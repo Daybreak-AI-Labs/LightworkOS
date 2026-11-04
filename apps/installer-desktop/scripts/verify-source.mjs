@@ -335,6 +335,10 @@ export function verifyDesktopSource({
     }
     git(root, ["config", "--local", "core.autocrlf", "false"]);
     git(root, ["config", "--local", "core.eol", "lf"]);
+    // A checkout made with autocrlf on leaves CRLF files that the index
+    // records as clean, so `reset --hard` alone rewrites none of them. Empty
+    // the index first so every tracked file is written again from its blob.
+    git(root, ["read-tree", "--empty"]);
     git(root, ["reset", "--hard", installRef]);
     head = verifyRef(root, installRef, true);
   }
