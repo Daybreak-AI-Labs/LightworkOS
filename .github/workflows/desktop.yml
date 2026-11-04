@@ -57,6 +57,7 @@ jobs:
       - name: Verify canonical source bytes before package execution
         env:
           MAVERICK_INSTALL_REF: ${{ github.sha }}
+        shell: bash
         run: >-
           node scripts/verify-source.mjs
           --repo ../..
@@ -131,6 +132,7 @@ jobs:
           node-version: "22.23.1"
 
       - name: Verify canonical source bytes before package execution
+        shell: bash
         run: >-
           node scripts/verify-source.mjs
           --repo ../..

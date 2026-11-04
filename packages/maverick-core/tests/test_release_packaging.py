@@ -1051,6 +1051,60 @@ def test_tauri_binary_apps_use_tracked_locks_and_a_pinned_toolchain():
         assert required_argument in build_step
 
 
+def _cargo_lock_version(lock: str, crate: str) -> str:
+    match = re.search(
+        rf'^\[\[package\]\]\nname = "{re.escape(crate)}"\nversion = "([^"]+)"$',
+        lock,
+        re.MULTILINE,
+    )
+    assert match, f"{crate} is not in the lock"
+    return match.group(1)
+
+
+def test_tauri_crates_share_a_minor_with_the_tauri_npm_packages():
+    # `tauri build` refuses to bundle when the tauri crate and
+    # @tauri-apps/api differ in major.minor, and both apps are bundled with
+    # the installer's @tauri-apps/cli.
+    pnpm_lock = (
+        REPO_ROOT / "apps" / "installer-desktop" / "pnpm-lock.yaml"
+    ).read_text(encoding="utf-8")
+    npm = {
+        match.group(1): match.group(2)
+        for match in re.finditer(
+            r"^  '(@tauri-apps/(?:api|cli))@(\d+\.\d+)\.\d+':$",
+            pnpm_lock,
+            re.MULTILINE,
+        )
+    }
+    assert set(npm) == {"@tauri-apps/api", "@tauri-apps/cli"}
+    assert npm["@tauri-apps/api"] == npm["@tauri-apps/cli"]
+    for relative in (
+        "apps/desktop/src-tauri/Cargo.lock",
+        "apps/installer-desktop/src-tauri/Cargo.lock",
+    ):
+        lock = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        crate = _cargo_lock_version(lock, "tauri")
+        assert crate.rsplit(".", 1)[0] == npm["@tauri-apps/api"], relative
+
+
+def test_desktop_source_verification_runs_under_bash_on_every_runner():
+    # The bundle matrix includes Windows, whose default shell is pwsh; there
+    # "$MAVERICK_INSTALL_REF" expands to nothing and verification fails.
+    desktop = (
+        REPO_ROOT / ".github" / "workflows" / "desktop.yml"
+    ).read_text(encoding="utf-8")
+    marker = "      - name: Verify canonical source bytes before package execution\n"
+    assert desktop.count(marker) == 2
+    start = 0
+    for _ in range(2):
+        start = desktop.index(marker, start)
+        end = desktop.find("\n      - ", start + len(marker))
+        step = desktop[start:end]
+        assert "        shell: bash\n" in step
+        assert '--ref "$MAVERICK_INSTALL_REF"' in step
+        start = end
+
+
 def test_public_site_contains_the_commit_bound_governance_benchmark():
     manifest = (REPO_ROOT / "docs" / "public-docs.txt").read_text(
         encoding="utf-8"
