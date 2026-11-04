@@ -1,0 +1,36 @@
+{% extends "public_base.html" %}
+{% from "_passphrase_fields.html" import styles, passphrase, script with context %}
+{% block title %}{{ title }} · Lightwork{% endblock %}
+{% block public_label %}{{ 'First-time setup' if setup else 'Sign in' }}{% endblock %}
+{% block public_footer %}{{ 'Owner setup on this computer' if setup else 'Sign in to this workspace' }}{% endblock %}
+{% block head_extra %}{{ styles() }}{% endblock %}
+{% block content %}
+<div class="panel own">
+  <h1 class="page-title">{{ title }}</h1>
+  <p class="own__lede">{{ explanation }}</p>
+  {% if message %}<p class="own__alert" role="alert">{{ message }}</p>{% endif %}
+  <form method="post" data-draft-recovery="off" id="owner-form" novalidate>
+    <label class="own__field"><span>Email address</span>
+      <input class="input" type="email" name="email" maxlength="320" required autocomplete="username" placeholder="you@company.com">
+      {% if setup %}<span class="own__hint">A label for this account on this computer. Lightwork does not send anything to it.</span>{% endif %}
+    </label>
+    {{ passphrase(new=setup) }}
+    {% if setup %}
+    <label class="own__check"><input type="checkbox" name="confirm" value="yes" required>
+      <span>I manage this computer and understand that saving turns off anonymous administrator access and turns on named sign-in.</span></label>
+    {% endif %}
+    <div class="own__actions">
+      <button type="submit" class="btn btn--primary">{{ 'Save owner and sign in' if setup else 'Sign in' }}</button>
+      {% if setup %}
+      <a href="/auth/local-login">Already set up? Sign in</a>
+      <a href="/start?owner=later" class="muted">Skip for now</a>
+      {% endif %}
+    </div>
+  </form>
+  {% if not setup %}
+  <p class="own__hint">No passphrase yet? Ask your administrator for an invitation; accepting it lets you
+    choose one. An invitation cannot replace a passphrase you already have. Forgotten it? Ask the installation owner to reset it.</p>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts_extra %}{{ script() }}{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Compare cost records - Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Value & spend', 'Compare cost records', lede=report.notice, compact=true) }}
+{% from "_spend_freshness.html" import spend_freshness %}
+{{ spend_freshness(report.spend_recorded_at) }}
+<section class="panel">
+  <form method="get"><label>UTC day <input class="input" type="date" name="day" value="{{ report.day }}" required></label>
+    {% if report.goal_id %}<input type="hidden" name="goal_id" value="{{ report.goal_id }}"><p>Selected task: {{ report.goal_id }}. <a href="/cost-reconciliation">Compare all owned attempts for the day</a>.</p>{% endif %}
+    <button class="btn btn--primary" type="submit">Compare current records</button></form>
+  <p><a href="/spend">Spend</a> · <a href="/budget">Your budget</a></p>
+  {% for ledger in report.ledgers %}
+  <section class="panel"><h2>{{ ledger.name }}</h2><p>{{ ledger.state }}{% if ledger.period %} · {{ ledger.period | datetime('date') }}{% endif %}</p>
+    <p>{% if ledger.amount is not none %}<span title="{{ '%.6f'|format(ledger.amount) }} {{ ledger.currency }} exactly">{{ ledger.amount | money(currency=ledger.currency) }}</span>{% else %}Amount unavailable or separately accounted{% endif %}</p>
+    <p>{{ ledger.scope }}</p><p>{{ ledger.basis or '' }}</p>
+    {% if ledger.unknown_count %}<p>{{ ledger.unknown_count }} attempts have unknown costs; the subtotal is incomplete.</p>{% endif %}
+    {% if ledger.href %}<a href="{{ ledger.href }}">Open source record</a>{% endif %}
+  </section>{% endfor %}
+  <h2>Provider reservations and settlement evidence</h2><p>{{ report.provider_coverage }}</p>
+  <p>{{ report.tasks_without_complete_receipt_evidence }} selected tasks lack a complete available linked receipt catalogue. Missing receipts are not free work.</p>
+  {% for group in report.provider_groups %}
+  <section class="panel"><h3>{{ group.provider }} · {{ group.period }} · {{ group.currency }}</h3>
+    <p>Recorded at verified rates: {{ group.recorded | money(currency=group.currency) }}; estimated: {{ group.estimated | money(currency=group.currency) }}; reconciled in the local ledger: {{ group.reconciled | money(currency=group.currency) }}.</p>
+    <p>Pending reservation ceilings: {{ group.ceiling | money(currency=group.currency) }}; unknown-outcome amounts still held: {{ group.unknown | money(currency=group.currency) }}; reservations with unknown amount: {{ group.unknown_amounts }}.</p>
+    <p>Do not add held ceilings to charges. Reconciled means a governed local accounting review changed the ledger; it does not certify a provider invoice or refund.</p>
+  </section>{% endfor %}
+  {% for row in report.receipts %}
+  <details><summary>{{ row.reference }} — {{ row.basis }} · {{ row.state }}</summary>
+    <p><a href="/chat/goal/{{ row.goal_id }}">Task {{ row.goal_id }}</a> · {{ row.provider }} · {{ row.period }} · {{ row.currency }}</p>
+    <p>Projected ceiling: {{ row.projected | money(currency=row.currency) if row.projected is not none else 'unknown' }}; recorded settlement: {{ row.actual | money(currency=row.currency) if row.actual is not none else 'unknown' }}.</p>
+    <p>Rate-card version: {{ row.rate_card_version or 'not recorded' }}; evidence: {{ row.pricing_evidence_id or 'not recorded' }}; reconciliation review: {{ row.reconciliation_review or 'none' }}.</p>
+    <p>{{ row.pricing_basis or 'Historical pricing evidence is unavailable; current configuration does not retroactively verify it.' }}</p>
+  </details>{% endfor %}
+  <h2>Why amounts can differ</h2><ul>{% for reason in report.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+  <p>Excluded costs: {{ report.exclusions }}</p>
+</section>
+{% endblock %}

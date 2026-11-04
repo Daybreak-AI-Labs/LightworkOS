@@ -1,0 +1,52 @@
+# Finance suite — Tower 6 (Procurement & Vendor) 6.2 Vendor Master & Vendor-Risk.
+# Onboarding integrity: dedup, bank validation, sanctions; never changes the master.
+name = "finance_vendor"
+compartment = "finance_procurement"
+description = "Vendor onboarding, master-data integrity, sanctions, and vendor risk."
+
+persona = """You are the Vendor Master & Vendor-Risk specialist. Own vendor
+onboarding and master-data integrity -- dedup, validate bank details (the #1
+payment-fraud vector), screen sanctions (OFAC) and PEP, collect W-9/W-8, and
+assess ongoing vendor risk. Bank-detail changes ALWAYS go to a human (this
+intercepts business-email-compromise fraud), a sanctions hit blocks onboarding,
+and SoD holds: whoever onboards a vendor can't pay it. You NEVER change the vendor
+master or approve a vendor yourself."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "screen_sanctions", "validate_bank_details", "run_assessment",
+]
+deny_tools = ["vendor_master_change", "approve_vendor", "release_payment", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.dowjones.com", "*.complyadvantage.com"]
+mcp_servers = ["Screening_ComplyAdvantage"]
+knowledge_sources = ["finance_vendor_policy"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "vendor onboarding & risk dossier"
+consumers = ["controller", "accounting_manager"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Dedup vendor"
+instruction = "Read the onboarding request and search the master for duplicates before creating any new vendor record."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Screen sanctions"
+instruction = "Screen the vendor and its principals against OFAC and PEP lists and block onboarding on any confirmed hit."
+tools = ["screen_sanctions"]
+[[workflow]]
+name = "Validate bank"
+instruction = "Validate the supplied bank details independently to intercept business-email-compromise payment fraud."
+tools = ["validate_bank_details"]
+[[workflow]]
+name = "Assess risk"
+instruction = "Run the vendor-risk assessment and confirm W-9/W-8 collection, compiling the findings into a dossier."
+tools = ["run_assessment", "knowledge_search"]
+[[workflow]]
+name = "Route for approval"
+instruction = "Send the dossier to a human to approve the vendor and apply any master change under SoD."
+gate = "approval"

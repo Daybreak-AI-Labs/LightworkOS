@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Approval challenges · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% call hero('Learning & safeguards', 'Approval challenges', subtitle='Check a practice scenario, then share it',
+             lede='Choose a practice scenario, check Lightwork’s response, and share the scenario with another team.') %}{% endcall %}
+<section class="panel glass-surface" id="approval-challenges">
+  <p class="notice"><strong>Source: practice scenario, not a customer incident.</strong> These are fictional requests and reviewers. No private work is mined, no AI call is made, and your real approval queue stays untouched.</p>
+  <p id="ac-status" role="status" aria-live="polite">Checking your current challenge records…</p>
+  <div class="ac-toolbar"><span id="ac-setting"></span><button class="btn" type="button" id="ac-setup" hidden>Change local challenge permission</button></div>
+  <form id="ac-generate">
+    <label>Fictional approval change<select class="input" name="family" required><option value="">Choose a change to explore</option></select></label>
+    <label>Required sign-offs<select class="input" name="quorum"><option value="1">One reviewer</option><option value="2">Two reviewers</option></select></label>
+    <button class="btn btn--primary" type="submit">Build and check locally</button>
+  </form>
+  <details><summary>What the local check does</summary><p>The practice explores one fictional request and two reviewers, up to 12 steps and 50,000 possible situations. It finds a short failure sequence in a deliberately weakened copy, then tries that sequence against this installation’s approval safeguards. The check uses a fresh disposable local copy, with no customer settings, credentials or network connections and a 10-second deadline.</p><p>It checks that the request is unchanged and the reviewer still holds or can take it. It also checks that the review has not expired and that an earlier review cannot be reused after undo. These checks can refuse an outdated sign-off; they cannot grant reviewer permission or reduce the required sign-offs. This selected practice does not establish complete protection, a new invention, business improvement or protection in another product. No live approval rule is installed or activated.</p></details>
+  <hr>
+  <h2>Receive a reusable challenge</h2>
+  <form id="ac-import"><label>Challenge file<input class="input" name="file" type="file" accept=".lwchallenge,application/json" required></label><p>Choose a supported Lightwork practice file, up to 8 KB. It contains a fictional scenario and the steps to try. It cannot supply custom code, customer settings or credentials. Review first; its local check is a separate action.</p><button class="btn" type="submit">Review selected file</button></form>
+  <hr>
+  <h2>Your saved challenges</h2>
+  <label>Saved practice challenge<select class="input" id="ac-choice"><option value="">Choose a saved challenge</option></select></label>
+  <div class="ac-toolbar"><button class="btn" id="ac-read" type="button">Review saved challenge</button><button class="btn btn--ghost" id="ac-refresh" type="button">Refresh records</button><button class="btn btn--ghost" id="ac-newer" type="button" hidden>Newer records</button><button class="btn btn--ghost" id="ac-older" type="button" hidden>Earlier records</button></div>
+  <p id="ac-page"></p>
+  <section id="ac-review" hidden aria-labelledby="ac-title">
+    <h2 id="ac-title"></h2><p id="ac-origin"></p><p id="ac-result"></p>
+    <h3>Practice sequence</h3><ol id="ac-steps"></ol>
+    <p id="ac-bounds"></p><p id="ac-limit"></p>
+    <div class="ac-toolbar"><button class="btn btn--primary" id="ac-check" type="button" hidden>Check this file locally</button><button class="btn" id="ac-export" type="button" hidden>Review and authorize sharing</button><a class="btn" id="ac-download" hidden>Download authorized challenge</a><button class="btn" id="ac-resolve" type="button" hidden>Resolve interrupted check</button><button class="btn btn--ghost" id="ac-remove" type="button" hidden>Remove saved practice record</button></div>
+    <p>Keep up to 256 active practice records in this workspace. Remove one of your inactive records here to make space; its decision receipt stays in the activity history. A check in progress cannot be removed. Removing a record does not recall a file you previously shared.</p>
+    <p>The shared file contains only the selected practice scenario, required sign-off count, declared limits, sequence and checks that refuse outdated sign-offs. It contains no customer incident, private values, account or request identity, local timings or installation’s software details. Sharing needs separate consent for this exact file. A recipient must review and check it separately; nothing is activated automatically.</p>
+  </section>
+  <button class="btn" id="ac-recover" type="button" hidden>Read the original operation's saved result</button>
+  <p><a class="btn btn--ghost" href="/learning">Return to Learning</a></p>
+</section>
+<style>
+#approval-challenges{max-width:60rem;min-width:0}#approval-challenges form{display:grid;gap:var(--space-3);margin-block:var(--space-4)}#approval-challenges select,#approval-challenges input{width:100%;max-width:100%;min-width:0}#approval-challenges .ac-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin-block:var(--space-3)}#approval-challenges [hidden]{display:none!important}#approval-challenges h2,#approval-challenges p,#approval-challenges li,#approval-challenges button,#approval-challenges a,#approval-challenges summary{overflow-wrap:anywhere}#approval-challenges button,#approval-challenges a{max-width:100%;white-space:normal}#approval-challenges details summary{cursor:pointer;min-height:2.75rem;padding-block:var(--space-2)}#approval-challenges ol{padding-inline-start:var(--space-5)}
+</style>
+<script src="/static/lightwork-approval-challenges.js" defer></script>
+{% endblock %}

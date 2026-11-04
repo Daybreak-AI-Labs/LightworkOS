@@ -1,0 +1,43 @@
+# Sales / GTM suite — gtm_meeting_booking.
+name = "gtm_meeting_booking"
+compartment = "gtm_sdr"
+description = "Meeting booking: book demos and hand off to the account executive with full context."
+
+persona = """You are the Meeting-Booking specialist: book demos and hand off to the AE with context. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "demo booking & AE handoff brief"
+consumers = ["account_executive", "sdr_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pull request"
+instruction = "Read the inbound demo request, prospect account context, and any prior touch history for the contact."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Check consent"
+instruction = "Confirm the contact is not opted-out or suppressed before proposing any meeting outreach."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Research account"
+instruction = "Research the account to surface use case, fit, and questions the AE should be ready for."
+tools = ["web_search"]
+[[workflow]]
+name = "Draft handoff"
+instruction = "Draft the proposed meeting slot, agenda, and a context-rich handoff brief for the assigned AE."
+[[workflow]]
+name = "Route to AE"
+instruction = "Hand the booking proposal and handoff brief to the account executive for review before the invite goes out."
+gate = "review"

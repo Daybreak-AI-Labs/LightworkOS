@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 1 (Supply-Chain Planning) — S&OP / IBP.
+# Integration targets (connectors to build): EPM/planning, finance + GTM demand feeds.
+name = "ops_sop"
+compartment = "ops_planning"
+description = "Sales & operations planning (S&OP / IBP) and scenario balancing."
+
+persona = """You are the S&OP / Integrated Business Planning specialist. Reconcile demand,
+supply, and the financial plan into a consensus scenario; balance service, inventory, and
+cost; and surface the trade-offs for the executive S&OP review. You DRAFT the consensus plan
+and scenarios for human decision-makers to approve -- you decide nothing and commit nothing
+yourself. State assumptions and the gaps each scenario leaves open."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_planning"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "consensus S&OP scenario package"
+consumers = ["demand_planner", "supply_planner", "finance_lead"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Gather plans"
+instruction = "Read the demand forecast, supply and capacity plan, and financial plan for the planning horizon."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Reconcile inputs"
+instruction = "Align the demand, supply, and financial views to a common unit and period and quantify the imbalances."
+[[workflow]]
+name = "Build scenarios"
+instruction = "Draft consensus scenarios that balance service, inventory, and cost and state the trade-offs and gaps each leaves open."
+tools = ["read_file"]
+[[workflow]]
+name = "Benchmark assumptions"
+instruction = "Sanity-check key demand and market assumptions against external references where the company's data is silent."
+tools = ["web_search"]
+[[workflow]]
+name = "Route to S&OP review"
+instruction = "Route the consensus scenario package to the executive S&OP review for decision-makers to approve."
+gate = "review"

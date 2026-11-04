@@ -1,0 +1,865 @@
+{% extends "base.html" %}
+{% block title %}Flow run · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .fr { max-width: 900px; }
+  .fr__status { font-weight: var(--font-semibold); }
+  .fr__status.completed { color: var(--success, #16a34a); }
+  .fr__status.failed, .fr__status.rejected { color: var(--danger, #dc2626); }
+  .fr__status.paused_approval, .fr__status.paused_delay, .fr__status.queued, .fr__status.running { color: #d97706; }
+  .fr__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: var(--space-3) 0; }
+  .fr__review { flex: 1 0 100%; border: 1px solid var(--border); border-radius: var(--radius-lg);
+                padding: var(--space-3); background: var(--surface-sunken); }
+  .fr__review h3, .fr__review h4 { margin: var(--space-2) 0; }
+  .fr__review p, .fr__review ul { margin: var(--space-1) 0 var(--space-2); }
+  .fr__review code { overflow-wrap: anywhere; }
+  .fr__msg { font-size: var(--text-sm); color: var(--muted); }
+  .fr__error { color: var(--danger, #dc2626); font-size: var(--text-sm); margin: var(--space-2) 0;
+               white-space: pre-wrap; word-break: break-word; }
+  .fr__steps { list-style: none; padding: 0; margin: 0; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .fr__step { display: flex; gap: var(--space-3); align-items: baseline; padding: var(--space-2) var(--space-3);
+              border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+  .fr__step:last-child { border-bottom: none; }
+  .fr__step .badge { width: 20px; text-align: center; }
+  .fr__step .kind { font-size: var(--text-xs); color: var(--muted); min-width: 130px; }
+  .fr__step .lbl { flex: 1; }
+  .fr__step.cursor { background: var(--surface-sunken); }
+  .fr__data { margin-top: var(--space-4); }
+  .fr__values { min-width: 0; }
+  .fr__value { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); margin: var(--space-2) 0; min-width: 0; }
+  .fr__value summary { cursor: pointer; white-space: pre-wrap; overflow-wrap: break-word; }
+  .fr__value-body { min-width: 0; padding-top: var(--space-2); }
+  .fr__data .fr__literal { white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; max-width: 100%; box-sizing: border-box; }
+  .fr__data .btn { white-space: normal; max-width: 100%; }
+  .fr__value-note { margin: var(--space-2) 0; font-size: var(--text-sm); color: var(--muted); }
+  .fr__answer { overflow-wrap: break-word; max-height: 320px; overflow: auto; }
+  .fr__data pre { background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-md);
+                  padding: var(--space-3); font-size: 12px; overflow-x: auto; max-height: 320px; }
+  .fr__allow { display: flex; gap: var(--space-2); align-items: flex-end; flex-wrap: wrap; flex: 1 0 100%; }
+  .fr__example { margin: var(--space-4) 0; }
+  .fr__example h2 { margin: 0 0 var(--space-2); font-size: var(--text-lg); }
+  .fr__example p { max-width: 65ch; }
+  .fr__example textarea { width: 100%; min-height: 7rem; box-sizing: border-box; resize: vertical; }
+  .fr__example .fr__actions { margin-bottom: 0; }
+  .fr__example .btn { white-space: normal; }
+  @media (max-width: 480px) { .fr__example .fr__actions .btn { width: 100%; } }
+  .fr__feedback { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-2) 0; }
+  .fr__feedback-btn { min-width: 44px; min-height: 44px; }
+  .fr__feedback-btn[aria-pressed="true"] { border-color: var(--brand-border); }
+  .fr__feedback-msg { flex-basis: 100%; }
+</style>
+
+<div class="fr">
+  {% from "_hero.html" import hero %}
+  {% call hero('Flows', 'Flow run', title_id='fr-title', compact=true) %}
+    <span class="badge" id="fr-status" role="status">Loading…</span>
+  {% endcall %}
+  <p class="fr__msg" id="fr-meta"></p>
+  <p id="fr-owner-links" hidden>
+    <a class="btn btn--ghost" id="fr-designer-link" href="/flows/designer/{{ flow_id }}">Open the flow</a>
+    <a class="btn btn--ghost" href="/flows/{{ flow_id | urlencode }}/teach#teach-recipe">Learn from reviewed runs</a>
+    <a class="btn btn--ghost" href="/automations">All automations</a>
+  </p>
+  <div id="fr-review-links" hidden>{{ back_link('/approvals', 'Approvals') }}
+    <p class="fr__msg">This view shows your assigned approval. Complete run information is available to the flow owner.</p>
+  </div>
+  <div class="fr__error" id="fr-error" role="alert" hidden></div>
+  <div class="fr__actions" id="fr-actions"></div>
+  <span class="fr__msg" id="fr-msg" role="status" aria-live="polite"></span>
+  <div class="fr__feedback" id="fr-feedback" data-flow-run-feedback data-run="{{ run_id }}" role="group" aria-label="{{ ut('Rate this run') }}" lang="{{ ul('Rate this run') }}" hidden>
+    <span class="fr__msg">{{ ui('Done by agents. Was it useful?') }}</span>
+    <button class="btn btn--ghost fr__feedback-btn" type="button" data-rating="up" aria-pressed="false" aria-label="{{ ut('Yes, useful') }}">👍</button>
+    <button class="btn btn--ghost fr__feedback-btn" type="button" data-rating="down" aria-pressed="false" aria-label="{{ ut('No, not useful') }}">👎</button>
+    <span class="fr__msg fr__feedback-msg" data-feedback-msg role="status" aria-live="polite"></span>
+  </div>
+  {% if not request.query_params.get('approval_review') %}{% include "_workflow_explanation.html" %}{% endif %}
+
+  {% if learning_example_panel %}<section class="panel fr__example" id="le-card" aria-labelledby="le-title"
+           data-flow-id="{{ flow_id }}" data-run-id="{{ run_id }}" data-draft-recovery="off">
+    <h2 id="le-title">Learning example</h2>
+    <p id="le-status" role="status" aria-live="polite">Checking this example…</p>
+    <p id="le-description" class="fr__msg"></p>
+    <p id="le-message" role="status" aria-live="polite"></p>
+    <div class="fr__actions">
+      <button type="button" class="btn btn--ghost" id="le-withdraw" hidden>Stop using this example</button>
+      <button type="button" class="btn btn--ghost" id="le-refresh" disabled>Refresh status</button>
+    </div>
+    <form id="le-form" class="mv-form" hidden novalidate aria-labelledby="le-form-title">
+      <h3 id="le-form-title">Stop using this example</h3>
+      <p id="le-consequence">This withdraws approval for future use of this example. It keeps the review and audit history,
+        does not undo completed work, and cannot erase existing downloads or copies.</p>
+      <div class="mv-form__field">
+        <label for="le-reason">Reason for stopping use</label>
+        <textarea class="textarea" id="le-reason" required maxlength="2000"
+                  aria-describedby="le-consequence le-error" autocomplete="off"></textarea>
+        <p id="le-error" class="mv-form__err" role="alert"></p>
+      </div>
+      <div class="fr__actions">
+        <button type="submit" class="btn btn--primary" id="le-confirm">Confirm: stop using this example</button>
+        <button type="button" class="btn btn--ghost" id="le-cancel">Cancel</button>
+      </div>
+    </form>
+  </section>{% endif %}
+
+  {% if learning_capture_panel %}<section class="panel fr__example" id="lx-card" aria-labelledby="lx-title" data-flow-id="{{ flow_id }}" data-run-id="{{ run_id }}">
+    <h2 id="lx-title">Keep this run as a learning example</h2>
+    <p id="lx-status" role="status" aria-live="polite" tabindex="-1">Checking whether this run can be an example…</p>
+    <div class="fr__actions"><button type="button" class="btn btn--ghost" id="lx-refresh">Check current status</button></div>
+    <div id="lx-enroll" hidden>
+      <p class="fr__msg">Lightwork keeps this run's starting details and what each action sent and got back. You can review it and let new flows learn from it. Approving each action stays a separate step on this page.</p>
+      <p class="fr__msg">Check what each part holds. Lightwork filled these in from this run and earlier ones; change anything that's
+        wrong. A value that doesn't match stops the example from being kept, but never stops the run.</p>
+      <div id="lx-describe"></div>
+      <div class="mv-form__field"><label for="lx-until">Keep the example until</label>
+        <input class="input" type="date" id="lx-until"></div>
+      <div class="fr__actions"><button type="button" class="btn btn--primary" id="lx-enroll-go">Keep this run as an example</button></div>
+    </div>
+    <div id="lx-review" hidden>
+      <div id="lx-evidence"></div>
+      <div class="mv-form__field"><label for="lx-review-reason">Why this example is or isn't right</label>
+        <textarea class="textarea" id="lx-review-reason" maxlength="2000" rows="2"></textarea></div>
+      <div class="fr__actions">
+        <button type="button" class="btn btn--primary" id="lx-accept">Review acceptance</button>
+        <button type="button" class="btn btn--ghost" id="lx-reject">Review rejection</button>
+      </div>
+    </div>
+    <div id="lx-grant" hidden>
+      <p class="fr__msg">Allow new flows to learn from this accepted example. Copies made while learning are kept until the date
+        you choose; withdrawing the example later stops future use but doesn't erase those copies.</p>
+      <div class="mv-form__field"><label for="lx-grant-until">Allow learning until</label>
+        <input class="input" type="date" id="lx-grant-until"></div>
+      <div class="mv-form__field"><label for="lx-grant-reason">Why it may be used for learning</label>
+        <textarea class="textarea" id="lx-grant-reason" maxlength="2000" rows="2"></textarea></div>
+      <label><input type="checkbox" id="lx-grant-copies"> Keep the copies made while learning until that date</label>
+      <div class="fr__actions"><button type="button" class="btn btn--primary" id="lx-grant-go">Review learning permission</button></div>
+    </div>
+    <div id="lx-decision-review" style="overflow-wrap:anywhere;min-width:0"></div>
+    <div id="lx-original" hidden>
+      <h3>Original example decision</h3>
+      <label for="lx-original-choice">Your original decisions</label>
+      <select class="select" id="lx-original-choice"><option value="">Choose an original decision</option></select>
+      <p id="lx-original-status" role="status" aria-live="polite"></p>
+      <button type="button" class="btn btn--ghost" id="lx-original-read">Read original result</button>
+    </div>
+    <p id="lx-next" class="fr__msg" hidden><a class="btn btn--ghost" href="/flows/{{ flow_id | urlencode }}/teach#teach-recipe">Learn from reviewed runs</a></p>
+  </section>{% endif %}
+
+  <h2 id="fr-steps-title" style="font-size:var(--text-base);" hidden>Steps</h2>
+  <ul class="fr__steps" id="fr-steps" hidden></ul>
+
+  <div class="fr__data" hidden>
+    <h2 style="font-size:var(--text-base);">Information in this run</h2>
+    <p class="fr__msg">Private values are hidden. Open a named value to read it. Long text and lists have further pages; the remaining amount is always shown.</p>
+    <p id="fr-values-status" class="fr__msg" role="status" aria-live="polite"></p>
+    <button class="btn btn--ghost" type="button" id="fr-values-refresh">Refresh run information</button>
+    <div class="fr__values" id="fr-data-rows"></div>
+    <h2 style="font-size:var(--text-base);">What it started with</h2>
+    <div class="fr__values" id="fr-input-rows"></div>
+    <details style="margin-top: var(--space-3);">
+      <summary>Technical details</summary>
+      <p class="fr__msg">This is a limited summary. Use the named values above for complete saved information.</p>
+      <pre id="fr-data">…</pre>
+      <pre id="fr-input">…</pre>
+    </details>
+  </div>
+</div>
+
+<script src="/static/lightwork-markdown.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var flowId = {{ flow_id | tojson }};
+  var runId = {{ run_id | tojson }};
+  var KIND_ICON = { agent: '🧠', action: '⚙️', branch: '🔀', foreach: '🔁',
+                    parallel: '🔱', approval: '✅', delay: '⏱', subflow: '📎' };
+  var KIND_LABEL = { agent: 'AI task', action: 'Connected action', branch: 'Decision', switch: 'Choose a path',
+    foreach: 'Repeat for each item', while: 'Repeat while', parallel: 'Run together', approval: 'Approval',
+    delay: 'Wait', wait_event: 'Wait for another app', scope: 'Handle a failure', subflow: 'Run another flow', setvar: 'Update data' };
+  var STATUS_LABEL = { queued: 'Waiting to start', running: 'Running', completed: 'Finished', failed: 'Failed',
+    rejected: 'Rejected', cancelled: 'Cancelled', paused_approval: 'Waiting for approval', paused_delay: 'Waiting',
+    paused_event: 'Waiting for another app', claimed: 'Starting', resuming: 'Continuing',
+    budget_limited: 'Paused — spending limit reached',
+    indeterminate: 'Needs checking in the other app' };
+  var STATUS_BADGE = { completed: 'ok', failed: 'blocked', rejected: 'blocked', indeterminate: 'warn', budget_limited: 'warn' };
+  var ORIGIN = { webhook: 'Started by another app', schedule: 'Started on schedule', event_trigger: 'Started by a new item', retry: 'Started again' };
+  var flowName = '';
+  var assignedReviewOnly = false;
+  function human(v) { return window.mvHuman ? window.mvHuman(v) : String(v || '').replace(/_/g, ' '); }
+  function plain(failure, what) { return window.mvErrorText ? window.mvErrorText(failure, what) : 'Could not ' + what + '. Try again.'; }
+  function stepLabel(id) {
+    var n = (flowNodes || []).filter(function (x) { return x.id === id; })[0];
+    return n ? (n.title || KIND_LABEL[n.kind] || 'that step') : 'the step that stopped';
+  }
+  var ACTIVE = ['queued', 'claimed', 'running', 'resuming', 'paused_delay'];
+  var msg = document.getElementById('fr-msg');
+  var flowNodes = null;   // ordered [{id, kind, label}] from the flow definition
+  var sending = false, actionButtons = [], pendingAction = null;
+
+  function runKey(run) { return [run.status, run.cursor || '', run.updated || ''].join('|'); }
+  function holdActions(disabled) {
+    actionButtons.forEach(function (button) { button.disabled = disabled; });
+  }
+  function sendOnce(request) {
+    if (sending || pendingAction) return;
+    sending = true;
+    holdActions(true);
+    request(function (failed) {
+      sending = false;
+      if (failed) holdActions(false);
+    });
+  }
+
+  function say(t) { if (window.mvStatus) window.mvStatus(msg, t || ''); else msg.textContent = t || ''; }
+  {% include "_dash_helpers.js" %}
+
+  function orderNodes(flow) {
+    // BFS from start so the timeline reads in execution order; orphans go last.
+    var byId = {}, order = [], seen = {};
+    (flow.nodes || []).forEach(function (n) { byId[n.id] = n; });
+    var queue = flow.start ? [flow.start] : [];
+    while (queue.length) {
+      var id = queue.shift();
+      if (!id || seen[id] || !byId[id]) continue;
+      seen[id] = 1; order.push(byId[id]);
+      ['next', 'if_true', 'if_false', 'on_error'].forEach(function (k) {
+        if (byId[id][k]) queue.push(byId[id][k]);
+      });
+    }
+    (flow.nodes || []).forEach(function (n) { if (!seen[n.id]) order.push(n); });
+    return order.map(function (n) {
+      return { id: n.id, kind: n.kind, title: n.label || '', label: n.label || n.brief || (n.tool ? human(n.tool) : '') || n.prompt || '',
+               choices: n.choices || [], form: n.form || [], assignee: n.assignee || '' };
+    });
+  }
+
+  function badgeFor(run, id) {
+    if (run.cursor === id && ['paused_approval', 'paused_delay', 'paused_event'].indexOf(run.status) >= 0) return '⏳';
+    if (run.cursor === id && run.status === 'failed') return '🔴';
+    var rs = (run.nodes || {})[id];
+    if (!rs) return '·';
+    if (rs.outcome === 1) return '🟢';
+    if (rs.outcome === 0) return '🔴';
+    if (rs.status === 'true') return '✓';
+    if (rs.status === 'false') return '✗';
+    return '🟠';
+  }
+
+  function renderSteps(run) {
+    var ul = document.getElementById('fr-steps');
+    ul.textContent = '';
+    var list = flowNodes || Object.keys(run.nodes || {}).map(function (id) { return { id: id, kind: '', label: '' }; });
+    list.forEach(function (n) {
+      var li = document.createElement('li');
+      li.className = 'fr__step' + (run.cursor === n.id ? ' cursor' : '');
+      var rs = (run.nodes || {})[n.id] || {};
+      li.innerHTML = '';
+      function span(cls, text) { var s = document.createElement('span'); s.className = cls; s.textContent = text; return s; }
+      li.appendChild(span('badge', badgeFor(run, n.id)));
+      li.appendChild(span('kind', (KIND_ICON[n.kind] || '') + ' ' + (KIND_LABEL[n.kind] || human(n.kind || 'Step'))));
+      li.appendChild(span('lbl', n.label || ''));
+      var st;
+      if (run.cursor === n.id && !rs.status) st = run.status === 'failed' ? 'Stopped here' : 'Waiting here';
+      else if (rs.outcome === 1) st = 'Worked';
+      else if (rs.outcome === 0) st = 'Failed';
+      else if (rs.status === 'true') st = 'Answered yes';
+      else if (rs.status === 'false') st = 'Answered no';
+      else if (rs.status) st = human(rs.status);
+      else st = 'Not reached';
+      if (rs.seconds != null) st += ' · ' + (rs.seconds < 1 ? 'under a second' : Math.round(rs.seconds) + ' seconds');
+      li.appendChild(span('', st));
+      ul.appendChild(li);
+    });
+  }
+
+  function renderActions(run) {
+    var box = document.getElementById('fr-actions');
+    box.textContent = '';
+    actionButtons = [];
+    function btn(label, primary, onClick) {
+      var b = document.createElement('button');
+      b.className = 'btn ' + (primary ? 'btn--primary' : 'btn--ghost'); b.type = 'button';
+      b.textContent = label; b.addEventListener('click', onClick); box.appendChild(b);
+      actionButtons.push(b);
+    }
+    function addText(parent, tag, text) {
+      var node = document.createElement(tag); node.textContent = text; parent.appendChild(node);
+      return node;
+    }
+    function addList(parent, title, values) {
+      addText(parent, 'h4', title);
+      var ul = document.createElement('ul');
+      (values && values.length ? values : ['None recorded.']).forEach(function (value) {
+        addText(ul, 'li', String(value));
+      });
+      parent.appendChild(ul);
+    }
+    function money(budget) {
+      if (budget && typeof budget.maximum === 'number') return 'Up to ' + (window.mvMoney ? window.mvMoney(budget.maximum) : '$' + budget.maximum.toFixed(2));
+      if (budget && budget.state) return 'Checked again when it runs';
+      return 'Within your workspace limits';
+    }
+    function renderApprovalCard(card) {
+      var review = document.createElement('section');
+      review.className = 'fr__review'; review.setAttribute('aria-label', 'What you are approving');
+      addText(review, 'strong', 'This is Lightwork’s suggestion — the decision is yours.');
+      addText(review, 'h3', card.summary || 'Approval details');
+      addText(review, 'p', 'What it changes: ' + ((card.target && card.target.label) || 'Not available'));
+      addList(review, 'What it will do', card.parameters && card.parameters.summary);
+      var preview = card.preview || {};
+      addText(review, 'p', 'Before: ' + (preview.before || 'Not available'));
+      addText(review, 'p', 'After: ' + (preview.after || 'Not available'));
+      var consequences = card.consequences || {};
+      addList(review, 'What happens next', consequences.known_effects);
+      if ((consequences.unresolved_assumptions || []).length) addList(review, 'Open questions', consequences.unresolved_assumptions);
+      addText(review, 'p', 'Can it be undone? ' + (consequences.irreversible ? 'No' : 'Yes'));
+      addText(review, 'p', 'Spending: ' + money(card.budget));
+      var authority = card.authority || {};
+      var who = authority.actor ? (window.mvHuman ? authority.actor.replace(/^[a-z]+:/, '') : authority.actor) : '';
+      if (who) addText(review, 'p', 'Requested by: ' + who);
+      var expires = window.mvWhen ? window.mvWhen(card.expires_at) : '';
+      if (expires) addText(review, 'p', 'Decide by: ' + expires);
+      var tech = document.createElement('details');
+      addText(tech, 'summary', 'Technical details (for auditors)');
+      var currentAuthority = run.approval_authority || {};
+      addText(tech, 'p', 'Item fingerprint: ' + ((card.target && card.target.sha256) || 'Not available'));
+      addText(tech, 'p', 'Role: ' + (currentAuthority.role || authority.role || 'Not available'));
+      addText(tech, 'p', 'Role fingerprint: ' + (currentAuthority.role_permissions_sha256 || 'Not available'));
+      addText(tech, 'p', 'Connected accounts fingerprint: ' + (currentAuthority.credential_inventory_sha256 || 'Not available'));
+      addText(tech, 'p', 'Spending rules fingerprint: ' + (currentAuthority.budget_authority_sha256 || 'Not available'));
+      review.appendChild(tech);
+      box.appendChild(review);
+    }
+    if (run.status === 'paused_approval') {
+      // Prefer the pause-time snapshot (run.human): it is what the node
+      // declared when it paused, immune to flow edits made while waiting.
+      var node = (run.human && Object.keys(run.human).length)
+        ? run.human
+        : ((flowNodes || []).filter(function (n) { return n.id === run.cursor; })[0] || {});
+      var card = node.approval_card;
+      var canDecide = run.approval_card_status === 'current'
+        && typeof run.approval_binding_sha256 === 'string'
+        && run.approval_binding_sha256.length === 64 && card;
+      var teaching = run.cursor === 'teaching_review'
+        && (run.teaching_review || (Array.isArray(node.choices) && node.choices.length === 2
+          && node.choices.indexOf('route:0') >= 0 && node.choices.indexOf('route:1') >= 0));
+      var teachingDetail = run.teaching_review || {};
+      var teachingOptions = teaching && teachingDetail.status === 'current'
+        && teachingDetail.question && teachingDetail.question.options;
+      if (teaching) {
+        var teachingPanel = document.createElement('section');
+        teachingPanel.className = 'fr__review';
+        teachingPanel.setAttribute('aria-label', 'Choose a continuation');
+        addText(teachingPanel, 'h3', 'Choose how this case should continue');
+        addText(teachingPanel, 'p', 'The learned rules disagree on this completed case. Choosing an action opens a separate approval before it runs.');
+        if (!Array.isArray(teachingOptions) || teachingOptions.length !== 2) {
+          canDecide = false;
+          addText(teachingPanel, 'p', 'Complete, verified options are unavailable or contain protected values. This page cannot submit a teaching decision. Refresh the page to see the latest.');
+        } else {
+          addText(teachingPanel, 'h4', 'Actual observations');
+          addText(teachingPanel, 'pre', JSON.stringify(teachingDetail.question.observation, null, 2));
+          teachingOptions.forEach(function (option) {
+            addText(teachingPanel, 'h4', option.tool);
+            addText(teachingPanel, 'pre', JSON.stringify(option.arguments, null, 2));
+          });
+          addText(teachingPanel, 'p', 'Question commitment: ' + teachingDetail.question.question_sha256);
+        }
+        box.appendChild(teachingPanel);
+      }
+      if (card) renderApprovalCard(card);
+      if (!canDecide) {
+        var refreshable = run.approval_card_status === 'expired' && run.resume_at == null && !run.approval_review_only;
+        addText(box, 'p', refreshable
+          ? 'The review window has closed. Request a fresh review of this paused work, then check its details before deciding. Completed steps stay completed.'
+          : 'This request can’t be decided yet because its details could not be checked. Reload to check its current work, access and deadline.');
+        if (refreshable) btn('Request fresh review', true, requestFreshApproval);
+        btn('Reload', !refreshable, function () { window.location.reload(); });
+      }
+      if (run.prompt) { var p = document.createElement('span'); p.className = 'fr__msg'; p.textContent = '“' + run.prompt + '” '; box.appendChild(p); }
+      if (node.assignee) { var as = document.createElement('span'); as.className = 'fr__msg'; as.textContent = '· asked of ' + node.assignee.replace(/^[a-z]+:/, '') + ' '; box.appendChild(as); }
+      // optional form fields collected on sign-off (merged into flow data on resume)
+      var inputs = {}, formFields = [], reviewedInputs = null, reviewPending = false;
+      var inputReview = document.createElement('section');
+      inputReview.className = 'fr__review'; inputReview.hidden = true;
+      inputReview.setAttribute('aria-label', 'Submitted approval inputs');
+      function clearInputReview() {
+        reviewedInputs = null; inputReview.hidden = true; inputReview.textContent = '';
+      }
+      (node.form || []).forEach(function (fld) {
+        if (!fld.name) return;
+        formFields.push({ name: fld.name, label: fld.label || human(fld.name) });
+        var wrap = document.createElement('div'); wrap.style.margin = '4px 0';
+        var lab = document.createElement('label'); lab.style.cssText = 'display:block;font-size:12px;color:var(--muted);';
+        lab.textContent = fld.label || human(fld.name);
+        var inp = document.createElement('input'); inp.className = 'input';
+        inp.id = 'fr-field-' + fld.name; lab.htmlFor = inp.id;
+        inp.addEventListener('input', function () {
+          inputs[fld.name] = inp.value; clearInputReview();
+        });
+        wrap.appendChild(lab); wrap.appendChild(inp); box.appendChild(wrap);
+      });
+      if (formFields.length) box.appendChild(inputReview);
+      function reviewThenResume(decision) {
+        if (!formFields.length) {
+          resume(decision, inputs, run.approval_binding_sha256, run); return;
+        }
+        var fingerprint = JSON.stringify(inputs);
+        if (reviewedInputs && reviewedInputs.fingerprint === fingerprint) {
+          resume(decision, inputs, reviewedInputs.binding, run); return;
+        }
+        if (reviewPending) return;
+        reviewPending = true;
+        say('Checking your answers…');
+        api('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/approval-preview',
+            { method: 'POST', body: JSON.stringify({ inputs: inputs }) })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+            if (!r.ok || typeof j.approval_binding_sha256 !== 'string'
+                || !/^[0-9a-f]{64}$/.test(j.approval_binding_sha256)) {
+              throw new Error(plain(r, 'check these answers'));
+            }
+            if (fingerprint !== JSON.stringify(inputs)) return;
+            reviewedInputs = { fingerprint: fingerprint, binding: j.approval_binding_sha256 };
+            inputReview.textContent = '';
+            addText(inputReview, 'strong', 'Check your answers, then confirm.');
+            formFields.forEach(function (field) {
+              var value = Object.prototype.hasOwnProperty.call(inputs, field.name)
+                ? String(inputs[field.name]) : '';
+              addText(inputReview, 'p', field.label + ': ' + (value || '(empty)'));
+            });
+            var confirmBtn = document.createElement('button');
+            confirmBtn.type = 'button'; confirmBtn.className = 'btn btn--primary';
+            confirmBtn.textContent = decision === 'approved' ? 'Confirm approval' : (decision === 'rejected' ? 'Confirm rejection' : 'Confirm “' + decision + '”');
+            confirmBtn.addEventListener('click', function () { reviewThenResume(decision); });
+            inputReview.appendChild(confirmBtn);
+            actionButtons.push(confirmBtn);
+            inputReview.hidden = false;
+            confirmBtn.focus();
+            say('Check your answers above, then confirm.');
+          }); })
+          .catch(function (error) { say(error && error.message ? error.message : plain(error, 'check these answers')); })
+          .finally(function () { reviewPending = false; });
+      }
+      if (canDecide && !teaching) btn('Approve', true, function () {
+        reviewThenResume('approved');
+      });
+      // any declared choice verdicts become their own buttons (routed by a switch)
+      (node.choices || []).forEach(function (ch) {
+        var option = teachingOptions && teachingOptions.find(function (item) { return ch === 'route:' + item.route; });
+        if (canDecide) btn(option ? 'Choose ' + option.tool : ch, false, function () {
+          reviewThenResume(ch);
+        });
+      });
+      if (canDecide) btn('Reject', false, function () {
+        reviewThenResume('rejected');
+      });
+    }
+    if (run.status === 'paused_event') {
+      if (run.prompt) { var pe = document.createElement('span'); pe.className = 'fr__msg'; pe.textContent = '📥 ' + run.prompt + ' '; box.appendChild(pe); }
+      btn('Continue now (skip the wait)', false, function () { resume('approved', null, '', run); });
+    }
+    if (run.status === 'failed' && run.cursor) {
+      btn('Try again from “' + stepLabel(run.cursor) + '”', true, function () { retry(true, undefined, run); });
+    }
+    if (run.status === 'budget_limited' && run.cursor) {
+      var current = Math.max(run.cost_dollars || 0, run.budget_limit_dollars || 0);
+      var allowWrap = document.createElement('div'); allowWrap.className = 'fr__allow';
+      var allowField = document.createElement('div'); allowField.className = 'field';
+      var allowLabel = document.createElement('label'); allowLabel.htmlFor = 'fr-allowance';
+      allowLabel.textContent = 'New spending limit for this run ($) — currently ' + (window.mvMoney ? window.mvMoney(current) : '$' + current.toFixed(2));
+      var allowance = document.createElement('input'); allowance.id = 'fr-allowance'; allowance.className = 'input';
+      allowance.type = 'number'; allowance.min = String(current);
+      allowance.step = '0.01'; allowance.value = (current + 5).toFixed(2);
+      allowField.appendChild(allowLabel); allowField.appendChild(allowance); allowWrap.appendChild(allowField);
+      [5, 20].forEach(function (extra) {
+        var quick = document.createElement('button'); quick.type = 'button'; quick.className = 'btn btn--ghost';
+        quick.textContent = '+$' + extra; quick.setAttribute('aria-label', 'Set the limit to ' + (window.mvMoney ? window.mvMoney(current + extra) : '$' + (current + extra).toFixed(2)));
+        quick.addEventListener('click', function () { allowance.value = (current + extra).toFixed(2); });
+        allowWrap.appendChild(quick);
+      });
+      box.appendChild(allowWrap);
+      btn('Continue saved work with this allowance', true, function () {
+        var amount = Number(allowance.value);
+        if (!Number.isFinite(amount) || amount <= Number(allowance.min)) {
+          say('Choose a limit above the current one. Your organization’s limits still apply.'); return;
+        }
+        retry(true, amount, run);
+      });
+    }
+    if (['failed', 'completed', 'rejected'].indexOf(run.status) >= 0) {
+      btn('Run again from the start', false, function () { retry(false, undefined, run); });
+    }
+  }
+
+  function requestFreshApproval() {
+    sendOnce(function (done) {
+      var url = '/api/v1/flows/runs/' + encodeURIComponent(runId) + '/approval-refresh';
+      function checked(response) {
+        return response.json().catch(function () { return {}; }).then(function (value) {
+          if (!response.ok) throw new Error(typeof value.detail === 'string' ? value.detail : 'Could not request a fresh review. Reopen the run and try again.');
+          return value;
+        });
+      }
+      api(url).then(checked).then(async function (review) {
+        if (!window.mvConfirm || !(await window.mvConfirm(review.summary + '\n\n' + review.message, {okText: 'Request fresh review'}))) {
+          done(true); return;
+        }
+        var result = await api(url, {method: 'POST', body: JSON.stringify({binding: review.binding, confirmed: true})}).then(checked);
+        done(true); say(result.message); poll(0);
+        window.dispatchEvent(new CustomEvent('lightwork:product-state-changed'));
+      }).catch(function (error) { done(true); say(error.message || 'Could not request a fresh review. Reopen the run.'); });
+    });
+  }
+  function resume(decision, inputs, approvalBinding, decidedRun) {
+    sendOnce(function (done) {
+      api('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/resume',
+          { method: 'POST', body: JSON.stringify({ decision: decision, inputs: inputs || {},
+            approval_binding_sha256: approvalBinding || '' }) })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+          done(!r.ok);
+          say(r.ok ? (decision === 'rejected' ? 'Rejected.' : (decision === 'approved' ? 'Approved — continuing…' : '“' + decision + '” chosen — continuing…'))
+            : (j && typeof j.detail === 'string' && j.detail.length < 512 ? j.detail : 'Could not resume. Refresh the page and try again.'));
+          if (!r.ok) return;
+          pendingAction = decidedRun ? { key: runKey(decidedRun), reviewOnly: assignedReviewOnly,
+            kind: 'decision', exhausted: false } : null;
+          if (assignedReviewOnly) {
+            // An assigned reviewer cannot follow the owner's private run.
+            renderRun(decidedRun);
+          } else {
+            if (decidedRun) renderRun(decidedRun);
+            poll(60, pendingAction && pendingAction.key);
+          }
+        }); })
+        .catch(function () { done(true); say('Could not resume. Refresh the page and try again.'); });
+    });
+  }
+  function retry(fromFailure, allowance, failedRun) {
+    var query = fromFailure ? '?from_failure=1' : '';
+    if (allowance !== undefined) query += '&budget_limit_dollars=' + encodeURIComponent(allowance);
+    sendOnce(function (done) {
+      api('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry' + query,
+          { method: 'POST' })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, r: r, j: j }; }); })
+        .then(function (res) {
+          done(!res.ok);
+          if (!res.ok) { say(plain(res.r, 'run it again')); return; }
+          if (res.j.retried_from) { window.location = '/flows/' + encodeURIComponent(flowId) + '/runs/' + encodeURIComponent(res.j.run_id); return; }
+          pendingAction = failedRun ? { key: runKey(failedRun), reviewOnly: false,
+            kind: 'retry', exhausted: false } : null;
+          say('Continuing from “' + stepLabel(res.j.from_node) + '”…');
+          if (failedRun) renderRun(failedRun);
+          poll(60, pendingAction && pendingAction.key);
+        }).catch(function (e) { done(true); say(plain(e, 'run it again')); });
+    });
+  }
+
+  var pageGeneration = 0, valuesGeneration = 0, valuesUpdated = null;
+  var valuesVersion = '', valuesContext = '', privateClosed = false, liveStream = null;
+  var valueRequests = new Set(), valueRetries = new Set();
+  var valuesStatus = document.getElementById('fr-values-status');
+  function clearValues(message, closePrivate) {
+    valuesGeneration += 1;
+    valueRequests.forEach(function (controller) { controller.abort(); }); valueRequests.clear();
+    valueRetries.clear();
+    valuesVersion = ''; valuesContext = ''; valuesUpdated = null;
+    ['fr-data-rows', 'fr-input-rows', 'fr-data', 'fr-input'].forEach(function (id) {
+      document.getElementById(id).textContent = '';
+    });
+    valuesStatus.textContent = message || '';
+    if (closePrivate) {
+      privateClosed = true; pageGeneration += 1;
+      if (liveStream) liveStream.close();
+      ['fr-steps', 'fr-actions', 'fr-error', 'fr-meta'].forEach(function (id) {
+        document.getElementById(id).textContent = '';
+      });
+      ['fr-owner-links', 'le-card', 'lx-card', 'fr-feedback'].forEach(function (id) {
+        var node = document.getElementById(id); if (node) node.hidden = true;
+      });
+      document.getElementById('fr-title').textContent = 'Flow run';
+      document.getElementById('fr-status').textContent = 'Reopen to check access';
+      document.getElementById('fr-values-refresh').disabled = true;
+      say(message);
+    }
+  }
+  function valueFailure(error) {
+    if (error.stale) return;
+    if ([401, 403, 404].indexOf(error.status) >= 0 || error.redirected) {
+      clearValues('This run is no longer available in this account. Reopen it after checking your access.', true);
+    } else if (error.status === 409) {
+      clearValues('The saved information or account changed. Refresh the run information before reading more.', false);
+    } else if (error.status === 503) {
+      clearValues('Complete saved information is unavailable. Refresh after its retained data is available.', false);
+    }
+  }
+  async function readValue(scope, path, part, offset) {
+    var started = valuesGeneration, page = pageGeneration;
+    var controller = new AbortController(), timer = setTimeout(function () { controller.abort(); }, 12000);
+    valueRequests.add(controller);
+    var query = new URLSearchParams({ scope: scope, part: part, offset: String(offset), updated: String(valuesUpdated) });
+    path.forEach(function (index) { query.append('path', String(index)); });
+    if (valuesVersion) query.set('version', valuesVersion);
+    if (valuesContext) query.set('context', valuesContext);
+    function current() { return !privateClosed && started === valuesGeneration && page === pageGeneration; }
+    try {
+      var response = await api('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/values?' + query, { signal: controller.signal });
+      if (!current()) throw { stale: true };
+      if (response.redirected || !response.ok || !/^application\/json\b/i.test(response.headers.get('Content-Type') || '')) {
+        throw { status: response.status, redirected: response.redirected };
+      }
+      var reader = response.body.getReader(), bytes = 0, chunks = [];
+      for (;;) {
+        var chunk = await reader.read();
+        if (!current()) { await reader.cancel(); throw { stale: true }; }
+        if (chunk.done) break;
+        bytes += chunk.value.byteLength;
+        if (bytes > 65536) { await reader.cancel(); throw new Error('The saved page is too large to show.'); }
+        chunks.push(chunk.value);
+      }
+      var joined = new Uint8Array(bytes), at = 0;
+      chunks.forEach(function (chunk) { joined.set(chunk, at); at += chunk.byteLength; });
+      var result = JSON.parse(new TextDecoder().decode(joined));
+      if (!current()) throw { stale: true };
+      if (!/^[a-f0-9]{64}$/.test(result.version || '') || !/^[a-f0-9]{64}$/.test(result.context || '')
+          || (valuesVersion && result.version !== valuesVersion) || (valuesContext && result.context !== valuesContext)) {
+        throw { status: 409 };
+      }
+      valuesVersion = result.version; valuesContext = result.context;
+      return result;
+    } catch (error) { valueFailure(error); throw error; }
+    finally { clearTimeout(timer); valueRequests.delete(controller); }
+  }
+  function showValue(host, scope, path, part) {
+    var started = valuesGeneration, offset = 0, loaded = false, busy = false, text = '';
+    var content = el('div', 'fr__value-body'), note = el('p', 'fr__value-note', 'Checking this saved value…');
+    var more = el('button', 'btn btn--ghost', 'Read saved value'); more.type = 'button';
+    host.append(content, note, more);
+    async function load() {
+      if (busy || privateClosed || started !== valuesGeneration) return;
+      valueRetries.delete(load);
+      busy = true; more.disabled = true;
+      try {
+        var result = await readValue(scope, path, part, offset);
+        if (started !== valuesGeneration || !host.isConnected) return;
+        if (result.kind === 'object' || result.kind === 'list') {
+          if (!Array.isArray(result.children) || result.children.length > 20) throw new Error('Unsupported saved page.');
+          result.children.forEach(function (child) {
+            var childPath = path.concat(child.index), detail = el('details', 'fr__value');
+            var summary = el('summary', '', child.name + (child.name_complete ? '' : '… (name continues)'));
+            var body = el('div'); detail.append(summary, body); content.appendChild(detail);
+            var opened = false;
+            detail.addEventListener('toggle', function () {
+              if (!detail.open || opened || started !== valuesGeneration) return;
+              opened = true;
+              if (!child.name_complete) {
+                var names = el('details', 'fr__value'); names.appendChild(el('summary', '', 'Read complete field name'));
+                var nameBody = el('div'); names.appendChild(nameBody); body.appendChild(names);
+                names.addEventListener('toggle', function () {
+                  if (names.open && !nameBody.childNodes.length) showValue(nameBody, scope, childPath, 'name');
+                });
+              }
+              showValue(body, scope, childPath, 'value');
+            });
+          });
+          note.textContent = result.total ? (result.remaining ? result.remaining + ' more ' + (result.kind === 'list' ? 'items' : 'named values') + ' to read.' : result.total + ' ' + (result.kind === 'list' ? (result.total === 1 ? 'item' : 'items') : (result.total === 1 ? 'named value' : 'named values')) + ' · All shown') : 'No saved values here.';
+          more.textContent = 'Show more ' + (result.kind === 'list' ? 'items' : 'named values');
+        } else {
+          if (typeof result.text !== 'string') throw new Error('Unsupported saved value.');
+          text += result.text;
+          var pre = content.querySelector('pre');
+          if (!pre) { pre = el('pre', 'fr__literal'); pre.tabIndex = 0; content.appendChild(pre); }
+          pre.textContent = result.kind === 'scalar' && result.text === 'true' ? 'Yes' : result.kind === 'scalar' && result.text === 'false' ? 'No' : result.kind === 'scalar' && result.text === 'null' ? 'No value' : text;
+          note.textContent = result.remaining ? result.remaining + ' more characters to read.' : 'Complete saved value shown.';
+          more.textContent = 'Read more text';
+          if (!result.remaining && result.answer === true && text.length <= 65536 && window.lwMarkdown) {
+            var formatted = el('div', 'fr__answer'); formatted.hidden = true;
+            var toggle = el('button', 'btn btn--ghost', 'Read formatted answer'); toggle.type = 'button';
+            window.lwMarkdown.renderInto(formatted, text); content.append(formatted, toggle);
+            toggle.addEventListener('click', function () {
+              formatted.hidden = !formatted.hidden; pre.hidden = !formatted.hidden;
+              toggle.textContent = formatted.hidden ? 'Read formatted answer' : 'Show answer as written';
+            });
+          }
+        }
+        offset = result.next; loaded = true; more.hidden = result.next === null;
+      } catch (error) {
+        if (error.stale || started !== valuesGeneration || !host.isConnected) return;
+        valueRetries.add(load);
+        note.textContent = 'Could not read this saved page. Your reading position is kept. Check access or try this page again.';
+        more.textContent = loaded ? 'Try this page again' : 'Read saved value';
+      } finally { busy = false; more.disabled = false; }
+    }
+    more.addEventListener('click', load); load();
+  }
+  function renderValues(run) {
+    if (privateClosed || assignedReviewOnly) { clearValues('', false); return; }
+    if (valuesUpdated === run.updated) { valueRetries.forEach(function (retry) { retry(); }); return; }
+    clearValues('', false); valuesUpdated = run.updated;
+    showValue(document.getElementById('fr-data-rows'), 'data', [], 'value');
+    showValue(document.getElementById('fr-input-rows'), 'input', [], 'value');
+  }
+  document.getElementById('fr-values-refresh').addEventListener('click', function () { poll(0); });
+  function privateBoundary(event) {
+    if (event.detail && event.detail.reason === 'selection') return;
+    clearValues('Your account, workspace or access changed. Reopen this run to read its current information.', true);
+  }
+  ['lightwork:workspace-changed', 'lightwork:account-context-changed'].forEach(function (name) {
+    document.addEventListener(name, privateBoundary); window.addEventListener(name, privateBoundary);
+  });
+  window.addEventListener('lightwork:copilot-context-changed', privateBoundary);
+  document.addEventListener('lightwork:copilot-context-changed', privateBoundary);
+  var finishedSaid = false;
+  function renderRun(run) {
+    if (privateClosed) return;
+    assignedReviewOnly = run.approval_review_only === true;
+    if (!assignedReviewOnly && !finishedSaid && ['failed', 'completed', 'rejected'].indexOf(run.status) >= 0) {
+      finishedSaid = true;  // the rating (lightwork-result-feedback.js) appears once the run is done
+      document.dispatchEvent(new CustomEvent('lightwork:flow-run-finished'));
+    }
+    ['fr-owner-links', 'le-card', 'lx-card', 'fr-steps-title', 'fr-steps'].forEach(function (id) {
+      var section = document.getElementById(id);
+      if (section) section.hidden = assignedReviewOnly;
+    });
+    document.querySelector('.fr__data').hidden = assignedReviewOnly;
+    document.getElementById('fr-review-links').hidden = !assignedReviewOnly;
+    var started = window.mvWhen ? window.mvWhen(run.created || run.created_at || run.started_at) : '';
+    document.getElementById('fr-title').textContent = assignedReviewOnly ? 'Flow approval request'
+      : '“' + (flowName || 'Flow') + '”' + (started ? ' — run started ' + started : ' — run');
+    var st = document.getElementById('fr-status');
+    st.textContent = STATUS_LABEL[run.status] || human(run.status);
+    st.className = 'badge ' + (STATUS_BADGE[run.status] || (ACTIVE.indexOf(run.status) >= 0 || /^paused/.test(run.status) ? 'pending' : 'idle'));
+    var meta = document.getElementById('fr-meta');
+    if (meta) {
+      var bits = [];
+      if (assignedReviewOnly) bits.push('Assigned to you');
+      else if (run.origin && run.origin !== 'manual') bits.push(
+        run.origin.indexOf('event:v2:') === 0
+          ? 'Started by ' + human(run.origin.split(':').slice(4).join(':'))
+          : (ORIGIN[run.origin] || human(run.origin)));
+      else bits.push('Started by hand');
+      if (run.cost_dollars) bits.push('cost ' + (window.mvMoney ? window.mvMoney(run.cost_dollars) : '$' + Number(run.cost_dollars).toFixed(2)));
+      meta.textContent = bits.join(' · ');
+    }
+    var err = document.getElementById('fr-error');
+    if (run.error) {
+      err.hidden = false; err.textContent = '';
+      var lead = document.createElement('p');
+      lead.textContent = run.status === 'indeterminate'
+        ? 'We couldn’t tell whether the last step finished in the other app. Check it there before running again.'
+        : 'This run stopped at “' + stepLabel(run.cursor) + '”. Open the flow to fix that step, or try again.';
+      err.appendChild(lead);
+      var more = document.createElement('details'); var sum = document.createElement('summary');
+      sum.textContent = 'Technical details'; more.appendChild(sum);
+      var pre = document.createElement('pre'); pre.textContent = run.error; more.appendChild(pre);
+      var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn btn--ghost'; copy.textContent = 'Copy details for support';
+      copy.addEventListener('click', function () { if (window.mvCopy) window.mvCopy(run.error); });
+      more.appendChild(copy);
+      err.appendChild(more);
+    } else { err.hidden = true; }
+    renderValues(run);
+    document.getElementById('fr-data').textContent = JSON.stringify(run.data || {}, null, 2);
+    document.getElementById('fr-input').textContent = JSON.stringify(run.input_data || {}, null, 2);
+    renderSteps(run); renderActions(run);
+    if (pendingAction && !pendingAction.reviewOnly && runKey(run) !== pendingAction.key) pendingAction = null;
+    if (pendingAction && (pendingAction.reviewOnly || runKey(run) === pendingAction.key)) {
+      var actions = document.getElementById('fr-actions');
+      actions.textContent = '';
+      actionButtons = [];
+      var note = document.createElement('p');
+      note.textContent = pendingAction.reviewOnly
+        ? 'Decision recorded. The flow owner can follow what happens next.'
+        : (pendingAction.kind === 'retry' ? 'Trying this run again.' : 'Decision recorded. Waiting for the flow to continue.');
+      actions.appendChild(note);
+      st.textContent = pendingAction.reviewOnly ? 'Decision recorded'
+        : (pendingAction.kind === 'retry' ? 'Trying again' : 'Decision recorded');
+      if (pendingAction.reviewOnly) {
+        // Same markup as the back_link macro: the arrow is decoration.
+        var back = document.createElement('a'), arrow = document.createElement('span');
+        back.className = 'back-link'; back.href = '/approvals';
+        arrow.setAttribute('aria-hidden', 'true'); arrow.textContent = '\u2190 ';
+        back.append(arrow, 'Back to Approvals'); actions.appendChild(back);
+      } else if (pendingAction.exhausted) {
+        var check = document.createElement('button');
+        check.type = 'button'; check.className = 'btn btn--ghost';
+        check.textContent = 'Check current status';
+        check.addEventListener('click', function () {
+          pendingAction.exhausted = false;
+          check.disabled = true;
+          poll(20, pendingAction.key);
+        });
+        actions.appendChild(check);
+      }
+    } else if (sending) holdActions(true);
+  }
+
+  function poll(tries, queuedKey) {
+    if (privateClosed) return;
+    var page = pageGeneration;
+    api('/api/v1/flows/runs/' + encodeURIComponent(runId))
+      .then(function (r) {
+        if (page !== pageGeneration || privateClosed) return null;
+        if (r.redirected || [401, 403, 404].indexOf(r.status) >= 0) {
+          clearValues('This run is no longer available in this account. Reopen it after checking your access.', true); return null;
+        }
+        if (!r.ok) {
+          if (r.status === 503) clearValues('Complete saved information is unavailable. Refresh after its retained data is available.', false);
+          if (r.status === 404) {
+            say('We couldn’t find this run, or you don’t have access to it.');
+            document.getElementById('fr-status').textContent = 'Not found';
+          } else say(plain(r, 'load the run'));
+          return null;
+        }
+        return r.json();
+      })
+      .then(function (run) {
+        if (!run || page !== pageGeneration || privateClosed) return;
+        renderRun(run);
+        var queued = !!queuedKey && runKey(run) === queuedKey;
+        if ((queued || ACTIVE.indexOf(run.status) >= 0) && tries > 0) {
+          setTimeout(function () { poll(tries - 1, queued ? queuedKey : ''); }, 1200);
+        } else if (queued && pendingAction) {
+          pendingAction.exhausted = true;
+          renderRun(run);
+          say('The flow is still catching up. Check its current status in a moment.');
+        }
+      }).catch(function (e) { say(plain(e, 'load the run')); });
+  }
+  function watch() {
+    if (privateClosed) return;
+    var page = pageGeneration;
+    // Live updates over SSE; polling is the fallback (no EventSource, stream
+    // slots exhausted, or the connection never opens).
+    if (typeof EventSource === 'undefined') { poll(60); return; }
+    var es;
+    try { es = new EventSource('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/events'); }
+    catch (e) { poll(60); return; }
+    liveStream = es;
+    var closed = false;
+    function fallback() {
+      if (closed || privateClosed || page !== pageGeneration) return;
+      closed = true;
+      es.close();
+      if (pendingAction && pendingAction.reviewOnly) return;
+      poll(60, pendingAction && pendingAction.key);
+    }
+    function onSnap(evt) {
+      if (privateClosed || page !== pageGeneration) return;
+      try { renderRun(JSON.parse(evt.data)); } catch (e) { /* keep streaming */ }
+    }
+    es.addEventListener('snapshot', onSnap);
+    es.addEventListener('terminal', function (evt) { onSnap(evt); closed = true; es.close(); });
+    es.addEventListener('timeout', fallback);
+    es.onerror = fallback;
+  }
+
+  api('/api/v1/flows/' + encodeURIComponent(flowId))
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (f) {
+      if (f) { flowNodes = orderNodes(f); flowName = f.name || human(flowId); }
+      watch();
+    })
+    .catch(function () { watch(); });
+})();
+</script>
+{% if comments_enabled() and not request.query_params.get('approval_review') %}{% from "_comments.html" import comments %}{{ comments('run', run_id, 'Comments on this run') }}
+<script src="/static/lightwork-comments.js" defer></script>{% endif %}
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-result-feedback.js" defer></script>{% if not request.query_params.get('approval_review') %}{% if learning_example_panel %}<script src="/static/lightwork-learning-example.js" defer></script>{% endif %}{% if learning_capture_panel %}<script src="/static/lightwork-learning-capture.js" defer></script>{% endif %}{% endif %}{% endblock %}

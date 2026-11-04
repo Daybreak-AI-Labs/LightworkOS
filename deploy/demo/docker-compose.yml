@@ -1,0 +1,54 @@
+# Lightwork — one-command browser demo (Option 1 in README.md: local).
+#
+# Boots the dashboard (web UI + REST API) in a container and publishes it on
+# http://localhost:8765. The demo audience never opens a terminal beyond the
+# single launch step (use ./run-demo.sh to also auto-open the browser).
+#
+#   cp demo.env.example demo.env        # then put your ANTHROPIC_API_KEY in it
+#   ./run-demo.sh                       # generates a token, starts, opens browser
+#
+# ...or by hand from the repo root:
+#   MAVERICK_DASHBOARD_TOKEN=$(openssl rand -hex 24) \
+#     docker compose -f deploy/demo/docker-compose.yml \
+#       --env-file deploy/demo/demo.env up --build
+
+services:
+  maverick-demo:
+    build:
+      # Reuse the single hardened image (unprivileged uid 1000). Context is the
+      # repo root so the Dockerfile can COPY every package.
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: maverick:latest
+    container_name: maverick-demo
+    # The image ENTRYPOINT is `maverick`; serve the dashboard bound to all
+    # interfaces *inside* the container (the published port below is what
+    # actually reaches your browser).
+    command: ["dashboard", "--host", "0.0.0.0", "--port", "8765"]
+    ports:
+      - "127.0.0.1:${MAVERICK_DEMO_PORT:-8765}:8765"
+    environment:
+      # Non-loopback access REQUIRES a token: the dashboard refuses to serve an
+      # unauthenticated admin surface off localhost. run-demo.sh generates one.
+      MAVERICK_DASHBOARD_TOKEN: ${MAVERICK_DASHBOARD_TOKEN:?set MAVERICK_DASHBOARD_TOKEN (run ./run-demo.sh, which generates it)}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # --- demo cost + abuse guardrails (goals make real LLM calls that bill
+      # your key) -----------------------------------------------------------
+      MAVERICK_BUDGET_DOLLARS: ${MAVERICK_BUDGET_DOLLARS:-0.50}
+      MAVERICK_DASHBOARD_MAX_GOALS_PER_MIN: ${MAVERICK_DASHBOARD_MAX_GOALS_PER_MIN:-3}
+      MAVERICK_DASHBOARD_MAX_GOALS_GLOBAL_PER_MIN: ${MAVERICK_DASHBOARD_MAX_GOALS_GLOBAL_PER_MIN:-10}
+    volumes:
+      # Persist demo state across restarts; `docker compose down -v` wipes it
+      # for a clean slate before the next demo.
+      - maverick-demo-state:/home/maverick/.maverick
+    restart: unless-stopped
+    healthcheck:
+      # /livez is auth-exempt and returns 200 once the process accepts TCP.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/livez').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  maverick-demo-state:

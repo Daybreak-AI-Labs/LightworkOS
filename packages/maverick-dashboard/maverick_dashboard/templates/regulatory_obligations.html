@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Regulations and rules · Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .rob-shell { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; }
+  .rob-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  .rob-row--end { align-items: end; }
+  .rob-row label { display: flex; flex-direction: column; gap: .25rem; }
+  .rob-metrics { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); margin-top: .75rem; }
+  .rob-metric { border: 1px solid var(--border); border-radius: var(--radius-md); padding: .7rem .9rem; }
+  .rob-metric strong { display: block; font-size: var(--text-xl); }
+  .rob-metric span { color: var(--muted); font-size: var(--text-sm); }
+  .rob-table-wrap { overflow-x: auto; }
+  .rob-library { display: grid; gap: .5rem; list-style: none; margin: .5rem 0 0; padding: 0; }
+  .rob-library li { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; justify-content: space-between;
+                    border: 1px solid var(--border); border-radius: var(--radius-md); padding: .6rem .8rem; }
+  .rob-verdict { font-size: var(--text-xl); font-weight: var(--font-bold); margin: .5rem 0 0; }
+  .rob-problems { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .rob-flush-top { margin-top: 0; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="rob-shell" id="rob-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
+     data-can-admin="{{ 'true' if rob_can_admin else 'false' }}">
+  {% from "_hero.html" import hero %}
+  {% call hero('Compliance', 'Regulations and rules',
+               subtitle='Which rules your AI workers follow',
+               lede='Each regulation you turn on adds rules that block, pause for approval, or limit certain
+                     actions. See which rules are active, check that they work, and test what would happen
+                     to a specific action.') %}
+    <div class="rob-row">
+      <span class="badge idle" id="rob-state" role="status">Checking</span>
+      <button class="btn btn--ghost" id="rob-refresh" type="button">Refresh</button>
+    </div>
+    <p><strong id="rob-health-title">Checking your regulations…</strong><br>
+       <span class="muted" id="rob-health-detail"></span></p>
+    <ul class="rob-problems" id="rob-problem-list" hidden></ul>
+    <div class="rob-metrics">
+      <div class="rob-metric"><strong id="rob-active">—</strong><span>Regulations on</span></div>
+      <div class="rob-metric"><strong id="rob-count">—</strong><span>Rules in force</span></div>
+      <div class="rob-metric"><strong id="rob-problems">—</strong><span>Rules not working</span></div>
+    </div>
+  {% endcall %}
+
+  <div id="rob-operation-state" class="muted" role="status" aria-live="polite"></div>
+
+  <section aria-labelledby="rob-library-title">
+    <div class="section-head"><h2 id="rob-library-title">Regulations</h2></div>
+    <div class="panel">
+      <p class="muted rob-flush-top">Choose a regulation to see its rules.{% if rob_can_admin %} Turning one on takes effect right away.{% endif %} To turn a regulation off, ask the person who installed Lightwork.</p>
+      <ul class="rob-library" id="rob-library"><li>Loading…</li></ul>
+    </div>
+  </section>
+
+  <section aria-labelledby="rob-rules-title">
+    <div class="section-head"><h2 id="rob-rules-title">Rules</h2><span class="muted" id="rob-obligations-note">Loading…</span></div>
+    <div class="panel rob-table-wrap" tabindex="0" role="region" aria-label="Your regulatory obligations">
+      <table>
+        <thead><tr><th scope="col">Regulation</th><th scope="col">Article</th><th scope="col">Rule</th>
+          <th scope="col">What it does</th><th scope="col">Applies to</th><th scope="col">Source</th></tr></thead>
+        <tbody id="rob-rows"><tr><td colspan="6">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="rob-check-title">
+    <div class="section-head"><h2 id="rob-check-title">Test an action</h2></div>
+    <div class="panel">
+      <form id="rob-check-form" autocomplete="off" class="rob-row rob-row--end">
+        <label for="rob-action-filter">Search actions
+          <input class="input" id="rob-action-filter" type="search" placeholder="For example: email">
+        </label>
+        <label for="rob-action">Action
+          <select class="select" id="rob-action" name="action" required><option value="">Loading…</option></select>
+        </label>
+        <label for="rob-scope">Under
+          <select class="select" id="rob-scope" name="scope">
+            <option value="active">The regulations that are on</option>
+            <option value="all">Every regulation</option>
+          </select>
+        </label>
+        <button class="btn btn--primary" type="submit">Test action</button>
+      </form>
+      <div id="rob-verdict-box" hidden role="status" aria-live="polite">
+        <p class="rob-verdict" id="rob-verdict" data-decision="allow">—</p>
+        <p class="muted" id="rob-verdict-detail"></p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="rob-updates-title">
+    <div class="section-head"><h2 id="rob-updates-title">Regulatory updates</h2></div>
+    <div class="panel">
+      <p class="muted rob-flush-top">Notices about rule changes that affect your customers, and evidence that needs refreshing because a rule changed.</p>
+      <div id="rob-updates" role="status" aria-live="polite"><p class="muted">Loading…</p></div>
+    </div>
+  </section>
+
+  <details class="panel">
+    <summary>Advanced: preview rules from an AI gateway</summary>
+    <p class="muted">If you use an AI gateway with its own restrictions, upload its rules file to see how they would combine with yours. This is only a preview; nothing is saved or changed.</p>
+    <form id="rob-gateway-preview-form" class="rob-row rob-row--end" autocomplete="off">
+      <label for="rob-gateway-file">Gateway rules file
+        <input class="input" id="rob-gateway-file" name="document" type="file" accept=".json,application/json" required>
+      </label>
+      <button class="btn btn--ghost" type="submit">Preview</button>
+    </form>
+    <p class="muted" id="rob-gateway-preview-state" role="status" aria-live="polite" aria-atomic="true">No file previewed yet. Choose a file above to preview what the gateway would do.</p>
+    <div id="rob-gateway-result"></div>
+  </details>
+  {% include "_ops_regulatory_feed.html" %}
+  <noscript><p class="panel">Turn on JavaScript in your browser to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-regulatory-obligations.js" defer></script>{% endblock %}

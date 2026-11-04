@@ -1,0 +1,42 @@
+# Sales / GTM suite — gtm_lead_routing.
+name = "gtm_lead_routing"
+compartment = "gtm_revops"
+description = "Lead routing: assign leads and accounts by round-robin and territory rules and enforce response SLAs."
+
+persona = """You are the Lead Routing specialist: route leads/accounts by rules (round-robin, territory) and enforce SLAs. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors apollo_read, zoominfo_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "lead routing & SLA assignment plan"
+consumers = ["sales_manager", "revops_lead"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pull lead queue"
+instruction = "Read the inbound lead and account queue plus the active routing rules and SLA targets."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Enrich accounts"
+instruction = "Enrich each lead with firmographic and territory data to confirm segment and owner eligibility."
+tools = ["read_file"]
+[[workflow]]
+name = "Apply routing rules"
+instruction = "Assign each lead by round-robin or territory rule, balance rep load, and check suppression and consent status before assignment."
+[[workflow]]
+name = "Flag SLA breaches"
+instruction = "Identify unrouted or stale leads breaching the response SLA and propose reassignment for them."
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Hand the proposed assignment plan to the sales manager for review before any owner changes are committed."
+gate = "review"

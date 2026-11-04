@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Lightwork CLI engineering bootstrap - WiX Toolset v4 authoring.
+
+  Build (Windows host with WiX v4, see build.ps1):
+    .\build.ps1 -Wheel ..\..\dist\maverick_agent-VER-py3-none-any.whl
+
+  What this MSI does:
+    * Installs per user (no UAC prompt) under %LOCALAPPDATA%\Programs\Maverick.
+    * Ships the maverick-agent wheel + launcher/bootstrap and puts bin\ on the
+      *user* PATH.
+    * The launcher resolves maverick.cli:main; before dispatch, its helper
+      installs the bundled wheel into the per-user site when missing or when
+      the installed distribution differs from this MSI's ProductVersion.
+      (`py -m maverick` does NOT work - the package has no __main__.py - so
+      the launcher goes through the console-script entry point instead.)
+    * Requires an existing Python installation and live PyPI access to resolve
+      dependencies. It omits the other seven release-cohort packages and is an
+      engineering bootstrap, not an offline or complete platform installer.
+
+  The produced MSI ships UNSIGNED. SmartScreen can warn until an Authenticode
+  signing path exists.
+
+  Preprocessor variables (-d on the wix command line):
+    ProductVersion  required three-part MSI version
+    WheelPath       path to the built maverick-agent wheel (required)
+    WheelName       original PEP 427 wheel basename (required)
+-->
+<?ifndef ProductVersion ?>
+  <?error ProductVersion is required; run build.ps1 so release-cohort.toml is applied ?>
+<?endif?>
+<?ifndef WheelName ?>
+  <?error WheelName is required; run build.ps1 with a valid maverick-agent wheel ?>
+<?endif?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <!--
+    UpgradeCode is the product family identity: it must NEVER change across
+    releases or MajorUpgrade stops detecting installed versions and users
+    end up with side-by-side installs. test_wxs.py pins this exact value.
+  -->
+  <Package
+      Name="Lightwork CLI (Engineering Bootstrap)"
+      Manufacturer="Daybreak Labs"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="9E2B7C41-6A8D-4F3B-8E5A-2C90D17B4F6E"
+      Language="1033"
+      Scope="perUser"
+      Compressed="yes">
+
+    <MajorUpgrade
+        AllowSameVersionUpgrades="no"
+        DowngradeErrorMessage="A newer version of the Lightwork CLI engineering bootstrap is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Per-user layout: %LOCALAPPDATA%\Programs\Maverick\{bin,wheels} -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Maverick">
+          <Directory Id="BINFOLDER" Name="bin" />
+          <Directory Id="WHEELSFOLDER" Name="wheels" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!--
+      Per-user components keep an HKCU registry value as KeyPath (files under
+      the user profile are not stable keypaths; this is the documented WiX
+      pattern for perUser packages).
+    -->
+    <ComponentGroup Id="CliComponents">
+
+      <Component Id="LauncherCmd" Directory="BINFOLDER">
+        <File Id="MaverickCmd" Name="maverick.cmd" Source="maverick.cmd" />
+        <File Id="MaverickBootstrap" Name="maverick_bootstrap.py"
+              Source="maverick_bootstrap.py" />
+        <RegistryValue Root="HKCU" Key="Software\Maverick\CLI"
+                       Name="launcher" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+      <!--
+        Preserve the wheel's complete PEP 427 basename. Renaming it to a stable
+        `maverick_agent.whl` makes pip reject it before inspecting its contents
+        because version and compatibility tags are part of the filename.
+        WheelPath and its validated basename come from build.ps1.
+      -->
+      <Component Id="BundledWheel" Directory="WHEELSFOLDER">
+        <File Id="MaverickWheel" Name="$(var.WheelName)"
+              Source="$(var.WheelPath)" />
+        <RegistryValue Root="HKCU" Key="Software\Maverick\CLI"
+                       Name="wheel" Type="string" Value="$(var.ProductVersion)" KeyPath="yes" />
+      </Component>
+
+      <!--
+        Append bin\ to the USER PATH (System="no" - perUser install never
+        touches the machine PATH). Part="last" appends instead of clobbering;
+        the entry is removed on uninstall (Permanent="no").
+      -->
+      <Component Id="PathEnvironment" Directory="BINFOLDER">
+        <Environment Id="UserPath" Name="PATH" Value="[BINFOLDER]"
+                     Part="last" Action="set" Permanent="no" System="no" />
+        <RegistryValue Root="HKCU" Key="Software\Maverick\CLI"
+                       Name="path" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+
+    </ComponentGroup>
+
+    <Feature Id="Cli" Title="Lightwork CLI Engineering Bootstrap" Level="1">
+      <ComponentGroupRef Id="CliComponents" />
+    </Feature>
+
+  </Package>
+</Wix>

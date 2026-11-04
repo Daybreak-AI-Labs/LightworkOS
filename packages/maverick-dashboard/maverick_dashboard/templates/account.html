@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Your account · Lightwork{% endblock %}
+{% block content %}
+  <p><a href="/devices">Your paired devices</a></p>
+  {% from "_hero.html" import hero %}
+  {{ hero('Your account', 'Your account',
+          subtitle='Your role and what you can do',
+          lede='Who you are signed in as, what your role lets you do, and the limits on the
+                tools your tasks may use. Ask an administrator if something here should change.') }}
+  <p><a class="btn" href="/preferences">Your preferences</a> <a class="btn btn--ghost" href="/today">Today</a> <a class="btn btn--ghost" href="/account/api-keys">Access keys for scripts and integrations</a></p>
+  {% if owner_authenticator %}<p><a class="btn btn--ghost" href="/account/owner-authenticator">Authenticator app</a></p>{% endif %}
+  <section class="panel" id="fa-account" aria-labelledby="fa-account-title">
+    <h2 id="fa-account-title" class="sr-only">Account details</h2>
+    <p class="muted" id="fa-account-status" role="status" aria-live="polite">Loading your account…</p>
+  </section>
+  <p><a class="btn" href="/access-requests">Explain or request permissions</a> <a class="btn" href="/content-access">Review content-access requests</a> <a class="btn" href="/my-data">My data and personal memory</a></p>
+  <style>
+    #fa-account .fa-facts { display: grid; grid-template-columns: minmax(10rem, max-content) 1fr; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-4); }
+    #fa-account .fa-facts dt { color: var(--muted); }
+    #fa-account .fa-facts dd { margin: 0; }
+    #fa-account .fa-list { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
+  </style>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+{% endblock %}

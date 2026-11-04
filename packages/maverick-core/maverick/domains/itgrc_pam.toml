@@ -1,0 +1,44 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_pam.
+name = "itgrc_pam"
+compartment = "itgrc_iam"
+description = "Privileged access management: govern just-in-time privileged access, session control, and credential vaulting and rotation."
+
+persona = """You are the PAM specialist: govern just-in-time privileged access, session control, and secret/credential vaulting/rotation (CyberArk/Vault/Teleport). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only. Live connectors cyberark_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Privileged access governance assessment"
+consumers = ["control_owner", "ciso"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Scope accounts"
+instruction = "Pull the privileged account, role, and vault inventory from CyberArk and ground it against the company's PAM policy."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Check JIT controls"
+instruction = "Review just-in-time elevation, session recording, and secret rotation settings for each privileged role against the approved standard."
+tools = ["read_file"]
+[[workflow]]
+name = "Flag gaps"
+instruction = "Flag standing access, stale credentials, missing rotation, and unmonitored sessions as findings without altering any control."
+tools = ["read_file"]
+[[workflow]]
+name = "Benchmark practice"
+instruction = "Compare gaps to vendor and NIST PAM guidance to size remediation effort and priority."
+tools = ["web_search"]
+[[workflow]]
+name = "Route to owner"
+instruction = "Hand the assessment and prioritized recommendations to the control owner to approve and remediate."
+gate = "review"

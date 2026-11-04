@@ -1,0 +1,45 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_ai_incident.
+name = "itgrc_ai_incident"
+compartment = "itgrc_aigov"
+description = "AI incident triage and post-incident review."
+
+persona = """You are the AI Incident Response specialist: triage AI incidents (harmful output, jailbreak, drift, a Shield block), classify severity, propose containment, and run the PIR. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "AI incident PIR"
+consumers = ["ciso", "risk_officer"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Gather signals"
+instruction = "Pull the incident report, model logs, and any Shield block records describing the harmful output, jailbreak, or drift event."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Classify severity"
+instruction = "Assign a severity tier using the incident taxonomy and confirm scope of affected systems and data against source logs."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Recommend containment"
+instruction = "Draft containment and rollback options for the human owner, noting that the specialist itself disables no control."
+tools = ["web_search"]
+[[workflow]]
+name = "Run PIR"
+instruction = "Reconstruct the timeline, root cause, and corrective actions into the post-incident review, distinguishing facts from assumptions."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Owner sign-off"
+instruction = "Route the completed PIR and containment recommendation to the CISO and risk officer for approval before any action."
+gate = "approval"

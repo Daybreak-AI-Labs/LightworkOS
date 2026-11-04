@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-retry-dashboard"
+description = "Enables the retry_dashboard command without any pre-configured scope."
+commands.allow = ["retry_dashboard"]
+
+[[permission]]
+identifier = "deny-retry-dashboard"
+description = "Denies the retry_dashboard command without any pre-configured scope."
+commands.deny = ["retry_dashboard"]

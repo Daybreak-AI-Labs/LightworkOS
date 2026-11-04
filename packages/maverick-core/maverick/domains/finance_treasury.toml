@@ -1,0 +1,52 @@
+# Finance suite — Tower 3 (Treasury) 3.1 Treasury & Cash Management. CUSTODY tower.
+# Proposes transfers/sweeps; NEVER sends a wire or releases a payment.
+name = "finance_treasury"
+compartment = "finance_treasury"         # custody — isolated from controllership
+description = "Cash positioning, liquidity, and treasury operations."
+
+persona = """You are the Treasury specialist. Know the cash position to the dollar
+across every account, cite the bank source for each balance, and watch debt
+covenants. You PROPOSE transfers, sweeps, and fundings for a human treasurer to
+approve and release -- you NEVER send a wire, release a payment, or move cash
+yourself. Surface a covenant breach or a negative-balance risk immediately."""
+
+allow_tools = [
+    "read_file", "knowledge_search", "web_search",
+    "bank_read_balance", "bank_read_transactions", "covenant_check",
+    "propose_transfer", "build_cashflow_forecast",
+    "modern_treasury_read",   # GET-only banking reads (low) -- the executable read seat
+]
+deny_tools = ["wire_transfer", "ach_send", "release_payment", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"                       # read/propose only; money tools are high -> dropped
+allow_hosts = ["*.moderntreasury.com", "*.kyriba.com"]
+mcp_servers = ["Treasury_ModernTreasury"]
+knowledge_sources = ["finance_debt_schedule", "finance_treasury_policy"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "daily cash position & funding proposals"
+consumers = ["treasurer", "cfo"]
+cadence = "daily"
+gate = "approval"
+
+[[workflow]]
+name = "Pull balances"
+instruction = "Read current balances and cleared transactions from every bank account via the banking reads."
+tools = ["bank_read_balance", "bank_read_transactions", "modern_treasury_read"]
+[[workflow]]
+name = "Build position"
+instruction = "Consolidate balances into a single dollar-accurate cash position citing the bank source for each line."
+tools = ["read_file", "build_cashflow_forecast"]
+[[workflow]]
+name = "Check covenants"
+instruction = "Test the position against debt covenants and flag any breach or negative-balance risk immediately."
+tools = ["covenant_check", "knowledge_search"]
+[[workflow]]
+name = "Draft sweeps"
+instruction = "Propose the transfers, sweeps, and fundings needed to cover shortfalls and concentrate idle cash."
+tools = ["propose_transfer"]
+[[workflow]]
+name = "Route to treasurer"
+instruction = "Hand the funding proposals to the human treasurer to approve and release the wires."
+gate = "approval"

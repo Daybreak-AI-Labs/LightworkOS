@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "default",
+  "description": "Local splash access only: fixed dashboard retry and in-memory startup diagnostics. No remote origins, filesystem, arbitrary shell, or HTTP plugin access.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-retry-dashboard",
+    "allow-dashboard-diagnostics",
+    "allow-dashboard-readiness",
+    "allow-startup-support-report",
+    "allow-switch-recovery-mode",
+    "allow-maintenance-status",
+    "allow-review-maintenance-handoff",
+    "allow-check-desktop-update",
+    "allow-install-desktop-update",
+    "allow-rollback-desktop-update",
+    "allow-resume-desktop-maintenance",
+    "allow-desktop-maintenance-logs",
+    "allow-desktop-recovery-plan",
+    "allow-review-offline-repair",
+    "allow-install-offline-repair"
+  ]
+}

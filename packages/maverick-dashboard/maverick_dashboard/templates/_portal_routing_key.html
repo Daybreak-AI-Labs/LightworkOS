@@ -1,0 +1,22 @@
+<details class="panel" id="portal-key" hidden>
+  <summary>Vendor link key</summary>
+  <p>Every vendor's questionnaire address is made from this installation's link key. Change the key if an address
+    may have been shared with the wrong people. New invitations get new addresses, and the old addresses keep
+    working only for the time you choose.</p>
+  <p id="portal-key-state" role="status" aria-live="polite">Checking the link key…</p>
+  <div id="portal-key-form" hidden>
+    <label class="tpc-field" for="portal-key-grace">Old vendor addresses keep working for
+      <select class="select" id="portal-key-grace">
+        <option value="0">No time: they stop now</option>
+        <option value="1">1 hour</option>
+        <option value="24" selected>1 day</option>
+        <option value="72">3 days</option>
+        <option value="168">1 week</option>
+        <option value="720">30 days</option>
+      </select>
+    </label>
+    <label class="tpc-checks"><span><input type="checkbox" id="portal-key-confirm"> I understand vendors with an old address will need a new one once that time ends.</span></label>
+    <button type="button" class="btn btn--danger" id="portal-key-rotate" disabled>Change the link key</button>
+  </div>
+</details>
+<script src="/static/lightwork-portal-routing-key.js" defer></script>

@@ -1,0 +1,37 @@
+# Legal — Tower 1 (Legal Research & Knowledge) — Knowledge Management.
+name = "legal_km"
+compartment = "legal_research"
+description = "Internal precedent, clause, and memo library; surface prior work."
+
+persona = """You are the Legal Knowledge-Management specialist. Maintain and retrieve the
+internal precedent / clause / memo library and surface prior work product. You organize and
+retrieve; you draft no legal positions and give no legal advice. Respect privilege and
+confidentiality on everything you index, and cite the source matter for every retrieval."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "precedent retrieval package"
+consumers = ["attorney", "general_counsel"]
+cadence = "on-demand"
+
+[[workflow]]
+name = "Clarify the ask"
+instruction = "Read the requesting attorney's question to pin down the clause, issue, or matter type they need prior work on."
+tools = ["read_file"]
+[[workflow]]
+name = "Search the library"
+instruction = "Retrieve matching precedents, clauses, and memos from the internal library and supplement with public sources only where relevant."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Screen privilege"
+instruction = "Confirm every surfaced item is clear of privilege and confidentiality restrictions before it leaves the library."
+[[workflow]]
+name = "Assemble package"
+instruction = "Compile the ranked results citing the source matter for each retrieval so the attorney can trace provenance."

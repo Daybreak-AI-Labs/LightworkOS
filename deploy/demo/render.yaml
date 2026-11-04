@@ -1,0 +1,39 @@
+# Lightwork hosted demo — Render blueprint (Option 3 in README.md).
+#
+# Push this repo to GitHub, then in Render: New > Blueprint and point it at the
+# repo. Render builds the single image from deploy/docker/Dockerfile and runs
+# the dashboard. MAVERICK_DASHBOARD_TOKEN is generated for you; set your
+# ANTHROPIC_API_KEY in the Render dashboard (marked sync:false so it is never
+# committed).
+#
+# Your demo link is then https://<service-name>.onrender.com/ — authenticate
+# with the dashboard token via the Authorization: Bearer header (the dashboard
+# does not accept ?token= in the URL, which keeps the bearer out of logs/Referer).
+# Copy the generated token from the service's Environment tab.
+#
+# Render auto-detects the listening port (8765) and routes 443 -> it with TLS.
+
+services:
+  - type: web
+    name: maverick-demo
+    runtime: docker
+    repo: https://github.com/Daybreak-AI-Labs/LightworkOS
+    dockerfilePath: ./deploy/docker/Dockerfile
+    dockerContext: .
+    # The image ENTRYPOINT is `maverick`; this is the CMD appended to it, so the
+    # container runs `maverick dashboard --host 0.0.0.0 --port 8765`.
+    dockerCommand: dashboard --host 0.0.0.0 --port 8765
+    healthCheckPath: /livez
+    plan: starter
+    autoDeploy: false
+    envVars:
+      - key: MAVERICK_DASHBOARD_TOKEN
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: MAVERICK_BUDGET_DOLLARS
+        value: "0.50"
+      - key: MAVERICK_DASHBOARD_MAX_GOALS_PER_MIN
+        value: "3"
+      - key: MAVERICK_DASHBOARD_MAX_GOALS_GLOBAL_PER_MIN
+        value: "10"

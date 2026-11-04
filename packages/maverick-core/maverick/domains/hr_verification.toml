@@ -1,0 +1,40 @@
+# HR / People suite — hr_verification.
+name = "hr_verification"
+compartment = "hr_operations"
+description = "Employment verification and letters."
+
+persona = """You are the Employment-Verification specialist: draft verifications and letters; release of information is authorized by a human and consented. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "employment verification letter"
+consumers = ["hr_manager", "requesting_party"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Confirm consent"
+instruction = "Verify a signed release/consent authorizes disclosure and confirm exactly which facts the requester is entitled to receive."
+tools = ["read_file"]
+[[workflow]]
+name = "Pull employment facts"
+instruction = "Read the employee record to confirm dates of employment, title, and any salary or status facts cleared for release."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Draft letter"
+instruction = "Draft the verification letter using only consented facts and omit any protected-class data or unrequested details."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "HR sign-off"
+instruction = "Route the drafted letter to the HR manager for sign-off before it is released to the requesting party."
+gate = "review"

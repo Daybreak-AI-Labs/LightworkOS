@@ -1,0 +1,24 @@
+<section class="panel" id="conversation-inbox" data-goal="{{ goal.id }}" data-context="{{ conversation_context }}" data-operate="{{ '1' if can_operate else '0' }}" aria-labelledby="conversation-inbox-title">
+<h2 id="conversation-inbox-title">{{ ui('Messages and task receipts') }}</h2>
+<p id="conversation-inbox-status" role="status" aria-live="polite">{{ ui('Checking background message availability.') }}</p>
+<div class="conversation-inbox-buttons"><button class="btn btn--ghost" type="button" id="conversation-inbox-refresh">{{ ui('Refresh messages') }}</button><button class="btn btn--ghost" type="button" id="conversation-inbox-receipt" hidden>{{ ui('Check unconfirmed receipt') }}</button></div>
+<div id="conversation-inbox-items"></div>
+<form data-product-validation id="conversation-inbox-edit" hidden>
+<h3 id="conversation-inbox-edit-title" tabindex="-1">{{ ui('Edit pending message') }}</h3>
+<label for="conversation-inbox-edit-text">{{ ui('Message') }}</label><textarea lang="und" dir="auto" data-user-content id="conversation-inbox-edit-text" class="input" rows="5" maxlength="12000" required></textarea>
+<fieldset><legend>{{ ui('Retain these saved files') }}</legend><div id="conversation-inbox-edit-files"></div></fieldset>
+<label for="conversation-inbox-edit-new-files">{{ ui('Add or replace files') }}</label><input type="file" id="conversation-inbox-edit-new-files" multiple>
+<p>{{ ui('Uncheck a saved file to remove it. Newly selected files are not saved until the updated receipt is acknowledged.') }}</p>
+<button class="btn btn--primary" type="submit">{{ ui('Save reviewed pending message') }}</button><button class="btn btn--ghost" type="button" id="conversation-inbox-edit-close">{{ ui('Keep saved message and close editor') }}</button>
+</form>
+<div id="conversation-inbox-guidance" hidden role="region" aria-labelledby="conversation-inbox-guidance-title">
+<h3 id="conversation-inbox-guidance-title" tabindex="-1">{{ ui('Review guidance at the task checkpoint') }}</h3><div id="conversation-inbox-guidance-review"></div>
+<p>{{ ui('Guidance cannot undo completed actions or override permissions, approved scope, spending limits or other policy. Acceptance means the exact guidance entered a safe model-turn checkpoint; it does not prove the model obeyed it.') }}</p>
+<button class="btn btn--primary" id="conversation-inbox-append" type="button">{{ ui('Approve as additional guidance') }}</button><button class="btn btn--ghost" id="conversation-inbox-replace" type="button">{{ ui('Approve and replace other pending guidance') }}</button><button class="btn btn--ghost" id="conversation-inbox-guidance-close" type="button">{{ ui('Keep awaiting my decision') }}</button>
+</div>
+</section>
+<style>#conversation-inbox{margin-block:var(--space-4)}#conversation-inbox label{display:block;margin-block:var(--space-2)}#conversation-inbox .input{width:100%}#conversation-inbox button{white-space:normal;margin:var(--space-1)}#conversation-inbox p,#conversation-inbox pre{white-space:pre-wrap;overflow-wrap:anywhere}#conversation-inbox [hidden]{display:none!important}.conversation-message{border-block-start:1px solid var(--border);padding-block:var(--space-3)}#conversation-send-options{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);padding-block:var(--space-2)}#conversation-send-options select{max-width:100%}</style>
+
+{% include "_human_conversations.html" %}
+
+<script src="{{ asset('lightwork-human-conversation-handoffs.js') }}" defer></script>

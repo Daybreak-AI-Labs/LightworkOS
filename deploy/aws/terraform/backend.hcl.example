@@ -1,0 +1,4 @@
+# Partial backend configuration for the S3 backend in versions.tf. Copy to
+# backend.hcl (git-ignored), name the state bucket created out of band (see
+# README.md) and run `terraform init -backend-config=backend.hcl`.
+bucket = "lightwork-tfstate-<account-id>"

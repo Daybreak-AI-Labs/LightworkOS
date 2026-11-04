@@ -1,0 +1,20 @@
+{{- /* The RWO state PVC is used by the supported single-replica control plane.
+       The reserved autoscaling path is rejected until all durable state is
+       transactionally shared, so do not create an orphan claim there. */ -}}
+{{- if and .Values.persistence.enabled (not .Values.autoscaling.enabled) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "maverick.fullname" . }}-state
+  labels:
+    {{- include "maverick.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.accessMode }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }}

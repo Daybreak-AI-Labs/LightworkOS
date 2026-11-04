@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Audit binder · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .bnd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 var(--space-4); }
+  .bnd-stat .v { font-size: var(--text-2xl); font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
+  .bnd-stat .l { font-size: var(--text-sm); color: var(--muted); }
+  .bnd-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-bottom: var(--space-4); }
+  .bnd-scroll { overflow-x: auto; }
+  .bnd-mono { font-family: var(--font-mono, monospace); font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .bnd-clip { max-width: 24rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media print {
+    .sidebar, .topbar, nav, .bnd-actions, footer, header,
+    .mv-copilot, .mv-copilot__fab { display: none !important; }
+    .panel { break-inside: avoid; border: 1px solid var(--print-border); }
+    body { background: var(--print-paper); color: var(--print-ink-strong); }
+  }
+</style>
+
+  {% set chain_words = {'verified': 'Intact', 'broken': 'Changed or damaged', 'unsigned': 'Not protected', 'partial': 'Partly checked', 'unverified': 'Not checked', 'empty': 'Nothing recorded'} %}
+  {% set sig_words = {'signed': 'Yes', 'unsigned': 'No', 'unavailable': 'Not available'} %}
+  {% from "_hero.html" import hero %}
+  {{ hero('Governance', 'Audit binder',
+          lede='A printable evidence pack of approvals, assessments and records for the selected period, ready to hand to an auditor.') }}
+  <p class="muted">Covers the last {{ days }} days · made {{ b.generated_at | datetime('absolute') }}. The privacy and finance sections show how things stand today.</p>
+  <div class="bnd-actions">
+    <button class="btn btn--primary" id="binder-print" type="button">Print or save as PDF</button>
+    <button class="btn btn--ghost" id="binder-json" type="button">Download evidence file (for auditors)</button>
+    <label for="binder-days" class="sr-only">Period</label>
+    <select id="binder-days" class="select">
+      {% for value, label in [(30, 'Last 30 days'), (90, 'Last 90 days'), (365, 'Last 12 months')] %}
+      <option value="{{ value }}"{% if value == days %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    {{ back_link('/audit', 'Activity log') }}
+  </div>
+
+  <div class="section-head"><h2>Tamper-evident activity log</h2></div>
+  <div class="panel">
+    <div class="bnd-grid">
+      <div class="bnd-stat"><div class="v">{{ chain_words.get(b.chain.verdict) or (b.chain.verdict | humanize) }}</div><div class="l">Overall result</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.chain.files | length }}</div><div class="l">Days checked</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.chain.events }}</div><div class="l">Events in this period</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.chain.kinds | length }}</div><div class="l">Kinds of event</div></div>
+    </div>
+    {% if b.chain.files %}
+    <div class="bnd-scroll" tabindex="0" role="region" aria-label="Activity log verification by day">
+    <table>
+      <thead><tr><th scope="col">Day</th><th scope="col">Events</th>
+        <th scope="col">Result</th><th scope="col">Problems found</th></tr></thead>
+      <tbody>
+        {% for f in b.chain.files %}
+        <tr>
+          <td>{{ f.day | datetime('date') }}</td>
+          <td>{{ f.events }}</td>
+          <td><span class="badge {{ 'done' if f.verdict == 'verified' else 'blocked' if f.verdict == 'broken' else 'warn' }}">{{ chain_words.get(f.verdict) or (f.verdict | humanize) }}</span></td>
+          <td>{% if f.breaks %}{{ f.breaks | length }} entr{{ 'y' if f.breaks | length == 1 else 'ies' }} changed or could not be confirmed{% else %}None{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="muted">Most common events: {% for k, n in (b.chain.kinds.items() | list)[:10] %}{{ kind_label(k) }} ({{ n }}){% if not loop.last %} · {% endif %}{% endfor %}</p>
+    {% else %}
+    <p class="muted">Nothing was recorded in this period.</p>
+    {% endif %}
+    {% if b.chain.anchor_breaks %}
+    <p class="badge blocked">The record linking the days together shows a day was removed or changed</p>
+    <p>Check the activity log for the affected days, and contact support if you did not expect this. <a href="/audit">Open the activity log</a> · <a href="/help">Get help</a></p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Approvals: who decided and how many agreed</h2></div>
+  <div class="panel">
+    {% if b.approvals %}
+    <div class="bnd-scroll" tabindex="0" role="region" aria-label="Recorded approval decisions">
+    <table>
+      <thead><tr><th scope="col">Action</th><th scope="col">Risk</th>
+        <th scope="col">Decision</th><th scope="col">Requested by</th>
+        <th scope="col">Decided by</th><th scope="col">Approvals needed</th><th scope="col">Approved by</th><th scope="col">Logged</th></tr></thead>
+      <tbody>
+        {% for a in b.approvals[:60] %}
+        <tr>
+          <td class="bnd-clip" title="{{ a.action }}">{{ approval_action_label(a.action) }}</td>
+          <td><span class="badge {{ 'blocked' if a.risk == 'high' else 'warn' if a.risk == 'medium' else 'done' }}">{{ a.risk | humanize }}</span></td>
+          <td><span class="badge {{ 'done' if a.status == 'approved' else 'blocked' if a.status == 'denied' else 'info' }}">{{ {'approved': 'Approved', 'denied': 'Rejected', 'pending': 'Waiting'}.get(a.status) or (a.status | humanize) }}</span></td>
+          <td>{{ (a.requested_by | identity) if a.requested_by else '—' }}</td>
+          <td>{{ (a.decided_by | identity) if a.decided_by else '—' }}</td>
+          <td>{{ a.approved_count }} of {{ a.approvals_required }}</td>
+          <td>{% if a.approvers %}{% for p in a.approvers %}{{ p | identity }}{% if p == a.requested_by %} (their own request){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}—{% endif %}</td>
+          <td>{{ ('Waiting (' ~ a.audit_pending_count ~ ')') if a.audit_pending_count else 'Yes' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="muted">Showing {{ [b.approvals | length, 60] | min }} of {{ b.approvals_total }} approval records in print. The JSON snapshot contains all {{ b.approvals_total }} records in the exact window.</p>
+    {% else %}
+    <p class="muted">No approvals in this period. Choose a longer period to include earlier decisions.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Assessments and decisions</h2></div>
+  <div class="panel">
+    {% if b.assessments %}
+    <div class="bnd-scroll" tabindex="0" role="region" aria-label="Assessment decisions">
+    <table>
+      <thead><tr><th scope="col">Questionnaire</th><th scope="col">Subject</th>
+        <th scope="col">Risk before → after fixes</th><th scope="col">Status</th>
+        <th scope="col">Times reviewed</th></tr></thead>
+      <tbody>
+        {% for s in b.assessments[:80] %}
+        <tr>
+          <td>{{ s.type | humanize }}</td>
+          <td>{{ s.subject }}</td>
+          <td>{{ s.inherent | humanize }} → {{ s.residual | humanize }}</td>
+          <td><span class="badge {{ 'done' if s.status == 'approved' else 'blocked' if s.status == 'rejected' else 'info' }}">{{ s.status | humanize }}</span>{% if s.review_due %} <span class="badge warn">Review due</span>{% endif %}</td>
+          <td>{{ s.revision }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="muted" style="font-size: var(--text-xs); margin-top: var(--space-2);">
+      Showing {{ [b.assessments | length, 80] | min }} of {{ b.assessments_total }} record(s) in print. The JSON download contains these current assessment summaries, including the revision number and template fingerprint.</p>
+    {% else %}
+    <p class="muted">No assessments yet. <a href="/assessments">Start an assessment</a></p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Privacy records <span class="badge info">As of today</span></h2></div>
+  <div class="panel">
+    {% if b.registers.enabled %}
+    <div class="bnd-grid">
+      <div class="bnd-stat"><div class="v">{{ b.registers.ropa }}</div><div class="l">Records of processing</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.dpa }}</div><div class="l">Data processing agreement reviews</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.ai }}</div><div class="l">AI systems</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.dsar }}</div><div class="l">Data subject requests</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.incidents }}</div><div class="l">Incidents</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.registers.dsar_aging.overdue }}</div><div class="l">Requests overdue</div></div>
+    </div>
+    {% else %}
+    <p class="muted">Privacy records are not turned on. <a href="/privacy">Open the privacy workspace</a></p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>How often reviewers accepted the first draft</h2></div>
+  <div class="panel">
+    {% if b.learning.decided %}
+    <div class="bnd-grid">
+      <div class="bnd-stat"><div class="v">{{ b.learning.first_pass_rate }}%</div><div class="l">Accepted first time</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.decided }}</div><div class="l">Decided</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.qualified }}</div><div class="l">Approved after follow-ups</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.rejected }}</div><div class="l">Rejected</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.learning.median_days_to_decision }}</div><div class="l">Typical days to decide</div></div>
+    </div>
+    <p class="muted">Accepted first time means approved with no follow-up questions. See the monthly trend on the <a href="/privacy/board">command center</a>.</p>
+    {% else %}
+    <p class="muted">No assessments have been decided yet. Decided assessments appear here once a reviewer approves or rejects one.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Finance controls <span class="badge info">As of today</span></h2></div>
+  <div class="panel">
+    <p>{{ b.finance.posture.disclaimer }}</p>
+    <div class="bnd-grid">
+      <div class="bnd-stat"><div class="v">{{ b.finance.sod.conflicts if b.finance.sod.conflicts is not none else '—' }}</div><div class="l">Separation-of-duties conflicts</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.finance.licenses.total or 0 }}</div><div class="l">Active licenses</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.finance.licenses.due_90d or 0 }}</div><div class="l">Renewals within 90 days</div></div>
+      <div class="bnd-stat"><div class="v">{{ b.finance.licenses.overdue or 0 }}</div><div class="l">Overdue</div></div>
+    </div>
+  </div>
+
+  <details class="panel">
+    <summary>Technical details for auditors</summary>
+    <p>Signed: {{ sig_words.get(b.artifact.signature_state) or (b.artifact.signature_state | humanize) }}.
+      Key held separately from this server: {{ 'Yes, confirmed' if b.artifact.independent_key_custody_verified else 'Not confirmed' }}.</p>
+    <p class="bnd-mono">Evidence file name: {{ b.artifact.binder_id }}</p>
+    <p class="bnd-mono">Signing key: {{ b.artifact.key_id or '—' }}</p>
+    <p class="bnd-mono">Evidence file fingerprint: {{ b.artifact.digest }}</p>
+    {% if b.chain.anchor_breaks %}<ul class="bnd-mono">{% for br in b.chain.anchor_breaks %}<li>{{ br.reason | humanize }}</li>{% endfor %}</ul>{% endif %}
+  </details>
+
+  <script nonce="{{ csp_script_nonce }}" id="binder-payload" type="application/json">{{ b | tojson }}</script>
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      const print = document.getElementById('binder-print');
+      if (print) print.addEventListener('click', function () { window.print(); });
+      const period = document.getElementById('binder-days');
+      if (period) period.addEventListener('change', function () { window.location.href = '/audit/binder?days=' + encodeURIComponent(period.value); });
+      const button = document.getElementById('binder-json');
+      const source = document.getElementById('binder-payload');
+      if (!button || !source) return;
+      button.addEventListener('click', function () {
+        const payload = JSON.parse(source.textContent || '{}');
+        // Preserve the server's signed JSON values: JavaScript reserialization
+        // changes integral floats and integers beyond its exact numeric range.
+        const blob = new Blob([source.textContent + '\n'], {type: 'application/json'});
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = 'lightwork-audit-binder-' + String(payload.artifact && payload.artifact.binder_id || 'snapshot') + '.json';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(href);
+      });
+    })();
+  </script>
+{% endblock %}

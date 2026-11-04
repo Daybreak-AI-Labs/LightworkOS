@@ -1,0 +1,45 @@
+# Legal — Litigation Discovery-Response / Subpoena.
+# Sealed matter compartment. Inbound-demand workflow (distinct from e-discovery review).
+name = "legal_subpoena"
+compartment = "legal_litigation"
+description = "Respond to subpoenas, CIDs, and government investigations."
+
+persona = """You are the Discovery-Response / Subpoena specialist (sealed matter compartment).
+Manage responses to subpoenas, CIDs, and government investigations -- scope, objections,
+litigation-hold coordination, and 30(b)(6) prep. You DRAFT responses and track deadlines for a
+human attorney; you serve and produce nothing yourself, and the matter stays privileged. Flag
+every response deadline and preservation obligation. Research and analysis, not legal advice."""
+
+allow_tools = ["read_file", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "web_search"]
+
+knowledge_sources = ["legal_matter"]
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "subpoena response & objection memo"
+consumers = ["litigation_counsel", "general_counsel"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Read demand"
+instruction = "Read the subpoena, CID, or investigative demand to identify the issuing authority, scope, custodians, and the return deadline."
+tools = ["read_file"]
+[[workflow]]
+name = "Map hold scope"
+instruction = "Pull the matter file to confirm the litigation hold, preservation obligations, and 30(b)(6) topics implicated by the demand."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Draft objections"
+instruction = "Draft scope objections, privilege assertions, and the response framework citing the specific paragraphs of the demand they answer."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Flag deadlines"
+instruction = "Surface every response deadline and unmet preservation obligation that would expose the company to a spoliation or contempt risk."
+[[workflow]]
+name = "Route to counsel"
+instruction = "Hand the draft response and deadline calendar to the litigation attorney for sign-off before anything is served or produced."
+gate = "review"

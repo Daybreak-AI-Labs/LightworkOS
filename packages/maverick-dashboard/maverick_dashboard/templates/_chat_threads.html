@@ -1,0 +1,14 @@
+{# The person's chats: one row per thread (a root goal and its follow-ups),
+   newest first, the open one highlighted. Rendered by the chat shell. #}
+{% macro chat_threads(threads) %}
+<ul class="cs-list" id="cs-list">
+  {% for t in threads %}
+  {# One vocabulary with the open chat's status (run_status.py); the chat page
+     keeps the open task's row in step as its run changes. #}
+  {% set state_label = ui(t.state_label) if t.state_label else '' %}
+  <li><a data-conversation-root="{{ t.id }}" href="/chat/goal/{{ t.target_id }}"{% if t.active %} class="active" aria-current="true"{% endif %}{% if state_label %} aria-describedby="chat-status-{{ t.id }}"{% endif %} title="{{ t.title }}" lang="und" dir="auto">{% if t.pinned %}{{ ui('Pinned:') }} {% endif %}<bdi lang="und" dir="auto" data-user-content>{{ t.title }}</bdi>{% if t.archived %} {{ ui('(archived)') }}{% endif %}</a>{% if state_label %}<span class="cs-list__status cs-list__status--{{ t.status }}" id="chat-status-{{ t.id }}">{{ state_label }}</span>{% endif %}</li>
+  {% else %}
+  <li class="cs-empty">{{ ui('No chats yet.') }}{% if can_create_goal %} <a href="/chat" style="display:inline; padding:0;">{{ ui('Start a chat') }}</a>{% endif %}</li>
+  {% endfor %}
+</ul>
+{% endmacro %}

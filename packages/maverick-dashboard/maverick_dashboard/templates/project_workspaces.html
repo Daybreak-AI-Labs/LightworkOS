@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Project workspaces · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<div id="pw-root" data-project="{{ project_id or '' }}" data-context="{{ project_context }}">
+  <p>{% if project_id and not project_tabs %}{{ back_link('/project-workspaces', 'Project workspaces') }}{% else %}{{ back_link('/projects', 'Projects') }}{% endif %}</p>
+  {% from "_hero.html" import hero %}
+  {{ hero('Projects', 'Project workspaces', title_id='pw-title',
+          lede='Plan an outcome, connect the work that supports it, and keep the current accepted result in view.',
+          compact=true) }}
+  {% if project_tabs %}{% from "_view_tabs.html" import view_tabs %}{{ view_tabs('Project views', project_tabs, 'plan') }}{% endif %}
+  {% include "_project_workspace_body.html" %}
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-project-workspaces.js') }}" defer></script>{% endblock %}

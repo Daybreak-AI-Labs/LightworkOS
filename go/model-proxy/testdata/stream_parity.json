@@ -1,0 +1,7 @@
+{
+  "content_type": "text/event-stream",
+  "chunks": [
+    "data: {\"text\":\"Hello, λ\"}\n\n",
+    "data: {\"done\":true}\n\n"
+  ]
+}

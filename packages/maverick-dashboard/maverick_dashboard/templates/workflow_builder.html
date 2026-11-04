@@ -1,0 +1,1797 @@
+{% extends "base.html" %}
+{% block title %}Workflow builder · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .wf { max-width: 860px; margin-inline: auto; }
+  .wf :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .wf__field { margin-bottom: var(--space-4); }
+  .wf__field > label { display: block; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: var(--space-2); font-weight: var(--font-medium); }
+  .wf__brief { min-height: 120px; resize: vertical; line-height: var(--leading); }
+  .wf__steps { min-height: 200px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace; font-size: var(--text-sm); line-height: 1.6; }
+  .wf__row { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; margin-top: var(--space-4); }
+  .wf__file-input { display: none; }
+  .wf__hint { color: var(--muted); font-size: var(--text-sm); }
+  .wf [hidden] { display: none !important; }
+
+  /* segmented control: pick what to build */
+  .seg { display: flex; gap: var(--space-1); padding: var(--space-1); background: var(--surface-sunken); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: var(--space-5); }
+  .seg__opt { flex: 1 1 0; display: flex; flex-direction: column; gap: var(--space-0-5); align-items: flex-start; text-align: start; padding: var(--space-3) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-weight: var(--font-medium); transition: background .15s ease, color .15s ease, box-shadow .15s ease; }
+  .seg__opt:hover { color: var(--text); }
+  .seg__opt.is-active { background: var(--surface-1); color: var(--text); box-shadow: var(--shadow-sm); font-weight: var(--font-semibold); }
+  .seg__sub { font-size: var(--text-xs); font-weight: var(--font-normal); color: var(--muted); }
+
+  /* starter example chips */
+  .wf__chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+  .chip { padding: 0.32rem 0.72rem; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-size: var(--text-xs); cursor: pointer; line-height: 1.4; transition: color .12s ease, border-color .12s ease, background .12s ease; }
+  .chip:hover { color: var(--text); border-color: var(--brand-border); background: var(--brand-subtle); }
+  .chip__lead { color: var(--muted); margin-right: var(--space-1); }
+
+  /* button spinner (currentColor adapts to primary/ghost) */
+  .spinner { width: 0.95em; height: 0.95em; border-radius: var(--radius-round); border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; animation: wf-spin .6s linear infinite; }
+  @keyframes wf-spin { to { transform: rotate(360deg); } }
+
+  /* editor cards rise in */
+  .wf-card, .wf-saved { animation: wf-rise .22s ease both; }
+  @keyframes wf-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .wf-card__head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .wf-card__head h2 { margin: 0; font-size: var(--text-lg); }
+  .wf-grid { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+  .wf-grid > .wf__field { flex: 1 1 220px; }
+  .wf-grid > .wf__field--sm { flex: 0 0 9rem; }
+
+  /* persona + refine */
+  .pb-persona { min-height: 100px; resize: vertical; line-height: var(--leading); }
+  .wf__refine { display: flex; gap: var(--space-2); }
+  .wf__refine .input { flex: 1 1 auto; }
+
+  /* playbook step cards — the gate is the visible governance signal */
+  .pb-step { position: relative; border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); background: var(--surface-2); transition: border-color .12s ease, box-shadow .12s ease; }
+  .pb-step:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+  .pb-step[data-gate="approval"] { border-left-color: var(--brand); }
+  .pb-step[data-gate="review"] { border-left-color: var(--info); }
+  .pb-gatebadge.gov { background: var(--brand-subtle); color: var(--brand); }
+  .pb-step__head { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-2); }
+  .pb-step__num { flex: none; width: 1.6rem; height: 1.6rem; border-radius: var(--radius-pill); background: var(--brand-subtle); color: var(--brand); font-size: var(--text-xs); font-weight: var(--font-semibold); display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+  .pb-step__name { flex: 1 1 auto; }
+  .pb-step__gate { flex: 0 0 8rem; }
+  .pb-step__inst { resize: vertical; line-height: 1.5; margin-bottom: var(--space-2); min-height: 2.6rem; }
+  .pb-step__move { display: inline-flex; flex: none; }
+  .pb-step__btn { padding: 0.3rem 0.5rem; font-size: var(--text-sm); line-height: var(--leading-none); }
+  .pb-gatebadge { margin-left: auto; }
+
+  /* flow canvas: steps connected into a governed top-to-bottom pipeline */
+  .pb-flow { display: flex; flex-direction: column; gap: 1.75rem; }
+  #pb-steps { display: flex; flex-direction: column; gap: 1.75rem; }
+  .pb-flow__node { position: relative; align-self: center; display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border: 1px dashed var(--border-strong); border-radius: var(--radius-pill); background: var(--surface-sunken); color: var(--muted); font-size: var(--text-sm); }
+  .pb-flow__node .dot { flex: none; width: 0.55rem; height: 0.55rem; border-radius: var(--radius-round); }
+  .pb-flow__start .dot { background: var(--brand); }
+  .pb-flow__end .dot { background: var(--success); }
+  /* connector + chevron, drawn into the 1.75rem gap above each node */
+  .pb-step::before, .pb-flow__end::before { content: ""; position: absolute; left: 50%; top: -1.75rem; width: 2px; height: 1.75rem; background: var(--border-strong); transform: translateX(-50%); }
+  .pb-step::after, .pb-flow__end::after { content: ""; position: absolute; left: 50%; top: -0.42rem; width: 7px; height: 7px; border-right: 2px solid var(--border-strong); border-bottom: 2px solid var(--border-strong); transform: translateX(-50%) rotate(45deg); }
+  /* the gate is a checkpoint in the flow: color the connector arriving at a gated step */
+  .pb-step[data-gate="approval"]::before { background: var(--brand); }
+  .pb-step[data-gate="approval"]::after { border-color: var(--brand); }
+  .pb-step[data-gate="review"]::before { background: var(--info); }
+  .pb-step[data-gate="review"]::after { border-color: var(--info); }
+
+  /* live governance check */
+  .wf__govern { margin-top: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-sunken); padding: var(--space-3) var(--space-4); }
+  .wf__govern.is-ok { border-color: var(--brand-border); background: var(--brand-subtle); }
+  .wf__govern.is-err { border-color: var(--danger-subtle); }
+  .wf__govern h3 { margin: 0; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: var(--font-medium); }
+  .wf__lint { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
+  .wf__lint li { display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-1) 0; font-size: var(--text-sm); color: var(--text); }
+  .wf__lint li::before { flex: none; font-weight: var(--font-semibold); }
+  .wf__lint .err { color: var(--danger); }
+  .wf__lint .err::before { content: "⚠"; }
+  .wf__lint .warn::before { content: "•"; color: var(--warn); }
+  .wf__lint .ok { color: var(--brand); }
+  .wf__lint .ok::before { content: "✓"; }
+
+  /* tool field with a "Browse connectors" button */
+  .wf__toolfield { display: flex; gap: var(--space-2); align-items: center; }
+  .wf__toolfield .input { flex: 1 1 auto; }
+
+  /* connector picker dialog */
+  .picker-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: var(--space-7) var(--space-4); background: var(--scrim); }
+  .picker { display: flex; flex-direction: column; width: min(640px, 100%); max-height: 80vh; overflow: hidden; background: var(--surface-1); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+  .picker__head { padding: var(--space-4); border-bottom: 1px solid var(--hairline); }
+  .picker__head h3 { margin: 0 0 var(--space-3); font-size: var(--text-md); }
+  .picker__list { overflow-y: auto; padding: var(--space-2); }
+  .picker__item { display: flex; gap: var(--space-3); align-items: baseline; width: 100%; text-align: start; padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; cursor: pointer; }
+  .picker__item:hover { background: var(--row-hover); border-color: var(--border); }
+  .picker__item:disabled { cursor: default; }
+  .picker__main { min-width: 0; }
+  .picker__name { font-weight: var(--font-medium); font-variant-numeric: tabular-nums; }
+  .picker__added { color: var(--brand); font-size: var(--text-xs); margin-left: var(--space-2); }
+  .picker__over { color: var(--danger); font-size: var(--text-xs); margin-left: var(--space-2); }
+  .picker__desc { color: var(--muted); font-size: var(--text-sm); line-height: 1.4; margin-top: var(--space-0-5); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .picker__meta { margin-left: auto; flex: none; }
+  .picker__foot { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--hairline); }
+  .badge.risk-low { background: var(--success-subtle); color: var(--success); }
+  .badge.risk-medium { background: var(--warn-subtle); color: var(--warn); }
+  .badge.risk-high { background: var(--danger-subtle); color: var(--danger); }
+
+  /* saved success */
+  .wf-saved { border-color: var(--brand-border); background: var(--brand-subtle); }
+  .wf-saved__head { display: flex; align-items: center; gap: var(--space-3); }
+  .wf-saved__check { flex: none; width: 2rem; height: 2rem; border-radius: var(--radius-pill); background: var(--brand); color: var(--brand-fg); display: inline-flex; align-items: center; justify-content: center; font-weight: var(--font-semibold); }
+  .wf-saved h2 { margin: 0; color: var(--brand); font-size: var(--text-lg); }
+
+  /* schedule panel (in the saved state, for templates) */
+  .wf__sched { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
+  .wf__sched-title { margin: 0 0 var(--space-1); font-size: var(--text-md); color: var(--text); }
+  summary.wf__sched-title { cursor: pointer; margin: 0; }
+  details.wf__sched[open] > summary.wf__sched-title { margin-bottom: var(--space-3); }
+  summary.wf__sched-title:hover { color: var(--brand); }
+  .wf__copyrow { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .wf__copyrow code { font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace; font-size: var(--text-xs); word-break: break-all; }
+  .wf__curl { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); font-size: var(--text-xs); line-height: 1.5; overflow-x: auto; white-space: pre; margin: 0 0 var(--space-2); }
+  .wf__sched-list { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .wf__sched-list .mv-row { font-size: var(--text-sm); }
+  .wf__sched-when { color: var(--muted); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; }
+    .wf-card, .wf-saved { animation: none; }
+  }
+  @media (max-width: 560px) {
+    .seg { flex-direction: column; }
+  }
+  .wf__days { border: 0; padding: 0; margin: 0 0 var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); font-size: var(--text-sm); }
+  .wf__days legend { color: var(--muted); margin-bottom: var(--space-1); }
+  .wf__days label { display: inline-flex; align-items: center; gap: var(--space-1); }
+</style>
+
+  <h1 class="page-title">{{ ui("Workflow builder") }}</h1>
+  <p class="page-subtitle">{{ ui("Describe what you want or provide a document. Lightwork drafts it for you to refine, save and run. You can also build it by hand.") }} <a href="/goal-builder">{{ ui("manual builder") }}</a>.</p>
+  {% if builder_modes %}{% from "_tabs.html" import tab_bar, panel_attrs %}{{ tab_bar('Workflow builder modes', builder_modes, '') }}<div {{ panel_attrs('') }}>{% endif %}
+
+  <div class="wf">
+    <div class="seg" role="group" aria-label="{{ ut('What to build') }}" lang="{{ ul('What to build') }}">
+      <button type="button" id="wf-form-template" class="seg__opt is-active" aria-pressed="true">
+        {{ ui("Reusable template") }}
+        <span class="seg__sub">{{ ui("repeat the work with new details each time") }}</span>
+      </button>
+      <button type="button" id="wf-form-playbook" class="seg__opt" aria-pressed="false">
+        {{ ui("Agent playbook") }}
+        <span class="seg__sub">{{ ui("draft an agent’s instructions and allowed actions") }}</span>
+      </button>
+    </div>
+
+    {% from "_form_field.html" import error_summary %}
+    {# Each editor uses the shared form-field pattern -- the problem next to its
+       field and in a summary that takes focus, with nothing typed cleared. #}
+    <form class="panel" id="wf-draft-form" data-mv-validate>
+      {{ error_summary('wf-draft-errors') }}
+      <div class="wf__field" style="margin-bottom: var(--space-3);">
+        <label for="wf-brief"><span id="wf-noun">{{ ui("Describe the workflow") }}</span></label>
+        <textarea lang="und" dir="auto" data-user-content id="wf-brief" class="input wf__brief"
+          ></textarea><span class="wf__hint">{{ ui('Example: gather competitor news, summarize changes and draft a team email.') }}</span>
+        <div class="wf__chips" id="wf-examples" aria-label="{{ ut('Starter examples') }}" lang="{{ ul('Starter examples') }}"></div>
+      </div>
+      <div class="wf__row">
+        <button type="button" id="wf-draft-btn" class="btn btn--primary">
+          <span class="spinner" hidden aria-hidden="true"></span><span>{{ ui("Draft with AI") }}</span>
+        </button>
+        <button type="button" id="wf-file-btn" class="btn btn--ghost">{{ ui("Upload a document…") }}</button>
+        <input type="file" id="wf-file" class="wf__file-input"
+               accept=".pdf,.docx,.txt,.md,.markdown,.json,.csv,.yaml,.yml,text/*,application/json"
+               aria-label="{{ ut('Upload a document to draft from') }}" lang="{{ ul('Upload a document to draft from') }}">
+        <span class="wf__hint" id="wf-file-name"></span>
+        <div id="wf-source-review" hidden>
+          <label for="wf-source-text">{{ ui("Review extracted procedure") }}</label>
+          <textarea lang="und" dir="auto" data-user-content class="textarea" id="wf-source-text" rows="8" maxlength="8000"></textarea>
+          <p class="wf__hint">{{ ui("Source material only. Review and remove private or irrelevant text before Draft with AI. Uploading does not start work. PDF and Word documents require the installed document parsers; maximum file size is 512 KB.") }}</p>
+          <button class="btn btn--ghost" type="button" id="wf-source-clear">{{ ui("Remove document") }}</button>
+        </div>
+      </div>
+    </form>
+
+    <p id="wf-status" role="status" aria-live="polite" class="muted" style="min-height: 1.2em; margin: 0 0 var(--space-4);"></p>
+
+    <!-- template editor -->
+    <div class="panel wf-card" id="wf-preview" hidden>
+      <div class="wf-card__head">
+        <span class="badge info">{{ ui("Template") }}</span>
+        <h2>{{ ui("Review & edit") }}</h2>
+      </div>
+      <form id="wf-template-form" data-mv-validate>
+      {{ error_summary('wf-template-errors') }}
+      <div class="wf-grid">
+        <div class="wf__field" style="flex: 1 1 16rem;">
+          <label for="wf-name">{{ ui("Short name (filled in from the title)") }}</label>
+          <input type="text" id="wf-name" class="input" aria-label="{{ ut('Workflow short name') }}" lang="{{ ul('Workflow short name') }}">
+        </div>
+        <div class="wf__field" style="flex: 2 1 18rem;">
+          <label for="wf-title">{{ ui("Title") }}</label>
+          <input type="text" id="wf-title" class="input" aria-label="{{ ut('Workflow title') }}" lang="{{ ul('Workflow title') }}"
+                 required data-error-required="{{ ut('Give the workflow a title, for example Weekly competitor summary.') }}">
+        </div>
+      </div>
+      <div class="wf__field">
+        <label for="wf-steps">{{ ui("Steps") }}</label>
+        <textarea lang="und" dir="auto" data-user-content id="wf-steps" class="input wf__steps" ></textarea>
+      </div>
+      <div class="wf-grid">
+        <div class="wf__field">
+          <label for="wf-params">{{ ui("Input names (existing templates)") }}</label>
+          <input type="text" id="wf-params" class="input" placeholder="competitor, timeframe" aria-label="{{ ut('Information to ask for each time') }}" lang="{{ ul('Information to ask for each time') }}">
+          <p class="wf__hint">{{ ui("Add named input fields below to choose a label, type, optional value or default. Existing names remain required text unless you customize them.") }}</p>
+          <div id="wf-input-fields"></div>
+          <button class="btn btn--ghost" id="wf-add-input" type="button">{{ ui("Add input field") }}</button>
+        </div>
+        <div class="wf__field wf__field--sm">
+          <label for="wf-budget">{{ ui("Optional spending limit ($)") }}</label>
+          <input type="number" id="wf-budget" class="input" min="0" step="0.01"
+                 data-error-range="{{ ut('Enter a spending limit of $0 or more with at most two decimal places, or leave it empty for no limit.') }}"
+                 data-error-format="{{ ut('Enter a spending limit of $0 or more with at most two decimal places, or leave it empty for no limit.') }}"
+                 aria-label="{{ ut('Optional per-run budget in dollars') }}" placeholder="{{ ut('No task limit') }}" lang="{{ ul('No task limit') }}">
+        </div>
+      </div>
+      <div class="wf__field">
+        <label for="wf-refine">{{ ui("Refine with a follow-up") }}</label>
+        <div class="wf__refine">
+          <input type="text" id="wf-refine" class="input"
+                 placeholder="{{ ut('Example: add a step to email the summary; make it weekly.') }}"
+                 aria-label="{{ ut('Refine the workflow with a follow-up instruction') }}" lang="{{ ul('Refine the workflow with a follow-up instruction') }}">
+          <button type="button" id="wf-refine-btn" class="btn">
+            <span class="spinner" hidden aria-hidden="true"></span><span>{{ ui("Refine") }}</span>
+          </button>
+        </div>
+      </div>
+      <div class="wf__row">
+        <button type="button" id="wf-save-btn" class="btn btn--primary">{{ ui("Save workflow") }}</button>
+        <span class="wf__hint">{{ ui("Saved workflows appear in Templates and can be run from Chat.") }} <a href="/templates">{{ ui("Templates") }}</a>.</span>
+      </div>
+      </form>
+    </div>
+
+    <!-- playbook editor -->
+    <div class="panel wf-card" id="pb-preview" hidden>
+      <div class="wf-card__head">
+        <span class="badge info">{{ ui("Agent playbook") }}</span>
+        <h2>{{ ui("Review & edit the playbook") }}</h2>
+      </div>
+      <form id="pb-form" data-mv-validate>
+      {{ error_summary('pb-form-errors') }}
+      <div class="wf-grid">
+        <div class="wf__field" style="flex: 1 1 16rem;">
+          <label for="pb-name">{{ ui("Short name (filled in from the description)") }}</label>
+          <input type="text" id="pb-name" class="input" aria-label="{{ ut('Agent short name') }}" lang="{{ ul('Agent short name') }}"
+                 required data-error-required="{{ ut('Give the agent a short name, for example competitor_watch.') }}">
+        </div>
+        <div class="wf__field wf__field--sm">
+          <label for="pb-risk">{{ ui("Riskiest action allowed") }}</label>
+          <select id="pb-risk" class="input">
+            <option value="low" lang="{{ ul("Low") }}">{{ ut("Low") }}</option>
+            <option value="medium" lang="{{ ul("Medium") }}">{{ ut("Medium") }}</option>
+            <option value="high" lang="{{ ul("High") }}">{{ ut("High") }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="wf__field">
+        <label for="pb-desc">{{ ui("Description") }}</label>
+        <input type="text" id="pb-desc" class="input" aria-label="{{ ut('Agent description') }}" lang="{{ ul('Agent description') }}">
+      </div>
+      <div class="wf__field">
+        <label for="pb-persona">{{ ui("Role and working instructions") }}</label>
+        <textarea lang="und" dir="auto" data-user-content id="pb-persona" class="input pb-persona" ></textarea>
+      </div>
+      <div class="wf-grid">
+        <div class="wf__field">
+          <strong>{{ ui("Allowed actions") }}</strong>
+          <div id="pb-allow-summary" class="wf__row" aria-label="{{ ut('Selected allowed actions') }}" lang="{{ ul('Selected allowed actions') }}"></div>
+          <button type="button" class="btn btn--ghost" data-browse="allow"
+                  aria-label="{{ ut('Choose allowed actions') }}" lang="{{ ul('Choose allowed actions') }}">{{ ui("Choose actions…") }}</button>
+          <details id="pb-allow-advanced">
+            <summary>{{ ui("Technical details: type action names instead") }}</summary>
+            <label for="pb-allow">{{ ui("Allowed action names (separate with commas)") }}</label>
+            <input type="text" id="pb-allow" class="input" placeholder="web_search, send_email"
+                   aria-label="{{ ut('Allowed action names') }}" lang="{{ ul('Allowed action names') }}">
+          </details>
+        </div>
+        <div class="wf__field">
+          <strong>{{ ui("Always blocked actions") }}</strong>
+          <div id="pb-deny-summary" class="wf__row" aria-label="{{ ut('Selected blocked actions') }}" lang="{{ ul('Selected blocked actions') }}"></div>
+          <button type="button" class="btn btn--ghost" data-browse="deny"
+                  aria-label="{{ ut('Choose blocked actions') }}" lang="{{ ul('Choose blocked actions') }}">{{ ui("Choose actions…") }}</button>
+          <details id="pb-deny-advanced">
+            <summary>{{ ui("Technical details: type action names instead") }}</summary>
+            <label for="pb-deny">{{ ui("Blocked action names (separate with commas)") }}</label>
+            <input type="text" id="pb-deny" class="input" placeholder="shell, delete_file"
+                   aria-label="{{ ut('Blocked action names') }}" lang="{{ ul('Blocked action names') }}">
+          </details>
+        </div>
+      </div>
+      <div class="wf__field">
+        <label>{{ ui("Steps") }} <span class="wf__hint" style="text-transform: none; letter-spacing: 0;">{{ ui("Instructions to follow in order") }}</span></label>
+        <p class="wf__hint" id="pb-gate-boundary">{{ ui("Playbook review instructions do not automatically pause the work. To require a human decision before continuing, add an approval step in a flow.") }} <a href="/flows/designer">{{ ui("approval step in a flow") }}</a>.</p>
+        <div class="pb-flow">
+          <div class="pb-flow__node pb-flow__start"><span class="dot" aria-hidden="true"></span>{{ ui("Start here") }}</div>
+          <div id="pb-steps"></div>
+          <div class="pb-flow__node pb-flow__end" id="pb-flow-end" hidden><span class="dot" aria-hidden="true"></span>{{ ui("Task complete") }}</div>
+        </div>
+        <button type="button" id="pb-add-step" class="btn btn--ghost" style="margin-top: var(--space-4);">{{ ui("Add a step") }}</button>
+      </div>
+      <div class="wf__field">
+        <label for="pb-refine">{{ ui("Refine with a follow-up") }}</label>
+        <div class="wf__refine">
+          <input type="text" id="pb-refine" class="input"
+                 placeholder="{{ ut('Example: require approval before a payment; add a reconciliation step.') }}"
+                 aria-label="{{ ut('Refine the playbook with a follow-up instruction') }}" lang="{{ ul('Refine the playbook with a follow-up instruction') }}">
+          <button type="button" id="pb-refine-btn" class="btn">
+            <span class="spinner" hidden aria-hidden="true"></span><span>{{ ui("Refine") }}</span>
+          </button>
+        </div>
+      </div>
+      <div class="wf__govern" id="pb-govern">
+        <h3>{{ ui("Governance check") }}</h3>
+        <ul id="pb-lint" class="wf__lint"></ul>
+      </div>
+      <div class="wf__row">
+        <button type="button" id="pb-save-btn" class="btn btn--primary"{% if not pack_editing_allowed %} disabled title="{{ ut('An administrator must check and save this draft') }}"{% endif %} lang="{{ ul('An administrator must check and save this draft') }}">{{ ui("Review Save draft") }}</button>
+        <span class="wf__hint">{% if pack_editing_allowed %}{{ ui("Save a retained draft, then separately review Publish in Agent Factory. Saving here does not change the agent people use.") }} <a href="/agents">{{ ui("Agent Factory") }}</a>.{% else %}This draft stays unsaved until an administrator checks and saves it. <button type="button" class="btn btn--ghost" id="pb-copy-draft">{{ ui("Copy the draft to send to an administrator") }}</button>{% endif %}</span>
+      </div>
+      </form>
+      <label><input type="checkbox" id="pb-acknowledge-original"> I read any earlier unconfirmed original and acknowledge that earlier work may already exist. This is a separate new Save draft intent.</label>
+      <div id="pb-specialist-review" class="panel" aria-live="polite"></div>
+    </div>
+
+    <!-- saved -->
+    <div class="panel wf-card wf-saved" id="wf-saved" hidden>
+      <div class="wf-saved__head">
+        <span class="wf-saved__check" aria-hidden="true">✓</span>
+        <div>
+          <h2>{{ ui("Saved") }}</h2>
+          <p id="wf-saved-msg" class="muted" style="margin: var(--space-1) 0 0;"></p>
+        </div>
+      </div>
+      <div class="wf__row">
+        <a class="btn btn--primary" id="wf-saved-link" href="/templates">{{ ui("Open Templates") }}</a>
+        <a class="btn btn--ghost" id="wf-run-now" href="/chat">{{ ui("Run it now") }}</a>
+      </div>
+      {% if scheduling_enabled %}
+      <details class="wf__sched" id="wf-sched" hidden>
+        <summary class="wf__sched-title"><span role="heading" aria-level="3">{{ ui("Run it on a schedule") }}</span></summary>
+        <p class="wf__hint">{{ ui("Lightwork starts this workflow automatically while it is running. Times are in your time zone.") }}</p>
+        <div class="wf-grid">
+          <div class="wf__field">
+            <label for="sched-cadence">{{ ui("How often") }}</label>
+            <select id="sched-cadence" class="input">
+              <option value="" lang="{{ ul("Off") }}">{{ ut("Off") }}</option>
+              <option value="daily" lang="{{ ul("Every day") }}">{{ ut("Every day") }}</option>
+              <option value="weekdays" lang="{{ ul("Every weekday (Mon–Fri)") }}">{{ ut("Every weekday (Mon–Fri)") }}</option>
+              <option value="days" lang="{{ ul("On certain days each week") }}">{{ ut("On certain days each week") }}</option>
+              <option value="monthly" lang="{{ ul("Once a month") }}">{{ ut("Once a month") }}</option>
+              <option value="hourly" lang="{{ ul("Every few hours") }}">{{ ut("Every few hours") }}</option>
+            </select>
+          </div>
+          <div class="wf__field wf__field--sm" id="sched-time-wrap">
+            <label for="sched-time">{{ ui("At (your time)") }}</label>
+            <input type="time" id="sched-time" class="input" value="09:00" />
+          </div>
+          <div class="wf__field wf__field--sm" id="sched-interval-wrap" hidden>
+            <label for="sched-interval">{{ ui("Every") }}</label>
+            <select id="sched-interval" class="input">
+              <option value="1" lang="{{ ul("1 hour") }}">{{ ut("1 hour") }}</option><option value="2" lang="{{ ul("2 hours") }}">{{ ut("2 hours") }}</option><option value="3" lang="{{ ul("3 hours") }}">{{ ut("3 hours") }}</option>
+              <option value="4" lang="{{ ul("4 hours") }}">{{ ut("4 hours") }}</option><option value="6" selected lang="{{ ul("6 hours") }}">{{ ut("6 hours") }}</option><option value="8" lang="{{ ul("8 hours") }}">{{ ut("8 hours") }}</option>
+              <option value="12" lang="{{ ul("12 hours") }}">{{ ut("12 hours") }}</option>
+            </select>
+          </div>
+          <div class="wf__field wf__field--sm" id="sched-dom-wrap" hidden>
+            <label for="sched-dom">{{ ui("Day of the month") }}</label>
+            <select id="sched-dom" class="input">
+              {% for d in range(1, 29) %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+        <fieldset class="wf__days" id="sched-days-wrap" hidden>
+          <legend>{{ ui("On these days") }}</legend>
+          <label><input type="checkbox" value="1" checked /> {{ ui("Mon") }}</label>
+          <label><input type="checkbox" value="2" /> {{ ui("Tue") }}</label>
+          <label><input type="checkbox" value="3" /> {{ ui("Wed") }}</label>
+          <label><input type="checkbox" value="4" /> {{ ui("Thu") }}</label>
+          <label><input type="checkbox" value="5" /> {{ ui("Fri") }}</label>
+          <label><input type="checkbox" value="6" /> {{ ui("Sat") }}</label>
+          <label><input type="checkbox" value="0" /> {{ ui("Sun") }}</label>
+        </fieldset>
+        <p class="wf__hint" id="sched-local-hint" hidden></p>
+        <div class="wf__field" id="sched-params-wrap" hidden>
+          <label>{{ ui("Answers to use each time") }}</label>
+          <div id="sched-params"></div>
+        </div>
+        <div class="wf__row">
+          <button type="button" id="sched-btn" class="btn btn--primary" disabled>{{ ui("Schedule it") }}</button>
+          <span class="wf__hint" id="sched-cron-preview" aria-live="polite"></span>
+        </div>
+        <ul class="wf__sched-list" id="sched-list" aria-label="{{ ut('Active schedules') }}" lang="{{ ul('Active schedules') }}"></ul>
+      </details>
+      {% endif %}
+      {% if triggers_enabled %}
+      <details class="wf__sched" id="wf-trig" hidden>
+        <summary class="wf__sched-title"><span role="heading" aria-level="3">{{ ui("Start it from another app") }}</span></summary>
+        <p class="wf__hint">{{ ui("Let GitHub, Slack, Zapier or another app start this workflow whenever something happens there.") }}</p>
+        <div class="wf-grid">
+          <div class="wf__field">
+            <label for="trig-name">{{ ui("Name for this start (optional)") }}</label>
+            <input type="text" id="trig-name" class="input" placeholder="{{ ut('Uses the workflow name') }}" lang="{{ ul('Uses the workflow name') }}">
+          </div>
+        </div>
+        <div class="wf__field" id="trig-params-wrap" hidden>
+          <label>{{ ui("Answers to use each time") }}</label>
+          <div id="trig-params"></div>
+        </div>
+        <div class="wf__row">
+          <button type="button" id="trig-btn" class="btn btn--primary" disabled>{{ ui("Let another app start it") }}</button>
+          <span class="wf__hint" id="trig-msg" role="status" aria-live="polite"></span>
+        </div>
+        <div id="trig-howto" hidden>
+          <p class="wf__hint">{{ ui("In the other app, add a step that sends a web request to this address and names this start. Your administrator can help with the security key.") }}<span id="trig-secret-warn" hidden> ⚠ {{ ui("The security key isn’t set up yet, so the address won’t accept requests.") }} {% if webhook_setup_available %}<a href="/settings#webhook-settings">{{ ui("Set it up in Settings") }}</a>{% else %}Ask an administrator to set it up in Settings.{% endif %}</span></p>
+          <div class="wf__copyrow"><code id="trig-url"></code><button type="button" class="btn btn--ghost" id="trig-url-copy">{{ ui("Copy address") }}</button><button type="button" class="btn btn--ghost" id="trig-name-copy">{{ ui("Copy start name") }}</button></div>
+        </div>
+        <ul class="wf__sched-list" id="trig-list" aria-label="{{ ut('Starts from other apps') }}" lang="{{ ul('Starts from other apps') }}"></ul>
+      </details>
+      {% endif %}
+    </div>
+
+    <!-- connector picker (shared, for allow/deny/step tool fields) -->
+    <div class="picker-backdrop" id="tool-picker" hidden role="dialog" aria-modal="true" aria-label="{{ ut('Browse connectors') }}" lang="{{ ul('Browse connectors') }}">
+      <div class="picker">
+        <div class="picker__head">
+          <h3 id="tp-title">{{ ui("Browse connectors") }}</h3>
+          <input type="search" id="tp-search" class="input" placeholder="{{ ut('Search actions by name or description…') }}"
+                 aria-label="{{ ut('Search connectors') }}" autocomplete="off" lang="{{ ul('Search connectors') }}">
+          <p class="picker__count muted" id="tp-count" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);"></p>
+        </div>
+        <div class="picker__list" id="tp-list"></div>
+        <div class="picker__foot">
+          <span class="wf__hint" id="tp-hint"></span>
+          <button type="button" class="btn btn--primary" id="tp-done">{{ ui("Close the list") }}</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="panel" id="workflow-versions" hidden aria-labelledby="workflow-versions-title">
+    <h2 id="workflow-versions-title">{{ ui("Draft versions and publication") }}</h2>
+    <p>{{ ui("Review the saved draft here. Save edits above before checking a sample. Samples validate inputs and show rendered instructions; they never call an AI model, tool, or external service.") }}</p>
+    <p id="workflow-versions-status" role="status" aria-live="polite"></p>
+    <button class="btn" type="button" id="workflow-versions-refresh">{{ ui("Refresh version review") }}</button>
+    <div id="workflow-versions-content"></div>
+  </section>
+  {% if builder_modes %}</div>{% endif %}
+{% endblock %}
+{% block scripts_extra %}
+  <script src="/static/lightwork-template-connections.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var mode = 'template';
+    var brief = document.getElementById('wf-brief');
+    var noun = document.getElementById('wf-noun');
+    var examples = document.getElementById('wf-examples');
+    var draftBtn = document.getElementById('wf-draft-btn');
+    var fileBtn = document.getElementById('wf-file-btn');
+    var fileInput = document.getElementById('wf-file');
+    var fileName = document.getElementById('wf-file-name');
+    var status = document.getElementById('wf-status');
+    var formTplBtn = document.getElementById('wf-form-template');
+    var formPbBtn = document.getElementById('wf-form-playbook');
+    // template editor
+    var preview = document.getElementById('wf-preview');
+    var elName = document.getElementById('wf-name');
+    var elTitle = document.getElementById('wf-title');
+    var elSteps = document.getElementById('wf-steps');
+    var elParams = document.getElementById('wf-params');
+    var elBudget = document.getElementById('wf-budget');
+    var saveBtn = document.getElementById('wf-save-btn');
+    var wfRefine = document.getElementById('wf-refine');
+    var wfRefineBtn = document.getElementById('wf-refine-btn');
+    // playbook editor
+    var pbPreview = document.getElementById('pb-preview');
+    var pbName = document.getElementById('pb-name');
+    var pbDesc = document.getElementById('pb-desc');
+    var pbPersona = document.getElementById('pb-persona');
+    var pbAllow = document.getElementById('pb-allow');
+    var pbDeny = document.getElementById('pb-deny');
+    function renderToolSelections() {
+      [[pbAllow, 'pb-allow-summary'], [pbDeny, 'pb-deny-summary']].forEach(function (entry) {
+        var input = entry[0], host = document.getElementById(entry[1]);
+        host.textContent = '';
+        var tools = splitList(input.value);
+        if (!tools.length) productText(host,input === pbAllow ? 'No actions selected' : 'No extra blocked actions');
+        tools.forEach(function (tool, index) {
+          var button = document.createElement('button');
+          var label = tool.replace(/_/g, ' ');
+          button.type = 'button'; button.className = 'btn btn--ghost';
+          button.textContent = label + ' ×'; button.title = tool;
+          button.setAttribute('aria-label', translated('Remove {name} from this selection',{name:label}));
+          button.lang=window.LightworkI18n?window.LightworkI18n.languageFor('Remove {name} from this selection'):'en';
+          button.addEventListener('click', function () {
+            input.value = splitList(input.value).filter(function (name) { return name !== tool; }).join(', ');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            var remaining = host.querySelectorAll('button');
+            var target = remaining[Math.min(index, remaining.length - 1)] ||
+              document.querySelector('[data-browse="' + (input === pbAllow ? 'allow' : 'deny') + '"]');
+            if (target) target.focus();
+          });
+          host.appendChild(button);
+        });
+      });
+    }
+    pbAllow.addEventListener('input', renderToolSelections);
+    pbDeny.addEventListener('input', renderToolSelections);
+    var pbRisk = document.getElementById('pb-risk');
+    var pbSteps = document.getElementById('pb-steps');
+    var pbFlowEnd = document.getElementById('pb-flow-end');
+    var pbAddBtn = document.getElementById('pb-add-step');
+    var pbSaveBtn = document.getElementById('pb-save-btn');
+    var pbRefine = document.getElementById('pb-refine');
+    var pbRefineBtn = document.getElementById('pb-refine-btn');
+    var pbGovern = document.getElementById('pb-govern');
+    var pbLintEl = document.getElementById('pb-lint');
+    // Track whether each editor has been opened independently of its current
+    // field contents. A user may intentionally clear every identifying field
+    // before comparing the other artifact type; content-based detection would
+    // then strand the first editor even though its preview still exists.
+    var templateWorkspaceStarted = false;
+    var playbookWorkspaceStarted = false;
+    var recovery = null;
+    var pbEditingName = null;
+    var pbEditGeneration = null;
+    function recoveryFields() {
+      return Array.from(document.querySelectorAll('.wf input[id],.wf textarea[id],.wf select[id]')).filter(function (field) {
+        return /^(wf-|pb-|sched-|trig-)/.test(field.id) && !/^(file|password|hidden|submit|button)$/.test(field.type) && !/secret|password|token|confirm/i.test(field.id);
+      });
+    }
+    function inputFieldDrafts() {
+      return Array.from(inputFields.querySelectorAll('fieldset')).map(function (row) {
+        var values={}; row.querySelectorAll('[data-input-key]').forEach(function (input) {
+          values[input.dataset.inputKey]=input.type==='checkbox' ? input.checked : input.value;
+        }); return values;
+      });
+    }
+    function validInputDrafts(rows) {
+      var keys=['name','label','type','required','default','choices','help','condition_field','condition_value'];
+      return Array.isArray(rows) && rows.length<=100 && rows.every(function (row) {
+        return row && typeof row==='object' && !Array.isArray(row) && Object.keys(row).every(function (key) {
+          return keys.includes(key) && (key==='required' ? typeof row[key]==='boolean' : typeof row[key]==='string');
+        });
+      });
+    }
+    function restoreInputDrafts(rows) {
+      inputFields.replaceChildren(); rows.forEach(function (values) {
+        addInputField('',{}); var row=inputFields.lastElementChild;
+        row.querySelectorAll('[data-input-key]').forEach(function (input) {
+          if (!Object.prototype.hasOwnProperty.call(values,input.dataset.inputKey)) return;
+          if (input.type==='checkbox') input.checked=values[input.dataset.inputKey];
+          else input.value=values[input.dataset.inputKey];
+        });
+      });
+    }
+    function recoveryPayload() {
+      var fields = {};
+      recoveryFields().forEach(function (field) { fields[field.id] = field.type === 'checkbox' ? field.checked : field.value; });
+      var steps = Array.from(pbSteps.querySelectorAll('.pb-step')).map(function (row) {
+        var step = {}; ['name','inst','tools','gate'].forEach(function (key) { step[key] = row.querySelector('.pb-step__' + key).value; }); return step;
+      });
+      return {format:1, fields:fields, steps:steps, mode:mode, template_started:templateWorkspaceStarted, playbook_started:playbookWorkspaceStarted,
+        template_name:wfEditingName, template_generation:wfEditGeneration, template_wall:wfEditWall, input_fields:inputFieldDrafts(),
+        agent_name:pbEditingName, agent_generation:pbEditGeneration, agent_preserve:pbEditPreserve};
+    }
+    function restoreRecovery(payload) {
+      if (!payload || payload.format !== 1 || !payload.fields || !Array.isArray(payload.steps) || !['template','playbook'].includes(payload.mode)) throw new Error('This recovery copy is not a supported workflow draft.');
+      if ((payload.input_fields !== undefined && !validInputDrafts(payload.input_fields)) ||
+          !payload.steps.every(function (step) { return step && ['name','inst','tools','gate'].every(function (key) { return typeof step[key] === 'string'; }); }) ||
+          !Object.values(payload.fields).every(function (value) { return typeof value === 'string' || typeof value === 'boolean'; }) ||
+          (payload.template_name && !Number.isInteger(payload.template_generation)) ||
+          (payload.agent_name && !/^[0-9a-f]{64}$/.test(payload.agent_generation || ''))) throw new Error('This recovery copy has incomplete fields or saved-version information. Current work was kept.');
+      // The original tokens remain bound to these edits. Save must reject a
+      // changed resource; restoring never upgrades an unreviewed write token.
+      wfEditingName = payload.template_name; wfEditGeneration = payload.template_generation; wfEditWall = payload.template_wall;
+      pbEditingName = payload.agent_name; pbEditGeneration = payload.agent_generation; pbEditPreserve = payload.agent_preserve;
+      recoveryFields().forEach(function (field) {
+        if (!Object.prototype.hasOwnProperty.call(payload.fields, field.id)) return;
+        if (field.type === 'checkbox') field.checked = payload.fields[field.id] === true;
+        else field.value = payload.fields[field.id];
+      });
+      pbSteps.textContent = '';
+      payload.steps.forEach(function (step) {
+        addStep(); var row = pbSteps.lastElementChild;
+        ['name','inst','tools','gate'].forEach(function (key) { row.querySelector('.pb-step__' + key).value = step[key] || ''; });
+        paintGate(row);
+      });
+      if (payload.input_fields !== undefined) restoreInputDrafts(payload.input_fields);
+      else {
+        inputFields.replaceChildren();
+        Object.entries((payload.parameter_schema || {}).fields || {}).forEach(function (entry) { addInputField(entry[0],entry[1]); });
+      }
+      renumber(); renderToolSelections();
+      templateWorkspaceStarted = !!payload.template_started; playbookWorkspaceStarted = !!payload.playbook_started;
+      setForm(payload.mode); schedulePbLint();
+      setStatus('Recovered for review. Re-select any attachment. Save will check whether the original workflow or agent changed.');
+    }
+    function initializeRecovery() {
+      if (!window.mvDraftRecovery || recovery) return;
+      recovery = window.mvDraftRecovery.create({key:'workflow-builder:' + window.location.search,
+        host:document.querySelector('.wf'), read:recoveryPayload, restore:restoreRecovery});
+    }
+    var existingNames = null;
+    var pbLintTimer = null;
+    // shared saved box
+    var savedBox = document.getElementById('wf-saved');
+    var savedMsg = document.getElementById('wf-saved-msg');
+    var savedLink = document.getElementById('wf-saved-link');
+    // schedule panel (null when [features] scheduling is off)
+    var schedWrap = document.getElementById('wf-sched');
+    var schedCadence = document.getElementById('sched-cadence');
+    var schedTime = document.getElementById('sched-time');
+    var schedInterval = document.getElementById('sched-interval');
+    var schedParamsWrap = document.getElementById('sched-params-wrap');
+    var schedParams = document.getElementById('sched-params');
+    var schedBtn = document.getElementById('sched-btn');
+    var schedCronPreview = document.getElementById('sched-cron-preview');
+    var schedList = document.getElementById('sched-list');
+    var lastSavedTemplate = null;
+    // webhook-trigger panel (null when [features] triggers is off)
+    var trigWrap = document.getElementById('wf-trig');
+    var trigName = document.getElementById('trig-name');
+    var trigParamsWrap = document.getElementById('trig-params-wrap');
+    var trigParams = document.getElementById('trig-params');
+    var trigBtn = document.getElementById('trig-btn');
+    var trigMsg = document.getElementById('trig-msg');
+    var trigHowto = document.getElementById('trig-howto');
+    var trigList = document.getElementById('trig-list');
+    // connector picker
+    var tpBackdrop = document.getElementById('tool-picker');
+    var tpTitle = document.getElementById('tp-title');
+    var tpSearch = document.getElementById('tp-search');
+    var tpList = document.getElementById('tp-list');
+    var tpCount = document.getElementById('tp-count');
+    var tpDone = document.getElementById('tp-done');
+    var toolCatalog = null;       // [{name, description, risk}], fetched once
+    var pickerTarget = null;      // the tool <input> to insert into
+    var pickerRestrict = null;    // Set of names to limit to, or null for all
+    var RISK_RANK = { low: 0, medium: 1, high: 2 };
+    // Draft/refine is an unsaved operator workspace. Reading an existing pack,
+    // live governance validation, and Save remain the admin control boundary.
+    var PACK_EDITING = {{ pack_editing_allowed | tojson }};
+
+    var EXAMPLES = {
+      template: [
+        {% raw %}'Weekly competitive-intel report on {{competitor}} — summarize moves and email the team',
+        'Onboard a new {{role}} hire: build the checklist and draft a welcome email',
+        'Summarize {{document}} into a one-page brief with key risks and next steps',{% endraw %}
+      ],
+      playbook: [
+        'An accounts-payable clerk that reads, three-way-matches, and pays invoices',
+        'A support-triage agent that tags incoming tickets and routes them',
+        'A contract-review agent that flags risky clauses and drafts redlines',
+      ],
+    };
+
+    function productText(node, source, values) { if (window.LightworkI18n) window.LightworkI18n.set(node, source, values); else node.textContent=translated(source,values); }
+    function translated(source,values) { return window.LightworkI18n ? window.LightworkI18n.text(source,values) : String(source || '').replace(/\{(\w+)\}/g,function(all,key){return values && Object.prototype.hasOwnProperty.call(values,key)?String(values[key]):all;}); }
+    function localizedNumber(value) { return window.LightworkI18n ? window.LightworkI18n.number(value) : String(value); }
+    function appendSource(node,value) { var source=document.createElement('bdi');source.lang='und';source.dir='auto';source.dataset.userContent='';source.textContent=value;node.append(' ',source); }
+
+    function setStatus(msg, isErr, values) {
+      productText(status, msg || '', values);
+      status.style.color = isErr ? 'var(--danger)' : 'var(--muted)';
+    }
+    function playbookNoteSuffix(d) {
+      var notes = (d && Array.isArray(d.notes) ? d.notes : [])
+        .filter(function (n) { return typeof n === 'string' && n.trim(); })
+        .slice(0, 3);
+      return notes.length ? (' ' + notes.join(' ')) : '';
+    }
+    function setBusy(btn, on) {
+      btn.disabled = on;
+      var sp = btn.querySelector('.spinner');
+      if (sp) sp.hidden = !on;
+    }
+    function splitList(s) {
+      return (s || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+    }
+    function hidePanels() { preview.hidden = true; pbPreview.hidden = true; savedBox.hidden = true; }
+
+    function renderExamples() {
+      examples.textContent = '';
+      EXAMPLES[mode].forEach(function (ex) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip';
+        var lead = document.createElement('span');
+        lead.className = 'chip__lead';
+        productText(lead,'Try:');
+        b.appendChild(lead);
+        var example=document.createElement('span');productText(example,ex);b.appendChild(example);
+        b.addEventListener('click', function () { brief.value = translated(ex); brief.focus(); });
+        examples.appendChild(b);
+      });
+    }
+
+    function setForm(next) {
+      mode = next;
+      var isTpl = mode === 'template';
+      formTplBtn.classList.toggle('is-active', isTpl);
+      formTplBtn.setAttribute('aria-pressed', String(isTpl));
+      formPbBtn.classList.toggle('is-active', !isTpl);
+      formPbBtn.setAttribute('aria-pressed', String(!isTpl));
+      productText(noun, isTpl ? 'Describe the workflow' : 'Describe the agent');
+      if (!isTpl) {
+        if (PACK_EDITING) loadRoster();
+        loadTools();
+      }
+      renderExamples();
+      hidePanels();
+      // Switching artifact types must not strand an in-progress draft. Each
+      // editor keeps its own fields; reveal the prior workspace again when the
+      // operator switches back instead of requiring another provider call.
+      if (isTpl && templateWorkspaceStarted) preview.hidden = false;
+      if (!isTpl && playbookWorkspaceStarted) pbPreview.hidden = false;
+      setStatus(!isTpl && !PACK_EDITING
+        ? 'Draft mode — you can create and refine a first pass; an admin must validate and save it.'
+        : '');
+    }
+    formTplBtn.addEventListener('click', function () { setForm('template'); });
+    formPbBtn.addEventListener('click', function () { setForm('playbook'); });
+    if (!PACK_EDITING) {
+      // Keep authoring available while making the mutation boundary explicit.
+      formPbBtn.title = translated('Draft an unsaved first pass for admin review');
+      var pbSub = formPbBtn.querySelector('.seg__sub');
+      if (pbSub) productText(pbSub,'draft now; admin validates and saves');
+      pbSaveBtn.disabled = true;
+    }
+
+    fileBtn.addEventListener('click', function () { fileInput.click(); });
+    var sourceText = document.getElementById('wf-source-text'), sourceReview = document.getElementById('wf-source-review');
+    var sourceSerial = 0, sourceReady = false;
+    document.getElementById('wf-source-clear').addEventListener('click', function () {
+      sourceSerial++; fileInput.value=''; sourceText.value=''; sourceReview.hidden=true; sourceReady=false; fileName.textContent=''; draftBtn.disabled=false;
+    });
+    fileInput.addEventListener('change', async function () {
+      var serial=++sourceSerial; sourceReady=false; sourceReview.hidden=true; sourceText.value='';
+      if (!fileInput.files.length) return;
+      var file=fileInput.files[0]; draftBtn.disabled=true;
+      productText(fileName,'Reading document for your review.');
+      try {
+        if (file.size > 512000) throw new Error('Choose a document smaller than 512 KB, or paste the relevant section.');
+        var fd=new FormData(); fd.append('file',file);
+        var response=await fetch('/api/v1/workflows/extract-source',{method:'POST',body:fd});
+        var result=await response.json();
+        if (serial!==sourceSerial) return;
+        if (!response.ok) throw new Error(response.status===422 && typeof result.detail==='string' ? result.detail : plainErr(response,'read the document'));
+        if (typeof result.text!=='string' || result.started!==false) throw new Error('The extracted document could not be confirmed. Choose the file again.');
+        sourceText.value=result.text; sourceReview.hidden=false; sourceReady=true;
+        productText(fileName,result.truncated ? 'Only the first 8,000 characters fit. Review this excerpt or replace it with the relevant section.' : 'Document ready for review. Draft with AI sends the reviewed text.');
+        sourceText.focus();
+      } catch (error) { if (serial===sourceSerial) productText(fileName,error.message); }
+      finally { if (serial===sourceSerial) draftBtn.disabled=false; }
+    });
+
+    function showSaved(href, label) {
+      savedLink.setAttribute('href', href);
+      productText(savedLink,label);
+      preview.hidden = true; pbPreview.hidden = true;
+      if (schedWrap) schedWrap.hidden = true;   // template saves re-show it; playbooks don't
+      if (trigWrap) trigWrap.hidden = true;
+      savedBox.hidden = false;
+      savedBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // ---- template form ----
+    var wfEditingName = null;   // set when rehydrated via ?edit= (Save overwrites)
+    var wfEditWall = null;      // preserved budget_wall_seconds for an edited template
+    var wfEditGeneration = null; // compare-and-swap generation for safe edits
+    // Render an API error detail readably. A 422's `detail` is a Pydantic error
+    // ARRAY, not a string — assigning it to textContent would print "[object
+    // Object]", so flatten it to "field: message" here.
+    var FIELD_WORDS = { name: 'the short name', title: 'the title', body: 'the steps', params: 'the information to ask for',
+      budget_dollars: 'the spending limit', budget_wall_seconds: 'the time limit' };
+    function detailText(data, status, what) {
+      var d = data && data.detail;
+      if (Array.isArray(d) && d.length) {
+        var fields = d.map(function (e) {
+          var loc = (e && e.loc && e.loc.length) ? e.loc[e.loc.length - 1] : '';
+          return FIELD_WORDS[loc] || '';
+        }).filter(Boolean);
+        if (fields.length) return translated('Check {fields}, then try again.',{fields:fields.filter(function(f,i){return fields.indexOf(f)===i;}).map(function(field){return translated(field);}).join(', ')});
+      }
+      return plainErr({ status: status }, what || 'save the workflow');
+    }
+    function slugName(text) {
+      return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 48);
+    }
+    // Fill the short name from the title until someone types their own.
+    var nameTouched = false;
+    elName.addEventListener('input', function () { nameTouched = !!elName.value.trim(); });
+    elTitle.addEventListener('input', function () { if (!nameTouched && !wfEditingName) elName.value = slugName(elTitle.value); });
+    var pbNameTouched = false;
+    pbName.addEventListener('input', function () { pbNameTouched = !!pbName.value.trim(); });
+    pbDesc.addEventListener('input', function () { if (!pbNameTouched && !pbName.value.trim()) pbName.value = slugName(pbDesc.value.split(/\s+/).slice(0, 4).join(' ')); });
+    var copyDraft = document.getElementById('pb-copy-draft');
+    if (copyDraft) copyDraft.addEventListener('click', function () {
+      var pb = collectPlaybook();
+      var lines = ['Agent: ' + (pbName.value.trim() || '(no name yet)'), 'Description: ' + pb.description, '',
+        'Role and instructions:', pb.persona, '', 'Riskiest action allowed: ' + pb.max_risk,
+        'Allowed actions: ' + (pb.allow_tools.join(', ') || 'none'), 'Blocked actions: ' + (pb.deny_tools.join(', ') || 'none'), '', 'Steps:'];
+      pb.workflow.forEach(function (st, i) { lines.push((i + 1) + '. ' + st.name + (st.instruction ? ' — ' + st.instruction : '') + (st.gate ? ' (' + (GATE_LABEL[st.gate] || st.gate) + ')' : '')); });
+      mvCopy(lines.join('\n'));
+    });
+    function plainErr(failure, what) {
+      return window.mvErrorText ? window.mvErrorText(failure, what) : 'Could not ' + what + '. Try again.';
+    }
+    var inputFields = document.getElementById('wf-input-fields');
+    function addInputField(name, field) {
+      field=field || {}; var row=document.createElement('fieldset'); row.className='wf__field';
+      var legend=document.createElement('legend'); productText(legend,'Input field'); row.appendChild(legend);
+      function control(key,label,type,value) {
+        var wrap=document.createElement('label'); productText(wrap,label);
+        var input=document.createElement(type==='select' ? 'select' : 'input'); input.className='input'; input.dataset.inputKey=key;
+        if (type==='select') ['text','date','enum','number','email','connection'].forEach(function (kind) { var option=new Option('',kind);productText(option,{text:'Text',date:'Date',enum:'Choice',number:'Number',email:'Email',connection:'Connected account'}[kind]);input.appendChild(option); });
+        else input.type=type;
+        if (type==='checkbox') input.checked=value; else input.value=value || '';
+        input.maxLength=key==='help' ? 500 : 100; wrap.appendChild(input); row.appendChild(wrap); return input;
+      }
+      control('name','Name used in the steps','text',name);
+      control('label','Label shown to the person','text',field.label || name);
+      control('type','Type','select',field.type || 'text');
+      control('required','Required','checkbox',field.required !== false);
+      control('default','Default value (optional)','text',field.default);
+      control('choices','Choice options (separate with commas)','text',(field.choices || []).join(', '));
+      control('help','Help beside the field','text',field.help);
+      control('condition_field','Show only when this other input matches (optional)','text',field.show_when && field.show_when.field);
+      control('condition_value','Matching value','text',field.show_when && field.show_when.value);
+      var remove=document.createElement('button'); remove.type='button'; remove.className='btn btn--ghost'; productText(remove,'Remove field definition');
+      remove.addEventListener('click',function () { row.remove(); }); row.appendChild(remove); inputFields.appendChild(row);
+    }
+    document.getElementById('wf-add-input').addEventListener('click',function () { addInputField('',{}); });
+    function collectInputFields() {
+      var fields={};
+      inputFields.querySelectorAll('fieldset').forEach(function (row) {
+        var values={}; row.querySelectorAll('[data-input-key]').forEach(function (input) { values[input.dataset.inputKey]=input.type==='checkbox' ? input.checked : input.value.trim(); });
+        if (!/^[A-Za-z_]\w*$/.test(values.name) || fields[values.name]) throw new Error('Each input needs a unique name using letters, numbers and underscores.');
+        var field={type:values.type,label:values.label,required:values.required,default:values.default,help:values.help,choices:values.choices ? values.choices.split(',').map(function (v) { return v.trim(); }).filter(Boolean) : []};
+        if (values.condition_field) field.show_when={field:values.condition_field,value:values.condition_value};
+        fields[values.name]=field;
+      });
+      return Object.keys(fields).length ? {version:1,fields:fields} : {};
+    }
+    function renderDraft(d, shouldScroll) {
+      templateWorkspaceStarted = true;
+      elName.value = d.name || '';
+      elTitle.value = d.title || '';
+      elSteps.value = d.body || '';
+      elParams.value = (d.params || []).join(', ');
+      inputFields.replaceChildren();
+      Object.entries((d.parameter_schema || {}).fields || {}).forEach(function (entry) { addInputField(entry[0],entry[1]); });
+      elBudget.value = (d.budget_dollars != null) ? d.budget_dollars : '';
+      if (recovery) recovery.changed();
+      if (d.budget_wall_seconds != null) wfEditWall = d.budget_wall_seconds;
+      preview.hidden = false; pbPreview.hidden = true; savedBox.hidden = true;
+      if (shouldScroll !== false) {
+        preview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+    function stepsFromBody(body) {
+      // Recover the ordered steps from the numbered "## Steps" markdown so a
+      // refine round-trip hands the model a real steps[] array (not just prose,
+      // which risks dropped/reordered steps).
+      var out = [];
+      (body || '').split('\n').forEach(function (line) {
+        var m = /^\s*\d+\.\s+(.*\S)\s*$/.exec(line);
+        if (m) out.push(m[1]);
+      });
+      return out;
+    }
+    function collectTemplate() {
+      var t = {
+        name: elName.value.trim(), title: elTitle.value.trim(), body: elSteps.value,
+        params: splitList(elParams.value), budget_dollars: elBudget.value.trim() === '' ? null : Number(elBudget.value),
+      };
+      t.parameter_schema=collectInputFields();
+      Object.keys(t.parameter_schema.fields || {}).forEach(function (name) { if (!t.params.includes(name)) t.params.push(name); });
+      // Preserve the wall-time cap of an edited template (the form has no field
+      // for it) so a save round-trip can't reset it to the server default.
+      if (wfEditWall != null) t.budget_wall_seconds = wfEditWall;
+      // Overwrite only when saving back to the template we opened for edit; a
+      // fresh name must not silently clobber an existing one.
+      t.overwrite = !!(wfEditingName && t.name === wfEditingName);
+      if (t.overwrite && wfEditGeneration != null) {
+        t.expected_generation = wfEditGeneration;
+      }
+      return t;
+    }
+    async function postTemplate(payload) {
+      // A refusal's status and body drive the conflict and name messages below.
+      try { return { resp: { ok: true, status: 200 }, data: (await window.mvFetchJSON('/api/v1/workflows', { method: 'POST', body: payload })) || {} }; }
+      catch (error) { if (!error.status) throw error; return { resp: { ok: false, status: error.status }, data: error.payload || {} }; }
+    }
+
+    // The shared form-field pattern finds missing or wrong answers first.
+    function formReady(form) { return !form || !window.mvFieldErrors || window.mvFieldErrors.validate(form); }
+    function fieldProblem(form, field, message) {
+      if (window.mvFieldErrors && form) { setStatus(''); window.mvFieldErrors.show(form, [{field: field, message: translated(message)}]); }
+      else setStatus(message, true);
+    }
+    ['wf-draft-form', 'wf-template-form', 'pb-form'].forEach(function (id) {
+      var editor = document.getElementById(id);
+      if (editor) editor.addEventListener('submit', function (event) { event.preventDefault(); });
+    });
+    saveBtn.addEventListener('click', async function () {
+      if (!formReady(document.getElementById('wf-template-form'))) return;
+      var payload = collectTemplate();
+      if (!payload.name && payload.title) { payload.name = slugName(payload.title); elName.value = payload.name; }
+      if (!payload.name) { setStatus('Give the workflow a title.', true); elTitle.focus(); return; }
+      saveBtn.disabled = true;
+      setStatus('Saving…');
+      try {
+        var r = await postTemplate(payload);
+        if (r.resp.status === 409) {
+          if (payload.overwrite) {
+            // This edit carried expected_generation and lost the CAS race.
+            // Never retry it against a newer version the operator has not seen.
+            setStatus('Not saved — this workflow changed after you opened it. Reload the latest version before applying your edits.', true);
+            return;
+          }
+          // A fresh name collision has no reviewed generation token. Open the
+          // existing workflow through the edit route, which supplies one,
+          // instead of turning confirmation into a blind overwrite.
+          if (await mvConfirm('A workflow named {name} already exists. Open its latest version for conflict-safe editing?', { okText: 'Open latest', productCopy:true, values:{name:payload.name} })) {
+            window.location.assign('/workflow-builder?edit=' + encodeURIComponent(payload.name));
+          } else {
+            setStatus('Not saved — pick a different name.', true);
+          }
+          return;
+        }
+        if (!r.resp.ok) { setStatus(detailText(r.data, r.resp.status), true); return; }
+        var data = r.data;
+        setStatus('');
+        wfEditingName = data.name;   // subsequent saves overwrite this one
+        wfEditGeneration = data.generation;
+        document.dispatchEvent(new CustomEvent('lightwork:workflow-saved', {detail:{name:data.name}}));
+        if (recovery) recovery.changed();
+        productText(savedMsg,data.params && data.params.length ? 'Saved {name} as a reusable workflow. It asks for: {inputs}.' : 'Saved {name} as a reusable workflow.',{name:data.title || data.name,inputs:(data.params || []).join(', ')});
+        var runNow = document.getElementById('wf-run-now');
+        if (runNow) runNow.href = '/chat?title=' + encodeURIComponent(data.title || data.name);
+        showSaved('/templates', 'Open Templates');
+        showScheduling({ name: data.name, params: data.params || [], parameter_schema: data.parameter_schema || {} });
+        showTriggers({ name: data.name, params: data.params || [], parameter_schema: data.parameter_schema || {} });
+      } catch (e) {
+        setStatus(plainErr(e, 'save the workflow'), true);
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    // ---- schedule a saved template to run on a cron (feature-gated) ----
+    // The schedule is chosen in local time and stored as a UTC timetable.
+    // Converting keeps the weekday right when the local day differs from UTC.
+    function toUtc(h, m) {
+      var d = new Date(); d.setHours(h, m, 0, 0);
+      var shift = d.getUTCDay() - d.getDay();
+      if (shift > 1) shift = -1; else if (shift < -1) shift = 1;
+      return { h: d.getUTCHours(), m: d.getUTCMinutes(), shift: shift };
+    }
+    function shiftDays(days, shift) { return days.map(function (x) { return String(((Number(x) + shift) % 7 + 7) % 7); }); }
+    function currentCron() {
+      var cad = schedCadence.value;
+      if (!cad) return null;
+      if (cad === 'hourly') {
+        var n = parseInt(schedInterval.value, 10);
+        if (isNaN(n) || n < 1) n = 1; if (n > 23) n = 23;
+        return '0 */' + n + ' * * *';
+      }
+      var parts = (schedTime.value || '09:00').split(':');
+      var h = parseInt(parts[0], 10); var m = parseInt(parts[1], 10);
+      if (isNaN(h)) h = 9;
+      if (isNaN(m)) m = 0;
+      var u = toUtc(h, m);
+      if (cad === 'daily') return u.m + ' ' + u.h + ' * * *';
+      if (cad === 'weekdays') return u.m + ' ' + u.h + ' * * ' + (u.shift ? shiftDays(['1', '2', '3', '4', '5'], u.shift).join(',') : '1-5');
+      if (cad === 'days') {
+        var days = Array.prototype.filter.call(document.querySelectorAll('#sched-days-wrap input[type=checkbox]'), function (c) { return c.checked; })
+          .map(function (c) { return c.value; });
+        if (!days.length) return null;
+        return u.m + ' ' + u.h + ' * * ' + shiftDays(days, u.shift).join(',');
+      }
+      if (cad === 'monthly') {
+        var dom = parseInt((document.getElementById('sched-dom') || {}).value, 10) || 1;
+        dom = Math.min(28, Math.max(1, dom + u.shift));
+        return u.m + ' ' + u.h + ' ' + dom + ' * *';
+      }
+      return null;
+    }
+    // A stored UTC timetable in words, in the viewer's time.
+    var DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    function cronWords(cron) {
+      var f = String(cron || '').trim().split(/\s+/);
+      if (f.length !== 5) return translated('On a custom timetable');
+      if (f[0] === '0' && /^\*\/\d+$/.test(f[1]) && f[2] === '*' && f[3] === '*' && f[4] === '*') return translated('Every {count} hours',{count:localizedNumber(f[1].slice(2))});
+      if (!/^\d+$/.test(f[0]) || !/^\d+$/.test(f[1]) || f[3] !== '*') return translated('On a custom timetable');
+      var d = new Date(); d.setUTCHours(Number(f[1]), Number(f[0]), 0, 0);
+      var shift = d.getDay() - d.getUTCDay(); if (shift > 1) shift = -1; else if (shift < -1) shift = 1;
+      var at = d.toLocaleTimeString(window.LightworkI18n ? window.LightworkI18n.locale : undefined, { hour: 'numeric', minute: '2-digit' });
+      if (f[2] === '*' && f[4] === '*') return translated('Every day at {time}',{time:at});
+      if (f[2] === '*' && /^[0-7](,[0-7])*$|^1-5$/.test(f[4])) {
+        var days = f[4] === '1-5' ? ['1', '2', '3', '4', '5'] : f[4].split(',');
+        days = shiftDays(days, shift).map(Number).sort();
+        if (days.join(',') === '1,2,3,4,5') return translated('Weekdays at {time}',{time:at});
+        return translated('Every {days} at {time}',{days:days.map(function(x){return window.LightworkI18n ? new Intl.DateTimeFormat(window.LightworkI18n.locale,{weekday:'long'}).format(new Date(2024,0,7+(x%7))) : DAY_NAMES[x%7];}).join(', '),time:at});
+      }
+      if (/^\d+$/.test(f[2]) && f[4] === '*') return translated('Monthly on day {day} at {time}',{day:localizedNumber(Number(f[2])+shift),time:at});
+      return translated('On a custom timetable');
+    }
+    function syncSchedInputs() {
+      // Show only the input(s) the chosen cadence needs.
+      var cad = schedCadence.value;
+      var show = { 'sched-time-wrap': ['daily', 'weekdays', 'days', 'monthly'].indexOf(cad) >= 0,
+        'sched-interval-wrap': cad === 'hourly', 'sched-dom-wrap': cad === 'monthly', 'sched-days-wrap': cad === 'days' };
+      Object.keys(show).forEach(function (id) { var e = document.getElementById(id); if (e) e.hidden = !show[id]; });
+    }
+    var fmtWhen = function(value){return window.LightworkI18n ? window.LightworkI18n.formatDate(value) : window.mvWhen(value);};
+    function automationInput(parent, p, i, prefix, schema, changed) {
+      var spec=(schema && schema.fields || {})[p] || {required:true}, id=prefix+'-param-'+i;
+      var label=document.createElement('label');label.htmlFor=id;label.lang='und';label.dir='auto';label.textContent=spec.label || p;
+      var input=document.createElement(spec.type==='enum'||spec.type==='connection'?'select':'input');
+      input.id=id;input.className='input '+prefix+'-param';input.dataset.param=p;input.required=spec.required!==false;
+      input.dataset.showWhen=JSON.stringify(spec.show_when || {});
+      if(spec.type==='enum'){var empty=new Option('','');productText(empty,'Choose an option');input.append(empty);(spec.choices||[]).forEach(function(choice){var option=new Option(choice,choice);option.lang='und';input.append(option);});}
+      else if(spec.type!=='connection'){input.type=['date','number','email'].includes(spec.type)?spec.type:'text';if(spec.type==='number')input.step='any';}
+      input.value=spec.default||'';input.addEventListener('input',changed);input.addEventListener('change',changed);
+      var row=document.createElement('div');row.dataset.parameterRow=p;row.append(label,input);parent.append(row);
+      if(spec.help){var help=document.createElement('p');help.lang='und';help.textContent=spec.help;row.append(help);}
+      if(spec.type==='connection'){input.dataset.connectedAccount='';window.LightworkTemplateConnections.mount(input);}
+    }
+    function automationValues(parent, selector){
+      var values={}, ok=true;parent.querySelectorAll(selector).forEach(function(input){values[input.dataset.param]=input.value;});
+      parent.querySelectorAll(selector).forEach(function(input){
+        var when=JSON.parse(input.dataset.showWhen||'{}'), hidden=Boolean(when.field&&values[when.field]!==when.value);
+        input.closest('[data-parameter-row]').hidden=hidden;input.disabled=hidden;
+        if(hidden)values[input.dataset.param]='';else if(!input.checkValidity())ok=false;
+      });return ok?values:null;
+    }
+    function renderSchedParams(params) {
+      schedParams.textContent = '';
+      if (!params || !params.length) { schedParamsWrap.hidden = true; return; }
+      schedParamsWrap.hidden = false;
+      params.forEach(function(p,i){automationInput(schedParams,p,i,'sched',lastSavedTemplate.parameter_schema,updateSchedBtn);});
+    }
+    function schedParamValues() {return automationValues(schedParams,'.sched-param');}
+
+    function updateSchedBtn() {
+      syncSchedInputs();
+      var cron = currentCron();
+      schedBtn.disabled = !cron || schedParamValues() === null;
+      productText(schedCronPreview,cron ? 'Runs: {schedule}' : '',{schedule:cronWords(cron)});
+    }
+    function showScheduling(tpl) {
+      if (!schedWrap) return;             // no-op when [features] scheduling is off
+      lastSavedTemplate = tpl;
+      schedCadence.value = '';
+      schedCronPreview.textContent = '';
+      renderSchedParams(tpl.params);
+      updateSchedBtn();
+      schedWrap.hidden = false;
+      loadSchedules();
+    }
+    async function scheduleIt() {
+      if (!lastSavedTemplate) return;
+      var cron = currentCron(); if (!cron) return;
+      var params = schedParamValues(); if (params === null) return;
+      schedBtn.disabled = true;
+      productText(schedCronPreview,'Scheduling…');
+      try {
+        // The server builds and checks the timetable in the person's own time zone.
+        var cad = schedCadence.value, zone = 'UTC';
+        try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { zone = 'UTC'; }
+        var days = Array.prototype.filter.call(document.querySelectorAll('#sched-days-wrap input[type=checkbox]'), function (c) { return c.checked; })
+          .map(function (c) { return Number(c.value); });
+        var timetable = { repeat: cad === 'days' ? 'weekly' : cad, at: /^\d{2}:\d{2}$/.test(schedTime.value) ? schedTime.value : '09:00',
+          days: days, day_of_month: parseInt((document.getElementById('sched-dom') || {}).value, 10) || 1,
+          every_hours: Math.min(12, Math.max(1, parseInt(schedInterval && schedInterval.value, 10) || 1)), zone: zone };
+        var resp = await fetch('/api/v1/schedules/add', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ what: 'workflow', template: lastSavedTemplate.name, params: params, timetable: timetable }),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { productText(schedCronPreview,plainErr(resp, 'save the schedule')); mvFail(resp, 'save the schedule'); return; }
+        schedCadence.value = '';
+        productText(schedCronPreview,'Scheduled — next run {time}.',{time:fmtWhen(data.next_run)});
+        mvToast(translated('Schedule saved — next run {time}',{time:fmtWhen(data.next_run)}));
+        loadSchedules();
+      } catch (e) {
+        productText(schedCronPreview,plainErr(e, 'save the schedule'));
+      } finally {
+        updateSchedBtn();
+      }
+    }
+    async function loadSchedules() {
+      if (!schedList) return;
+      try {
+        var data = (await window.mvFetchJSON('/api/v1/schedules').catch(function () { return {}; })) || {};
+        renderSchedList(data.schedules || []);
+      } catch (e) { /* the list is best-effort */ }
+    }
+    function renderSchedList(items) {
+      schedList.textContent = '';
+      items.forEach(function (s) {
+        var li = document.createElement('li');
+        li.className = 'mv-row';
+        var span = document.createElement('span');
+        span.className = 'mv-row__main';
+        var title = document.createElement('strong');
+        if(s.title){title.textContent=s.title;title.lang='und';title.dir='auto';title.dataset.userContent='';}else productText(title,'Untitled task');
+        var when = document.createElement('span');
+        when.className = 'wf__sched-when';
+        if(s.zone)productText(when,'Next {time} ({zone} time)',{time:fmtWhen(s.next_run)||translated('Run soon'),zone:String(s.zone).replace(/_/g,' ')});
+        else if(fmtWhen(s.next_run))productText(when,'{schedule} · next {time}',{schedule:cronWords(s.cron),time:fmtWhen(s.next_run)});
+        else productText(when,cronWords(s.cron));
+        when.prepend(' · ');
+        span.appendChild(title); span.appendChild(when);
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn btn--ghost btn--danger';
+        rm.setAttribute('aria-label', translated('Delete the schedule for {name}',{name:s.title||translated('Untitled task')}));
+        productText(rm,'Delete schedule');
+        rm.addEventListener('click', function () { cancelSchedule(s.id, li, s); });
+        li.appendChild(span); li.appendChild(rm);
+        schedList.appendChild(li);
+      });
+    }
+    async function cancelSchedule(id, li, s) {
+      var url = '/api/v1/schedules/' + encodeURIComponent(id), next = Number(s && s.next_run) * 1000;
+      // Too close to its next run for a safe undo window: ask, then delete now.
+      if (next && next - Date.now() < 30000) {
+        if (!(await mvConfirm('Delete this schedule? Its next run is due within a minute, so it is deleted now and can’t be brought back.', { okText: 'Delete schedule', productCopy:true }))) return;
+        try {
+          var resp = await fetch(url, { method: 'DELETE' });
+          if (resp.ok) { if (li) li.remove(); mvToast(translated('Schedule deleted')); } else { mvFail(resp, 'delete the schedule'); }
+        } catch (e) { mvFail(e, 'delete the schedule'); }
+        return;
+      }
+      // One action with a way back: sent when the Undo time is up.
+      if (li) li.hidden = true;
+      mvUndo(translated('Schedule deleted'), {
+        action: 'delete the schedule', latest: next ? next - 15000 : undefined,
+        run: function (keepalive) { return fetch(url, { method: 'DELETE', keepalive: keepalive }); },
+        undo: function () { if (li) { li.hidden = false; var b = li.querySelector('button'); if (b) b.focus(); } },
+        done: function () { if (li) li.remove(); }
+      });
+    }
+    if (schedWrap) {
+      schedCadence.addEventListener('change', updateSchedBtn);
+      schedTime.addEventListener('input', updateSchedBtn);
+      if (schedInterval) schedInterval.addEventListener('change', updateSchedBtn);
+      var schedDom = document.getElementById('sched-dom');
+      if (schedDom) schedDom.addEventListener('change', updateSchedBtn);
+      Array.prototype.forEach.call(document.querySelectorAll('#sched-days-wrap input[type=checkbox]'), function (c) {
+        c.addEventListener('change', updateSchedBtn);
+      });
+      schedBtn.addEventListener('click', scheduleIt);
+    }
+
+    // ---- create a webhook trigger for a saved template (feature-gated) ----
+    var trigTpl = null;
+    function renderTrigParams(params) {
+      trigParams.textContent = '';
+      if (!params || !params.length) { trigParamsWrap.hidden = true; return; }
+      trigParamsWrap.hidden = false;
+      params.forEach(function(p,i){automationInput(trigParams,p,i,'trig',trigTpl.parameter_schema,updateTrigBtn);});
+    }
+    function trigParamValues() {return automationValues(trigParams,'.trig-param');}
+
+    function updateTrigBtn() { trigBtn.disabled = trigParamValues() === null; }
+    function showTriggers(tpl) {
+      if (!trigWrap) return;            // no-op when [features] triggers is off
+      trigTpl = tpl;
+      trigName.value = '';
+      trigMsg.textContent = '';
+      trigHowto.hidden = true;
+      renderTrigParams(tpl.params);
+      updateTrigBtn();
+      trigWrap.hidden = false;
+      loadTriggers();
+    }
+    async function createTrigger() {
+      if (!trigTpl) return;
+      var params = trigParamValues(); if (params === null) return;
+      trigBtn.disabled = true;
+      productText(trigMsg,'Creating…');
+      try {
+        var data;
+        try {
+          data = (await window.mvFetchJSON('/api/v1/triggers', { method: 'POST',
+            body: { template: trigTpl.name, params: params, name: trigName.value.trim() || null } }, 'set that up')) || {};
+        } catch (refused) {
+          if (!refused.status) throw refused;
+          productText(trigMsg,plainErr(refused, 'set that up')); mvFail(refused, 'set that up'); return;
+        }
+        productText(trigMsg,'Ready.');
+        mvToast(translated('{name} can now be started by another app',{name:data.name}));
+        showHowto(data);
+        loadTriggers();
+      } catch (e) {
+        productText(trigMsg,plainErr(e, 'set that up'));
+      } finally {
+        updateTrigBtn();
+      }
+    }
+    var lastTrigName = '';
+    function showHowto(data) {
+      var url = window.location.origin + (data.webhook_url || '/webhook/run');
+      lastTrigName = data.name;
+      document.getElementById('trig-url').textContent = url;
+      var warn = document.getElementById('trig-secret-warn');
+      if (warn) warn.hidden = !!data.secret_configured;
+      trigHowto.hidden = false;
+    }
+    async function loadTriggers() {
+      if (!trigList) return;
+      try {
+        var data = (await window.mvFetchJSON('/api/v1/triggers').catch(function () { return {}; })) || {};
+        renderTrigList(data.triggers || []);
+      } catch (e) { /* the list is best-effort */ }
+    }
+    function renderTrigList(items) {
+      trigList.textContent = '';
+      items.forEach(function (t) {
+        var li = document.createElement('li');
+        li.className = 'mv-row';
+        var span = document.createElement('span');
+        span.className = 'mv-row__main';
+        var title = document.createElement('strong');
+        title.textContent = t.name;
+        title.lang='und';title.dir='auto';title.dataset.userContent='';
+        var sub = document.createElement('span');
+        sub.className = 'wf__sched-when';
+        var pcount = t.params ? Object.keys(t.params).length : 0;
+        productText(sub,'Runs {name}',{name:window.mvHuman?window.mvHuman(t.template||''):(t.template||'')});sub.prepend(' · ');
+        if(pcount){var answerCount=document.createElement('span');productText(answerCount,pcount===1?' · {count} saved answer':' · {count} saved answers',{count:localizedNumber(pcount)});sub.append(answerCount);}
+        span.appendChild(title); span.appendChild(sub);
+        var rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'btn btn--ghost btn--danger';
+        rm.setAttribute('aria-label', translated('Delete the start {name}',{name:t.name}));
+        productText(rm,'Delete start');
+        rm.addEventListener('click', function () { deleteTrigger(t.name, li); });
+        li.appendChild(span); li.appendChild(rm);
+        trigList.appendChild(li);
+      });
+    }
+    function deleteTrigger(name, li) {
+      // One action with a way back: other apps can start this
+      // workflow until the Undo time is up, then the start is deleted.
+      if (li) li.hidden = true;
+      mvUndo(translated('{name} deleted. Other apps can no longer start this workflow.', {name: name}), {
+        action: 'delete it',
+        run: function (keepalive) { return fetch('/api/v1/triggers/' + encodeURIComponent(name), { method: 'DELETE', keepalive: keepalive }); },
+        undo: function () { if (li) { li.hidden = false; var b = li.querySelector('button'); if (b) b.focus(); } },
+        done: function () { if (li) li.remove(); }
+      });
+    }
+    if (trigWrap) {
+      trigName.addEventListener('input', updateTrigBtn);
+      trigBtn.addEventListener('click', createTrigger);
+      var urlCopy = document.getElementById('trig-url-copy');
+      if (urlCopy) urlCopy.addEventListener('click', function () { mvCopy(document.getElementById('trig-url').textContent); });
+      var nameCopy = document.getElementById('trig-name-copy');
+      if (nameCopy) nameCopy.addEventListener('click', function () { mvCopy(lastTrigName); });
+    }
+
+    // ---- playbook form ----
+    var GATE_LABEL = { review: 'Someone reviews', approval: 'Someone must approve' };
+    function paintGate(row) {
+      var gate = row.querySelector('.pb-step__gate').value;
+      row.dataset.gate = gate || '';
+      var badge = row.querySelector('.pb-gatebadge');
+      if (!gate) { badge.hidden = true; return; }
+      badge.hidden = false;
+      productText(badge,GATE_LABEL[gate] || gate);
+      // Approval is the platform's signature governance control — paint it brand,
+      // not the amber/warn reserved for risk/degraded states.
+      badge.className = 'badge pb-gatebadge ' + (gate === 'approval' ? 'gov' : 'info');
+    }
+    function renumber() {
+      var steps = pbSteps.querySelectorAll('.pb-step');
+      steps.forEach(function (row, i) {
+        row.querySelector('.pb-step__num').textContent = localizedNumber(i+1);
+      });
+      pbFlowEnd.hidden = !steps.length;   // the "Task complete" node appears once there are steps
+    }
+    function moveStep(row, dir) {
+      if (dir < 0 && row.previousElementSibling) pbSteps.insertBefore(row, row.previousElementSibling);
+      else if (dir > 0 && row.nextElementSibling) pbSteps.insertBefore(row.nextElementSibling, row);
+      renumber(); schedulePbLint();
+    }
+    function addStep(step) {
+      step = step || {};
+      var row = document.createElement('div');
+      row.className = 'pb-step';
+      row.innerHTML =
+        '<div class="pb-step__head">'
+        + '<span class="pb-step__num"></span>'
+        + '<input class="input pb-step__name" placeholder="Step name" aria-label="Step name" />'
+        + '<select class="input pb-step__gate" aria-label="Does a person check this step?">'
+        + '<option value="">No check</option>'
+        + '<option value="review">Someone reviews</option>'
+        + '<option value="approval">Someone must approve</option>'
+        + '</select>'
+        + '<span class="pb-step__move">'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__up">Move up</button>'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__down">Move down</button>'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__rm">Remove</button>'
+        + '</span>'
+        + '</div>'
+        + '<textarea lang="und" dir="auto" data-user-content class="input pb-step__inst" rows="2" placeholder="What the agent does at this step" aria-label="Step instruction"></textarea>'
+        + '<div class="pb-step__head" style="margin: 0;">'
+        + '<input class="input pb-step__tools" style="flex: 1 1 auto;" placeholder="Actions used here — choose them with the button" aria-label="Actions used in this step" />'
+        + '<button type="button" class="btn btn--ghost pb-step__btn pb-step__browse">Choose actions…</button>'
+        + '<span class="badge pb-gatebadge" hidden></span>'
+        + '</div>';
+      productText(row.querySelector('.pb-step__up'), 'Move up');
+      productText(row.querySelector('.pb-step__down'), 'Move down');
+      productText(row.querySelector('.pb-step__rm'), 'Remove');
+      productText(row.querySelector('.pb-step__browse'), 'Choose actions…');
+      row.querySelectorAll('.pb-step__gate option').forEach(function(option){productText(option,option.textContent);});
+      if(window.LightworkI18n) {
+        row.querySelectorAll('input,textarea,select').forEach(function(field){
+          var label=field.getAttribute('aria-label'),placeholder=field.getAttribute('placeholder');
+          if(label){var described=document.createElement('span');described.className='sr-only';described.id='wf-step-label-'+crypto.randomUUID();productText(described,label);field.before(described);field.setAttribute('aria-labelledby',described.id);field.removeAttribute('aria-label');}
+          if(placeholder)field.setAttribute('placeholder',window.LightworkI18n.text(placeholder));
+          if(field.tagName!=='SELECT'){field.lang='und';field.dir='auto';field.dataset.userContent='';}
+        });
+      }
+      // assign untrusted values via properties (never string-interpolated into HTML)
+      row.querySelector('.pb-step__name').value = step.name || '';
+      row.querySelector('.pb-step__inst').value = step.instruction || '';
+      row.querySelector('.pb-step__tools').value = (step.tools || []).join(', ');
+      row.querySelector('.pb-step__gate').value = step.gate || '';
+      row.querySelector('.pb-step__gate').addEventListener('change', function () { paintGate(row); });
+      row.querySelector('.pb-step__up').addEventListener('click', function () { moveStep(row, -1); });
+      row.querySelector('.pb-step__down').addEventListener('click', function () { moveStep(row, 1); });
+      row.querySelector('.pb-step__rm').addEventListener('click', function () {
+        // Re-home focus before removing the focused ✕ button, so keyboard users
+        // aren't dropped to <body>: prefer the previous step's ✕, else Add step.
+        var prev = row.previousElementSibling;
+        var landing = (prev && prev.querySelector('.pb-step__rm')) || document.getElementById('pb-add-step');
+        row.remove(); renumber(); schedulePbLint();
+        if (landing && typeof landing.focus === 'function') landing.focus();
+      });
+      row.querySelector('.pb-step__browse').addEventListener('click', function () {
+        openPicker(row.querySelector('.pb-step__tools'), allowSet(), 'Tools for this step');
+      });
+      pbSteps.appendChild(row);
+      paintGate(row);
+    }
+    pbAddBtn.addEventListener('click', function () { addStep(); renumber(); schedulePbLint(); });
+
+    function renderPlaybook(d, shouldScroll) {
+      playbookWorkspaceStarted = true;
+      if (recovery) recovery.changed();
+      pbName.value = d.name || '';
+      pbDesc.value = d.description || '';
+      pbPersona.value = d.persona || '';
+      pbAllow.value = (d.allow_tools || []).join(', ');
+      pbDeny.value = (d.deny_tools || []).join(', ');
+      renderToolSelections();
+      pbRisk.value = d.max_risk || 'medium';
+      pbSteps.innerHTML = '';
+      (d.workflow || []).forEach(function (s) { addStep(s); });
+      if (!pbSteps.children.length) addStep();
+      renumber();
+      pbPreview.hidden = false; preview.hidden = true; savedBox.hidden = true;
+      schedulePbLint();
+      if (shouldScroll !== false) {
+        pbPreview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function collectPlaybook() {
+      var steps = [];
+      pbSteps.querySelectorAll('.pb-step').forEach(function (row) {
+        var name = row.querySelector('.pb-step__name').value.trim();
+        if (!name) return;
+        steps.push({
+          name: name,
+          instruction: row.querySelector('.pb-step__inst').value.trim(),
+          tools: splitList(row.querySelector('.pb-step__tools').value),
+          gate: row.querySelector('.pb-step__gate').value || null,
+        });
+      });
+      return {
+        description: pbDesc.value.trim(), persona: pbPersona.value,
+        allow_tools: splitList(pbAllow.value), deny_tools: splitList(pbDeny.value),
+        max_risk: pbRisk.value, workflow: steps,
+      };
+    }
+    // When editing an existing agent, carry forward the override fields the
+    // builder can't show (set by ?edit_agent=) so saving doesn't drop them.
+    var pbEditPreserve = null;
+    function playbookPayload() {
+      return Object.assign(collectPlaybook(), pbEditPreserve || {}, {
+        expected_generation:pbEditingName === pbName.value.trim() ? pbEditGeneration : 'new'
+      });
+    }
+
+    // --- live governance feedback (reuses the agent-override lint endpoint) ---
+    async function loadRoster() {
+      if (existingNames) return;
+      existingNames = new Set();
+      try {
+        var data = (await window.mvFetchJSON('/api/v1/agents').catch(function () { return {}; })) || {};
+        (data.agents || []).forEach(function (a) { if (a && a.name) existingNames.add(a.name); });
+      } catch (e) { /* the collision hint is best-effort */ }
+    }
+    function lintLine(cls, text) {
+      var li = document.createElement('li');
+      li.className = cls;
+      li.textContent = text;   // server/user text -> textContent, never innerHTML
+      return li;
+    }
+    function renderLint(data, name) {
+      pbLintEl.textContent = '';
+      pbGovern.classList.remove('is-ok', 'is-err');
+      if (!PACK_EDITING) {
+        pbLintEl.appendChild(lintLine(
+          'warn',
+          'Draft only — a dashboard admin must run governance validation and save this playbook.'
+        ));
+        pbSaveBtn.disabled = true;
+        return;
+      }
+      if (!data) { pbSaveBtn.disabled = false; return; }
+      var errs = data.errors || [], warns = data.warnings || [];
+      if (existingNames && existingNames.has(name)) {
+        pbLintEl.appendChild(lintLine('warn', '“' + name + '” already exists — saving customizes that agent.'));
+      }
+      errs.forEach(function (e) { pbLintEl.appendChild(lintLine('err', e)); });
+      warns.forEach(function (w) { pbLintEl.appendChild(lintLine('warn', w)); });
+      if (!errs.length && !warns.length) {
+        pbLintEl.appendChild(lintLine('ok', 'Looks sound — no governance issues.'));
+        pbGovern.classList.add('is-ok');
+      } else if (errs.length) {
+        pbGovern.classList.add('is-err');
+      }
+      pbSaveBtn.disabled = errs.length > 0;   // a pack that fails lint is refused on save
+    }
+    async function pbLint() {
+      if (!PACK_EDITING) { renderLint(null); return; }
+      var name = pbName.value.trim();
+      if (!name) { renderLint(null); return; }
+      await loadRoster();
+      try {
+        var data = await window.mvFetchJSON('/api/v1/agents/' + encodeURIComponent(name) + '/validate', {
+          method: 'POST', body: playbookPayload(),
+        }).catch(function () { return null; });
+        renderLint(data, name);
+      } catch (e) { renderLint(null); }
+    }
+    function schedulePbLint() { clearTimeout(pbLintTimer); pbLintTimer = setTimeout(pbLint, 500); }
+    pbPreview.addEventListener('input', schedulePbLint);
+    pbPreview.addEventListener('change', schedulePbLint);
+
+    var pbDecisionGeneration = 0, pbDecisionReview = document.getElementById('pb-specialist-review');
+    function invalidatePbDecision(event) {
+      if (event && pbDecisionReview.contains(event.target)) return;
+      pbDecisionGeneration++; pbDecisionReview.replaceChildren();
+    }
+    pbPreview.addEventListener('input', invalidatePbDecision);
+    pbPreview.addEventListener('change', invalidatePbDecision);
+    function clearPbDecision(event) {
+      if (event && event.type === 'lightwork:copilot-context-changed' && event.detail && event.detail.reason === 'selection') return;
+      invalidatePbDecision(); pbSaveBtn.disabled = true; document.getElementById('pb-acknowledge-original').checked = false;
+    }
+    ['lightwork:account-context-changed', 'lightwork:workspace-changed', 'lightwork:authority-changed', 'lightwork:copilot-context-changed'].forEach(function (event) { document.addEventListener(event, clearPbDecision); });
+    window.addEventListener('lightwork:context-changed', clearPbDecision);
+    pbSaveBtn.addEventListener('click', async function () {
+      if (!PACK_EDITING) {
+        setStatus('A dashboard admin must validate and save this draft.', true);
+        return;
+      }
+      if (!formReady(document.getElementById('pb-form'))) return;
+      var name = pbName.value.trim();
+      if (!name) { setStatus('Give the agent a short name.', true); return; }
+      pbSaveBtn.disabled = true;
+      setStatus('Preparing the complete Save draft review…');
+      var current = ++pbDecisionGeneration, entered = playbookPayload(); delete entered.expected_generation;
+      var binding = JSON.stringify(entered), acknowledged = document.getElementById('pb-acknowledge-original').checked;
+      try {
+        if (!window.LWSpecialistDrafts) throw new Error('The complete draft controls are unavailable. Refresh Workflow Builder; your entered playbook is kept.');
+        await window.LWSpecialistDrafts.reviewPlaybook(pbDecisionReview, {
+          name:name, entered:entered, acknowledge_previous:acknowledged,
+          isCurrent:function () { var now = playbookPayload(); delete now.expected_generation; return current === pbDecisionGeneration && pbName.value.trim() === name && JSON.stringify(now) === binding; },
+          onSaved:function (result, handoff) {
+            setStatus('The complete draft is saved. The active agent is unchanged.');
+            var link = document.createElement('a'); link.className = 'btn'; link.textContent = 'Open this draft in Agent Factory to review Publish';
+            link.href = '/agents?' + (handoff.newAgent ? 'new=1' : 'name=' + encodeURIComponent(name)) + '&specialist_draft=' + encodeURIComponent(result.draft || ('SPD-' + result.operation)) + '#specialist-drafts';
+            pbDecisionReview.appendChild(link);
+            if (recovery) recovery.changed();
+          }
+        });
+        if (current === pbDecisionGeneration) setStatus('Read every setting below. Nothing is saved until you confirm this review.');
+      } catch (e) {
+        if (current === pbDecisionGeneration) setStatus(e.message || 'The review could not be confirmed. Your entered playbook is kept.', true);
+      } finally {
+        if (current === pbDecisionGeneration) pbSaveBtn.disabled = !PACK_EDITING;
+      }
+    });
+
+    // ---- connector picker: browse real tools (with risk) instead of typing ----
+    async function loadTools() {
+      if (toolCatalog) return;
+      try {
+        var data = (await window.mvFetchJSON('/api/v1/tools').catch(function () { return {}; })) || {};
+        toolCatalog = (data.tools || []).filter(function (t) { return t && t.name; });
+      } catch (e) { toolCatalog = []; }
+    }
+    function allowSet() {
+      var a = splitList(pbAllow.value);
+      return a.length ? new Set(a) : null;   // restrict step picker to allowed tools
+    }
+    var pickerOpener = null;   // element to restore focus to when the picker closes
+    function openPicker(input, restrict, title) {
+      pickerTarget = input;
+      pickerRestrict = restrict || null;
+      pickerOpener = document.activeElement;
+      productText(tpTitle,title || 'Browse connectors');
+      tpSearch.value = '';
+      tpBackdrop.hidden = false;
+      renderTools();
+      loadTools().then(renderTools);   // re-render once the catalog lands
+      tpSearch.focus();
+    }
+    function closePicker() {
+      tpBackdrop.hidden = true;
+      pickerTarget = null; pickerRestrict = null;
+      // Return focus to the "Browse…" button that opened the picker, so a
+      // keyboard user isn't dropped to <body>.
+      if (pickerOpener && pickerOpener.isConnected && typeof pickerOpener.focus === 'function') pickerOpener.focus();
+      pickerOpener = null;
+    }
+    function pickerFocusables() {
+      return Array.prototype.filter.call(
+        tpBackdrop.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'),
+        function (el) { return !el.hidden && el.getAttribute('aria-hidden') !== 'true'; }
+      );
+    }
+    function productPill(className,source){var item=pill(className,'');productText(item,source);return item;}
+    function pill(cls, text) {
+      var s = document.createElement('span');
+      s.className = cls;
+      s.textContent = text;
+      return s;
+    }
+    function renderTools() {
+      tpList.textContent = '';
+      if (!toolCatalog) { productText(tpCount,'Loading connectors…'); return; }
+      var q = tpSearch.value.trim().toLowerCase();
+      var ceiling = RISK_RANK[pbRisk.value] != null ? RISK_RANK[pbRisk.value] : 2;
+      var already = pickerTarget ? new Set(splitList(pickerTarget.value)) : new Set();
+      var pool = pickerRestrict
+        ? toolCatalog.filter(function (t) { return pickerRestrict.has(t.name); })
+        : toolCatalog;
+      var matches = pool.filter(function (t) {
+        return !q || t.name.toLowerCase().indexOf(q) >= 0
+          || (t.description || '').toLowerCase().indexOf(q) >= 0;
+      });
+      var countSource=pickerRestrict ? (matches.length===1 ? '{count} action allowed for this specialist' : '{count} actions allowed for this specialist') : (matches.length===1 ? '{count} action available' : '{count} actions available');
+      productText(tpCount,countSource,{count:localizedNumber(matches.length)});if(matches.length>80){var more=document.createElement('span');productText(more,'Showing the first 80.');tpCount.append(' ',more);}
+      matches.slice(0, 80).forEach(function (t) {
+        var risk = t.risk || 'medium';
+        var over = (RISK_RANK[risk] != null ? RISK_RANK[risk] : 1) > ceiling;
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'picker__item';
+        var main = document.createElement('div');
+        main.className = 'picker__main';
+        var nameRow = document.createElement('div');
+        nameRow.appendChild(pill('picker__name', t.name.replace(/_/g, ' ')));
+        item.title = t.name;
+        if (already.has(t.name)) nameRow.appendChild(productPill('picker__added', '✓ added'));
+        if (over) nameRow.appendChild(productPill('picker__over', 'exceeds max risk'));
+        main.appendChild(nameRow);
+        if (t.description) main.appendChild(pill('picker__desc', t.description));
+        item.appendChild(main);
+        item.appendChild(productPill('badge risk-' + risk + ' picker__meta', {low:'Low',medium:'Medium',high:'High'}[risk] || risk));
+        item.addEventListener('click', function () { insertTool(t.name); });
+        tpList.appendChild(item);
+      });
+    }
+    function insertTool(name) {
+      if (!pickerTarget) return;
+      var list = splitList(pickerTarget.value);
+      if (list.indexOf(name) < 0) list.push(name);
+      pickerTarget.value = list.join(', ');
+      pickerTarget.dispatchEvent(new Event('input', { bubbles: true }));   // -> live governance check
+      renderTools();                                                        // reflect the "added" state
+    }
+    tpSearch.addEventListener('input', renderTools);
+    tpDone.addEventListener('click', closePicker);
+    tpBackdrop.addEventListener('click', function (e) { if (e.target === tpBackdrop) closePicker(); });
+    tpBackdrop.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); closePicker(); return; }
+      if (e.key !== 'Tab') return;
+      var focusable = pickerFocusables();
+      if (!focusable.length) { e.preventDefault(); return; }
+      var first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    });
+    pbPreview.querySelectorAll('[data-browse]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (b.dataset.browse === 'deny') openPicker(pbDeny, null, 'Denied tools');
+        else openPicker(pbAllow, null, 'Allowed tools');
+      });
+    });
+
+    // ---- shared draft action ----
+    async function draft() {
+      var draftMode = mode;
+      setBusy(draftBtn, true);
+      setStatus(draftMode === 'playbook' ? 'Drafting the playbook…' : 'Drafting the workflow…');
+      try {
+        var resp;
+        if (fileInput.files.length && !sourceReady) { setStatus('Review a readable document before drafting, or remove it and use the brief.',true); return; }
+        if (!brief.value.trim() && !sourceText.value.trim()) {
+          fieldProblem(document.getElementById('wf-draft-form'), brief, draftMode === 'playbook'
+            ? 'Describe the agent you want, or upload a document to draft from.'
+            : 'Describe the workflow you want, or upload a document to draft from.');
+          return;
+        }
+        if (window.mvFieldErrors) window.mvFieldErrors.clear(document.getElementById('wf-draft-form'));
+        resp = await fetch('/api/v1/workflows/draft', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({description:brief.value.trim(), source_text:sourceText.value, form:draftMode})
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { setStatus(plainErr(resp, 'draft it'), true); return; }
+        var completedStatus;
+        var draftStillVisible = mode === draftMode;
+        if (draftMode === 'playbook') {
+          renderPlaybook(data, draftStillVisible);
+          completedStatus = 'Draft ready — review the persona, tools, and gated steps, then save.';
+        } else {
+          // Only a successful fresh draft becomes a new-template workspace.
+          // Empty briefs, provider errors, and network failures leave the edit
+          // name, generation and hidden wall cap intact.
+          wfEditingName = null; wfEditGeneration = null; wfEditWall = null;
+          renderDraft(data, draftStillVisible);
+          completedStatus = 'Draft ready — review and edit below, then save.';
+        }
+        // The request belongs to the form selected when Draft was pressed.
+        // If the operator switched forms while it was in flight, retain the
+        // completed draft in its own workspace without replacing the form now
+        // on screen. Switching back reveals it through setForm's continuity
+        // flags, without another provider request.
+        if (mode !== draftMode) {
+          setForm(mode);
+          setStatus(draftMode === 'playbook' ? 'Agent draft ready. Switch back to review it.' : 'Workflow draft ready. Switch back to review it.');
+        } else {
+          setStatus(completedStatus);if(draftMode==='playbook')appendSource(status,playbookNoteSuffix(data));
+        }
+      } catch (e) {
+        setStatus('Could not reach the drafting service. Try again in a minute.', true);
+      } finally {
+        setBusy(draftBtn, false);
+      }
+    }
+    draftBtn.addEventListener('click', draft);
+
+    // ---- refine: revise the current draft with a follow-up instruction ----
+    async function refine(form) {
+      var isPb = form === 'playbook';
+      var instrEl = isPb ? pbRefine : wfRefine;
+      var btn = isPb ? pbRefineBtn : wfRefineBtn;
+      var instruction = instrEl.value.trim();
+      if (!instruction) { setStatus('Type the change you want, then Refine.', true); return; }
+      setBusy(btn, true);
+      setStatus('Refining…');
+      var current = isPb ? collectPlaybook() : collectTemplate();
+      // Hand the refiner a real steps[] array (the save path doesn't need it, so
+      // it's added here, not in the shared collector) so the model revises
+      // structured steps instead of re-deriving them from the markdown body.
+      if (isPb) current.name = pbName.value.trim();
+      else current.steps = stepsFromBody(elSteps.value);
+      try {
+        var resp = await fetch('/api/v1/workflows/refine', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ form: form, instruction: instruction, current: current }),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) { setStatus(plainErr(resp, 'refine it'), true); return; }
+        if (isPb) renderPlaybook(data); else { data.parameter_schema = data.parameter_schema || current.parameter_schema; renderDraft(data); }
+        instrEl.value = '';
+        setStatus('Refined — review the update, refine again, or save.');if(isPb)appendSource(status,playbookNoteSuffix(data));
+      } catch (e) {
+        setStatus('Could not reach the refining service. Try again in a minute.', true);
+      } finally {
+        setBusy(btn, false);
+      }
+    }
+    wfRefineBtn.addEventListener('click', function () { refine('template'); });
+    pbRefineBtn.addEventListener('click', function () { refine('playbook'); });
+    wfRefine.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); refine('template'); } });
+    pbRefine.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); refine('playbook'); } });
+
+    async function receiveAuthoringHandoff(blocked) {
+      var raw, handoff;
+      try {
+        raw = sessionStorage.getItem('lightwork.authoring-handoff');
+        sessionStorage.removeItem('lightwork.authoring-handoff');
+        if (!raw) return;
+        handoff = JSON.parse(raw);
+      } catch (e) { setStatus('The saved draft could not be read. Return to Chat and prepare it again.', true); return; }
+      if (!handoff || handoff.kind !== 'agent' || typeof handoff.brief !== 'string' || !handoff.brief.trim() ||
+          Array.from(handoff.brief).length > 8000 || typeof handoff.context !== 'string' || !handoff.context ||
+          !Number.isFinite(handoff.created_at) || Date.now() - handoff.created_at < 0 || Date.now() - handoff.created_at > 600000) {
+        setStatus('This saved draft cannot be used or has expired. Return to Chat and prepare a brief of 8,000 characters or fewer.', true); return;
+      }
+      function hasDraft() {
+        return brief.value.trim() || templateWorkspaceStarted || playbookWorkspaceStarted || fileInput.files.length ||
+          [elName, elTitle, elSteps, pbName, pbDesc, pbPersona].some(function (field) { return field.value.trim(); });
+      }
+      if (blocked || hasDraft()) { setStatus('Your existing draft was kept. The draft from Chat was not loaded.'); return; }
+      var touched = false;
+      function markTouched() { touched = true; }
+      ['input', 'change', 'click'].forEach(function (event) { document.addEventListener(event, markTouched, true); });
+      try {
+        var response = await fetch('/api/v1/templates/draft-context');
+        var current = await response.json();
+        if (!response.ok || !current || current.context !== handoff.context) throw new Error('workspace mismatch');
+        if (touched || hasDraft()) { setStatus('Your current work was kept. The draft from Chat was not loaded.'); return; }
+        setForm('playbook');
+        brief.value = handoff.brief;
+        setStatus('Brief ready. Review it, then choose Draft when you are ready.');
+      } catch (e) {
+        setStatus('The saved draft could not be verified in this workspace. Return to Chat and prepare it again.', true);
+      } finally {
+        ['input', 'change', 'click'].forEach(function (event) { document.removeEventListener(event, markTouched, true); });
+      }
+    }
+
+    renderExamples();
+
+    // Deep-links from the Templates / Agents pages:
+    //   ?edit_agent=<name> -> rehydrate the PLAYBOOK editor; Save retains a draft.
+    //   ?edit=<name>       -> rehydrate the TEMPLATE editor; Save overwrites.
+    //   ?template=<name>   -> jump to automating it (schedule / webhook trigger).
+    var PB_EDIT = {{ edit_agent_prefill | tojson }};
+    var PB_EDIT_DENIED = {{ edit_agent_denied | tojson }};
+    var WF_EDIT = {{ edit_prefill | tojson }};
+    var WF_PREFILL = {{ prefill | tojson }};
+    if (PB_EDIT && PB_EDIT.name && PACK_EDITING) {
+      setForm('playbook');
+      pbEditPreserve = PB_EDIT.preserve || null;
+      pbEditingName = PB_EDIT.name; pbEditGeneration = PB_EDIT.generation;
+      renderPlaybook(PB_EDIT);
+      setStatus('Editing agent {name}. Change the instructions, actions or steps, then review Save draft. Publish is a separate decision in Agent Factory.',false,{name:PB_EDIT.name});
+    } else if (PB_EDIT_DENIED) {
+      // The server deliberately withheld the existing pack from page data.
+      setStatus('Editing agent {name} requires a dashboard administrator. You can still draft an unsaved first pass.',true,{name:PB_EDIT_DENIED});
+    } else if (WF_EDIT && WF_EDIT.name) {
+      setForm('template');
+      wfEditingName = WF_EDIT.name;   // Save overwrites this template
+      wfEditGeneration = WF_EDIT.generation;
+      renderDraft(WF_EDIT);
+      setStatus('Editing {name}. Save to overwrite, or rename to save a copy.',false,{name:WF_EDIT.title || WF_EDIT.name});
+    } else if (WF_PREFILL && WF_PREFILL.name) {
+      setForm('template');
+      productText(savedMsg,'Automate {name}: schedule it or start it from another app.',{name:WF_PREFILL.title || WF_PREFILL.name});
+      showSaved('/templates', 'Open Templates');
+      showScheduling({ name: WF_PREFILL.name, params: WF_PREFILL.params || [], parameter_schema: WF_PREFILL.parameter_schema || {} });
+      showTriggers({ name: WF_PREFILL.name, params: WF_PREFILL.params || [], parameter_schema: WF_PREFILL.parameter_schema || {} });
+    }
+    receiveAuthoringHandoff(!!(PB_EDIT || PB_EDIT_DENIED || WF_EDIT || WF_PREFILL));
+    initializeRecovery();
+    window.addEventListener('lightwork:drafts-ready', initializeRecovery);
+    document.querySelector('.wf').addEventListener('click', function (event) { if (recovery && !event.target.closest('.draft-recovery')) recovery.changed(); });
+  })();
+  </script>
+  <script src="/static/lightwork-workflow-versions.js" defer></script>
+{% endblock %}

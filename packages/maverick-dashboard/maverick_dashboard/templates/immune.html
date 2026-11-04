@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Safety monitoring · Lightwork{% endblock %}
+{% block head_extra %}{% include "_console_style.html" %}{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+<div class="ic-shell" id="ic-root" data-console="immune" data-api-url="{{ api_url }}" data-copilot-page="{{ page_path }}"
+     data-can-admin="{{ 'true' if can_admin else 'false' }}" data-can-global-admin="{{ 'true' if can_global_admin else 'false' }}">
+  {{ hero('Safety', 'Safety monitoring',
+          lede='Checks that Lightwork’s assistants cannot combine tools in risky ways, that sensitive data does not
+                leave, that the people approving work stay alert, and that assistants behave the same when nobody is watching.') }}
+  <p class="muted" id="ic-status" role="status" aria-live="polite">Loading.</p>
+  <p class="danger-text" id="ic-error" role="alert" aria-live="assertive"></p>
+
+  <section class="ic-metrics" aria-label="Safety summary">
+    <article class="panel ic-metric"><span>Risky tool combinations</span><strong id="ic-trifectas">—</strong></article>
+    <article class="panel ic-metric"><span>Ways data could leave</span><strong id="ic-exfil">—</strong></article>
+    <article class="panel ic-metric"><span>Sensitive data checks</span><strong id="ic-ifc-events">—</strong></article>
+    <article class="panel ic-metric"><span>Practice re-runs</span><strong id="ic-replays">—</strong></article>
+  </section>
+
+  <section class="panel" aria-labelledby="ic-comp-title">
+    <h2 id="ic-comp-title">Risky tool combinations</h2>
+    <p class="muted">A chain of assistants that can read private data, change things and send data out. Each one is a path a mistake or an attack could use. Narrow an assistant’s tools on the Agents page to close it.</p>
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-comp-caption"><table class="ic-table"><caption id="ic-comp-caption">Chains of assistants with all three abilities</caption>
+      <thead><tr><th scope="col">Assistants in the chain</th><th scope="col">Reads private data with</th><th scope="col">Changes things with</th><th scope="col">Sends data out with</th><th scope="col">Risk if data leaves</th></tr></thead>
+      <tbody id="ic-comp-rows"><tr><td colspan="5">Loading.</td></tr></tbody></table></div>
+    <p><a class="btn btn--ghost" href="/agents">Review assistants and their tools</a></p>
+  </section>
+
+  <section class="panel" aria-labelledby="ic-ifc-title">
+    <h2 id="ic-ifc-title">Sensitive data at the exit</h2>
+    <p class="muted" id="ic-ifc-mode">Protection: —</p>
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-ifc-caption"><table class="ic-table"><caption id="ic-ifc-caption">Recent times labelled data reached a tool that sends it outside</caption>
+      <thead><tr><th scope="col">Task</th><th scope="col">Tool</th><th scope="col">Kind of data</th><th scope="col">Copied word for word</th><th scope="col">What happened</th></tr></thead>
+      <tbody id="ic-ifc-rows"><tr><td colspan="5">Loading.</td></tr></tbody></table></div>
+  </section>
+
+  <section class="panel" aria-labelledby="ic-over-title">
+    <div class="ic-head">
+      <h2 id="ic-over-title">Reviewer alertness</h2>
+      <span class="badge" id="ic-over-state">Reviewer tests: —</span>
+    </div>
+    <p class="muted">Lightwork can place a realistic approval with one planted mistake, such as a changed bank account, in the approvals queue. This checks that reviewers catch it. People earn the right to decide alone once they catch enough. Nobody is told which approvals are tests.</p>
+    <div class="ic-actions" id="ic-over-controls"></div>
+    {% if can_admin %}
+    <form id="ic-canary-form" class="ic-form" hidden>
+      <div class="ic-row">
+        <label>Kind of decision
+          <select class="select" name="decision_class" id="ic-canary-class"><option value="">Any kind</option></select></label>
+        <label>How many
+          <select class="select" name="count"><option value="1">1</option><option value="3">3</option><option value="5">5</option></select></label>
+        <button type="submit" class="btn btn--primary">Plant test approvals</button>
+      </div>
+    </form>
+    <details>
+      <summary>Record a practice drill result</summary>
+      <p class="muted">A drill is a practice decision made without any assistant’s help, to check people keep their own skills.</p>
+      <form id="ic-drill-form" class="ic-form">
+        <div class="ic-row">
+          <label>Person
+            <select class="select" name="person" id="ic-drill-person" required><option value="">Choose a person</option></select></label>
+          <label>Kind of decision
+            <select class="select" name="decision_class" id="ic-drill-class" required><option value="">Choose a kind</option></select></label>
+        </div>
+        <fieldset class="ic-checks"><legend>Result</legend>
+          <label><input type="radio" name="passed" value="true" required> Passed</label>
+          <label><input type="radio" name="passed" value="false"> Did not pass</label>
+        </fieldset>
+        <div><button type="submit" class="btn btn--primary">Save drill result</button></div>
+      </form>
+    </details>
+    {% endif %}
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-over-caption"><table class="ic-table"><caption id="ic-over-caption">How often each person caught planted mistakes</caption>
+      <thead><tr><th scope="col">Person</th><th scope="col">Kind of decision</th><th scope="col">Caught</th><th scope="col">Missed</th><th scope="col">Confidence</th><th scope="col">Trusted to decide alone</th></tr></thead>
+      <tbody id="ic-over-rows"><tr><td colspan="6">Loading.</td></tr></tbody></table></div>
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-drill-caption"><table class="ic-table"><caption id="ic-drill-caption">Practice drill results</caption>
+      <thead><tr><th scope="col">Person</th><th scope="col">Kind of decision</th><th scope="col">Passed</th><th scope="col">Did not pass</th><th scope="col">Confidence</th><th scope="col">Skills kept up</th></tr></thead>
+      <tbody id="ic-drill-rows"><tr><td colspan="6">Loading.</td></tr></tbody></table></div>
+  </section>
+
+  <section class="panel" aria-labelledby="ic-twin-title">
+    <div class="ic-head">
+      <h2 id="ic-twin-title">Practice re-runs</h2>
+      <span class="badge" id="ic-twin-state">Recording: —</span>
+    </div>
+    <p class="muted">Lightwork can record what tools returned during a task. It then re-runs the task with the same answers to see whether the assistant still does the same thing. It can also check whether an assistant behaves differently when told it is being watched.</p>
+    <div class="ic-actions" id="ic-twin-controls"></div>
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-recorded-caption"><table class="ic-table"><caption id="ic-recorded-caption">Recorded tasks that can be re-run</caption>
+      <thead><tr><th scope="col">Choose</th><th scope="col">Task</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="ic-recorded-rows"><tr><td colspan="4">Loading.</td></tr></tbody></table></div>
+    {% if can_admin %}<p><button type="button" class="btn btn--ghost" id="ic-awareness">Check behaviour when watched (chosen tasks)</button></p>{% endif %}
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-twin-caption"><table class="ic-table"><caption id="ic-twin-caption">Past re-runs</caption>
+      <thead><tr><th scope="col">Original task</th><th scope="col">Re-run</th><th scope="col">Told it was watched</th><th scope="col">Result</th><th scope="col">Tool answers reused</th><th scope="col">Close matches</th><th scope="col">Unexpected actions</th><th scope="col">Answer match</th></tr></thead>
+      <tbody id="ic-twin-rows"><tr><td colspan="8">Loading.</td></tr></tbody></table></div>
+  </section>
+
+  <details class="panel">
+    <summary>Rule sets and discovery records (for technical staff)</summary>
+    <h3>Check a rule set for conflicts</h3>
+    <p class="muted">Choose a rule set file. Lightwork lists rules that forbid something another rule requires.</p>
+    <div class="ic-row ic-form">
+      <label for="ic-rules-file">Rule set file</label>
+      <input type="file" id="ic-rules-file" class="input" accept=".json,application/json">
+      <div><button type="button" class="btn btn--ghost" id="ic-rules-check">Check for conflicts</button></div>
+    </div>
+    <div id="ic-rules-result" role="status" aria-live="polite"></div>
+
+    <h3>Discovery records</h3>
+    <p class="muted">A discovery record shows which people shaped an invention that assistants helped with, for your legal team. Choose a record file, then check it, sign it, or add research runs to it.</p>
+    <div class="ic-form">
+      <label for="ic-title-file">Discovery record file</label>
+      <input type="file" id="ic-title-file" class="input" accept=".json,application/json">
+      <div class="ic-actions">
+        <button type="button" class="btn btn--ghost" id="ic-title-check">Check for problems</button>
+        {% if can_admin %}<button type="button" class="btn btn--ghost" id="ic-title-seal">Sign and download</button>{% endif %}
+        <button type="button" class="btn btn--ghost" id="ic-title-verify">Confirm a signed record</button>
+      </div>
+      {% if can_admin %}
+      <label for="ic-title-runs">Research run records to add</label>
+      <input type="file" id="ic-title-runs" class="input" accept=".json,application/json" multiple>
+      <label for="ic-title-elements">Parts of the invention these runs shaped (one per line, optional)</label>
+      <textarea id="ic-title-elements" class="textarea" rows="3"></textarea>
+      <div><button type="button" class="btn btn--ghost" id="ic-title-research">Add research runs and download</button></div>
+      {% endif %}
+    </div>
+    <div id="ic-title-result" role="status" aria-live="polite"></div>
+  </details>
+  {% include "_ops_immune.html" %}
+  <noscript><p class="panel">This page needs JavaScript turned on.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-immune-console.js"></script>{% endblock %}

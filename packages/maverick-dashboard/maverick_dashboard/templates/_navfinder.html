@@ -1,0 +1,99 @@
+{# The Ctrl+K command menu, shared by the product shell (base.html) and the
+   chat shell (chat_base.html): one title on both, "Search or run a command".
+   Its page destinations (every page the caller may open, from the same
+   role-filtered registry as the sidebar plus pages folded out of the rail)
+   are fetched from /nav/finder on first open; JavaScript only filters and
+   ranks those server-rendered links. Settings, people and, when record search
+   is on, records come from their own permission-checked searches. Commands
+   (navigation_api.commands) are rendered here only for people who may use
+   them, and each opens the page's own form or confirmation -- none decides,
+   stops work or saves anything from the menu alone. Prefixes narrow a search:
+   > commands, / pages, # records, @ people, : settings. #}
+{% set _finder_name = "Search pages, records and settings" if record_search_context else "Search pages and settings" %}
+{% set _commands = nav_commands() if nav_commands is defined and nav_commands else [] %}
+{% set _personal_menu = nav_personal() if nav_personal is defined and nav_personal else none %}
+{% set _people_search = can_open_page is defined and can_open_page('/users') %}
+{# Each command: its label, the words that find it, where it goes without
+   JavaScript, and a short description. #}
+{% set _command_copy = {
+  'new-task': {'label': 'New task', 'synonyms': 'start a task|create a task|new chat|ask|compose', 'href': '/chat', 'context': 'Opens the composer'},
+  'approvals': {'label': 'Approve or reject…', 'synonyms': 'approve|reject|approval|approvals|decide|decision|sign off', 'href': '/approvals', 'context': 'Choose a waiting request'},
+  'halt': {'label': 'Pause all work (emergency stop)', 'synonyms': 'pause|stop|emergency stop|halt|stop all work|pause everything|stop all agents|stop every agent|stop agents|stop all tasks|stop everything|kill switch', 'href': '#halt-pill', 'context': 'Asks you to confirm first'},
+  'invite': {'label': 'Invite someone', 'synonyms': 'invite|add user|add a person|new user|colleague', 'href': '/users#invite-email', 'context': 'Opens the invite form'},
+  'setting': {'label': 'Open setting…', 'synonyms': 'setting|settings|preference|preferences|option|configure', 'href': '#navfinder-input', 'context': 'Find a setting by name'},
+  'pin': {'label': 'Unpin this page' if (_personal_menu and _personal_menu.current_pinned) else 'Pin this page', 'synonyms': 'pin|unpin|favorite|bookmark|sidebar', 'href': '#navpins', 'context': 'Pinned pages in the sidebar'},
+  'shortcuts': {'label': 'Show keyboard shortcuts', 'synonyms': 'keyboard|shortcuts|keys|hotkeys', 'href': '#shortcuts-dialog', 'context': 'Press ? anywhere'},
+} %}
+{# Group labels as the rail shows them; defined here so the partial renders
+   the same from either shell. #}
+{% set _group_labels = {'Operate': 'Work', 'Observe': 'Insights', 'Govern': 'Governance', 'Admin': 'Administration', 'Extend': 'Library'} %}
+  <dialog class="navfinder" id="navfinder-dialog"
+          aria-labelledby="navfinder-title" aria-describedby="navfinder-help">
+    <div class="navfinder__head">
+      <div>
+        <h2 id="navfinder-title">{{ ui('Search or run a command') }}</h2>
+        <p class="sr-only" id="navfinder-help">{{ ui('Type to search. Use the up and down arrow keys to choose a result, Enter to open it, and Escape to close.') }} {{ ui('Start with > for commands, / for pages or : for settings.') }}{% if record_search_context %} {{ ui('Start with # for records.') }}{% endif %}{% if _people_search %} {{ ui('Start with @ for people.') }}{% endif %}</p>
+      </div>
+      <button type="button" class="iconbtn navfinder__close" id="navfinder-close" aria-label="{{ ut("Close search") }}" lang="{{ ul("Close search") }}">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3.5 3.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="navfinder__search">
+      <svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.25" stroke="currentColor" stroke-width="1.4"/><path d="m10.25 10.25 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      {# Shown while choosing from a command's list (Approve or reject…). #}
+      <span class="navfinder__mode" id="navfinder-mode" hidden></span>
+      <input type="search" id="navfinder-input" autocomplete="off" spellcheck="false"
+             role="combobox" aria-autocomplete="list" aria-controls="navfinder-results"
+             aria-expanded="false" aria-labelledby="navfinder-title"
+             placeholder="{{ ut(_finder_name ~ "…") }}" lang="{{ ul(_finder_name ~ "…") }}" />
+      <kbd aria-hidden="true">Esc</kbd>
+    </div>
+    <p class="navfinder__hint" id="navfinder-hint" aria-hidden="true"><kbd>&gt;</kbd> {{ ui('commands') }} <kbd>/</kbd> {{ ui('pages') }}{% if record_search_context %} <kbd>#</kbd> {{ ui('records') }}{% endif %}{% if _people_search %} <kbd>@</kbd> {{ ui('people') }}{% endif %} <kbd>:</kbd> {{ ui('settings') }}</p>
+    <p class="navfinder__count" id="navfinder-count" role="status" aria-live="polite" aria-atomic="true"></p>
+    {% if record_search_context %}
+    <div class="navfinder-record-controls">
+      <label for="navfinder-kind">{{ ui('Include records') }}</label>
+      <select id="navfinder-kind" class="ctl"><option value="all" lang="{{ ul('Business record metadata') }}">{{ ut('Business record metadata') }}</option><option value="knowledge" lang="{{ ul('Approved knowledge content') }}">{{ ut('Approved knowledge content') }}</option><option value="history" lang="{{ ul('Historical metadata') }}">{{ ut('Historical metadata') }}</option><option value="vendor" lang="{{ ul('Vendors') }}">{{ ut('Vendors') }}</option><option value="evidence" lang="{{ ul('Evidence') }}">{{ ut('Evidence') }}</option><option value="assessment" lang="{{ ul('Assessments') }}">{{ ut('Assessments') }}</option><option value="decision" lang="{{ ul('Decisions') }}">{{ ut('Decisions') }}</option><option value="task" lang="{{ ul('Tasks') }}">{{ ut('Tasks') }}</option><option value="report" lang="{{ ul('Reports') }}">{{ ut('Reports') }}</option><option value="pages" lang="{{ ul('Pages only') }}">{{ ut('Pages only') }}</option></select>
+      <label id="navfinder-purpose-label" for="navfinder-purpose" hidden>{{ ui('Permitted use') }}<select id="navfinder-purpose" class="ctl"></select></label>
+      <fieldset id="navfinder-history" hidden><legend>{{ ui('Historical metadata') }}</legend>
+        <label>{{ ui('Source') }}<select id="navfinder-source" class="ctl"><option value="tasks" lang="{{ ul('Tasks') }}">{{ ut('Tasks') }}</option><option value="projects" lang="{{ ul('Projects') }}">{{ ut('Projects') }}</option><option value="workflows" lang="{{ ul('Workflows') }}">{{ ut('Workflows') }}</option><option value="automations" lang="{{ ul('Automations') }}">{{ ut('Automations') }}</option><option value="connections" lang="{{ ul('Connections') }}">{{ ut('Connections') }}</option><option value="facts" lang="{{ ul('Shared facts') }}">{{ ut('Shared facts') }}</option><option value="questionnaires" lang="{{ ul('Questionnaires') }}">{{ ut('Questionnaires') }}</option><option value="vault" lang="{{ ul('Document vault') }}">{{ ut('Document vault') }}</option><option value="reports" lang="{{ ul('Executive reports') }}">{{ ut('Executive reports') }}</option><option value="vendors" lang="{{ ul('Vendor register') }}">{{ ut('Vendor register') }}</option><option value="onboarding" lang="{{ ul('Vendor onboarding') }}">{{ ut('Vendor onboarding') }}</option><option value="reviews" lang="{{ ul('Project reviews') }}">{{ ut('Project reviews') }}</option></select></label>
+        <label>{{ ui('On or after (UTC)') }}<input id="navfinder-after" class="ctl" type="date"></label>
+        <label>{{ ui('On or before (UTC)') }}<input id="navfinder-before" class="ctl" type="date"></label>
+        <label>{{ ui('Order') }}<select id="navfinder-order" class="ctl"><option value="newest" lang="{{ ul('Newest first') }}">{{ ut('Newest first') }}</option><option value="oldest" lang="{{ ul('Oldest first') }}">{{ ut('Oldest first') }}</option></select></label>
+        <label>{{ ui('Matches per page') }}<select id="navfinder-page-size" class="ctl"><option value="20">20</option><option value="50">50</option></select></label>
+      </fieldset>
+      <button type="button" id="navfinder-search" class="btn">{{ ui('Search records') }}</button>
+    </div>
+    <p id="navfinder-record-status" class="navfinder__count" role="status" aria-live="polite">{{ ui('Metadata search by name or reference. Document contents and private notes are excluded.') }}</p>
+    <p class="navfinder__count"><a href="/knowledge-access">{{ ui('Search approved knowledge content') }}</a> {{ ui("Choose a permitted purpose and review exact source versions. Content access and training permission remain separate.") }}</p>
+    {% endif %}
+    {# Destinations arrive from GET /nav/finder only when the finder opens. #}
+    <ul class="navfinder__results" id="navfinder-results" role="listbox"
+        aria-label="{{ ut("Search results") }}" lang="{{ ul("Search results") }}"
+        data-navfinder-src="/nav/finder" data-navfinder-find="/nav/finder/find"{% if _people_search %} data-navfinder-people="/nav/finder/people"{% endif %}{% if record_search_context %} data-navfinder-records{% endif %}>
+      {% for _id in _commands %}{% set _copy = _command_copy[_id] %}
+      <li role="none"><a id="navfinder-action-{{ _id }}" href="{{ _copy.href }}" role="option" tabindex="-1" aria-selected="false"
+         data-navfinder-action="{{ _id }}" data-label="{{ _copy.label }}|{{ ut(_copy.label) }}" data-heading=""
+         data-synonyms="{{ _copy.synonyms }}" data-search="{{ _copy.label }} {{ ut(_copy.label) }} {{ _copy.synonyms | replace('|', ' ') }}"
+         {%- if _id == 'approvals' %} data-navfinder-list="/api/v1/approvals"{% endif %}
+         {%- if _id == 'pin' %} data-label-pin="Pin this page" data-label-unpin="Unpin this page"{% endif %}>
+        <span class="navfinder__label">{{ ui(_copy.label) }}</span>
+        <span class="navfinder__group">{{ ui('Command') }} › {{ ui(_copy.context) }}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+    <p class="navfinder__empty" id="navfinder-empty" hidden>{{ ui('No matching pages. Try a broader search.') }}</p>
+    {# What the empty state says in each narrowed search (lightwork-navfinder.js). #}
+    <template id="navfinder-empty-copy">
+      <span data-scope="actions">{{ ui('No matching commands.') }}</span>
+      <span data-scope="pages">{{ ui('No matching pages. Try a broader search.') }}</span>
+      <span data-scope="records">{{ ui('No matching records. Type a name or reference.') if record_search_context else ui('Record search is turned off.') }}</span>
+      <span data-scope="people">{{ ui('No matching people.') if _people_search else ui('Only people who can open Users can search for people.') }}</span>
+      <span data-scope="settings">{{ ui('Type the name of a setting.') }}</span>
+      <span data-scope="approvals">{{ ui('Nothing is waiting for your decision.') }}</span>
+    </template>
+    {% if record_search_context %}
+    <button type="button" id="navfinder-more" class="btn" hidden>{{ ui('More records') }}</button>
+    <details class="navfinder-record-coverage"><summary>{{ ui('Search coverage') }}</summary><p>{{ ui('Search reads current saved records. For older records, choose Historical metadata, a source and optional dates. Continue through bounded windows, including empty windows. Open a source workspace to resolve unavailable access.') }}</p><ul id="navfinder-coverage"></ul></details>
+    {% endif %}
+  </dialog>

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{{ ut("Business details") }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+<div id="wrd-root" data-context="{{ work_details_context }}">
+  {{ hero('', ui("Business details"), lede=ui("Keep the details and stages your team needs alongside its work. Choose a task or a security record, fill in its business details, and review before saving."), compact=true) }}
+  <p id="wrd-status" role="status" aria-live="polite" tabindex="-1">{{ ui("Loading your work…") }}</p>
+  <p id="wrd-history-note" class="muted"></p>
+  <div class="wrd-actions"><button id="wrd-refresh" class="btn" type="button">{{ ui("Refresh work") }}</button><button id="wrd-original" class="btn" type="button" hidden>{{ ui("Check original save") }}</button></div>
+  <section id="wrd-recovery" class="panel" hidden aria-labelledby="wrd-recovery-heading">
+    <h2 id="wrd-recovery-heading">{{ ui("Check the original save") }}</h2>
+    <p id="wrd-recovery-note">{{ ui("The reply to your save was not confirmed. Check that exact request before making another change.") }}</p>
+    <p id="wrd-recovery-status" role="status" tabindex="-1"></p>
+    <div id="wrd-original-details"></div>
+  </section>
+  <section class="panel" aria-labelledby="wrd-work-heading">
+    <h2 id="wrd-work-heading">{{ ui("Choose your work") }}</h2>
+    <div class="wrd-grid">
+      <div><label for="wrd-kind">{{ ui("Work category") }}</label><select id="wrd-kind" class="input"></select></div>
+      <form id="wrd-search-form" data-draft-recovery="off"><label for="wrd-search">{{ ui("Find by name") }}</label><div class="wrd-actions"><input id="wrd-search" class="input" type="search" maxlength="200"><button id="wrd-search-button" class="btn" type="submit">{{ ui("Find work") }}</button></div></form>
+    </div>
+    <div id="wrd-records"></div>
+    <div class="wrd-actions"><button id="wrd-previous" class="btn btn--ghost" type="button">{{ ui("Previous work") }}</button><p id="wrd-page"></p><button id="wrd-next" class="btn btn--ghost" type="button">{{ ui("Next work") }}</button></div>
+  </section>
+  <section id="wrd-values" class="panel" hidden aria-labelledby="wrd-values-heading">
+    <h2 id="wrd-values-heading" tabindex="-1"></h2>
+    <p id="wrd-record-note"></p>
+    <p>{{ ui("Business stages describe your team's progress. They do not start, stop, or approve work.") }}</p>
+    <form id="wrd-values-form" data-product-validation data-draft-recovery="off">
+      <div id="wrd-value-fields"></div>
+      <div class="wrd-actions"><button id="wrd-values-review" class="btn btn--primary" type="submit">{{ ui("Review business details") }}</button><button id="wrd-values-reset" class="btn btn--ghost" type="button">{{ ui("Use saved details") }}</button></div>
+    </form>
+  </section>
+  <section id="wrd-definitions" class="panel" hidden aria-labelledby="wrd-definitions-heading">
+    <h2 id="wrd-definitions-heading">{{ ui("Set up this category") }}</h2>
+    <p>{{ ui("Choose the fields and business stages your team uses for this category. Changes apply to its business details and leave task execution and approvals separate.") }}</p>
+    <form id="wrd-definition-form" data-product-validation data-draft-recovery="off">
+      <h3>{{ ui("Business fields") }}</h3>
+      <p>{{ ui("Add up to 20 fields. Give each field a name your team will recognize.") }}</p>
+      <div id="wrd-definition-fields"></div>
+      <button id="wrd-add-field" class="btn btn--ghost" type="button">{{ ui("Add a business field") }}</button>
+      <h3>{{ ui("Business stages") }}</h3>
+      <p>{{ ui("Add up to 12 stages in the order your team uses them. A stage is a business label; it does not change execution or approval.") }}</p>
+      <div id="wrd-definition-stages"></div>
+      <button id="wrd-add-stage" class="btn btn--ghost" type="button">{{ ui("Add a business stage") }}</button>
+      <div class="wrd-actions"><button id="wrd-definition-review" class="btn" type="submit">{{ ui("Review category setup") }}</button><button id="wrd-definition-reset" class="btn btn--ghost" type="button">{{ ui("Use saved setup") }}</button></div>
+    </form>
+  </section>
+  <section id="wrd-review" class="panel" hidden aria-labelledby="wrd-review-heading">
+    <h2 id="wrd-review-heading" tabindex="-1">{{ ui("Review your change") }}</h2>
+    <p id="wrd-review-note"></p>
+    <div id="wrd-review-details"></div>
+    <div class="wrd-actions"><button id="wrd-save" class="btn" type="button">{{ ui("Save reviewed change") }}</button><button id="wrd-cancel" class="btn btn--ghost" type="button">{{ ui("Cancel review") }}</button></div>
+  </section>
+</div>
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+  #wrd-root{max-width:72rem}#wrd-root .panel{margin-block:var(--space-4)}
+  #wrd-root label{display:block;margin-block:var(--space-3) var(--space-1)}
+  #wrd-root label:has(input[type=checkbox]){display:flex;align-items:center;gap:var(--space-2);min-height:44px}
+  #wrd-root .input{width:100%;min-width:0;max-width:100%}#wrd-root .wrd-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:var(--space-4)}
+  #wrd-root .wrd-actions{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-2);margin-block:var(--space-3)}
+  #wrd-root .wrd-actions>.input{flex:1 1 12rem}#wrd-root button{white-space:normal;min-height:44px;max-width:100%}
+  #wrd-root fieldset{min-width:0;margin-block:var(--space-3);padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md)}
+  #wrd-root p,#wrd-root h2,#wrd-root h3,#wrd-root legend,#wrd-root label,#wrd-root dd{overflow-wrap:anywhere}
+  #wrd-root dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:var(--space-2) var(--space-3)}#wrd-root dd{margin:0;white-space:pre-wrap}
+  #wrd-root .wrd-record{display:block;text-align:start;width:100%;margin-block:var(--space-2)}
+  #wrd-root [hidden]{display:none!important}@media(max-width:480px){ #wrd-root dl{grid-template-columns:1fr}#wrd-root dt{font-weight:600}}
+</style>
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-work-record-details.js') }}" defer></script>{% endblock %}

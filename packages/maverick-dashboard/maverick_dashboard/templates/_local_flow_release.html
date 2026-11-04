@@ -1,0 +1,21 @@
+<details class="research-advanced" id="local-flow-release">
+  <summary><strong>Release a taught workflow safely</strong></summary>
+  <p>Use learned rules without AI fallback. Start with a published rule-only baseline, change and save the next version, then practice it. A different release administrator must approve the exact version before putting it into use.</p>
+  <p>Practice checks that the complete version runs. It does not establish accuracy or improvement. This path supports taught rules, simple routing and up to sixteen included workflows owned by you, with sixty-four total steps. Connected actions and waiting steps need a separate release connection.</p>
+  <p id="local-flow-release-status" role="status" aria-live="polite"></p>
+  <form id="local-flow-release-form" class="research-form">
+    <label>Saved taught workflow<select class="input" name="flow_id" required><option value="">Choose a workflow</option></select></label>
+    <p id="local-flow-release-current" class="muted"></p>
+    <ul id="local-flow-release-included" hidden aria-label="Included saved workflows"></ul>
+    <a id="local-flow-release-open" class="btn btn--ghost" hidden>Open workflow to edit, publish or practice</a>
+    <button type="button" class="btn" id="local-flow-release-rules">Use learned rules only</button>
+    <label>Completed practice of this version<select class="input" name="practice_run" required><option value="">Choose a practice run</option></select></label>
+    <label>Known-case comparison to include<select class="input" name="comparison_id"><option value="">Readiness only; no answer comparison</option></select></label>
+    <a class="btn btn--ghost" id="local-flow-release-compare" href="/learning/flow-checks">Compare saved rules on real cases</a>
+    <p class="muted">Preparing a review authorizes a current independent release administrator to publish only this exact version after approval, and restore only its retained baseline. It shares this version's instructions, teaching examples and any selected real-case inputs, expected answers and paired results with those administrators. The recorded authorization is tied to your account and these exact saved versions. One local release review is prepared per workspace at a time.</p>
+    <button type="submit" class="btn btn--primary">Prepare exact release review</button>
+    <button type="button" class="btn btn--ghost" id="local-flow-release-refresh">Refresh saved versions</button>
+    <a class="btn btn--ghost" href="/settings/all">Review release settings</a>
+  </form>
+</details>
+<script src="/static/lightwork-local-flow-release.js" defer></script>

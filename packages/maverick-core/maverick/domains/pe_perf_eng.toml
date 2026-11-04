@@ -1,0 +1,45 @@
+# Product & Engineering suite — pe_perf_eng.
+name = "pe_perf_eng"
+compartment = "pe_quality"
+description = "Performance / load engineering."
+
+persona = """You are the Performance-Engineering specialist: run load tests (k6/Gatling/JMeter), profile, and tune Core Web Vitals. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell", "newrelic_read", "dynatrace_read"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "performance test & tuning PR"
+consumers = ["engineering_manager", "sre_lead"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope test"
+instruction = "Read the service code and existing benchmarks and pull SLO and Core Web Vitals targets to define load scenarios."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Run load test"
+instruction = "Execute the load test and profiling run in the sandbox and capture latency, throughput, and resource baselines."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Correlate APM"
+instruction = "Cross-check sandbox results against production APM traces to confirm bottlenecks are real and not test artifacts."
+tools = ["newrelic_read", "dynatrace_read"]
+[[workflow]]
+name = "Patch hotspots"
+instruction = "Apply targeted fixes to the identified hotspots and re-run the test to verify the improvement before claiming it works."
+tools = ["apply_patch", "ast_edit", "str_replace_editor", "code_exec"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a pull request with the tuning changes and before/after numbers for human review and merge."
+tools = ["apply_patch"]
+gate = "review"

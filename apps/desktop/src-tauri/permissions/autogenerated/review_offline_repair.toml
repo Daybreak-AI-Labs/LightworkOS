@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-review-offline-repair"
+description = "Bundled local maintenance control."
+commands.allow = ["review_offline_repair"]
+
+[[permission]]
+identifier = "deny-review-offline-repair"
+description = "Denies the local maintenance control."
+commands.deny = ["review_offline_repair"]

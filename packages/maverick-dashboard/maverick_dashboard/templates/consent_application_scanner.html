@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}App tracking checks · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+<div class="governance-workbench" id="consent-application-scanner-shell"
+     data-api-base="{{ api_base }}" data-copilot-page="/consent/application-scans"
+     data-can-admin="{{ 'true' if application_scanner_can_admin else 'false' }}"
+     data-can-audit="{{ 'true' if application_scanner_can_audit else 'false' }}">
+  {{ hero('Consent review', 'App tracking checks',
+          lede='Check your mobile and TV apps for the permissions, personal data and tracking tools they declare. A second person reviews each result before you rely on it.') }}
+  {% include "_consent_nav.html" %}
+  {% if not application_scanner_enabled %}
+  {{ module_gate('consent_preferences.application_scanner', 'App tracking checks',
+                 detail='Reads the settings files of your apps to list the permissions and tracking tools they declare.',
+                 can_activate=application_scanner_can_admin) }}
+  {% endif %}
+  <p id="cas-runtime-status" class="muted" role="status" aria-live="polite">Checking whether app checks are available…</p>
+
+  <fieldset class="feature-gated-workbench" id="cas-operations" disabled>
+    <legend class="sr-only">App tracking checks</legend>
+
+    <section class="panel" aria-labelledby="cas-apps-heading">
+      <div class="section-head">
+        <h2 id="cas-apps-heading">Your apps</h2>
+        <button class="btn btn--primary" type="button" id="cas-new"{% if not application_scanner_can_admin %} disabled{% endif %}>Add an app</button>
+      </div>
+      {% if not application_scanner_can_admin %}<p class="muted">Only an administrator can add apps, upload files or record reviews.</p>{% endif %}
+      <div id="cas-apps"><p class="muted">Loading apps…</p></div>
+
+      <form id="cas-register-form" class="cw-editor" hidden novalidate autocomplete="off">
+        <fieldset class="cw-form"{% if not application_scanner_can_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Add an app</legend>
+          <h3 class="cw-wide">Add an app</h3>
+          <label>App name<input class="input" name="display_name" maxlength="255" required placeholder="Example Shop"></label>
+          <label>Runs on
+            <select class="select" name="platform" required>
+              {% for value, label in [('android','Android phones and tablets'),('ios','iPhone and iPad'),('fireos','Amazon Fire TV and tablets'),('tvos','Apple TV'),('roku','Roku'),('tizen','Samsung TV'),('webos','LG TV')] %}
+              <option value="{{ value }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="cw-wide">App store name
+            <input class="input" name="bundle_id" maxlength="255" required placeholder="com.yourcompany.app" aria-describedby="cas-bundle-help">
+            <span class="muted" id="cas-bundle-help">The name your app is published under, shown in the store link or your developer’s settings, for example com.yourcompany.app.</span>
+          </label>
+          <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Add app</button>
+            <button class="btn btn--ghost" type="button" data-cas-close="cas-register-form">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+
+      <form id="cas-scan-form" class="cw-editor" hidden novalidate autocomplete="off">
+        <fieldset class="cw-form"{% if not application_scanner_can_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Check an app’s files</legend>
+          <h3 class="cw-wide" id="cas-scan-title">Check an app’s files</h3>
+          <input type="hidden" name="application_id">
+          <input type="hidden" name="expected_application_revision">
+          <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+          <label class="cw-wide">App settings files
+            <input class="input" id="cas-files" name="files" type="file" multiple required
+                   accept=".xml,.json,.plist,.xcprivacy,application/xml,application/json,application/x-plist,text/plain"
+                   aria-describedby="cas-files-help">
+          </label>
+          <p class="muted cw-wide" id="cas-files-help">Choose the settings files your developer can send you. Use AndroidManifest.xml for Android or Fire TV, and Info.plist and PrivacyInfo.xcprivacy for iPhone and Apple TV. Use the manifest file for Roku, config.xml for Samsung TV, or the appinfo file for LG TV. Up to 64 files, each under 1 MB. The app itself (the file people download) cannot be read.</p>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Check files</button>
+            <button class="btn btn--ghost" type="button" data-cas-close="cas-scan-form">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="cas-scans-heading">
+      <div class="section-head">
+        <h2 id="cas-scans-heading">Check results</h2>
+        <button class="btn btn--ghost" type="button" id="cas-refresh-status">Refresh</button>
+      </div>
+      <p class="muted">Each result lists what the app’s files declare. Someone other than the person who uploaded the files must review it.</p>
+      <div id="cas-scans"><p class="muted">Loading results…</p></div>
+
+      <div id="cas-detail" class="cw-editor" hidden tabindex="-1">
+        <h3 id="cas-detail-title">Result</h3>
+        <div id="cas-detail-body"></div>
+        <div class="cw-actions"><button class="btn btn--ghost" type="button" data-cas-close="cas-detail">Close</button></div>
+      </div>
+
+      <form id="cas-review-form" class="cw-editor" hidden novalidate autocomplete="off">
+        <fieldset class="cw-form"{% if not application_scanner_can_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Review a result</legend>
+          <h3 class="cw-wide" id="cas-review-title">Review this result</h3>
+          <input type="hidden" name="scan_id">
+          <input type="hidden" name="expected_revision">
+          <label>Your decision
+            <select class="select" name="decision" required>
+              <option value="accepted">Accept – the result is correct</option>
+              <option value="needs_changes">Needs changes – ask for new files</option>
+              <option value="rejected">Reject – do not use this result</option>
+            </select>
+          </label>
+          <label>Reason
+            <select class="select" name="review_note_code" required>
+              <option value="matches-app-store-listing">Matches the app’s store listing</option>
+              <option value="matches-privacy-notice">Matches our privacy notice</option>
+              <option value="unexpected-tracking-tool">Found a tracking tool we did not expect</option>
+              <option value="permission-not-explained">A permission is not explained to people</option>
+              <option value="files-incomplete">Some files are missing</option>
+              <option value="wrong-app-version">Files are from the wrong app version</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Save review</button>
+            <button class="btn btn--ghost" type="button" data-cas-close="cas-review-form">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="cas-upkeep-heading">
+      <h2 id="cas-upkeep-heading">Upkeep</h2>
+      <div class="cw-actions">
+        <button class="btn" id="cas-verify-integrity" type="button"{% if not application_scanner_can_audit %} disabled{% endif %}>Check that records are intact</button>
+        <button class="btn btn--danger" id="cas-purge" type="button"{% if not application_scanner_can_admin %} disabled{% endif %}>Delete expired results</button>
+      </div>
+      {% if not application_scanner_can_audit %}<p class="muted">You need audit access to run the records check.</p>{% endif %}
+      <p id="cas-operation-status" class="cw-result" role="status" aria-live="polite"></p>
+    </section>
+  </fieldset>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">Only the settings files you upload are read, and they are not kept after the check. The results list what the files declare. They do not prove how the app behaves on a device, and tracking tools are only suggestions until a person reviews them. Viewers can see results, administrators make changes and auditors check the records.</p>
+  </details>
+  <noscript><p class="panel">Turn on JavaScript to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-consent-workbench.js" defer></script>
+<script src="/static/lightwork-consent-application-scanner.js" defer></script>
+{% endblock %}

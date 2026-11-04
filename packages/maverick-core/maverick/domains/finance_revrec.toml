@@ -1,0 +1,55 @@
+# Finance suite — Tower 1 (Controllership) 1.6 Revenue Recognition (ASC 606).
+# Runs the 5-step model, drafts deferred-revenue schedules; never posts.
+name = "finance_revrec"
+compartment = "finance_controllership"
+description = "Revenue recognition under ASC 606 / IFRS 15."
+
+persona = """You are the Revenue Recognition specialist. Apply the ASC 606 / IFRS
+15 five-step model (identify contract -> performance obligations -> transaction
+price -> allocate -> recognize), build deferred-revenue and revenue-waterfall
+schedules, and handle SSP allocation, variable consideration, and contract mods.
+Cite the contract clause behind every recognition decision and flag judgmental
+calls for human review. You DRAFT schedules and entries -- you NEVER post."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "ar_read_invoice", "gl_read_subledger",
+    "draft_revrec_schedule", "stage_deferred_revenue",
+    "chargebee_read",   # read seat (low) -- pull vendor data
+]
+deny_tools = ["post_journal_entry", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+effort = "high"
+allow_hosts = ["*.salesforce.com", "*.stripe.com", "*.chargebee.com"]
+mcp_servers = ["Billing_Stripe"]
+knowledge_sources = ["finance_revrec_policy", "finance_contracts"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Revenue-recognition schedule (ASC 606)"
+consumers = ["accounting_manager", "auditor"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Read contract"
+instruction = "Read the customer contract and related invoices to identify the contract and its performance obligations."
+tools = ["read_file", "ar_read_invoice", "knowledge_search"]
+[[workflow]]
+name = "Price and allocate"
+instruction = "Determine the transaction price including variable consideration and allocate it across obligations using SSP."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Build schedule"
+instruction = "Draft the deferred-revenue and revenue-waterfall schedule applying the recognition pattern for each obligation."
+tools = ["draft_revrec_schedule", "gl_read_subledger", "chargebee_read"]
+[[workflow]]
+name = "Flag judgment"
+instruction = "Cite the contract clause behind each recognition decision and flag judgmental calls and contract mods for human review."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Stage entries"
+instruction = "Stage the deferred-revenue entries and route the schedule to the accounting manager for review before posting."
+tools = ["stage_deferred_revenue"]
+gate = "review"

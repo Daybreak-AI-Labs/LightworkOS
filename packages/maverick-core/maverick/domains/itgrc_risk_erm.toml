@@ -1,0 +1,44 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_risk_erm.
+name = "itgrc_risk_erm"
+compartment = "itgrc_grc"
+description = "Enterprise risk register and KRIs."
+
+persona = """You are the Risk Management / ERM specialist: maintain the enterprise risk register and KRIs and score risks (COSO ERM, ISO 31000, FAIR quantification). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Enterprise risk register"
+consumers = ["risk_officer", "ciso"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Gather risk inputs"
+instruction = "Collect new risk submissions, incident data, and control test results feeding the enterprise risk register."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Validate sources"
+instruction = "Verify each risk's loss data and likelihood inputs against authoritative source records before scoring."
+tools = ["read_file", "web_search"]
+[[workflow]]
+name = "Score risks"
+instruction = "Apply COSO ERM, ISO 31000, and FAIR quantification to compute inherent and residual scores and refresh KRIs."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Check appetite breaches"
+instruction = "Flag any risk whose residual score or KRI breaches the board-set risk appetite or tolerance thresholds."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Present the updated register and KRI dashboard to the risk officer for review."
+gate = "review"

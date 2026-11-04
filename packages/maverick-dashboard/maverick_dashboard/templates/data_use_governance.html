@@ -1,0 +1,977 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Data use rules · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set du_on = data_use_enabled %}
+{% set du_admin = data_use_can_admin if data_use_can_admin is defined else true %}
+<div class="governance-workbench" id="dug-root" data-can-admin="{{ 'true' if du_admin else 'false' }}" data-enabled="{{ 'true' if du_on else 'false' }}" data-compiler="{{ 'true' if data_use_compiler_enabled else 'false' }}">
+  {{ hero('Data governance', 'Data use rules',
+          lede='Describe your data, record why it may be used, set rules for who can use it and how, and decide requests from projects that want to use it.') }}
+  {% from "_tabs.html" import sub_nav %}
+  {{ sub_nav('Data use tools', [('', [('/data-use', 'Data use rules'), ('/data-use/providers', 'Snowflake and Databricks')])], '/data-use') }}
+  {% if not du_on %}
+  {{ module_gate('data_use_governance', 'Data use rules',
+                 detail='Keeps a record of your data, why it may be used and the rules that decide each request. Ask your data owner to agree before turning it on.',
+                 status=acm_module_status) }}
+  {% endif %}
+  {% if du_on and not data_use_compiler_enabled %}
+  {{ module_gate('data_use_governance.compiler', 'Database rule preparation',
+                 detail='Turns approved requests into ready-to-apply database rules. Requests and decisions keep working without it.') }}
+  {% endif %}
+  <p id="dug-status-message" class="muted" role="status" aria-live="polite"></p>
+
+  <section class="stats" aria-label="Summary">
+    <div class="stat"><div class="num" id="dug-assets-count">—</div><div class="label">Data sets</div></div>
+    <div class="stat"><div class="num" id="dug-policies-count">—</div><div class="label">Rules in force</div></div>
+    <div class="stat"><div class="num" id="dug-requests-count">—</div><div class="label">Requests waiting</div></div>
+    <div class="stat"><div class="num" id="dug-policy-default">—</div><div class="label">When no rule applies</div></div>
+  </section>
+  {% if not du_admin %}<p class="muted">Only an administrator can change data sets, reasons, labels and rules, or decide requests. You can still ask for data.</p>{% endif %}
+
+  <section class="panel" aria-labelledby="dug-assets-heading">
+    <div class="section-head">
+      <h2 id="dug-assets-heading">Data sets</h2>
+      <button class="btn" type="button" id="dug-new-asset"{% if not du_on or not du_admin %} disabled{% endif %}>Add a data set</button>
+    </div>
+    <p class="muted">A data set is a table, file or feed of data. List its fields so rules can refer to them.</p>
+    <div id="dug-assets"><p class="muted">Loading data sets…</p></div>
+    <form id="dug-catalog" class="cw-editor" hidden novalidate>
+      <fieldset id="dug-catalog-controls" class="cw-form" data-feature-enabled="{{ 'true' if du_on else 'false' }}"{% if not du_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Data set or field</legend>
+        <h3 class="cw-wide" id="dug-catalog-title">Add a data set</h3>
+        <input type="hidden" name="mode" value="asset">
+        <input type="hidden" name="asset_id">
+        <input type="hidden" name="field_id">
+        <input type="hidden" name="expected_revision" value="0">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label data-mode="asset">Name<input class="input" name="asset_name" maxlength="120" placeholder="Customers"></label>
+        <label data-mode="asset">Kind
+          <select class="select" name="asset_type">
+            <option value="table">Database table</option><option value="view">Database view</option>
+            <option value="dataset">Data set</option><option value="stream">Live feed</option>
+            <option value="file">File</option><option value="api">Connected service</option>
+            <option value="model_input">AI model input</option><option value="model_output">AI model output</option>
+          </select>
+        </label>
+        <label data-mode="field" hidden>Field name<input class="input" name="field_name" maxlength="120" placeholder="Email address"></label>
+        <label data-mode="field" hidden>Kind of value
+          <select class="select" name="data_type">
+            <option value="string">Text</option><option value="integer">Whole number</option><option value="number">Number</option>
+            <option value="boolean">Yes or no</option><option value="date">Date</option><option value="datetime">Date and time</option>
+            <option value="uuid">Unique code</option><option value="binary">File or image</option>
+            <option value="json">Structured value</option><option value="object">Group of values</option><option value="array">List of values</option>
+          </select>
+        </label>
+        <label data-mode="field" hidden class="cw-checks"><input type="checkbox" name="nullable"> Can be left empty</label>
+        <label class="cw-wide">Where it is described
+          <textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" placeholder="For example: Customer table in the sales database, owned by the data team"></textarea>
+        </label>
+        <label class="cw-wide">Or attach its description<input class="input" type="file" name="evidence_file"></label>
+        <div class="cw-actions">
+          <button class="btn" type="submit">Save</button>
+          <button class="btn btn--ghost" type="button" data-dug-close="dug-catalog">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+    <div id="dug-fields-panel" class="cw-editor" hidden>
+      <h3 id="dug-fields-title">Fields</h3>
+      <div id="dug-fields"></div>
+      <div class="cw-actions"><button class="btn btn--ghost" type="button" data-dug-close="dug-fields-panel">Close</button></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="dug-context-heading">
+    <div class="section-head">
+      <h2 id="dug-context-heading">Why each data set may be used</h2>
+      <button class="btn" type="button" id="dug-new-context"{% if not du_on or not du_admin %} disabled{% endif %}>Record a reason</button>
+    </div>
+    <p class="muted">Before any request is allowed, a data set needs four up-to-date reasons, each from a different source. They are its business purpose, the laws that apply, the consent people gave, and how sensitive it is.</p>
+    <div id="dug-contexts"><p class="muted">Loading…</p></div>
+    <form id="dug-context" class="cw-editor" hidden novalidate>
+      <fieldset id="dug-context-controls" class="cw-form" data-feature-enabled="{{ 'true' if du_on else 'false' }}"{% if not du_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Record a reason</legend>
+        <h3 class="cw-wide">Record a reason</h3>
+        <input type="hidden" name="expected_revision" value="0">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Data set<select class="select" name="asset_id" required></select></label>
+        <label>Kind of reason
+          <select class="select" name="context_kind">
+            <option value="business_purpose">Business purpose</option>
+            <option value="regulatory">Laws that apply</option>
+            <option value="consent">Consent people gave</option>
+            <option value="observed_classification">How sensitive the data is</option>
+          </select>
+        </label>
+        <label class="cw-wide">Values, separated by commas<input class="input" name="values" maxlength="1000" placeholder="Marketing, Customer support"></label>
+        <label>Where this comes from<input class="input" name="source_system" maxlength="100" placeholder="Customer database"></label>
+        <label>Valid until<input class="input" type="date" name="fresh_until" required></label>
+        <label class="cw-wide">Supporting note<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" placeholder="Who confirmed this and where it is written down"></textarea></label>
+        <label class="cw-wide">Or attach the supporting document<input class="input" type="file" name="evidence_file"></label>
+        <details class="cw-wide"><summary>More options</summary>
+          <label>Version of the source record<input class="input" type="number" name="source_revision" min="1" value="1"></label>
+        </details>
+        <div class="cw-actions">
+          <button class="btn" type="submit">Save reason</button>
+          <button class="btn btn--ghost" type="button" data-dug-close="dug-context">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="dug-labels-heading">
+    <div class="section-head">
+      <h2 id="dug-labels-heading">Labels</h2>
+      <button class="btn" type="button" id="dug-new-label"{% if not du_on or not du_admin %} disabled{% endif %}>Create a label</button>
+    </div>
+    <p class="muted">Labels mark fields that need extra care, such as personal or financial data. Rules can apply only to labelled fields.</p>
+    <div id="dug-labels"><p class="muted">Loading…</p></div>
+    <form id="dug-label" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not du_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Label</legend>
+        <h3 class="cw-wide" id="dug-label-title">Create a label</h3>
+        <input type="hidden" name="label_id">
+        <input type="hidden" name="version" value="1">
+        <input type="hidden" name="expected_current_version" value="0">
+        <input type="hidden" name="expected_revision" value="0">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Name<input class="input" name="label_name" maxlength="100" placeholder="Personal email"></label>
+        <label>Category
+          <select class="select" name="taxonomy_id">
+            <option value="personal-data">Personal data</option><option value="sensitive-personal-data">Sensitive personal data</option>
+            <option value="financial-data">Financial data</option><option value="health-data">Health data</option>
+            <option value="children-data">Children’s data</option><option value="confidential-business">Confidential business data</option>
+            <option value="public-data">Public data</option>
+          </select>
+        </label>
+        <label>How sensitive
+          <select class="select" name="sensitivity">
+            <option value="25">Low</option><option value="50" selected>Medium</option><option value="75">High</option><option value="100">Highest</option>
+          </select>
+        </label>
+        <label class="cw-wide">What it means<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" placeholder="Email addresses of customers and prospects"></textarea></label>
+        <div class="cw-actions">
+          <button class="btn" type="submit">Save label</button>
+          <button class="btn btn--ghost" type="button" data-dug-close="dug-label">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+    <form id="dug-assign" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not du_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Label a field</legend>
+        <h3 class="cw-wide" id="dug-assign-title">Label a field</h3>
+        <input type="hidden" name="label_id">
+        <input type="hidden" name="label_version">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Data set<select class="select" name="asset_id" required></select></label>
+        <label>Field<select class="select" name="field_id" required></select></label>
+        <label class="cw-wide">Why this field gets the label<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000"></textarea></label>
+        <div class="cw-actions">
+          <button class="btn" type="submit">Label field</button>
+          <button class="btn btn--ghost" type="button" data-dug-close="dug-assign">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="dug-policies-heading">
+    <div class="section-head">
+      <h2 id="dug-policies-heading">Rules</h2>
+      <button class="btn" type="button" id="dug-new-policy"{% if not du_on or not du_admin %} disabled{% endif %}>Create a rule</button>
+    </div>
+    <p class="muted">A rule says what happens when a project asks to use data. It can allow it, block it, hide part of each value, show only some rows, or send it to a person. A rule only takes effect after a second person switches it on.</p>
+    <div id="dug-policies"><p class="muted">Loading rules…</p></div>
+    <form id="dug-policy" class="cw-editor" hidden novalidate>
+      <fieldset id="dug-policy-controls" class="cw-form" data-feature-enabled="{{ 'true' if du_on else 'false' }}"{% if not du_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Rule</legend>
+        <h3 class="cw-wide" id="dug-policy-title">Create a rule</h3>
+        <input type="hidden" name="policy_id">
+        <input type="hidden" name="version" value="1">
+        <input type="hidden" name="expected_current_version" value="0">
+        <input type="hidden" name="expected_revision" value="0">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label class="cw-wide" data-new-only>Rule name<input class="input" name="policy_name" maxlength="100" placeholder="Marketing use of customer data"></label>
+        <fieldset class="cw-wide"><legend>Applies to these data sets</legend><div class="cw-checks" id="dug-scope-assets"></div><p class="muted">Leave all unticked to apply to every data set.</p></fieldset>
+        <fieldset class="cw-wide"><legend>Only these fields</legend><div class="cw-checks" id="dug-scope-fields"></div><p class="muted">Leave all unticked for every field.</p></fieldset>
+        <fieldset class="cw-wide"><legend>When a project wants to</legend>
+          <div class="cw-checks" id="dug-scope-actions">
+            <label><input type="checkbox" name="scope_action" value="read"> Read it</label>
+            <label><input type="checkbox" name="scope_action" value="analyze"> Analyse it</label>
+            <label><input type="checkbox" name="scope_action" value="export"> Export it</label>
+            <label><input type="checkbox" name="scope_action" value="share"> Share it</label>
+            <label><input type="checkbox" name="scope_action" value="train"> Train an AI model with it</label>
+            <label><input type="checkbox" name="scope_action" value="write"> Change it</label>
+          </div>
+        </fieldset>
+        {% if data_use_projects %}
+        <fieldset class="cw-wide"><legend>Only for these projects</legend><div class="cw-checks">
+          {% for p in data_use_projects %}<label><input type="checkbox" name="scope_project" value="{{ p.value }}"> {{ p.label }}</label>{% endfor %}
+        </div><p class="muted">Leave all unticked for every project.</p></fieldset>
+        {% endif %}
+        <fieldset class="cw-wide"><legend>Only when the reasons include</legend>
+          <div id="dug-conditions"></div>
+          <p class="muted">Leave all unticked if the rule does not depend on the reasons.</p>
+        </fieldset>
+        <fieldset class="cw-wide"><legend>What happens</legend>
+          <div id="dug-controls"></div>
+          <button class="btn btn--ghost" type="button" id="dug-add-control">Add another step</button>
+        </fieldset>
+        <div class="cw-actions">
+          <button class="btn" type="submit">Save as draft</button>
+          <button class="btn btn--ghost" type="button" id="dug-policy-preview">Preview what it covers</button>
+          <button class="btn btn--ghost" type="button" data-dug-close="dug-policy">Cancel</button>
+        </div>
+        <p class="muted cw-wide" id="dug-policy-preview-result" role="status"></p>
+      </fieldset>
+    </form>
+    {% if suggestions_enabled is defined and suggestions_enabled() %}{% from "_policy_suggestions.html" import policy_suggestions, policy_suggestions_script %}{{ policy_suggestions("data-use-rule", "A draft takes effect only after another administrator reviews and activates it.", "h3") }}{{ policy_suggestions_script() }}{% endif %}
+  </section>
+
+  <section class="panel" aria-labelledby="dug-exceptions-heading">
+    <div class="section-head">
+      <h2 id="dug-exceptions-heading">Time-limited exceptions</h2>
+      <button class="btn" type="button" id="dug-new-exception"{% if not du_on %} disabled{% endif %}>Ask for an exception</button>
+    </div>
+    <p class="muted">An exception replaces one step of a rule for a limited time. An administrator must approve it, and it ends on its end date.</p>
+    <div id="dug-exceptions"><p class="muted">Loading…</p></div>
+    <form id="dug-exception" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not du_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Ask for an exception</legend>
+        <h3 class="cw-wide">Ask for an exception</h3>
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Rule<select class="select" name="policy_id" required></select></label>
+        <label>Data set<select class="select" name="asset_id" required></select></label>
+        <fieldset class="cw-wide"><legend>Fields</legend><div class="cw-checks" id="dug-exception-fields"></div></fieldset>
+        <label>For this use
+          <select class="select" name="action">
+            <option value="read">Read it</option><option value="analyze">Analyse it</option><option value="export">Export it</option>
+            <option value="share">Share it</option><option value="train">Train an AI model with it</option><option value="write">Change it</option>
+          </select>
+        </label>
+        <label>Instead
+          <select class="select" name="effect">
+            <option value="allow">Allow it</option><option value="mask">Hide part of each value</option><option value="review">Send it to a person</option>
+          </select>
+        </label>
+        <label data-effect="mask" hidden>How to hide it<select class="select" name="mask_method"></select></label>
+        <label>Ends on<input class="input" type="date" name="expires_at" required></label>
+        <label class="cw-wide">Why it is needed<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" required></textarea></label>
+        <div class="cw-actions">
+          <button class="btn" type="submit">Send for approval</button>
+          <button class="btn btn--ghost" type="button" data-dug-close="dug-exception">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="dug-requests-heading">
+    <div class="section-head">
+      <h2 id="dug-requests-heading">Requests to use data</h2>
+      <button class="btn" type="button" id="dug-new-request"{% if not du_on %} disabled{% endif %}>Ask to use data</button>
+    </div>
+    <div id="dug-requests"><p class="muted">Loading requests…</p></div>
+    <form id="dug-request" class="cw-editor" hidden novalidate>
+      <fieldset id="dug-request-controls" class="cw-form" data-feature-enabled="{{ 'true' if du_on else 'false' }}"{% if not du_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Ask to use data</legend>
+        <h3 class="cw-wide">Ask to use data</h3>
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Short name<input class="input" name="request_name" maxlength="80" placeholder="Spring campaign list"></label>
+        <label>Project
+          <select class="select" name="project_id" required>
+            {% for p in data_use_projects %}<option value="{{ p.value }}">{{ p.label }}</option>{% endfor %}
+            {% if not data_use_projects %}<option value="">Create a project first</option>{% endif %}
+          </select>
+        </label>
+        <label>Data set<select class="select" name="asset_id" required></select></label>
+        <label>To
+          <select class="select" name="action">
+            <option value="read">Read it</option><option value="analyze">Analyse it</option><option value="export">Export it</option>
+            <option value="share">Share it</option><option value="train">Train an AI model with it</option><option value="write">Change it</option>
+          </select>
+        </label>
+        <fieldset class="cw-wide"><legend>Fields needed</legend><div class="cw-checks" id="dug-request-fields"></div></fieldset>
+        <fieldset class="cw-wide"><legend>Purpose</legend><div class="cw-checks" id="dug-request-purposes"></div></fieldset>
+        <label class="cw-wide">Why the project needs it<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" required></textarea></label>
+        <div class="cw-actions">
+          <button class="btn" type="submit">Send request</button>
+          <button class="btn btn--ghost" type="button" data-dug-close="dug-request">Cancel</button>
+          {% if not data_use_projects %}<a class="btn btn--ghost" href="/projects">Create a project</a>{% endif %}
+        </div>
+      </fieldset>
+    </form>
+    <div id="dug-decision" class="cw-editor" hidden tabindex="-1">
+      <h3 id="dug-decision-title">Decision</h3>
+      <div id="dug-decision-body"></div>
+      <fieldset id="dug-compile" class="cw-actions"{% if not data_use_compiler_enabled %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Prepare database rules</legend>
+        <button class="btn" type="button" id="dug-compile-button">Prepare database rules</button>
+        <a class="btn btn--ghost" href="/data-use/providers">Apply them in Snowflake or Databricks</a>
+      </fieldset>
+      <div id="dug-compile-result" class="cw-result" role="status" aria-live="polite"></div>
+      <div class="cw-actions"><button class="btn btn--ghost" type="button" data-dug-close="dug-decision">Close</button></div>
+    </div>
+  </section>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">When no rule applies, the answer is always “block”. Each change records who made it, and your name is added by Lightwork, not typed. A rule or reason recorded by one person must be switched on or used by a different person. Database rules are prepared from the saved records only; nobody can type database commands here.</p>
+  </details>
+</div>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/data-use";
+  // The shared consent JSON client (mvFetchJSON): a non-2xx or malformed response is never success.
+  async function call(path, options) {
+    return window.LightworkConsentWorkbench.client(API)(path, options);
+  }
+  var CW = window.LightworkConsentWorkbench;
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (CW && document.getElementById("dug-root")) { if (window.mvFetchJSON) start(); else document.addEventListener("DOMContentLoaded", start); }
+
+  function start() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $("dug-root"), status = $("dug-status-message");
+    var canAdmin = root.dataset.canAdmin === "true", enabled = root.dataset.enabled === "true";
+    var compilerOn = root.dataset.compiler === "true";
+    var state = {assets: [], fields: [], contexts: [], labels: [], labelVersions: [], assignments: [], policies: [], versions: [], exceptions: [], requests: [], decisions: []};
+    var KINDS = {business_purpose: "Business purpose", regulatory: "Laws that apply", consent: "Consent people gave", observed_classification: "How sensitive the data is"};
+    var CONDITIONS = [["business_purpose_any", "business_purpose", "Business purpose"], ["regulatory_any", "regulatory", "Laws that apply"], ["consent_any", "consent", "Consent people gave"], ["observed_classification_any", "observed_classification", "How sensitive the data is"]];
+    var ACTIONS = {read: "Read it", analyze: "Analyse it", export: "Export it", share: "Share it", train: "Train an AI model with it", write: "Change it"};
+    var EFFECTS = [["allow", "Allow it"], ["deny", "Block it"], ["mask", "Hide part of each value"], ["row_filter", "Only show some rows"], ["review", "Send it to a person"]];
+    var MASKS = [["redact", "Replace it with a blank marker"], ["null", "Show it as empty"], ["hash_sha256", "Replace it with a matching code"], ["tokenize", "Replace it with a token"], ["preserve_last4", "Show only the last 4 characters"], ["bucket", "Show a range instead of the exact number"], ["generalize_date", "Show only the month and year"]];
+    var OPERATORS = [["eq", "is"], ["ne", "is not"], ["in", "is one of (separate with commas)"], ["lt", "is less than"], ["gt", "is more than"], ["is_null", "is empty"], ["not_null", "is not empty"]];
+    var TYPES = {string: "Text", integer: "Whole number", number: "Number", boolean: "Yes or no", date: "Date", datetime: "Date and time", uuid: "Unique code", binary: "File or image", json: "Structured value", object: "Group of values", array: "List of values"};
+    var REASONS = {
+      contexts_not_independently_sourced: "Two or more of the reasons come from the same source. Each reason must come from a different source.",
+      request_purpose_not_authorized: "The purpose asked for is not one of the data set’s recorded business purposes.",
+      default_deny_no_applicable_policy: "No rule covers this request, so it is blocked.",
+      request_asset_binding_stale: "The data set changed after the request was sent. Ask again.",
+    };
+    function reasonText(code) {
+      var text = String(code || ""), head = text.split(":")[0], tail = text.slice(head.length + 1);
+      if (REASONS[head]) return REASONS[head];
+      if (head === "missing_context") return "Missing reasons: " + tail.split(",").map(function (k) { return KINDS[k] || CW.human(k); }).join(", ") + ".";
+      if (head === "stale_context") return "Out-of-date reasons: " + tail.split(",").map(function (k) { return KINDS[k] || CW.human(k); }).join(", ") + ". Record them again.";
+      if (head === "stale_label_assignment") return "A field label changed after it was assigned. Label the field again.";
+      if (head === "request_field_binding_stale") return "The field “" + CW.human(tail) + "” changed after the request was sent. Ask again.";
+      if (head === "stale_exception") return "An exception has ended or changed.";
+      return "The request did not meet every rule.";
+    }
+    function say(text, isError) { CW.say(status, text, isError); }
+    function fail(error, action) { return CW.fail(status, error, action); }
+    document.querySelectorAll("[data-dug-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.dugClose).hidden = true; }); });
+    function nowSeconds() { return Date.now() / 1000; }
+    function fieldsOf(assetId) { return state.fields.filter(function (f) { return f.asset_id === assetId; }); }
+    function assetLabel(id) { return CW.human(id); }
+    function checkboxes(host, name, items, chosen) {
+      host.replaceChildren();
+      chosen = chosen || [];
+      if (!items.length) { host.appendChild(CW.el("p", "muted", "Nothing to choose from yet.")); return; }
+      items.forEach(function (item) {
+        var label = CW.el("label"), input = document.createElement("input");
+        input.type = "checkbox"; input.name = name; input.value = item.value; input.checked = chosen.indexOf(item.value) >= 0;
+        label.append(input, " " + item.label); host.appendChild(label);
+      });
+    }
+    function ticked(scope, name) { return Array.prototype.filter.call(scope.querySelectorAll("[name='" + name + "']"), function (c) { return c.checked; }).map(function (c) { return c.value; }); }
+    function words(text) {
+      var out = [];
+      String(text || "").split(",").forEach(function (v) { if (v.trim()) { var s = CW.slug(v, "value"); if (out.indexOf(s) < 0) out.push(s); } });
+      return out;
+    }
+    // Fingerprint of a note or attached file, computed here: never typed.
+    async function evidence(form) {
+      var file = form.elements.evidence_file && form.elements.evidence_file.files && form.elements.evidence_file.files[0];
+      if (file) return CW.sha256File(file);
+      var note = form.elements.evidence_note ? form.elements.evidence_note.value.trim() : "";
+      if (!note) throw Object.assign(new Error("note"), {plain: "Add a short note or attach a document so others know where this comes from."});
+      return CW.sha256("lightwork.data-use.note.v1\n" + note);
+    }
+    function sayError(error, action) {
+      if (error && error.plain) { say(error.plain, true); return; }
+      fail(error, action);
+    }
+    function reference(form) { if (form.elements.idempotency_key) form.elements.idempotency_key.value = CW.reference(); }
+
+    async function refresh() {
+      if (!enabled) {
+        ["dug-assets", "dug-contexts", "dug-labels", "dug-policies", "dug-exceptions", "dug-requests"].forEach(function (id) {
+          $(id).replaceChildren(CW.el("p", "muted", "Turn on data use rules above to start."));
+        });
+        return;
+      }
+      try {
+        var types = ["asset", "field", "context", "label", "label_version", "label_assignment", "policy", "policy_version", "exception", "request", "decision"];
+        var results = await Promise.all([call("/status")].concat(types.map(function (t) { return call("/records/" + t + "?limit=499"); })));
+        var s = results[0];
+        state.assets = results[1].items || []; state.fields = results[2].items || []; state.contexts = results[3].items || [];
+        state.labels = results[4].items || []; state.labelVersions = results[5].items || []; state.assignments = results[6].items || [];
+        state.policies = results[7].items || []; state.versions = results[8].items || []; state.exceptions = results[9].items || [];
+        state.requests = results[10].items || []; state.decisions = results[11].items || [];
+        $("dug-policy-default").textContent = s.policy_default === "deny" ? "Block" : CW.human(s.policy_default || "Block");
+        $("dug-assets-count").textContent = String(state.assets.length);
+        $("dug-policies-count").textContent = String(state.policies.filter(function (p) { return p.state === "active"; }).length);
+        $("dug-requests-count").textContent = String(state.requests.filter(function (r) { return r.status === "pending" || r.status === "review"; }).length);
+        renderAssets(); renderContexts(); renderLabels(); renderPolicies(); renderExceptions(); renderRequests();
+      } catch (error) {
+        fail(error, "load data use rules");
+      }
+    }
+
+    // ----- Data sets and fields -----
+    function renderAssets() {
+      CW.table($("dug-assets"), state.assets, {label: "Data sets", name: function (a) { return assetLabel(a.asset_id); },
+        columns: [
+          {label: "Data Set", value: function (a) { return assetLabel(a.asset_id); }},
+          {label: "Kind", value: function (a) { var o = document.querySelector("#dug-catalog option[value='" + a.asset_type + "']"); return o ? o.textContent : CW.human(a.asset_type); }},
+          {label: "Fields", value: function (a) { return String(fieldsOf(a.asset_id).length); }},
+          {label: "Reasons Recorded", value: function (a) { return String(state.contexts.filter(function (c) { return c.asset_id === a.asset_id && c.fresh_until > nowSeconds(); }).length) + " of 4"; }},
+        ],
+        actions: [
+          {label: "Fields", run: showFields},
+          {label: "Add field", when: function () { return canAdmin; }, run: function (a) { openCatalog("field", a); }},
+          {label: "Record a reason", when: function () { return canAdmin; }, run: function (a) { openContext(a.asset_id); }},
+        ],
+        empty: {title: "No data sets yet.", body: "Add the tables or files your projects want to use.", action: canAdmin ? {label: "Add a data set", run: function () { openCatalog("asset", null); }} : null}});
+    }
+    function showFields(asset) {
+      $("dug-fields-title").textContent = "Fields of " + assetLabel(asset.asset_id);
+      CW.table($("dug-fields"), fieldsOf(asset.asset_id), {label: "Fields", name: function (f) { return CW.human(f.field_id); },
+        columns: [
+          {label: "Field", value: function (f) { return CW.human(f.field_id); }},
+          {label: "Kind of Value", value: function (f) { return TYPES[f.data_type] || CW.human(f.data_type); }},
+          {label: "Can Be Empty", value: function (f) { return f.nullable ? "Yes" : "No"; }},
+          {label: "Labels", value: function (f) { return state.assignments.filter(function (x) { return x.asset_id === f.asset_id && x.field_id === f.field_id && x.status !== "revoked"; }).map(function (x) { return CW.human(x.label_id); }).join(", ") || "None"; }},
+        ],
+        actions: [{label: "Change", when: function () { return canAdmin; }, run: function (f) { openCatalog("field", asset, f); }}],
+        empty: {title: "No fields yet.", body: "Add the fields of this data set so rules can refer to them.", action: canAdmin ? {label: "Add field", run: function () { openCatalog("field", asset); }} : null}});
+      CW.open($("dug-fields-panel"), "button");
+    }
+    function openCatalog(mode, asset, field) {
+      var form = $("dug-catalog"), f = form.elements;
+      form.reset(); reference(form);
+      f.mode.value = mode; f.asset_id.value = asset ? asset.asset_id : ""; f.field_id.value = field ? field.field_id : "";
+      f.expected_revision.value = String(field ? field.revision : 0);
+      form.querySelectorAll("[data-mode]").forEach(function (n) { n.hidden = n.dataset.mode !== mode; });
+      if (field) { f.field_name.value = CW.human(field.field_id); f.field_name.readOnly = true; f.data_type.value = field.data_type; f.nullable.checked = !!field.nullable; }
+      else f.field_name.readOnly = false;
+      $("dug-catalog-title").textContent = mode === "asset" ? "Add a data set" : (field ? "Change a field of " : "Add a field to ") + assetLabel(asset.asset_id);
+      CW.open(form);
+    }
+    $("dug-new-asset").addEventListener("click", function () { openCatalog("asset", null); });
+    $("dug-catalog").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, mode = f.mode.value;
+      try {
+        var payload = {expected_revision: Number(f.expected_revision.value) || 0, idempotency_key: f.idempotency_key.value, catalog_binding_sha256: await evidence(form)};
+        var path;
+        if (mode === "asset") {
+          if (!f.asset_name.value.trim()) { say("Give the data set a name.", true); return; }
+          var assetId = CW.slug(f.asset_name.value, "data-set");
+          if (state.assets.some(function (a) { return a.asset_id === assetId; })) { say("A data set with that name already exists.", true); return; }
+          path = "/assets/" + encodeURIComponent(assetId); payload.asset_type = f.asset_type.value;
+        } else {
+          if (!f.field_name.value.trim()) { say("Give the field a name.", true); return; }
+          var fieldId = f.field_id.value || CW.slug(f.field_name.value, "field").replace(/-/g, "_");
+          path = "/assets/" + encodeURIComponent(f.asset_id.value) + "/fields/" + encodeURIComponent(fieldId);
+          payload.data_type = f.data_type.value; payload.nullable = f.nullable.checked;
+        }
+        await call(path, {method: "PUT", json: payload});
+        form.hidden = true;
+        say(mode === "asset" ? "Data set added." : "Field saved.");
+        await refresh();
+      } catch (error) { sayError(error, "save"); }
+    });
+
+    // ----- Reasons (decision context) -----
+    function renderContexts() {
+      CW.table($("dug-contexts"), state.contexts, {label: "Reasons", name: function (c) { return assetLabel(c.asset_id) + " " + (KINDS[c.context_kind] || ""); },
+        columns: [
+          {label: "Data Set", value: function (c) { return assetLabel(c.asset_id); }},
+          {label: "Kind", value: function (c) { return KINDS[c.context_kind] || CW.human(c.context_kind); }},
+          {label: "Values", value: function (c) { return (c.values || []).map(CW.human).join(", "); }},
+          {label: "Source", value: function (c) { return CW.human(c.source_system); }},
+          {label: "Valid Until", value: function (c) { return c.fresh_until > nowSeconds() ? CW.when(c.fresh_until) : CW.badge("Out of date", "warn"); }},
+        ],
+        actions: [{label: "Record again", when: function () { return canAdmin; }, run: function (c) { openContext(c.asset_id, c); }}],
+        empty: {title: "No reasons recorded yet.", body: "Record why each data set may be used before projects ask for it.", action: canAdmin && state.assets.length ? {label: "Record a reason", run: function () { openContext(); }} : null}});
+    }
+    function openContext(assetId, existing) {
+      var form = $("dug-context"), f = form.elements;
+      if (!state.assets.length) { say("Add a data set first.", true); return; }
+      form.reset(); reference(form);
+      CW.fill(f.asset_id, state.assets.map(function (a) { return {value: a.asset_id, label: assetLabel(a.asset_id)}; }));
+      if (assetId) f.asset_id.value = assetId;
+      if (existing) { f.context_kind.value = existing.context_kind; f.values.value = (existing.values || []).map(CW.human).join(", "); f.source_system.value = CW.human(existing.source_system); }
+      syncContextRevision();
+      f.fresh_until.value = CW.toInput(nowSeconds() + 30 * 86400, true);
+      CW.open(form, "select");
+    }
+    function syncContextRevision() {
+      var f = $("dug-context").elements;
+      var current = state.contexts.filter(function (c) { return c.asset_id === f.asset_id.value && c.context_kind === f.context_kind.value; })[0];
+      f.expected_revision.value = String(current ? current.revision : 0);
+    }
+    $("dug-context").elements.asset_id.addEventListener("change", syncContextRevision);
+    $("dug-context").elements.context_kind.addEventListener("change", syncContextRevision);
+    $("dug-new-context").addEventListener("click", function () { openContext(); });
+    $("dug-context").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      var values = words(f.values.value), source = CW.slug(f.source_system.value, "");
+      if (!values.length) { say("Enter at least one value.", true); return; }
+      if (!f.source_system.value.trim()) { say("Say where this reason comes from.", true); return; }
+      var fresh = CW.toSeconds(f.fresh_until.value);
+      if (!(fresh > nowSeconds())) { say("Choose a date in the future for “Valid until”.", true); return; }
+      try {
+        await call("/assets/" + encodeURIComponent(f.asset_id.value) + "/contexts/" + encodeURIComponent(f.context_kind.value), {method: "PUT", json: {
+          values: values, source_system: source, source_revision: Number(f.source_revision.value) || 1,
+          // The source fingerprint depends only on the source, so two reasons
+          // from the same place are recognised as not independent.
+          source_authority_sha256: await CW.sha256("lightwork.data-use.source.v1:" + source),
+          evidence_sha256: await evidence(form), observed_at: nowSeconds() - 1, fresh_until: fresh,
+          expected_revision: Number(f.expected_revision.value) || 0, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say("Reason saved."); await refresh();
+      } catch (error) { sayError(error, "save the reason"); }
+    });
+
+    // ----- Labels -----
+    function latestLabelVersion(labelId) { return state.labelVersions.filter(function (v) { return v.label_id === labelId; }).sort(function (a, b) { return b.version - a.version; })[0]; }
+    function renderLabels() {
+      CW.table($("dug-labels"), state.labels, {label: "Labels", name: function (l) { return CW.human(l.label_id); },
+        columns: [
+          {label: "Label", value: function (l) { return CW.human(l.label_id); }},
+          {label: "Category", value: function (l) { var v = latestLabelVersion(l.label_id); return v ? CW.human(v.taxonomy_id) : ""; }},
+          {label: "Fields Labelled", value: function (l) { return String(state.assignments.filter(function (x) { return x.label_id === l.label_id && x.status !== "revoked"; }).length); }},
+          {label: "Status", value: function (l) { return l.state === "active" ? CW.badge("In use", "ok") : CW.badge("Retired", "idle"); }},
+        ],
+        actions: [
+          {label: "Label a field", when: function (l) { return canAdmin && l.state === "active"; }, run: openAssign},
+          {label: "Retire", kind: "danger", when: function (l) { return canAdmin && l.state === "active"; }, run: function (l, b) { CW.busy(b, function () { return retireLabel(l); }); }},
+        ],
+        empty: {title: "No labels yet.", body: "Create labels such as “Personal data” to mark fields that need extra care.", action: canAdmin ? {label: "Create a label", run: openLabel} : null}});
+    }
+    function openLabel() { var form = $("dug-label"); form.reset(); reference(form); CW.open(form); }
+    $("dug-new-label").addEventListener("click", openLabel);
+    $("dug-label").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      if (!f.label_name.value.trim()) { say("Give the label a name.", true); return; }
+      var labelId = CW.slug(f.label_name.value, "label"), existing = state.labels.filter(function (l) { return l.label_id === labelId; })[0];
+      try {
+        await call("/labels/" + encodeURIComponent(labelId) + "/versions", {method: "POST", json: {
+          version: existing ? existing.current_version + 1 : 1, taxonomy_id: f.taxonomy_id.value, sensitivity: Number(f.sensitivity.value),
+          definition_sha256: await evidence(form), reviewed_at: nowSeconds() - 1,
+          expected_current_version: existing ? existing.current_version : 0, expected_revision: existing ? existing.revision : 0, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say("Label saved."); await refresh();
+      } catch (error) { sayError(error, "save the label"); }
+    });
+    function openAssign(label) {
+      var form = $("dug-assign"), f = form.elements;
+      form.reset(); reference(form);
+      f.label_id.value = label.label_id; f.label_version.value = String(label.current_version);
+      $("dug-assign-title").textContent = "Label a field as " + CW.human(label.label_id);
+      CW.fill(f.asset_id, state.assets.map(function (a) { return {value: a.asset_id, label: assetLabel(a.asset_id)}; }));
+      fillAssignFields();
+      CW.open(form, "select");
+    }
+    function fillAssignFields() {
+      var f = $("dug-assign").elements;
+      CW.fill(f.field_id, fieldsOf(f.asset_id.value).map(function (x) { return {value: x.field_id, label: CW.human(x.field_id)}; }), fieldsOf(f.asset_id.value).length ? "" : "This data set has no fields yet");
+    }
+    $("dug-assign").elements.asset_id.addEventListener("change", fillAssignFields);
+    $("dug-assign").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      if (!f.field_id.value) { say("Choose a field.", true); return; }
+      var current = state.assignments.filter(function (x) { return x.asset_id === f.asset_id.value && x.field_id === f.field_id.value && x.label_id === f.label_id.value; })[0];
+      try {
+        await call("/labels/" + encodeURIComponent(f.label_id.value) + "/assignments", {method: "PUT", json: {
+          asset_id: f.asset_id.value, field_id: f.field_id.value, label_version: Number(f.label_version.value),
+          assignment_evidence_sha256: await evidence(form), expected_revision: current ? current.revision : 0, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say("Field labelled."); await refresh();
+      } catch (error) { sayError(error, "label the field"); }
+    });
+    async function retireLabel(label) {
+      if (!(await CW.confirm("Retire the label “" + CW.human(label.label_id) + "”? Rules that depend on it will stop matching labelled fields.", "Retire label"))) return;
+      try { await call("/labels/" + encodeURIComponent(label.label_id) + "/retire", {method: "POST", json: {expected_revision: label.revision, idempotency_key: CW.reference()}}); say("Label retired."); await refresh(); }
+      catch (error) { fail(error, "retire the label"); }
+    }
+
+    // ----- Rules (policies) -----
+    function versionOf(policyId, version) { return state.versions.filter(function (v) { return v.policy_id === policyId && v.version === version; })[0]; }
+    function describeDocument(doc) {
+      if (!doc) return "";
+      var scope = doc.scope || {}, parts = [];
+      parts.push(scope.asset_ids && scope.asset_ids.length ? scope.asset_ids.map(assetLabel).join(", ") : "Every data set");
+      if (scope.actions && scope.actions.length) parts.push("to " + scope.actions.map(function (a) { return (ACTIONS[a] || a).toLowerCase(); }).join(" or "));
+      var effects = (doc.controls || []).map(function (c) { var e = EFFECTS.filter(function (x) { return x[0] === c.effect; })[0]; return e ? e[1] : c.effect; });
+      return parts.join(" ") + ": " + effects.join("; ");
+    }
+    function renderPolicies() {
+      CW.table($("dug-policies"), state.policies, {label: "Rules", name: function (p) { return CW.human(p.policy_id); },
+        columns: [
+          {label: "Rule", value: function (p) { return CW.human(p.policy_id); }},
+          {label: "What It Does", value: function (p) { var v = versionOf(p.policy_id, p.current_version); return describeDocument(v && v.document); }},
+          {label: "Status", value: function (p) {
+            if (p.state === "retired") return CW.badge("Retired", "idle");
+            if (p.state === "active" && p.active_version === p.current_version) return CW.badge("In force", "ok");
+            return CW.badge(p.state === "active" ? "Changes waiting to be switched on" : "Draft", "warn");
+          }},
+        ],
+        actions: [
+          {label: "Switch on", kind: "primary", when: function (p) { return canAdmin && p.state !== "retired" && p.active_version !== p.current_version; }, run: function (p, b) { CW.busy(b, function () { return activatePolicy(p); }); }},
+          {label: "Change", when: function (p) { return canAdmin && p.state !== "retired"; }, run: function (p) { openPolicy(p); }},
+          {label: "Retire", kind: "danger", when: function (p) { return canAdmin && p.state !== "retired"; }, run: function (p, b) { CW.busy(b, function () { return retirePolicy(p); }); }},
+        ],
+        empty: {title: "No rules yet.", body: "Until you create a rule, every request is blocked.", action: canAdmin ? {label: "Create a rule", run: function () { openPolicy(null); }} : null}});
+    }
+    function allFieldChoices(assetIds) {
+      var out = [];
+      state.fields.forEach(function (f) { if (!assetIds.length || assetIds.indexOf(f.asset_id) >= 0) if (!out.some(function (o) { return o.value === f.field_id; })) out.push({value: f.field_id, label: CW.human(f.field_id)}); });
+      return out;
+    }
+    function contextValues(kind) {
+      var seen = [];
+      state.contexts.forEach(function (c) { if (c.context_kind === kind) (c.values || []).forEach(function (v) { if (seen.indexOf(v) < 0) seen.push(v); }); });
+      return seen.sort().map(function (v) { return {value: v, label: CW.human(v)}; });
+    }
+    function renderConditions(conditions) {
+      var host = $("dug-conditions"); host.replaceChildren();
+      conditions = conditions || {};
+      CONDITIONS.forEach(function (c) {
+        var box = CW.el("fieldset"), legend = CW.el("legend", "", c[2]), checks = CW.el("div", "cw-checks");
+        box.append(legend, checks); host.appendChild(box);
+        var items = contextValues(c[1]); (conditions[c[0]] || []).forEach(function (v) { if (!items.some(function (i) { return i.value === v; })) items.push({value: v, label: CW.human(v)}); });
+        checkboxes(checks, "cond_" + c[0], items, conditions[c[0]]);
+      });
+      var labelBox = CW.el("fieldset"), labelChecks = CW.el("div", "cw-checks");
+      labelBox.append(CW.el("legend", "", "Fields with these labels"), labelChecks); host.appendChild(labelBox);
+      checkboxes(labelChecks, "cond_label_any", state.labels.filter(function (l) { return l.state === "active"; }).map(function (l) { return {value: l.label_id, label: CW.human(l.label_id)}; }), conditions.label_any);
+    }
+    function scopeFields() {
+      var form = $("dug-policy");
+      var chosen = ticked(form, "scope_field");
+      checkboxes($("dug-scope-fields"), "scope_field", allFieldChoices(ticked(form, "scope_asset")), chosen);
+      form.querySelectorAll(".dug-control").forEach(function (row) { refreshControlFields(row); });
+    }
+    function fieldTypeOf(fieldId) { var f = state.fields.filter(function (x) { return x.field_id === fieldId; })[0]; return f ? f.data_type : "string"; }
+    function refreshControlFields(row) {
+      var form = $("dug-policy"), choices = allFieldChoices(ticked(form, "scope_asset")), box = row.querySelector(".dug-control-fields");
+      var chosen = ticked(box, row.dataset.name + "_field");
+      checkboxes(box, row.dataset.name + "_field", choices, chosen);
+      var fieldSelect = row.querySelector("[data-part=filter_field]"), keep = fieldSelect.value;
+      CW.fill(fieldSelect, choices.filter(function (c) { return ["string", "integer", "number", "boolean", "date", "datetime", "uuid"].indexOf(fieldTypeOf(c.value)) >= 0; }));
+      if (keep) fieldSelect.value = keep;
+    }
+    var controlCount = 0;
+    function select(options, part, label) {
+      var wrap = CW.el("label", "", label + " "), s = document.createElement("select");
+      s.className = "select"; s.dataset.part = part;
+      options.forEach(function (o) { var opt = CW.el("option", "", o[1]); opt.value = o[0]; s.appendChild(opt); });
+      wrap.appendChild(s); return wrap;
+    }
+    function addControl(existing) {
+      controlCount += 1;
+      var row = CW.el("div", "cw-editor dug-control"), name = "ctl" + controlCount;
+      row.dataset.name = name;
+      var effect = select(EFFECTS, "effect", "Then"), mask = select(MASKS, "mask", "How to hide it"), fieldsBox = CW.el("fieldset");
+      fieldsBox.append(CW.el("legend", "", "For these fields (leave unticked for all)"));
+      var fieldChecks = CW.el("div", "cw-checks dug-control-fields"); fieldsBox.appendChild(fieldChecks);
+      var filter = CW.el("div", "cw-row"), filterField = select([], "filter_field", "Show only rows where"), op = select(OPERATORS, "filter_op", "");
+      var valueWrap = CW.el("label", "", "Value "), value = document.createElement("input"); value.className = "input"; value.dataset.part = "filter_value"; valueWrap.appendChild(value);
+      op.firstChild.textContent = "Condition "; filter.append(filterField, op, valueWrap);
+      var remove = CW.el("button", "btn btn--ghost", "Remove this step"); remove.type = "button";
+      remove.addEventListener("click", function () { row.remove(); });
+      row.append(effect, mask, filter, fieldsBox, remove);
+      function sync() {
+        var e = effect.querySelector("select").value;
+        mask.hidden = e !== "mask"; filter.hidden = e !== "row_filter";
+        var o = op.querySelector("select").value; valueWrap.hidden = o === "is_null" || o === "not_null";
+        var t = fieldTypeOf(filterField.querySelector("select").value);
+        value.type = t === "date" ? "date" : t === "datetime" ? "datetime-local" : (t === "integer" || t === "number") && o !== "in" ? "number" : "text";
+      }
+      [effect, op, filterField].forEach(function (w) { w.querySelector("select").addEventListener("change", sync); });
+      $("dug-controls").appendChild(row);
+      refreshControlFields(row);
+      if (existing) {
+        effect.querySelector("select").value = existing.effect;
+        if (existing.mask_method) mask.querySelector("select").value = existing.mask_method;
+        checkboxes(fieldChecks, name + "_field", allFieldChoices(ticked($("dug-policy"), "scope_asset")), existing.field_ids || []);
+        var rf = existing.row_filter;
+        if (rf && rf.op && (rf.field || (rf.left && rf.left.field))) {
+          filterField.querySelector("select").value = rf.field || rf.left.field;
+          op.querySelector("select").value = rf.op;
+          if (rf.values) value.value = rf.values.join(", "); else if (rf.value !== undefined) value.value = String(rf.value);
+        }
+      }
+      sync();
+    }
+    $("dug-add-control").addEventListener("click", function () { addControl(null); });
+    function literal(raw, type) {
+      if (type === "integer") { var n = Number(raw); if (!Number.isInteger(n)) throw Object.assign(new Error("v"), {plain: "Enter a whole number for the row condition."}); return n; }
+      if (type === "number") { var x = Number(raw); if (!Number.isFinite(x)) throw Object.assign(new Error("v"), {plain: "Enter a number for the row condition."}); return x; }
+      if (type === "boolean") return /^(yes|true|1)$/i.test(String(raw).trim());
+      if (type === "datetime") return new Date(raw).toISOString().replace(/\.\d{3}Z$/, "Z");
+      return String(raw).trim();
+    }
+    function readControls() {
+      var rows = $("dug-policy").querySelectorAll(".dug-control"), out = [];
+      if (!rows.length) throw Object.assign(new Error("c"), {plain: "Add at least one step under “What happens”."});
+      Array.prototype.forEach.call(rows, function (row, index) {
+        var effect = row.querySelector("[data-part=effect]").value;
+        var control = {control_id: "step-" + (index + 1) + "-" + effect.replace(/_/g, "-"), effect: effect, field_ids: ticked(row, row.dataset.name + "_field")};
+        if (effect === "mask") control.mask_method = row.querySelector("[data-part=mask]").value;
+        if (effect === "row_filter") {
+          var field = row.querySelector("[data-part=filter_field]").value, op = row.querySelector("[data-part=filter_op]").value, raw = row.querySelector("[data-part=filter_value]").value, type = fieldTypeOf(field);
+          if (!field) throw Object.assign(new Error("f"), {plain: "Choose which field decides the rows to show."});
+          if (op === "is_null" || op === "not_null") control.row_filter = {op: op, field: field};
+          else if (!String(raw).trim()) throw Object.assign(new Error("f"), {plain: "Enter the value for the row condition."});
+          else if (op === "in") control.row_filter = {op: "in", field: field, values: String(raw).split(",").map(function (v) { return literal(v, type); })};
+          else control.row_filter = {op: op, field: field, value: literal(raw, type)};
+        }
+        out.push(control);
+      });
+      return out;
+    }
+    function openPolicy(policy) {
+      var form = $("dug-policy"), f = form.elements, doc = null;
+      form.reset(); reference(form);
+      $("dug-controls").replaceChildren();
+      form.querySelectorAll("[data-new-only]").forEach(function (n) { n.hidden = !!policy; });
+      if (policy) {
+        var latest = versionOf(policy.policy_id, policy.current_version); doc = latest ? latest.document : null;
+        f.policy_id.value = policy.policy_id; f.version.value = String(policy.current_version + 1);
+        f.expected_current_version.value = String(policy.current_version); f.expected_revision.value = String(policy.revision);
+        $("dug-policy-title").textContent = "Change the rule “" + CW.human(policy.policy_id) + "”";
+      } else {
+        f.policy_id.value = ""; f.version.value = "1"; f.expected_current_version.value = "0"; f.expected_revision.value = "0";
+        $("dug-policy-title").textContent = "Create a rule";
+      }
+      var scope = (doc && doc.scope) || {};
+      checkboxes($("dug-scope-assets"), "scope_asset", state.assets.map(function (a) { return {value: a.asset_id, label: assetLabel(a.asset_id)}; }), scope.asset_ids);
+      checkboxes($("dug-scope-fields"), "scope_field", allFieldChoices(scope.asset_ids || []), scope.field_ids);
+      form.querySelectorAll("[name=scope_action]").forEach(function (c) { c.checked = (scope.actions || []).indexOf(c.value) >= 0; });
+      form.querySelectorAll("[name=scope_project]").forEach(function (c) { c.checked = (scope.project_ids || []).indexOf(c.value) >= 0; });
+      renderConditions(doc && doc.conditions);
+      ((doc && doc.controls) || [{effect: "deny", field_ids: []}]).forEach(addControl);
+      CW.open(form);
+    }
+    $("dug-scope-assets").addEventListener("change", scopeFields);
+    $("dug-new-policy").addEventListener("click", function () { openPolicy(null); });
+    function ruleDocument(form) {
+      var conditions = {};
+      CONDITIONS.forEach(function (c) { conditions[c[0]] = ticked(form, "cond_" + c[0]); });
+      conditions.label_any = ticked(form, "cond_label_any");
+      return {scope: {asset_ids: ticked(form, "scope_asset"), field_ids: ticked(form, "scope_field"), project_ids: ticked(form, "scope_project"), actions: ticked(form, "scope_action")}, conditions: conditions, controls: readControls()};
+    }
+    // What a rule would have covered in the last 30 days, from the recorded
+    // requests to use data. Report only; "" when it can't be worked out.
+    async function rulePreviewText(doc) {
+      try {
+        var data = await call("/policies/preview", {method: "POST", json: {document: doc}});
+        if (!data.considered) return "No requests to use data were recorded in the last 30 days, so there is nothing to compare it with.";
+        return "In the last 30 days it would have covered " + data.requests + " of " + data.considered + " requests to use data, from " +
+          data.projects + (data.projects === 1 ? " project" : " projects") + " and " + data.people + (data.people === 1 ? " person" : " people") + "." +
+          (data.conditional ? " It also depends on the reasons for using the data, which are checked when a request is decided, so it may cover fewer." : "");
+      } catch (error) { return ""; }
+    }
+    $("dug-policy-preview").addEventListener("click", async function () {
+      var out = $("dug-policy-preview-result");
+      try {
+        var text = await rulePreviewText(ruleDocument($("dug-policy")));
+        if (window.mvStatus) window.mvStatus(out, (text || "The preview could not be worked out. Try again.") + " Preview only. Nothing changes until a second administrator switches the rule on.");
+        else out.textContent = text;
+      } catch (error) { if (window.mvStatus) window.mvStatus(out, error.plain || "Check the rule's steps first.", {error: true}); }
+    });
+    $("dug-policy").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      try {
+        var policyId = f.policy_id.value;
+        if (!policyId) {
+          if (!f.policy_name.value.trim()) { say("Give the rule a name.", true); return; }
+          policyId = CW.slug(f.policy_name.value, "rule");
+          if (state.policies.some(function (p) { return p.policy_id === policyId; })) { say("A rule with that name already exists. Use “Change” on it instead.", true); return; }
+        }
+        var documentBody = ruleDocument(form);
+        await call("/policies/" + encodeURIComponent(policyId) + "/versions", {method: "POST", json: {version: Number(f.version.value), document: documentBody, expected_current_version: Number(f.expected_current_version.value), expected_revision: Number(f.expected_revision.value), idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say("Rule saved as a draft. Ask a different administrator to switch it on."); await refresh();
+      } catch (error) { sayError(error, "save the rule"); }
+    });
+    async function activatePolicy(policy) {
+      var latest = versionOf(policy.policy_id, policy.current_version);
+      var foresee = latest ? await rulePreviewText(latest.document) : "";
+      if (!(await CW.confirm("Switch on the rule “" + CW.human(policy.policy_id) + "”? " + (foresee ? foresee + " " : "") + "New requests will be decided with it straight away.", "Switch on"))) return;
+      try {
+        await call("/policies/" + encodeURIComponent(policy.policy_id) + "/activate", {method: "POST", json: {version: policy.current_version, reviewed_at: nowSeconds() - 1, expected_revision: policy.revision, idempotency_key: CW.reference()}});
+        say("Rule switched on."); await refresh();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not switch on the rule. The person who wrote it cannot switch it on, or it changed since you opened the page. Ask a different administrator, or refresh and try again.", true); return; }
+        fail(error, "switch on the rule");
+      }
+    }
+    async function retirePolicy(policy) {
+      if (!(await CW.confirm("Retire the rule “" + CW.human(policy.policy_id) + "”? It will stop applying to new requests. This cannot be undone.", "Retire rule"))) return;
+      try { await call("/policies/" + encodeURIComponent(policy.policy_id) + "/retire", {method: "POST", json: {expected_revision: policy.revision, idempotency_key: CW.reference()}}); say("Rule retired."); await refresh(); }
+      catch (error) { fail(error, "retire the rule"); }
+    }
+
+    // ----- Exceptions -----
+    function renderExceptions() {
+      CW.table($("dug-exceptions"), state.exceptions, {label: "Exceptions", name: function (x) { return CW.human(x.exception_id); },
+        columns: [
+          {label: "Rule", value: function (x) { return CW.human(x.policy_id); }},
+          {label: "Data Set", value: function (x) { return ((x.scope || {}).asset_ids || []).map(assetLabel).join(", "); }},
+          {label: "Instead", value: function (x) { var c = x.replacement_control || {}; var e = EFFECTS.filter(function (y) { return y[0] === c.effect; })[0]; return e ? e[1] : ""; }},
+          {label: "Ends", value: function (x) { return CW.when(x.expires_at); }},
+          {label: "Status", value: function (x) { var s = x.state || x.status; var map = {requested: ["Waiting for approval", "warn"], approved: ["Approved", "ok"], denied: ["Refused", "danger"], closed: ["Ended", "idle"]}; var m = map[s] || [CW.human(s), "idle"]; return CW.badge(m[0], m[1]); }},
+        ],
+        actions: [
+          {label: "Approve", kind: "primary", when: function (x) { return canAdmin && (x.state || x.status) === "requested"; }, run: function (x, b) { CW.busy(b, function () { return reviewException(x, true); }); }},
+          {label: "Refuse", when: function (x) { return canAdmin && (x.state || x.status) === "requested"; }, run: function (x, b) { CW.busy(b, function () { return reviewException(x, false); }); }},
+          {label: "End now", kind: "danger", when: function (x) { var s = x.state || x.status; return s === "approved" || s === "requested"; }, run: function (x, b) { CW.busy(b, function () { return closeException(x); }); }},
+        ],
+        empty: {title: "No exceptions.", body: "Ask for an exception when a project needs a rule relaxed for a short time."}});
+    }
+    function fillExceptionFields() {
+      var f = $("dug-exception").elements;
+      checkboxes($("dug-exception-fields"), "exception_field", fieldsOf(f.asset_id.value).map(function (x) { return {value: x.field_id, label: CW.human(x.field_id)}; }));
+    }
+    $("dug-exception").elements.asset_id.addEventListener("change", fillExceptionFields);
+    $("dug-exception").elements.effect.addEventListener("change", function () { $("dug-exception").querySelector("[data-effect=mask]").hidden = $("dug-exception").elements.effect.value !== "mask"; });
+    $("dug-new-exception").addEventListener("click", function () {
+      var form = $("dug-exception"), f = form.elements, active = state.policies.filter(function (p) { return p.state === "active"; });
+      if (!active.length) { say("An exception needs a rule that is in force. Switch on a rule first.", true); return; }
+      form.reset(); reference(form);
+      CW.fill(f.policy_id, active.map(function (p) { return {value: p.policy_id, label: CW.human(p.policy_id)}; }));
+      CW.fill(f.asset_id, state.assets.map(function (a) { return {value: a.asset_id, label: assetLabel(a.asset_id)}; }));
+      CW.fill(f.mask_method, MASKS.map(function (m) { return {value: m[0], label: m[1]}; }));
+      fillExceptionFields();
+      f.expires_at.value = CW.toInput(nowSeconds() + 14 * 86400, true);
+      form.querySelector("[data-effect=mask]").hidden = true;
+      CW.open(form, "select");
+    });
+    $("dug-exception").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, expires = CW.toSeconds(f.expires_at.value);
+      if (!(expires > nowSeconds())) { say("Choose an end date in the future.", true); return; }
+      var control = {control_id: "exception-" + f.effect.value, effect: f.effect.value, field_ids: ticked(form, "exception_field")};
+      if (f.effect.value === "mask") control.mask_method = f.mask_method.value;
+      try {
+        var exceptionId = "exception-" + CW.reference().slice(0, 12);
+        await call("/exceptions/" + encodeURIComponent(exceptionId), {method: "POST", json: {policy_id: f.policy_id.value, scope: {asset_ids: [f.asset_id.value], field_ids: ticked(form, "exception_field"), project_ids: [], actions: [f.action.value]}, replacement_control: control, rationale_sha256: await evidence(form), expires_at: expires, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say("Exception sent for approval."); await refresh();
+      } catch (error) { sayError(error, "send the exception"); }
+    });
+    async function reviewException(x, approve) {
+      if (!(await CW.confirm((approve ? "Approve" : "Refuse") + " this exception to “" + CW.human(x.policy_id) + "”?" + (approve ? " It applies until " + CW.when(x.expires_at) + "." : ""), approve ? "Approve" : "Refuse"))) return;
+      try { await call("/exceptions/" + encodeURIComponent(x.exception_id) + "/review", {method: "POST", json: {approve: approve, reviewed_at: nowSeconds() - 1, expected_revision: x.revision, idempotency_key: CW.reference()}}); say(approve ? "Exception approved." : "Exception refused."); await refresh(); }
+      catch (error) {
+        if (error && error.status === 409) { say("Could not record the decision. The person who asked cannot approve their own exception, or it changed. Refresh and try again.", true); return; }
+        fail(error, "record the decision");
+      }
+    }
+    async function closeException(x) {
+      if (!(await CW.confirm("End this exception now? The normal rule applies again straight away.", "End exception"))) return;
+      try { await call("/exceptions/" + encodeURIComponent(x.exception_id) + "/close", {method: "POST", json: {expected_revision: x.revision, idempotency_key: CW.reference()}}); say("Exception ended."); await refresh(); }
+      catch (error) { fail(error, "end the exception"); }
+    }
+
+    // ----- Requests and decisions -----
+    var REQUEST_STATUS = {pending: ["Waiting for a decision", "warn"], authorized: ["Allowed", "ok"], denied: ["Blocked", "danger"], review: ["Needs a person", "warn"]};
+    function projectName(id) { var o = document.querySelector("#dug-request [name=project_id] option[value='" + id + "']"); return o ? o.textContent : CW.human(id); }
+    function renderRequests() {
+      CW.table($("dug-requests"), state.requests, {label: "Requests", name: function (r) { return CW.human(r.request_id); },
+        columns: [
+          {label: "Request", value: function (r) { return CW.human(r.request_id); }},
+          {label: "Project", value: function (r) { return projectName(r.project_id); }},
+          {label: "Data", value: function (r) { return assetLabel(r.asset_id) + ": " + (r.field_ids || []).map(CW.human).join(", "); }},
+          {label: "To", value: function (r) { return ACTIONS[r.action] || CW.human(r.action); }},
+          {label: "Status", value: function (r) { var m = REQUEST_STATUS[r.status] || [CW.human(r.status), "idle"]; return CW.badge(m[0], m[1]); }},
+        ],
+        actions: [
+          {label: "Decide", kind: "primary", when: function (r) { return canAdmin && r.status === "pending"; }, run: function (r, b) { CW.busy(b, function () { return decide(r); }); }},
+          {label: "See decision", when: function (r) { return !!r.decision_id; }, run: function (r) { showDecision(r.decision_id); }},
+        ],
+        empty: {title: "No requests yet.", body: "Projects ask here before they use a data set.", action: enabled ? {label: "Ask to use data", run: openRequest} : null}});
+    }
+    function fillRequestChoices() {
+      var f = $("dug-request").elements, asset = f.asset_id.value;
+      checkboxes($("dug-request-fields"), "request_field", fieldsOf(asset).map(function (x) { return {value: x.field_id, label: CW.human(x.field_id)}; }));
+      var purposes = [];
+      state.contexts.forEach(function (c) { if (c.asset_id === asset && c.context_kind === "business_purpose") (c.values || []).forEach(function (v) { if (purposes.indexOf(v) < 0) purposes.push(v); }); });
+      checkboxes($("dug-request-purposes"), "request_purpose", purposes.map(function (v) { return {value: v, label: CW.human(v)}; }));
+      if (!purposes.length) $("dug-request-purposes").replaceChildren(CW.el("p", "muted", "This data set has no recorded business purpose yet. Ask an administrator to record one."));
+    }
+    function openRequest() {
+      var form = $("dug-request"), f = form.elements;
+      if (!state.assets.length) { say("There are no data sets to ask for yet.", true); return; }
+      form.reset(); reference(form);
+      CW.fill(f.asset_id, state.assets.map(function (a) { return {value: a.asset_id, label: assetLabel(a.asset_id)}; }));
+      fillRequestChoices(); CW.open(form);
+    }
+    $("dug-request").elements.asset_id.addEventListener("change", fillRequestChoices);
+    $("dug-new-request").addEventListener("click", openRequest);
+    $("dug-request").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, fields = ticked(form, "request_field"), purposes = ticked(form, "request_purpose");
+      if (!f.project_id.value) { say("Create a project first, then ask for data for it.", true); return; }
+      if (!fields.length) { say("Tick at least one field.", true); return; }
+      if (!purposes.length) { say("Tick the purpose you need the data for.", true); return; }
+      try {
+        var requestId = CW.slug(f.request_name.value || "request", "request").slice(0, 80) + "-" + CW.reference().slice(0, 8);
+        await call("/requests/" + encodeURIComponent(requestId), {method: "POST", json: {project_id: f.project_id.value, asset_id: f.asset_id.value, field_ids: fields, action: f.action.value, purpose_codes: purposes, request_evidence_sha256: await evidence(form), idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say("Request sent. An administrator will decide it."); await refresh();
+      } catch (error) { sayError(error, "send the request"); }
+    });
+    async function decide(r) {
+      if (!(await CW.confirm("Decide the request “" + CW.human(r.request_id) + "” now? Lightwork checks it against the rules and reasons in force and records the result.", "Decide"))) return;
+      try {
+        var decision = await call("/requests/" + encodeURIComponent(r.request_id) + "/authorize", {method: "POST", json: {expected_request_revision: r.revision, idempotency_key: CW.reference()}});
+        await refresh(); showDecision(decision.decision_id, decision);
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not decide the request. The person who asked cannot decide it, or something changed. Ask a different administrator, or refresh and try again.", true); return; }
+        fail(error, "decide the request");
+      }
+    }
+    var shownDecision = null;
+    function showDecision(decisionId, fresh) {
+      var d = fresh || state.decisions.filter(function (x) { return x.decision_id === decisionId; })[0];
+      if (!d) { say("That decision is no longer available. Refresh the page.", true); return; }
+      shownDecision = d;
+      var outcome = {allow: "Allowed", deny: "Blocked", review: "Needs a person", mask: "Allowed with some values hidden", row_filter: "Allowed for some rows"}[d.outcome] || CW.human(d.outcome);
+      var body = $("dug-decision-body");
+      CW.facts(body, [["Outcome", outcome], ["Data set", assetLabel(d.asset_id)], ["Fields", (d.field_ids || []).map(CW.human).join(", ")], ["Rules used", (d.matched_policy_ids || []).map(CW.human).join(", ") || "None"]]);
+      var steps = CW.el("ul");
+      (d.controls || []).forEach(function (c) { var e = EFFECTS.filter(function (x) { return x[0] === c.effect; })[0]; steps.appendChild(CW.el("li", "", CW.human(c.field_id) + ": " + (e ? e[1] : c.effect))); });
+      body.appendChild(steps);
+      if ((d.reasons || []).length) {
+        body.appendChild(CW.el("h4", "", "Why"));
+        var why = CW.el("ul"); d.reasons.forEach(function (code) { why.appendChild(CW.el("li", "", reasonText(code))); }); body.appendChild(why);
+      }
+      $("dug-compile-button").disabled = !compilerOn || !canAdmin;
+      CW.say($("dug-compile-result"), "");
+      CW.open($("dug-decision"), null);
+    }
+    $("dug-compile-button").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        if (!shownDecision) return;
+        try {
+          var ir = await call("/decisions/" + encodeURIComponent(shownDecision.decision_id) + "/compile", {method: "POST", json: shownDecision.decision_sha256 ? {expected_decision_sha256: shownDecision.decision_sha256} : {}});
+          var count = Array.isArray(ir.controls) ? ir.controls.length : 0;
+          CW.say($("dug-compile-result"), "Database rules prepared" + (count ? " (" + count + " steps)" : "") + ". Apply them from the Snowflake and Databricks page.");
+        } catch (error) { CW.fail($("dug-compile-result"), error, "prepare the database rules"); }
+      });
+    });
+
+    refresh();
+  }
+})();
+</script>
+{% if comments_enabled() %}{% from "_comments.html" import comments %}{{ comments('policy', 'data-use', 'Comments on the data use rules') }}
+<script src="/static/lightwork-comments.js" defer></script>{% endif %}
+{% endblock %}

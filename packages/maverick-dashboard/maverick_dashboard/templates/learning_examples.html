@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Learning examples · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+{% from "_hero.html" import hero %}
+<div class="lex">
+  {% call hero('Workflows', 'Learning examples',
+      lede='Find recent runs kept as examples. Open one to review what happened, allow learning, or stop future use. Copilot can help with the selected example on its run page.') %}{% endcall %}
+  <p>{{ back_link('/workflows', 'Workflows') }}</p>
+  <section class="panel" aria-labelledby="lex-title">
+    <div class="section-head"><h2 id="lex-title">Your recent examples</h2></div>
+    <p id="lex-status" role="status" aria-live="polite">Checking your examples…</p>
+    <div class="lex__controls">
+      <label for="lex-filter">Show</label>
+      <select class="select" id="lex-filter">
+        <option value="all">All examples</option>
+        <option value="review">Needs review</option>
+        <option value="permission">Needs learning permission</option>
+        <option value="ready">Ready to teach</option>
+        <option value="stopped">No longer usable</option>
+      </select>
+      <button class="btn btn--ghost" type="button" id="lex-refresh">Refresh</button>
+    </div>
+    <ul id="lex-list" class="lex__list" aria-label="Recent learning examples"></ul>
+    <button class="btn btn--ghost" type="button" id="lex-older" hidden>Show older examples</button>
+  </section>
+</div>
+<style>
+  .lex { max-width: 980px; margin-inline: auto; }
+  .lex__controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0; }
+  .lex__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+  .lex__row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3);
+              border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3); }
+  .lex__row p { margin: var(--space-1) 0 0; }
+  .lex__name { font-weight: var(--font-semibold); }
+  .lex__meta { color: var(--muted); font-size: var(--text-sm); }
+  .lex__row .btn { white-space: normal; }
+  @media (max-width: 480px) { .lex__row .btn { width: 100%; } }
+</style>
+<script src="/static/lightwork-learning-examples.js" defer></script>
+{% endblock %}

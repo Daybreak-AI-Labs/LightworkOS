@@ -1,0 +1,11 @@
+<section id="lo-rm-guided" aria-label="Reviewed local ranking training">
+  <p class="muted">Learn from permitted task outlines with recorded steps on both attempts. Answer drafts with no steps are skipped; identical step patterns remain unresolved. Training runs locally; nothing is shared, enabled or replaced. Agreement on these comparisons does not prove better results on new work.</p>
+  <div class="lrn__actions">
+    <button class="btn btn--ghost" type="button" id="lo-rm-source-refresh">Refresh eligible outlines</button>
+    <button class="btn btn--ghost" type="button" id="lo-rm-original" hidden>Check original training result</button>
+  </div>
+  <p id="lo-rm-guided-status" class="muted" role="status" aria-live="polite">Checking the current source…</p>
+  <div id="lo-rm-guided-review" class="stack"></div>
+  <div id="lo-rm-guided-result" class="stack" aria-live="polite"></div>
+</section>
+<script src="/static/lightwork-reward-model-training.js" defer></script>

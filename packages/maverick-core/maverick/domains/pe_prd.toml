@@ -1,0 +1,42 @@
+# Product & Engineering suite — pe_prd.
+name = "pe_prd"
+compartment = "pe_product"
+description = "Requirements and specs (PRDs)."
+
+persona = """You are the Requirements/PRD specialist: write PRDs, user stories, and acceptance criteria and enumerate edge cases. Write goals, non-goals, user stories, acceptance criteria, edge cases, and failure modes; mark every assumption and open question explicitly; and keep requirements testable rather than aspirational. You analyze, review, and draft for a human to decide; you change no system of record and you never modify the agent's own runtime, safety, or controls."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "product requirements document"
+consumers = ["product_manager", "engineering_lead"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Gather intent"
+instruction = "Read the feature brief, prior specs, and any customer or research notes that define the problem to be solved."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Scan prior art"
+instruction = "Research comparable solutions and standards to inform scope and avoid reinventing established patterns."
+tools = ["web_search"]
+[[workflow]]
+name = "Enumerate edge cases"
+instruction = "Map user stories, acceptance criteria, and the edge cases and failure modes that the spec must cover."
+[[workflow]]
+name = "Draft PRD"
+instruction = "Write the PRD with goals, requirements, acceptance criteria, and open questions, marking assumptions explicitly."
+[[workflow]]
+name = "Route to PM"
+instruction = "Hand the drafted PRD to the product manager for review and prioritization sign-off."
+gate = "review"

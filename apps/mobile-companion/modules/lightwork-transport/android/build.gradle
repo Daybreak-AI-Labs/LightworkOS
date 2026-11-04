@@ -1,0 +1,19 @@
+apply plugin: 'com.android.library'
+
+group = 'ai.lightwork.transport'
+version = '0.1.0'
+
+def corePlugin = new File(project(':expo-modules-core').projectDir.absolutePath, 'ExpoModulesCorePlugin.gradle')
+apply from: corePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+
+android {
+  namespace 'ai.lightwork.transport'
+  defaultConfig { versionCode 1; versionName '0.1.0' }
+}
+
+dependencies {
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}

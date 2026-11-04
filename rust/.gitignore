@@ -1,0 +1,6 @@
+# Rust / wasm / python build outputs — never commit artifacts, only source.
+/target
+**/target
+**/pkg
+*.whl
+Cargo.lock.bak

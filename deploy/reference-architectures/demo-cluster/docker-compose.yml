@@ -1,0 +1,77 @@
+# Lightwork public read-only demo (demo.maverick.dev) — compose blueprint.
+#
+#   MAVERICK_DASHBOARD_TOKEN=$(openssl rand -hex 32) docker compose up -d
+#
+# Three services:
+#   seed       one-shot: writes a handful of finished demo goals into the
+#              shared state volume via the real world-model API (seed_demo.py)
+#   dashboard  the real dashboard, token-protected, NEVER published on the host
+#   proxy      nginx path-allowlist proxy: the only public surface. Serves
+#              /demo + /healthz only (the dashboard has no global read-only
+#              flag — see README) and injects the bearer upstream only for the
+#              redacted demo page.
+#
+# Public entry: http://<host>:8080 — front it with TLS at the edge (README).
+
+services:
+  seed:
+    build:
+      context: ../../..
+      dockerfile: deploy/docker/Dockerfile
+    image: maverick:demo
+    entrypoint: ["python", "/seed/seed_demo.py"]
+    volumes:
+      - demo-state:/home/maverick/.maverick
+      - ./seed_demo.py:/seed/seed_demo.py:ro
+    restart: "no"          # one-shot; idempotent on re-run
+
+  dashboard:
+    image: maverick:demo
+    command: ["dashboard", "--host", "0.0.0.0", "--port", "8765"]
+    environment:
+      # Required: with a token set, EVERY request needs Authorization: Bearer.
+      # Only nginx knows it; the public never does.
+      MAVERICK_DASHBOARD_TOKEN: ${MAVERICK_DASHBOARD_TOKEN:?set a strong random token}
+    volumes:
+      - demo-state:/home/maverick/.maverick
+    expose:
+      - "8765"             # reachable by the proxy only; no host port mapping
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      # /livez (liveness: process is up), NOT /healthz: this demo runs without a
+      # provider key and /healthz returns 503 by design when no key is set, so a
+      # /healthz check would mark the container permanently unhealthy.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/livez', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+
+  proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:8080"
+    environment:
+      MAVERICK_DASHBOARD_TOKEN: ${MAVERICK_DASHBOARD_TOKEN:?set a strong random token}
+    volumes:
+      # The official nginx image envsubsts *.template into /etc/nginx/conf.d.
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+
+volumes:
+  demo-state: {}

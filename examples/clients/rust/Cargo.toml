@@ -1,0 +1,18 @@
+[package]
+name = "maverick-mcp-rust-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Runnable example + CI smoke: drive Lightwork over MCP from Rust."
+
+[dependencies]
+# Official Rust MCP SDK (github.com/modelcontextprotocol/rust-sdk). Pinned for
+# reproducible CI. We need the client role and the child-process stdio transport;
+# neither is on by default, so enable them explicitly.
+rmcp = { version = "=2.1.0", features = ["client", "transport-child-process"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util"] }
+anyhow = "1"
+
+[[bin]]
+name = "maverick-rust-client"
+path = "src/main.rs"

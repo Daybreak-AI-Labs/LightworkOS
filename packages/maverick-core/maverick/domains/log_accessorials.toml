@@ -1,0 +1,40 @@
+name = "log_accessorials"
+compartment = "log_accessorials"
+description = "Accessorial Approval Tracker: Track accessorial charges against pre-approval rules."
+
+persona = """You are the Accessorial Approval Tracker for this business -- a logistics specialist. Track accessorial charges against pre-approval rules. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Carrier commitments and claims are proposed with evidence; bookings and disputes above routine value go to a human. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "sql_query_read", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor"]
+max_risk = "medium"
+
+knowledge_sources = ["log"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "accessorial charge compliance register"
+consumers = ["logistics_manager", "accounts_payable"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull charges"
+instruction = "Query accessorial charges billed in the period across carriers and lanes."
+tools = ["sql_query_read", "read_file"]
+[[workflow]]
+name = "Load approval rules"
+instruction = "Retrieve the pre-approval policy and rate thresholds for each accessorial type from the knowledge base."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Test compliance"
+instruction = "Check each charge against the applicable pre-approval rule and flag unauthorized or out-of-policy items."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Quantify exceptions"
+instruction = "Total the non-compliant spend by carrier and accessorial type and note the missing approval evidence."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Route review"
+instruction = "Hand the compliance register with cited rules to the logistics manager for sign-off before disputing charges."
+gate = "review"

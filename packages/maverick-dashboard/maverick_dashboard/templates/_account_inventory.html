@@ -1,0 +1,9 @@
+<section class="panel" aria-labelledby="account-inventory-title">
+  <h2 id="account-inventory-title">All connected accounts</h2>
+  <p class="muted">Accounts from Connections and Automations appear together here. Their permissions remain separate; choose the existing account's repair link before setting up another one.</p>
+  <p id="account-inventory-status" role="status" aria-live="polite">Loading accounts.</p>
+  <button class="btn btn--ghost" type="button" id="account-inventory-refresh">Refresh account inventory</button>
+  <ul id="account-inventory-list" class="cx__list"></ul>
+  <details id="account-qualification"><summary>Provider and platform qualification</summary><p id="account-qualification-status" role="status"></p><ul id="account-qualification-list"></ul></details>
+</section>
+<script src="/static/lightwork-account-inventory.js" defer></script>

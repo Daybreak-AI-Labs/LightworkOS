@@ -1,0 +1,5 @@
+/target
+
+# This is an application (not a library), so its lockfile is committed for
+# reproducible CI -- un-ignore it from the repo-root `Cargo.lock` rule.
+!Cargo.lock

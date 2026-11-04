@@ -1,0 +1,96 @@
+<section id="connection-setup" class="cx__form" aria-labelledby="cs-title">
+  <h2 id="cs-title">Connect an account (sign-in-based)</h2>
+  <p>Connect Google Drive, Google Cloud Storage, Jira Cloud or Microsoft email by signing in to the account. You review access on the provider's website, then return here to finish saving the connection.</p>
+  <p id="cs-status" role="status" aria-live="polite" tabindex="-1">Loading account connection options…</p>
+  <button id="cs-refresh" class="btn" type="button">Refresh account connections</button>
+  <a id="cs-signin-link" class="btn btn--primary" href="/start" hidden>Set up named sign-in</a>
+  <button id="cs-retry" class="btn btn--primary" type="button" hidden>Retry account sign-in</button>
+  <p id="cs-task-return" hidden>Your original request is still saved. <a id="cs-task-link" class="btn">Return to request</a></p>
+  <div id="cs-enable" hidden>
+    <p>Sign-in-based connections are off. Key-based connections still work. Turning this on lets people sign in to Google, Atlassian or Microsoft accounts here and lets Lightwork renew that access when work needs it.</p>
+    <label class="cs-check"><input id="cs-enable-confirm" type="checkbox">Turn on sign-in-based connections for this app.</label>
+    <button id="cs-enable-button" class="btn" type="button" disabled>Turn on sign-in-based connections</button>
+  </div>
+  <details id="cs-disable" hidden>
+    <summary>Turn off account connections</summary>
+    <p>Accounts connected here (Google Drive, Google Cloud Storage, Jira Cloud and Microsoft email) stop working straight away. Workflows and email that use them can't read or change anything through them, and nobody can connect a new account. Their saved sign-in stays stored and encrypted, so turning this back on makes them work again. To remove an account for good, use its own remove button instead.</p>
+    <fieldset>
+      <legend>What to turn off</legend>
+      <label class="cs-check"><input id="cs-disable-scope-authorization" name="cs-disable-scope" type="radio" value="authorization" checked>Only account sign-in (saved connections with their own access key keep working)</label>
+      <label class="cs-check"><input id="cs-disable-scope-all" name="cs-disable-scope" type="radio" value="all">Account sign-in and every saved connection (workflows that use any connection stop, including vendor onboarding)</label>
+    </fieldset>
+    <label class="cs-check"><input id="cs-disable-confirm" type="checkbox">I understand what stops working.</label>
+    <button id="cs-disable-button" class="btn btn--danger" type="button" disabled>Turn off account connections</button>
+  </details>
+  <div id="cs-options" hidden>
+    <details id="cs-app-details" hidden>
+      <summary>For the person who installed Lightwork: set up the account provider</summary>
+      <p>Before anyone can connect an account, the app Lightwork uses must be set up once.
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> ·
+        <a href="https://developer.atlassian.com/console/myapps/" target="_blank" rel="noopener noreferrer">Atlassian developer console</a> ·
+        <a href="https://entra.microsoft.com/" target="_blank" rel="noopener noreferrer">Microsoft Entra app registrations</a>.
+        Create an app there, add the return address below, then paste the app's ID and secret here. The secret is encrypted and never shown again.</p>
+      <div id="cs-microsoft-help" hidden>
+        <p>For Microsoft email, register an app that allows accounts in any organizational directory.
+          Add the exact return addresses below as <strong>Web</strong> addresses, and create an app secret.
+          Add delegated Office 365 Exchange Online permissions for reading the signed-in mailbox and
+          sending its replies. Microsoft calls these <strong>IMAP.AccessAsUser.All</strong> and <strong>SMTP.Send</strong>.
+          Your administrator may need to approve the app and enable incoming mail and authenticated
+          outgoing mail for the mailbox. Lightwork cannot change your organization's Microsoft rules.</p>
+        <p><a href="https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth" target="_blank" rel="noopener noreferrer">Microsoft's mail account requirements</a></p>
+      </div>
+      <label for="cs-callback">Return address to add in the provider's app settings</label><input id="cs-callback" class="input" readonly>
+      <button id="cs-callback-copy" class="btn" type="button">Copy return address</button>
+      <details id="cs-native-settings"><summary>Using the Lightwork desktop app?</summary><p>Also add this second return address: <strong>http://127.0.0.1:8766/connections</strong>, then tick the box below.</p></details>
+      <div id="cs-native-enable" hidden><label class="cs-check"><input id="cs-native-enable-confirm" type="checkbox">Enable system-browser sign-in returns to this desktop installation.</label><button id="cs-native-enable-button" class="btn" type="button" disabled>Enable desktop returns</button></div>
+      <div id="cs-native-disable" hidden><p>Desktop returns are on. Turning them off means people using the Lightwork desktop app can't finish connecting an account in their web browser. They can still connect from this page in a browser. Accounts already connected keep working.</p><label class="cs-check"><input id="cs-native-disable-confirm" type="checkbox">Turn off system-browser sign-in returns to this desktop installation.</label><button id="cs-native-disable-button" class="btn btn--danger" type="button" disabled>Turn off desktop returns</button></div>
+      <form id="cs-application" autocomplete="off" data-draft-recovery="off">
+        <label for="cs-provider">Provider</label><select id="cs-provider" class="input"><option value="google">Google</option><option value="atlassian">Atlassian</option><option value="microsoft">Microsoft</option></select>
+        <p id="cs-app-status"></p>
+        <label for="cs-client-id">App ID (client ID from the provider's console)</label><input id="cs-client-id" class="input" required maxlength="1024" autocomplete="off">
+        <label for="cs-client-secret">App secret (client secret from the provider's console)</label><input id="cs-client-secret" class="input" type="password" maxlength="4096" autocomplete="off" data-draft-recovery="off">
+        <p id="cs-secret-help">Enter the secret supplied by your provider application.</p>
+        <label class="cs-check"><input id="cs-native-registered" type="checkbox">I registered the exact desktop return address above for this provider application.</label>
+        <label class="cs-check"><input id="cs-app-confirm" type="checkbox">I reviewed this provider application and want to save its credentials.</label>
+        <button id="cs-app-save" class="btn" type="submit" disabled>Save provider application</button>
+      </form>
+    </details>
+    <form id="cs-authorize" autocomplete="off" data-draft-recovery="off">
+      <label for="cs-profile">Service and access</label><select id="cs-profile" class="input"></select><p id="cs-access"></p>
+      <details><summary>What this lets Lightwork do</summary><ul id="cs-scopes"></ul></details>
+      <label for="cs-existing">New or existing connection</label><select id="cs-existing" class="input"></select>
+      <label for="cs-name">Connection name</label><input id="cs-name" class="input" required maxlength="64" pattern="[a-z0-9][a-z0-9_\-]{0,63}" placeholder="team-drive" aria-describedby="cs-name-help">
+      <p id="cs-name-help" class="muted">A short name workflows use for this account, like team-drive. Type any name; it is tidied into small letters and dashes for you.</p>
+      <div id="cs-site-field" hidden><label for="cs-site">Jira Cloud site</label><input id="cs-site" class="input" type="url" maxlength="256" placeholder="https://your-team.atlassian.net"></div>
+      <p id="cs-profile-status"></p>
+      <label class="cs-check"><input id="cs-authorize-confirm" type="checkbox">I reviewed this service, destination and access, and want to continue to the provider for consent.</label>
+      <button id="cs-authorize-button" class="btn btn--primary" type="submit" disabled>Prepare provider sign-in</button>
+    </form>
+    <div id="cs-departure" hidden><p id="cs-departure-help">The provider will ask you to approve access. Continue in this tab so Lightwork can check the return belongs to this account and workspace.</p><a id="cs-provider-link" class="btn btn--primary" rel="noreferrer">Continue to provider</a><button id="cs-cancel-departure" class="btn" type="button">Cancel sign-in</button></div>
+    <div id="cs-return" hidden><h3>Finish connecting the account</h3><p>The provider has approved access. Finish to save the connection. This doesn't run a workflow yet.</p><label class="cs-check"><input id="cs-finish-confirm" type="checkbox">Save the returned authorization for the connection I reviewed.</label><button id="cs-finish" class="btn btn--primary" type="button" disabled>Finish connection</button><button id="cs-cancel-return" class="btn" type="button">Discard returned authorization</button></div>
+    <h3>Account connection status</h3><ul id="cs-connections"></ul>
+    <p id="cs-mail-next" hidden>After connecting Microsoft email, <a href="/channels#channel-email" class="btn">choose the mailbox on Channels</a>. Saving an account here does not start email or send a message.</p>
+    <p class="muted">Lightwork renews access when a workflow or connected email needs it. If the provider removes access, connect the account again.</p>
+  </div>
+</section>
+<style>
+  #connection-setup{min-width:0}#connection-setup label{display:block;margin-block:var(--space-2)}#connection-setup form{margin-block:var(--space-4)}
+  #connection-setup .input{box-sizing:border-box;width:100%;min-width:0;max-width:100%}#connection-setup .cs-check{display:flex;gap:var(--space-2);align-items:flex-start}#connection-setup .cs-check input{flex:0 0 auto;margin-top:.35em}
+  #connection-setup p,#connection-setup li,#connection-setup summary,#connection-setup button,#connection-setup a{white-space:normal;overflow-wrap:anywhere}#connection-setup button,#connection-setup a{max-width:100%;box-sizing:border-box;margin-block:var(--space-2)}
+</style>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var copy = document.getElementById('cs-callback-copy');
+  if (copy) copy.addEventListener('click', function () {
+    var value = document.getElementById('cs-callback').value;
+    if (value && window.mvCopy) window.mvCopy(value);
+  });
+  var name = document.getElementById('cs-name');
+  if (name) name.addEventListener('change', function () {
+    name.value = name.value.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[-_]+|-+$/g, '').slice(0, 64);
+  });
+})();
+</script>
+<script src="/static/lightwork-native-account-return.js"></script>
+<script src="/static/lightwork-access-state.js"></script>
+<script src="/static/lightwork-connection-setup.js"></script>

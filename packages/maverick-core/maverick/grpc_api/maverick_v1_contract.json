@@ -1,0 +1,207 @@
+{
+  "messages": {
+    "CancelRequest": {
+      "goal_id": {
+        "label": "",
+        "number": 1,
+        "type": "int64"
+      }
+    },
+    "CancelResponse": {
+      "cancelled": {
+        "label": "",
+        "number": 1,
+        "type": "bool"
+      }
+    },
+    "Event": {
+      "agent": {
+        "label": "",
+        "number": 3,
+        "type": "string"
+      },
+      "content": {
+        "label": "",
+        "number": 5,
+        "type": "string"
+      },
+      "goal_id": {
+        "label": "",
+        "number": 2,
+        "type": "int64"
+      },
+      "id": {
+        "label": "",
+        "number": 1,
+        "type": "int64"
+      },
+      "kind": {
+        "label": "",
+        "number": 4,
+        "type": "string"
+      },
+      "ts": {
+        "label": "",
+        "number": 6,
+        "type": "double"
+      }
+    },
+    "GetStatusRequest": {
+      "goal_id": {
+        "label": "",
+        "number": 1,
+        "type": "int64"
+      }
+    },
+    "GoalStatus": {
+      "found": {
+        "label": "",
+        "number": 4,
+        "type": "bool"
+      },
+      "goal_id": {
+        "label": "",
+        "number": 1,
+        "type": "int64"
+      },
+      "result": {
+        "label": "",
+        "number": 3,
+        "type": "string"
+      },
+      "status": {
+        "label": "",
+        "number": 2,
+        "type": "string"
+      }
+    },
+    "RunGoalRequest": {
+      "capability_json": {
+        "label": "",
+        "number": 7,
+        "type": "string"
+      },
+      "channel": {
+        "label": "",
+        "number": 4,
+        "type": "string"
+      },
+      "goal_id": {
+        "label": "",
+        "number": 1,
+        "type": "int64"
+      },
+      "max_depth": {
+        "label": "",
+        "number": 6,
+        "type": "int32"
+      },
+      "max_dollars": {
+        "label": "",
+        "number": 2,
+        "type": "double"
+      },
+      "max_wall_seconds": {
+        "label": "",
+        "number": 3,
+        "type": "double"
+      },
+      "user_id": {
+        "label": "",
+        "number": 5,
+        "type": "string"
+      }
+    },
+    "StartGoalRequest": {
+      "channel": {
+        "label": "",
+        "number": 5,
+        "type": "string"
+      },
+      "description": {
+        "label": "",
+        "number": 2,
+        "type": "string"
+      },
+      "max_dollars": {
+        "label": "",
+        "number": 3,
+        "type": "double"
+      },
+      "max_wall_seconds": {
+        "label": "",
+        "number": 4,
+        "type": "double"
+      },
+      "title": {
+        "label": "",
+        "number": 1,
+        "type": "string"
+      },
+      "user_id": {
+        "label": "",
+        "number": 6,
+        "type": "string"
+      }
+    },
+    "StartGoalResponse": {
+      "goal_id": {
+        "label": "",
+        "number": 1,
+        "type": "int64"
+      }
+    },
+    "StreamEpisodeRequest": {
+      "goal_id": {
+        "label": "",
+        "number": 1,
+        "type": "int64"
+      },
+      "max_seconds": {
+        "label": "",
+        "number": 3,
+        "type": "double"
+      },
+      "since_id": {
+        "label": "",
+        "number": 2,
+        "type": "int64"
+      }
+    }
+  },
+  "package": "maverick.v1",
+  "services": {
+    "Maverick": {
+      "Cancel": {
+        "request": "CancelRequest",
+        "request_stream": false,
+        "response": "CancelResponse",
+        "response_stream": false
+      },
+      "GetStatus": {
+        "request": "GetStatusRequest",
+        "request_stream": false,
+        "response": "GoalStatus",
+        "response_stream": false
+      },
+      "RunGoal": {
+        "request": "RunGoalRequest",
+        "request_stream": false,
+        "response": "GoalStatus",
+        "response_stream": false
+      },
+      "StartGoal": {
+        "request": "StartGoalRequest",
+        "request_stream": false,
+        "response": "StartGoalResponse",
+        "response_stream": false
+      },
+      "StreamEpisode": {
+        "request": "StreamEpisodeRequest",
+        "request_stream": false,
+        "response": "Event",
+        "response_stream": true
+      }
+    }
+  }
+}

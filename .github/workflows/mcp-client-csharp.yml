@@ -1,0 +1,78 @@
+name: MCP client (C#)
+
+# Executes the C# / .NET MCP client example against a live `maverick mcp`
+# stdio server. The Python contract test (test_client_quickstart_contract.py)
+# checks the documented tool surface; this proves the .NET client actually
+# connects and round-trips -- it's what catches a broken `maverick mcp` entry
+# point or an SDK/protocol drift that doc checks can't.
+#
+# Only the no-LLM flow runs (initialize -> tools/list -> maverick_facts_get);
+# maverick_start needs a provider key + budget and is out of scope for CI.
+#
+# Lives in its own workflow (not mcp-clients.yml) so the .NET toolchain only
+# spins up when the C# surface or the MCP server changes.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/maverick-core/**'
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/csharp/**'
+      - 'docs/clients/csharp-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - '.github/workflows/mcp-client-csharp.yml'
+  pull_request:
+    # The client-parity contract is the MCP wire protocol, which lives in
+    # maverick-mcp; a blanket 'packages/maverick-core/**' filter fired this
+    # .NET-toolchain job on essentially every Python PR. This is not a required
+    # check, so a core change that alters the exposed surface is still caught by
+    # the push:main run above without paying for a .NET build on every unrelated
+    # core PR.
+    paths:
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/csharp/**'
+      - 'docs/clients/csharp-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - '.github/workflows/mcp-client-csharp.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+jobs:
+  csharp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "8.0.423"
+      - name: Install Lightwork (kernel + MCP server)
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -I -m pip install -e ./packages/maverick-core
+          python -I -m pip install --no-deps -e ./packages/maverick-mcp
+          python -I -m pip check
+          python -I scripts/verify_constraint_closure.py
+      - name: Run the C# MCP client end-to-end
+        working-directory: examples/clients/csharp
+        run: |
+          dotnet restore --locked-mode
+          dotnet run --no-restore

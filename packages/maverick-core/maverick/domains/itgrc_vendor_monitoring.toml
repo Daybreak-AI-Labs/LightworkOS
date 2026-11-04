@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_vendor_monitoring.
+name = "itgrc_vendor_monitoring"
+compartment = "itgrc_tprm"
+description = "Continuous vendor monitoring: watch vendors for breaches, SOC 2 expiry, and posture changes and raise alerts."
+
+persona = """You are the Continuous Vendor Monitoring specialist: monitor vendors for breaches, SOC-2 expiry, and posture changes (SecurityScorecard/BitSight). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Vendor monitoring alert brief"
+consumers = ["vendor_risk_manager", "control_owner"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Scope vendors"
+instruction = "Read the current vendor inventory and tiering to identify which vendors are in monitoring scope this cycle."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Pull signals"
+instruction = "Gather posture changes, breach disclosures, and SOC-2 attestation expiry dates from external rating and news sources for each in-scope vendor."
+tools = ["web_search"]
+[[workflow]]
+name = "Verify findings"
+instruction = "Corroborate each external signal against the company's vendor records and prior assessments to rule out false positives before escalating."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Assess impact"
+instruction = "Rate the materiality of each confirmed posture change or expiry against the vendor's tier and the services it supports."
+[[workflow]]
+name = "Brief owner"
+instruction = "Draft the prioritized alert brief with recommended actions and route it to the vendor risk manager for review and any control decision."
+gate = "review"

@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Workflow pilots · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Your AI workforce', 'Workflow pilots',
+        lede='Compare the same cases with and without AI. Plan the cases and acceptance criteria before work starts,
+              then record observed effort, corrections, cost evidence, and the current reviewed outcome.',
+        compact=true) }}
+<p>These are your recorded observations. Provider invoice accuracy, customer acceptance of the pilot itself,
+  and isolation from model training require separate evidence. <a href="/savings">View savings estimates</a>.</p>
+<style>
+  .op-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr));gap:var(--space-3); }
+  .op-grid label, .op-case label { display:flex;flex-direction:column;gap:var(--space-1); }
+  .op-case { margin-block:var(--space-3);padding:var(--space-3);border:1px solid var(--border);min-width:0; }
+  .op-case input,.op-case select,.op-grid input,.op-grid textarea { max-width:100%;width:100%;box-sizing:border-box; }
+  #op-report { overflow-wrap:anywhere; }
+  #op-cost-form,#op-cost-coverage-form { display:grid;gap:var(--space-3); }
+  #op-cost-form label,#op-cost-coverage-form label { display:flex;flex-direction:column;gap:var(--space-1);min-width:0; }
+  #op-cost-form label:has(input[type="checkbox"]),#op-cost-coverage-form label:has(input[type="checkbox"]) { flex-direction:row;align-items:flex-start; }
+  #op-cost-form input[type="checkbox"],#op-cost-coverage-form input[type="checkbox"] { flex:none;width:auto;margin-block-start:.3em; }
+  #op-cost-form .input,#op-cost-coverage-form .input { box-sizing:border-box;width:100%;max-width:100%;min-width:0; }
+  .op-accounting-assurance { padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-1); }
+  .op-accounting-assurance h3,.op-accounting-record h3,.op-accounting-record-detail h4 { margin-block-start:0; }
+  .op-accounting-records { display:grid;gap:var(--space-3);margin-block:var(--space-4); }
+  .op-accounting-record { padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md);min-width:0;overflow-wrap:anywhere; }
+  .op-accounting-record-detail { margin-block-start:var(--space-3);padding:var(--space-3);border-inline-start:3px solid var(--brand);background:var(--surface-1); }
+  .op-accounting-record-detail[hidden] { display:none; }
+  .op-accounting-record-detail ul,.op-accounting-record-detail ol { padding-inline-start:1.5rem; }
+  .op-accounting-cost-event + .op-accounting-cost-event { margin-block-start:var(--space-3); }
+  .op-accounting-cost-event summary { cursor:pointer;font-weight:650; }
+  .op-accounting-cost-event details[open] summary { margin-block-end:var(--space-2); }
+  .ov-actions { display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:end; }
+  .ov-actions label { flex:1 1 18rem;display:flex;flex-direction:column;gap:var(--space-1); }
+  .ov-summary-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:var(--space-3); }
+  .ov-summary-card { padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-1); }
+  .ov-summary-card h3 { margin-block-start:0; }
+  .ov-entry-form { display:grid;gap:var(--space-3);margin-block-start:var(--space-3); }
+  .ov-entry-form label { display:flex;flex-direction:column;gap:var(--space-1);min-width:0; }
+  .ov-entry-form .input { box-sizing:border-box;width:100%;max-width:100%; }
+  .ov-entry-form fieldset { border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3); }
+</style>
+<div id="outcome-pilots" data-context="{{ pilot_context }}" data-enabled="{{ 'true' if pilot_enabled else 'false' }}">
+  <p id="op-status" role="status" aria-live="polite"></p>
+  <section class="panel" id="op-original-controls" aria-labelledby="op-original-heading">
+    <h2 id="op-original-heading">Check an original pilot request</h2>
+    <p>A lost reply can leave a saved or partly saved change. Read its original outcome before another save. This never repeats the request.</p>
+    <button type="button" class="btn" id="op-original-check">Check original outcome</button>
+    <div id="op-original-result" role="status" aria-live="polite"></div>
+  </section>
+  <section class="panel" id="op-guided-review" aria-live="polite"></section>
+  <section class="panel" aria-labelledby="op-accounting-title">
+    <h2 id="op-accounting-title">Outcome and cost accounting</h2>
+    <p>Technical verification, human acceptance, and complete cost are reported separately. Failed, cancelled, and unresolved work remains in the denominator.</p>
+    <p>The summary is bounded for reliability. It labels partial coverage when more admitted records exist. Open a visible record to review its source, pricing, receipt, and reservation evidence without leaving Lightwork.</p>
+    <div id="op-accounting-summary" aria-live="polite">Loading current accounting…</div>
+    <div>
+      <button type="button" class="btn" id="op-accounting-previous" disabled>Previous accounting page</button>
+      <button type="button" class="btn" id="op-accounting-next" disabled>Next accounting page</button>
+    </div>
+  </section>
+  <section class="panel" aria-labelledby="ov-title" data-own-controls>
+    <h2 id="ov-title">Cohort value report</h2>
+    <p>This report includes every admitted case. It separates measured observations from estimates, withholds ROI when cost or human-time evidence is missing, and keeps renewal and expansion records outside operational savings.</p>
+    <div class="ov-actions">
+      <label for="ov-pilot">Pilot cohort
+        <select id="ov-pilot" class="input"><option value="">Choose a frozen pilot</option></select>
+      </label>
+      <label for="ov-record">Case to update
+        <select id="ov-record" class="input"><option value="">Choose an admitted case</option></select>
+      </label>
+      <button type="button" class="btn" id="ov-load-more" hidden>Load more pilot cohorts</button>
+      <button type="button" class="btn" id="ov-refresh">Refresh cohort</button>
+      <button type="button" class="btn" id="ov-export" disabled>Download value evidence</button>
+    </div>
+    <p id="ov-selected-summary">Choose a case to review or add evidence.</p>
+    <p id="ov-status" role="status" aria-live="polite">Loading the complete cohort…</p>
+    <div id="ov-summary" aria-live="polite"></div>
+
+    <details>
+      <summary>Record or correct baseline evidence</summary>
+      <p>Use the evidence available before Lightwork handled this case. Choose Estimated when the value is modeled. Choose Unknown when the evidence is unavailable.</p>
+      <form id="ov-baseline-form" class="ov-entry-form">
+        <div class="op-grid">
+          <label>Baseline cost evidence<select class="input" name="cost_basis"><option value="observed">Observed</option><option value="estimated">Estimated</option><option value="unknown">Unknown</option></select></label>
+          <label>Baseline cost<input class="input" name="cost_amount" inputmode="decimal" maxlength="32" placeholder="125.00"></label>
+          <label>Currency<input class="input" name="currency" maxlength="3" pattern="[A-Z]{3}" placeholder="USD"></label>
+          <label>Why baseline cost is unknown<textarea class="input" name="cost_unknown_reason" maxlength="1000" rows="2"></textarea></label>
+          <label>Baseline human-time evidence<select class="input" name="human_basis"><option value="observed">Observed</option><option value="estimated">Estimated</option><option value="unknown">Unknown</option></select></label>
+          <label>Baseline hands-on minutes<input class="input" name="human_minutes" inputmode="decimal" maxlength="24"></label>
+          <label>Why baseline time is unknown<textarea class="input" name="human_unknown_reason" maxlength="1000" rows="2"></textarea></label>
+          <label>Evidence source<input class="input" name="source_ref" required maxlength="512" placeholder="Invoice, timesheet, or record name"></label>
+        </div>
+        <label>Evidence details<textarea class="input" name="evidence_note" required maxlength="4000" rows="3"></textarea></label>
+        <label>Correction explanation<textarea class="input" name="correction_reason" maxlength="2000" rows="2" placeholder="Required when replacing the current baseline"></textarea></label>
+        <button type="submit" class="btn btn--primary">Save baseline evidence</button>
+      </form>
+    </details>
+
+    <details>
+      <summary>Record a delivered cost or correction</summary>
+      <p>Record provider usage, failed attempts, setup, review, exceptions, rework, support, and shared allocations. Unknown cost stays unknown.</p>
+      <form id="ov-cost-form" class="ov-entry-form">
+        <div class="op-grid">
+          <label>Cost category<select class="input" name="category"><option value="inference">AI provider</option><option value="retrieval">Knowledge retrieval</option><option value="search">Search provider</option><option value="storage">Storage</option><option value="generation">Content generation</option><option value="evaluation">Evaluation</option><option value="retry">Failed attempt or retry</option><option value="setup">Setup</option><option value="review">Human review</option><option value="exception">Exception handling</option><option value="rework">Rework</option><option value="support">Support</option><option value="human">Other human effort</option><option value="allocation">Shared allocation</option><option value="update">Updates</option><option value="other">Other</option></select></label>
+          <label>Attempt result<select class="input" name="attempt_state"><option value="succeeded">Succeeded</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option><option value="unknown">Unknown</option></select></label>
+          <label>Cost evidence<select class="input" name="basis"><option value="observed">Observed</option><option value="estimated">Estimated</option><option value="unknown">Unknown</option></select></label>
+          <label>How this amount relates to the current total<select class="input" name="total_relationship" required><option value="included_in_current_total">Breakdown only — already included</option><option value="additional_to_current_total">Additional cost — add to total</option></select></label>
+          <label>Amount<input class="input" name="amount" inputmode="decimal" maxlength="32"></label>
+          <label>Currency<input class="input" name="currency" maxlength="3" pattern="[A-Z]{3}" placeholder="USD"></label>
+          <label>Why cost is unknown<textarea class="input" name="unknown_reason" maxlength="1000" rows="2"></textarea></label>
+          <label>Quantity<input class="input" name="quantity" inputmode="decimal" maxlength="32" placeholder="Optional"></label>
+          <label>Quantity unit<input class="input" name="unit" maxlength="32" placeholder="minutes, calls, cases"></label>
+          <label>Evidence source<input class="input" name="source_ref" required maxlength="512"></label>
+          <label>Allocation method<select class="input" name="allocation_method"><option value="direct">Direct to this case</option><option value="usage_weighted">Weighted by usage</option><option value="equal_share">Equal share</option><option value="operator_estimate">Operator estimate</option><option value="unattributed">Not yet attributed</option></select></label>
+        </div>
+        <p id="ov-cost-relationship-help" class="muted" role="status">Breakdown only keeps this detail visible without adding it again. Choose it only when a current all-in total already includes this amount.</p>
+        <label>Evidence details<textarea class="input" name="evidence_note" required maxlength="4000" rows="3"></textarea></label>
+        <label>Allocation assumption<textarea class="input" name="allocation_assumption" maxlength="2000" rows="2" placeholder="Required for every non-direct allocation"></textarea></label>
+        <label>Correction explanation<textarea class="input" name="correction_reason" maxlength="2000" rows="2" placeholder="Required when replacing the same source entry"></textarea></label>
+        <fieldset id="ov-cost-coverage">
+          <legend>Evidence required to complete cost coverage</legend>
+          <p>For every family, state whether it is included in the recorded total, exactly zero, or still unknown. Add the evidence or assumption behind that statement.</p>
+          <div class="op-grid">
+            {% for family, label in [
+              ('provider_usage', 'Provider usage'), ('failed_attempts', 'Failed attempts'),
+              ('setup', 'Setup'), ('review', 'Human review'),
+              ('exception', 'Exception handling'), ('rework', 'Rework'),
+              ('support', 'Support'), ('allocation', 'Shared allocation')
+            ] %}
+            <div data-coverage-family="{{ family }}">
+              <label>{{ label }}<select class="input" name="coverage_{{ family }}_status"><option value="unknown">Unknown</option><option value="included">Included in total</option><option value="zero">Confirmed zero</option></select></label>
+              <label>Evidence or assumption<textarea class="input" name="coverage_{{ family }}_note" maxlength="1000" rows="2"></textarea></label>
+            </div>
+            {% endfor %}
+          </div>
+        </fieldset>
+        <label><input type="checkbox" name="complete_coverage"> Mark complete only after every cost family above is Included or Confirmed zero.</label>
+        <button type="submit" class="btn btn--primary">Save delivered cost</button>
+      </form>
+    </details>
+
+    <details>
+      <summary>Record renewal or expansion evidence</summary>
+      <p>Commercial outcomes remain visible as their own evidence and are never added to operational savings.</p>
+      <form id="ov-commercial-form" class="ov-entry-form">
+        <div class="op-grid">
+          <label>Record type<select class="input" name="kind"><option value="renewal">Renewal</option><option value="expansion">Expansion</option></select></label>
+          <label>Stage<select class="input" name="stage"><option value="planned">Planned</option><option value="proposed">Proposed</option><option value="observed">Observed</option><option value="won">Won</option><option value="lost">Lost</option></select></label>
+          <label>Value evidence<select class="input" name="basis"><option value="observed">Observed</option><option value="estimated">Estimated</option><option value="unknown">Unknown</option></select></label>
+          <label>Amount<input class="input" name="amount" inputmode="decimal" maxlength="32"></label>
+          <label>Currency<input class="input" name="currency" maxlength="3" pattern="[A-Z]{3}" placeholder="USD"></label>
+          <label>Why value is unknown<textarea class="input" name="unknown_reason" maxlength="1000" rows="2"></textarea></label>
+          <label>Evidence source<input class="input" name="source_ref" required maxlength="512"></label>
+        </div>
+        <label>Evidence details<textarea class="input" name="note" required maxlength="4000" rows="3"></textarea></label>
+        <label>Correction explanation<textarea class="input" name="correction_reason" maxlength="2000" rows="2" placeholder="Required when replacing the same source entry"></textarea></label>
+        <button type="submit" class="btn btn--primary">Save commercial evidence</button>
+      </form>
+    </details>
+  </section>
+  <div class="panel">
+    <h2>Your pilots</h2>
+    <label for="op-selected">Choose a pilot</label>
+    <select id="op-selected" class="input"><option value="">Choose a pilot</option></select>
+    <button type="button" class="btn" id="op-load-more" hidden>Load more pilots</button>
+    <button type="button" class="btn" id="op-refresh">Refresh</button>
+    <button type="button" class="btn" id="op-export" disabled>Download current report</button>
+  </div>
+  <div id="op-report"></div>
+  <details class="panel" id="op-plan-details">
+    <summary>Plan a new pilot</summary>
+    <p>Prepare at least four pending tasks or vendor intake cases in the app. Each must be unstarted.
+      Choose representative cases before viewing results. Half will be assigned to a fixed evaluation group;
+      use the remaining cases to refine your process. The plan and group assignments cannot be edited after saving.</p>
+    <p><a href="/projects">Open projects</a> · <a href="/third-party/vendor-onboarding">Open vendor intake</a></p>
+    <details>
+      <summary>Prepare a task without starting it</summary>
+      <p>Save each case here, then choose it in the plan below. After freezing the plan,
+        open the task and choose Start this task. Preparation makes no provider calls.</p>
+      <form id="op-prepare">
+        <div class="op-grid">
+          <label>Task name<input name="title" class="input" required maxlength="200"></label>
+          <label>Agent or specialist with a reviewed result<select name="domain" id="op-specialist" class="input" required><option value="">Choose an agent or specialist</option></select></label>
+          <label>Task instructions<textarea name="description" class="input" required maxlength="4000" rows="3"></textarea></label>
+        </div>
+        <button type="submit" class="btn">Save prepared task</button>
+        <p id="op-prepared" role="status" aria-live="polite"></p>
+      </form>
+    </details>
+    <p id="op-source-coverage" role="status"></p>
+    <form id="op-plan">
+      <div class="op-grid">
+        <label>Pilot name<input class="input" name="title" required maxlength="200"></label>
+        <label>Customer or team<input class="input" name="customer" required maxlength="200"></label>
+        <label>Workflow<textarea class="input" name="workflow" required maxlength="1000" rows="3"></textarea></label>
+        <label>Acceptance criteria<textarea class="input" name="criteria" required maxlength="4000" rows="3"></textarea></label>
+        <label>Learning-data treatment<select class="input" name="learning_mode" id="op-learning-mode">
+          <option value="observational">Observe outcomes; no new learning exclusion</option>
+          <option value="exclude_local_learning">Exclude evaluation tasks from automatic local learning</option>
+        </select></label>
+        <label>Prior-exposure checks and remaining limitations<textarea class="input" name="prior_exposure_statement" id="op-prior-exposure" maxlength="2000" rows="3"></textarea></label>
+      </div>
+      <div class="op-accounting-assurance">
+        <h3>Optional improvement release</h3>
+        <p>Connect this plan to a governed candidate before work starts. Lightwork checks the currently deployed baseline and freezes both release commitments with the selected cases. Use protected evaluation tasks and record prior-exposure checks. The task history does not yet verify which release served each case, so the resulting comparison remains exploratory.</p>
+        <label for="op-candidate">Candidate release</label>
+        <select id="op-candidate" name="candidate_id" class="input" disabled><option value="">No candidate release — workflow pilot</option></select>
+        <button type="button" class="btn" id="op-candidate-refresh">Check release readiness</button>
+        <p id="op-candidate-status" role="status" aria-live="polite">Open this plan to check whether release comparisons are available. A normal workflow pilot does not need a release connection.</p>
+      </div>
+      <p>The exclusion mode requires a named account and task cases only. It prevents automatic local capture, donation and learning replay for the fixed evaluation group. It does not undo prior learning, control provider training or cover manually copied/relabelled data. State what was checked; do not assume new task IDs prove new content.</p>
+      <div id="op-planned-cases"></div>
+      <button type="button" class="btn" id="op-add-case">Add a case</button>
+      <button type="submit" class="btn btn--primary">Save and freeze plan</button>
+    </form>
+  </details>
+  <details class="panel" id="op-review-panel"><summary>Independently review a pilot’s local learning policy</summary>
+    <p>An administrator who did not create the pilot checks two things. Its test plan was fixed in advance, and its test tasks were kept out of automatic learning. The decision covers this installation only. It does not certify how the AI provider trains its models.</p>
+    <label for="op-review-reference">Pilot to review</label>
+    <select class="select" id="op-review-reference" aria-describedby="op-review-note"><option value="">Open this section to load pilots…</option></select>
+    <p class="muted" id="op-review-note" role="status"></p>
+    <button type="button" class="btn" id="op-review-load">Open review evidence</button>
+    <p>Review authority does not grant access to private employee tasks. Before opening a review with employee-owned sources, use <a href="/content-access">Content access</a> to request a purpose-bound, independently approved read for each source task. Expired or revoked access must be reviewed again.</p>
+    <div id="op-independent-report"></div>
+  </details>
+</div>
+<script src="/static/lightwork-outcome-accounting.js" defer></script>
+<script src="/static/lightwork-outcome-value.js" defer></script>
+<script src="/static/lightwork-outcome-pilot-costs.js" defer></script>
+<script src="/static/lightwork-outcome-pilots.js" defer></script>
+{% endblock %}

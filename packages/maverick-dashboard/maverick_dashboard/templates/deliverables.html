@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}Results · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_empty_state.html" import empty_state %}
+  {% set results_actions %}<a class="btn btn--primary" href="/chat">Start a task</a>{% endset %}
+  {% if not browse %}
+  {% call hero('Your work', 'Results',
+               subtitle='The work Lightwork finished for you',
+               lede='Open a result to read, share, print, or download the saved answer. <a href="/goals">Tasks</a> shows work that is still running or needs attention.' | safe,
+               actions=results_actions if can_create_goal else '') %}
+    {{ state('Current state',
+             (recent_results | length ~ ' finished task' ~ ('' if recent_results | length == 1 else 's') ~ ' on this page') if recent_results else 'No results yet',
+             badge='Ready to use' if recent_results else 'Nothing finished yet',
+             badge_class='ok' if recent_results else 'idle') }}
+  {% endcall %}
+  {% if awaiting %}
+    <div class="section-head"><h2>Awaiting approval</h2><span class="badge warn">{{ awaiting | length }}</span></div>
+    <div class="panel" style="padding: var(--space-2) var(--space-3);">
+      {% for r in awaiting %}
+        <div class="mv-row">
+          <div class="mv-row__main">
+            <div class="mv-row__title">{{ r.deliverable }}</div>
+            <div class="mv-row__sub muted">{{ r.title }} · needs {{ r.gate | humanize | lower }}</div>
+          </div>
+          <div class="mv-row__actions"><a class="btn" href="/chat/goal/{{ r.id }}">Review</a></div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+  <div class="section-head">
+    <h2>Finished work</h2>
+    <a class="btn btn--ghost" href="/deliverables?role=all">Browse what agents and specialists can produce</a>
+  </div>
+  {% if recent_results %}
+    <div class="card-grid">
+      {% for g in recent_results %}
+        <div class="card dlv-finished">
+          <span class="badge done">Done</span>
+          <strong>{{ g.title }}</strong>
+          {% if result_labels.get(g.domain) %}<span class="muted">{{ result_labels[g.domain] }}</span>{% endif %}
+          <span class="muted" data-when="{{ g.updated_at }}"></span>
+          <a class="dlv-finished__open" href="/chat/goal/{{ g.id }}">{{ ui('Open result →') }}</a>
+          {# AI-written, and rated in one tap where the viewer owns the task. #}
+          <div class="dlv-feedback" data-result-feedback data-goal="{{ g.id }}" role="group" aria-label="{{ ut('Rate this result') }}" lang="{{ ul('Rate this result') }}">
+            <span class="muted">{{ ui('Written by an agent.') }}{% if can_rate and (g.owner or '') == feedback_owner %} {{ ui('Was it useful?') }}{% endif %}</span>
+            {% if can_rate and (g.owner or '') == feedback_owner %}
+            <button class="btn btn--ghost dlv-feedback__btn" type="button" data-rating="up" aria-pressed="false" aria-label="{{ ut('Yes, useful') }}">👍</button>
+            <button class="btn btn--ghost dlv-feedback__btn" type="button" data-rating="down" aria-pressed="false" aria-label="{{ ut('No, not useful') }}">👎</button>
+            {% endif %}
+            <span class="muted dlv-feedback__msg" data-feedback-msg role="status" aria-live="polite"></span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    {% if results_page > 1 or results_more %}
+      <nav class="dlv-pager" aria-label="Results pages">
+        {% if results_page > 1 %}<a class="btn" href="/deliverables?page={{ results_page - 1 }}" rel="prev">Previous</a>{% endif %}
+        <span class="muted">Page {{ results_page }}</span>
+        {% if results_more %}<a class="btn" href="/deliverables?page={{ results_page + 1 }}" rel="next">Next</a>{% endif %}
+      </nav>
+    {% endif %}
+  {% elif can_create_goal %}
+    {{ empty_state('No results yet',
+                   'Finished tasks with a saved answer appear here, ready to read, share or download. Start a task to get the first one.',
+                   action_label='Start a task', action_href='/chat') }}
+  {% else %}
+    {{ empty_state('No results yet',
+                   'Finished tasks you can view appear here, ready to read, share or download.') }}
+  {% endif %}
+  {% else %}
+  {% set produced = items | selectattr('latest') | list %}
+  {% set has_results = produced or awaiting %}
+  {% call hero('Your AI workforce', 'Results',
+               subtitle='Work, organized by who it\'s for',
+               lede='The work your AI teams produce, organized by result
+                     and by who it\'s for — your forecasts, reports, and items
+                     awaiting your approval (the full
+                     <a href="/goals">task history</a> is separate).' | safe,
+               actions=results_actions if can_create_goal else '') %}
+    {{ state('Current state',
+             (produced | length ~ ' result' ~ ('' if produced | length == 1 else 's') ~ ' produced') if has_results else 'No results yet',
+             badge=(awaiting | length ~ ' awaiting approval') if awaiting else ('clear' if has_results else 'Nothing run yet'),
+             badge_class='warn' if awaiting else ('ok' if has_results else 'idle'),
+             copy=('Each result names what it is, who it\'s for, and
+                   whether it needs approval before it is acted on.') if has_results
+                  else 'Results appear here as your AI teams finish work. The agents and specialists themselves are listed in Agent Factory.') }}
+  {% endcall %}
+
+  {% if showing_mine %}
+    <p class="muted" style="margin-top: calc(-1 * var(--space-2)); margin-bottom: var(--space-4);">
+      Showing deliverables for your role{{ 's' if mine|length > 1 else '' }}: <strong>{{ mine|map('humanize')|join(', ') }}</strong>.
+    </p>
+  {% endif %}
+
+  {% if not has_results and not role and not showing_all and not showing_mine %}
+    {% if can_create_goal %}
+    {{ empty_state('No results yet',
+                   'When a task finishes, its result shows up here, filed by what it is and who it is for. Start a task to get the first one.',
+                   action_label='Start a task', action_href='/chat') }}
+    {% else %}
+    {{ empty_state('No results yet',
+                   'When a task you can view finishes, its result shows up here, filed by what it is and who it is for.') }}
+    {% endif %}
+  {% else %}
+  {% if items or role or showing_mine or active_roles %}
+    <div class="dlv-filter" role="group" aria-label="Filter by role">
+      {% if mine %}
+        <a href="/deliverables" class="dlv-chip{% if showing_mine %} dlv-chip--on{% endif %}">Mine</a>
+      {% endif %}
+      <a href="/deliverables?role=all" class="dlv-chip{% if not showing_mine and not role %} dlv-chip--on{% endif %}">All</a>
+      {# Only roles with live work get a chip — not the whole catalogue. #}
+      {% for r in active_roles %}
+        <a href="/deliverables?role={{ r }}" class="dlv-chip{% if role == r %} dlv-chip--on{% endif %}{% if r in mine %} dlv-chip--mine{% endif %}">{{ r|humanize }}</a>
+      {% endfor %}
+      {# A hand-picked role that has no work yet still needs its own chip. #}
+      {% if role and role not in active_roles %}
+        <a href="/deliverables?role={{ role }}" class="dlv-chip dlv-chip--on">{{ role|humanize }}</a>
+      {% endif %}
+    </div>
+    {# The full role set is searchable rather than a wall of chips. #}
+    {% if roles|length > active_roles|length %}
+      <form class="dlv-jump" method="get" action="/deliverables" role="search">
+        <label for="dlv-role-pick" class="sr-only">Show results for another role</label>
+        <select id="dlv-role-pick" name="role" class="input dlv-jump__in" data-typeahead data-typeahead-placeholder="Type a role, for example: controller">
+          <option value="">Pick one of {{ roles|length }} roles…</option>
+          {% for r in roles %}<option value="{{ r }}"{% if r == role and role not in active_roles %} selected{% endif %}>{{ r|humanize }}</option>{% endfor %}
+        </select>
+        <button class="btn" type="submit">Show</button>
+      </form>
+    {% endif %}
+  {% endif %}
+
+  {% if awaiting %}
+    <div class="section-head">
+      <h2>Awaiting approval</h2>
+      <span class="badge warn">{{ awaiting|length }}</span>
+    </div>
+    <div class="panel" style="padding: var(--space-2) var(--space-3);">
+      {% for r in awaiting %}
+        <div class="mv-row">
+          <div class="mv-row__main">
+            <div class="mv-row__title">{{ r.deliverable }}</div>
+            <div class="mv-row__sub muted">
+              {{ r.title }} · <span data-when="{{ r.updated_at }}"></span> · needs {{ r.gate|humanize|lower }}
+            </div>
+          </div>
+          <div class="mv-row__actions">
+            <a class="btn" href="/chat/goal/{{ r.id }}">Review</a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if items %}
+    {# One page of the deliverables at a time: the whole catalogue is thousands. #}
+    {% set pg = paginate(request.query_params.get('page')) %}
+    <div class="section-head">
+      <h2>Results</h2>
+      {% if pg.pages > 1 %}<span class="muted">Showing {{ pg.first }}–{{ pg.last }} of {{ '{:,}'.format(pg.total) }}</span>{% endif %}
+    </div>
+    <div class="card-grid">
+      {% for it in pg.page_items %}
+        <div class="card">
+          <div class="dlv-card__head">
+            <span class="dlv-card__label">{{ it.deliverable }}</span>
+            {% if it.gate %}<span class="badge" title="Needs {{ it.gate|humanize|lower }} before it is acted on">Needs {{ it.gate|humanize|lower }}</span>{% endif %}
+          </div>
+          <p class="muted dlv-card__meta">
+            {%- if it.consumers %}For {{ it.consumers|map('humanize')|join(', ') }}{% else %}Not assigned to anyone yet{% endif -%}
+            {%- if it.cadence %} · {{ it.cadence|humanize }}{% endif -%}
+            {%- if it.shape %} · {{ it.shape|humanize }}{% endif -%}
+          </p>
+          {% if it.latest %}
+            <a class="dlv-run" href="/chat/goal/{{ it.latest.id }}">
+              <span class="badge {{ it.latest.status }}">{{ it.latest.status|humanize }}</span>
+              <span class="dlv-run__title">{{ it.latest.title }}</span>
+              <span class="muted" data-when="{{ it.latest.updated_at }}"></span>
+            </a>
+            {% if it.awaiting_count %}
+              <p class="muted dlv-card__await">{{ it.awaiting_count }} awaiting your approval</p>
+            {% endif %}
+          {% else %}
+            <p class="muted dlv-card__meta">Not produced yet.</p>
+          {% endif %}
+        </div>
+      {% endfor %}
+      {% if pg.pages > 1 %}
+        {# Keep the chosen role (or the explicit "all") on the next page. #}
+        {% set role_q = request.query_params.get('role') %}
+        {% set page_link = '/deliverables?' ~ (('role=' ~ (role_q | urlencode) ~ '&') if role_q else '') ~ 'page=' %}
+        <nav class="dlv-pager" aria-label="Results pages">
+          {% if pg.prev %}<a class="btn" href="{{ page_link ~ pg.prev }}" rel="prev">Previous</a>{% endif %}
+          <span class="muted">Page {{ pg.page }} of {{ pg.pages }}</span>
+          {% if pg.next %}<a class="btn" href="{{ page_link ~ pg.next }}" rel="next">Next</a>{% endif %}
+        </nav>
+      {% endif %}
+    </div>
+  {% elif showing_mine %}
+    {{ empty_state('Nothing for your role' ~ ('s' if mine|length > 1 else '') ~ ' yet',
+                   'Deliverables routed to ' ~ (mine|map('humanize')|join(', ')) ~ ' appear here once a team produces them. See every deliverable meanwhile.',
+                   action_label='See all deliverables', action_href='/deliverables?role=all') }}
+  {% elif has_results or role %}
+    {{ empty_state(('No results for ' ~ (role|humanize)) if role else 'No results declared yet',
+                   'Results appear here as soon as your teams start producing them — each one names what it is, who it\'s for, and whether it needs approval. Check which teams are set up in this workspace.',
+                   action_label='Open Compartments', action_href='/compartments') }}
+  {% endif %}
+  {% endif %}
+  {% endif %}
+
+  <style>
+    .dlv-filter { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+    .dlv-jump { display: flex; gap: var(--space-2); align-items: center; margin-bottom: var(--space-5); max-width: 30rem; }
+    .dlv-jump__in { flex: 1 1 auto; }
+    .dlv-chip {
+      padding: 0.3rem 0.8rem; border: 1px solid var(--border); border-radius: var(--radius-pill);
+      font-size: var(--text-sm); color: var(--muted); background: var(--surface-1);
+      transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
+    }
+    .dlv-chip:hover { color: var(--text); border-color: var(--brand-border); }
+    .dlv-chip--on { color: var(--brand-fg); background: var(--brand); border-color: var(--brand); }
+    /* a role the signed-in user consumes: a subtle dot, so "mine" reads at a glance */
+    .dlv-chip--mine:not(.dlv-chip--on) { border-color: var(--brand-border); }
+    .dlv-chip--mine::before { content: "• "; color: var(--brand); }
+    .dlv-card__head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+    .dlv-card__label { font-weight: var(--font-semibold); margin-inline-end: auto; }
+    .dlv-card__meta { font-size: var(--text-sm); margin: 0 0 var(--space-3); }
+    .dlv-card__await { font-size: var(--text-sm); margin: var(--space-2) 0 0; color: var(--warn); }
+    .dlv-run {
+      display: flex; align-items: center; gap: var(--space-2); margin-top: auto;
+      padding: var(--space-2) var(--space-3); border: 1px solid var(--hairline);
+      border-radius: var(--radius-md); background: var(--surface-sunken);
+    }
+    .dlv-run:hover { border-color: var(--brand-border); }
+    .dlv-run__title { flex: 1 1 auto; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dlv-finished { display: flex; flex-direction: column; gap: var(--space-2); color: var(--text); }
+        .dlv-finished__open { color: var(--brand); font-weight: var(--font-semibold); margin-top: auto; }
+    .dlv-feedback { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+    .dlv-feedback__btn { min-width: 44px; min-height: 44px; }
+    .dlv-feedback__btn[aria-pressed="true"] { border-color: var(--brand-border); }
+    .dlv-feedback__msg { flex-basis: 100%; }
+    .dlv-pager { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-3); }
+  </style>
+{% endblock %}
+{% block scripts_extra %}
+  <script src="/static/lightwork-typeahead.js" defer></script>
+  <script src="/static/lightwork-result-feedback.js" defer></script>
+  <script nonce="{{ csp_script_nonce }}">
+    // Format every server-rendered timestamp via the shared relative-time helper.
+    (function () {
+      document.querySelectorAll('[data-when]').forEach(function (el) {
+        var ts = parseFloat(el.getAttribute('data-when'));
+        if (ts) el.textContent = window.mvWhen(ts);
+      });
+    })();
+  </script>
+{% endblock %}

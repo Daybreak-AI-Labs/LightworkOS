@@ -1,0 +1,27 @@
+"""Connected-input product copy; draft translations pending language review."""
+
+ROWS = [
+    ("This draft has selected accounts. Run it as a task, or return to Templates to prepare a new reusable draft without private account selections.",
+     "Ce brouillon contient des comptes sélectionnés. Exécutez-le comme tâche ou revenez aux modèles pour préparer un nouveau brouillon réutilisable sans sélection de compte privé.",
+     "Dieser Entwurf enthält ausgewählte Konten. Führen Sie ihn als Aufgabe aus oder erstellen Sie unter Vorlagen einen neuen wiederverwendbaren Entwurf ohne private Kontoauswahl.",
+     "この下書きには選択済みのアカウントがあります。タスクとして実行するか、テンプレートに戻り、個人アカウントの選択を含まない再利用可能な下書きを作成してください。",
+     "此草稿已选择帐户。请将其作为任务运行，或返回模板创建不包含私人帐户选择的可重复使用草稿。"),
+    ("Connected account", "Compte connecté", "Verbundenes Konto", "接続済みアカウント", "已连接账户"),
+    ("Choose a connected account", "Choisissez un compte connecté", "Verbundenes Konto auswählen", "接続済みアカウントを選択", "选择已连接账户"),
+    ("Refresh accounts", "Actualiser les comptes", "Konten aktualisieren", "アカウントを更新", "刷新账户"),
+    ("No eligible connected accounts. Open Connections to connect your own account.",
+     "Aucun compte connecté admissible. Ouvrez Connexions pour connecter votre propre compte.",
+     "Keine geeigneten verbundenen Konten. Öffnen Sie Verbindungen, um Ihr eigenes Konto zu verbinden.",
+     "利用できる接続済みアカウントがありません。「接続」を開いて自分のアカウントを接続してください。",
+     "没有符合条件的已连接账户。打开“连接”以连接您自己的账户。"),
+    ("Account selections must be renewed after the account or its permissions change.",
+     "Vous devez sélectionner à nouveau le compte après un changement du compte ou de ses autorisations.",
+     "Nach Änderungen am Konto oder seinen Berechtigungen muss das Konto erneut ausgewählt werden.",
+     "アカウントまたは権限が変更された場合は、アカウントを選び直す必要があります。",
+     "账户或其权限发生变化后，必须重新选择账户。"),
+    ("Connected accounts could not be loaded. Retry or open Connections.",
+     "Impossible de charger les comptes connectés. Réessayez ou ouvrez Connexions.",
+     "Verbundene Konten konnten nicht geladen werden. Erneut versuchen oder Verbindungen öffnen.",
+     "接続済みアカウントを読み込めませんでした。再試行するか「接続」を開いてください。",
+     "无法加载已连接账户。请重试或打开“连接”。"),
+]

@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}AI system tasks · Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .aet-shell { display: grid; gap: var(--space-5); }
+  .aet-shell .panel h2 { margin: 0; }
+  .aet-form { display: grid; gap: var(--space-3); }
+  .aet-form fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; display: grid; gap: var(--space-3); }
+  .aet-form-grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+  .aet-form label { display: grid; gap: .35rem; font-weight: var(--font-semibold); }
+  .aet-choices { border: 1px solid var(--hairline); border-radius: var(--radius-md, 8px); padding: var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); max-height: 12rem; overflow: auto; }
+  .aet-choices label { display: flex; gap: .4rem; align-items: center; font-weight: var(--font-normal); }
+  .aet-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .aet-table { overflow: auto; }
+  .aet-output { white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto; }
+  .aet-shell :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .aet-shell * { transition: none !important; scroll-behavior: auto !important; } }
+  @media (forced-colors: active) { .aet-choices { border-color: CanvasText; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="aet-shell" id="ai-entity-task-shell"
+     data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
+     data-module-enabled="{{ 'true' if task_module_enabled else 'false' }}"
+     data-can-operate="{{ 'true' if task_can_operate else 'false' }}"
+     data-can-audit="{{ 'true' if task_can_audit else 'false' }}"
+     data-can-admin="{{ 'true' if task_can_admin else 'false' }}">
+  {{ hero('Governance', 'AI system tasks', lede='Assign review and fix-up work for each AI system in your inventory, and track who owns it, how it is going and when it is due.') }}
+  {% if not task_module_enabled %}
+  {{ module_gate('ai_entity_tasks', 'AI system tasks',
+                 detail='Turn this on (together with the AI inventory) to assign review and fix-up work for each AI system your organization uses.',
+                 can_activate=task_can_activate) }}
+  {% endif %}
+{% if task_workspace_missing %}
+  <section class="panel" aria-labelledby="aet-workspace-title">
+    <h2 id="aet-workspace-title">Choose a workspace first</h2>
+    <p>Tasks are kept separately for each workspace. Choose a workspace from the workspace menu, then open this page again.</p>
+  </section>
+{% else %}
+  <details>
+    <summary>About this page's safeguards</summary>
+    <ul class="muted">
+      <li>Lightwork checks that the item is current before saving a task. If the AI system changed since you opened the page, it asks you to refresh.</li>
+      <li>Your workspace, identity, permissions and how long tasks are kept are checked automatically.</li>
+      <li>Each task keeps a verification fingerprint linking it to the reviewed inventory record, and every change is kept in its history.</li>
+    </ul>
+  </details>
+
+  <section class="panel" aria-labelledby="aet-status-title"{% if not task_module_enabled %} hidden{% endif %}>
+    <div class="section-head"><h2 id="aet-status-title">Availability</h2><button class="btn btn--ghost" id="aet-refresh-status" type="button">Check again</button></div>
+    <p><strong id="aet-readiness">Checking…</strong> <span class="badge idle" id="aet-status-mark" data-state="checking">Checking</span></p>
+    <p class="muted" id="aet-readiness-detail" role="status" aria-live="polite">Checking availability before enabling actions.</p>
+  </section>
+
+  <fieldset class="aet-shell" id="aet-operations" disabled>
+    <legend class="sr-only">AI system task actions</legend>
+
+    <section class="panel" aria-labelledby="aet-list-title">
+      <div class="section-head"><h2 id="aet-list-title">All tasks</h2><span class="badge idle" id="aet-list-count">0 tasks</span></div>
+      <form class="aet-form" id="aet-filter-form" autocomplete="off" novalidate>
+        <div class="aet-form-grid">
+          <label>AI system
+            <select class="select" name="entity_id" data-entity-picker><option value="">Any AI system</option></select>
+          </label>
+          <label>Status
+            <select class="select" name="status">
+              <option value="">Any status</option>
+              <option value="open">Open</option>
+              <option value="in_progress">In progress</option>
+              <option value="blocked">Blocked</option>
+              <option value="resolved">Resolved</option>
+              <option value="dismissed">Dismissed</option>
+            </select>
+          </label>
+          <label>Assigned to
+            <select class="select" name="assignee_ref" data-person-picker><option value="">Anyone</option></select>
+          </label>
+          <label>Priority
+            <select class="select" name="priority">
+              <option value="">Any priority</option>
+              <option value="critical">Critical</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+        </div>
+        <div class="aet-actions">
+          <button class="btn btn--primary" type="submit">Show tasks</button>
+          <button class="btn btn--ghost" id="aet-clear-filters" type="button">Clear filters</button>
+        </div>
+      </form>
+      <p class="muted" id="aet-list-status" role="status" aria-live="polite">{{ 'Loading tasks…' if task_module_enabled else 'Tasks appear here once AI system tasks are turned on.' }}</p>
+      <div class="aet-table"><table><caption class="sr-only">AI system tasks and what you can do with each</caption>
+        <thead><tr><th scope="col">Task</th><th scope="col">AI system</th><th scope="col">Status</th><th scope="col">Priority</th><th scope="col">Assigned to</th><th scope="col">Due</th><th scope="col">Actions</th></tr></thead>
+        <tbody id="aet-task-list"></tbody></table></div>
+    </section>
+
+    <section class="panel" aria-labelledby="aet-create-title">
+      <div class="section-head"><h2 id="aet-create-title">New task</h2></div>
+      <p class="muted" id="aet-inventory-status" role="status" aria-live="polite">{% set _off_text = "AI systems can be chosen once AI system tasks are turned on." %}{{ "Checking available AI systems…" if task_module_enabled else (ut(_off_text) if ut is defined else _off_text) }}</p>
+      <a id="aet-inventory-link" href="/security/assurance" hidden>Open AI inventory</a>
+      <form class="aet-form" id="aet-create-form" autocomplete="off" novalidate>
+        <fieldset id="aet-create-controls"{% if not task_can_operate %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Create a task</legend>
+          <div class="aet-form-grid">
+            <label>AI system
+              <select class="select" name="entity_id" data-entity-picker required><option value="">Choose an AI system…</option></select>
+            </label>
+            <label>Type of task
+              <select class="select" name="kind" required>
+                <option value="review">Review</option>
+                <option value="remediation">Fix a problem</option>
+              </select>
+            </label>
+            <label>Priority
+              <select class="select" name="priority" required>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+            <label>Assign to
+              <select class="select" name="assignee_ref" data-person-picker><option value="">Nobody yet</option></select>
+            </label>
+            <label>Due date <span class="muted">(optional)</span>
+              <input class="input" name="due_at" type="date">
+            </label>
+          </div>
+          <label>Title
+            <input class="input" name="title" maxlength="500" required>
+          </label>
+          <label>Description
+            <textarea class="textarea input" name="description" maxlength="16000" rows="3"></textarea>
+          </label>
+          <fieldset class="aet-choices" data-collaborator-picker="create">
+            <legend>Also involve <span class="muted">(optional)</span></legend>
+          </fieldset>
+          <input type="hidden" data-auto-reference name="idempotency_key">
+          <div class="aet-actions"><button class="btn btn--primary" type="submit">Create task</button></div>
+        </fieldset>
+      </form>
+      {% if not task_can_operate %}<p class="muted">You need operator access to create tasks. Ask an administrator.</p>{% endif %}
+    </section>
+
+    <section class="panel" id="aet-update-panel" aria-labelledby="aet-update-title" hidden>
+      <div class="section-head"><h2 id="aet-update-title" tabindex="-1">Edit task</h2></div>
+      <p id="aet-update-subject"></p>
+      <form class="aet-form" id="aet-update-form" autocomplete="off" novalidate>
+        <fieldset id="aet-update-controls"{% if not task_can_operate %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Edit the selected task</legend>
+          <input type="hidden" name="task_id">
+          <input type="hidden" name="expected_revision">
+          <div class="aet-form-grid">
+            <label>Status
+              <select class="select" name="status">
+                <option value="open">Open</option>
+                <option value="in_progress">In progress</option>
+                <option value="blocked">Blocked</option>
+                <option value="resolved">Resolved</option>
+                <option value="dismissed">Dismissed</option>
+              </select>
+            </label>
+            <label>Priority
+              <select class="select" name="priority">
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+            <label>Assigned to
+              <select class="select" name="assignee_ref" data-person-picker><option value="">Nobody</option></select>
+            </label>
+            <label>Due date
+              <input class="input" name="due_at" type="date">
+            </label>
+          </div>
+          <fieldset class="aet-choices" data-collaborator-picker="update">
+            <legend>Also involve</legend>
+          </fieldset>
+          <input type="hidden" data-auto-reference name="idempotency_key">
+          <div class="aet-actions"><button class="btn btn--primary" type="submit">Save changes</button><button class="btn btn--ghost" type="button" id="aet-update-cancel">Cancel</button></div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" id="aet-history-panel" aria-labelledby="aet-history-title" hidden>
+      <div class="section-head"><h2 id="aet-history-title" tabindex="-1">Task history</h2></div>
+      <ol id="aet-history-list"></ol>
+    </section>
+
+    <section class="panel" aria-labelledby="aet-audit-title">
+      <div class="section-head"><h2 id="aet-audit-title">Checks and clean-up</h2></div>
+      <div class="aet-actions">
+        <button class="btn" id="aet-verify-integrity" type="button"{% if not task_can_audit %} disabled aria-disabled="true"{% endif %}>Check records are intact</button>
+        <button class="btn" id="aet-retention-due" type="button"{% if not task_can_audit %} disabled aria-disabled="true"{% endif %}>Count expired tasks</button>
+      </div>
+      <form class="aet-form" id="aet-purge-form" autocomplete="off" novalidate>
+        <fieldset id="aet-purge-controls"{% if not task_can_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Delete expired tasks</legend>
+          <div class="aet-actions"><button class="btn btn--danger" type="submit" id="aet-purge-button">Delete expired tasks</button></div>
+        </fieldset>
+      </form>
+      <p class="muted" id="aet-retention-summary" role="status"></p>
+      {% if not task_can_audit %}<p class="muted">Checks need auditor access; deleting expired tasks needs an administrator.</p>{% endif %}
+    </section>
+  </fieldset>
+
+  <section class="panel" aria-labelledby="aet-output-title">
+    <div class="section-head"><h2 id="aet-output-title">Last action</h2></div>
+    <p id="aet-operation-status" role="status" aria-live="polite">Nothing has been done yet.</p>
+    <details><summary>Technical details</summary><pre class="aet-output" id="aet-operation-output" tabindex="0"></pre></details>
+  </section>
+
+  <noscript><p class="panel">Turn on JavaScript in your browser to use this page.</p></noscript>
+{% endif %}
+</div>
+{% endblock %}
+{% block scripts_extra %}
+  {% if not task_workspace_missing %}<script src="/static/lightwork-ai-entity-tasks.js" defer></script>{% endif %}
+{% endblock %}

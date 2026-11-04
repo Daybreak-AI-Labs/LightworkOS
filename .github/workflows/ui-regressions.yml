@@ -1,0 +1,155 @@
+name: UI regressions
+
+on:
+  pull_request:
+    paths:
+      - 'packages/maverick-dashboard/**'
+      - 'packages/maverick-core/**'
+      - 'scripts/acceptance/fixtures/**'
+      - 'apps/mobile-companion/**'
+      - 'apps/desktop/ui/**'
+      - 'apps/desktop/tests/**'
+      - 'extensions/chat-widget/**'
+      - '.github/workflows/ui-regressions.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/maverick-dashboard/**'
+      - 'packages/maverick-core/**'
+      - 'scripts/acceptance/fixtures/**'
+      - 'apps/mobile-companion/**'
+      - 'apps/desktop/ui/**'
+      - 'apps/desktop/tests/**'
+      - 'extensions/chat-widget/**'
+      - '.github/workflows/ui-regressions.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-regressions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  customer-browser-journeys:
+    runs-on: ubuntu-24.04
+    # The default journeys alone are allowed 45 minutes by playwright.config.js
+    # (globalTimeout); the own-server journeys and the setup journeys run after
+    # them in this job, so the job bound must sit above that, not below it.
+    timeout-minutes: 60
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12.13'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: '22.23.1'
+      - name: Install isolated dashboard runtime
+        run: >-
+          python -m pip install
+          -e './packages/maverick-core[audit-signing]'
+          -e ./packages/maverick-dashboard
+          -e ./packages/maverick-knowledge
+          -e ./packages/maverick-shield
+          -e ./packages/maverick-channels
+          -e ./packages/maverick-evolve
+          -e ./packages/maverick-mcp
+          -e ./apps/installer-cli
+      - name: Install browser test runtime
+        working-directory: packages/maverick-dashboard/tests/browser
+        run: |
+          npm ci --ignore-scripts
+          # The runner image ships a Google Chrome apt source whose index
+          # intermittently fails verification (Hash Sum mismatch); Playwright
+          # brings its own Chromium, so drop it before --with-deps runs apt.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
+          npx playwright install --with-deps chromium
+      - name: Real Chromium customer journeys with synthetic local integrations
+        working-directory: packages/maverick-dashboard/tests/browser
+        env:
+          LIGHTWORK_BROWSER_OUTPUT: ${{ runner.temp }}/lightwork-browser-results
+        run: npm test
+      - name: Preserve rendered screenshots, traces, and test evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: customer-browser-journeys
+          path: |
+            ${{ runner.temp }}/lightwork-browser-results
+            packages/maverick-dashboard/tests/browser/browser-report
+            packages/maverick-dashboard/tests/browser/test-results/results.json
+            .browser-approval-copilot-results
+            .browser-consent-creation-results
+            .browser-department-boards-results
+            .browser-department-team-results
+            .browser-results-ekko-discovery
+            .browser-results-intent-value
+            .browser-privacy-handoff-results
+            .browser-retention-maintenance-results
+            .browser-structured-action-results
+            .browser-task-signoff-results
+            .browser-webhook-recovery-results
+          # Only the explicitly listed synthetic fixture outputs are included.
+          include-hidden-files: true
+          retention-days: 14
+
+      - name: Explicit synthetic setup and connection recovery journeys
+        working-directory: packages/maverick-dashboard/tests/browser
+        env:
+          LIGHTWORK_BROWSER_SHOW_VENDOR_SETUP: '1'
+          LIGHTWORK_BROWSER_OUTPUT: ${{ runner.temp }}/lightwork-setup-browser-results
+        run: >-
+          npx playwright test connection_task_return.spec.js
+          customer_setup_recovery.spec.js vendor_setup_readiness.spec.js
+      - name: Preserve setup recovery evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: customer-setup-browser-journeys
+          path: |
+            ${{ runner.temp }}/lightwork-setup-browser-results
+            packages/maverick-dashboard/tests/browser/browser-report
+            packages/maverick-dashboard/tests/browser/test-results/results.json
+          retention-days: 14
+
+  dashboard-and-splash:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: '22.23.1'
+      - name: Install dashboard DOM test dependencies
+        run: npm ci --prefix packages/maverick-dashboard/tests/js --ignore-scripts
+      - name: Dashboard controller regressions
+        run: node --test packages/maverick-dashboard/tests/js/*.test.js
+      - name: Desktop splash regressions
+        run: node --test apps/desktop/tests/*.test.js
+
+  mobile-companion:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/mobile-companion/tests
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: '22.23.1'
+          cache: npm
+          cache-dependency-path: apps/mobile-companion/tests/package-lock.json
+      - name: Install isolated component test dependencies
+        run: npm ci --ignore-scripts
+      - name: Mobile connection and state regressions
+        run: npm test

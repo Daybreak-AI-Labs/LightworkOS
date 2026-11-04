@@ -1,0 +1,5 @@
+{
+  "_comment": "Tests that fail under the PRODUCTION security posture (MAVERICK_TEST_SECURE_DEFAULT=1). A debt register to shrink, not an exemption list. Regenerate with `python -m maverick.posture_gate --regen --report <f>`.",
+  "count": 0,
+  "failures": []
+}

@@ -1,0 +1,15 @@
+{% extends "public_base.html" %}
+{% block title %}{{ rf.verify_title }}{% endblock %}
+{% block public_label %}{{ rf.page_title }}{% endblock %}
+{% block public_footer %}{{ rf.page_title }}{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+<div style="width: 100%; max-width: 40rem; margin: 0 auto;">
+{{ hero('', rf.verify_title, lede=rf.verify_intro, compact=true) }}
+<section class="panel">
+  <form method="post" action="/rights/verify/{{ token }}">
+    <button class="btn btn--primary" type="submit">{{ rf.verify_button }}</button>
+  </form>
+</section>
+</div>
+{% endblock %}

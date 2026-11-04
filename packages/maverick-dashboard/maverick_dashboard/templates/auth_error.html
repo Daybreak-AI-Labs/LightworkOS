@@ -1,0 +1,24 @@
+{% extends "public_base.html" %}
+{#- Company sign-in failed: the person has no session, so this is the public
+    shell. Generic by default; the two documented reasons pass their own
+    title, message and next step. -#}
+{% block title %}{{ title or 'Restart sign-in' }} · Lightwork{% endblock %}
+{% block public_label %}Sign in{% endblock %}
+{% block public_footer %}Sign in to this workspace{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 36rem; margin: 0 auto;" aria-labelledby="title">
+  <h1 id="title" class="page-title" tabindex="-1">{{ title or 'Sign-in could not finish' }}</h1>
+  {% if message %}
+  <p>{{ message }}</p>
+  <p style="display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center;">
+    <a class="btn btn--primary" href="{{ action_href }}">{{ action_label }}</a>
+    <a href="/">Return to Lightwork</a></p>
+  {% else %}
+  <p>Your sign-in may have expired, been cancelled, or been interrupted. Restart to open a new secure sign-in request. Your previous sign-in code will not be reused.</p>
+  <p style="display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: center;">
+    <a class="btn btn--primary" href="{{ restart_url }}">Restart sign-in</a>
+    <a href="/">Return to Lightwork</a></p>
+  <p class="muted">If this continues, contact your organization's sign-in administrator and tell them when it happened. Never send them passwords or sign-in codes.</p>
+  {% endif %}
+</section>
+{% endblock %}

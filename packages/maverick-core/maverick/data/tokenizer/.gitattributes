@@ -1,0 +1,2 @@
+# Preserve the exact reviewed upstream vocabulary bytes across platforms.
+*.tiktoken binary

@@ -1,0 +1,22 @@
+<style nonce="{{ csp_style_nonce }}">
+  .ic-shell{display:grid;gap:var(--space-4)}
+  .ic-metrics{display:grid;gap:var(--space-3);grid-template-columns:repeat(4,minmax(0,1fr))}
+  .ic-metric strong{display:block;font-size:1.5rem}.ic-metric span{color:var(--text-muted);font-size:.85rem}
+  .ic-head{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:center;justify-content:space-between}
+  .ic-head h2{margin:0}
+  .ic-table-wrap{max-height:32rem;overflow:auto}
+  .ic-table{border-collapse:collapse;font-size:.9rem;width:100%}
+  .ic-table th,.ic-table td{border-bottom:1px solid color-mix(in srgb,var(--text) 12%,transparent);padding:.5rem;text-align:left;vertical-align:top}
+  .ic-table td{word-break:break-word}
+  .ic-table caption{caption-side:top;color:var(--text-muted);padding:0 0 .5rem;text-align:left}
+  .ic-actions{display:flex;flex-wrap:wrap;gap:.4rem}
+  .ic-form{display:grid;gap:.4rem;max-width:44rem}
+  .ic-form .ic-row{display:flex;flex-wrap:wrap;gap:.6rem;align-items:end}
+  .ic-form .ic-row > label{display:flex;flex-direction:column;gap:.25rem}
+  .ic-list{margin:.4rem 0;padding-left:1.2rem}
+  .ic-pre{max-height:28rem;overflow:auto;white-space:pre-wrap;font-size:.8rem}
+  .ic-grid{display:grid;gap:var(--space-4);grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ic-wide{grid-column:1/-1}
+  .ic-checks{display:flex;flex-wrap:wrap;gap:.3rem 1rem}
+  @media(max-width:880px){.ic-grid{grid-template-columns:1fr}.ic-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>

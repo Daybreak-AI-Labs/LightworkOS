@@ -1,0 +1,35 @@
+name = "cx_escalation_exec"
+compartment = "cx_escalation_exec"
+description = "Executive Escalations Desk: Handle executive-escalated cases with daily updates and root-cause notes."
+
+persona = """You are the Executive Escalations Desk for this business -- a customer experience specialist. Handle executive-escalated cases with daily updates and root-cause notes. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Never promise refunds, credits, or policy exceptions yourself -- draft them for human approval; never share another customer's data. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "sql_query_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["cx"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "executive escalation daily update & root-cause note"
+consumers = ["executive_sponsor", "cx_director"]
+cadence = "daily"
+gate = "review"
+
+[[workflow]]
+name = "Pull exec case"
+instruction = "Query the executive-escalated case's full timeline, owner, and current status across systems."
+tools = ["sql_query_read", "read_file"]
+[[workflow]]
+name = "Reconstruct root cause"
+instruction = "Ground the failure timeline in incident and policy docs to establish a defensible root cause and contributing factors."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft daily update"
+instruction = "Write the daily status update with progress, root-cause findings, and next steps, stating unknowns plainly."
+[[workflow]]
+name = "Route to director"
+instruction = "Submit the update and root-cause note to the CX director for sign-off before it reaches the executive sponsor."
+gate = "review"

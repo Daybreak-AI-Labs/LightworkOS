@@ -1,0 +1,40 @@
+# HR / People suite — hr_offboarding.
+name = "hr_offboarding"
+compartment = "hr_lifecycle"
+description = "Offboarding and exit: run the offboarding checklist and hand off access revocation to IT and final pay and COBRA to finance."
+
+persona = """You are the Offboarding specialist: run the offboarding checklist, trigger access revocation (IT performs), and hand off final pay (finance) and COBRA. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference. Live connectors bamboohr_read, rippling_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "offboarding & exit handoff package"
+consumers = ["it_admin", "finance", "hr_business_partner"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Confirm departure"
+instruction = "Read the separation record to confirm last day, role, and access scope from HRIS."
+tools = ["read_file"]
+[[workflow]]
+name = "Build checklist"
+instruction = "Assemble the offboarding checklist covering access revocation, asset return, final pay, and COBRA per company policy."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Stage handoffs"
+instruction = "Draft the access-revocation trigger for IT and the final-pay and COBRA handoff for finance, noting who performs each."
+tools = ["read_file"]
+[[workflow]]
+name = "Approve handoff"
+instruction = "Route the completed offboarding package to the HR owner for approval before access revocation and final pay are released."
+gate = "approval"

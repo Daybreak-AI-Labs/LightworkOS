@@ -1,0 +1,34 @@
+{
+  "producer": "@tauri-apps/cli 2.11.4",
+  "scope": "Synthetic cryptographic interoperability; no Authenticode or MSI acceptance",
+  "envelope": {
+    "policy": {
+      "schema": 1,
+      "id": "dddddddddddddddddddddddddddddddd",
+      "issued_at": 1788727109,
+      "expires_at": 1788727739,
+      "from": {
+        "version": "1.0.0",
+        "runtime_sha256": "d8994843c77be961f40bdb98ff3b41c15165405aa0097307f62b1ad806517c9f",
+        "native_sha256": "956360794a2c32fc560b32feea1066c37221a421908bbbd877210fb30972eab4",
+        "publisher_thumbprint": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "public_key": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwQkVCNDU0ODQ4QTlDRjYKUldUMm5JcUVWTFMra0g3YkZ5WDN1MTdUL2hGQmlaYjdiSGhWZlpKSEs3N2tPYVB4WFlQM1NUbDcK"
+      },
+      "to": {
+        "version": "1.0.1",
+        "runtime_sha256": "3aefc37377c5a7743ed0c1fa1d6fe9bb511fb1732466091be46d64ef17193787",
+        "native_sha256": "cc738d1c75a1f105f18f5fe4ed9aa8defa4f8ad15fc64cfbefe2e2f0da259da5",
+        "publisher_thumbprint": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "public_key": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2NEUyQkI5REM5NTMzMjIKUldRaU01WGN1U3RPOW9MdWFHUmR4aXdFRzRXNFlCWkJybEdYdWNGUktPbnBvMVJWeEVJM2hDY2EK"
+      },
+      "new_installer_sha256": "bba73a7219f0275ed5846389c4feb1f8c878f53a04c897497d991e1280a55ad8",
+      "rollback": "exact-retained-pair-only"
+    },
+    "from_signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMm5JcUVWTFMra0pZVzZNWXBhZkE2b21LRkdCRTNmZVFqa2FIWTRTdGNZT3NBZ3lsRTVFNVhkUmM0bDVBMG10UFJIQ1kzZDU3bzFRNUxUTG5UbkhlVzdZWU1xMWRjTUFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NzI3MTM5CWZpbGU6cG9saWN5Lmpzb24KZDNGYVFSc2lvMHZGZk5yYXZYSVJnOW5iQ0tWUkdXc3paWk5KRE5QSFdyMS9sY2NXbktJUFNLNXRDaW9zbnBKNkE2ZGRmRGJkVW8wUDZxbVRnL2s1RHc9PQo=",
+    "to_signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRaU01WGN1U3RPOWlUNC9sajA3MVpCSUl0WHlJNWlPL05WWWdSbHpqSEdFMFdEVytNdUlLdndsVnUySlJqNEttWityT21BYjJ3Qnl3anIrUWlKZlU2U3FGKzlUdzY0NXdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NzI3MTM5CWZpbGU6cG9saWN5Lmpzb24KNmdNSko3MzJDMm1OZUxkcTBSZTJqMVlmRVVsanVKTnBzUVJ5WkVVVGNHT3JOSWZJWThoOE9kd1RJVXJxNU9iMGhIOERIMmxOOG5Zd09iR2ZzZk56QkE9PQo="
+  },
+  "payload_base64": "U3ludGhldGljIGlkZW50aXR5IGJyaWRnZSBmaXh0dXJlOyBub3QgYW4gaW5zdGFsbGFibGUgTVNJLgo=",
+  "artifact_signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMm5JcUVWTFMra0hyRnF3ZzdKS3JnV2x4Y1dYS1FpTVNoNW0xV044aFVlSlVlemo0V1JpcFBFMytqejVGNkYwenF1eTQyWTRwZW9DeFY3MThpWW91dDNrOFd2QVZvYmdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NzI3MTM5CWZpbGU6Zml4dHVyZS1icmlkZ2UubXNpCmFJT25xZ0x2MVpsT2l5bEtLWWwrYlBYR0ltR2NoZm1VQzdqRDN2VFpuUzYwYkhnTVRLNzcrNFFEcm1kSHZNRjd2SUl4cWV1UzJjZldZWmtOVDVmTUJnPT0K",
+  "unrelated_signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTMHYzL0xVdTNvcXdPY1FFS3NxTVBkVjZmaUgyb29SNnhsUmI4czRtYkQ5Wm1wVmJURkJCMG5XaDF3bzBTdDBVd1NISVBnaUIyL2FmcUxvc0ZaNk9jYVFxbmV0dWFLN2dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NzI3MTQwCWZpbGU6cG9saWN5Lmpzb24KeDJHQUs0NjVoN0RQK0FjdTljZ24wNlkxZzFwQTVKLy90SDJidk5sYitzamt6bmhRNWN5UFhOUmRybVpqVzlMZW92bFNpZmFrTlVORmxzQmZFYWV4Qnc9PQo=",
+  "private_keys_retained": false
+}

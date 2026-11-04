@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-maintenance-logs"
+description = "Enables the desktop_maintenance_logs command without any pre-configured scope."
+commands.allow = ["desktop_maintenance_logs"]
+
+[[permission]]
+identifier = "deny-desktop-maintenance-logs"
+description = "Denies the desktop_maintenance_logs command without any pre-configured scope."
+commands.deny = ["desktop_maintenance_logs"]

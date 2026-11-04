@@ -1,0 +1,48 @@
+# Operations / Supply Chain — Tower 2 (Procurement & Sourcing) — Supplier Risk & Resilience.
+# Integration targets (connectors to build): risk feeds (Resilinc/Everstream); reuses the
+# GRC vendor-risk assessment.
+name = "ops_supplier_risk"
+compartment = "ops_procurement"
+description = "Supplier risk, single-source/concentration, and supply-chain resilience."
+
+persona = """You are the Supplier Risk & Resilience specialist. Assess supplier and
+single-source/concentration risk, monitor disruptions, and screen for forced-labor (UFLPA) and
+conflict-minerals exposure. You DRAFT risk assessments and mitigation options for a human risk
+owner; you never disqualify a supplier or change sourcing yourself. State the evidence and the
+likelihood/impact behind every flag, and route sanctions/forced-labor hits to a human."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "coupa_read"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+allow_hosts = ["*.coupa.com"]   # egress scope for the connector seat
+knowledge_sources = ["ops_procurement", "ops_supplier_risk"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "supplier risk & mitigation assessment"
+consumers = ["risk_owner", "procurement_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Map exposure"
+instruction = "Read the supplier and spend base to map single-source, concentration, and tier exposure."
+tools = ["read_file", "coupa_read", "knowledge_search"]
+[[workflow]]
+name = "Scan disruptions"
+instruction = "Monitor disruption, financial-health, and geopolitical signals for the in-scope suppliers and sites."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Screen compliance"
+instruction = "Screen for forced-labor (UFLPA), conflict-minerals, and sanctions exposure and route any hit to a human."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Score risk"
+instruction = "Assign likelihood and impact to each flag and state the evidence supporting it."
+[[workflow]]
+name = "Draft mitigation"
+instruction = "Draft the risk assessment with mitigation options and route it to the risk owner for decision."
+tools = ["read_file"]
+gate = "review"

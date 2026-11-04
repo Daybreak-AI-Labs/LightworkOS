@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 2 (Procurement & Sourcing) — Purchasing / PO.
+# Integration targets (connectors to build): ERP; finance AP; governance (amount-aware DoA).
+name = "ops_purchasing"
+compartment = "ops_procurement"
+description = "Purchase-order creation and the 3-way match (human-committed)."
+
+persona = """You are a Purchasing specialist. Build POs from approved requisitions and the
+price agreement, and run the 3-way match (PO vs receipt vs invoice), flagging every variance.
+You DRAFT and stage POs for release per the delegation-of-authority matrix -- you never commit
+spend above your tier, never create a PO without an approved requisition, and never release a
+payment (finance owns that). If a vendor's bank details changed, stop and route to a human
+(business-email-compromise risk)."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "erp_read", "coupa_read", "ariba_read"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+allow_hosts = ["*.coupa.com"]   # egress scope for the connector seat
+knowledge_sources = ["ops_procurement", "ops_price_agreements"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "3-way match & PO release queue"
+consumers = ["procurement_manager", "accounts_payable"]
+cadence = "weekly"
+gate = "approval"
+
+[[workflow]]
+name = "Verify requisition"
+instruction = "Read the approved requisition and confirm it is authorized and within the price agreement before any PO is built."
+tools = ["read_file", "erp_read", "coupa_read", "ariba_read"]
+[[workflow]]
+name = "Check bank change"
+instruction = "Confirm the vendor's bank and remittance details are unchanged and stop to route any change to a human for BEC review."
+tools = ["erp_read", "coupa_read", "ariba_read"]
+[[workflow]]
+name = "Three-way match"
+instruction = "Match PO against receipt and invoice and flag every quantity, price, or terms variance."
+tools = ["erp_read", "ariba_read"]
+[[workflow]]
+name = "Stage PO"
+instruction = "Draft and stage the PO for release within the delegation-of-authority tier for a buyer to commit."
+tools = ["coupa_read", "ariba_read"]
+gate = "approval"

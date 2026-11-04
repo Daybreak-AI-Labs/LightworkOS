@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% set _name = a.description or (a.id | humanize) %}
+{% block title %}{{ _name }} · Outside agents · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+  {% set _LIFECYCLE = {'active': 'Active', 'suspended': 'Paused', 'revoked': 'Access blocked', 'contained': 'Blocked for rule breaks', 'expired': 'Access expired'} %}
+  {% set _MEMORY = {'lesson': 'lessons', 'semantic': 'facts', 'procedural': 'how-to notes', 'episodic': 'task summaries'} %}
+  <h1 class="page-title">{{ _name }}</h1>
+  <p class="page-subtitle">{{ a.platform_label }}{% if a.description %} · {{ a.id }}{% endif %} · {{ back_link('/external-agents', 'Outside agents') }}</p>
+
+  <div class="panel">
+    <p style="margin: 0 0 var(--space-3);">
+      {% if a.contained %}<span class="badge failure">Blocked after repeated rule breaks</span>
+      {% elif a.active %}<span class="badge active">{{ _LIFECYCLE.get(a.lifecycle, a.lifecycle | humanize) }}</span>
+      {% else %}<span class="badge failure">{{ _LIFECYCLE.get(a.lifecycle, a.lifecycle | humanize) }}</span>{% endif %}
+      {% if a.owner %}<span class="badge">Owner: {{ (a.owner | identity).name }}</span>{% endif %}
+      {% if a.department %}<span class="badge">{{ a.department | humanize }}</span>{% endif %}
+      {% if a.max_risk %}<span class="badge">Riskiest action allowed: {{ a.max_risk | humanize }}</span>{% endif %}
+      {% if a.credentials %}<span class="badge">Access key active</span>{% else %}<span class="badge">No access key yet</span>{% endif %}
+    </p>
+    <div class="mv-row__actions" style="flex-wrap: wrap;">
+      {% if a.contained %}
+      <button type="button" class="btn btn--primary" data-xa-release="{{ a.id }}" data-xa-label="{{ _name }}"{% if not can_manage %} disabled aria-disabled="true"{% endif %}>Let it work again</button>
+      {% endif %}
+      <button type="button" class="btn btn--ghost" data-xa-mint="{{ a.id }}" data-xa-label="{{ _name }}"{% if not can_manage %} disabled aria-disabled="true"{% endif %}>Create access key</button>
+      {% if a.over_budget %}
+      <button type="button" class="btn btn--ghost" data-xa-reset-budget="{{ a.id }}" data-xa-label="{{ _name }}"{% if not can_manage %} disabled aria-disabled="true"{% endif %}>Reset spending</button>
+      {% endif %}
+      <button type="button" class="btn btn--ghost btn--danger" data-xa-revoke="{{ a.id }}" data-xa-label="{{ _name }}"{% if not can_manage %} disabled aria-disabled="true"{% endif %}>Block all access</button>
+      <button type="button" class="btn btn--ghost btn--danger" data-xa-remove="{{ a.id }}" data-xa-go-roster data-xa-label="{{ _name }}"{% if not can_manage %} disabled aria-disabled="true"{% endif %}>Remove agent</button>
+    </div>
+    {% if not can_manage %}<p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">Only an administrator can change this agent.</p>{% endif %}
+  </div>
+
+  {% include "_external_agent_actions.html" %}
+
+  {% if access %}
+  <details class="panel" id="agent-access">
+    <summary><strong>Check access</strong> <span class="badge">{{ access.label }}</span> <span class="sub">— what this agent can do here, and which rule allows it</span></summary>
+    <h2 style="font-size: var(--text-md, 1rem); margin: var(--space-4) 0 var(--space-2);">Actions by risk</h2>
+    <table>
+      <caption class="sr-only">What this agent may do at each risk level</caption>
+      <thead><tr><th scope="col">Actions</th><th scope="col">Answer</th><th scope="col">What it means</th><th scope="col">Rule that decides it</th></tr></thead>
+      <tbody>
+      {% for t in access.tiers %}
+        <tr><th scope="row">{{ t.title }}</th><td><span class="badge{% if t.level == 'refused' %} failure{% endif %}">{{ t.label }}</span></td><td>{{ t.means }}</td><td>{{ t.rule }}.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="sub">It runs on {{ access.platform }}, so Lightwork checks each action before the agent takes it. Your risk ratings for its actions always win over what it reports.</p>
+    <h2 style="font-size: var(--text-md, 1rem); margin: var(--space-4) 0 var(--space-2);">Actions it may use</h2>
+    <p>{% if access.allowed %}Only: {{ access.allowed | map('humanize') | join(', ') }}.{% else %}Any action, within the risk answers above.{% endif %}
+      {% if access.blocked %}Never: {{ access.blocked | map('humanize') | join(', ') }}.{% endif %}</p>
+    <p>{% if access.data_scopes %}Shared knowledge it may read: {{ access.data_scopes | map('humanize') | join(', ') }}.{% else %}It may not read shared knowledge.{% endif %}</p>
+    <h2 style="font-size: var(--text-md, 1rem); margin: var(--space-4) 0 var(--space-2);">Spending limit</h2>
+    <p>{% if access.spending.limit is not none %}It may report {{ access.spending.limit | money }} {{ 'per month' if access.spending.period == 'monthly' else 'in total' }}: {{ access.spending.spent | money }} used, {{ access.spending.remaining | money }} left.{% if access.spending.over %} Further actions are refused until an administrator resets its spending.{% endif %}{% else %}It has no spending limit of its own.{% endif %}</p>
+    <p class="muted mv-freshness" data-mv-freshness>{% if a.last_run_at %}Spending updated {{ a.last_run_at | datetime }}, when it last reported a task.{% else %}No spending reported yet.{% endif %}</p>
+  </details>
+  {% endif %}
+
+  {% macro execution_card(entry) %}
+  <article class="panel" style="margin-top: var(--space-3); overflow-wrap: anywhere;">
+    <h3>{{ entry.connector }} · {{ entry.action }}</h3>
+    <p class="badge {{ entry.tone }}">{{ entry.status }}</p>
+    {% if entry.notice %}<p>{{ entry.notice }}</p>{% endif %}
+    <p class="muted">Requested {{ entry.created_at | datetime if entry.created_at else 'time unavailable' }}{% if entry.claimed_at %} · Started {{ entry.claimed_at | datetime }}{% endif %}{% if entry.finished_at %} · Recorded {{ entry.finished_at | datetime }}{% endif %}</p>
+    <details><summary>Execution reference</summary><p>{{ entry.execution_id }}</p></details>
+  </article>
+  {% endmacro %}
+  <section class="panel" id="xa-executions" data-agent="{{ a.id }}" aria-labelledby="xa-execution-heading">
+    <h2 id="xa-execution-heading" style="margin-top:0">Recent connected changes</h2>
+    <p>Saved outcomes for changes requested by this agent. If a result is unknown, check the connected service before submitting another request. This page never retries a change.</p>
+    <div class="mv-row__actions" style="flex-wrap:wrap"><button class="btn btn--ghost" id="xa-execution-refresh" type="button">Reload saved status</button><button class="btn btn--ghost" id="xa-execution-copilot" type="button">Ask Copilot about these changes</button></div>
+    <p class="muted" id="xa-execution-coverage">Showing {{ a.execution_coverage.displayed_count }} of {{ a.execution_coverage.retained_count }} retained records. Latest {{ a.execution_coverage.limit }} at most, kept for {{ a.execution_coverage.retention_seconds // 3600 }} hours. This is not a complete activity archive.</p>
+    <p class="muted" id="xa-execution-status" role="status" aria-live="polite">Saved status loaded. No connected change or retry was sent.</p>
+    <div id="xa-execution-rows">
+      {% for entry in a.execution_readback[:3] %}{{ execution_card(entry) }}{% endfor %}
+      {% if a.execution_readback | length > 3 %}<details data-earlier-executions><summary>Earlier retained changes ({{ (a.execution_readback | length) - 3 }})</summary>{% for entry in a.execution_readback[3:] %}{{ execution_card(entry) }}{% endfor %}</details>{% endif %}
+      {% if not a.execution_readback %}<p>No connected changes remain in this local execution ledger. Older records may have expired.</p>{% endif %}
+    </div>
+  </section>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Spend and budget</h2>
+    <p class="muted mv-freshness" data-mv-freshness>{% if a.last_run_at %}Spending updated {{ a.last_run_at | datetime }}, when it last reported a task.{% else %}No spending reported yet.{% endif %}</p>
+    <table>
+      <thead><tr><th scope="col">Period</th><th scope="col">Amount</th></tr></thead>
+      <tbody>
+        <tr><td>{{ 'This month' if a.period == 'monthly' else 'All time' }}</td>
+            <td>{{ a.period_spent | money }}{% if a.max_dollars is not none %} of {{ a.max_dollars | money }}{% endif %}
+                {% if a.over_budget %}<span class="badge failure">Over budget</span>{% endif %}</td></tr>
+        <tr><td>Reported by the agent, all time</td><td>{{ a.spent_dollars | money }}</td></tr>
+        <tr><td>Recorded by Lightwork</td>
+            <td>{{ a.record.get('runs', 0) }} task{{ '' if a.record.get('runs', 0) == 1 else 's' }} · {{ a.record.get('dollars', 0) | money }}</td></tr>
+        <tr><td>Tasks that took longer than allowed</td><td>{{ a.wall_violations }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  {% if a.tool_risks %}
+  <div class="panel">
+    <h2 style="margin-top:0">Your risk ratings for its actions</h2>
+    <p class="muted" style="font-size: var(--text-sm)">Your rating always wins over what the agent reports. To change them, add the agent again on <a href="/external-agents">Outside agents</a> with the same name.</p>
+    <table>
+      <thead><tr><th scope="col">Action</th><th scope="col">Your rating</th></tr></thead>
+      <tbody>
+        {% for tool, risk in a.tool_risks.items() | sort %}
+        <tr><td>{{ tool | replace('.', ' ') | humanize }}</td><td><span class="badge {{ 'failure' if risk == 'high' else '' }}">{{ risk | humanize }}</span></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if a.memory %}
+  <div class="panel">
+    <h2 style="margin-top:0">Learning contributions</h2>
+    <p class="muted" style="font-size: var(--text-sm)">Knowledge this agent shared for future tasks. The supporting records are in the <a href="/audit">audit log</a>.</p>
+    <p style="margin:0">
+      {% for kind, n in a.memory.items() | sort %}
+      <span class="badge">{{ n }} {{ _MEMORY.get(kind, kind | humanize | lower) }}</span>
+      {% endfor %}
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2 style="margin-top:0">Recent tasks</h2>
+    {% if a.episodes %}
+    <table>
+      <thead><tr><th scope="col">Task</th><th scope="col">Outcome</th><th scope="col">Cost</th><th scope="col">When</th></tr></thead>
+      <tbody>
+        {% for e in a.episodes %}
+        <tr>
+          <td><a href="/chat/goal/{{ e.goal_id }}">Open the task</a></td>
+          <td>{% if e.outcome == 'success' %}<span class="badge active">Succeeded</span>
+              {% elif e.outcome %}<span class="badge failure">{{ e.outcome | humanize }}</span>
+              {% else %}<span class="badge">Running</span>{% endif %}</td>
+          <td>{{ e.cost_dollars | money }}</td>
+          <td>{{ e.ended_at | datetime if e.ended_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No tasks yet</p>
+      <p class="mv-empty__body">When the agent reports work, or starts a live task, it shows up here.</p>
+      <a class="btn btn--ghost" href="/external-agents">Back to outside agents</a>
+    </div>
+    {% endif %}
+  </div>
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-external-agent-executions.js') }}" defer></script>{% endblock %}

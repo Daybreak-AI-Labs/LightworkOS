@@ -1,0 +1,94 @@
+{# One tab bar for a page whose views each have their own address
+   (``?tab=branches``, ``?view=3d``): the address is the tab's state, so a
+   view can be bookmarked, shared, reloaded and reached by Back. Each tab is a
+   link, so the bar works without scripts; lightwork-tabs.js adds the arrow,
+   Home and End keys of a tab list (the focused tab opens with Enter or Space).
+
+     {% from "_tabs.html" import tab_bar, panel_attrs %}
+     {{ tab_bar('Task replay views', [('', 'Replay', '/replay'),
+                                      ('branches', 'Branches', '/replay?tab=branches')], selected) }}
+     <div {{ panel_attrs(selected) }}> … the selected view … </div>
+
+   ``host_header(host)`` is the header a page shows when it hosts another
+   page's job in one of its tabs: the host's title (a hero when ``host.kicker``
+   is set, else a plain heading), then the tab bar. ``host`` carries kicker,
+   title, subtitle, lede, label, tabs and selected. Only tabs the person may
+   open are passed in; the page checks the same access again.
+
+   ``panel_tabs(...)`` is the same bar for views that are panels of one page
+   (or filters of one list): each tab is a button, the selected one shows its
+   panel, and the arrow keys select (``activation='manual'`` only moves focus,
+   for a choice that loads data). ``items`` are ``(key, text)`` or
+   ``(key, text, value)``; with ``data='sec-tab'`` each tab also carries
+   ``data-sec-tab="<value or key>"`` for the page's own script. Tab ids are
+   ``<tab_prefix><key>``, panel ids ``<panel_prefix><key>`` (by default
+   ``<id>-tab-`` and ``<id>-panel-``); ``controls='run-list'`` makes every tab
+   control one shared list instead (``controls=false`` for a choice, such as
+   a board's time range, that changes the whole page rather than one panel),
+   and ``hash='sec-'`` keeps the selected tab in the address (#sec-risks).
+
+     {{ panel_tabs('Security record types', [('controls', 'Controls'), ('risks', 'Risks')], 'controls', id='sec', hash='sec-') }}
+     <section {{ tab_panel('controls', 'controls', id='sec') }}> … </section>
+
+   ``sub_nav(label, groups, current)`` is the bar for a set of sibling pages:
+   a ``nav`` of links with ``aria-current="page"`` on this one (links, not a
+   tab list: each is its own page). ``groups`` are ``(group label or '',
+   [(href, text), …])``. #}
+
+{% macro tab_bar(label, items, selected, id='page-tabs') %}
+<div class="mv-tabs" role="tablist" aria-label="{{ label }}" data-mv-tabs>
+  {%- for key, text, href in items %}
+  <a class="mv-tab" role="tab" id="{{ id }}-{{ key or 'main' }}" href="{{ href }}" aria-controls="{{ id }}-panel"
+     aria-selected="{{ 'true' if key == selected else 'false' }}" tabindex="{{ '0' if key == selected else '-1' }}">{{ text }}</a>
+  {%- endfor %}
+</div>
+<script src="/static/lightwork-tabs.js" defer></script>
+{%- endmacro %}
+
+{% macro panel_attrs(selected, id='page-tabs') -%}
+role="tabpanel" id="{{ id }}-panel" aria-labelledby="{{ id }}-{{ selected or 'main' }}"
+{%- endmacro %}
+
+{% macro host_header(host) %}
+{% if host.kicker %}
+  {% from "_hero.html" import hero %}
+  {{ hero(host.kicker, host.title, subtitle=host.subtitle or '', lede=host.lede or '') }}
+{% else %}
+  <h1 class="page-title">{{ host.title }}</h1>
+  {% if host.lede %}<p class="page-subtitle">{{ host.lede }}</p>{% endif %}
+{% endif %}
+{{ tab_bar(host.label, host.tabs, host.selected) }}
+{%- endmacro %}
+
+
+{% macro panel_tabs(label, items, selected, id='page-tabs', data='', hash=none, activation='auto', tab_prefix=none, panel_prefix=none, controls='', cls='') %}
+{%- set tp = tab_prefix if tab_prefix is not none else id ~ '-tab-' %}
+{%- set pp = panel_prefix if panel_prefix is not none else id ~ '-panel-' %}
+<div class="mv-tabs{{ ' ' ~ cls if cls }}" role="tablist" aria-label="{{ label }}" data-mv-tabs="panels"
+     {%- if hash is not none %} data-mv-tabs-hash="{{ hash }}"{% endif %}{% if activation == 'manual' %} data-mv-tabs-activation="manual"{% endif %}>
+  {%- for item in items %}
+  {%- set key = item[0] %}
+  <button class="mv-tab" type="button" role="tab"{% if data %} data-{{ data }}="{{ item[2] if item|length > 2 else key }}"{% endif %} aria-selected="{{ 'true' if key == selected else 'false' }}" tabindex="{{ '0' if key == selected else '-1' }}" id="{{ tp }}{{ key }}" data-mv-tab="{{ key }}"{% if controls is not false %} aria-controls="{{ controls or (pp ~ key) }}"{% endif %}>{{ item[1] }}</button>
+  {%- endfor %}
+</div>
+<script src="/static/lightwork-tabs.js" defer></script>
+{%- endmacro %}
+
+{% macro tab_panel(key, selected, id='page-tabs', tab_prefix=none, panel_prefix=none) -%}
+{%- set tp = tab_prefix if tab_prefix is not none else id ~ '-tab-' -%}
+{%- set pp = panel_prefix if panel_prefix is not none else id ~ '-panel-' -%}
+role="tabpanel" id="{{ pp }}{{ key }}" aria-labelledby="{{ tp }}{{ key }}"{% if key != selected %} hidden{% endif %}
+{%- endmacro %}
+
+{% macro sub_nav(label, groups, current, cls='') %}
+<nav class="mv-tabs mv-tabs--nav{{ ' ' ~ cls if cls }}" aria-label="{{ label }}">
+  {%- for group, links in groups %}
+  <div class="mv-tabs__group"{% if group %} role="group" aria-label="{{ group }}"{% endif %}>
+    {%- if group %}<span class="mv-tabs__label" aria-hidden="true">{{ group }}</span>{% endif %}
+    {%- for href, text in links %}
+    <a class="mv-tab" href="{{ href }}"{% if href == current %} aria-current="page"{% endif %}>{{ text }}</a>
+    {%- endfor %}
+  </div>
+  {%- endfor %}
+</nav>
+{%- endmacro %}

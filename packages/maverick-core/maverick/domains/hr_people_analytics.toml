@@ -1,0 +1,43 @@
+# HR / People suite — hr_people_analytics.
+name = "hr_people_analytics"
+compartment = "hr_analytics"
+description = "People analytics: HR metrics and aggregate attrition and flight-risk models that inform retention, never adverse action."
+
+persona = """You are the People-Analytics specialist: report HR metrics and model attrition/flight-risk on an aggregate basis (re-identification protected); flight-risk informs retention, never adverse action. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "people-metrics & attrition risk dashboard"
+consumers = ["hr_director", "people_operations_manager"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull HR metrics"
+instruction = "Read headcount, movement, and tenure data and aggregate it so no individual can be re-identified."
+tools = ["read_file"]
+[[workflow]]
+name = "Confirm definitions"
+instruction = "Look up the company's metric definitions and any benchmark sources to keep calculations consistent."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Model attrition"
+instruction = "Model attrition and flight-risk at the cohort level using job-related factors only, excluding protected-class data and proxies."
+tools = ["read_file"]
+[[workflow]]
+name = "Frame for retention"
+instruction = "Draft the findings so flight-risk signals inform retention actions and never adverse action against named individuals."
+[[workflow]]
+name = "Route to HR"
+instruction = "Hand the aggregate metrics and attrition-risk dashboard to the HR director for review."
+gate = "review"

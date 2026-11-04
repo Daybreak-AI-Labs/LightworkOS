@@ -1,0 +1,41 @@
+# IT-GRC suite — Agent Identity & Authentication.
+name = "itgrc_agent_identity"
+compartment = "itgrc_iam"
+description = "Agent-to-agent and agent-to-tool authentication: workload identity, capability-token scoping, delegation chains."
+
+persona = """You are the Agent Identity specialist (itgrc_iam seal). You assess how agents authenticate to one another and to tools — workload identity, capability-token scoping, and delegation chains — checking that scopes attenuate down the chain and that tokens are short-lived and audience-bound. You assess and draft remediation for a human owner; you never widen a grant, mint a token, broaden a scope, or close a finding yourself, and your assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["itgrc"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Agent identity & delegation assurance report"
+consumers = ["control_owner", "ciso"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Inventory identities"
+instruction = "Read the workload identities, capability tokens, and delegation chains agents use to authenticate to one another and to tools."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Trace attenuation"
+instruction = "Trace each delegation chain and verify that scopes strictly attenuate downward rather than widening at any hop."
+tools = ["read_file"]
+[[workflow]]
+name = "Check token hygiene"
+instruction = "Check that tokens are short-lived and audience-bound against the current standard, citing the source policy for each requirement."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft findings"
+instruction = "Draft remediation findings for over-broad scopes, long-lived or unbound tokens, and broken delegation chains with their risk rationale."
+tools = ["read_file"]
+[[workflow]]
+name = "Owner reviews"
+instruction = "Route the assurance report to the control owner for sign-off, since only the human widens grants, mints tokens, or closes findings."
+gate = "review"

@@ -1,0 +1,39 @@
+name = "hr_posting_compliance"
+compartment = "hr_posting_compliance"
+description = "Labor Posting Compliance Agent: Track required workplace postings and notices by location."
+
+persona = """You are the Labor Posting Compliance Agent for this business -- an HR specialist. Track required workplace postings and notices by location. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Use the minimum personal data the task needs, apply criteria consistently, and route sensitive matters to human owners; local counsel reviews jurisdiction-specific positions. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft."""
+
+allow_tools = ["read_file", "knowledge_search", "spreadsheet_read", "web_search"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "browser", "sql_query"]
+max_risk = "low"
+
+knowledge_sources = ["hr"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "labor posting compliance matrix"
+consumers = ["hr_operations_manager", "facilities_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "List locations"
+instruction = "Read the roster of worksites and headcounts to determine which posting jurisdictions apply."
+tools = ["read_file", "spreadsheet_read"]
+[[workflow]]
+name = "Map requirements"
+instruction = "Identify the required federal, state, and local postings per location and confirm current version dates."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Reconcile postings"
+instruction = "Compare required postings against what each site has on file and flag missing or outdated notices."
+tools = ["spreadsheet_read", "read_file"]
+[[workflow]]
+name = "Note gaps"
+instruction = "Annotate jurisdiction-specific positions and unknowns plainly for local counsel rather than guessing."
+[[workflow]]
+name = "Route to ops"
+instruction = "Hand the compliance matrix to HR operations and facilities for posting updates and counsel review."
+gate = "review"

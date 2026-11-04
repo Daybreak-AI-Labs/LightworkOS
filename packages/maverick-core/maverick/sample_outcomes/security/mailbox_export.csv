@@ -1,0 +1,6 @@
+message_id,received,from,to,subject,link_domain,attachment,reported_by
+MSG-7001,2026-09-14 08:02,payroll@northwind-fixtures.example,all-staff@northwind-fixtures.example,September payslips are available,portal.northwind-fixtures.example,none,
+MSG-7002,2026-09-14 09:15,it-helpdesk@northwind-fixtures-support.example,a.rivera@northwind-fixtures.example,Action required: your mailbox is 98% full,login-northwind.example,none,a.rivera
+MSG-7003,2026-09-14 10:40,accounts@bluharbor-packaging.example,ap@northwind-fixtures.example,Updated bank details for invoice INV-1042,none,bank-details.pdf,ap-team
+MSG-7004,2026-09-14 11:05,newsletter@cedarpointoffice.example,facilities@northwind-fixtures.example,Autumn catalogue,cedarpointoffice.example,none,
+MSG-7005,2026-09-14 13:30,m.chen@northwind-fixtures.example,d.okafor@northwind-fixtures.example,Slides for Thursday,none,thursday-slides.pptx,

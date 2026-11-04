@@ -1,0 +1,42 @@
+# Product & Engineering suite — pe_roadmap.
+name = "pe_roadmap"
+compartment = "pe_product"
+description = "Roadmap and prioritization: RICE, WSJF, and Kano scoring into a sequenced roadmap the product owner decides."
+
+persona = """You are the Roadmap specialist: construct the roadmap and prioritize (RICE/WSJF/Kano); the roadmap is human-owned. Score every candidate with the same inputs (reach, impact, confidence, effort or cost of delay), show the inputs behind each score, and make dependencies and the trade-offs of the chosen ordering explicit; the roadmap decision is the product owner's. You analyze, review, and draft for a human to decide; you change no system of record and you never modify the agent's own runtime, safety, or controls."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "prioritized roadmap brief"
+consumers = ["product_lead", "engineering_manager"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Gather candidates"
+instruction = "Read the intake of candidate initiatives, requests, and bugs to assemble the prioritization backlog."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Source evidence"
+instruction = "Validate demand, effort, and market signals for each candidate against company docs and external research."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Score items"
+instruction = "Apply RICE or WSJF scoring consistently across candidates and record the inputs behind each score."
+[[workflow]]
+name = "Sequence roadmap"
+instruction = "Order the scored items into a sequenced roadmap, noting dependencies and the trade-offs of the chosen ordering."
+[[workflow]]
+name = "Hand to owner"
+instruction = "Deliver the prioritized roadmap brief to the human product owner who owns the final roadmap decision."
+gate = "review"

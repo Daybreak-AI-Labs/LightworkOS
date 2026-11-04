@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}Teach this flow · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+{% from "_hero.html" import hero, state %}
+<div class="ft" id="flow-teach" data-flow="{{ flow.id }}" data-questions="{{ '1' if questions_on else '0' }}"
+     data-examples="{{ '1' if examples_on else '0' }}" data-lineage="{{ '1' if lineage_on else '0' }}">
+  {% call hero('Automations', 'Teach this flow', subtitle=flow.name,
+               lede='Teach a step to answer from your examples, or build a new flow from runs you reviewed. Nothing here saves, publishes or runs anything until you choose to save.') %}
+    {{ state('Current state', 'Version ' ~ flow.version, badge='Saved flow', badge_class='ok',
+             copy='Publishing stays a separate step in the flow designer.') }}
+  {% endcall %}
+  <p>{{ back_link('/flows/designer/' ~ (flow.id | urlencode), 'Flow designer') }}
+    <a class="btn btn--ghost" href="/learning/examples">Review learning examples</a>
+    {% if can_open_page('/learning/distinctions') %}<a class="btn btn--ghost" href="/learning/distinctions?flow={{ flow.id|urlencode }}">Find missing distinctions</a>{% endif %}
+    <a class="btn btn--ghost" href="/research?release_flow={{ flow.id|urlencode }}#local-flow-release">Review this workflow's release</a>
+    <button type="button" class="btn btn--ghost" id="ft-refresh">Refresh flow and examples</button></p>
+  <p id="ft-status" role="status" aria-live="polite" tabindex="-1"></p>
+
+  <section class="panel ft__section" id="teach-rules" aria-labelledby="tr-title">
+    <div class="section-head"><h2 id="tr-title">Teach a step from examples</h2></div>
+    <p class="muted">Give examples of the answer an AI step should give. Lightwork keeps every simple rule that fits all of
+      them. The step then answers by itself only when all those rules agree, and asks its assistant otherwise.</p>
+    <div class="ft__field"><label for="tr-step">Step</label>
+      <select id="tr-step" class="select"><option value="">Loading steps…</option></select></div>
+    <p id="tr-current" class="muted"></p>
+    <div class="ft__row" id="tr-current-actions" hidden>
+      <button type="button" class="btn btn--ghost" id="tr-use-current">Try or improve the current rule</button>
+      <button type="button" class="btn btn--ghost btn--danger" id="tr-remove">Stop using the learned rule</button>
+    </div>
+
+    <h3>What the step looks at</h3>
+    <div id="tr-inputs" class="ft__grid" role="group" aria-label="Inputs the step looks at"></div>
+    <button type="button" class="btn btn--ghost" id="tr-add-input">Add an input</button>
+    <div class="ft__field"><label for="tr-output">Kind of answer</label>
+      <select id="tr-output" class="select">
+        <option value="string">Text</option><option value="integer">Whole number</option><option value="boolean">Yes or no</option>
+      </select></div>
+
+    <div class="ft__field"><label for="tr-constants">Numbers or words a rule may compare against (optional, up to 8, separated by commas)</label>
+      <input id="tr-constants" class="input" type="text" maxlength="16391" placeholder="For example: 100, gold"></div>
+
+    <h3>Examples</h3>
+    <div id="tr-examples" class="ft__table" role="group" aria-label="Examples"></div>
+    <button type="button" class="btn btn--ghost" id="tr-add-example">Add an example</button>
+
+    <fieldset class="ft__choices">
+      <legend>How rules may be built</legend>
+      <label><input type="radio" name="tr-style" value="simple" checked> Simple rules</label>
+      <label><input type="radio" name="tr-style" value="combined"> Rules that combine a few operations</label>
+      <label for="tr-ops" class="ft__inline">Operations per rule
+        <select id="tr-ops" class="select"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option></select></label>
+    </fieldset>
+    <div class="ft__row">
+      <button type="button" class="btn btn--primary" id="tr-learn">Learn from these examples</button>
+      <button type="button" class="btn btn--ghost" id="tr-more" hidden>Add these examples to the learned rule</button>
+    </div>
+    <div id="tr-result" class="ft__result" hidden>
+      <p id="tr-summary"></p>
+      <h3>Try it</h3>
+      <div id="tr-try" class="ft__grid" role="group" aria-label="Inputs to try"></div>
+      <button type="button" class="btn btn--ghost" id="tr-try-go">Try these inputs</button>
+      <p id="tr-try-out" role="status" aria-live="polite"></p>
+      <button type="button" class="btn btn--primary" id="tr-attach">Use this rule in the step</button>
+    </div>
+
+    {% if questions_on %}
+    <details class="ft__questions" id="tr-questions">
+      <summary>Let Lightwork ask you about an unclear case</summary>
+      <p class="muted">Lightwork looks for inputs where the rules that fit your examples disagree, and asks you for the right
+        answer. Your answer is recorded with your name. This works on the step's saved rule.</p>
+      <button type="button" class="btn btn--ghost" id="tq-ask">Find an unclear case</button>
+      <div id="tq-case" hidden>
+        <p id="tq-inputs"></p>
+        <div class="ft__field" id="tq-answer-wrap"></div>
+        <div class="ft__field"><label for="tq-reason">Why this is the right answer</label>
+          <textarea id="tq-reason" class="textarea" rows="2" maxlength="2000"></textarea></div>
+        <button type="button" class="btn btn--primary" id="tq-answer">Record my answer</button>
+      </div>
+      <p id="tq-status" role="status" aria-live="polite"></p>
+    </details>
+    {% endif %}
+  </section>
+
+  <section class="panel ft__section" id="teach-recipe" aria-labelledby="rc-title">
+    <div class="section-head"><h2 id="rc-title">Build a flow from reviewed runs</h2></div>
+    {% if examples_on and lineage_on %}
+    <p class="muted">Choose runs of this flow that were reviewed and separately allowed for learning. Lightwork signs each
+      current example, learns from those records, and binds the new flow to them. Each action will check that its examples
+      are still allowed before it starts. You review and save the draft separately.</p>
+    <div id="rc-runs" class="ft__list" role="group" aria-label="Reviewed runs"></div>
+    <button type="button" class="btn btn--ghost" id="rc-refresh">Refresh reviewed examples</button>
+    <fieldset class="ft__choices" id="rc-tools-set"><legend>Actions the new flow may use</legend><div id="rc-tools"></div></fieldset>
+    <div class="ft__field"><label for="rc-style">What to learn</label>
+      <select id="rc-style" class="select">
+        <option value="plain">The same actions every time, with details copied from inputs and earlier results</option>
+        <option value="transforms">The same actions, working out details with simple calculations</option>
+        <option value="choices">One shared action, then a choice between two final actions</option>
+      </select></div>
+    <div class="ft__field" id="rc-ops-wrap" hidden><label for="rc-ops">Operations per calculation</label>
+      <select id="rc-ops" class="select"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select></div>
+    <div class="ft__row">
+      <button type="button" class="btn btn--primary" id="rc-learn">Learn from the chosen runs</button>
+      <button type="button" class="btn btn--ghost" id="rc-more" hidden>Add the chosen runs to what was learned</button>
+    </div>
+    <div id="rc-result" class="ft__result" hidden>
+      <p id="rc-summary"></p>
+      <div class="ft__field"><label for="rc-name">Name for the new flow</label>
+        <input id="rc-name" class="input" type="text" maxlength="200"></div>
+      <label id="rc-teach-wrap" hidden><input id="rc-teach" type="checkbox"> Pause at the choice so a person can teach it</label>
+      <button type="button" class="btn btn--primary" id="rc-draft">Make the new flow</button>
+    </div>
+    {% else %}
+    <p class="muted">Reviewed, signed examples aren't ready on this installation. An administrator can turn on example
+      collection and signed histories in <a href="/settings">Settings</a>. Then keep and review new runs before allowing
+      learning from them.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel ft__section" id="teach-signed" aria-labelledby="sg-title">
+    <div class="section-head"><h2 id="sg-title">Learn from signed examples</h2></div>
+    {% if not lineage_on %}<p class="muted">Signed learning is not ready. Ask an administrator to enable signed examples
+      and set this installation's signing name in <a href="/settings">Settings</a> before using this section.</p>{% endif %}
+    <p class="muted">A signed example is a reviewed run sealed by this installation so it can be checked later. Learning
+      from signed examples keeps a record of exactly which runs taught the flow. Approving the result makes it usable in
+      governed flows, and any example withdrawn later stops it.</p>
+    <div id="sg-runs" class="ft__list" role="group" aria-label="Runs that can be signed"></div>
+    <div class="ft__field"><label for="sg-files">Add signed example files</label>
+      <input id="sg-files" type="file" multiple accept=".json,application/json" {% if not lineage_on %}disabled{% endif %}></div>
+    <ul id="sg-set" class="ft__list" aria-label="Signed examples ready to use"></ul>
+    <div class="ft__field"><label for="sg-style">What to learn</label>
+      <select id="sg-style" class="select">
+        <option value="plain">The same actions every time</option>
+        <option value="transforms">The same actions, with calculated details</option>
+        <option value="choices">One shared action, then a choice between two final actions</option>
+        <option value="workflow">Which action comes next, and when the work is finished</option>
+        <option value="memory">Next actions that depend on running totals</option>
+      </select></div>
+    <div class="ft__row">
+      <button type="button" class="btn btn--primary" id="sg-learn" {% if not lineage_on %}disabled{% endif %}>Learn from these signed examples</button>
+      <button type="button" class="btn btn--ghost" id="sg-refine" hidden {% if not lineage_on %}disabled{% endif %}>Add these signed examples to what was learned</button>
+    </div>
+    <div id="sg-result" class="ft__result" hidden>
+      <p id="sg-summary"></p>
+      <div class="ft__row">
+        <button type="button" class="btn btn--ghost" id="sg-inspect">Look at it as a flow</button>
+        <button type="button" class="btn btn--primary" id="sg-approve" {% if not lineage_on %}disabled{% endif %}>Approve for governed use</button>
+        <button type="button" class="btn btn--ghost" id="sg-download">Download what was learned</button>
+      </div>
+      <ol id="sg-steps"></ol>
+    </div>
+    <div class="ft__field"><label for="sg-package">Or open a learned file you saved earlier</label>
+      <input id="sg-package" type="file" accept=".json,application/json"></div>
+    <h3>Approved recipes</h3>
+    <ul id="sg-approved" class="ft__list" aria-label="Approved recipes"></ul>
+    <details>
+      <summary>Technical details</summary>
+      <div class="ft__field"><label for="sg-trust">Trust file from another installation (optional)</label>
+        <input id="sg-trust" type="file" accept=".json,application/json"></div>
+      <p class="muted">Signed examples are confirmed and learned from only with this workspace's own keys. A trust file only shows whether a key you supplied signed an example.</p>
+    </details>
+  </section>
+
+  <div id="ft-save" class="panel ft__save" hidden>
+    <p id="ft-save-note"></p>
+    <button type="button" class="btn btn--primary" id="ft-save-go">Save learned flow</button>
+    <button type="button" class="btn btn--ghost" id="ft-save-cancel">Don't save</button>
+  </div>
+</div>
+<style>
+  .ft { max-width: 980px; margin-inline: auto; }
+  .ft [hidden] { display: none !important; }
+  .ft__section { margin-block: var(--space-4); }
+  .ft__section p, .ft__section li, .ft__section label { overflow-wrap: anywhere; }
+  .ft__field { display: grid; gap: var(--space-1); margin-block: var(--space-2); max-width: 36rem; }
+  .ft__row { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-2); }
+  .ft__grid { display: grid; gap: var(--space-2); }
+  .ft__grid > div { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; }
+  .ft__table { display: grid; gap: var(--space-2); overflow-x: auto; }
+  .ft__table > div { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; }
+  .ft__choices { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); margin-block: var(--space-3); }
+  .ft__choices label { display: inline-flex; gap: var(--space-1); align-items: center; }
+  .ft__inline { display: inline-flex; gap: var(--space-2); align-items: center; }
+  .ft__list { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
+  .ft__list label { display: flex; gap: var(--space-2); align-items: center; }
+  .ft__result { border-top: 1px solid var(--border); margin-top: var(--space-3); padding-top: var(--space-3); }
+  .ft__save { position: sticky; bottom: var(--space-3); }
+  .ft label.ft__cell { display: grid; gap: var(--space-1); font-size: var(--text-sm); }
+</style>
+<script nonce="{{ csp_script_nonce }}">{% include "flow_designer_inputs.js" %}</script>
+<script src="/static/lightwork-flow-teach.js" defer></script>
+{% endblock %}

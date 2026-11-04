@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Your notifications - Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% if personal_alerts_unavailable %}
+{% set alerts_actions %}<a class="btn btn--primary" href="/settings/all">Open All settings</a>{% endset %}
+{{ hero('Your account', 'Your notifications',
+        lede='Personal task alerts can tell you when your work finishes, needs an answer, or needs attention. They stay with your account.',
+        actions=alerts_actions if viewer_global_admin else '', compact=true) }}
+<section class="panel">
+  <p role="status">{{ personal_alerts_unavailable }}</p>
+</section>
+{% else %}
+{{ hero('Your account', 'Your notifications',
+        lede='Personal alerts for your own tasks and decisions assigned to you. Choose a verified private conversation or register your own private topic below for alerts outside Lightwork. Shared organization alerts stay separate.',
+        compact=true) }}
+<section class="panel">
+  <p class="muted">The inbox includes current unresolved work and recent activity from the last seven days. Changes resolved before observation are combined into the current actionable state. Repeated streaming updates do not create alerts.</p>
+  <p><a href="/preferences">Your preferences</a> · <a href="/action-center">Action Center</a></p>
+  <p id="personal-notification-status" role="status" aria-live="polite">Loading your inbox.</p>
+  <p id="personal-notification-error" role="alert" hidden></p>
+  <button class="btn btn--ghost" id="personal-notification-refresh" type="button">Refresh inbox</button>
+  <p class="muted" id="personal-background-status">This inbox refreshes while visible and catches up when you return. Checking whether background observation is enabled.</p>
+  <p class="muted" id="personal-external-status">Checking verified private delivery options.</p>
+  <div id="personal-delivery-receipts"></div>
+  <p class="muted">Each alert says why you get it, what it needs and by when. Mute a task, or every alert from one agent, from the alert itself; undo it there or below in your preferences.</p>
+  <p id="personal-notification-mute-status" role="status" aria-live="polite"></p>
+  <div id="personal-notification-items"></div>
+</section>
+<form class="panel" id="notification-preferences" tabindex="-1">
+  <h2>Personal notification preferences</h2>
+  <label>Delivery <select class="select" name="mode"><option value="immediate">As changes are observed</option><option value="digest">Daily digest</option><option value="off">Off</option></select></label>
+  <label>Time zone <input class="input" name="timezone" list="notification-timezones" maxlength="100" required></label>
+  <datalist id="notification-timezones"><option value="UTC"></option><option value="America/New_York"></option><option value="America/Los_Angeles"></option><option value="Europe/London"></option><option value="Asia/Tokyo"></option></datalist>
+  <label>Daily digest time <input class="input" type="time" name="digest_time" required></label>
+  <label><input type="checkbox" name="quiet_enabled"> Hold new personal alerts during quiet hours</label>
+  <label>Quiet hours start <input class="input" type="time" name="quiet_start" required></label>
+  <label>Quiet hours end <input class="input" type="time" name="quiet_end" required></label>
+  <p class="muted">Times follow the selected zone through daylight-saving changes. A digest is released at most once per local day, at the first eligible observation after its time.</p>
+  <label><input type="checkbox" name="critical_exceptions"> Let approval and deadline alerts bypass quiet hours and digest timing when organization policy permits</label>
+  <p class="muted" id="personal-critical-policy"></p>
+  <fieldset><legend>Notify me about</legend>
+    {% for value,label in [('needs-decision','Needs my answer or decision'),('blocked','Blocked work'),('failed','Work that did not finish'),('completed','Completed work'),('changed-result','Changed results'),('deadline','Approaching or overdue deadlines')] %}
+    <label><input type="checkbox" name="event" value="{{ value }}"> {{ label }}</label>
+    {% endfor %}
+    <label><input type="checkbox" name="mentions"> When someone mentions me in a comment</label>
+  </fieldset>
+  <fieldset><legend>Private delivery channels</legend>
+    <p>Link and explicitly confirm your own identity in <a href="/my-data">My data</a>, then select it here to opt into private alerts. Slack, Telegram and Teams are supported. For Teams, link from a private chat with the current Lightwork bot. Each message says why you get the alert, what it needs and by when, with a sign-in link to it, and never includes task text. Anything you already saw here is not sent again. Organization webhook alerts stay separate.</p>
+    <div id="personal-external-links"></div>
+  </fieldset>
+  <fieldset><legend>Project watches</legend>
+    <label><input type="checkbox" name="watch_all_projects"> Watch all of my tasks, including tasks without a project</label>
+    <div id="notification-project-watches"></div>
+    <p class="muted">When all-task watching is off, only the selected projects' tasks create alerts. Assigned approvals keep their own subscription.</p>
+  </fieldset>
+  <fieldset><legend>Your daily summary</legend>
+    <p class="muted">Your daily summary lists requests waiting for you, questions an agent asked and recent results. Choose when it goes out, and where, in <a href="/me#daily-summary">My work</a>. Results you already saw here are left out of it.</p>
+    {% include "_digest_preview.html" %}
+  </fieldset>
+  <fieldset><legend>Muted tasks and agents</legend>
+    <select class="select" id="notification-mute-task" aria-label="Task to mute"></select>
+    <select class="select" id="notification-mute-duration" aria-label="Mute duration"><option value="3600">One hour</option><option value="86400">One day</option><option value="604700">Seven days</option></select>
+    <button class="btn btn--ghost" type="button" id="notification-add-mute">Add task mute to draft</button>
+    <div id="notification-mutes"></div>
+  </fieldset>
+  <button class="btn btn--primary" type="submit">Save personal notification preferences</button>
+  <button class="btn btn--ghost" type="button" id="notification-reload-preferences">Reload saved preferences</button>
+  <p id="personal-notification-save-status" role="status" aria-live="polite"></p>
+</form>
+{% include "_personal_alert_test.html" %}
+{% include "_personal_push_devices.html" %}
+<script src="/static/lightwork-personal-notifications.js" defer></script>
+<script src="/static/lightwork-personal-alert-tests.js" defer></script>
+<script src="/static/lightwork-personal-push-devices.js" defer></script>
+{% endif %}
+{% endblock %}

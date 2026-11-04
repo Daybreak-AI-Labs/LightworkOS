@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prepare-oauth-return"
+description = "Enables the prepare_oauth_return command without any pre-configured scope."
+commands.allow = ["prepare_oauth_return"]
+
+[[permission]]
+identifier = "deny-prepare-oauth-return"
+description = "Denies the prepare_oauth_return command without any pre-configured scope."
+commands.deny = ["prepare_oauth_return"]

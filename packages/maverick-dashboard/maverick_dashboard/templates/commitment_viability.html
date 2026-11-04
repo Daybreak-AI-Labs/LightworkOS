@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Promise reviews · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .cmv-intro { max-width: 74ch; }
+  .cmv-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr));gap:var(--space-3); }
+  .cmv-grid label,.cmv-stack label { display:flex;flex-direction:column;gap:var(--space-1);min-width:0; }
+  .cmv-grid input,.cmv-grid select,.cmv-stack textarea,.cmv-stack input,.cmv-stack select { box-sizing:border-box;width:100%;max-width:100%; }
+  .cmv-grid label:has(input[type=checkbox]) { flex-direction:row;align-items:center; }
+  .cmv-grid input[type=checkbox] { width:auto; }
+  .cmv-stack { display:grid;gap:var(--space-3); }
+  .cmv-subpanel { padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-1); }
+  .cmv-subpanel h3 { margin-block-start:0; }
+  .cmv-actions { display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center; }
+  .cmv-status { font-weight:650; }
+  .cmv-card { border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3);background:var(--surface-1);margin-block:var(--space-3); }
+  .cmv-card h3 { margin-block-start:0; }
+  .cmv-card p { overflow-wrap:anywhere; }
+  #cmv-report[hidden],#cmv-enabled[hidden] { display:none; }
+</style>
+{% from "_hero.html" import hero %}
+{% set cmv_lede %}Review how two accepted orders share reported stock and working capacity before a buying or delivery window closes. See what is known, what is uncertain, and which conditional choice needs an owner's decision.{% endset %}
+{{ hero('Operations', 'Promise reviews', lede=cmv_lede, compact=true) }}
+{% if not review_enabled %}
+<section class="panel"><h2>Promise reviews are off</h2>
+  <p>{% if review_admin %}Enable Promise reviews in <a href="/settings?focus=feature-commitment_viability">Settings</a> to start using this pilot.{% else %}Ask an administrator to enable Promise reviews in Settings.{% endif %}</p>
+</section>
+{% else %}
+<div id="cmv-enabled" data-context="{{ review_context }}">
+  <p id="cmv-message" role="status" aria-live="polite" tabindex="-1"></p>
+  <section class="panel">
+    <h2>Your reviews</h2>
+    <p>Saved reviews are tied to this account and workspace. This pilot holds at most 1,000 active reviews across your organization's workspaces. When a review is finished, its owner can archive it to make room. Its orders, sources, observations, decisions, and activity receipts remain available here.</p>
+    <div class="cmv-actions">
+      <label for="cmv-select">Saved review</label>
+      <select class="input" id="cmv-select"><option value="">Choose a review</option></select>
+      <button type="button" class="btn" id="cmv-open">Open review</button>
+      <button type="button" class="btn" id="cmv-refresh">Refresh saved reviews</button>
+      <button type="button" class="btn" id="cmv-more" hidden>Load more</button>
+    </div>
+  </section>
+  <details class="panel" id="cmv-new-details">
+    <summary><strong>Start a promise review</strong></summary>
+    <p>Enter the figures your team currently reports. Lightwork will record who entered them and when they must be checked again. It does not verify supplier stock or reserve any resource.</p>
+    <p id="cmv-copy-note" hidden>Figures were copied from an earlier review for convenience. Recheck every figure, then enter the new choice, its source, and a fresh review time before saving.</p>
+    <form id="cmv-new" class="cmv-stack">
+      <label>Review name<input class="input" name="title" required maxlength="200" placeholder="October customer orders"></label>
+      <div class="cmv-grid">
+        <section class="cmv-subpanel"><h3>First accepted order</h3>
+          <div class="cmv-stack">
+            <label>Order name<input class="input" name="order_a_name" required maxlength="160"></label>
+            <label>Delivery date and time<input class="input" type="datetime-local" name="order_a_due_at" required></label>
+            <label>Material units needed<input class="input" type="number" name="order_a_material_units" required min="1" max="1000000" value="1"></label>
+            <label><input type="checkbox" name="order_a_uses_capacity" checked> Uses the shared work center</label>
+          </div>
+        </section>
+        <section class="cmv-subpanel"><h3>Second accepted order</h3>
+          <div class="cmv-stack">
+            <label>Order name<input class="input" name="order_b_name" required maxlength="160"></label>
+            <label>Delivery date and time<input class="input" type="datetime-local" name="order_b_due_at" required></label>
+            <label>Material units needed<input class="input" type="number" name="order_b_material_units" required min="1" max="1000000" value="1"></label>
+            <label><input type="checkbox" name="order_b_uses_capacity" checked> Uses the shared work center</label>
+          </div>
+        </section>
+      </div>
+      <div class="cmv-grid">
+        <section class="cmv-subpanel"><h3>Reported supply</h3><div class="cmv-stack">
+          <label>Shared work center<input class="input" name="capacity_name" required maxlength="160" placeholder="Assembly line A"></label>
+          <label>Work units available<input class="input" type="number" name="capacity_units" required min="1" max="1000000" value="1"></label>
+          <label>Material<input class="input" name="material_name" required maxlength="160" placeholder="Component X"></label>
+          <label>Stock units reported<input class="input" type="number" name="stock_units" required min="0" max="1000000" value="0"></label>
+          <label>Confidence in stock report<select class="input" name="stock_certainty"><option value="unknown">Not confirmed</option><option value="confirmed">Team reports available</option><option value="unavailable">Team reports unavailable</option></select></label>
+        </div></section>
+        <section class="cmv-subpanel"><h3>Reversible choice</h3><p>For example, a time-limited material quote or extra capacity you could request. Recording it does not exercise the choice.</p><div class="cmv-stack">
+          <label>Choice name<input class="input" name="option_name" required maxlength="160" placeholder="Supplier quote B"></label>
+          <label>What it adds<select class="input" name="option_kind"><option value="material">Material</option><option value="capacity">Work capacity</option></select></label>
+          <label>Units it could add<input class="input" type="number" name="option_units" required min="1" max="1000000" value="1"></label>
+          <label>Earliest ready time<input class="input" type="datetime-local" name="option_ready_at" required></label>
+          <label>Choice expires<input class="input" type="datetime-local" name="option_expires_at" required></label>
+          <label>Lead time after decision, in hours<input class="input" type="number" name="option_lead_hours" min="0" max="277777" value="0" required></label>
+          <label>Cost or condition to consider<input class="input" name="option_cost_note" maxlength="240"></label>
+        </div></section>
+      </div>
+      <label>Source and basis for these figures<textarea class="input" name="basis" required minlength="10" maxlength="2000" rows="3" placeholder="Who reported these figures, where they came from, and what remains unconfirmed"></textarea></label>
+      <label>Check these figures again by<input class="input" type="datetime-local" name="review_by" required></label>
+      <button type="submit" class="btn btn--primary">Create review</button>
+    </form>
+  </details>
+  <section class="panel" id="cmv-report" hidden aria-live="polite">
+    <h2 id="cmv-report-title" tabindex="-1">Current review</h2>
+    <p id="cmv-lifecycle-note" class="cmv-status"></p>
+    <p id="cmv-report-state" class="cmv-status"></p>
+    <p id="cmv-report-explanation"></p>
+    <p id="cmv-source-note"></p>
+    <div id="cmv-components"></div>
+    <div id="cmv-gaps"></div>
+    <div id="cmv-options"></div>
+    <div id="cmv-proposals"></div>
+    <details><summary>Reported sources and review times</summary><div id="cmv-sources"></div></details>
+    <div class="cmv-actions"><button type="button" class="btn" id="cmv-reassess">Refresh assessment</button></div>
+    <details id="cmv-trace-details"><summary>Record observed contention</summary>
+      <p>If one order ran while another waited for the same work center, record the completed interval. Lightwork will suggest a shared dependency for the owner to review. The observation is your team's report.</p>
+      <form id="cmv-trace" class="cmv-stack">
+        <div class="cmv-grid">
+          <label>Order that ran<select class="input" name="running_order" required></select></label>
+          <label>Order that waited<select class="input" name="blocked_order" required></select></label>
+          <label>Work started<input class="input" type="datetime-local" name="started_at" required></label>
+          <label>Work ended<input class="input" type="datetime-local" name="ended_at" required></label>
+          <label>Observed at<input class="input" type="datetime-local" name="observed_at" required></label>
+          <label>Check this observation again by<input class="input" type="datetime-local" name="review_by" required></label>
+        </div>
+        <label>Where this observation came from<textarea class="input" name="basis" required minlength="10" maxlength="2000" rows="2"></textarea></label>
+        <button type="submit" class="btn">Record observation</button>
+      </form>
+    </details>
+    <details id="cmv-archive-details">
+      <summary><strong>Finish and archive this review</strong></summary>
+      <p>Use this when your team has finished this review. Its full saved history remains readable, and its active slot becomes available for a new review. You cannot add observations or decisions after archiving.</p>
+      <form id="cmv-archive" class="cmv-stack">
+        <label><input type="checkbox" name="confirm_finished" required> I have finished this review and understand it will become read-only.</label>
+        <button type="submit" class="btn">Finish and archive</button>
+      </form>
+    </details>
+  </section>
+</div>
+<script src="/static/lightwork-commitment-viability.js" defer></script>
+{% endif %}
+{% include "_commitment_capability.html" %}
+{% include "_commitment_economic_alternatives.html" %}
+{% endblock %}

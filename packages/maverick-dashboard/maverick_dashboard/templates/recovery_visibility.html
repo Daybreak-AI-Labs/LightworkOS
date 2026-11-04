@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Understand a missing reply · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Understand a missing reply', lede='Find when the same visible status can hide different original outcomes, and which permitted observation tells them apart.') }}
+<style>#recovery-visibility,#recovery-visibility form,#recovery-visibility label{display:grid;gap:var(--space-2);min-width:0;overflow-wrap:anywhere}#recovery-visibility select,#recovery-visibility button{min-width:0;max-width:100%;width:100%;box-sizing:border-box;white-space:normal}#recovery-visibility dd{margin-left:0;white-space:pre-wrap}#recovery-visibility label.visibility-check{display:flex;align-items:flex-start}#recovery-visibility input[type=checkbox]{flex:none}#recovery-visibility fieldset{min-width:0;border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3)}</style>
+<section id="recovery-visibility" class="panel">
+  <p>Two fictional reviewers, one fictional request. Lightwork checks every reachable situation within your chosen interaction limit using its installed sign-off and local activity safeguards. Your live approvals stay untouched.</p>
+  <p id="rv-disabled" class="muted" hidden>This practice is off. An administrator can <a href="/settings#feature-recovery_visibility">enable it in Settings</a>. Earlier original results remain readable.</p>
+  <form id="rv-form">
+    <label>Required sign-offs<select class="input" name="quorum"><option value="1">One reviewer</option><option value="2" selected>Two distinct reviewers</option></select></label>
+    <label>Complete interaction limit<select class="input" name="steps"><option value="1">One interaction</option><option value="2">Two interactions</option><option value="3" selected>Three interactions</option></select></label>
+    <fieldset><legend>What can the person currently see?</legend><p class="muted">Choose at least one observation. Lightwork checks whether this visible information can identify the first reviewer’s original outcome.</p>
+    {% for value,label in observations.items() %}<label class="visibility-check"><input type="checkbox" name="observations" value="{{ value }}" {% if value in ('status','count') %}checked{% endif %}><span>{{ label }}</span></label>{% endfor %}
+    </fieldset>
+    <button id="rv-prepare" type="button" class="btn btn--primary">Review local practice</button>
+    <button id="rv-refresh" type="button" class="btn btn--ghost">Refresh current controls</button>
+  </form>
+  <section id="rv-review" hidden></section>
+  <p id="rv-status" role="status" aria-live="polite"></p><p id="rv-error" class="danger-text" role="alert"></p>
+  <section id="rv-result" hidden></section>
+  <label>Original local practices<select id="rv-history" class="input"><option value="">Choose an original practice</option></select></label>
+  <button id="rv-read" type="button" class="btn btn--ghost">Check original result</button>
+  <details><summary>Scope, allowance and uncertainty</summary><p id="rv-scope" class="muted"></p><p id="rv-limits" class="muted"></p><p class="muted">The complete search, ordinary comparison and fresh replay of the paired histories share one allowance. It is up to 1,200 local setup/action/readback operations and twenty seconds, plus process and receipt overhead. No AI provider is called. An interrupted reply never repeats its original practice. Read the original result; a missing result does not prove failure. A separately reviewed new practice receives a different original request.</p></details>
+  <a class="btn btn--ghost" href="/approvals">Open actual approvals</a>
+</section>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-recovery-visibility.js"></script>{% endblock %}

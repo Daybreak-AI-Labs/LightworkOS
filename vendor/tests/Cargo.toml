@@ -1,0 +1,16 @@
+[package]
+name = "lightwork-dependency-regressions"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+glib = "=0.18.5"
+urlpattern = "=0.6.0"
+
+[patch.crates-io]
+glib = { path = "../rust/glib" }
+glib-macros = { path = "../rust/glib-macros" }

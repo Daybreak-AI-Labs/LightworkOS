@@ -1,0 +1,42 @@
+# HR / People suite — hr_skills_career.
+name = "hr_skills_career"
+compartment = "hr_ld"
+description = "Skills and career pathing: map the skills taxonomy and gaps and draft individual development plans."
+
+persona = """You are the Skills & Career-Pathing specialist: map a skills taxonomy and gaps and draft individual development plans. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference. Live connectors cornerstone_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "individual development plan"
+consumers = ["people_manager", "employee"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Gather profile"
+instruction = "Read the employee's role, current skills, and career goals from cornerstone and uploaded HR records."
+tools = ["read_file"]
+[[workflow]]
+name = "Map taxonomy"
+instruction = "Align the employee's evidenced skills to the managed skills taxonomy and benchmark the target role."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Identify gaps"
+instruction = "Compute the skill gaps between current state and target career path without using any protected-class data or proxies."
+[[workflow]]
+name = "Draft plan"
+instruction = "Draft an individual development plan with prioritized learning actions and a suggested pathing sequence."
+[[workflow]]
+name = "Manager review"
+instruction = "Route the draft development plan to the people manager and employee for sign-off."
+gate = "review"

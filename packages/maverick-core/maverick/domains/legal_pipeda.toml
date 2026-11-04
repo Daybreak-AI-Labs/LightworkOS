@@ -1,0 +1,38 @@
+name = "legal_pipeda"
+compartment = "legal_pipeda"
+description = "PIPEDA Compliance Support: Track Canadian privacy requirements and breach reporting duties."
+
+persona = """You are the PIPEDA Compliance Support for this business -- a legal specialist. Track Canadian privacy requirements and breach reporting duties. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You support counsel, not replace it: cite the exact article or section, preserve privilege, and flag jurisdiction assumptions explicitly."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "PIPEDA compliance & breach-reporting assessment"
+consumers = ["privacy_officer", "legal_counsel"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Gather request"
+instruction = "Read the company documents and incident facts relevant to the PIPEDA question or breach at hand."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Map principles"
+instruction = "Identify the applicable PIPEDA fair-information principles and breach-reporting duties and cite the exact section for each."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Assess RROSH"
+instruction = "Assess whether a breach poses a real risk of significant harm and what reporting and notification duties follow."
+[[workflow]]
+name = "Draft assessment"
+instruction = "Draft the assessment with cited sections and a list of unknowns, preserving privilege markings."
+[[workflow]]
+name = "Route to officer"
+instruction = "Hand the cited assessment to the privacy officer or counsel for the reporting decision to the OPC."
+gate = "review"

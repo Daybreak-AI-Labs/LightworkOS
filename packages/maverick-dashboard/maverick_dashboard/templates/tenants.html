@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Workspaces · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set active_tenants = tenants | selectattr('status', 'equalto', 'active') | list | length %}
+  {% call hero('Administration', 'Workspaces',
+               subtitle='Separate spaces for each client or team',
+               lede='Each workspace keeps its own records, documents and daily
+                     spending limit. For a summary of each workspace, open
+                     <a href="/tenants/overview">Workspace overview</a>.' | safe) %}
+    {{ state('Current state',
+             tenants | length ~ ' workspace' ~ ('' if tenants | length == 1 else 's') ~ ' set up',
+             badge=(active_tenants ~ ' active') if tenants else 'Single workspace',
+             badge_class='ok' if active_tenants else 'idle',
+             copy='One client per workspace: separate records, documents,
+                   budget and access. You can pause one without touching the rest.') }}
+  {% endcall %}
+
+  <div class="section-head"><h2>Create a workspace</h2></div>
+  <div class="panel">
+    <form id="tenant-add" class="tenants-form">
+      <label class="tenants-field">Workspace name
+        <input class="input" name="display_name" required maxlength="200" placeholder="e.g. Acme Finance" autocomplete="off">
+      </label>
+      {% if billing_on %}
+      <label class="tenants-field">Plan
+        <select class="select" name="plan">
+          <option value="free" selected>Free</option>
+          <option value="pro">Pro</option>
+          <option value="enterprise">Enterprise</option>
+        </select>
+      </label>
+      {% endif %}
+      <fieldset class="tenants-limit">
+        <legend>Daily spending limit</legend>
+        <label><input type="checkbox" name="no_limit" checked data-limit-toggle> No daily limit</label>
+        <label class="tenants-field">Limit in US dollars per day
+          <input class="input" name="max_daily_dollars" type="number" min="0.01" step="0.01" disabled data-limit-amount>
+        </label>
+      </fieldset>
+      <details class="tenants-invite" id="tenant-invite">
+        <summary>Also invite an administrator for this workspace</summary>
+        <p class="muted tenants-msg">Creates the workspace and an invitation for its first administrator together. The invitation link is shown once so you can send it.</p>
+        <div class="tenants-form">
+          <label class="tenants-field">Administrator's email
+            <input class="input" name="admin_email" type="email" maxlength="254" autocomplete="off" placeholder="name@client.com">
+          </label>
+          <label class="tenants-field">Their role
+            <select class="select" name="role" data-onboard-roles><option value="admin" selected>Admin</option></select>
+          </label>
+        </div>
+      </details>
+      <div><button type="submit" class="btn btn--primary">Create workspace</button></div>
+    </form>
+    <p id="tenant-add-msg" role="status" aria-live="polite" class="muted tenants-msg"></p>
+    <div id="tenant-onboard-out" hidden>
+      <label class="tenants-field" for="tenant-onboard-link">Invitation link (shown once)
+        <input class="input" id="tenant-onboard-link" readonly autocomplete="off" spellcheck="false">
+      </label>
+      <p><button type="button" class="btn" id="tenant-onboard-copy">Copy link</button></p>
+    </div>
+    <details class="tenants-why">
+      <summary>Why use workspaces?</summary>
+      <ul class="muted">
+        <li><strong>Its own records.</strong> Work done for one workspace can't be seen from the others.</li>
+        <li><strong>Its own documents.</strong> Uploaded files and customized agents stay in the workspace that owns them.</li>
+        <li><strong>Its own budget.</strong> A daily spending limit and usage records for each workspace, so costs roll up cleanly for billing.</li>
+        <li><strong>Its own access.</strong> People can have a different role in each workspace.</li>
+      </ul>
+    </details>
+  </div>
+
+  {% if not tenants %}
+    <div class="panel">
+      <p class="muted tenants-empty">No workspaces yet. You're using a single workspace, which is
+        fine for one team. Create one above when you add a second client or team.</p>
+    </div>
+  {% else %}
+    <div class="section-head"><h2>Your workspaces</h2></div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Workspace</th><th scope="col">Status</th>
+            {% if billing_on %}<th scope="col">Plan</th>{% endif %}<th scope="col">Daily limit</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in tenants %}
+            {% set name = t.display_name or t.id %}
+            {% set action_name = name ~ (' (' ~ t.id ~ ')' if t.id in duplicate_ids else '') %}
+            <tr data-tenant-row="{{ t.id }}" data-tenant-name="{{ action_name }}">
+              <td>{{ name }}{% if t.id in duplicate_ids %}<br><span class="muted">Reference: {{ t.id }}</span>{% endif %}</td>
+              <td><span class="badge {{ 'active' if t.status == 'active' else 'blocked' }}">{{ 'Active' if t.status == 'active' else ('Paused' if t.status == 'suspended' else t.status | humanize) }}</span></td>
+              {% if billing_on %}
+              <td>
+                  <label class="sr-only" for="plan-{{ loop.index }}">Plan for {{ action_name }}</label>
+                <select class="select" id="plan-{{ loop.index }}" data-tenant-plan="{{ t.id }}" data-current="{{ t.plan }}">
+                  {% for p in ('free', 'pro', 'enterprise') %}<option value="{{ p }}"{% if t.plan == p %} selected{% endif %}>{{ p | capitalize }}</option>{% endfor %}
+                </select>
+              </td>
+              {% endif %}
+              <td>
+                <form class="tenant-quota" data-tenant="{{ t.id }}">
+                  <label><input type="checkbox" name="no_limit" data-limit-toggle{% if not t.max_daily_dollars %} checked{% endif %}
+                                aria-label="No daily limit for {{ action_name }}"> No limit</label>
+                  <input class="input tenants-amount" name="max_daily_dollars" type="number" min="0.01" step="0.01" data-limit-amount
+                         value="{{ '%g' % t.max_daily_dollars if t.max_daily_dollars else '' }}"
+                         aria-label="Daily limit for {{ action_name }} in US dollars"{% if not t.max_daily_dollars %} disabled{% endif %}>
+                  <button type="submit" class="btn" aria-label="Save daily limit for {{ action_name }}">Save</button>
+                  <span class="muted">{% if t.max_daily_dollars %}{{ t.max_daily_dollars | money }}/day{% else %}No limit{% endif %}</span>
+                </form>
+              </td>
+              <td class="tenants-actions">
+                <a class="btn btn--ghost" href="/tenants/{{ t.id | urlencode }}/features" aria-label="Manage features for {{ action_name }}">Features</a>
+                {% if t.status == 'active' %}
+                <button type="button" class="btn" data-tenant-action="suspend" aria-label="Pause {{ action_name }}">Pause</button>
+                {% else %}
+                <button type="button" class="btn" data-tenant-action="resume" aria-label="Resume {{ action_name }}">Resume</button>
+                {% endif %}
+                <button type="button" class="btn btn--danger" data-tenant-action="delete" aria-label="Remove workspace {{ action_name }}">Remove workspace</button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted tenants-msg">The daily limit is the most a workspace's tasks may spend together each day (midnight to midnight UTC<span data-mv-utc-midnight></span>).</p>
+      <p id="tenant-quota-msg" role="status" aria-live="polite" class="muted tenants-msg"></p>
+    </div>
+  {% endif %}
+  {% if removed_tenants or removed_error %}
+  <details class="panel tenants-advanced" id="removed-workspaces">
+    <summary><h2 class="tenants-advanced__title">Removed workspaces{% if removed_tenants %} ({{ removed_tenants | length }}){% endif %}</h2></summary>
+    <p class="muted">Their stored records remain closed. Restoring one reopens the same records as a paused workspace; former members and selections do not return. Review the records, then invite people again before resuming it.</p>
+    {% if removed_error %}<p role="alert">{{ removed_error }}</p>{% endif %}
+    {% for removed in removed_tenants %}
+    <div class="settings-row-form" data-removed-workspace="{{ removed.id }}" data-removed-name="{{ removed.display_name }}">
+      <strong>{{ removed.display_name }}</strong>
+      {% if removed.restorable %}
+      <button type="button" class="btn" data-tenant-restore>Restore as paused</button>
+      {% else %}
+      <span class="muted">Records cannot be restored here. Ask an administrator to check the backup.</span>
+      {% endif %}
+      <button type="button" class="btn btn--danger" data-workspace-erase>Review permanent erasure</button>
+      <button type="button" class="btn" data-workspace-erasure-history>Read erasure results</button>
+    </div>
+    {% endfor %}
+    <p id="removed-tenants-msg" role="status" aria-live="polite" class="muted tenants-msg"></p>
+    <section id="workspace-erasure-review" class="panel" hidden aria-labelledby="workspace-erasure-title">
+      <h3 id="workspace-erasure-title" tabindex="-1">Review permanent local erasure</h3>
+      <div id="workspace-erasure-details"></div>
+      <label class="tenants-field"><input id="workspace-erasure-confirm" type="checkbox"> I reviewed every consequence and want to permanently erase these local records.</label>
+      <div class="tenants-actions">
+        <button type="button" class="btn btn--danger" id="workspace-erasure-apply" disabled>Erase the reviewed local records</button>
+        <button type="button" class="btn" id="workspace-erasure-cancel">Cancel</button>
+        <button type="button" class="btn" id="workspace-erasure-original" hidden>Check this original result</button>
+      </div>
+    </section>
+    <section id="workspace-erasure-history" hidden aria-labelledby="workspace-erasure-history-title">
+      <h3 id="workspace-erasure-history-title" tabindex="-1">Original erasure results</h3>
+      <div id="workspace-erasure-history-rows"></div>
+      <label class="tenants-field"><input type="checkbox" id="workspace-erasure-acknowledge"> I understand that an earlier unconfirmed erasure may already have erased records. I want a separate review of remaining cleanup.</label>
+      <button type="button" class="btn" id="workspace-erasure-new-review">Review remaining cleanup separately</button>
+    </section>
+    <p id="workspace-erasure-message" role="status" aria-live="polite" class="muted tenants-msg"></p>
+  </details>
+  {% endif %}
+  <details class="panel tenants-advanced" id="tenant-keys-panel">
+    <summary><h2 id="keys-title" class="tenants-advanced__title">Advanced: workspace encryption keys</h2></summary>
+    <p class="muted">When your IT team replaces the master encryption key, re-protect every workspace's own key with the new one here before the server switches over. Choose both key files; they are used only for this and are never saved or shown.</p>
+    <form id="tenant-keys" class="tenants-form" aria-labelledby="keys-title">
+      <label class="tenants-field">Current key file
+        <input class="input" type="file" name="current_key" accept=".txt,.key,text/plain" required>
+      </label>
+      <label class="tenants-field">New key file
+        <input class="input" type="file" name="new_key" accept=".txt,.key,text/plain" required>
+      </label>
+      <div class="tenants-actions">
+        <button type="submit" class="btn">See what would change</button>
+        <button type="button" class="btn btn--primary" id="tenant-keys-rotate" hidden>Re-protect workspaces</button>
+      </div>
+    </form>
+    <p id="tenant-keys-msg" role="status" aria-live="polite" class="muted tenants-msg"></p>
+    <div id="tenant-keys-out"></div>
+  </details>
+
+  <style>
+    .tenants-advanced { margin-top: var(--space-4); }
+    .tenants-advanced > summary { cursor: pointer; }
+    .tenants-advanced__title { display: inline; font-size: var(--text-md, 1rem); margin: 0; }
+    .tenants-invite { grid-column: 1 / -1; }
+    .tenants-invite > summary { cursor: pointer; }
+    .tenants-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: var(--space-3); align-items: end; }
+    .tenants-field { display: flex; flex-direction: column; gap: var(--space-1); }
+    .tenants-limit { border: 0; padding: 0; margin: 0; display: grid; gap: var(--space-2); }
+    .tenants-limit legend { margin-bottom: var(--space-1); }
+    .tenants-msg { font-size: var(--text-sm); margin: var(--space-2) 0 0; }
+    .tenants-why { margin-top: var(--space-3); }
+    .tenants-empty { margin: 0; }
+    .tenant-quota { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+    .tenants-amount { width: 7rem; }
+    .tenants-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  </style>
+  <script src="/static/lightwork-tenants.js" defer></script>
+  <script src="/static/lightwork-tenant-ops.js" defer></script>
+{% endblock %}

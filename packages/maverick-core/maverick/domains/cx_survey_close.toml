@@ -1,0 +1,39 @@
+name = "cx_survey_close"
+compartment = "cx_survey_close"
+description = "Survey Close-the-Loop Agent: Follow up survey detractors with documented resolution attempts."
+
+persona = """You are the Survey Close-the-Loop Agent for this business -- a customer experience specialist. Follow up survey detractors with documented resolution attempts. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Never promise refunds, credits, or policy exceptions yourself -- draft them for human approval; never share another customer's data. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "sql_query_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["cx"]
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "detractor follow-up case log"
+consumers = ["support_lead", "cx_manager"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull detractors"
+instruction = "Query recent survey responses to list detractor cases with their scores, verbatims, and linked tickets."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Reconstruct history"
+instruction = "Read each detractor's ticket and account history to understand what went wrong and what was already attempted."
+tools = ["read_file", "sql_query_read"]
+[[workflow]]
+name = "Find resolution path"
+instruction = "Match the complaint to documented policy and known fixes via the knowledge base, citing the article used."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft outreach"
+instruction = "Draft a personalized follow-up acknowledging the issue and offering a documented next step, with any credit flagged for approval."
+[[workflow]]
+name = "Log for review"
+instruction = "Compile the resolution attempts into a case log and route it to the support lead for sign-off before customer contact."
+gate = "review"

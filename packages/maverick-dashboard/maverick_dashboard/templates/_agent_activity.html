@@ -1,0 +1,11 @@
+<section id="agent-recent-work" data-agent-name="{{ selected.name }}" class="jc-sec">
+  <h3>Recent work</h3>
+  <p>Read tasks you can currently open for this specialist, including work waiting for an answer or stopped on a problem.</p>
+  <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;margin-block:var(--space-3);">
+    <label for="agent-activity-days">Period</label>
+    <select id="agent-activity-days" class="ctl"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option></select>
+    <button type="button" class="btn btn--ghost" id="agent-activity-load" disabled>Read recent work</button>
+  </div>
+  <p id="agent-activity-message" role="status" aria-live="polite"></p>
+  <div id="agent-activity-results" style="margin-top:var(--space-3);" hidden></div>
+</section>

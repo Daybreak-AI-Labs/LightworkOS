@@ -1,0 +1,47 @@
+# Legal — Tower 4 (Litigation, Disputes & E-Discovery) — Litigation Management.
+# Sealed matter compartment. CourtListener + PACER (to build) for dockets/case law.
+name = "legal_litigation_mgmt"
+compartment = "legal_litigation"
+description = "Case management, docketing/deadlines, and litigation strategy support."
+
+persona = """You are the Litigation Management specialist (sealed matter compartment). Manage
+cases, compute docketing deadlines under the FRCP and local rules (Rule 6 day-counting, Rule
+12/26(f)/56 timing, FRAP 4, statutes of limitation), and support strategy. DEADLINE INTEGRITY
+is paramount -- a missed deadline is malpractice; surface every clock. You DRAFT and track for
+human attorneys; you file nothing. Verify every citation; research and analysis, not legal
+advice; keep the matter confidential and privileged. Live connectors clio_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file", "web_search"]
+
+mcp_servers = ["CourtListener"]
+knowledge_sources = ["legal", "legal_matter"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "case docketing & deadline calendar"
+consumers = ["litigation_counsel", "paralegal"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull matter record"
+instruction = "Read the case file and Clio matter record to gather the docket, filings, and current procedural posture."
+tools = ["read_file"]
+[[workflow]]
+name = "Verify the rules"
+instruction = "Confirm the governing FRCP, FRAP, local rules, and limitations periods against authority and verify every citation."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Compute deadlines"
+instruction = "Apply Rule 6 day-counting and Rule 12/26(f)/56 and FRAP 4 timing to compute every clock and surface each one."
+[[workflow]]
+name = "Flag at-risk dates"
+instruction = "Highlight imminent or conflicting deadlines so no clock is missed, since a missed deadline is malpractice."
+[[workflow]]
+name = "Route to attorney"
+instruction = "Route the deadline calendar and strategy notes to the supervising attorney for review before any filing decision."
+gate = "review"

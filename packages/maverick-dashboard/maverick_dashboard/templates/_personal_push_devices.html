@@ -1,0 +1,32 @@
+<section class="panel" id="private-device-setup" data-private-push tabindex="-1" aria-labelledby="private-device-title">
+  <h2 id="private-device-title">Your private notification destinations</h2>
+  <p>Connect a private ntfy topic to your account. All devices subscribed to that topic may receive notifications. A separate topic per phone gives you separate controls; Lightwork cannot prove which phone received or read a message.</p>
+  <p>In <a href="https://ntfy.sh/account" target="_blank" rel="noopener noreferrer">your ntfy account</a>, reserve a topic, set access for everyone else to <strong>Deny all</strong>, and create an access token. A provider plan with topic reservations may be required. Subscribe to that private topic in the ntfy app on the devices you want to notify. Lightwork checks the authenticated account and restriction before sending; changes at the provider remain outside Lightwork's control.</p>
+  <p data-push-note role="status"></p>
+  <form data-push-register>
+    <p><label>Destination name <input class="input" name="name" maxlength="100" placeholder="For example, My work phone" required></label></p>
+    <p><label>Private topic name <input class="input" name="topic" maxlength="64" autocomplete="off" spellcheck="false" required></label></p>
+    <p><label>Access token <input class="input" type="password" name="access_token" maxlength="128" autocomplete="new-password" required></label></p>
+    <p class="muted">Only you can control this destination in this workspace. Its token and topic are protected in saved storage and never given to Copilot. A new destination starts paused.</p>
+    <fieldset><legend>Destination quiet hours</legend>
+      <p><label>Time zone <input class="input" name="timezone" list="notification-timezones" maxlength="100" required></label></p>
+      <p><label><input type="checkbox" name="quiet_enabled"> Hold notifications during these hours</label></p>
+      <p><label>Quiet hours start <input class="input" type="time" name="quiet_start" value="22:00" required></label></p>
+      <p><label>Quiet hours end <input class="input" type="time" name="quiet_end" value="08:00" required></label></p>
+      <p class="muted">These hours follow your selected time zone through daylight-saving changes. They apply to tests too and never have an automatic urgent override. Your personal timing and subscriptions above also apply to automatic task alerts.</p>
+    </fieldset>
+    <button class="btn btn--primary" type="submit" data-push-register-button>Check privacy and review registration</button>
+  </form>
+  <p class="muted">Checking privacy contacts ntfy with your token to read the current account reservation. It sends no notification. Only a separately confirmed test or an enabled destination can send a message.</p>
+  <button class="btn btn--ghost" type="button" data-push-refresh>Refresh saved destinations</button>
+  <div data-push-list></div>
+  <section data-push-review hidden aria-label="Complete destination review">
+    <h3>Review this destination action</h3>
+    <div data-push-details></div>
+    <p><label><input type="checkbox" data-push-confirm> I have reviewed this destination, its permissions and this complete action</label></p>
+    <button class="btn" type="button" data-push-apply disabled>Confirm this action</button>
+    <button class="btn btn--ghost" type="button" data-push-cancel>Keep current setup</button>
+  </section>
+  <button class="btn btn--ghost" type="button" data-push-original hidden>Read original result</button>
+  <p data-push-status role="status" aria-live="polite"></p>
+</section>

@@ -1,0 +1,6 @@
+supplier,buyer,contact_email,notes
+Northwind Fixtures Ltd,sam.buyer,orders@northwind-fixtures.example,
+Blue Harbor Packaging,sam.buyer,orders@blueharbor-packaging.example,prefers email
+Quickline Logistics,lee.buyer,dispatch@quickline-logistics.example,acknowledges by phone
+Cedar Point Office Supply,lee.buyer,sales@cedarpointoffice.example,
+Granite Ridge Fasteners,sam.buyer,orders@graniteridge-fasteners.example,new supplier this quarter

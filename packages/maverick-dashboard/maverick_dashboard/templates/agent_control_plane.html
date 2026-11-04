@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Agent controls · Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .acp-shell{display:grid;gap:var(--space-5)}
+  .acp-shell .panel h2{margin:0}
+  .acp-form{display:grid;gap:var(--space-3)}
+  .acp-form fieldset{border:0;margin:0;min-inline-size:0;padding:0}
+  .acp-form fieldset[disabled]{opacity:.62}
+  .acp-fields{display:grid;gap:var(--space-3);grid-template-columns:repeat(2,minmax(0,1fr))}
+  .acp-form label{display:grid;gap:.35rem;font-weight: var(--font-semibold)}
+  .acp-form :where(.input,.select){min-width:0;width:100%}
+  .acp-tools{border:1px solid var(--hairline);border-radius:var(--radius-md,8px);padding:var(--space-3);display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4)}
+  .acp-tools label{display:flex;gap:.4rem;align-items:center;font-weight: var(--font-normal)}
+  .acp-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+  .acp-table-wrap{overflow:auto}
+  .acp-verbs{display:flex;flex-wrap:wrap;gap:.35rem}
+  .acp-roster-nav{align-items:center;display:flex;flex-wrap:wrap;gap:.55rem;justify-content:flex-end;margin-top:var(--space-3)}
+  .acp-roster-nav .muted{margin:0 auto 0 0}
+  .acp-result{border-left:3px solid var(--accent);padding:var(--space-2) var(--space-3);margin:var(--space-2) 0}
+  .acp-result ul{margin:.35rem 0 0;padding-left:1.2rem}
+  .acp-tech pre{white-space:pre-wrap;word-break:break-word;max-height:24rem;overflow:auto}
+  .acp-danger{border-color:var(--danger)}
+  @media(max-width:640px){.acp-fields{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="acp-shell" id="acp-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}" data-can-operate="{{ 'true' if acp_can_operate else 'false' }}" data-can-audit="{{ 'true' if acp_can_audit else 'false' }}" data-can-admin="{{ 'true' if acp_can_admin else 'false' }}" data-can-halt="{{ 'true' if acp_can_halt else 'false' }}" data-halt-scope="{{ acp_halt_scope }}" data-workspace-scope="{{ 'true' if acp_workspace_scope_known else 'false' }}" data-workspace-value="{{ acp_workspace_scope or '' }}">
+  {% call hero('Agents', 'Agent controls', lede='Pause, resume or restrict any agent working in Lightwork, or stop everything in an emergency.') %}
+    <div class="hero-statebox" role="status" aria-live="polite" aria-atomic="true">
+      <div class="hero-statebox__label">Current state</div>
+      <div class="hero-statebox__row"><strong id="acp-health-title">Checking your agents…</strong><span class="badge idle" data-state="partial" id="acp-state">Checking</span></div>
+      <p class="hero-statebox__copy" id="acp-health-detail">Loading the list of agents and people.</p>
+      <div class="acp-actions"><button class="btn btn--ghost" id="acp-refresh" type="button">Refresh</button></div>
+    </div>
+  {% endcall %}
+
+  <div class="grid" aria-label="Summary">
+    <div class="stat"><div class="num" id="acp-native">—</div><div class="label">Your agents and people</div></div>
+    <div class="stat"><div class="num" id="acp-external">—</div><div class="label">Outside agents</div></div>
+    <div class="stat"><div class="num" id="acp-suspended">—</div><div class="label">Paused / isolated</div></div>
+  </div>
+
+  <section class="panel" aria-labelledby="acp-help-title">
+    <div class="section-head"><h2 id="acp-help-title">What each action does</h2></div>
+    <ul>
+      <li><strong>Pause</strong> stops an agent or person from doing any more work until someone resumes them.</li>
+      <li><strong>Resume</strong> lets a paused agent or person work again.</li>
+      <li><strong>Isolate</strong> (administrators) locks an agent away so it cannot be resumed by accident. <strong>End isolation</strong> lifts it.</li>
+      <li><strong>Limit</strong> tightens what an outside agent may do: its risk level, spending, time and tools. It never loosens limits.</li>
+    </ul>
+    <details>
+      <summary>About this page's safeguards</summary>
+      <p class="muted">After every change Lightwork re-reads the real state of each agent and shows you what it found. A change is only reported as done once it has been confirmed. Group actions work on the exact list you reviewed; if anything changed in between, Lightwork refuses and asks you to review again. The emergency stop is reported as active only after Lightwork has checked it took effect. Each action is written to the agent's history; if that record could not be written, the result says so.</p>
+    </details>
+  </section>
+
+  <section class="panel" aria-labelledby="acp-roster-title">
+    <div class="section-head"><h2 id="acp-roster-title" tabindex="-1">Agents and people</h2><button class="btn btn--ghost" id="acp-load-roster" type="button">Reload list</button></div>
+    <div class="acp-table-wrap" tabindex="0" role="region" aria-label="Agents and people working in Lightwork"><table><caption class="sr-only">Agents and people working in Lightwork, with the actions you can take on each</caption><thead><tr><th scope="col">Agent or person</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Tasks running</th><th scope="col">Limits</th><th scope="col">Actions</th></tr></thead><tbody id="acp-rows"><tr><td colspan="6">Loading…</td></tr></tbody></table></div>
+    <div class="acp-roster-nav"><span class="muted" id="acp-roster-page" role="status" aria-live="polite" aria-atomic="true"></span><button class="btn btn--ghost" id="acp-roster-prev" type="button" aria-label="Previous page of agents" disabled>Previous</button><button class="btn btn--ghost" id="acp-roster-next" type="button" aria-label="Next page of agents" disabled>Next</button></div>
+  </section>
+
+  <section class="panel" aria-labelledby="acp-verb-title">
+    <div class="section-head"><h2 id="acp-verb-title">Act on one agent or person</h2></div>
+    <p class="muted">You can also use the buttons on each row above.</p>
+    <form class="acp-form" id="acp-verb-form" autocomplete="off"><fieldset id="acp-verb-controls"{% if not (acp_can_operate or acp_can_admin or acp_can_audit) %} disabled aria-disabled="true" data-role-disabled="true"{% endif %}><div class="acp-fields"><label>Agent or person<select class="select" name="principal" id="acp-verb-principal" required><option value="">Loading…</option></select></label><label>Action<select class="select" name="verb" id="acp-verb-select">{% if acp_can_operate %}<option value="suspend" data-requires-control-plane="true" disabled>Pause</option><option value="resume" data-requires-control-plane="true" disabled>Resume</option>{% endif %}{% if acp_can_admin %}<option value="contain" data-requires-control-plane="true" disabled>Isolate</option><option value="release" data-requires-control-plane="true" disabled>End isolation</option>{% endif %}{% if acp_can_audit %}<option value="ledger">View history</option>{% endif %}</select></label><label>Reason (needed to pause or isolate)<input class="input" name="reason" maxlength="500"></label></div><div class="acp-actions"><button class="btn btn--primary" id="acp-verb-submit" type="submit">Apply this action</button></div></fieldset></form>
+  </section>
+
+  <section class="panel" aria-labelledby="acp-attenuate-title">
+    <div class="section-head"><h2 id="acp-attenuate-title" tabindex="-1">Limit an outside agent</h2></div>
+    <form class="acp-form" id="acp-attenuate-form" autocomplete="off"><fieldset id="acp-attenuate-controls" disabled aria-disabled="true"{% if not acp_can_operate %} data-role-disabled="true"{% endif %}><div class="acp-fields"><label>Outside agent<select class="select" name="principal" id="acp-attenuate-principal" required><option value="">Loading…</option></select></label><label>Highest risk it may take<select class="select" name="max_risk"><option value="">Keep the current limit</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><label>Spending limit (US dollars)<input class="input" name="max_dollars" type="number" min="0.01" max="1000000" step="0.01" placeholder="Keep the current limit"></label><label>Time limit per task<select class="select" name="max_wall_seconds"><option value="">Keep the current limit</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option><option value="14400">4 hours</option><option value="86400">1 day</option></select></label></div><fieldset class="acp-tools" id="acp-deny-tools" aria-describedby="acp-deny-tools-help"><legend>Tools to block</legend><span class="muted" id="acp-deny-tools-help">Choose an outside agent to see its tools.</span></fieldset><div class="acp-actions"><button class="btn btn--primary" type="submit">Apply limits</button></div></fieldset></form>
+  </section>
+
+  <section class="panel" aria-labelledby="acp-fleet-title">
+    <div class="section-head"><h2 id="acp-fleet-title">Act on a group</h2><span class="muted" id="acp-fleet-selection-state" role="status" aria-live="polite" aria-atomic="true">Choose a group and press Review group first.</span></div>
+    <p class="muted">First review exactly who is in the group. If anyone's status changes before you apply the action, Lightwork stops and asks you to review again.</p>
+    <form class="acp-form" id="acp-fleet-form" autocomplete="off"><fieldset id="acp-fleet-controls" disabled aria-disabled="true"{% if not (acp_can_operate or acp_can_admin) %} data-role-disabled="true"{% endif %}><div class="acp-fields"><label>Group<select class="select" name="scope" id="acp-fleet-scope"><option value="">Loading…</option></select></label><label>Action<select class="select" name="verb" id="acp-fleet-verb">{% if acp_can_operate %}<option value="suspend">Pause</option><option value="resume">Resume</option>{% endif %}{% if acp_can_admin %}<option value="contain">Isolate</option><option value="release">End isolation</option>{% endif %}</select></label><label>Reason (needed to pause or isolate)<input class="input" name="reason" maxlength="500"></label><label>End isolation automatically after (isolate only)<select class="select" name="release_after_seconds"><option value="">Never — stay isolated until someone ends it</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">7 days</option><option value="2678400">31 days</option></select></label><input data-auto-reference type="hidden" name="idempotency_key"></div><div class="acp-actions"><button class="btn" id="acp-fleet-review" type="button">Review group</button><button class="btn btn--primary" id="acp-fleet-apply" type="button" disabled>Apply to reviewed group</button></div></fieldset></form>
+  </section>
+
+  <section class="panel acp-danger" aria-labelledby="acp-halt-title">
+    <div class="section-head"><h2 id="acp-halt-title">Emergency stop</h2><button class="btn" id="acp-clear-halt" type="button" disabled{% if not acp_can_halt %} data-role-disabled="true"{% endif %}>Resume all work</button></div>
+    <p class="muted">{% if acp_halt_scope == 'cluster' %}This stops every agent on every Lightwork server. Only an administrator can use it.{% elif acp_halt_scope == 'local' %}This stops every agent on this Lightwork server. Operators and administrators can use it.{% else %}Lightwork could not check who may use the emergency stop, so it is unavailable. Refresh the page to try again.{% endif %}</p>
+    <form class="acp-form" id="acp-halt-form" autocomplete="off"><fieldset id="acp-halt-controls" disabled aria-disabled="true"{% if not acp_can_halt %} data-role-disabled="true"{% endif %}><div class="acp-fields"><label>Reason<input class="input" name="reason" maxlength="200" required></label></div><div class="acp-actions"><button class="btn btn--danger" type="submit">Stop all agents now</button></div></fieldset></form>
+  </section>
+
+  <section class="panel" aria-labelledby="acp-last-title">
+    <div class="section-head"><h2 id="acp-last-title">Last action</h2></div>
+    <p id="acp-operation-state" role="status" aria-live="polite" aria-atomic="true">Nothing has been done yet.</p>
+    <div id="acp-output-summary"></div>
+    <details class="acp-tech"><summary>Technical details</summary><pre id="acp-output" tabindex="0"></pre></details>
+  </section>
+  <noscript><p class="panel">Turn on JavaScript in your browser to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-agent-control-plane.js" defer></script>{% endblock %}

@@ -1,0 +1,20 @@
+{#- Tasks page: tasks coming due (the forward ledger), overdue first, with
+    the questions waiting for an answer. Only tasks the person may see. -#}
+<div id="wo-upcoming-root">
+  <div class="section-head"><h2 id="wo-up-h">Coming due</h2></div>
+  <section class="panel" aria-labelledby="wo-up-h">
+    <div class="wo-row">
+      <label for="wo-up-days">Due within</label>
+      <select id="wo-up-days" class="select">
+        <option value="7">7 days</option><option value="14">14 days</option>
+        <option value="30" selected>30 days</option><option value="60">60 days</option><option value="90">90 days</option>
+      </select>
+    </div>
+    <div id="wo-up" role="status" aria-live="polite">Loading…</div>
+  </section>
+</div>
+<style>
+  .wo-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0 1rem; }
+</style>
+<script src="/static/lightwork-ops-jobs.js" defer></script>
+<script src="/static/lightwork-workforce-ops.js" defer></script>

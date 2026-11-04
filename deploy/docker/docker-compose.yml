@@ -1,0 +1,35 @@
+# Lightwork — docker compose stack.
+#
+# Spins up the agent in a container with persistent state mounted from
+# the host. Useful for VPS deployments and for users who want isolation.
+#
+# First run:
+#   docker compose -f deploy/docker/docker-compose.yml run --rm maverick init
+#
+# Subsequent runs:
+#   docker compose -f deploy/docker/docker-compose.yml run --rm maverick start "..."
+
+services:
+  maverick:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: maverick:latest
+    container_name: maverick
+    # The image runs as the unprivileged "maverick" user (uid/gid 1000), so
+    # state lives under /home/maverick/.maverick, not /root. Ensure the host
+    # ${HOME}/.maverick dir is readable/writable by uid 1000.
+    volumes:
+      - ${HOME}/.maverick:/home/maverick/.maverick
+      - ${HOME}/maverick-workspace:/workspace
+    env_file:
+      # required:false so the documented first run (`... run --rm maverick init`,
+      # which CREATES ~/.maverick/.env) doesn't fail on the not-yet-existent
+      # file. Compose errors on a missing env_file unless it's marked optional.
+      - path: ${HOME}/.maverick/.env
+        required: false
+    environment:
+      MAVERICK_CONFIG: /home/maverick/.maverick/config.toml
+      MAVERICK_WORKDIR: /workspace
+    stdin_open: true
+    tty: true

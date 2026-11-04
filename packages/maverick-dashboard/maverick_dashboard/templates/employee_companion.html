@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Your companion · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ asset('lightwork-employee-companion.css') }}">{% endblock %}
+{% block content %}
+<div class="ec-shell" id="ec-root" data-mode="employee" data-draft-recovery="off" data-companion-context="{{ companion_context | default('') }}">
+  {% call hero('Your workspace', 'Your companion', lede='Talk through your work, prepare drafts and check on tasks while they continue.') %}
+    <div class="hero-statebox">
+      <div class="hero-statebox__label">Conversation and draft preview</div>
+      <div class="hero-statebox__row"><strong id="ec-policy-label">Checking availability</strong><span class="badge idle" id="ec-badge">Loading</span></div>
+      <p class="hero-statebox__copy" id="ec-policy-summary">Loading your companion policy.</p>
+      <div class="ec-actions"><button class="btn btn--ghost" id="ec-refresh" type="button">Refresh</button><button class="btn btn--ghost" id="ec-own-copilot" type="button" disabled>Ask Copilot</button></div>
+    </div>
+  {% endcall %}
+  <p class="ec-status" id="ec-status" role="status" aria-live="polite" aria-atomic="true">Loading your companion.</p>
+  <div class="ec-columns">
+    <section class="panel ec-conversation" aria-labelledby="ec-conversation-title">
+      <div class="section-head"><h2 id="ec-conversation-title">Your conversation</h2><button class="btn btn--ghost" id="ec-clear" type="button" disabled>Clear history</button></div>
+      <div class="ec-clear-confirm" id="ec-clear-confirm" hidden>
+        <p id="ec-clear-description">Clear your saved companion conversation and the messages shown here? This also cancels any pending companion reply; AI processing already sent to the provider may still be billed. Your tasks and policy will stay in place. Activity records are kept separately.</p>
+        <div class="ec-actions"><button class="btn btn--danger" id="ec-clear-yes" type="button" aria-describedby="ec-clear-description">Clear conversation</button><button class="btn btn--ghost" id="ec-clear-no" type="button">Keep conversation</button></div>
+      </div>
+      <p class="muted ec-help">Your most recent 50 exchanges. Task checks can include sources. AI drafts can show which task context was provided, without verifying every statement in the draft.</p>
+      <div class="ec-messages" id="ec-messages" role="log" aria-label="Companion conversation" aria-live="polite" aria-relevant="additions text"><p class="muted">Loading your conversation.</p></div>
+      <div class="ec-reply-state" id="ec-reply-state" hidden>
+        <p id="ec-reply-status" role="status" aria-live="polite" aria-atomic="true"></p>
+        <button class="btn btn--ghost" id="ec-check-reply" type="button" hidden>Check reply status</button>
+        <div id="ec-retained-reply" hidden><h3>Requested reply</h3><p id="ec-retained-answer"></p><p class="muted ec-help">This is the saved answer to the request you opened. Review it before use.</p></div>
+      </div>
+      <form class="ec-form" id="ec-message-form" autocomplete="off">
+        <label for="ec-message">Ask about your work</label>
+        <textarea class="input" id="ec-message" name="message" rows="3" maxlength="4000" placeholder="Help me draft an update for my team." aria-describedby="ec-message-help ec-status ec-provider-notice" disabled required></textarea>
+        <p class="muted ec-help" id="ec-message-help">Checking which kinds of questions your administrator allows.</p>
+        <p class="muted ec-help" id="ec-provider-notice">When AI conversation is enabled, your message, eligible saved conversation and permitted task context are sent to the AI provider configured by your administrator. Lightwork's history setting does not control the provider's retention.</p>
+        <div class="ec-actions"><button class="btn btn--primary" id="ec-send" type="submit" disabled>Ask companion</button></div>
+      </form>
+      <div class="ec-quick-status"><p class="muted ec-help">Quick task checks use Lightwork directly, without calling an AI model.</p><div class="ec-actions"><button class="btn btn--ghost" type="button" data-question="What is running?" disabled>What is running?</button><button class="btn btn--ghost" type="button" data-question="What needs attention?" disabled>What needs attention?</button></div></div>
+    </section>
+    <aside class="ec-sidebar">
+      <section class="panel" aria-labelledby="ec-tasks-title"><div class="section-head"><h2 id="ec-tasks-title">Your active tasks</h2></div><p class="muted ec-help">A snapshot of your own work. Open a task for its latest details.</p><ul class="ec-task-list" id="ec-tasks"><li>Loading your tasks.</li></ul></section>
+      <section class="panel" aria-labelledby="ec-boundaries-title"><div class="section-head"><h2 id="ec-boundaries-title">Your boundaries</h2></div><p>Your administrator controls availability, task access, AI conversation and history retention. Companion administration shows policy and activity metadata, without conversation text.</p><p>AI replies are drafts to review. This companion cannot send messages, start or change tasks, use connected documents or take external actions. Saved conversations are history, not learned preferences.</p><p>Lightwork checks your access again when you use or refresh this page. It cannot recall text you have already viewed or copied.</p><p class="muted" id="ec-retention">Checking how long conversation history is kept.</p></section>
+    </aside>
+  </div>
+  <noscript><p class="panel">Turn on JavaScript to use your companion.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-employee-companion.js') }}" defer></script>{% endblock %}

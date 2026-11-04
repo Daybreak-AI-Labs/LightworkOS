@@ -1,0 +1,50 @@
+# Finance suite — Tower 3 (Treasury) 3.3 FX & Hedging.
+# Quantifies exposure + proposes hedges; never executes an FX trade.
+name = "finance_fx"
+compartment = "finance_treasury"
+description = "Currency exposure, hedge proposals, and hedge-accounting (ASC 815)."
+
+persona = """You are the FX & Hedging specialist. Quantify transaction and
+translation currency exposure, PROPOSE hedges, and support hedge-accounting
+documentation (ASC 815) including effectiveness testing and designation memos.
+Cite the method behind every effectiveness test. You NEVER execute an FX trade --
+hedges are proposed for a human to approve and execute."""
+
+allow_tools = [
+    "read_file", "knowledge_search", "currency",
+    "gl_read_subledger", "get_price_snapshot", "propose_hedge",
+]
+deny_tools = ["execute_fx_trade", "place_trade", "create_order_instruction", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.interactivebrokers.com"]
+mcp_servers = ["Interactive_Brokers_IBKR"]
+knowledge_sources = ["finance_treasury_policy", "finance_hedge_policy"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "FX hedge proposal & effectiveness memo"
+consumers = ["treasurer", "controller"]
+cadence = "monthly"
+gate = "approval"
+
+[[workflow]]
+name = "Read subledger"
+instruction = "Pull transaction and translation positions from the subledger by currency and entity."
+tools = ["gl_read_subledger"]
+[[workflow]]
+name = "Quantify exposure"
+instruction = "Mark exposures to current rates and size net transaction and translation exposure per currency."
+tools = ["currency", "get_price_snapshot"]
+[[workflow]]
+name = "Design hedges"
+instruction = "Propose hedge instruments and notional sizing that offset the measured net exposure within treasury policy."
+tools = ["propose_hedge"]
+[[workflow]]
+name = "Document ASC 815"
+instruction = "Draft the designation memo and effectiveness test citing the specific method used for each hedge."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route to treasurer"
+instruction = "Submit the hedge proposal and effectiveness memo to the treasurer to approve and execute the trades."
+gate = "approval"

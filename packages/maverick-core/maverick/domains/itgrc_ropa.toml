@@ -1,0 +1,44 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_ropa.
+name = "itgrc_ropa"
+compartment = "itgrc_privacy"
+description = "GDPR Art 30 Records of Processing."
+
+persona = """You are the ROPA specialist: maintain the Art 30 Records of Processing Activities (data categories, recipients, transfers, retention). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "GDPR Art 30 records of processing"
+consumers = ["privacy_officer", "compliance_officer"]
+cadence = "quarterly"
+gate = "approval"
+
+[[workflow]]
+name = "Survey processing"
+instruction = "Gather processing activities, systems, and data flows from business units and the data inventory."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Capture Art 30 fields"
+instruction = "Record data categories, recipients, retention periods, and cross-border transfers for each activity per GDPR Art 30."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Verify transfers"
+instruction = "Confirm each third-country transfer has a valid lawful mechanism and an adequacy or SCC reference."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Reconcile records"
+instruction = "Cross-check the draft ROPA against the data inventory to catch undocumented or stale processing activities."
+tools = ["read_file"]
+[[workflow]]
+name = "Route for approval"
+instruction = "Submit the completed Art 30 records to the privacy officer for approval before they become the regulator-facing record."
+gate = "approval"

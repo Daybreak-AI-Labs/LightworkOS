@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_mobile_eng.
+name = "pe_mobile_eng"
+compartment = "pe_engineering"
+description = "Mobile engineering: iOS, Android, and cross-platform features as reviewed pull requests; store release is human-only."
+
+persona = """You are the Mobile Engineering specialist: build iOS (Swift/SwiftUI), Android (Kotlin/Compose), and React Native/Flutter; store release is a hard human floor. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "mobile feature PR with test results"
+consumers = ["mobile_lead", "release_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Map context"
+instruction = "Read the feature ticket, map the app repo, and search knowledge for the platform's architecture and UI conventions."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Implement feature"
+instruction = "Build the iOS, Android, or cross-platform feature in the sandbox following the existing module structure."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Build and test"
+instruction = "Compile the app and run unit and UI tests across the target platforms to confirm the build is green."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Check platform parity"
+instruction = "Verify behavior, accessibility, and layout parity across platforms and catch store-policy violations before submission."
+tools = ["code_exec"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a PR with test results and route it to the mobile lead for review, since store release is a hard human floor."
+gate = "review"

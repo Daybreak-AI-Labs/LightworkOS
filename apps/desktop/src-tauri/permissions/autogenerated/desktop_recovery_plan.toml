@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-desktop-recovery-plan"
+description = "Bundled local maintenance control."
+commands.allow = ["desktop_recovery_plan"]
+
+[[permission]]
+identifier = "deny-desktop-recovery-plan"
+description = "Denies the local maintenance control."
+commands.deny = ["desktop_recovery_plan"]

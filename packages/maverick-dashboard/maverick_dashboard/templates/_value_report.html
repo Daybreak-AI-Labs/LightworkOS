@@ -1,0 +1,21 @@
+{#- Savings page: the rest of the workforce value report -- learning checkpoints,
+    whether the activity record checks out, and outside agents by vendor.
+    Filled by lightwork-insights-ops.js. -#}
+<div class="section-head"><h2 id="vr-title">Learning and record checks</h2></div>
+<div class="panel" id="value-report" aria-labelledby="vr-title">
+  <form class="vr-form" id="value-report-form">
+    <label for="value-report-days">Look back over</label>
+    <select class="select" id="value-report-days" name="days">
+      <option value="30">30 days</option>
+      <option value="90" selected>90 days</option>
+      <option value="180">6 months</option>
+      <option value="365">1 year</option>
+    </select>
+    <button type="submit" class="btn">Show</button>
+  </form>
+  <p class="muted" id="value-report-status" role="status" aria-live="polite"></p>
+  <ul id="value-report-out"></ul>
+  <div id="value-report-vendors"></div>
+</div>
+<style>.vr-form { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }</style>
+<script src="/static/lightwork-insights-ops.js" defer></script>

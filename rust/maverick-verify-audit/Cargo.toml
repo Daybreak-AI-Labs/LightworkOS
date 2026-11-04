@@ -1,0 +1,28 @@
+[package]
+name = "maverick-verify-audit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standalone Ed25519 hash-chain verifier for Lightwork's NDJSON audit log (byte-exact port of maverick.audit.signing.verify_chain; no Python required)."
+
+[[bin]]
+name = "maverick-verify-audit"
+path = "src/main.rs"
+
+[dependencies]
+# Ed25519 verification, pure Rust. verify_strict() rejects the malleable /
+# small-order signatures the RFC-8032 verify equation would otherwise accept,
+# matching `cryptography`'s strict PublicKey.verify (which also rejects them).
+ed25519-dalek = "3"
+sha2 = "0.11"
+hex = "0.4"
+# arbitrary_precision: KEEP the original number literal from each row verbatim
+# so re-serialization reproduces CPython's float/int repr byte-for-byte (the
+# bytes the hash was computed over). Without it serde would reformat e.g.
+# `1e+30` -> `1e30` and every hash would mismatch. preserve_order keeps a
+# stable read; we re-sort keys ourselves to match json.dumps(sort_keys=True).
+serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

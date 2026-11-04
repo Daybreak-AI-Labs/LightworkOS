@@ -1,0 +1,87 @@
+{# Row/page actions for external agents (shared by the roster and one agent's
+   page): release, create an access key, reset the budget meter, block all
+   access, remove. Each asks first and explains the result in plain words. #}
+<div class="panel" id="xa-token-panel" hidden>
+  <h2 style="margin-top:0">Your new access key — copy it now</h2>
+  <p class="muted">You won’t see it again. Paste it into your platform’s settings (for example a Salesforce Named Credential or AWS Secrets Manager). Creating another key replaces this one straight away.</p>
+  <p><code id="xa-token" style="word-break: break-all;"></code></p>
+  <button type="button" class="btn" id="xa-token-copy">Copy the key</button>
+</div>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  async function call(url, opts, okMsg, reload, what) {
+    var data;
+    try { data = await window.mvFetchJSON(url, opts, what); }
+    catch (e) { window.mvToast(e.message, { error: true }); return null; }
+    if (okMsg) window.mvToast(okMsg);
+    if (reload) setTimeout(function () { window.location.reload(); }, 350);
+    return data || {};
+  }
+  window.xaCall = call;
+  function label(b) { return b.getAttribute("data-xa-label") || "this agent"; }
+  document.querySelectorAll("[data-xa-mint]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-xa-mint");
+      if (!(await window.mvConfirm("Create a new access key for " + label(b) + "? Any older key stops working straight away.", { okText: "Create key" }))) return;
+      var out = await call("/api/v1/external-agents/" + encodeURIComponent(id) + "/credentials", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ surface: "rest" }),
+      }, "Access key created — copy it now.", false, "create the access key");
+      if (out && out.token) {
+        var panel = document.getElementById("xa-token-panel");
+        document.getElementById("xa-token").textContent = out.token;
+        panel.hidden = false;
+        panel.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+  });
+  var copyBtn = document.getElementById("xa-token-copy");
+  if (copyBtn) copyBtn.addEventListener("click", function () {
+    window.mvCopy(document.getElementById("xa-token").textContent);
+  });
+  document.querySelectorAll("[data-xa-release]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-xa-release");
+      if (!(await window.mvConfirm("Let " + label(b) + " work again? It was blocked after repeated rule breaks; its record of those is cleared.", { okText: "Let it work again" }))) return;
+      call("/api/v1/external-agents/" + encodeURIComponent(id) + "/release",
+           { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+           "It can work again.", true, "release the agent");
+    });
+  });
+  document.querySelectorAll("[data-xa-reset-budget]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-xa-reset-budget");
+      if (!(await window.mvConfirm("Start " + label(b) + "’s spending count again from zero? Its all-time total is kept.", { okText: "Reset spending" }))) return;
+      call("/api/v1/external-agents/" + encodeURIComponent(id) + "/reset-budget",
+           { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+           "Spending count reset.", true, "reset the spending count");
+    });
+  });
+  document.querySelectorAll("[data-xa-revoke]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-xa-revoke");
+      if (!(await window.mvConfirm("Block all access for " + label(b) + "? Every access key stops working on its next use.", { okText: "Block all access" }))) return;
+      call("/api/v1/trust/agents/" + encodeURIComponent(id) + "/revoke", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revoked: true }),
+      }, "Access blocked.", true, "block access");
+    });
+  });
+  document.querySelectorAll("[data-xa-remove]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-xa-remove");
+      // One action with a way back: removed when the Undo time is up.
+      var row = b.hasAttribute("data-xa-go-roster") ? null : b.closest("tr, li, article");
+      if (row) row.hidden = true;
+      window.mvUndo("{name} removed. It stops working here; its past work stays in your records.", { values: {name: label(b)},
+        action: "remove the agent",
+        run: function (keepalive) { return fetch("/api/v1/external-agents/" + encodeURIComponent(id), { method: "DELETE", keepalive: keepalive, headers: { Accept: "application/json" } }); },
+        undo: function () { if (row) row.hidden = false; b.focus(); },
+        done: function () {
+          if (b.hasAttribute("data-xa-go-roster")) window.location.assign("/external-agents"); else window.location.reload();
+        }
+      });
+    });
+  });
+})();
+</script>

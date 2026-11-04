@@ -1,0 +1,44 @@
+# HR / People suite — hr_background_check.
+name = "hr_background_check"
+compartment = "hr_recruiting"
+description = "Background check and FCRA adverse action."
+
+persona = """You are the Background-Check specialist: run the FCRA pre-adverse/adverse-action process and ban-the-box timing (Checkr/HireRight); the decision is human. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "FCRA adverse-action packet"
+consumers = ["recruiting_manager", "hr_compliance"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Pull report"
+instruction = "Read the background-check report from the vendor and the role's screening criteria."
+tools = ["read_file"]
+[[workflow]]
+name = "Check timing"
+instruction = "Research ban-the-box timing and FCRA pre-adverse waiting-period rules for the candidate's jurisdiction."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Assess relevance"
+instruction = "Assess each flagged item for job-relevance without using protected-class data or its proxies."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft notices"
+instruction = "Draft the pre-adverse and adverse-action notices with the dispute window and copy of the report."
+tools = ["read_file"]
+[[workflow]]
+name = "Route decision"
+instruction = "Route the recommendation and notices to the human who makes the final adverse-action decision."
+gate = "approval"

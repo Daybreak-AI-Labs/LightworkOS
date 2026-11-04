@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Plan tree · {{ goal.title }} · Lightwork{% endblock %}
+{% block content %}
+<style>
+  #plan-tree {
+    width: 100%; height: 560px; border-radius: var(--radius-sm);
+    background: var(--bg); border: 1px solid var(--border);
+  }
+  .legend { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
+  .legend span { font-size: 0.85em; color: var(--muted); }
+  .legend .live { margin-left: auto; }
+  /* Static fallback when JS is disabled. */
+  .tree { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tree ul { list-style: none; padding-left: 1.5rem; border-left: 1px solid var(--border); margin: 0; }
+  .tree > ul { padding-left: 0; border-left: 0; }
+  .tree li { position: relative; padding: 0.35rem 0 0.35rem 1rem; }
+  .tree .node {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.25rem 0.5rem; border-radius: var(--radius-xs); background: var(--surface-1);
+    border: 1px solid var(--border);
+  }
+  .tree .nid { color: var(--muted); }
+  .tree .title { color: var(--text); }
+  .tree .cost { color: var(--muted); font-size: 0.85em; margin-left: 0.5rem; }
+</style>
+{% from "_task_tabs.html" import task_tabs %}
+{% from "_hero.html" import hero %}
+{{ task_tabs(goal, 'plan') }}
+{{ hero('Task', 'Plan for: ' ~ goal.title, compact=true) }}
+<div class="panel">
+  <div class="legend">
+    <span><span class="badge active">In progress</span></span>
+    <span><span class="badge success">Finished</span></span>
+    <span><span class="badge failure">Failed</span></span>
+    <span><span class="badge blocked">Blocked</span></span>
+    <span><span class="badge pending">Waiting</span></span>
+    <span class="live" id="plan-tree-status" aria-live="polite">Plan captured when this page loaded.</span>
+  </div>
+  <div id="plan-tree" role="img" hidden
+       aria-label="Map of the steps for {{ goal.title }}"></div>
+  <section aria-label="Task steps and relationships">
+    <div class="tree" id="plan-tree-list">
+      {# Server-rendered fallback for clients without JS. Tree HTML is
+         pre-rendered in Python because Jinja macros can't recurse with
+         dict args (unhashable). #}
+      {{ tree_html | safe }}
+    </div>
+    {% if not (root and root.children) %}
+    <p class="muted" style="margin: 0;">This task has one step, so there is no map of smaller steps. Open the task link above to review its result.</p>
+    {% endif %}
+  </section>
+</div>
+
+<p class="muted">
+  When connected, this view updates automatically. The task list remains available
+  when the map or live updates are unavailable. Open a step to review its current
+  state, or reload the page to refresh the saved view.
+</p>
+<p><a class="btn btn--ghost" href="/goals/{{ goal.id }}/trajectory">Review task activity</a></p>
+
+<script src="/static/cytoscape-3.30.2.min.js"
+        integrity="sha384-IWROdLKRsN1UuJywMlWl7/blXQ8GEooN2n7dzTxfEPd7ybYIKCUJ2Ol/1Gpf3YV4" {# pragma: allowlist secret #}
+        crossorigin="anonymous"></script>
+<script nonce="{{ csp_script_nonce }}">
+  // Interactive plan-tree: fetch /api/v1/goals/{id}/tree, render with
+  // Cytoscape, and poll for live updates while the goal is running.
+  (function() {
+    const GOAL_ID = {{ goal.id }};
+    const API = "/api/v1/goals/" + GOAL_ID + "/tree";
+    const POLL_MS = 4000;
+    const TERMINAL = ["done", "succeeded", "failed", "cancelled"];
+    const container = document.getElementById("plan-tree");
+    const statusEl = document.getElementById("plan-tree-status");
+    const list = document.getElementById("plan-tree-list");
+    function costLabel(node) {
+      return node.dollars ? "  " + (window.mvMoney ? window.mvMoney(node.dollars) : "$" + Number(node.dollars).toFixed(2)) : "";
+    }
+    function renderList(root) {
+      function item(node) {
+        const li = document.createElement('li'), link = document.createElement('a');
+        link.href = '/chat/goal/' + encodeURIComponent(node.id);
+        link.textContent = (node.title || 'Untitled task') + ' — ' + String(node.status || 'Waiting').replace(/_/g, ' ') + costLabel(node);
+        li.appendChild(link);
+        if ((node.children || []).length) {
+          const children = document.createElement('ul');
+          node.children.forEach(child => children.appendChild(item(child)));
+          li.appendChild(children);
+        }
+        return li;
+      }
+      if (list.dataset.snapshot === JSON.stringify(root)) return;
+      const focused = list.contains(document.activeElement) ? document.activeElement.getAttribute('href') : null;
+      const ul = document.createElement('ul'); ul.appendChild(item(root));
+      list.replaceChildren(ul); list.dataset.snapshot = JSON.stringify(root);
+      if (focused) Array.from(list.querySelectorAll('a')).find(link => link.getAttribute('href') === focused)?.focus({preventScroll: true});
+    }
+
+    // Map a goal status to a node colour (theme-driven CSS vars).
+    const css = getComputedStyle(document.body);
+    function colour(status) {
+      const v = (n) => (css.getPropertyValue(n) || "").trim() || "#888";
+      if (status === "active" || status === "in_progress") return v("--accent");
+      if (status === "done" || status === "succeeded") return v("--accent");
+      if (status === "failed" || status === "failure") return v("--danger");
+      if (status === "blocked") return v("--warn");
+      return v("--muted");
+    }
+
+    // Flatten the nested tree into Cytoscape node/edge elements.
+    function toElements(root) {
+      const els = [];
+      (function walk(n) {
+        if (!n || n.id === undefined) return;
+        els.push({ data: {
+          id: String(n.id),
+          label: (n.title || "(untitled)") + costLabel(n),
+          status: n.status || "",
+        }});
+        (n.children || []).forEach((c) => {
+          els.push({ data: { id: n.id + "->" + c.id, source: String(n.id), target: String(c.id) } });
+          walk(c);
+        });
+      })(root);
+      return els;
+    }
+
+    let cy = null;
+    try { if (container && typeof cytoscape !== "undefined") cy = cytoscape({
+      container: container,
+      elements: [],
+      style: [
+        { selector: "node", style: {
+          "label": "data(label)", "font-size": "11px", "color": css.getPropertyValue("--text").trim() || "#ddd",
+          "background-color": (ele) => colour(ele.data("status")),
+          "text-valign": "center", "text-halign": "right", "text-margin-x": 6,
+          "width": 14, "height": 14,
+        }},
+        { selector: "edge", style: {
+          "width": 1.5, "line-color": css.getPropertyValue("--border").trim() || "#444",
+          "curve-style": "bezier", "target-arrow-shape": "triangle",
+          "target-arrow-color": css.getPropertyValue("--border").trim() || "#444",
+        }},
+      ],
+      layout: { name: "breadthfirst", directed: true, padding: 20, spacingFactor: 1.1 },
+      wheelSensitivity: 0.2,
+    }); } catch (_) { cy = null; }
+    if (!cy && container) container.hidden = true;
+
+    if (cy) cy.on("tap", "node", (ev) => {
+      window.location.href = "/chat/goal/" + encodeURIComponent(ev.target.id());
+    });
+
+    let timer = null, controller = null, busy = false, stopped = false, failures = 0, lastRefresh = null;
+    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn btn--ghost';
+    retry.textContent = 'Refresh plan'; statusEl.after(retry);
+    async function tick() {
+      if (busy || stopped || document.visibilityState === 'hidden') return;
+      clearTimeout(timer); busy = true; controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      try {
+        const r = await fetch(API, {headers: {Accept: 'application/json'}, credentials: 'same-origin', cache: 'no-store', signal: controller.signal});
+        if ([401, 403, 404].includes(r.status) || r.redirected) {
+          stopped = true; if (cy) cy.elements().remove(); list.replaceChildren(); delete list.dataset.snapshot;
+          statusEl.textContent = r.status === 401 || r.redirected ? 'Sign in again to view the plan, then choose Refresh plan.' : 'This plan is no longer available to your account.';
+          return;
+        }
+        if (!r.ok) throw new Error('unavailable');
+        const tree = await r.json();
+        if (!tree || !Number.isInteger(tree.id)) throw new Error('invalid');
+        renderList(tree);
+        if (cy) {
+          try {
+            container.hidden = !(tree.children || []).length;
+            if (!container.hidden && typeof cy.resize === 'function') cy.resize();
+            cy.elements().remove(); cy.add(toElements(tree));
+            cy.layout({name: 'breadthfirst', directed: true, padding: 20}).run();
+          } catch (_) { cy.destroy(); cy = null; container.hidden = true; }
+        }
+        lastRefresh = (window.mvTimeAbsolute ? window.mvTimeAbsolute(Date.now()) : new Date().toLocaleTimeString()); failures = 0;
+        stopped = TERMINAL.includes(tree.status);
+        statusEl.textContent = (stopped ? 'Task ' : 'Live — ') + String(tree.status || 'running').replace(/_/g, ' ') + '. Refreshed ' + lastRefresh + '.';
+      } catch (e) {
+        failures++;
+        statusEl.textContent = (e.name === 'AbortError' ? 'Plan refresh timed out.' : 'Plan updates unavailable. Refresh the page and try again.')
+          + (lastRefresh ? ' Showing older data from ' + lastRefresh + '.'
+            : list.querySelector('a') ? ' Showing the plan captured when this page loaded; it may be out of date.'
+              : ' No current plan was loaded.') + ' Choose Refresh plan to retry.';
+        if (failures >= 5) stopped = true;
+      } finally {
+        clearTimeout(timeout); busy = false; controller = null;
+        if (!stopped) timer = setTimeout(tick, Math.min(30000, POLL_MS * Math.max(1, failures)));
+      }
+    }
+    retry.addEventListener('click', () => { stopped = false; failures = 0; tick(); });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') clearTimeout(timer); else tick(); });
+    window.addEventListener('online', tick);
+    window.addEventListener('pagehide', () => { stopped = true; clearTimeout(timer); if (controller) controller.abort(); });
+    tick();
+  })();
+</script>
+{% endblock %}

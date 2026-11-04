@@ -1,0 +1,29 @@
+<details class="panel" id="tper-schedules">
+  <summary><strong>Recurring reports</strong></summary>
+  <p>Choose a saved report's layout and selected records. Each run creates a fresh PDF from their current contents, using your current access. No AI is used and no report is sent to anyone.</p>
+  <p class="muted" id="tprs-status" role="status" aria-live="polite">Loading report schedule controls…</p>
+  <form id="tprs-form" autocomplete="off">
+    <fieldset id="tprs-fields" class="tper-fieldset" disabled>
+      <legend>Choose what to create and when</legend>
+      <div class="tper-grid">
+        <label>Saved report layout<select class="select" name="report" required><option value="">Choose a saved report</option></select></label>
+        <label>Repeat<select class="select" name="repeat"><option value="daily">Every day</option><option value="weekly">Every week</option><option value="monthly">Every month</option></select></label>
+        <label>Time<input class="input" type="time" name="at" value="09:00" required></label>
+        <label>Time zone<select class="select" name="zone"><option value="UTC">UTC</option></select></label>
+        <label data-tprs-week hidden>Day of the week<select class="select" name="weekday"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+        <label data-tprs-month hidden>Day of the month<input class="input" type="number" min="1" max="31" name="monthday" value="1"></label>
+      </div>
+      <p data-tprs-month hidden class="muted">Months without the chosen date are skipped. Runs are not moved to a different day.</p>
+      <div class="tper-actions"><button class="btn btn--primary" type="submit">Review report schedule</button></div>
+    </fieldset>
+  </form>
+  <section id="tprs-review" class="panel" hidden aria-label="Complete report schedule review"></section>
+  <section id="tprs-original" class="panel">
+    <h3>Original creation request</h3>
+    <p>If a reply is interrupted, check Original before creating another schedule. Checking does not create or run anything.</p>
+    <button class="btn" id="tprs-check-original" type="button" disabled>Check original</button>
+    <p class="muted" id="tprs-original-status" role="status" aria-live="polite">No original request is held in this browser for this account and workspace.</p>
+  </section>
+  <div class="tper-actions"><button class="btn" id="tprs-refresh" type="button">Refresh schedules and controls</button></div>
+  <div id="tprs-list" aria-label="Current report schedules"></div>
+</details>

@@ -1,0 +1,609 @@
+{
+  "authenticate": [
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Authorization": "Bearer <client-token>"
+      },
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "authorization": "Bearer <client-token>"
+      },
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Authorization": "Bearer WRONG"
+      },
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "x-maverick-proxy-token": "<client-token>"
+      },
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "X-Maverick-Proxy-Token": "<client-token>"
+      },
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "x-maverick-proxy-token": "nope"
+      },
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {},
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Authorization": "Bearer <client-token> "
+      },
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Authorization": "Bearer "
+      },
+      "result": false
+    }
+  ],
+  "build_request": [
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Connection": "x-private",
+        "x-maverick-proxy-token": "<client-token>",
+        "x-private": "drop-me"
+      },
+      "path": "/v1/messages",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>"
+        },
+        "url": "https://api.anthropic.com/v1/messages"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Authorization": "Bearer <client-token>",
+        "X-Custom": "v"
+      },
+      "path": "/v1/messages",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>",
+          "X-Custom": "v"
+        },
+        "url": "https://api.anthropic.com/v1/messages"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Content-Type": "application/json",
+        "x-api-key": "client-sent"
+      },
+      "path": "v1/messages",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>",
+          "Content-Type": "application/json"
+        },
+        "url": "https://api.anthropic.com/v1/messages"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "x-api-key",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Accept": "application/json",
+        "api-key": "y",
+        "authorization": "Bearer x"
+      },
+      "path": "/v1/messages",
+      "result": {
+        "headers": {
+          "Accept": "application/json",
+          "x-api-key": "<upstream-key>"
+        },
+        "url": "https://api.anthropic.com/v1/messages"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Connection": "keep-alive",
+        "Content-Length": "10",
+        "Host": "evil",
+        "Keep-Alive": "1",
+        "TE": "trailers",
+        "Transfer-Encoding": "chunked",
+        "Upgrade": "h2"
+      },
+      "path": "/v1/messages",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>"
+        },
+        "url": "https://api.anthropic.com/v1/messages"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.openai.com"
+      },
+      "headers": {
+        "Authorization": "Bearer c"
+      },
+      "path": "/v1/chat/completions",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>"
+        },
+        "url": "https://api.openai.com/v1/chat/completions"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Authorization": "Bearer c"
+      },
+      "path": "https://evil.example.com/v1/messages",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>"
+        },
+        "url": "https://api.anthropic.com/https://evil.example.com/v1/messages"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [
+          "api.anthropic.com",
+          "api.openai.com"
+        ],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {
+        "Authorization": "Bearer c"
+      },
+      "path": "/v1/messages",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>"
+        },
+        "url": "https://api.anthropic.com/v1/messages"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {},
+      "path": "/",
+      "result": {
+        "headers": {
+          "Authorization": "Bearer <upstream-key>"
+        },
+        "url": "https://api.anthropic.com/"
+      }
+    }
+  ],
+  "parse_allowed_routes": [
+    {
+      "result": [
+        "GET /healthz",
+        "POST /v1/messages"
+      ],
+      "value": "POST /v1/messages, GET /healthz"
+    },
+    {
+      "result": [
+        "GET /healthz",
+        "POST /v1/messages"
+      ],
+      "value": "POST /v1/messages\nGET /healthz"
+    },
+    {
+      "result": [
+        "GET /healthz",
+        "POST /v1/messages"
+      ],
+      "value": "  post   /v1/messages  ,  GET healthz  "
+    },
+    {
+      "result": [],
+      "value": "garbage"
+    },
+    {
+      "result": [],
+      "value": ""
+    },
+    {
+      "result": [
+        "GET /b",
+        "POST /a"
+      ],
+      "value": "POST /a, , GET /b"
+    },
+    {
+      "result": [],
+      "value": "DELETE"
+    }
+  ],
+  "route_allowed": [
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/messages",
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "post",
+      "path": "/v1/messages",
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/messages?beta=true",
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/messages?url=https%3A%2F%2Fexample.com",
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "GET",
+      "path": "/v1/messages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/unknown",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "v1/messages",
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [
+          "GET /healthz",
+          "POST /v1/foo"
+        ],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "GET",
+      "path": "/healthz",
+      "result": true
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [
+          "GET /healthz"
+        ],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/messages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "//attacker/v1/messages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "//../v1/messages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/../v1/messages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1/%2e%2e/v1/messages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1%2fmessages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/v1\\messages",
+      "result": false
+    },
+    {
+      "config": {
+        "allow_hosts": [],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "method": "POST",
+      "path": "/%76%31/messages",
+      "result": false
+    }
+  ]
+}

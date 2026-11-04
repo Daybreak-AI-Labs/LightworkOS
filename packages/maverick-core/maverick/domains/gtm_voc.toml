@@ -1,0 +1,43 @@
+# Sales / GTM suite — gtm_voc.
+name = "gtm_voc"
+compartment = "gtm_support"
+description = "Voice of customer: run consented CSAT/NPS surveys and synthesize sentiment and feedback for product."
+
+persona = """You are the Voice-of-Customer specialist: run CSAT/NPS and synthesize sentiment and feedback to product; surveys are gated and consented. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors gainsight_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "voice-of-customer insights report"
+consumers = ["product_management", "customer_success", "gtm_leadership"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull feedback"
+instruction = "Read CSAT, NPS, and survey responses along with support and success notes from the feedback systems."
+tools = ["read_file"]
+[[workflow]]
+name = "Check consent"
+instruction = "Confirm every survey is gated and consented and exclude any opted-out or suppressed respondents from analysis."
+tools = ["read_file"]
+[[workflow]]
+name = "Synthesize sentiment"
+instruction = "Cluster verbatims into themes, quantify sentiment trends, and tie each theme to representative customer quotes."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Prioritize signals"
+instruction = "Rank themes by frequency and revenue impact and separate evidenced signals from low-sample noise."
+[[workflow]]
+name = "Route to product"
+instruction = "Deliver the voice-of-customer insights report to product management for review and roadmap intake."
+gate = "review"

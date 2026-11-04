@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Send people their data · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .prcd-grid { display:grid; grid-template-columns:minmax(18rem,1fr) minmax(24rem,2fr);
+               gap:var(--space-4); }
+  .prcd-stack { display:flex; flex-direction:column; gap:var(--space-3); }
+  .prcd-stack label { display:flex; flex-direction:column; gap:var(--space-1); }
+  .prcd-stack textarea { min-height:16rem; font-family:var(--font-mono); }
+  .prcd-output { min-height:24rem; max-height:52rem; overflow:auto; white-space:pre-wrap;
+                 word-break:break-word; }
+  .prcd-warning { border:2px solid var(--danger); padding:var(--space-3);
+                  border-radius: var(--radius-md); background:var(--surface-2); }
+  .prcd-confirm { display:flex; gap:var(--space-2); align-items:flex-start; }
+  @media (max-width:880px) { .prcd-grid { grid-template-columns:1fr; } }
+</style>
+
+{% from "_hero.html" import hero %}
+{{ hero('Privacy', 'Send people their data',
+        subtitle='One-time download codes for answered privacy requests',
+        lede='When a privacy request is closed and its response file is recorded, create a
+              short-lived, one-time download code for the person. The code is shown once:
+              copy it and send it to them securely.') }}
+<details class="panel">
+  <summary>About this page&rsquo;s safeguards</summary>
+  <ul>
+    <li>Codes are only created for closed requests, and only after the person has signed in again to prove who they are.</li>
+    <li>Lightwork keeps only a fingerprint of each code, so it can never show a code a second time.</li>
+    <li>Each code works once, expires after a few minutes, and can be revoked at any time.</li>
+  </ul>
+</details>
+
+{% from "_module_gate.html" import module_gate %}
+{% if not privacy_rights_consumer_delivery_enabled %}
+{{ module_gate('privacy_automation.rights_consumer_delivery', 'Sending people their data',
+               detail='Create one-time download codes for answered privacy requests. Turning this on also turns on privacy request handling.',
+               can_activate=can_admin) }}
+{% else %}
+<div id="prcd-app" data-can-admin="{{ 'true' if can_admin else 'false' }}" data-can-audit="{{ 'true' if can_audit else 'false' }}">
+  <p id="prcd-ready" class="muted" role="status" aria-live="polite">Checking whether download codes can be created…</p>
+  <p id="prcd-status" class="muted" role="status" aria-live="polite"></p>
+
+  <div class="section-head"><h2>Answered requests</h2></div>
+  <div class="panel" id="prcd-packages"><p class="muted">Loading…</p></div>
+
+  <section class="panel" id="prcd-link-box" hidden aria-labelledby="prcd-link-title">
+    <h2 id="prcd-link-title">Your one-time download code</h2>
+    <p><strong>This code is shown once.</strong> Copy it now and send it to the person securely. They enter it in your privacy portal to download their data. It expires soon and works once.</p>
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center;">
+      <label for="prcd-link" class="sr-only">Download code</label>
+      <input id="prcd-link" class="input" readonly style="flex:1 1 24rem;">
+      <button type="button" class="btn btn--primary" id="prcd-copy">Copy code</button>
+      <button type="button" class="btn btn--ghost" id="prcd-done">I have copied it</button>
+    </div>
+  </section>
+
+  {% if can_admin or can_audit %}
+  <div class="panel" style="display:flex; gap:.5rem; flex-wrap:wrap;">
+    {% if can_admin %}<button type="button" class="btn btn--ghost" id="prcd-purge">Delete expired code records</button>{% endif %}
+    {% if can_audit %}<button type="button" class="btn btn--ghost" id="prcd-integrity">Check records are intact</button>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<details class="panel" id="prcd-technical">
+<summary>Technical details: advanced operations</summary>
+<p><button class="btn" id="prcd-load-status" type="button">Check availability</button></p>
+<div class="prcd-grid">
+  <section class="panel prcd-stack">
+    <h2>Choose an action</h2>
+    <p>The workspace and the person acting come only from your sign-in. The
+      consumer binding comes only from a trusted runtime resolver. Unknown
+      fields are rejected.</p>
+    <label>Operation
+      <select id="prcd-operation" data-guided-api="/api/v1/privacy/rights-consumer-delivery">
+        <option value="delivery-mint" data-method="PUT" data-path="/deliveries/{delivery_id}">Delivery: mint one-time capability</option>
+        <option value="delivery-get" data-method="GET" data-path="/deliveries/{delivery_id}">Delivery: get digest-only metadata</option>
+        <option value="delivery-revoke" data-method="POST" data-path="/deliveries/{delivery_id}/revoke">Delivery: revoke</option>
+        <option value="export-create" data-method="PUT" data-path="/deliveries/{delivery_id}/exports/{export_id}">Evidence: create signed metadata export</option>
+        <option value="export-get" data-method="GET" data-path="/exports/{export_id}">Evidence: get signed metadata export</option>
+        <option value="retention-purge" data-method="POST" data-path="/retention/purge">Retention: purge expired state</option>
+        <option value="integrity" data-method="GET" data-path="/integrity">Integrity: check this workspace’s records</option>
+      </select>
+    </label>
+    <label>Record references (JSON)
+      <input class="input" id="prcd-path-values" value="{}" autocomplete="off">
+    </label>
+    <label>Action details (JSON)
+      <textarea class="input" id="prcd-body">{}</textarea>
+    </label>
+    <div class="prcd-warning" id="prcd-confirm-panel">
+      <label class="prcd-confirm"><input id="prcd-confirm" type="checkbox">
+        <span>I reviewed the exact case/package pins, reauthentication receipt,
+          TTL, retention, revision, and bearer-issuance or revocation impact.</span>
+      </label>
+    </div>
+    <button class="btn btn--primary" id="prcd-submit" type="button">Continue with selected action</button>
+  </section>
+  <section class="panel">
+    <h2>Result and availability</h2>
+    <pre class="prcd-output" id="prcd-output" aria-live="polite">No request made.</pre>
+  </section>
+</div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/privacy/rights-consumer-delivery";
+  var operation = document.getElementById("prcd-operation");
+  var paths = document.getElementById("prcd-path-values");
+  var body = document.getElementById("prcd-body");
+  var confirmation = document.getElementById("prcd-confirm");
+  var confirmationPanel = document.getElementById("prcd-confirm-panel");
+  var output = document.getElementById("prcd-output");
+  var highImpact = new Set([
+    "delivery-mint", "delivery-revoke", "export-create", "retention-purge"
+  ]);
+  var forbidden = new Set([
+    "tenant", "tenant_id", "actor", "actor_ref", "principal", "principal_ref",
+    "consumer", "consumer_subject", "consumer_subject_binding_sha256",
+    "capability", "server_grant", "object_ref", "encryption_key"
+  ]);
+
+  function show(value) {
+    output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  }
+  // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
+  function requestProblem(status, detail) {
+    return window.mvPlainDetail(detail) || window.mvErrorText({status: status, detail: detail}, "complete the request");
+  }
+  function problemText(error) {
+    var kind = error && error.name;
+    if (kind === "SyntaxError") {
+      return "Record references and Action details must be valid JSON. Check the quotes, commas and brackets, then try again.";
+    }
+    if (kind === "TypeError" || kind === "AbortError") {
+      return window.mvErrorText(error, "complete the request");
+    }
+    return error && error.message ? error.message : window.mvErrorText(error, "complete the request");
+  }
+  function selectedRoute() {
+    return operation.options[operation.selectedIndex];
+  }
+  function updateConfirmation() {
+    confirmation.checked = false;
+    confirmationPanel.hidden = !highImpact.has(operation.value);
+    show("No request made.");
+  }
+  function buildPath(template, values) {
+    return template.replace(/\{([A-Za-z0-9_]+)\}/g, function (_match, key) {
+      if (typeof values[key] !== "string" || !values[key]) {
+        throw new Error("Add \"" + key + "\" to Record references, then try again.");
+      }
+      return encodeURIComponent(values[key]);
+    });
+  }
+  function rejectAuthoritySelectors(payload) {
+    Object.keys(payload).forEach(function (key) {
+      if (forbidden.has(key)) {
+        throw new Error("Remove \"" + key + "\" from Action details. Lightwork sets that value itself, so it is never accepted here.");
+      }
+    });
+  }
+  async function run(method, path, payload) {
+    var options = {
+      method: method,
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: {"Accept": "application/json", "Cache-Control": "no-store"}
+    };
+    if (method !== "GET") {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(payload);
+    }
+    var response = await fetch(API + path, options);
+    var responseText = await response.text();
+    var result;
+    try {
+      if (!responseText) { throw new Error("empty response"); }
+      result = JSON.parse(responseText);
+    } catch (_error) {
+      throw new Error("Lightwork's reply could not be read. Refresh the page and try again.");
+    }
+    if (!response.ok) {
+      throw new Error(requestProblem(response.status, result && result.detail));
+    }
+    show({status: response.status, ok: response.ok, result: result});
+  }
+
+  document.getElementById("prcd-load-status").addEventListener("click", function () {
+    run("GET", "/status", {}).catch(function (error) { show(problemText(error)); });
+  });
+  operation.addEventListener("change", updateConfirmation);
+  document.getElementById("prcd-submit").addEventListener("click", async function () {
+    try {
+      if (highImpact.has(operation.value) && !confirmation.checked) {
+        throw new Error("Confirm the governed state change before continuing.");
+      }
+      var route = selectedRoute();
+      var pathValues = JSON.parse(paths.value || "{}");
+      var payload = JSON.parse(body.value || "{}");
+      rejectAuthoritySelectors(payload);
+      var path = buildPath(route.dataset.path, pathValues);
+      await run(route.dataset.method, path, payload);
+    } catch (error) { show(problemText(error)); }
+    finally {
+      confirmation.checked = false;
+      if (operation.value === "delivery-mint") { body.value = "{}"; }
+    }
+  });
+  updateConfirmation();
+}());
+</script>
+</details>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-privacy-rights-consumer-delivery.js" defer></script>
+{% endif %}
+{% endblock %}

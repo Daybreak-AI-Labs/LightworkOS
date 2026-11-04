@@ -1,0 +1,8 @@
+{# The emergency-stop banner. Hidden until the shell verifies that work is
+   stopped (lightwork-ui.js renders it from the same status read as the pill),
+   so it never claims a stop the server has not confirmed. #}
+<div id="halt-banner" class="halt-banner" role="alert" hidden>
+  <span class="halt-banner__dot" aria-hidden="true"></span>
+  <span class="halt-banner__text"><strong>Work is stopped.</strong> The emergency stop is on: tasks pause at their next step and nothing new starts until someone resumes work.</span>
+  <a href="#" class="btn halt-banner__resume" data-halt-resume hidden>Resume work</a>
+</div>

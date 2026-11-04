@@ -1,0 +1,28 @@
+{#- The practice marker on every screen while a person practises.
+    Practice tasks, results and approvals live in a separate practice
+    workspace; anything that would leave Lightwork is recorded instead. AI
+    answers are real provider calls, counted on a separate practice ledger
+    with its own daily cap. If practice stops being available while it is on,
+    the marker says so and changes wait for Back to live. -#}
+{% if practice_mode %}
+<div id="practice-banner" class="practice-banner" role="region" aria-labelledby="practice-banner-title">
+  <p class="practice-banner__text"><strong id="practice-banner-title">Practice mode.</strong>
+    Tasks, results and approvals here are kept apart from real work. Nothing is sent, paid or changed outside practice.
+    AI answers still come from the real AI service and cost real money{% if practice_spending %}: practice has its own limit of {{ practice_spending.cap | money }} a day ({{ practice_spending.spent_today | money }} used today), counted apart, not your spending limits{% endif %}.</p>
+  <span class="practice-banner__actions">
+    <button type="button" class="btn btn--ghost" data-practice-outbox aria-controls="practice-outbox" aria-expanded="false">What practice held back</button>
+    <button type="button" class="btn" data-practice-leave>Back to live</button>
+  </span>
+  <p class="practice-banner__status" data-practice-status role="status"></p>
+  <div id="practice-outbox" class="practice-banner__outbox" hidden aria-live="polite"></div>
+</div>
+{% elif practice_stopped %}
+<div id="practice-banner" class="practice-banner practice-banner--stopped" role="alert" aria-labelledby="practice-banner-title">
+  <p class="practice-banner__text"><strong id="practice-banner-title">Practice mode stopped.</strong>
+    {{ practice_stopped }} You are seeing real work, and nothing can be changed until you choose Back to live.</p>
+  <span class="practice-banner__actions">
+    <button type="button" class="btn" data-practice-leave>Back to live</button>
+  </span>
+  <p class="practice-banner__status" data-practice-status role="status"></p>
+</div>
+{% endif %}

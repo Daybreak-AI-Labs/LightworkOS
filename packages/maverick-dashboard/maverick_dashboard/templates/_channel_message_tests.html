@@ -1,0 +1,23 @@
+<div class="section-head"><h2 id="channel-message-tests">Send a reviewed chat test</h2></div>
+<section class="panel ch-form" data-channel-message-tests data-context="{{ channel_context }}" aria-labelledby="channel-message-tests">
+  <p>Choose a private conversation already received by your connected chat account. Lightwork checks the saved bot and current destination before showing the exact one-sentence test. No message is sent until you confirm.</p>
+  <label class="ch-field"><span>Chat app</span><select class="select" data-cmt-channel>
+    <option value="telegram">Telegram</option><option value="discord">Discord</option>
+    <option value="whatsapp_cloud">WhatsApp</option><option value="mattermost">Mattermost</option>
+  </select></label>
+  <button class="btn" type="button" data-cmt-load>Read current conversations</button>
+  <p class="muted">This asks the saved chat service about its bot and conversation. Only retained messages from that bot are offered; the sender must still be permitted. WhatsApp requires a conversation retained in the last 23 hours. The service can still refuse a reply outside its permitted window.</p>
+  <label class="ch-field"><span>Previous incoming conversation</span><select class="select" data-cmt-choice><option value="">Read conversations first…</option></select></label>
+  <div class="ch-actions"><button class="btn" type="button" data-cmt-more hidden>Read more conversations</button>
+    <button class="btn" type="button" data-cmt-review disabled>Verify destination and review message</button></div>
+  <div class="ch-people-review" data-cmt-review-host hidden></div>
+  <p class="ch-result" data-cmt-status role="status" aria-live="polite"></p>
+  <details><summary>Read an original test outcome</summary>
+    <p class="muted">If a reply was interrupted, the message may have arrived. Reading its original outcome never sends it again. The chat service accepting a message does not prove someone received it.</p>
+    <button class="btn" type="button" data-cmt-history>Read my original tests</button>
+    <label class="ch-field"><span>Original test</span><select class="select" data-cmt-original><option value="">No original selected</option></select></label>
+    <div class="ch-actions"><button class="btn" type="button" data-cmt-history-more hidden>Read more original tests</button>
+      <button class="btn" type="button" data-cmt-read disabled>Read original outcome</button></div>
+    <p data-cmt-outcome role="status" aria-live="polite"></p>
+  </details>
+</section>

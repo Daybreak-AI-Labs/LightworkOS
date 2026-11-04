@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_ml_dev.
+name = "pe_ml_dev"
+compartment = "pe_data"
+description = "ML model development: train and evaluate models with experiment tracking; model promotion is gated."
+
+persona = """You are the ML-Development specialist: develop, train, and evaluate models with experiment tracking (PyTorch/scikit-learn, MLflow); model promotion is gated. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "model training & evaluation report"
+consumers = ["ml_lead", "data_science_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Frame problem"
+instruction = "Read the modeling task and dataset spec, map the repo, and search knowledge for prior experiments and baselines."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Build pipeline"
+instruction = "Implement the training and feature pipeline in the sandbox with MLflow experiment tracking wired in."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Train and eval"
+instruction = "Run training runs and compute holdout metrics, capturing each experiment to MLflow for comparison."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Check overfit"
+instruction = "Validate against the baseline and check for overfitting, data leakage, and metric regressions before proposing promotion."
+tools = ["code_exec"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a PR with the evaluation report and route it to the ML lead for review and promotion approval."
+gate = "review"

@@ -1,0 +1,435 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero, state %}
+{% block title %}{{ 'Access · Outside agents' if tab_host else 'Agent trust' }} · Lightwork{% endblock %}
+{% block head_extra %}
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+  .tr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: var(--space-3); }
+  .tr-grid label, .tr-field { display: grid; gap: .3rem; }
+  .tr-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: .25rem .75rem; max-height: 14rem; overflow: auto; padding: .5rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .tr-checks label { display: flex; gap: .4rem; align-items: center; font-size: var(--text-sm); }
+  .tr-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .tr-key { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+</style>
+{% endblock %}
+{% block content %}
+{% set risk_word = {'low': 'Low-risk only', 'medium': 'Up to medium risk', 'high': 'Any risk', 'unbounded': 'Any risk'} %}
+{% set direction_word = {'inbound': 'It may contact us', 'outbound': 'We may contact it', 'both': 'Both ways'} %}
+{% if tab_host %}
+{% from "_tabs.html" import host_header, panel_attrs %}{{ host_header(tab_host) }}
+<div {{ panel_attrs(tab_host.selected) }}>
+<h2>Agent trust</h2>
+<p><strong>Blocking unlisted agents: {{ 'On' if enforced else 'Off' }}.</strong>
+  <span class="badge {{ 'ok' if enforced else 'warn' }}">{{ 'Agents not on the list are turned away' if enforced else 'The list is kept but not enforced' }}</span></p>
+{% else %}
+{% call hero('Security', 'Agent trust',
+             lede='Choose which outside AI agents may work with Lightwork, and what each one may do, see and spend.') %}
+  {{ state('Blocking unlisted agents',
+           'On' if enforced else 'Off',
+           badge='Agents not on the list are turned away' if enforced else 'The list is kept but not enforced',
+           badge_class='ok' if enforced else 'warn') }}
+{% endcall %}
+{% endif %}
+
+<div class="panel" aria-labelledby="tr-enforce-title">
+  <h2 id="tr-enforce-title" style="margin-top:0">Blocking</h2>
+  {% if not available %}
+  <p role="alert">Couldn't load the list of outside agents. <button type="button" class="btn btn--ghost" id="tr-retry">Try again</button></p>
+  {% endif %}
+  <p>{% if enforced %}Only agents on this list can work with Lightwork, and only within their limits.{% else %}Blocking is off: every outside agent can work with Lightwork. Turn it on to turn away agents that aren't on this list.{% endif %}</p>
+  {% if can_admin %}
+  <button type="button" class="btn {{ 'btn--danger' if enforced else 'btn--primary' }}" id="tr-enforce" data-enforced="{{ 'true' if enforced else 'false' }}">
+    {{ 'Turn off blocking' if enforced else 'Turn on blocking' }}</button>
+  {% endif %}
+</div>
+
+{% if graph and graph.nodes %}
+<div class="panel">
+  <h2 style="margin-top:0">Who can talk to whom</h2>
+  <svg viewBox="0 0 {{ graph.width }} {{ graph.height }}" width="100%"
+       style="max-width:{{ graph.width }}px" role="img"
+       aria-label="Map of outside agents and which way each may connect">
+    <defs>
+      <marker id="tg-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"></path>
+      </marker>
+    </defs>
+    {% for n in graph.nodes %}
+    <line x1="{{ graph.cx }}" y1="{{ graph.cy }}" x2="{{ n.x }}" y2="{{ n.y }}"
+          stroke="#94a3b8" stroke-width="1.5"
+          {% if n.outbound %}marker-end="url(#tg-arrow)"{% endif %}
+          {% if n.inbound %}marker-start="url(#tg-arrow)"{% endif %}></line>
+    {% endfor %}
+    {% for n in graph.nodes %}
+    <circle cx="{{ n.x }}" cy="{{ n.y }}" r="9" fill="{{ n.color }}"></circle>
+    <text x="{{ n.x }}" y="{{ n.y - 14 }}" text-anchor="middle" font-size="12"
+          fill="currentColor">{{ n.id | humanize }}</text>
+    {% endfor %}
+    <circle cx="{{ graph.cx }}" cy="{{ graph.cy }}" r="13" fill="#0f172a"
+            stroke="#475569" stroke-width="1.5"></circle>
+    <text x="{{ graph.cx }}" y="{{ graph.cy + 31 }}" text-anchor="middle"
+          font-size="12" fill="currentColor">Lightwork</text>
+  </svg>
+  <p class="muted" style="margin-top:.5rem">
+    An arrow into Lightwork means the agent may start conversations with us; an arrow out means we may reach out to it.
+    <span style="color:#2563eb">&#9679;</span> Limited ·
+    <span style="color:#d97706">&#9679;</span> Allowed risky actions ·
+    <span style="color:#dc2626">&#9679;</span> Blocked or expired
+  </p>
+</div>
+{% endif %}
+
+<div class="section-head"><h2>Outside agents</h2>
+  {% if can_admin %}<button type="button" class="btn btn--primary" data-tr-new>Add an agent</button>{% endif %}
+</div>
+<div class="panel">
+  {% if agents %}
+  <div style="overflow-x:auto">
+  <table>
+    <thead>
+      <tr><th scope="col">Agent</th><th scope="col">Direction</th><th scope="col">Allowed tools</th><th scope="col">Blocked tools</th><th scope="col">Highest risk</th><th scope="col">Spending limit</th><th scope="col">Data it may read</th><th scope="col">Status</th><th scope="col">Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for a in agents %}
+      {% set label = a.id | humanize %}
+      <tr>
+        <td><strong>{{ label }}</strong></td>
+        <td><span class="badge">{{ direction_word.get(a.direction, a.direction | humanize) }}</span></td>
+        <td>{% if a.allow_tools == ['*'] %}All tools{% else %}{% for t in a.allow_tools %}{{ t | humanize }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</td>
+        <td>{% for t in a.deny_tools %}{{ t | humanize }}{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</td>
+        <td><span class="badge {{ 'failure' if a.max_risk in ('high', 'unbounded') else '' }}">{{ risk_word.get(a.max_risk, a.max_risk | humanize) }}</span></td>
+        <td>
+          {% if a.max_dollars is not none %}{{ a.max_dollars | money }} per task{% else %}No limit{% endif %}
+          {% if a.max_wall_seconds is not none %} · {{ ((a.max_wall_seconds / 60) | round(1)) | string | replace('.0', '') }} min{% endif %}
+        </td>
+        <td>{% for s in a.data_scopes %}{{ s | humanize }}{% if not loop.last %}, {% endif %}{% else %}None{% endfor %}</td>
+        <td>
+          {% if a.revoked %}<span class="badge failure">Blocked</span>
+          {% elif a.active %}<span class="badge active">Active</span>
+          {% else %}<span class="badge failure">{{ {'expired': 'Expired', 'not_yet_valid': 'Not started yet'}.get(a.status, 'Not active') }}</span>{% endif %}
+          {% if not a.managed %}<div class="muted" style="font-size:var(--text-xs)">Set up by your installation</div>{% endif %}
+          {% if not a.has_key %}<div class="muted" style="font-size:var(--text-xs)">No security key on file</div>{% endif %}
+        </td>
+        <td>
+          <div class="tr-actions">
+            <button type="button" class="btn btn--ghost" data-tr-check="{{ a.id }}" data-name="{{ label }}" aria-label="Check access for {{ label }}">Check access</button>
+            {% if can_admin %}
+            {% if a.managed %}<button type="button" class="btn btn--ghost" data-tr-edit="{{ a.id }}" aria-label="Edit {{ label }}">Edit</button>{% endif %}
+            {% if a.revoked %}
+            <button type="button" class="btn" data-trust-restore="{{ a.id }}" data-name="{{ label }}"
+                    aria-label="Unblock {{ label }}">Unblock</button>
+            {% else %}
+            <button type="button" class="btn btn--danger" data-trust-revoke="{{ a.id }}" data-name="{{ label }}"
+                    aria-label="Block agent {{ label }}">Block agent</button>
+            {% endif %}
+            {% if a.managed %}<button type="button" class="btn btn--ghost" data-trust-remove="{{ a.id }}" data-name="{{ label }}"
+                    aria-label="Remove {{ label }}">Remove</button>{% endif %}
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="mv-empty">
+    <p class="mv-empty__title">No outside agents yet</p>
+    <p class="mv-empty__body">When you connect a partner's agent, another platform, or any outside AI system, add it here to control what it may do, see and spend.</p>
+    {% if can_admin %}<button type="button" class="btn btn--primary" data-tr-new>Add an agent</button>{% endif %}
+  </div>
+  {% endif %}
+  <p id="tr-check-result" role="status" aria-live="polite"></p>
+</div>
+
+{% if can_admin %}
+<div class="section-head"><h2 id="tr-form-title">Add an outside agent</h2></div>
+<div class="panel">
+  <form id="trust-add" aria-labelledby="tr-form-title">
+    <input type="hidden" name="id" value="">
+    <div class="tr-grid">
+      <label>Name
+        <input class="input" name="name" required maxlength="60" placeholder="For example: Partner assistant">
+      </label>
+      <label>Direction
+        <select class="select" name="direction">
+          <option value="both">Both ways</option>
+          <option value="inbound">It may contact us</option>
+          <option value="outbound">We may contact it</option>
+        </select>
+      </label>
+      <label>Highest-risk actions allowed
+        <select class="select" name="max_risk">
+          <option value="low" selected>Low-risk only</option>
+          <option value="medium">Up to medium risk</option>
+          <option value="high">Any risk</option>
+        </select>
+      </label>
+      <label>Spending limit per task in dollars (optional)
+        <input class="input" name="max_dollars" type="number" min="0" step="0.01" placeholder="2.00">
+      </label>
+      <label>Time limit per task in minutes (optional)
+        <input class="input" name="max_minutes" type="number" min="0" step="1" placeholder="10">
+      </label>
+      <div class="tr-field">
+        <label for="tr-pubkey">Security key from the agent's provider (optional)</label>
+        <input class="input" id="tr-pubkey" name="pubkey" maxlength="64" placeholder="Paste the key you were given" aria-describedby="tr-pubkey-help">
+        <span class="muted" id="tr-pubkey-help" style="font-size:var(--text-xs)">Or <button type="button" class="btn btn--ghost" id="tr-pubkey-file">load it from a file</button></span>
+      </div>
+    </div>
+
+    <fieldset style="margin-top:var(--space-3)">
+      <legend>Tools it may use</legend>
+      <label><input type="radio" name="tools_mode" value="all" checked> All tools</label>
+      <label><input type="radio" name="tools_mode" value="some"> Only the tools I choose</label>
+      <div class="tr-checks" id="tr-allow" hidden>
+        {% for value, label in tool_choices %}<label><input type="checkbox" name="allow_tools" value="{{ value }}"> {{ label }}</label>{% endfor %}
+      </div>
+    </fieldset>
+    <fieldset style="margin-top:var(--space-3)">
+      <legend>Tools it may never use</legend>
+      <div class="tr-checks">
+        {% for value, label in tool_choices %}<label><input type="checkbox" name="deny_tools" value="{{ value }}"> {{ label }}</label>{% endfor %}
+      </div>
+    </fieldset>
+    <div class="tr-field" style="margin-top:var(--space-3)">
+      <label for="tr-scopes">Data it may read (hold Ctrl or Cmd to choose more than one; none chosen means no access)</label>
+      <select class="select" id="tr-scopes" name="data_scopes" multiple size="6">
+        {% if area_choices.recent %}<optgroup label="Used by recent work">
+          {% for value, label in area_choices.recent %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </optgroup>{% endif %}
+      </select>
+      <script nonce="{{ csp_script_nonce }}" type="application/json" id="tr-area-groups">{{ area_choices.groups | tojson }}</script>
+    </div>
+    <div class="tr-actions" style="margin-top:var(--space-3)">
+      <button type="submit" class="btn btn--primary" id="tr-save">Add agent</button>
+      <button type="button" class="btn btn--ghost" id="tr-cancel" hidden>Cancel editing</button>
+    </div>
+    <p class="muted" id="tr-form-msg" role="status" aria-live="polite"></p>
+  </form>
+  <p class="muted" style="font-size: var(--text-sm); margin: var(--space-3) 0 0;">Changes take effect on each agent's next task.</p>
+</div>
+{% endif %}
+
+<div class="section-head"><h2>Our security key</h2></div>
+<div class="panel">
+  <p>Share this key with partners whose agents work with yours, so they can confirm messages really come from this Lightwork installation.</p>
+  <div class="tr-actions">
+    <button type="button" class="btn" id="tr-key-copy">Copy our key</button>
+    <button type="button" class="btn btn--ghost" id="tr-key-download">Download our key</button>
+  </div>
+  <details style="margin-top:var(--space-2)"><summary>Show the key</summary><p class="tr-key" id="tr-key-text">Open to load the key.</p></details>
+</div>
+{% if tab_host %}</div>{% endif %}
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var agents = {{ agents | tojson }};
+  var form = document.getElementById("trust-add");
+  function F(name) { return form ? form.elements.namedItem(name) : null; }
+  var msg = document.getElementById("tr-form-msg");
+  function errorText(failure, action) { return window.mvErrorText(failure, action); }
+  function reloadSoon(text) { window.mvToast(text); setTimeout(function () { window.location.reload(); }, 350); }
+  async function send(url, opts, okText, action) {
+    try {
+      var r = await fetch(url, Object.assign({ headers: { "Content-Type": "application/json", Accept: "application/json" } }, opts));
+      if (!r.ok) throw r;
+      reloadSoon(okText);
+      return true;
+    } catch (failure) {
+      window.mvFail(failure, action);
+      return false;
+    }
+  }
+  function slug(text) {
+    var s = String(text || "").toLowerCase();
+    if (s.normalize) s = s.normalize("NFKD");
+    s = s.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+    return s || "agent";
+  }
+
+  var retry = document.getElementById("tr-retry");
+  if (retry) retry.addEventListener("click", function () { window.location.reload(); });
+
+  var enforce = document.getElementById("tr-enforce");
+  if (enforce) enforce.addEventListener("click", async function () {
+    var on = enforce.getAttribute("data-enforced") === "true";
+    var ok = await window.mvConfirm(on
+      ? "Turn off blocking? Any outside agent will be able to work with Lightwork, even if it isn't on this list."
+      : "Turn on blocking? Outside agents that aren't on this list will be turned away from their next contact.",
+      { okText: on ? "Turn off" : "Turn on" });
+    if (!ok) return;
+    try {
+      // Turning blocking off lowers a protection; the server refuses it
+      // unless the request carries the confirmation given just above.
+      var r = await fetch("/api/v1/trust/enforcement", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ enforced: !on, confirm: on }) });
+      if (!r.ok) throw r;
+      reloadSoon(on ? "Blocking turned off." : "Blocking turned on.");
+    } catch (failure) {
+      window.mvToast(failure && failure.status === 409
+        ? "Your installation controls this setting, so it can't be changed here. Ask your IT team."
+        : errorText(failure, "change blocking"), { error: true });
+    }
+  });
+
+  document.querySelectorAll("[data-tr-check]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-tr-check");
+      var toolOptions = [{ value: "", label: "No particular tool" }].concat({{ tool_choices | tojson }}.map(function (p) { return { value: p[0], label: p[1] }; }));
+      var answer = await window.mvForm("Check access for " + b.getAttribute("data-name"), [
+        { key: "direction", label: "Who starts the conversation", type: "select", default: "inbound",
+          options: [{ value: "inbound", label: "The agent contacts us" }, { value: "outbound", label: "We contact the agent" }] },
+        { key: "tool", label: "Tool it wants to use", type: "select", default: "", options: toolOptions },
+        { key: "risk", label: "Risk of what it wants to do", type: "select", default: "",
+          options: [{ value: "", label: "Not sure" }, { value: "low", label: "Low" }, { value: "medium", label: "Medium" }, { value: "high", label: "High" }] }
+      ], { okText: "Check" });
+      if (!answer) return;
+      var out = document.getElementById("tr-check-result");
+      try {
+        var r = await fetch("/api/v1/trust/agents/" + encodeURIComponent(id) + "/check", {
+          method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ direction: answer.direction || "inbound", tools: answer.tool ? [answer.tool] : [], risk: answer.risk || null })
+        });
+        if (!r.ok) throw r;
+        var d = await r.json();
+        out.textContent = b.getAttribute("data-name") + ": " + (d.allowed ? "Allowed. " : "Turned away. ") + d.reason + " Nothing was changed.";
+      } catch (failure) { out.textContent = errorText(failure, "check this agent's access"); }
+    });
+  });
+
+  document.querySelectorAll("[data-trust-revoke]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-trust-revoke");
+      if (!(await window.mvConfirm("Block " + b.getAttribute("data-name") + "? It will be turned away on its next contact.", { okText: "Block" }))) return;
+      send("/api/v1/trust/agents/" + encodeURIComponent(id) + "/revoke", { method: "POST", body: JSON.stringify({ revoked: true }) }, "Agent blocked.", "block this agent");
+    });
+  });
+  document.querySelectorAll("[data-trust-restore]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-trust-restore");
+      if (!(await window.mvConfirm("Unblock " + b.getAttribute("data-name") + "? It can work with Lightwork again within its limits.", { okText: "Unblock" }))) return;
+      send("/api/v1/trust/agents/" + encodeURIComponent(id) + "/revoke", { method: "POST", body: JSON.stringify({ revoked: false }) }, "Agent unblocked.", "unblock this agent");
+    });
+  });
+  document.querySelectorAll("[data-trust-remove]").forEach(function (b) {
+    b.addEventListener("click", async function () {
+      var id = b.getAttribute("data-trust-remove");
+      // One action with a way back: the row leaves at once and the
+      // removal is sent when the Undo time is up.
+      var row = b.closest("tr, li, article");
+      if (row) row.hidden = true;
+      window.mvUndo("{name} removed from the list. If blocking is on, it will be turned away.", { values: {name: b.getAttribute("data-name")},
+        action: "remove this agent",
+        run: function (keepalive) { return fetch("/api/v1/trust/agents/" + encodeURIComponent(id), { method: "DELETE", keepalive: keepalive, headers: { Accept: "application/json" } }); },
+        undo: function () { if (row) row.hidden = false; b.focus(); },
+        done: function () { reloadSoon("Agent removed."); }
+      });
+    });
+  });
+
+  var keyText = null;
+  async function loadKey() {
+    if (keyText) return keyText;
+    keyText = (await window.mvFetchJSON("/api/v1/trust/pubkey")).key;
+    document.getElementById("tr-key-text").textContent = keyText;
+    return keyText;
+  }
+  var keyDetails = document.getElementById("tr-key-text").parentElement;
+  keyDetails.addEventListener("toggle", function () { if (keyDetails.open) loadKey().catch(function (f) { document.getElementById("tr-key-text").textContent = errorText(f, "load the key"); }); });
+  document.getElementById("tr-key-copy").addEventListener("click", function () {
+    loadKey().then(function (k) { window.mvCopy(k); }, function (f) { window.mvFail(f, "load the key"); });
+  });
+  document.getElementById("tr-key-download").addEventListener("click", function () {
+    loadKey().then(function (k) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([k + "\n"], { type: "text/plain" }));
+      a.download = "lightwork-security-key.txt"; document.body.appendChild(a); a.click(); a.remove();
+    }, function (f) { window.mvFail(f, "load the key"); });
+  });
+
+  if (!form) return;
+  var allowBox = document.getElementById("tr-allow");
+  var scopes = document.getElementById("tr-scopes");
+  try {
+    JSON.parse(document.getElementById("tr-area-groups").textContent || "[]").forEach(function (g) {
+      if (!g.options || !g.options.length) return;
+      var og = document.createElement("optgroup"); og.label = g.label;
+      g.options.forEach(function (p) { var o = document.createElement("option"); o.value = p[0]; o.textContent = p[1]; og.appendChild(o); });
+      scopes.appendChild(og);
+    });
+  } catch (e) { /* recent areas remain */ }
+  form.querySelectorAll('input[name="tools_mode"]').forEach(function (r) {
+    r.addEventListener("change", function () { allowBox.hidden = F("tools_mode").value !== "some"; });
+  });
+  document.getElementById("tr-pubkey-file").addEventListener("click", function () {
+    var input = document.createElement("input"); input.type = "file"; input.accept = ".txt,.pub,.key,text/plain";
+    input.addEventListener("change", function () {
+      var f = input.files && input.files[0]; if (!f) return;
+      f.text().then(function (t) {
+        var m = String(t).match(/[0-9a-fA-F]{64}/);
+        if (m) { F("pubkey").value = m[0]; msg.textContent = "Key loaded from " + f.name + "."; }
+        else msg.textContent = "That file doesn't contain a security key.";
+      });
+    });
+    input.click();
+  });
+
+  function checked(name) { return Array.prototype.map.call(form.querySelectorAll('input[name="' + name + '"]:checked'), function (c) { return c.value; }); }
+  function body() {
+    var num = function (v) { v = String(v || "").trim(); return v === "" ? null : Number(v); };
+    var minutes = num(F("max_minutes").value);
+    return {
+      pubkey: F("pubkey").value.trim(),
+      direction: F("direction").value,
+      max_risk: F("max_risk").value || null,
+      allow_tools: F("tools_mode").value === "some" ? checked("allow_tools") : [],
+      deny_tools: checked("deny_tools"),
+      data_scopes: Array.prototype.map.call(scopes.selectedOptions, function (o) { return o.value; }),
+      max_dollars: num(F("max_dollars").value),
+      max_wall_seconds: minutes === null ? null : Math.round(minutes * 60),
+    };
+  }
+  function resetForm() {
+    form.reset(); F("id").value = ""; F("name").disabled = false; allowBox.hidden = true;
+    document.getElementById("tr-form-title").textContent = "Add an Outside Agent";
+    document.getElementById("tr-save").textContent = "Add agent";
+    document.getElementById("tr-cancel").hidden = true; msg.textContent = "";
+  }
+  function edit(id) {
+    var a = agents.filter(function (x) { return x.id === id; })[0]; if (!a) return;
+    resetForm();
+    F("id").value = a.id; F("name").value = a.id.replace(/[-_.]+/g, " "); F("name").disabled = true;
+    F("direction").value = a.direction;
+    F("max_risk").value = a.max_risk === "unbounded" ? "high" : a.max_risk;
+    F("max_dollars").value = a.max_dollars == null ? "" : a.max_dollars;
+    F("max_minutes").value = a.max_wall_seconds == null ? "" : Math.round(a.max_wall_seconds / 60);
+    var some = !(a.allow_tools.length === 1 && a.allow_tools[0] === "*");
+    form.querySelector('input[name="tools_mode"][value="' + (some ? "some" : "all") + '"]').checked = true;
+    allowBox.hidden = !some;
+    form.querySelectorAll('input[name="allow_tools"]').forEach(function (c) { c.checked = some && a.allow_tools.indexOf(c.value) >= 0; });
+    form.querySelectorAll('input[name="deny_tools"]').forEach(function (c) { c.checked = a.deny_tools.indexOf(c.value) >= 0; });
+    Array.prototype.forEach.call(scopes.options, function (o) { o.selected = a.data_scopes.indexOf(o.value) >= 0; });
+    document.getElementById("tr-form-title").textContent = "Edit " + F("name").value;
+    document.getElementById("tr-save").textContent = "Save changes";
+    document.getElementById("tr-cancel").hidden = false;
+    form.scrollIntoView({ behavior: "smooth" }); F("direction").focus();
+  }
+  document.querySelectorAll("[data-tr-edit]").forEach(function (b) { b.addEventListener("click", function () { edit(b.getAttribute("data-tr-edit")); }); });
+  document.querySelectorAll("[data-tr-new]").forEach(function (b) { b.addEventListener("click", function () { resetForm(); form.scrollIntoView({ behavior: "smooth" }); F("name").focus(); }); });
+  document.getElementById("tr-cancel").addEventListener("click", resetForm);
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var b = body();
+    if (F("tools_mode").value === "some" && !b.allow_tools.length) { msg.textContent = "Choose at least one tool, or pick All tools."; return; }
+    if (F("id").value) {
+      send("/api/v1/trust/agents/" + encodeURIComponent(F("id").value), { method: "PUT", body: JSON.stringify(b) }, "Changes saved.", "save this agent");
+      return;
+    }
+    var id = slug(F("name").value);
+    if (agents.some(function (a) { return a.id === id; })) { msg.textContent = "An agent with this name is already on the list. Use its Edit button instead."; return; }
+    b.id = id;
+    send("/api/v1/trust/agents", { method: "POST", body: JSON.stringify(b) }, "Agent added.", "add this agent");
+  });
+})();
+</script>
+{% endblock %}

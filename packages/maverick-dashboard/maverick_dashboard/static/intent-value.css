@@ -1,0 +1,29 @@
+#iv-app { display: grid; gap: var(--space-4); min-width: 0; width: 100%; }
+#iv-app > *, #iv-report > *, .iv-form label { min-width: 0; }
+#iv-report { width: 100%; min-width: 0; }
+#iv-app .panel { padding: var(--space-4); }
+.iv-form { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: end; }
+.iv-form label { display: grid; gap: var(--space-1); flex: 1 1 10rem; }
+.iv-form input, .iv-form select, .iv-form textarea, #iv-benchmark-select {
+  color: var(--text); background: var(--surface-sunken, var(--panel)); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: var(--space-2); max-width: 100%; min-width: 0;
+}
+.iv-form input[type=checkbox] { width: auto; }
+.iv-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.iv-metric { text-align: left; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); cursor: pointer; }
+.iv-metric strong { display: block; font-size: var(--text-xl, 1.4rem); margin-top: var(--space-2); }
+.iv-metric span { display: block; margin-top: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
+.iv-metric:focus-visible, #iv-app button:focus-visible, #iv-app a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.iv-table { overflow-x: auto; }
+.iv-table table { width: 100%; border-collapse: collapse; }
+.iv-table th, .iv-table td { padding: var(--space-2); text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+.iv-opportunities { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
+.iv-opportunity { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+#iv-detail { color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-lg); width: min(54rem, calc(100vw - 2rem)); max-height: 85vh; overflow: auto; padding: var(--space-4); }
+#iv-detail::backdrop { background: rgb(0 0 0 / .45); }
+.iv-dialog-head { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
+#iv-detail-body { display: grid; gap: var(--space-3); overflow-wrap: anywhere; }
+.iv-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+#iv-error { color: var(--danger); }
+@media (max-width: 600px) { .iv-form { display: grid; grid-template-columns: minmax(0, 1fr); } .iv-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { #iv-detail, .iv-metric { background: var(--bg); } }

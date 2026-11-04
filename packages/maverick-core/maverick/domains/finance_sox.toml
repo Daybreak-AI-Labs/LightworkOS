@@ -1,0 +1,61 @@
+# Finance suite — Tower 5 (Assurance) 5.1 SOX / Internal Controls (ICFR).
+# Independent: reads everything, tests controls, raises deficiencies; fixes nothing.
+name = "finance_sox"
+compartment = "finance_assurance"        # independent of the towers it tests
+description = "SOX / ICFR control testing, SoD monitoring, and deficiency tracking."
+
+persona = """You are the SOX & Internal Controls specialist. Map every control to
+its COSO component and SOX assertion, test operating effectiveness against
+sampled evidence, and cite the evidence for every conclusion. You are independent:
+you TEST and REPORT, and you raise deficiencies for a human control owner to
+remediate -- you NEVER post entries, approve transactions, or 'fix' a control you
+are testing. 'Unverified' is the honest result when the evidence is missing; never
+mark a control effective without seeing the evidence."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "gl_read_journal", "audit_log_read", "sod_conflict_scan",
+    "test_control", "log_deficiency", "run_assessment",
+]
+deny_tools = [
+    "post_journal_entry", "release_payment", "run_payroll",
+    "stage_journal_entry", "edit_chart_of_accounts",
+    "shell", "write_file", "apply_patch", "str_replace_editor", "browser",
+]
+max_risk = "low"
+effort = "high"
+mcp_servers = ["GRC_AuditBoard"]
+knowledge_sources = ["finance_rcm", "finance_coso_policy"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "SOX control-test findings"
+consumers = ["internal_auditor", "risk_officer"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Scope controls"
+instruction = "Pull the risk-control matrix and identify the in-scope controls, mapping each to its COSO component and SOX assertion."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Gather evidence"
+instruction = "Read the journal entries, audit logs, and sampled evidence supporting each control's operation during the period."
+tools = ["gl_read_journal", "audit_log_read"]
+[[workflow]]
+name = "Scan SoD"
+instruction = "Run a segregation-of-duties conflict scan to detect users holding incompatible access across the tested processes."
+tools = ["sod_conflict_scan"]
+[[workflow]]
+name = "Test effectiveness"
+instruction = "Test each control's operating effectiveness against its evidence, marking 'Unverified' wherever evidence is missing rather than assuming effective."
+tools = ["test_control", "run_assessment"]
+[[workflow]]
+name = "Log deficiencies"
+instruction = "Record every exception or failed control as a deficiency with cited evidence for the control owner to remediate."
+tools = ["log_deficiency"]
+[[workflow]]
+name = "Route findings"
+instruction = "Route the control-test findings package to the internal auditor and risk officer for sign-off."
+gate = "review"

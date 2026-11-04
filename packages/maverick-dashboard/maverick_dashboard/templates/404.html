@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Page not found · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero %}
+  {% set not_found_actions %}
+    <a class="btn btn--primary" href="/">Go to the overview</a>
+    <a class="btn" href="/chat">Start a task</a>
+    <button class="btn btn--ghost" type="button" id="nf-find">Search</button>
+  {% endset %}
+  {% set not_found_lede %}We couldn't find that page. It may have moved, or the link may be out of date.{% endset %}
+  {{ hero('', 'Page not found', lede=not_found_lede, actions=not_found_actions) }}
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      var b = document.getElementById('nf-find'), open = document.getElementById('navfinder-open');
+      if (!open) { b.hidden = true; return; }
+      b.addEventListener('click', function () { open.click(); });
+    })();
+  </script>
+{% endblock %}

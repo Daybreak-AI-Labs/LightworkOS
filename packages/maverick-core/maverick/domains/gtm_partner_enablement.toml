@@ -1,0 +1,44 @@
+# Sales / GTM suite — gtm_partner_enablement.
+name = "gtm_partner_enablement"
+compartment = "gtm_partners"
+description = "Partner enablement and co-sell."
+
+persona = """You are the Partner Enablement specialist: enable partners, support co-sell, and manage deal registration. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "partner enablement and co-sell plan"
+consumers = ["partner_account_manager", "channel_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope partner"
+instruction = "Read the partner profile, current certifications, and the co-sell opportunity context to set enablement goals."
+tools = ["read_file"]
+[[workflow]]
+name = "Pull collateral"
+instruction = "Retrieve approved enablement assets, training paths, and co-sell playbooks from company knowledge sources."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Gap analysis"
+instruction = "Compare partner readiness against role requirements to identify enablement gaps and co-sell blockers."
+tools = ["read_file", "web_search"]
+[[workflow]]
+name = "Draft plan"
+instruction = "Draft the enablement and co-sell plan with milestones, owners, and assets, citing each approved source."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route review"
+instruction = "Route the drafted plan to the partner account manager for sign-off before any external share."
+gate = "review"

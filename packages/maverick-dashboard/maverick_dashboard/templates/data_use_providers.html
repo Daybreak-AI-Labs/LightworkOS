@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Snowflake and Databricks · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set dup_admin = data_use_can_admin if data_use_can_admin is defined else true %}
+<div class="governance-workbench" id="dup-root"
+     data-can-admin="{{ 'true' if dup_admin else 'false' }}"
+     data-snowflake="{{ 'true' if data_use_snowflake_enabled and data_use_enforcement_enabled else 'false' }}"
+     data-databricks="{{ 'true' if data_use_databricks_enabled and data_use_enforcement_enabled else 'false' }}">
+  {{ hero('Data governance', 'Snowflake and Databricks',
+          lede='Connect your Snowflake or Databricks tables, then apply the decisions from Data Use Rules there: hiding values, limiting rows and allowing or blocking access.') }}
+  {% from "_tabs.html" import sub_nav %}
+  {{ sub_nav('Data use tools', [('', [('/data-use', 'Data use rules'), ('/data-use/providers', 'Snowflake and Databricks')])], '/data-use/providers') }}
+  {% if not data_use_enforcement_enabled %}
+  {{ module_gate('data_use_governance.enforcement', 'Applying rules in your databases',
+                 detail='Lets Lightwork change access settings in your connected Snowflake or Databricks account. Turn on the service you use as well.',
+                 can_activate=dup_admin) }}
+  {% endif %}
+  {% if not data_use_snowflake_enabled %}
+  {{ module_gate('data_use_governance.snowflake', 'Snowflake',
+                 detail='Lets Lightwork apply your data use decisions in Snowflake.',
+                 can_activate=dup_admin) }}
+  {% endif %}
+  {% if not data_use_databricks_enabled %}
+  {{ module_gate('data_use_governance.databricks', 'Databricks',
+                 detail='Lets Lightwork apply your data use decisions in Databricks.',
+                 can_activate=dup_admin) }}
+  {% endif %}
+  <p id="dup-status" class="muted" role="status" aria-live="polite"></p>
+
+  <section class="panel" aria-labelledby="dup-bindings-heading">
+    <div class="section-head">
+      <h2 id="dup-bindings-heading">Connected tables</h2>
+      <button class="btn btn--primary" type="button" id="dup-new"{% if not dup_admin %} disabled{% endif %}>Connect a table</button>
+    </div>
+    <p class="muted">Each connected table links one of your data sets to a table in Snowflake or Databricks. Sign-in details for the service are set up by your administrator and are never typed here.</p>
+    <div id="dup-bindings"><p class="muted">Loading…</p></div>
+
+    <form id="dup-enroll" class="cw-editor" hidden novalidate autocomplete="off">
+      <fieldset class="cw-form"{% if not dup_admin %} disabled{% endif %}>
+        <legend class="sr-only">Connect a table</legend>
+        <h3 class="cw-wide" id="dup-enroll-title">Connect a table</h3>
+        <input type="hidden" name="binding_id">
+        <input type="hidden" name="expected_revision" value="0">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <fieldset class="cw-wide"><legend>Service</legend>
+          <div class="cw-checks">
+            <label><input type="radio" name="provider" value="snowflake"{% if not (data_use_snowflake_enabled and data_use_enforcement_enabled) %} disabled{% endif %}> Snowflake{% if not (data_use_snowflake_enabled and data_use_enforcement_enabled) %} (turn it on above first){% endif %}</label>
+            <label><input type="radio" name="provider" value="databricks"{% if not (data_use_databricks_enabled and data_use_enforcement_enabled) %} disabled{% endif %}> Databricks{% if not (data_use_databricks_enabled and data_use_enforcement_enabled) %} (turn it on above first){% endif %}</label>
+          </div>
+        </fieldset>
+        <label data-new-only>Name for this connection<input class="input" name="binding_name" maxlength="80" placeholder="Customers in Snowflake"></label>
+        <label>Data set<select class="select" name="asset_id" required></select></label>
+        <label>Account or workspace name<input class="input" name="account_or_workspace_id" maxlength="255" placeholder="The first part of your web address, for example acme-eu"></label>
+        <label>Database or catalog<input class="input" name="catalog" maxlength="255" placeholder="SALES"></label>
+        <label>Group inside the database<input class="input" name="schema_name" maxlength="255" placeholder="PUBLIC"></label>
+        <label>Table<input class="input" name="table" maxlength="255" placeholder="CUSTOMERS"></label>
+        <label>Role that gets access<input class="input" name="principal" maxlength="255" placeholder="ANALYST"></label>
+        <label>Warehouse or compute<input class="input" name="compute_id" maxlength="255" placeholder="REPORTING_WH"></label>
+        <label data-provider="snowflake" class="cw-wide">Tag that records Lightwork’s changes<input class="input" name="state_anchor" maxlength="767" placeholder="GOVERNANCE.TAGS.LIGHTWORK_STATE">
+          <span class="muted">Use the full tag name, like GOVERNANCE.TAGS.LIGHTWORK_STATE. Ask your Snowflake administrator which tag to use.</span>
+        </label>
+        <fieldset class="cw-wide"><legend>Columns</legend>
+          <p class="muted">Type the column name in the table for each field. Leave a field blank if the table does not have it.</p>
+          <div id="dup-field-map"></div>
+        </fieldset>
+        <details class="cw-wide"><summary>Masking and row rules in your database</summary>
+          <p class="muted">If your rules hide values or limit rows, name the matching policy already created in your database. Use its full name, like SECURITY.POLICIES.HIDE_EMAIL.</p>
+          <div id="dup-mask-map"></div>
+          <div id="dup-row-map"></div>
+        </details>
+        <label class="cw-wide cw-checks"><input type="checkbox" name="field_inventory_complete"> I have listed every column of this table that holds data from this data set</label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Save connection</button>
+          <button class="btn btn--ghost" type="button" data-dup-close="dup-enroll">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+    <div id="dup-check-result" class="cw-result" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="dup-decisions-heading">
+    <div class="section-head">
+      <h2 id="dup-decisions-heading">Decisions ready to apply</h2>
+      <button class="btn btn--ghost" type="button" id="dup-refresh">Refresh</button>
+    </div>
+    <p class="muted">Applying a decision changes access settings in your database straight away. Undo sets the table back to “blocked”, not to how it was before Lightwork.</p>
+    <div id="dup-decisions"><p class="muted">Loading…</p></div>
+  </section>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">Lightwork prepares every database change itself from the saved decision and checks the decision again just before applying it; nobody can type database commands here. Removing a connection is permanent and keeps its history; to reconnect, create a new connection. These connections have not yet been tried against a live customer account, so test with a non-production table first.</p>
+  </details>
+</div>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/data-use";
+  // The shared consent JSON client (mvFetchJSON): a non-2xx or malformed response is never success.
+  async function call(path, options) {
+    return window.LightworkConsentWorkbench.client(API)(path, options);
+  }
+  var CW = window.LightworkConsentWorkbench;
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (CW && document.getElementById("dup-root")) { if (window.mvFetchJSON) start(); else document.addEventListener("DOMContentLoaded", start); }
+
+  function start() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $("dup-root"), status = $("dup-status");
+    var canAdmin = root.dataset.canAdmin === "true";
+    var providers = ["snowflake", "databricks"].filter(function (p) { return root.dataset[p] === "true"; });
+    var NAMES = {snowflake: "Snowflake", databricks: "Databricks"};
+    var MASKS = [["redact", "Replace with a blank marker"], ["null", "Show as empty"], ["hash_sha256", "Replace with a matching code"], ["tokenize", "Replace with a token"], ["preserve_last4", "Show only the last 4 characters"], ["bucket", "Show a range"], ["generalize_date", "Show only month and year"]];
+    var state = {bindings: [], assets: [], fields: [], decisions: [], rowFilters: []};
+    function say(text, isError) { CW.say(status, text, isError); }
+    function fail(error, action) { return CW.fail(status, error, action); }
+    document.querySelectorAll("[data-dup-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.dupClose).hidden = true; }); });
+
+    async function load() {
+      if (!providers.length) {
+        $("dup-bindings").replaceChildren(CW.el("p", "muted", "Turn on applying rules and Snowflake or Databricks above to connect tables."));
+        $("dup-decisions").replaceChildren(CW.el("p", "muted", "Decisions can be applied once a table is connected."));
+        return;
+      }
+      try {
+        var lists = await Promise.all(providers.map(function (p) { return call("/providers/" + p + "/bindings?limit=499"); }));
+        state.bindings = [];
+        lists.forEach(function (list) { state.bindings = state.bindings.concat(list.items || []); });
+        var records = await Promise.all([call("/records/asset?limit=499"), call("/records/field?limit=499"), call("/records/decision?limit=499"), call("/providers/row-filters")]);
+        state.assets = records[0].items || []; state.fields = records[1].items || []; state.decisions = records[2].items || []; state.rowFilters = records[3].items || [];
+        renderBindings(); renderDecisions();
+      } catch (error) { fail(error, "load the connections"); }
+    }
+
+    function tableName(b) { return [b.catalog, b.schema_name || b.schema, b.table].filter(Boolean).join("."); }
+    function renderBindings() {
+      CW.table($("dup-bindings"), state.bindings, {label: "Connected tables", name: function (b) { return CW.human(b.binding_id); },
+        columns: [
+          {label: "Connection", value: function (b) { return CW.human(b.binding_id); }},
+          {label: "Service", value: function (b) { return NAMES[b.provider_id] || CW.human(b.provider_id); }},
+          {label: "Table", value: tableName},
+          {label: "Data Set", value: function (b) { return CW.human(b.asset_id); }},
+          {label: "Status", value: function (b) { return b.revoked ? CW.badge("Removed", "idle") : CW.badge("Connected", "ok"); }},
+        ],
+        actions: [
+          {label: "Check connection", when: function (b) { return !b.revoked; }, run: function (b, btn) { CW.busy(btn, function () { return check(b); }); }},
+          {label: "Change", when: function (b) { return canAdmin && !b.revoked; }, run: function (b) { openEnroll(b); }},
+          {label: "Remove permanently", kind: "danger", when: function (b) { return canAdmin && !b.revoked; }, run: function (b, btn) { CW.busy(btn, function () { return revoke(b); }); }},
+        ],
+        empty: {title: "No tables connected yet.", body: "Connect the table in Snowflake or Databricks that holds one of your data sets.", action: canAdmin ? {label: "Connect a table", run: function () { openEnroll(null); }} : null}});
+    }
+
+    function fieldsOf(assetId) { return state.fields.filter(function (f) { return f.asset_id === assetId; }); }
+    function mapRows(host, rows, name, existing, placeholder) {
+      host.replaceChildren();
+      rows.forEach(function (row) {
+        var label = CW.el("label", "", row.label + " "), input = document.createElement("input");
+        input.className = "input"; input.name = name; input.dataset.key = row.key; input.placeholder = placeholder || "";
+        input.value = existing && existing[row.key] ? (Array.isArray(existing[row.key]) ? existing[row.key].join(".") : existing[row.key]) : "";
+        label.appendChild(input); host.appendChild(label);
+      });
+    }
+    function describeFilter(item) {
+      var f = item.row_filter || {}, field = f.field || (f.left && f.left.field) || "";
+      var ops = {eq: "is", ne: "is not", in: "is one of", lt: "is less than", lte: "is at most", gt: "is more than", gte: "is at least", is_null: "is empty", not_null: "is not empty"};
+      var value = f.values ? f.values.join(", ") : (f.value !== undefined ? String(f.value) : "");
+      if (f.op === "and" || f.op === "or") return "Rows matching several conditions (rule " + CW.human(item.policy_id) + ")";
+      return "Rows where " + CW.human(field) + " " + (ops[f.op] || CW.human(f.op)) + (value ? " " + value : "") + " (rule " + CW.human(item.policy_id) + ")";
+    }
+    function syncMaps(existing) {
+      var f = $("dup-enroll").elements, asset = f.asset_id.value;
+      mapRows($("dup-field-map"), fieldsOf(asset).map(function (x) { return {key: x.field_id, label: CW.human(x.field_id)}; }), "map_field", existing && existing.field_map, "Column name");
+      if (!fieldsOf(asset).length) $("dup-field-map").appendChild(CW.el("p", "muted", "This data set has no fields yet. Add them on the Data Use Rules page."));
+      mapRows($("dup-mask-map"), MASKS.map(function (m) { return {key: m[0], label: m[1]}; }), "map_mask", existing && existing.mask_bindings, "SECURITY.POLICIES.NAME");
+      var filters = state.rowFilters.filter(function (r) { return r.asset_id === asset; });
+      mapRows($("dup-row-map"), filters.map(function (r) { return {key: r.row_filter_sha256, label: describeFilter(r)}; }), "map_row", existing && existing.row_filter_bindings, "SECURITY.POLICIES.NAME");
+    }
+    function syncProvider() {
+      var f = $("dup-enroll").elements, chosen = (Array.prototype.filter.call(f.provider, function (r) { return r.checked; })[0] || {}).value;
+      $("dup-enroll").querySelector("[data-provider=snowflake]").hidden = chosen !== "snowflake";
+    }
+    function openEnroll(existing) {
+      var form = $("dup-enroll"), f = form.elements;
+      if (!state.assets.length) { say("Add a data set on the Data Use Rules page first.", true); return; }
+      form.reset(); f.idempotency_key.value = CW.reference();
+      CW.fill(f.asset_id, state.assets.map(function (a) { return {value: a.asset_id, label: CW.human(a.asset_id)}; }));
+      form.querySelectorAll("[data-new-only]").forEach(function (n) { n.hidden = !!existing; });
+      Array.prototype.forEach.call(f.provider, function (r) { r.checked = existing ? r.value === existing.provider_id : r.value === providers[0]; r.disabled = r.disabled || (!!existing && r.value !== existing.provider_id); });
+      if (existing) {
+        f.binding_id.value = existing.binding_id; f.expected_revision.value = String(existing.revision || 0);
+        f.asset_id.value = existing.asset_id; f.account_or_workspace_id.value = existing.account_or_workspace_id || "";
+        f.catalog.value = existing.catalog || ""; f.schema_name.value = existing.schema_name || existing.schema || ""; f.table.value = existing.table || "";
+        f.principal.value = existing.principal || ""; f.compute_id.value = existing.compute_id || "";
+        f.state_anchor.value = Array.isArray(existing.state_anchor) ? existing.state_anchor.join(".") : "";
+        $("dup-enroll-title").textContent = "Change " + CW.human(existing.binding_id);
+      } else {
+        f.binding_id.value = ""; f.expected_revision.value = "0";
+        $("dup-enroll-title").textContent = "Connect a table";
+      }
+      syncProvider(); syncMaps(existing);
+      CW.open(form);
+    }
+    $("dup-enroll").elements.asset_id.addEventListener("change", function () { syncMaps(null); });
+    Array.prototype.forEach.call($("dup-enroll").elements.provider, function (r) { r.addEventListener("change", syncProvider); });
+    $("dup-new").addEventListener("click", function () { openEnroll(null); });
+    function collect(form, name) {
+      var out = {};
+      form.querySelectorAll("[name=" + name + "]").forEach(function (input) { if (input.value.trim()) out[input.dataset.key] = input.value.trim(); });
+      return out;
+    }
+    $("dup-enroll").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      var provider = (Array.prototype.filter.call(f.provider, function (r) { return r.checked; })[0] || {}).value;
+      if (!provider) { say("Choose Snowflake or Databricks.", true); return; }
+      var required = [["account_or_workspace_id", "account or workspace name"], ["catalog", "database"], ["schema_name", "group inside the database"], ["table", "table"], ["principal", "role"], ["compute_id", "warehouse"]];
+      for (var i = 0; i < required.length; i++) if (!f[required[i][0]].value.trim()) { say("Enter the " + required[i][1] + ".", true); return; }
+      if (provider === "snowflake" && !f.state_anchor.value.trim()) { say("Enter the tag that records Lightwork’s changes.", true); return; }
+      var fieldMap = collect(form, "map_field");
+      if (!Object.keys(fieldMap).length) { say("Enter the column name for at least one field.", true); return; }
+      if (!f.field_inventory_complete.checked) { say("Confirm that you listed every column that holds data from this data set.", true); return; }
+      var bindingId = f.binding_id.value || CW.slug(f.binding_name.value || (f.asset_id.value + " " + provider), "connection");
+      var layout = {provider: provider, account: f.account_or_workspace_id.value.trim(), catalog: f.catalog.value.trim(), schema: f.schema_name.value.trim(), table: f.table.value.trim(), columns: fieldMap};
+      try {
+        await call("/providers/" + provider + "/bindings/" + encodeURIComponent(bindingId), {method: "PUT", json: {
+          account_or_workspace_id: layout.account, asset_id: f.asset_id.value, catalog: layout.catalog, schema_name: layout.schema, table: layout.table,
+          principal: f.principal.value.trim(), compute_id: f.compute_id.value.trim(), field_map: fieldMap,
+          mask_bindings: collect(form, "map_mask"), row_filter_bindings: collect(form, "map_row"),
+          state_anchor: provider === "snowflake" ? f.state_anchor.value.trim() : null,
+          // Fingerprint of the table layout confirmed above, computed here.
+          catalog_snapshot_sha256: await CW.sha256(JSON.stringify(layout)),
+          field_inventory_complete: true, expected_revision: Number(f.expected_revision.value) || 0, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say("Connection saved. Nothing was changed in your database yet."); await load();
+      } catch (error) { fail(error, "save the connection"); }
+    });
+
+    async function check(b) {
+      try {
+        var result = await call("/providers/" + b.provider_id + "/bindings/" + encodeURIComponent(b.binding_id) + "/runtime-status");
+        var ok = !!(result && result.enabled === true && result.binding_enrolled === true && result.runtime_available === true);
+        CW.say($("dup-check-result"), ok ? CW.human(b.binding_id) + " is ready to use." : CW.human(b.binding_id) + " is not ready yet. Ask your administrator to check the sign-in details for " + (NAMES[b.provider_id] || "the service") + ".", !ok);
+      } catch (error) { CW.fail($("dup-check-result"), error, "check the connection"); }
+    }
+
+    async function revoke(b) {
+      var answers = await window.mvForm("Remove " + CW.human(b.binding_id), [{key: "reason", label: "Why remove it?", type: "select", required: true, default: "table-retired", options: [
+        {value: "table-retired", label: "The table is no longer used"}, {value: "wrong-table", label: "Connected to the wrong table"},
+        {value: "access-concern", label: "Access or security concern"}, {value: "moving-service", label: "Moving to another service"}, {value: "other", label: "Other"}]}], {okText: "Review removal"});
+      if (!answers) return;
+      if (!(await CW.confirm("Remove the connection " + CW.human(b.binding_id) + " permanently? This cannot be undone. Lightwork will stop applying decisions to this table; to connect it again you create a new connection.", "Remove permanently"))) return;
+      try {
+        await call("/providers/" + b.provider_id + "/bindings/" + encodeURIComponent(b.binding_id) + "/revoke", {method: "POST", json: {
+          expected_revision: b.revision, reason_sha256: await CW.sha256("lightwork.data-use.provider-revocation.v1:" + answers.reason), idempotency_key: CW.reference()}});
+        say("Connection removed."); await load();
+      } catch (error) { fail(error, "remove the connection"); }
+    }
+
+    var OUTCOMES = {allow: "Allowed", deny: "Blocked", review: "Needs a person", mask: "Allowed with values hidden", row_filter: "Allowed for some rows"};
+    function renderDecisions() {
+      var rows = [];
+      state.decisions.forEach(function (d) {
+        state.bindings.forEach(function (b) { if (!b.revoked && b.asset_id === d.asset_id) rows.push({decision: d, binding: b}); });
+      });
+      CW.table($("dup-decisions"), rows, {label: "Decisions ready to apply", name: function (r) { return CW.human(r.decision.request_id) + " " + CW.human(r.binding.binding_id); },
+        columns: [
+          {label: "Request", value: function (r) { return CW.human(r.decision.request_id); }},
+          {label: "Decision", value: function (r) { return OUTCOMES[r.decision.outcome] || CW.human(r.decision.outcome); }},
+          {label: "Decided", value: function (r) { return CW.when(r.decision.created_at || r.decision.decided_at); }},
+          {label: "Table", value: function (r) { return (NAMES[r.binding.provider_id] || "") + ": " + tableName(r.binding); }},
+        ],
+        actions: [
+          {label: function (r) { return "Apply in " + (NAMES[r.binding.provider_id] || "database"); }, kind: "primary", when: function () { return canAdmin; }, run: function (r, b) { CW.busy(b, function () { return execute(r, "apply"); }); }},
+          {label: "Undo", kind: "danger", when: function () { return canAdmin; }, run: function (r, b) { CW.busy(b, function () { return execute(r, "rollback"); }); }},
+        ],
+        empty: {title: "Nothing to apply yet.", body: "Decide a request on the Data Use Rules page, then connect the table that holds its data set."}});
+    }
+    async function execute(row, operation) {
+      var service = NAMES[row.binding.provider_id] || "the database";
+      var message = operation === "apply"
+        ? "Apply the decision for “" + CW.human(row.decision.request_id) + "” to " + tableName(row.binding) + " in " + service + " now? Access settings in your database change straight away."
+        : "Undo on " + tableName(row.binding) + " in " + service + "? The table is set to blocked for this decision. Earlier settings made outside Lightwork are not restored.";
+      if (!(await CW.confirm(message, operation === "apply" ? "Apply now" : "Undo and block"))) return;
+      // With four-eyes on, the first try asks a second person on the Approvals
+      // page; the next try sends that approval with the same reference.
+      var key = [row.binding.provider_id, row.binding.binding_id, row.decision.decision_id, row.decision.decision_sha256, operation].join("|");
+      var pending = pendingApproval(key);
+      var payload = {expected_decision_sha256: row.decision.decision_sha256, idempotency_key: pending ? pending.reference : CW.reference()};
+      if (pending) payload.approval_id = pending.approval_id;
+      try {
+        var result = await call("/providers/" + row.binding.provider_id + "/bindings/" + encodeURIComponent(row.binding.binding_id) + "/decisions/" + encodeURIComponent(row.decision.decision_id) + "/" + operation, {method: "POST", json: payload});
+        if (result && result.approval_id && (result.state === "approval_required" || result.state === "approval_pending")) {
+          rememberApproval(key, {approval_id: result.approval_id, reference: payload.idempotency_key});
+          say("A second person must approve this on the Approvals page. When they have, choose " + (operation === "apply" ? "Apply" : "Undo") + " again.");
+          return;
+        }
+        rememberApproval(key, null);
+        say(operation === "apply" ? "Applied in " + service + "." : "Undone. The table is blocked for this decision.");
+      } catch (error) {
+        if (pending && (error.status === 403 || error.status === 404 || error.status === 409)) rememberApproval(key, null);
+        fail(error, operation === "apply" ? "apply the decision" : "undo the decision");
+      }
+    }
+    var APPROVALS_KEY = "lightwork-data-use-second-approvals";
+    function approvals() { try { return JSON.parse(window.localStorage.getItem(APPROVALS_KEY) || "{}") || {}; } catch (_error) { return {}; } }
+    function pendingApproval(key) { var item = approvals()[key]; return item && item.approval_id && item.reference ? item : null; }
+    function rememberApproval(key, value) {
+      try { var all = approvals(); if (value) all[key] = value; else delete all[key]; window.localStorage.setItem(APPROVALS_KEY, JSON.stringify(all)); } catch (_error) { /* per-browser convenience only */ }
+    }
+    $("dup-refresh").addEventListener("click", load);
+    load();
+  }
+})();
+</script>
+{% endblock %}

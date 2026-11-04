@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Cache · Lightwork{% endblock %}
+{% block content %}
+  <h1 class="page-title">Cache</h1>
+  <p class="page-subtitle">Lightwork keeps temporary copies of things it has read so it can work faster.
+    Clear them if results look out of date.</p>
+
+  <div class="panel">
+    <table>
+      <thead><tr><th scope="col">What</th><th scope="col">Size</th><th scope="col">Action</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Recently read files</strong><br><span class="muted cache-help">Copies of files agents opened recently.</span></td>
+          <td class="muted">
+            {{ stats.files.entries }} file{{ '' if stats.files.entries == 1 else 's' }} · {{ stats.files.bytes | filesize }}
+            <span class="cache-help">(up to {{ stats.files.max_bytes | filesize }})</span>
+          </td>
+          <td><button type="button" class="btn purge" data-scope="files" data-label="recently read files">Clear</button></td>
+        </tr>
+        <tr>
+          <td><strong>Code project map</strong><br><span class="muted cache-help">A summary of code projects, rebuilt when needed.</span></td>
+          <td class="muted">Kept in memory (size not measured)</td>
+          <td><button type="button" class="btn purge" data-scope="repo_map" data-label="the code project map">Clear</button></td>
+        </tr>
+        <tr>
+          <td><strong>Skill search index</strong><br><span class="muted cache-help">Helps Lightwork find the right skill quickly.</span></td>
+          <td class="muted">
+            {% if stats.skill_embeddings.bytes %}{{ stats.skill_embeddings.bytes | filesize }} on disk{% else %}Empty{% endif %}
+          </td>
+          <td><button type="button" class="btn purge" data-scope="skill_embeddings" data-label="the skill search index">Clear</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="cache-all">
+      <button type="button" class="btn btn--primary purge" data-scope="all" data-label="everything">Clear everything</button>
+    </p>
+    <p id="cache-msg" role="status" aria-live="polite" class="muted cache-msg"></p>
+  </div>
+
+  <style>
+    .cache-help { font-size: var(--text-sm); }
+    .cache-all { margin-top: var(--space-4); }
+    .cache-msg { min-height: 1em; margin-top: var(--space-3); }
+  </style>
+
+  <script nonce="{{ csp_script_nonce }}">
+    (function() {
+      const msg = document.getElementById('cache-msg');
+      document.querySelectorAll('button.purge').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          const scope = btn.dataset.scope;
+          const ok = await window.mvConfirm('Clear ' + btn.dataset.label + '? Lightwork rebuilds it the next time it needs it; the next task may be a little slower.', {okText: 'Clear'});
+          if (!ok) return;
+          document.querySelectorAll('button.purge').forEach(b => b.disabled = true);
+          msg.textContent = 'Clearing…';
+          try {
+            const r = await fetch('/api/v1/cache/purge', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({scopes: [scope]}),
+            });
+            if (r.ok) {
+              msg.textContent = 'Cleared. Reloading…';
+              setTimeout(function() { window.location.reload(); }, 500);
+            } else {
+              msg.textContent = window.mvErrorText(r, 'clear the cache');
+              document.querySelectorAll('button.purge').forEach(b => b.disabled = false);
+            }
+          } catch (e) {
+            msg.textContent = window.mvErrorText(e, 'clear the cache');
+            document.querySelectorAll('button.purge').forEach(b => b.disabled = false);
+          }
+        });
+      });
+    })();
+  </script>
+{% endblock %}

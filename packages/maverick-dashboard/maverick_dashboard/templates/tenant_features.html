@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% set tenant_name = tenant.display_name or (tenant.id | humanize) %}
+{% block title %}Features · {{ tenant_name }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Administration', 'Workspace features',
+               subtitle=tenant_name,
+               lede='Turn features on or off for this workspace. Features included
+                     in its plan are ticked to start with.') %}
+    {{ state('Current state',
+             on_count ~ ' feature' ~ ('' if on_count == 1 else 's') ~ ' on',
+             badge=(tenant.plan | capitalize) ~ ' plan',
+             badge_class='ok',
+             copy='The plan sets what is included. Anything you change here
+                   applies to this workspace only, until you change it back.') }}
+  {% endcall %}
+
+  <p>{{ back_link('/tenants', 'Workspaces') }}</p>
+
+  {% macro feature_box(r) %}
+    <label class="tf-row">
+      <input type="checkbox" name="feature" value="{{ r.feature }}"
+             data-feature="{{ r.feature }}" data-in-plan="{{ '1' if r.in_plan else '0' }}"
+             {% if r.on %}checked{% endif %}>
+      <span>
+        {{ r.label }}
+        {% if r.source == 'plan' %}<span class="badge ok">In plan</span>
+        {% elif r.source == 'added' %}<span class="badge active">Added for this workspace</span>
+        {% elif r.source == 'removed' %}<span class="badge warn">Turned off for this workspace</span>{% endif %}
+      </span>
+    </label>
+  {% endmacro %}
+
+  <form id="features-form" data-tenant-id="{{ tenant.id }}">
+    <div class="section-head"><h2>Features</h2></div>
+    <div class="panel">
+      <fieldset class="tf-group">
+        <legend class="muted">A ticked box is on for this workspace.</legend>
+        <div class="tf-grid">{% for r in caps %}{{ feature_box(r) }}{% endfor %}</div>
+      </fieldset>
+    </div>
+
+    {% if depts %}
+    <div class="section-head"><h2>Departments</h2></div>
+    <div class="panel">
+      <fieldset class="tf-group">
+        <legend class="muted">Choose which departments this workspace can use.</legend>
+        <div class="tf-grid">{% for r in depts %}{{ feature_box(r) }}{% endfor %}</div>
+      </fieldset>
+    </div>
+    {% endif %}
+
+    <div class="panel tf-actions">
+      <button type="submit" class="btn btn--primary">Save features</button>
+      <p id="features-msg" role="status" aria-live="polite" class="muted"></p>
+    </div>
+  </form>
+  <style>
+    .tf-group { border: 0; padding: 0; margin: 0; }
+    .tf-group legend { font-size: var(--text-sm); padding: 0 0 var(--space-2); }
+    .tf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: var(--space-2); }
+    .tf-row { display: flex; gap: var(--space-2); align-items: baseline; padding: var(--space-1) 0; }
+    .tf-actions { margin-top: var(--space-3); display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+    .tf-actions p { font-size: var(--text-sm); margin: 0; }
+  </style>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var form = document.getElementById('features-form');
+    var msg = document.getElementById('features-msg');
+    if (!form) return;
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var add = [], remove = [];
+      form.querySelectorAll('input[type="checkbox"][data-feature]').forEach(function (cb) {
+        var inPlan = cb.getAttribute('data-in-plan') === '1';
+        if (cb.checked && !inPlan) add.push(cb.getAttribute('data-feature'));
+        if (!cb.checked && inPlan) remove.push(cb.getAttribute('data-feature'));
+      });
+      msg.textContent = 'Saving…';
+      var tid = encodeURIComponent(form.getAttribute('data-tenant-id') || '');
+      try {
+        var r = await fetch('/api/v1/admin/tenants/' + tid + '/features', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ add: add, remove: remove }),
+        });
+        if (!r.ok) {
+          msg.textContent = r.status === 403 ? 'Only administrators can change workspace features.'
+                                             : window.mvErrorText(r, 'save the features');
+          return;
+        }
+        msg.textContent = 'Saved.';
+        setTimeout(function () { window.location.reload(); }, 350);
+      } catch (e) { msg.textContent = window.mvErrorText(e, 'save the features'); }
+    });
+  })();
+  </script>
+{% endblock %}

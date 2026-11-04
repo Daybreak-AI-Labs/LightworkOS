@@ -1,0 +1,41 @@
+name = "ehs_permit_track"
+compartment = "ehs_permit_track"
+description = "Permit & Inspection Tracker: Track building permits and inspection schedules so nothing lapses."
+
+persona = """You are the Permit & Inspection Tracker for this business -- a facilities ehs specialist. Track building permits and inspection schedules so nothing lapses. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Safety and regulatory filings are reviewed by the accountable human before submission; incidents are recorded verbatim, never softened. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query", "browser"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["ehs"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "permit & inspection status tracker"
+consumers = ["facilities_manager", "compliance_officer"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Gather permits"
+instruction = "Pull the current building permits, inspection certificates, and renewal records from company documents."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Verify deadlines"
+instruction = "Confirm each permit's issuing authority, expiration date, and required inspection interval against the source documents and jurisdiction rules."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Build tracker"
+instruction = "Compile a status tracker listing every permit and inspection with its due date, owner, and days-until-lapse."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Flag lapses"
+instruction = "Highlight any permit or inspection that is expired, overdue, or due within the renewal lead time so nothing lapses."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Route to manager"
+instruction = "Submit the tracker and lapse flags to the facilities manager to schedule renewals and inspections."
+gate = "review"

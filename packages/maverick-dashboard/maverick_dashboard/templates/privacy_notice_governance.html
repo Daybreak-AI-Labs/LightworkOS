@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+{% block title %}Privacy notices · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .png-grid { display:grid; grid-template-columns:minmax(18rem,1fr) minmax(24rem,2fr);
+              gap:var(--space-4); }
+  .png-stack { display:flex; flex-direction:column; gap:var(--space-3); }
+  .png-stack label { display:flex; flex-direction:column; gap:var(--space-1); }
+  .png-stack textarea { min-height:18rem; font-family:var(--font-mono); }
+  .png-output { min-height:24rem; max-height:52rem; overflow:auto; white-space:pre-wrap;
+                word-break:break-word; }
+  .png-warning { border:2px solid var(--danger); padding:var(--space-3);
+                 border-radius: var(--radius-md); background:var(--surface-2); }
+  .png-confirm { display:flex; gap:var(--space-2); align-items:flex-start; }
+  .png-runtime { margin:var(--space-4) 0; display:grid; gap:var(--space-3); }
+  .png-runtime__actions { display:flex; flex-wrap:wrap; gap:var(--space-2); }
+  .png-fields { display:grid; gap:.75rem; grid-template-columns:repeat(auto-fill, minmax(15rem, 1fr)); align-items:end; }
+  .png-fields label { display:flex; flex-direction:column; gap:.25rem; }
+  .png-choices { display:flex; flex-wrap:wrap; gap:.4rem 1rem; margin:.75rem 0; border:1px solid var(--border); border-radius: var(--radius-md); padding:.5rem .75rem; }
+  .png-runtime__output { max-height:24rem; overflow:auto; white-space:pre-wrap;
+                         word-break:break-word; }
+  @media (max-width:880px) { .png-grid { grid-template-columns:1fr; } }
+</style>
+
+<div class="png-shell" data-copilot-page="/privacy/notice-governance">
+{% set jurisdictions = [
+  ('eu', 'European Union'), ('uk', 'United Kingdom'), ('us', 'United States (all states)'),
+  ('us-ca', 'California'), ('us-va', 'Virginia'), ('us-co', 'Colorado'), ('us-ct', 'Connecticut'),
+  ('us-tx', 'Texas'), ('ca', 'Canada'), ('br', 'Brazil'), ('au', 'Australia'), ('jp', 'Japan'),
+  ('in', 'India'), ('global', 'Everywhere else'),
+] %}
+{% set languages = [
+  ('en', 'English'), ('en-US', 'English (United States)'), ('en-GB', 'English (United Kingdom)'),
+  ('fr', 'French'), ('de', 'German'), ('es', 'Spanish'), ('it', 'Italian'), ('pt-BR', 'Portuguese (Brazil)'),
+  ('nl', 'Dutch'), ('ja', 'Japanese'),
+] %}
+{% from "_hero.html" import hero %}
+{{ hero('Privacy', 'Privacy notices',
+        subtitle='Approve and publish new versions of your privacy notices',
+        lede='Lightwork tracks which version of each privacy notice is approved and live. It records a
+              fingerprint of your notice files rather than their text, and it does not change your
+              website by itself.') }}
+<details class="panel">
+  <summary>About this page&rsquo;s safeguards</summary>
+  <ul>
+    <li>Each new version needs approval from the roles your approval rule names, and the author cannot approve their own version.</li>
+    <li>Publishing, withdrawing and rolling back only update Lightwork&rsquo;s own consent publishing records. Your website, app or tag manager is only changed by a connection your administrator sets up.</li>
+    <li>Notice text, personal data and keys are never stored here; only fingerprints of the files you choose.</li>
+  </ul>
+</details>
+{% from "_module_gate.html" import module_gate %}
+{% if not privacy_notice_governance_enabled %}
+{{ module_gate('privacy_automation.notice_governance', 'Privacy notice approval',
+               detail='Track which version of each privacy notice is approved and live, with approvals, scheduling, withdrawal and rollback.',
+               can_activate=can_admin) }}
+{% else %}
+<div id="png-app" data-can-admin="{{ 'true' if can_admin else 'false' }}" data-can-audit="{{ 'true' if can_audit else 'false' }}">
+  <p id="png-status" class="muted" role="status" aria-live="polite">Loading your notices…</p>
+
+  <section class="panel" aria-labelledby="png-sched-title">
+    <h2 id="png-sched-title">Scheduled publishing</h2>
+    <p id="png-sched" class="muted">Checking…</p>
+    {% if can_admin %}<button type="button" class="btn btn--ghost" id="png-run-once">Publish scheduled updates now</button>{% endif %}
+  </section>
+
+  <div class="section-head"><h2>Notice versions</h2>
+    <button type="button" class="btn btn--primary" id="png-new-version">Create notice version</button></div>
+  <div class="panel" id="png-releases"><p class="muted">Loading…</p></div>
+
+  <section class="panel" id="png-release-panel" hidden aria-labelledby="png-release-title">
+    <h2 id="png-release-title">New notice version</h2>
+    <form id="png-release-form" autocomplete="off">
+      <div class="png-fields">
+        <label for="png-notice">Notice
+          <select id="png-notice" class="select"><option value="">A new notice</option></select>
+        </label>
+        <label for="png-notice-name">Name of the new notice
+          <input id="png-notice-name" class="input" maxlength="80" placeholder="For example: Website privacy notice">
+        </label>
+        <label for="png-property">Website or app it appears on
+          <input id="png-property" class="input" maxlength="80" required placeholder="For example: Main website">
+        </label>
+        <label for="png-policy">Approval rule
+          <select id="png-policy" class="select" required></select>
+        </label>
+        <label>Accepted update (optional)<select class="select" id="png-accepted-proposal"><option value="">Create without a suggested update</option></select></label>
+        <label for="png-publication">Consent banner release it goes with
+          <input id="png-publication" class="input" maxlength="80" required placeholder="For example: Spring 2026 banner">
+        </label>
+        <label for="png-from">Takes effect on
+          <input id="png-from" type="date" class="input" required>
+        </label>
+        <label for="png-until">Stops applying on
+          <input id="png-until" type="date" class="input" required>
+        </label>
+        <label for="png-keep">Keep the record until
+          <input id="png-keep" type="date" class="input" required>
+        </label>
+      </div>
+      <fieldset class="png-choices"><legend>Where it applies</legend>
+        {% for code, name in jurisdictions %}
+        <label><input type="checkbox" name="jurisdiction" value="{{ code }}"> {{ name }}</label>
+        {% endfor %}
+      </fieldset>
+      <fieldset class="png-choices"><legend>Languages</legend>
+        {% for code, name in languages %}
+        <label><input type="checkbox" name="locale" value="{{ code }}"> {{ name }}</label>
+        {% endfor %}
+      </fieldset>
+      <div class="png-fields">
+        <label for="png-file-content">The notice text file
+          <input id="png-file-content" type="file" class="input" required>
+        </label>
+        <label for="png-file-policy">The approved privacy policy document
+          <input id="png-file-policy" type="file" class="input" required>
+        </label>
+        <label for="png-file-config">The consent settings file
+          <input id="png-file-config" type="file" class="input" required>
+        </label>
+      </div>
+      <p class="muted" id="png-accepted-status" role="status"></p>
+      <button type="button" class="btn btn--ghost" id="png-version-readback" hidden>Check original version save</button>
+      <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem;">
+        <button type="submit" class="btn btn--primary">Save version</button>
+        <button type="button" class="btn btn--ghost" id="png-release-cancel">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <div class="section-head"><h2>Which version is live?</h2></div>
+  <div class="panel">
+    <form id="png-effective" class="png-fields" autocomplete="off">
+      <label for="png-eff-property">Website or app
+        <select id="png-eff-property" class="select"></select>
+      </label>
+      <label for="png-eff-jur">Where
+        <select id="png-eff-jur" class="select">
+          {% for code, name in jurisdictions %}<option value="{{ code }}">{{ name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="png-eff-lang">Language
+        <select id="png-eff-lang" class="select">
+          {% for code, name in languages %}<option value="{{ code }}">{{ name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="png-eff-at">On
+        <input id="png-eff-at" type="datetime-local" class="input">
+      </label>
+      <div><button type="submit" class="btn btn--ghost">Check</button></div>
+    </form>
+    <p id="png-eff-result" role="status" aria-live="polite"></p>
+  </div>
+
+  {% include "_privacy_notice_proposals.html" %}
+  <div class="section-head"><h2>Suggested updates</h2></div>
+  <p class="muted">Recorded fingerprints and research references for an independent decision. Original files are not retained here; acceptance does not publish a notice or establish legal applicability.</p>
+  <div class="panel" id="png-proposals"><p class="muted">Loading…</p></div>
+  {% if suggestions_enabled is defined and suggestions_enabled() %}<div class="panel">{% from "_policy_suggestions.html" import policy_suggestions, policy_suggestions_script %}{{ policy_suggestions("privacy-notice", "A new notice version still needs submitting, its approvals and scheduling before anyone sees it.", "h3") }}{{ policy_suggestions_script() }}</div>{% endif %}
+
+  <div class="section-head"><h2>Approval rules</h2>
+    {% if can_admin %}<button type="button" class="btn btn--ghost" id="png-new-policy">Add an approval rule</button>{% endif %}</div>
+  <div class="panel" id="png-policies"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>Signed records</h2></div>
+  <div class="panel" id="png-records"><p class="muted">Loading…</p></div>
+
+  {% if can_admin or can_audit %}
+  <div class="panel" style="display:flex; gap:.5rem; flex-wrap:wrap;">
+    {% if can_admin %}<button type="button" class="btn btn--ghost" id="png-purge">Delete expired records</button>{% endif %}
+    {% if can_audit %}<button type="button" class="btn btn--ghost" id="png-integrity">Check records are intact</button>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if can_admin %}
+<section class="panel" id="png-targets" aria-labelledby="png-targets-title">
+  <div class="section-head">
+    <h2 id="png-targets-title">Where approved notices are published</h2>
+    <button type="button" class="btn btn--primary" id="png-target-add">Add a publishing target</button>
+  </div>
+  <p class="muted">Each target names the workspace, the consent banner release and the consent records an approved notice is published to. Workspaces with a target are the ones that publish.</p>
+  <p id="png-target-status" role="status" aria-live="polite"></p>
+  <div id="png-target-list"><p class="muted">Loading…</p></div>
+</section>
+{% endif %}
+
+<details class="panel" id="png-technical">
+<summary>Technical details: advanced operations</summary>
+<p><button class="btn" id="png-load-status" type="button">Check availability</button></p>
+<section class="panel png-runtime" aria-labelledby="png-runtime-title">
+  <div>
+    <h2 id="png-runtime-title">Publication updates in Lightwork</h2>
+    <p>Check scheduled publication updates or process one cycle for this workspace. This updates only Lightwork's consent publication records; it does not publish changes to a website, app, tag manager, or consent provider.</p>
+  </div>
+  <div class="png-runtime__actions">
+    <button class="btn" id="png-runtime-status" type="button">Refresh runtime status</button>
+    <label class="png-confirm">
+      <input id="png-runtime-confirm" type="checkbox">
+      <span>I reviewed the exact configured binding and authorize one bounded local cycle.</span>
+    </label>
+    <button class="btn btn--primary" id="png-runtime-run" type="button">Run one local cycle</button>
+  </div>
+  <pre class="png-runtime__output" id="png-runtime-output" aria-live="polite">Availability not loaded.</pre>
+</section>
+<div class="png-grid">
+  <section class="panel png-stack">
+    <h2>Choose an action</h2>
+    <p>The workspace and the person acting come only from your sign-in. Unknown fields,
+      raw notice text or markup, personal data, and key values are rejected.</p>
+    <label>Operation
+      <select id="png-operation" data-guided-api="/api/v1/privacy/notices">
+        <option value="policy-set" data-method="PUT" data-path="/approval-policies/{policy_id}">Approval policy: set exact revision</option>
+        <option value="policy-get" data-method="GET" data-path="/approval-policies/{policy_id}">Approval policy: get</option>
+        <option value="release-create" data-method="PUT" data-path="/releases/{notice_id}/versions">Release: create content-free version</option>
+        <option value="release-get" data-method="GET" data-path="/releases/{notice_id}/versions/{version}">Release: get version</option>
+        <option value="release-submit" data-method="POST" data-path="/releases/{notice_id}/versions/{version}/submit">Release: submit for review</option>
+        <option value="release-approve" data-method="POST" data-path="/releases/{notice_id}/versions/{version}/approvals">Release: independent role approval</option>
+        <option value="approval-revoke" data-method="POST" data-path="/releases/{notice_id}/versions/{version}/approvals/{role}/revoke">Approval: revoke as original approver</option>
+        <option value="release-schedule" data-method="POST" data-path="/releases/{notice_id}/versions/{version}/schedule">Release: schedule local publication intent</option>
+        <option value="intent-claim" data-method="POST" data-path="/publication-intents/claim">Publication intent: take the next one</option>
+        <option value="intent-fail" data-method="POST" data-path="/publication-intents/{intent_id}/fail">Publication intent: fail or dead-letter</option>
+        <option value="intent-requeue" data-method="POST" data-path="/publication-intents/{intent_id}/requeue">Publication intent: requeue dead letter</option>
+        <option value="intent-acknowledge" data-method="POST" data-path="/publication-intents/{intent_id}/acknowledge">Publication intent: acknowledge external worker receipt</option>
+        <option value="release-rollback" data-method="POST" data-path="/releases/{notice_id}/versions/{version}/rollback">Release: independent rollback</option>
+        <option value="release-withdraw" data-method="POST" data-path="/releases/{notice_id}/versions/{version}/withdraw">Release: independent withdrawal</option>
+        <option value="release-effective" data-method="GET" data-path="/effective/{property_id}?jurisdiction={jurisdiction}&amp;locale={locale}&amp;at={at}">Release: resolve exact effective version</option>
+        <option value="proposal-create" data-method="PUT" data-path="/update-proposals/{proposal_id}">Update proposal: create with approved citations</option>
+        <option value="proposal-get" data-method="GET" data-path="/update-proposals/{proposal_id}">Update proposal: get</option>
+        <option value="proposal-review" data-method="POST" data-path="/update-proposals/{proposal_id}/review">Update proposal: independent review</option>
+        <option value="notice-export" data-method="PUT" data-path="/releases/{notice_id}/exports/{export_id}">Notice: create signed metadata export</option>
+        <option value="export-get" data-method="GET" data-path="/exports/{export_id}">Export: get and verify signature</option>
+        <option value="retention-purge" data-method="POST" data-path="/retention/purge">Retention: purge expired records</option>
+        <option value="integrity" data-method="GET" data-path="/integrity">Integrity: check this workspace’s records</option>
+      </select>
+    </label>
+    <label>Path and query values as JSON object
+      <input class="input" id="png-path-values" value="{}" autocomplete="off">
+    </label>
+    <label>Action details (JSON)
+      <textarea class="input" id="png-body">{}</textarea>
+    </label>
+    <div class="png-warning" id="png-confirm-panel">
+      <label class="png-confirm"><input id="png-confirm" type="checkbox">
+        <span>I reviewed the exact digest, revision, independent-approval,
+          publication-intent, rollback, withdrawal, or purge consequences.</span>
+      </label>
+    </div>
+    <button class="btn btn--primary" id="png-submit" type="button">Continue with selected action</button>
+  </section>
+  <section class="panel">
+    <h2>Result</h2>
+    <pre class="png-output" id="png-output" aria-live="polite">No request made.</pre>
+  </section>
+</div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/privacy/notices";
+  var operation = document.getElementById("png-operation");
+  var paths = document.getElementById("png-path-values");
+  var body = document.getElementById("png-body");
+  var confirmation = document.getElementById("png-confirm");
+  var confirmationPanel = document.getElementById("png-confirm-panel");
+  var output = document.getElementById("png-output");
+  var runtimeOutput = document.getElementById("png-runtime-output");
+  var runtimeConfirmation = document.getElementById("png-runtime-confirm");
+  var highImpact = new Set([
+    "policy-set", "release-approve", "approval-revoke", "release-schedule",
+    "intent-claim", "intent-fail", "intent-requeue", "intent-acknowledge",
+    "release-rollback", "release-withdraw", "proposal-review", "retention-purge"
+  ]);
+  var forbiddenKeys = new Set([
+    "tenant", "tenant_id", "actor", "actor_ref", "principal", "principal_ref",
+    "notice_content", "raw_content", "raw_html", "html", "markup", "pii",
+    "personal_data", "signing_key", "signing_key_value", "secret", "secret_value"
+  ]);
+
+  function show(value) {
+    output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  }
+  // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
+  function requestProblem(status, detail) {
+    return window.mvPlainDetail(detail) || window.mvErrorText({status: status, detail: detail}, "complete the request");
+  }
+  function problemText(error) {
+    var kind = error && error.name;
+    if (kind === "SyntaxError") {
+      return "Path and query values and Action details must be valid JSON. Check the quotes, commas and brackets, then try again.";
+    }
+    if (kind === "TypeError" || kind === "AbortError") {
+      return window.mvErrorText(error, "complete the request");
+    }
+    return error && error.message ? error.message : window.mvErrorText(error, "complete the request");
+  }
+  function selectedRoute() {
+    return operation.options[operation.selectedIndex];
+  }
+  function updateConfirmation() {
+    confirmation.checked = false;
+    confirmationPanel.hidden = !highImpact.has(operation.value);
+  }
+  function containsForbiddenKey(value) {
+    if (!value || typeof value !== "object") { return false; }
+    if (Array.isArray(value)) { return value.some(containsForbiddenKey); }
+    return Object.keys(value).some(function (key) {
+      return forbiddenKeys.has(key) || containsForbiddenKey(value[key]);
+    });
+  }
+  function buildPath(template, values) {
+    return template.replace(/\{([A-Za-z0-9_]+)\}/g, function (_match, key) {
+      var value = values[key];
+      if ((typeof value !== "string" && typeof value !== "number") || value === "") {
+        throw new Error("Add \"" + key + "\" to Path and query values, then try again.");
+      }
+      return encodeURIComponent(String(value));
+    });
+  }
+  async function run(method, path, payload) {
+    var options = {method: method, headers: {"Accept": "application/json"}};
+    if (method !== "GET") {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(payload);
+    }
+    var response = await fetch(API + path, options);
+    var responseText = await response.text();
+    var result;
+    try {
+      if (!responseText) { throw new Error("empty response"); }
+      result = JSON.parse(responseText);
+    } catch (_error) {
+      throw new Error("Lightwork's reply could not be read. Refresh the page and try again.");
+    }
+    if (!response.ok) {
+      throw new Error(requestProblem(response.status, result && result.detail));
+    }
+    show({status: response.status, ok: response.ok, result: result});
+  }
+
+  document.getElementById("png-load-status").addEventListener("click", function () {
+    run("GET", "/status", {}).catch(function (error) { show(problemText(error)); });
+  });
+  async function runRuntime(method, path) {
+    var response = await fetch(API + path, {
+      method: method,
+      headers: {"Accept": "application/json", "Content-Type": "application/json"},
+      body: method === "POST" ? "{}" : undefined
+    });
+    var responseText = await response.text();
+    var result;
+    try { result = JSON.parse(responseText); }
+    catch (_error) { throw new Error("Lightwork's reply could not be read. Refresh the page and try again."); }
+    if (!response.ok) {
+      throw new Error(requestProblem(response.status, result && result.detail));
+    }
+    runtimeOutput.textContent = JSON.stringify(result, null, 2);
+  }
+  document.getElementById("png-runtime-status").addEventListener("click", function () {
+    runRuntime("GET", "/publication-runtime/status").catch(function (error) {
+      runtimeOutput.textContent = problemText(error);
+    });
+  });
+  document.getElementById("png-runtime-run").addEventListener("click", function () {
+    if (!runtimeConfirmation.checked) {
+      runtimeOutput.textContent = "Confirm the exact local publication cycle before continuing.";
+      return;
+    }
+    runtimeConfirmation.checked = false;
+    runRuntime("POST", "/publication-runtime/run-once").catch(function (error) {
+      runtimeOutput.textContent = problemText(error);
+    });
+  });
+  operation.addEventListener("change", updateConfirmation);
+  document.getElementById("png-submit").addEventListener("click", async function () {
+    try {
+      if (highImpact.has(operation.value) && !confirmation.checked) {
+        throw new Error("Confirm the governed state change before continuing.");
+      }
+      var route = selectedRoute();
+      var pathValues = JSON.parse(paths.value || "{}");
+      var payload = JSON.parse(body.value || "{}");
+      if (containsForbiddenKey(pathValues) || containsForbiddenKey(payload)) {
+        throw new Error("Workspace, person acting, raw content, personal data, and key values are never accepted. Remove them, then try again.");
+      }
+      var path = buildPath(route.dataset.path, pathValues);
+      await run(route.dataset.method, path, payload);
+    } catch (error) { show(problemText(error)); }
+  });
+  updateConfirmation();
+}());
+</script>
+</details>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-privacy-notice-governance.js" defer></script>
+<script src="/static/lightwork-privacy-notice-proposals.js" defer></script>
+{% if can_admin %}
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/privacy/notice-publication/targets";
+  var list = document.getElementById("png-target-list");
+  var status = document.getElementById("png-target-status");
+  var ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+  var state = {targets: [], workspaces: []};
+  function say(text, isError) { status.textContent = text; status.setAttribute("role", isError ? "alert" : "status"); }
+  async function call(method, path, body) {
+    // A conflict (409) answers with the current record, so it is returned too.
+    var data;
+    try { data = (await window.mvFetchJSON(API + path, {method: method, cache: "no-store", body: body || undefined})) || {}; }
+    catch (error) {
+      if (error.status !== 409) throw error;
+      data = error.payload || {}; data.status = 409; return data;
+    }
+    data.status = 200;
+    return data;
+  }
+  function failText(error, action) {
+    var plain = window.mvPlainDetail ? window.mvPlainDetail(error && error.detail) : "";
+    return plain || window.mvErrorText(error, action);
+  }
+  async function options(path, pick) {
+    try { return pick((await window.mvFetchJSON(path, {cache: "no-store"})) || {}); }
+    catch (_error) { return []; }
+  }
+  async function choices() {
+    var notices = await options("/api/v1/privacy/notices/records", function (d) {
+      var seen = {}; return (d.releases || []).filter(function (r) { if (seen[r.notice_id]) return false; seen[r.notice_id] = true; return true; })
+        .map(function (r) { return {value: r.notice_id, label: window.mvHuman(r.notice_id)}; }); });
+    var properties = await options("/api/v1/consent/publishing/catalog/properties?limit=50", function (d) {
+      return (d.items || []).map(function (p) { return {value: p.property_id, label: window.mvHuman(p.property_id)}; }); });
+    function versions(kind) {
+      return options("/api/v1/consent/publishing/catalog/" + kind + "?limit=50", function (d) {
+        return (d.items || []).map(function (r) { return {value: r.resource_id + "@" + r.version, label: window.mvHuman(r.resource_id) + ", version " + r.version}; }); });
+    }
+    return {notices: notices, properties: properties, ruleGroups: await versions("rule-groups"), noticeResources: await versions("notices")};
+  }
+  function pickOrType(key, label, opts, current) {
+    return opts.length ? {key: key, label: label, type: "select", options: opts, required: true, default: current}
+                       : {key: key, label: label, type: "text", required: true, default: current};
+  }
+  async function edit(target) {
+    var c = await choices();
+    var t = target || {};
+    var fields = [];
+    if (!target) fields.push({key: "binding_id", label: "Short name for this target", type: "text", required: true});
+    fields.push({key: "tenant_id", label: "Workspace that publishes", type: "text", required: true, default: t.tenant_id || (state.workspaces[0] || "default")});
+    fields.push(pickOrType("notice_id", "Privacy notice", c.notices, t.notice_id));
+    fields.push({key: "consent_publication_ref", label: "Consent banner release it goes with", type: "text", required: true, default: t.consent_publication_ref});
+    fields.push(pickOrType("property_id", "Website or app", c.properties, t.property_id));
+    fields.push(c.ruleGroups.length ? pickOrType("rule_group", "Consent rules", c.ruleGroups, t.rule_group_id ? t.rule_group_id + "@" + t.rule_group_version : undefined)
+      : {key: "rule_group_id", label: "Consent rules", type: "text", required: true, default: t.rule_group_id});
+    if (!c.ruleGroups.length) fields.push({key: "rule_group_version", label: "Consent rules version", type: "number", required: true, default: t.rule_group_version || 1});
+    fields.push(c.noticeResources.length ? pickOrType("notice_resource", "Notice text in the banner", c.noticeResources, t.notice_resource_id ? t.notice_resource_id + "@" + t.notice_resource_version : undefined)
+      : {key: "notice_resource_id", label: "Notice text in the banner", type: "text", required: true, default: t.notice_resource_id});
+    if (!c.noticeResources.length) fields.push({key: "notice_resource_version", label: "Notice text version", type: "number", required: true, default: t.notice_resource_version || 1});
+    var answer = await window.mvForm(target ? "Change the publishing target" : "Add a publishing target", fields, {okText: "Save"});
+    if (!answer) return;
+    function split(value) { var at = String(value || "").lastIndexOf("@"); return at > 0 ? [value.slice(0, at), Number(value.slice(at + 1))] : [value, 0]; }
+    var body = {tenant_id: answer.tenant_id, notice_id: answer.notice_id, consent_publication_ref: answer.consent_publication_ref, property_id: answer.property_id};
+    if (answer.rule_group) { var rg = split(answer.rule_group); body.rule_group_id = rg[0]; body.rule_group_version = rg[1]; }
+    else { body.rule_group_id = answer.rule_group_id; body.rule_group_version = Number(answer.rule_group_version); }
+    if (answer.notice_resource) { var nr = split(answer.notice_resource); body.notice_resource_id = nr[0]; body.notice_resource_version = nr[1]; }
+    else { body.notice_resource_id = answer.notice_resource_id; body.notice_resource_version = Number(answer.notice_resource_version); }
+    var name = target ? target.binding_id : String(answer.binding_id || "").trim();
+    var bad = ["notice_id", "consent_publication_ref", "property_id", "rule_group_id", "notice_resource_id"].filter(function (k) { return !ID.test(String(body[k] || "")); });
+    if (!ID.test(name) || bad.length) { say("Use short names made of letters, numbers, dots, dashes or colons.", true); return; }
+    try {
+      var result = await call("PUT", "/" + encodeURIComponent(name), body);
+      if (result.status === 409 && result.confirm) {
+        if (!(await window.mvConfirm("Approved notices will be published to this target. Save it?", {okText: "Save target"}))) return;
+        body.confirm = true;
+        result = await call("PUT", "/" + encodeURIComponent(name), body);
+      }
+      if (result.status === 409) { say(failText({status: 409, detail: result.detail}, "save the target"), true); return; }
+      state = result; render(); say("Saved.");
+    } catch (error) { say(failText(error, "save the target"), true); }
+  }
+  function remove(target, row) {
+    // One action with a way back: publishing to this target stops
+    // when the Undo time is up.
+    if (row) row.hidden = true;
+    window.mvUndo("Stopped publishing approved notices to {target}.", { values: {target: window.mvHuman(target.binding_id)},
+      action: "remove the target",
+      run: async function () {
+        var result = await call("DELETE", "/" + encodeURIComponent(target.binding_id));
+        if (result.status === 409) throw {status: 409, detail: result.detail};
+        state = result; return {ok: true};
+      },
+      undo: function () { if (row) row.hidden = false; },
+      done: function () { render(); say("Removed."); }
+    });
+  }
+  function render() {
+    list.textContent = "";
+    if (!state.targets.length) {
+      var empty = document.createElement("p"); empty.className = "muted";
+      empty.textContent = "No publishing targets yet. Add one to publish approved notices.";
+      list.appendChild(empty); return;
+    }
+    var table = document.createElement("table"); table.className = "table";
+    var head = table.createTHead().insertRow();
+    ["Target", "Workspace", "Privacy notice", "Website or app", "Set by", ""].forEach(function (text) { var th = document.createElement("th"); th.scope = "col"; th.textContent = text; head.appendChild(th); });
+    var bodyEl = table.createTBody();
+    state.targets.forEach(function (t) {
+      var row = bodyEl.insertRow();
+      [window.mvHuman(t.binding_id), t.tenant_id, window.mvHuman(t.notice_id), window.mvHuman(t.property_id),
+       {here: "This page", installer: "Your installer", deployment: "Server deployment"}[t.source] || ""].forEach(function (text) { row.insertCell().textContent = text; });
+      var actions = row.insertCell();
+      if (!t.locked) {
+        var change = document.createElement("button"); change.type = "button"; change.className = "btn btn--ghost"; change.textContent = "Change";
+        change.setAttribute("aria-label", "Change " + window.mvHuman(t.binding_id));
+        change.addEventListener("click", function () { edit(t); }); actions.appendChild(change);
+      }
+      if (t.removable) {
+        var del = document.createElement("button"); del.type = "button"; del.className = "btn btn--danger"; del.textContent = "Remove";
+        del.setAttribute("aria-label", "Remove " + window.mvHuman(t.binding_id));
+        del.addEventListener("click", function () { remove(t, row); }); actions.appendChild(del);
+      }
+    });
+    list.appendChild(table);
+  }
+  document.getElementById("png-target-add").addEventListener("click", function () { edit(null); });
+  function start() {
+    call("GET", "").then(function (result) { state = result; render(); })
+      .catch(function (error) { list.textContent = ""; say(failText(error, "load the publishing targets"), true); });
+  }
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (window.mvFetchJSON) start(); else document.addEventListener("DOMContentLoaded", start);
+}());
+</script>
+{% endif %}
+{% endif %}
+</div>
+{% endblock %}

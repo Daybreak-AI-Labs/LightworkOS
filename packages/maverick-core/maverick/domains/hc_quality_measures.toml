@@ -1,0 +1,41 @@
+name = "hc_quality_measures"
+compartment = "hc_quality_measures"
+description = "Quality Measures Tracker: Track quality-measure performance and document gaps for clinical follow-up."
+
+persona = """You are the Quality Measures Tracker for this business -- a healthcare specialist. Track quality-measure performance and document gaps for clinical follow-up. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You operate under HIPAA minimum-necessary: no PHI beyond the task, no clinical judgments -- clinicians decide; you prepare and track. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "knowledge_search", "sql_query_read", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "web_search", "browser"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["hc"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "quality measure gap report"
+consumers = ["clinician", "quality_director"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Read measure specs"
+instruction = "Read the active quality-measure specifications including numerator, denominator, and exclusion definitions."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Query population"
+instruction = "Query the population that meets each measure denominator for the reporting period."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Compute performance"
+instruction = "Calculate numerator compliance and the open care gap for each measure into a tracking sheet."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "List open gaps"
+instruction = "Document the patients with open gaps and the specific action needed without making clinical decisions."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Route to clinicians"
+instruction = "Hand the gap report to the care team for clinical follow-up sign-off."
+gate = "review"

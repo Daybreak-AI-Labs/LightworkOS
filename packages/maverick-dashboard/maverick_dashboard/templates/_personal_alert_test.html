@@ -1,0 +1,12 @@
+<section class="panel" data-private-alert-test aria-labelledby="private-alert-test-title">
+  <h2 id="private-alert-test-title">Try a private notification</h2>
+  <p>Review one fixed message to your verified private account. This does not change your notification preferences.</p>
+  <label for="private-alert-test-choice">Private chat</label>
+  <select class="select" id="private-alert-test-choice" data-alert-test-choice><option value="">Load notifications first</option></select>
+  <p><button class="btn btn--ghost" type="button" data-alert-test-review disabled>Review test message</button></p>
+  <div data-alert-test-details hidden></div>
+  <div data-alert-test-confirm hidden><label><input type="checkbox" data-alert-test-ack> Send this exact message to my reviewed private account.</label>
+    <p><button class="btn" type="button" data-alert-test-send disabled>Send one test</button></p></div>
+  <p role="status" aria-live="polite" data-alert-test-status></p>
+  <p><button class="btn btn--ghost" type="button" data-alert-test-original hidden>Read original test result</button></p>
+</section>

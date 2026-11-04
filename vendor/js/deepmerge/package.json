@@ -1,0 +1,9 @@
+{
+  "name": "@lightwork/deepmerge",
+  "version": "4.3.1-lightwork.1",
+  "private": true,
+  "description": "Reviewed deepmerge 4.3.1 compatibility fork with prototype-key protection",
+  "license": "MIT",
+  "main": "index.cjs",
+  "types": "index.d.ts"
+}

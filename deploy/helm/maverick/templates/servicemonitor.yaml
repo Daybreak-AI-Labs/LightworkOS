@@ -1,0 +1,26 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "maverick.fullname" . }}
+  labels:
+    {{- include "maverick.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "maverick.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+      {{- if .Values.serviceMonitor.bearerTokenSecret.key }}
+      # /metrics is bearer-gated when MAVERICK_DASHBOARD_TOKEN is set; without
+      # this the scrape 401s and every alert rule goes blind.
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ .Values.serviceMonitor.bearerTokenSecret.name | default (include "maverick.secretName" .) }}
+          key: {{ .Values.serviceMonitor.bearerTokenSecret.key }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,71 @@
+{% from "_assets.html" import asset -%}
+{# The assessment review pop-out — the reviewer's home for one assessment:
+   answers with the respondent's notes, findings by severity, the follow-up
+   thread, and the send-back box. Shared by /approvals and /privacy; include
+   ONCE per page and trigger via window.mvAssessmentReview.open(id). #}
+<style>
+  .arv { border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 0; width: min(760px, calc(100vw - 2rem)); max-height: min(84vh, 900px); background: var(--surface-1); color: var(--text); box-shadow: var(--shadow-lg); }
+  .arv::backdrop { background: var(--scrim); }
+  .arv[open] { display: flex; flex-direction: column; overflow: hidden; }
+  .arv__head { display: flex; flex-wrap: wrap; flex: none; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border); background: inherit; }
+  .arv__head h3 { margin: 0; font-size: var(--text-lg); text-transform: none; letter-spacing: 0; color: var(--text); }
+  .arv__risks { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; margin-inline-start: auto; }
+  .arv__body { padding: var(--space-4) var(--space-5); overflow-y: auto; min-height: 0; min-width: 0; overflow-wrap: anywhere; }
+  .arv__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--hairline); }
+  .arv__q { font-size: var(--text-base); }
+  .arv__note { color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-0-5); }
+  .arv__ans { align-self: start; }
+  .arv__section { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: var(--font-semibold); }
+  .arv textarea { width: 100%; min-height: 84px; background: var(--surface-sunken); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); font: inherit; }
+  .arv__answer-editor { min-width: 0; margin-block: var(--space-4); }
+  .arv__answer-editor select { width: 100%; min-width: 0; max-width: 100%; }
+  .arv__answer-editor label { display: block; margin-top: var(--space-3); }
+  .arv__answer-editor button { margin-top: var(--space-3); margin-inline-end: var(--space-2); }
+  .arv__incomplete { display: block; padding: var(--space-3); border: 1px solid var(--border-strong); border-inline-start: 3px solid var(--warn); border-radius: var(--radius-md); background: var(--surface-2); color: var(--text); font: inherit; line-height: 1.5; }
+  .arv pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .arv__foot { display: flex; flex-wrap: wrap; flex: none; gap: var(--space-2); justify-content: flex-end; padding: var(--space-3) var(--space-5); border-top: 1px solid var(--border); }
+  .arv__foot > *, .arv .badge { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  #arv-status:not(:empty) { flex-basis: 100%; }
+  #arv-cadence-wrap { flex-wrap: wrap; }
+  @media (max-width: 600px) {
+    .arv__head, .arv__body, .arv__foot { padding-inline: var(--space-3); }
+    .arv__head h3 { flex: 1; min-width: 0; }
+    .arv__risks { order: 2; flex-basis: 100%; margin-inline-start: 0; }
+    .arv__row { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+  }
+  @media (max-height: 500px) {
+    .arv { max-height: calc(100dvh - 1rem); }
+    .arv__foot { max-height: 35dvh; overflow-y: auto; }
+  }
+</style>
+
+<dialog class="arv" id="arv-dialog" aria-labelledby="arv-title">
+  <div class="arv__head">
+    <h3 id="arv-title">Assessment review</h3>
+    <div class="arv__risks">
+      <span class="badge" id="arv-inherent"></span>
+      <span aria-hidden="true" class="muted">→</span>
+      <span class="badge" id="arv-risk"></span>
+    </div>
+    <button class="btn btn--ghost" id="arv-close" aria-label="Close review">✕</button>
+  </div>
+  <div class="arv__body" id="arv-body"><p class="muted">Loading…</p></div>
+  <div class="arv__foot">
+    <span class="muted" id="arv-status" role="status" aria-live="polite" style="margin-inline-end:auto;"></span>
+    <button class="btn" id="arv-send" style="display:none;">Send questions back to requester</button>
+    <label class="muted" id="arv-cadence-wrap" style="display:none; align-items:center; gap:var(--space-2); font-size:var(--text-sm);">Next review
+      <select class="ctl" id="arv-cadence" aria-label="When to review again">
+        <option value="90">In 3 months</option>
+        <option value="180">In 6 months</option>
+        <option value="365" selected>In 1 year</option>
+        <option value="0">No scheduled review</option>
+      </select>
+    </label>
+    <button class="btn" id="arv-trigger" style="display:none;" title="Start a new review now, for example at a contract renewal or a new sub-processor">Re-review now</button>
+    <button class="btn" id="arv-accept" style="display:none;" title="Formally accept the residual risk with a rationale and expiry">Accept risk</button>
+    <button class="btn" id="arv-reject" style="display:none;">Reject</button>
+    <button class="btn btn--primary" id="arv-approve" style="display:none;">Approve assessment</button>
+  </div>
+</dialog>
+
+<script src="{{ asset('lightwork-assessment-review.js') }}" defer></script>

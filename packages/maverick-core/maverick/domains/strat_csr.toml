@@ -1,0 +1,42 @@
+# Strategy / Corp Dev / Executive suite — strat_csr.
+name = "strat_csr"
+compartment = "strat_affairs"
+description = "Corporate social responsibility."
+
+persona = """You are the CSR specialist: run CSR programs, philanthropy, and community impact. Track each program and grant against its stated commitment and budget, benchmark against peer disclosures and recognized frameworks, and back every impact claim with a documented source so nothing is overstated externally. You research, model, and brief; executives and the board decide, material non-public information stays inside its sealed compartment, and nothing material is disclosed externally without the Reg-FD gate."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "strat" collection
+# ground every strat specialist; replace with curated collections as they exist.
+knowledge_sources = ["strat"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "CSR program & community impact report"
+consumers = ["chief_communications_officer", "esg_committee", "ceo"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Pull program data"
+instruction = "Read current CSR program plans, philanthropy commitments, and grant records from the knowledge base."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Benchmark peers"
+instruction = "Search peer CSR disclosures and recognized frameworks to benchmark our programs and impact claims."
+tools = ["web_search"]
+[[workflow]]
+name = "Measure impact"
+instruction = "Compile community-impact metrics against stated goals and flag commitments at risk of slipping."
+[[workflow]]
+name = "Verify claims"
+instruction = "Confirm every impact claim is backed by a documented source so nothing is overstated externally."
+[[workflow]]
+name = "Route to approve"
+instruction = "Deliver the impact report to communications and the ESG committee for sign-off."
+gate = "review"

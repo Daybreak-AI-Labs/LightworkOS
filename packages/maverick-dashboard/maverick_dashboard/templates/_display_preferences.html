@@ -1,0 +1,44 @@
+      <details class="prefs" id="prefs-menu">
+        <summary class="iconbtn" aria-label="{{ ut('Display preferences') }}" title="{{ ut('Display preferences') }}" lang="{{ ul('Display preferences') }}">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5h3.4M10.4 5h3.1M2.5 11h6.3M13.1 11h.4"/><circle cx="7.7" cy="5" r="1.7"/><circle cx="10.8" cy="11" r="1.7"/></svg>
+        </summary>
+        <div class="prefs__panel" role="group" aria-label="{{ ut('Display preferences') }}" lang="{{ ul('Display preferences') }}">
+          <label class="prefs__row"><span>{{ ui("Save on this device only") }}</span><input type="checkbox" id="prefs-device-only" {% if not display_signed_in %}checked{% endif %}></label>
+          <label class="prefs__row"><span>{{ ui("Text size") }}</span><select class="ctl" data-ui-preference="text_size" aria-label="{{ ut('Text size') }}" lang="{{ ul('Text size') }}">
+            {% for size, label in [('standard', 'Standard'), ('large', 'Large'), ('larger', 'Larger')] %}<option value="{{ size }}" {% if display_text_size == size %}selected{% endif %} lang="{{ ul(label) }}">{{ ut(label) }}</option>{% endfor %}
+          </select></label>
+          <label class="prefs__row"><span>{{ ui("Interface language") }}</span><select class="ctl" data-ui-preference="interface_language" data-saved-value="{{ display_interface_language|default('') }}" aria-label="{{ ut('Interface language') }}" lang="{{ ul('Interface language') }}">{% for code, label in [('', 'Follow response language'),('en','English'),('fr','French'),('de','German'),('ja','Japanese'),('zh','Chinese'),('ar','Arabic')] %}<option value="{{ code }}" lang="{{ ul(label) }}" {% if display_interface_language|default('') == code %}selected{% endif %}>{{ ut(label) }}</option>{% endfor %}</select></label>
+          <p id="prefs-status" role="status" aria-live="polite"></p>
+          <button type="button" class="btn btn--ghost" id="prefs-undo" hidden>{{ ui("Undo appearance change") }}</button>
+          <label class="prefs__row"><span>{{ ui("Theme") }}</span>
+      <select class="ctl" id="theme-select" data-ui-preference="theme" aria-label="{{ ut('Theme') }}" lang="{{ ul('Theme') }}">
+        <option value="" lang="{{ ul("Theme") }}">{{ ut("Theme") }}</option>
+        <option value="system" {% if theme == 'system' %}selected{% endif %} lang="{{ ul("Follow system") }}">{{ ut("Follow system") }}</option>
+        <option value="dark" {% if theme == 'dark' %}selected{% endif %} lang="{{ ul("Dark") }}">{{ ut("Dark") }}</option>
+        <option value="light" {% if theme == 'light' %}selected{% endif %} lang="{{ ul("Light") }}">{{ ut("Light") }}</option>
+        <option value="solarized" {% if theme == 'solarized' %}selected{% endif %} lang="{{ ul("Solarized") }}">{{ ut("Solarized") }}</option>
+        <option value="hicontrast" {% if theme == 'hicontrast' %}selected{% endif %} lang="{{ ul("High contrast") }}">{{ ut("High contrast") }}</option>
+        {% for name in custom_theme_names %}
+        <option value="{{ name }}" lang="und" dir="auto" data-user-content {% if theme == name %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+          </label>
+          <label class="prefs__row"><span>{{ ui("Glass effects") }}</span><select class="ctl" id="glass-select" data-ui-preference="glass" aria-label="{{ ut('Glass effects') }}" lang="{{ ul('Glass effects') }}">
+            {% for value, label in [('off', 'Off'), ('on', 'On')] %}<option value="{{ value }}" {% if (glass or 'off') == value %}selected{% endif %} lang="{{ ul(label) }}">{{ ut(label) }}</option>{% endfor %}
+          </select></label>
+          <label class="prefs__row"><span>{{ ui("Density") }}</span>
+      <select class="ctl" id="density-select" data-ui-preference="density" aria-label="{{ ut('Density') }}" lang="{{ ul('Density') }}">
+        <option value="" lang="{{ ul("Density") }}">{{ ut("Density") }}</option>
+        <option value="comfortable" {% if density == 'comfortable' %}selected{% endif %} lang="{{ ul("Comfortable") }}">{{ ut("Comfortable") }}</option>
+        <option value="compact" {% if density == 'compact' %}selected{% endif %} lang="{{ ul("Compact") }}">{{ ut("Compact") }}</option>
+      </select>
+          </label>
+          <label class="prefs__row"><span{% if lang and page_lang and lang != page_lang %} lang="{{ lang }}"{% endif %}>{{ t('label.font') }}</span>
+      <select class="ctl" id="font-select" data-ui-preference="font" aria-label="{{ t('label.font') }}"{% if lang and page_lang and lang != page_lang %} lang="{{ lang }}"{% endif %}>
+        <option value="">{{ t('label.font') }}</option>
+        <option value="default" {% if font == 'default' %}selected{% endif %}>{{ t('font.default') }}</option>
+        <option value="dyslexic" {% if font == 'dyslexic' %}selected{% endif %}>{{ t('font.dyslexic') }}</option>
+      </select>
+          </label>
+        </div>
+      </details>

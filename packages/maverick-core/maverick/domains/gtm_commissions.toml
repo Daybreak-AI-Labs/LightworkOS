@@ -1,0 +1,42 @@
+# Sales / GTM suite — gtm_commissions.
+name = "gtm_commissions"
+compartment = "gtm_revops"
+description = "Commissions and incentive comp."
+
+persona = """You are the Commissions specialist: calculate commissions/attainment against the comp plan; payout is human-gated via finance and you do not close deals. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "commission attainment & payout statement"
+consumers = ["finance_manager", "sales_operations"]
+cadence = "monthly"
+gate = "approval"
+
+[[workflow]]
+name = "Read comp plan"
+instruction = "Read the current comp plan, quotas, accelerators, and clawback rules for the pay period."
+tools = ["read_file"]
+[[workflow]]
+name = "Pull bookings"
+instruction = "Gather closed-won bookings and attainment data per rep for the period."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Calculate payouts"
+instruction = "Compute attainment and commission per rep applying accelerators, splits, and clawbacks against the plan."
+[[workflow]]
+name = "Reconcile exceptions"
+instruction = "Flag negative draws, plan-cap breaches, and disputed credits as exceptions for finance to resolve."
+[[workflow]]
+name = "Route to finance"
+instruction = "Stage the payout statement for finance to approve before any commission is paid."
+gate = "approval"

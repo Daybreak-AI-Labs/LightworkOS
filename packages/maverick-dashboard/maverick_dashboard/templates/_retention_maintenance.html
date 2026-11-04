@@ -1,0 +1,17 @@
+{% if can_global_admin %}
+<div class="cmp-links">
+  <label for="cmp-retention-history">Your saved reviews
+    <select id="cmp-retention-history" class="select"><option value="">Loading saved reviews…</option></select>
+  </label>
+  <button type="button" class="btn btn--ghost" id="cmp-retention-recover">Check saved result</button>
+  <button type="button" class="btn btn--ghost" id="cmp-retention-copilot">Review retention with Copilot</button>
+</div>
+<p class="muted">Checking a saved result never repeats deletion. Your latest 30 reviews are shown from the most recent 256 local receipts.</p>
+<section id="cmp-retention-review" hidden aria-labelledby="cmp-retention-review-title" tabindex="-1">
+  <h3 id="cmp-retention-review-title">Review effective retention</h3>
+  <div id="cmp-retention-summary" class="cmp-grid"></div>
+  <p>Recorded privacy-rights holds block deletion for the whole workspace because broad retention cannot identify every subject record. Check external holds separately with your records owner. Deleting task history also removes its provenance links from retained facts.</p>
+  <label><input type="checkbox" id="cmp-retention-holds"> I confirmed with the records owner that no preservation hold applies to these records.</label>
+  <p><button type="button" class="btn btn--danger" id="cmp-retention-confirm" hidden>Delete reviewed old records</button></p>
+</section>
+{% endif %}

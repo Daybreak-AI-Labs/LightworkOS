@@ -1,0 +1,349 @@
+{# Department-workspace chassis, bottom half: the precedent memory panel,
+   the framework catalog, the shared review pop-out, and the chassis JS
+   (worklist filters + review triggers). Include after any page-specific
+   sections so those sit between the worklist and this block. #}
+  <style>
+    .pw-mem-link { background: none; border: 0; padding: 0; color: var(--brand);
+                   font: inherit; cursor: pointer; text-align: start; }
+    .pw-mem-link:hover { text-decoration: underline; }
+    .tpl-q { display: grid; grid-template-columns: 2fr 1fr auto auto auto;
+             gap: var(--space-2); align-items: start; padding: var(--space-2) 0;
+             border-bottom: 1px solid var(--hairline); }
+    .tpl-q input, .tpl-q select { width: 100%; }
+    .tpl-q .tpl-guidance { grid-column: 1 / -1; }
+    .tpl-meta { display: flex; gap: var(--space-3); flex-wrap: wrap;
+                margin-bottom: var(--space-3); }
+    .tpl-meta label { display: flex; flex-direction: column;
+                      gap: var(--space-1); flex: 1; min-width: 12rem; }
+  </style>
+
+  <div class="section-head"><h2>What the org already knows</h2></div>
+  <div class="panel">
+    {% if precedents %}
+    <p class="muted" style="margin-top:0; font-size:var(--text-sm);">Completed assessments feed
+      the platform's memory: similar future requests can reuse these precedents after individual review. Prior agreement is not factual certainty. Open an assessment to compare exact source answers and current questionnaire versions.</p>
+    <table>
+      <thead><tr><th scope="col">Subject</th><th scope="col">Questionnaire</th>
+        <th scope="col">Source date and review</th><th scope="col">Risk before → after safeguards</th><th scope="col">Findings</th></tr></thead>
+      <tbody>
+        {% set _ptitles = {} %}{% for t in templates %}{% set _ = _ptitles.update({t.type: t.title}) %}{% endfor %}
+        {% for p in precedents %}
+        <tr>
+          <td><button class="pw-mem-link" data-assessment="{{ p.id }}" type="button">{{ p.subject }}</button></td>
+          <td class="muted">{{ _ptitles.get(p.type) or (p.type | humanize) }}</td>
+          <td><span class="badge {{ 'warn' if p.review_due or p.status != 'approved' else 'done' }}">{{ 'Stale precedent - review due' if p.review_due else 'Approved precedent - recheck before reuse' if p.status == 'approved' else 'Unreviewed precedent' }}</span><br><span class="muted">{{ p.created_at | datetime }}</span></td>
+          <td class="pw-risk">
+            <span class="badge {{ 'blocked' if p.inherent_risk == 'high' else 'warn' if p.inherent_risk == 'medium' else 'done' }}">{{ p.inherent_risk | humanize }}</span>
+            <span aria-hidden="true" class="muted">→</span>
+            <span class="badge {{ 'blocked' if p.residual_risk == 'high' else 'warn' if p.residual_risk == 'medium' else 'done' }}">{{ p.residual_risk | humanize }}</span>
+          </td>
+          <td>{{ p.findings }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="muted">Memory builds as assessments complete — the second assessment of a
+        similar system can offer individually reviewed suggestions from the first.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Assessment catalog</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top:0; font-size:var(--text-sm);">Questionnaires your team can use.
+      Choose one to see or change its questions. Changes apply to new assessments only.</p>
+    <div class="pw-cat">
+      {% for t in templates %}
+        <button class="chip" data-tpl="{{ t.type }}" type="button"><b>{{ t.title }}</b> · {{ t.framework }} · {{ t.questions }} questions{% if t.custom %} · <em>custom</em>{% endif %}</button>
+      {% endfor %}
+      <button class="chip" id="pw-tpl-new" type="button"><b>+ New questionnaire</b></button>
+    </div>
+  </div>
+
+{% include "_assessment_review.html" %}
+
+<dialog class="arv" id="tpl-dialog" aria-labelledby="tpl-heading">
+  <div class="arv__head">
+    <h3 id="tpl-heading">Questionnaire editor</h3>
+    <span class="badge info" id="tpl-flag" style="margin-inline-start:auto; display:none;">Changed by your team</span>
+    <button class="btn btn--ghost" id="tpl-close">Close</button>
+  </div>
+  <div class="arv__body">
+    <div class="tpl-meta" id="tpl-newmeta" style="display:none;">
+      <input type="hidden" id="tpl-type">
+      <label><span class="muted">Department</span>
+        <select class="ctl" id="tpl-dept">
+          <option value="privacy">Privacy</option>
+          <option value="finance">Finance</option>
+          <option value="security">Security</option>
+        </select></label>
+    </div>
+    <div class="tpl-meta">
+      <label><span class="muted">Title</span>
+        <input class="ctl" id="tpl-title" maxlength="120"></label>
+      <label><span class="muted">Framework</span>
+        <select class="ctl" id="tpl-framework">
+          <option value="">Choose a framework</option>
+          <option>GDPR</option><option>CCPA</option><option>ISO 27001</option><option>SOC 2</option>
+          <option>NIST AI RMF</option><option>EU AI Act</option><option>HIPAA</option><option>PCI DSS</option>
+          <option>SOX</option><option value="Other">Other</option>
+        </select></label>
+    </div>
+    <label><span class="muted">Description</span>
+      <textarea class="ctl" id="tpl-description" maxlength="500" rows="3"></textarea></label>
+    <div class="arv__section">Questions — an answer that is a problem creates a finding at the level you choose</div>
+    <div id="tpl-qs"></div>
+    <button class="btn" id="tpl-add" type="button">Add a question</button>
+  </div>
+  <div class="arv__foot">
+    <span class="muted" id="tpl-status" role="status" aria-live="polite" style="margin-inline-end:auto;"></span>
+    <button class="btn" id="tpl-restore" style="display:none;" type="button">Restore the original questionnaire</button>
+    <button class="btn btn--primary" id="tpl-save" type="button">Save questionnaire</button>
+  </div>
+</dialog>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  // Review pop-out triggers — worklist buttons AND memory-panel subjects.
+  document.querySelectorAll('.pw-review-btn, .pw-mem-link').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (window.mvAssessmentReview) window.mvAssessmentReview.open(btn.dataset.assessment);
+    });
+  });
+
+  // ---- Questionnaire editor (catalog chips + "new questionnaire") ----
+  var tplDlg = document.getElementById('tpl-dialog');
+  var tplQs = document.getElementById('tpl-qs');
+  var tplStatus = document.getElementById('tpl-status');
+  var tplRestore = document.getElementById('tpl-restore');
+  var tplFlag = document.getElementById('tpl-flag');
+  var tplNewMeta = document.getElementById('tpl-newmeta');
+  var editingType = null;   // null = authoring a new questionnaire
+  var editingDept = 'privacy';
+  var editingRevision = 0;
+  var editingDigest = '';
+  function plain(failure, what) {
+    return window.mvErrorText ? window.mvErrorText(failure, what) : 'Could not ' + what + '. Try again.';
+  }
+  function setFramework(value) {
+    var sel = document.getElementById('tpl-framework');
+    if (value && !Array.prototype.some.call(sel.options, function (o) { return o.value === value; })) {
+      var o = document.createElement('option'); o.value = value; o.textContent = value; sel.appendChild(o);
+    }
+    sel.value = value || '';
+  }
+
+  function qRow(q) {
+    q = q || {};
+    var row = document.createElement('div');
+    row.className = 'tpl-q';
+    row.dataset.questionId = q.id || '';
+    function field(tag, cls, attrs) {
+      var el = document.createElement(tag);
+      el.className = 'ctl ' + (cls || '');
+      Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+      return el;
+    }
+    var text = field('input', 'tpl-text', { 'aria-label': 'Question text',
+      placeholder: 'Is a defined retention schedule in place?', maxlength: 500 });
+    text.value = q.text || '';
+    var section = field('input', 'tpl-section', { 'aria-label': 'Section',
+      placeholder: 'Section', maxlength: 80 });
+    section.value = q.section || '';
+    var risk = field('select', 'tpl-risk', { 'aria-label': 'Which answer is a problem' });
+    ['no', 'yes'].forEach(function (v) {
+      var o = document.createElement('option');
+      o.value = v; o.textContent = v === 'no' ? 'Flag if the answer is No' : 'Flag if the answer is Yes';
+      if ((q.risk_answer || 'no') === v) o.selected = true;
+      risk.appendChild(o);
+    });
+    var sev = field('select', 'tpl-sev', { 'aria-label': 'How serious' });
+    ['low', 'medium', 'high'].forEach(function (v) {
+      var o = document.createElement('option');
+      o.value = v; o.textContent = v.charAt(0).toUpperCase() + v.slice(1);
+      if ((q.severity || 'medium') === v) o.selected = true;
+      sev.appendChild(o);
+    });
+    var rm = document.createElement('button');
+    rm.type = 'button'; rm.className = 'btn btn--ghost'; rm.textContent = 'Remove';
+    rm.setAttribute('aria-label', 'Remove this question');
+    rm.addEventListener('click', function () { row.remove(); });
+    var guidance = field('input', 'tpl-guidance', { 'aria-label': 'Guidance',
+      placeholder: 'What to do if this becomes a finding (optional)', maxlength: 500 });
+    guidance.value = q.guidance || '';
+    row.append(text, section, risk, sev, rm, guidance);
+    return row;
+  }
+
+  function openEditor(type) {
+    editingType = type;
+    editingRevision = 0;
+    editingDigest = '';
+    tplStatus.textContent = '';
+    tplQs.innerHTML = '';
+    document.getElementById('tpl-title').value = '';
+    setFramework('');
+    document.getElementById('tpl-description').value = '';
+    document.getElementById('tpl-type').value = '';
+    tplNewMeta.style.display = type ? 'none' : 'flex';
+    tplRestore.style.display = 'none';
+    tplFlag.style.display = 'none';
+    tplDlg.showModal();
+    if (!type) { tplQs.appendChild(qRow()); return; }
+    tplStatus.textContent = 'Loading…';
+    window.mvFetchJSON('/api/v1/assess/templates/' + encodeURIComponent(type), {}, 'open the questionnaire')
+      .then(function (tpl) {
+        tplStatus.textContent = '';
+        document.getElementById('tpl-title').value = tpl.title;
+        setFramework(tpl.framework);
+        document.getElementById('tpl-description').value = tpl.description || '';
+        editingDept = tpl.department || 'privacy';
+        editingRevision = Number(tpl.revision || 0);
+        editingDigest = tpl.digest || '';
+        (tpl.questions || []).forEach(function (q) { tplQs.appendChild(qRow(q)); });
+        if (tpl.custom) {
+          tplFlag.style.display = '';
+          tplRestore.style.display = '';
+        }
+      })
+      .catch(function (e) { tplStatus.textContent = e && e.name !== 'TypeError' && e.message ? e.message : plain(e, 'open the questionnaire'); });
+  }
+
+  document.querySelectorAll('.pw-cat button[data-tpl]').forEach(function (b) {
+    b.addEventListener('click', function () { openEditor(b.dataset.tpl); });
+  });
+  var newBtn = document.getElementById('pw-tpl-new');
+  if (newBtn) newBtn.addEventListener('click', function () { openEditor(null); });
+  document.getElementById('tpl-close').addEventListener('click', function () { tplDlg.close(); });
+  document.getElementById('tpl-add').addEventListener('click', function () {
+    tplQs.appendChild(qRow());
+  });
+
+  document.getElementById('tpl-save').addEventListener('click', function () {
+    var title = document.getElementById('tpl-title').value.trim();
+    var type = editingType ||
+      title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+    if (!type) { tplStatus.textContent = 'Give the questionnaire a title first.'; return; }
+    if (!editingType && document.querySelector('.pw-cat button[data-tpl="' + type + '"]')) {
+      tplStatus.textContent = 'A questionnaire with this title already exists. Choose a different title, or open that one to change it.'; return;
+    }
+    var dept = editingType ? editingDept : document.getElementById('tpl-dept').value;
+    var questions = [];
+    tplQs.querySelectorAll('.tpl-q').forEach(function (row) {
+      var text = row.querySelector('.tpl-text').value.trim();
+      if (!text) return;
+      questions.push({
+        id: row.dataset.questionId || '',
+        text: text,
+        section: row.querySelector('.tpl-section').value.trim(),
+        risk_answer: row.querySelector('.tpl-risk').value,
+        severity: row.querySelector('.tpl-sev').value,
+        guidance: row.querySelector('.tpl-guidance').value.trim()
+      });
+    });
+    if (!questions.length) { tplStatus.textContent = 'Add at least one question.'; return; }
+    tplStatus.textContent = 'Saving…';
+    function publish(revision, digest) {
+      return fetch('/api/v1/assess/templates/' + encodeURIComponent(type), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: document.getElementById('tpl-title').value.trim(),
+          framework: document.getElementById('tpl-framework').value.trim(),
+          description: document.getElementById('tpl-description').value.trim(),
+          department: dept,
+          questions: questions,
+          expected_revision: revision,
+          expected_digest: digest
+        })
+      }).then(function (r) {
+        if (r.ok) { location.reload(); return null; }
+        throw new Error(r.status === 409
+          ? 'Someone changed this questionnaire while you were editing. Close it, reload the page and try again.'
+          : plain(r, 'save the questionnaire'));
+      });
+    }
+    var publication = editingType
+      ? publish(editingRevision, editingDigest)
+      : fetch('/api/v1/assess/template-state/' + encodeURIComponent(type))
+          .then(function (r) { if (!r.ok) throw new Error(plain(r, 'save the questionnaire')); return r.json(); })
+          .then(function (state) { return publish(state.revision, state.digest); });
+    publication.catch(function (e) { tplStatus.textContent = e && e.name !== 'TypeError' && e.message ? e.message : plain(e, 'save the questionnaire'); });
+  });
+
+  tplRestore.addEventListener('click', function () {
+    if (!editingType) return;
+    // One action with a way back: the team's changes are removed,
+    // for new assessments only, when the Undo time is up.
+    var url = '/api/v1/assess/templates/' + encodeURIComponent(editingType) +
+          '?expected_revision=' + encodeURIComponent(editingRevision) +
+          '&expected_digest=' + encodeURIComponent(editingDigest);
+    tplStatus.textContent = 'Restoring the original questionnaire. Existing assessments keep the version they started with.';
+    mvUndo('Original questionnaire restored. Your team’s changes are removed for new assessments.', {
+      action: 'restore the original',
+      run: function (keepalive) { return fetch(url, { method: 'DELETE', keepalive: keepalive }); },
+      undo: function () { tplStatus.textContent = ''; tplRestore.focus(); },
+      done: function () { location.reload(); }
+    });
+  });
+  // Client-side worklist filters (the shared tab bar marks the chosen one).
+  var buttons = document.querySelectorAll('.pw-filters button[data-filter]');
+  buttons.forEach(function (fb) {
+    fb.addEventListener('click', function () {
+      var f = fb.dataset.filter;
+      document.querySelectorAll('#pw-table tbody tr').forEach(function (tr) {
+        var show = f === 'all' ||
+          (f === 'high' ? tr.dataset.residual === 'high' :
+           f === 'due' ? tr.dataset.due === '1' :
+           f === 'mine' ? tr.dataset.mine === '1' :
+           f === 'unassigned' ? !tr.dataset.assignee : tr.dataset.status === f);
+        tr.style.display = show ? '' : 'none';
+      });
+    });
+  });
+
+  // Assign an assessment to a reviewer, chosen from the people in this
+  // workspace. The version comes off the row, so a stale page is told to
+  // refresh rather than overwriting someone else's change.
+  var reviewers = null;
+  function loadReviewers() {
+    if (!reviewers) reviewers = window.mvFetchJSON('/api/v1/assess/reviewers')
+      .then(function (j) { return (j && j.items) || []; });
+    return reviewers;
+  }
+  document.querySelectorAll('.pw-assign-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var current = btn.dataset.current || '';
+      var people;
+      try { people = await loadReviewers(); }
+      catch (e) { reviewers = null; mvFail(e, 'load the list of people'); return; }
+      var options = [{ value: '', label: 'Unassigned (anyone can pick it up)' }].concat(people.map(function (p) {
+        return { value: p.principal, label: p.label + (p.is_you ? ' (you)' : '') };
+      }));
+      if (current && !people.some(function (p) { return p.principal === current; })) options.push({ value: current, label: current });
+      var picked = await mvForm('Assign “' + (btn.dataset.subject || 'this assessment') + '”', [
+        { key: 'assignee', label: 'Reviewer', type: 'select', options: options, default: current,
+          help: 'This only says whose turn it is. Anyone with access can still review it.' },
+      ], { okText: 'Assign' });
+      if (picked === null) return;
+      var row = btn.closest('tr');
+      btn.disabled = true;
+      fetch('/api/v1/assess/sessions/' +
+            encodeURIComponent(btn.dataset.assessment) + '/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assignee: String(picked.assignee || '').trim(),
+          expected_revision: parseInt(row.dataset.revision, 10) || 0
+        })
+      }).then(function (r) {
+        if (r.ok) { location.reload(); return; }
+        btn.disabled = false;
+        mvToast(r.status === 409
+          ? 'This assessment changed while the page was open. Refresh and try again.'
+          : plain(r, 'assign the assessment'), { error: true });
+      }).catch(function (e) { btn.disabled = false; mvFail(e, 'assign the assessment'); });
+    });
+  });
+})();
+</script>

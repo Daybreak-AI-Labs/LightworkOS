@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Queue · DSAR Concierge{% endblock %}
+{% block content %}
+  <h1>Subject request queue</h1>
+  <p class="sub">Every open clock, riskiest first. The statutory deadline never waits —
+    neither does this queue.</p>
+
+  <div class="grid">
+    <div class="stat"><div class="v">{{ aging.open }}</div><div class="l">open</div></div>
+    <div class="stat"><div class="v">{{ aging.overdue }}</div><div class="l">overdue</div></div>
+    <div class="stat"><div class="v">{{ aging.closing_soon }}</div><div class="l">inside 7 days</div></div>
+    <div class="stat"><div class="v">{{ value.handled }}</div><div class="l">handled</div></div>
+    <div class="stat"><div class="v">${{ '%.0f' | format(value.dollars) }}</div><div class="l">value counted</div></div>
+  </div>
+
+  <div class="panel">
+    {% if rows %}
+    <table>
+      <thead><tr><th scope="col">request</th><th scope="col">subject</th>
+        <th scope="col">kind</th><th scope="col">identity</th>
+        <th scope="col">status</th><th scope="col">clock</th><th scope="col"></th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td class="mono">{{ r.id }}</td>
+          <td>{{ r.subject_id }}</td>
+          <td>{{ r.kind }}</td>
+          <td>{% if r.verified %}<span class="chip ok">verified</span>{% else %}<span class="chip warn">awaiting</span>{% endif %}</td>
+          <td><span class="chip {{ 'ok' if r.status in ('fulfilled', 'closed') else 'warn' if r.status == 'awaiting_erasure' else 'info' }}">{{ r.status | replace('_', ' ') }}</span></td>
+          <td>{% if r.status in ('fulfilled', 'closed') %}—{% elif r.overdue %}<span class="chip bad">{{ -r.days_left }}d overdue</span>{% else %}{{ r.days_left }}d left{% endif %}</td>
+          <td><a class="btn" href="/case/{{ r.id }}">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="note">No requests yet. Point subjects at <a href="/request">/request</a>, or wire your
+      mail gateway to <span class="mono">POST /webhook/message</span> — the detector opens tracked
+      requests from plain inbound text.</p>
+    {% endif %}
+  </div>
+
+  {% if standalone and mail %}
+  <div class="panel">
+    <h2>Captured outbound mail (standalone demo inbox)</h2>
+    {% for m in mail %}
+      <div class="evt"><b>{{ m.subject }}</b> → {{ m.to }}<br>
+        <span class="note" style="white-space:pre-line;">{{ m.body[:220] }}</span></div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endblock %}

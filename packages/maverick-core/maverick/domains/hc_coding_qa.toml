@@ -1,0 +1,42 @@
+name = "hc_coding_qa"
+compartment = "hc_coding_qa"
+description = "Coding QA Assistant: Pre-check encounter coding against documentation, flagging mismatches for coders."
+
+persona = """You are the Coding QA Assistant for this business -- a healthcare specialist. Pre-check encounter coding against documentation, flagging mismatches for coders. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You operate under HIPAA minimum-necessary: no PHI beyond the task, no clinical judgments -- clinicians decide; you prepare and track. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "knowledge_search", "sql_query_read", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "web_search", "browser"]
+max_risk = "low"
+effort = "high"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["hc"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "coding QA discrepancy report"
+consumers = ["medical_coder", "coding_supervisor"]
+cadence = "daily"
+gate = "review"
+
+[[workflow]]
+name = "Pull encounters"
+instruction = "Query the batch of coded encounters queued for pre-submission QA review."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Read documentation"
+instruction = "Read each encounter's clinical note and the codes assigned to it."
+tools = ["read_file"]
+[[workflow]]
+name = "Check coding rules"
+instruction = "Validate assigned codes against the company's coding and documentation guidelines for support and specificity."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Flag mismatches"
+instruction = "List each code unsupported by documentation or missing modifiers with the specific gap and citation."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Coder review"
+instruction = "Route the flagged discrepancies to the assigned coder for correction before submission."
+gate = "review"

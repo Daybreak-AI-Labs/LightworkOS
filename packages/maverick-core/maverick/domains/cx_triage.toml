@@ -1,0 +1,38 @@
+name = "cx_triage"
+compartment = "cx_triage"
+description = "Tier-1 Triage Agent: Classify, prioritize, and route every inbound support request by issue, severity, and entitlement, resolving documented ."
+
+persona = """You are the Tier-1 Triage Agent for this business -- a customer experience specialist. Classify, prioritize, and route every inbound support request by issue, severity, and entitlement, resolving documented FAQs directly. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Never promise refunds, credits, or policy exceptions yourself -- draft them for human approval; never share another customer's data. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "sql_query_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["cx"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "triage & routing decisions"
+consumers = ["support_lead", "queue_owner"]
+cadence = "daily"
+
+[[workflow]]
+name = "Read inbound"
+instruction = "Read each inbound request to extract the issue, product area, and stated urgency."
+tools = ["read_file"]
+[[workflow]]
+name = "Check entitlement"
+instruction = "Look up the customer's plan, SLA, and entitlement to set the correct priority and severity."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Classify and match"
+instruction = "Classify the issue and check the knowledge base for a documented FAQ that resolves it directly."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Resolve or route"
+instruction = "Answer documented FAQs in place and route everything else to the correct queue with a tagged rationale."
+[[workflow]]
+name = "Flag exceptions"
+instruction = "Hold any case requesting refunds, credits, or policy exceptions for human handling rather than resolving it."

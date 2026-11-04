@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Knowledge · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-knowledge-access.css">{% endblock %}
+{% block content %}
+  {% from "_form_field.html" import error_summary %}
+<section class="ka-shell" id="knowledge-access"
+      data-context="{{ knowledge_context }}"
+      data-tenant="{{ knowledge_tenant }}"
+      data-actor="{{ knowledge_actor }}"
+      data-api-base="{{ knowledge_api_base }}"
+      data-purpose-state="{{ knowledge_purpose_state }}"
+      data-can-review="{{ 'true' if knowledge_can_review else 'false' }}">
+  <header class="ka-hero">
+    <div>
+      <p class="eyebrow">Insights</p>
+      <h1 class="page-title">Knowledge</h1>
+      <p class="ka-lede">Find knowledge you can use now. Only sources you're currently allowed to use appear here. Lightwork checks each one again every time you open it.</p>
+    </div>
+    <div class="ka-boundary" aria-label="What permission covers">
+      <strong>Permission stays specific</strong>
+      <span>Being allowed to search, use or download a source does not mean it may be used to train AI models.</span>
+    </div>
+  </header>
+  {% if knowledge_tabs %}{% from "_tabs.html" import tab_bar, panel_attrs %}{{ tab_bar('Knowledge views', knowledge_tabs, '') }}<div {{ panel_attrs('') }}>{% endif %}
+
+  <p class="ka-status" id="ka-status" role="status" aria-live="polite" tabindex="-1">
+    Choose what you'll use the information for, then search.
+  </p>
+
+  {% if record_search_context %}<p><a href="/goals?find_history=tasks">Find older tasks and business records</a> by source, name or UTC date. This searches metadata without sending record content to AI.</p>{% endif %}
+
+  <details class="panel">
+    <summary>About this page's safeguards</summary>
+    <p class="muted">Each result is checked against the exact version of its source, its approval, current rights, how fresh it is, consent and where it came from. If any of those change, the result is hidden from searches, downloads and queued work. <a href="/research">Add or review sources</a></p>
+  </details>
+
+  <section class="panel" aria-labelledby="ka-search-heading">
+    <div class="section-head">
+      <h2 id="ka-search-heading">Search current sources</h2>
+      <span class="muted">Sources you can use now</span>
+    </div>
+    <form id="ka-search-form" class="ka-form" autocomplete="off">
+      <label class="ka-field ka-field--wide" for="ka-query">
+        Search
+        <input class="input" id="ka-query" name="query" maxlength="512"
+               placeholder="Policy, customer evidence, or source name">
+      </label>
+      <label class="ka-field" for="ka-purpose">
+        What you'll use it for
+        <select class="select" id="ka-purpose" name="purpose" required>
+          {% for code in knowledge_purposes %}<option value="{{ code }}"{% if loop.first %} selected{% endif %}>{{ code | humanize }}</option>{% else %}<option value="">No approved uses yet — add sources first</option>{% endfor %}
+        </select>
+      </label>
+      <input type="hidden" id="ka-limit" name="limit" value="20">
+      <div class="ka-actions ka-field--wide">
+        <button class="btn" id="ka-retry-purposes" type="button">Refresh available uses</button>
+        <button class="btn btn--primary" id="ka-search" type="submit">Search current sources</button>
+        <button class="btn" id="ka-export" type="button" disabled>Download these results</button>
+      </div>
+    </form>
+    <p class="muted ka-note" id="ka-search-note">A source's content is shown only after it passes its current checks.</p>
+    <div class="ka-results" id="ka-results" aria-live="polite"></div>
+  </section>
+
+  <section class="panel ka-detail-panel" id="ka-detail-panel" aria-labelledby="ka-detail-heading" hidden>
+    <div class="section-head">
+      <h2 id="ka-detail-heading" tabindex="-1">Source detail</h2>
+      <span class="badge approved">You can use this now</span>
+    </div>
+    <div id="ka-detail"></div>
+  </section>
+
+  <section class="panel" id="source-analysis" aria-labelledby="source-analysis-heading">
+    <h2 id="source-analysis-heading">Analyze selected sources</h2>
+    <p class="muted">Open source details and choose up to five exact versions. This task can write an analysis with the configured AI; it cannot use action tools. Selecting a source does not grant additional access.</p>
+    <p id="sa-policy" role="status">Checking current source-analysis policy.</p>
+    <ul id="sa-sources" aria-label="Selected source versions"></ul>
+    <form id="sa-form" class="ka-form" autocomplete="off">
+      <label class="ka-field ka-field--wide" for="sa-title">Task title<input id="sa-title" class="input" required maxlength="200"></label>
+      <label class="ka-field ka-field--wide" for="sa-description">What should the analysis answer?<textarea id="sa-description" class="textarea" required maxlength="16000" rows="3"></textarea></label>
+      <button id="sa-start" class="btn btn--primary" type="submit" disabled>Review and start analysis</button>
+      <button id="sa-recover" class="btn" type="button" hidden>Check previous submission</button>
+    </form>
+    <p id="sa-status" role="status" aria-live="polite"></p>
+    <div id="sa-output" aria-live="polite"></div>
+  </section>
+
+  <section class="ka-grid" aria-label="Knowledge rights requests">
+    <div class="panel">
+      <div class="section-head">
+        <h2 id="ka-request-heading">Request a correction or removal</h2>
+        <span class="muted">For one source</span>
+      </div>
+      <form id="ka-request-form" class="ka-form" aria-labelledby="ka-request-heading" autocomplete="off" data-mv-validate>
+        {{ error_summary('ka-request-errors') }}
+        <p class="ka-selected" id="ka-request-source">Open a source with View details, then come back here.</p>
+        <label class="ka-field" for="ka-request-type">
+          Request
+          <select class="input" id="ka-request-type" name="request_type" required>
+            <option value="correction">Correct information</option>
+            <option value="exclusion">Stop future use</option>
+            <option value="deletion">Request source deletion</option>
+          </select>
+        </label>
+        <label class="ka-field ka-field--wide" for="ka-request-reason">
+          Why this is needed
+          <textarea class="textarea" id="ka-request-reason" name="reason" rows="3" maxlength="2000" required
+                    data-error-required="Say why this source needs a change. For example: the price list is out of date."></textarea>
+        </label>
+        <label class="ka-field ka-field--wide" id="ka-correction-field" for="ka-proposed-correction">
+          Correct information
+          <textarea class="textarea" id="ka-proposed-correction" name="proposed_correction" rows="4" maxlength="8192"
+                    data-error-required="Enter the correct information that should replace what the source says."></textarea>
+        </label>
+        <label class="ka-check ka-field--wide">
+          <input type="checkbox" id="ka-request-confirm" name="confirm" required
+                 data-error-required="Tick the box to confirm you checked this source.">
+          <span>I checked this source. An independent administrator will review its dependencies and decide any change.</span>
+        </label>
+        <div class="ka-actions ka-field--wide">
+          <button class="btn btn--primary" id="ka-submit-request" type="submit" disabled>Submit request</button>
+        </div>
+      </form>
+      <p class="muted">You can submit feedback on a source you can currently open. Only administrators can approve or apply changes; training rights remain separate.</p>
+      <p class="ka-honesty">Removing a source does not remove what AI models already learned from it. Those models need to be reviewed for retirement or retraining.</p>
+    </div>
+
+    <div class="panel">
+      <div class="section-head">
+        <h2 id="ka-requests-heading">Request status</h2>
+        <div class="ka-actions">
+          {% if knowledge_can_review %}<button class="btn" type="button" id="ka-show-ready" aria-pressed="false">Ready to archive</button>{% endif %}
+          <button class="btn" type="button" id="ka-show-archived" aria-pressed="false">View finished archive</button>
+          <button class="btn" type="button" id="ka-refresh-requests">Refresh</button>
+        </div>
+      </div>
+      {% if knowledge_can_review %}<p class="muted" id="ka-capacity" role="status" aria-live="polite"></p>{% endif %}
+      <p class="muted" id="ka-batch-note" role="status" aria-live="polite"></p>
+      <button class="btn btn--ghost" type="button" id="ka-batch-copilot">Review this batch with Copilot</button>
+      {% if not knowledge_can_review %}
+      <p class="muted">Use Next batch to find your older requests. Only your own submissions and status are shown. You can also open a specific older receipt below.</p>
+      <form id="ka-find-archived" class="ka-form" autocomplete="off">
+        <label class="ka-field ka-field--wide" for="ka-archive-reference">Find an older archived request by its reference
+          <input class="input" id="ka-archive-reference" name="request_reference" required
+                 maxlength="54" pattern="knowledge-req-[a-f0-9]{40}" placeholder="Paste the reference shown on a request card">
+        </label>
+        <button class="btn" type="submit">Find archived request</button>
+      </form>
+      {% endif %}
+      <div id="ka-requests" class="ka-requests" aria-live="polite">
+        <p class="muted">Loading current request status…</p>
+      </div>
+      <p class="muted">A deletion request can be put on a legal hold. While the hold lasts, the original record is kept, but the source can still be stopped from new use.</p>
+    </div>
+  </section>
+
+  <section class="panel" id="ka-library" aria-labelledby="ka-library-heading" data-can-admin="{{ 'true' if knowledge_can_review else 'false' }}">
+    <div class="section-head">
+      <h2 id="ka-library-heading">Knowledge library</h2>
+      <button class="btn btn--ghost" type="button" id="ka-library-refresh">Refresh</button>
+    </div>
+    <p class="muted" id="ka-library-status" role="status" aria-live="polite">Loading the library…</p>
+    <div class="ka-table"><table><caption class="sr-only">Knowledge collections in this workspace</caption>
+      <thead><tr><th scope="col">Collection</th><th scope="col">Pieces of text</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="ka-library-collections"></tbody></table></div>
+    <h3>Starter content</h3>
+    <p class="muted">Public summaries of regulations (such as GDPR and the EU AI Act) that assistants can cite. Loading again replaces, never duplicates.</p>
+    <ul id="ka-library-starters"></ul>
+  </section>
+
+  {% if knowledge_sources_available %}
+  {% include '_knowledge_sources.html' %}
+  {% else %}
+  <section class="panel" id="knowledge-sources" aria-labelledby="knowledge-sources-heading">
+    <h2 id="knowledge-sources-heading">Saved Knowledge sources</h2>
+    <p class="muted">Turn on <a href="/settings/all?id=knowledge.enable">Document search for agents</a> to keep selected company folders and pages current here.</p>
+  </section>
+  {% endif %}
+  <noscript><p class="panel">JavaScript is required to revalidate and display governed knowledge sources.</p></noscript>
+  {% if knowledge_tabs %}</div>{% endif %}
+</section>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-access-state.js" defer></script><script src="/static/lightwork-knowledge-access.js" defer></script><script src="/static/lightwork-knowledge-library.js" defer></script><script src="/static/lightwork-source-analysis.js" defer></script><script src="/static/lightwork-knowledge-sources.js" defer></script>{% endblock %}

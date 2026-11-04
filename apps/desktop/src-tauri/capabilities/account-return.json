@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "account-return",
+  "description": "Only the exact local main-window Connections page can use the bounded account-return receiver. No general shell, URL opener, filesystem or maintenance access.",
+  "local": false,
+  "windows": ["main"],
+  "remote": {"urls": ["http://127.0.0.1:8765/connections"]},
+  "permissions": ["allow-prepare-oauth-return", "allow-launch-oauth-return", "allow-consume-oauth-return", "allow-cancel-oauth-return"]
+}

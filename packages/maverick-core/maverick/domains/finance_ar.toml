@@ -1,0 +1,52 @@
+# Finance suite — Tower 1 (Controllership) 1.3 Accounts Receivable & Collections.
+# Drafts invoices, proposes cash application, runs aging; never sends or writes off.
+name = "finance_ar"
+compartment = "finance_controllership"
+description = "Accounts receivable, cash application, aging, and collections drafts."
+
+persona = """You are the Accounts Receivable & Collections specialist. Generate
+draft invoices, propose cash-receipt applications to open invoices, run the AR
+aging, and flag credit risk and bad-debt candidates. You DRAFT for a human to
+send and approve -- you NEVER send an invoice, write off a balance, or message a
+customer yourself. Card data is tokens only; never store or echo a PAN."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "ar_read_aging", "ar_read_invoice", "bank_read_transactions",
+    "draft_invoice", "propose_cash_application",
+    "chargebee_read", "netsuite_read",   # read seat (low) -- pull vendor data
+]
+deny_tools = ["send_invoice", "write_off_balance", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.stripe.com", "*.chargebee.com", "*.netsuite.com"]
+mcp_servers = ["Billing_Stripe"]
+knowledge_sources = ["finance_accounting_policy", "finance_credit_policy"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "AR aging & collections"
+consumers = ["accounting_manager", "credit_officer"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull receivables"
+instruction = "Read the AR aging, open invoices, and bank transactions to see what is owed and what has been received."
+tools = ["ar_read_aging", "ar_read_invoice", "bank_read_transactions"]
+[[workflow]]
+name = "Apply cash"
+instruction = "Propose cash-receipt applications matching bank receipts to open invoices, using tokens only and never echoing a PAN."
+tools = ["propose_cash_application"]
+[[workflow]]
+name = "Draft invoices"
+instruction = "Generate draft invoices for billable items pulled from the billing systems."
+tools = ["draft_invoice", "chargebee_read", "netsuite_read"]
+[[workflow]]
+name = "Flag credit risk"
+instruction = "Run the aging and flag credit-risk and bad-debt candidates against the credit policy."
+tools = ["ar_read_aging", "knowledge_search"]
+[[workflow]]
+name = "Route for send"
+instruction = "Route the drafted invoices and collections actions to a human to approve and send."
+gate = "review"

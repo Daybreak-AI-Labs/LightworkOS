@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Compare real cases · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Compare saved rules on real cases', lede='Use original values from actual finished work to check the published rules and a changed saved version against the answers you expect.') }}
+<style>#flow-comparisons{overflow-wrap:anywhere}#flow-comparisons form,#flow-comparisons label{display:grid;gap:var(--space-2);min-width:0}#flow-comparisons input:not([type=checkbox]),#flow-comparisons select,#flow-comparisons fieldset{min-width:0;max-width:100%;width:100%;box-sizing:border-box}#flow-comparisons .btn{white-space:normal;text-align:center}</style>
+<div id="flow-comparisons" class="panel" style="display:grid;gap:var(--space-3);min-width:0">
+  <p class="muted">These are selected known cases, with answers you supply. Agreement does not establish untouched test performance, general accuracy or business value. Both complete rule versions run locally; no AI or connected actions run.</p>
+  <form id="flow-comparison-form" class="research-form">
+    <label>Saved workflow<select class="input" name="flow" required><option value="">Choose a workflow</option></select></label>
+    <p id="flow-comparison-version" class="muted"></p>
+    <div id="flow-comparison-included" class="muted" aria-live="polite"></div>
+    <label>Final result to compare<select class="input" name="output" required><option value="">Choose a result</option></select></label>
+    <div id="flow-comparison-cases"></div>
+    <button class="btn btn--ghost" id="flow-comparison-add" type="button">Add a real case</button>
+    <label style="display:flex;gap:var(--space-2);align-items:flex-start"><input type="checkbox" name="case_use" required style="flex:none;width:auto">I authorize using these original values and my expected answers for this exact local comparison and sharing this selected evidence for its independent release review.</label>
+    <button class="btn btn--primary" type="submit">Review and compare saved rules</button>
+    <button class="btn btn--ghost" id="flow-comparison-refresh" type="button">Refresh saved versions</button>
+  </form>
+  <p id="flow-comparison-status" role="status" aria-live="polite"></p>
+  <p id="flow-comparison-error" class="danger-text" role="alert"></p>
+  <section id="flow-comparison-result" hidden></section>
+  <label>Retained comparisons<select class="input" id="flow-comparison-history"><option value="">Choose a comparison</option></select></label>
+  <button class="btn btn--ghost" id="flow-comparison-read" type="button">Check original comparison result</button>
+  <a class="btn btn--ghost" id="flow-comparison-release" href="/research#local-flow-release">Prepare independent release review</a>
+  {% if can_open_page('/learning/recheck-rules') %}<a class="btn btn--ghost" href="/learning/recheck-rules">Recheck affected rules with retained evidence</a>{% endif %}
+  <details><summary>Scope and recovery</summary><p class="muted">Select up to five real runs from the latest 200 retained runs of the exact current publication. Each version uses its own saved included workflows, all belonging to the same account. The limits are sixteen included workflows, sixty-four total defined steps and eight levels. Comparisons support taught rules, directly named text, whole-number or yes/no inputs, ordinary value assignments and simple routes that compare values directly. Grouped inputs, expanding or transformed templates, cycles, retries, time calculations and secret lookups are outside this scope. Original inputs stay within 8 KB. A ten-second local allowance and a limit on step checks stop repeated included-workflow calls at step boundaries. An individual bounded calculation may return before the check can stop it. Local timings include recording overhead. If a reply is lost, check the original retained comparison; it does not repeat the work. Changing an included workflow makes an earlier comparison historical for release review. Removing it, replacing its owner or withdrawing its teaching sources can make the retained comparison unavailable.</p></details>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-local-flow-comparisons.js"></script>{% endblock %}

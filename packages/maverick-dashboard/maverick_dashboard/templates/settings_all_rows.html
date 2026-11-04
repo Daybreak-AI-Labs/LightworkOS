@@ -1,0 +1,13 @@
+{#- Rows loaded into Settings > All settings (one group, or search matches),
+    each group's parts in page order; the page puts each row in its place. -#}
+{% from "_settings_all_row.html" import setting_row, part_block %}
+<div data-rows-fragment data-complete="{{ complete }}">
+{% for g in groups %}
+<div data-fragment-group="{{ g.slug }}">
+  <div data-rows="">{% for s in g.settings if not s.subgroup %}{{ setting_row(s, g) }}{% endfor %}</div>
+  {% for sub in g.subgroups %}
+  {{ part_block(g, sub, sub.order, g.settings | selectattr('subgroup_slug', 'equalto', sub.slug) | list) }}
+  {% endfor %}
+</div>
+{% endfor %}
+</div>

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Lightwork threat check · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .hunt-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-3); margin-bottom:var(--space-4); }
+  .hunt-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+  .hunt-links { display:flex; gap:.5rem; flex-wrap:wrap; margin:0 0 var(--space-4); }
+  .hunt-scroll { overflow-x:auto; }
+  @media(max-width:880px){.hunt-grid{grid-template-columns:1fr}}
+</style>
+{% from "_hero.html" import hero, state %}
+{% call hero('Security', 'Lightwork threat check',
+             subtitle='Lightwork’s own activity',
+             lede='Looks for suspicious activity in Lightwork’s own records (what its assistants did, blocked
+                   actions, approvals and spending) and labels each finding with the kind of attack it resembles.
+                   Any containment is sent to the approvals queue; nothing is stopped automatically.') %}
+  {% if enabled %}
+  {{ state('Current state', 'Checking Lightwork’s own records', badge='On', badge_class='ok',
+           copy='Run a check at any time. The activity log is checked for tampering first.') }}
+  {% else %}
+  {{ state('Current state', 'Turned off', badge='Off', badge_class='idle',
+           copy='Lightwork’s own records are not being checked.') }}
+  {% endif %}
+{% endcall %}
+<div class="hunt-links">
+  <a class="btn btn--ghost" href="/security">Security &amp; GRC</a>
+  <a class="btn btn--ghost" href="/security/soc">Your own systems</a>
+  <a class="btn btn--ghost" href="/approvals">Approvals</a>
+  {% if enabled %}<button class="btn btn--primary" id="hunt-run" type="button">Run a check now</button>{% endif %}
+</div>
+{% include "_ops_security.html" %}
+{% if not enabled %}
+<section class="panel">
+  <h2>The Lightwork threat check is off</h2>
+  <p>Turn it on to have Lightwork look through its own records for signs of misuse.</p>
+  {% if can_global_admin %}
+  <button type="button" class="btn btn--primary" id="hunt-turn-on" data-section="threat_hunt">Turn on the threat check</button>
+  {% else %}
+  <p class="muted">Ask an administrator to turn this on.</p>
+  {% endif %}
+  <p id="hunt-turn-on-msg" role="status" aria-live="polite" class="muted"></p>
+</section>
+{% else %}
+<div id="hunt-root" data-hunt="platform" data-api="/api/v1/security/threats">
+<div class="hunt-grid">
+  <div class="stat"><div class="num" id="hunt-open">—</div><div class="label">Findings to look at</div></div>
+  <div class="stat"><div class="num" id="hunt-investigations">—</div><div class="label">Investigations</div></div>
+  <div class="stat"><div class="num" id="hunt-chain">—</div><div class="label">Activity log</div></div>
+</div>
+<p class="muted" id="hunt-status" role="status" aria-live="polite"></p>
+<p class="danger-text" id="hunt-error" role="alert" aria-live="assertive"></p>
+<section class="panel" aria-labelledby="hunt-findings-title">
+  <div class="section-head"><h2 id="hunt-findings-title">Findings</h2></div>
+  <div class="hunt-scroll"><table><caption class="sr-only">Findings, newest first</caption>
+    <thead><tr><th scope="col">Choose</th><th scope="col">How serious</th><th scope="col">What was found</th><th scope="col">Attack type</th><th scope="col">How sure</th><th scope="col">Evidence</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+    <tbody id="hunt-findings"></tbody></table></div>
+  <button type="button" class="btn btn--ghost" id="hunt-investigate">Start an investigation from the chosen findings</button>
+</section>
+<section class="panel" aria-labelledby="hunt-inv-title">
+  <h2 id="hunt-inv-title">Investigations</h2>
+  <div class="hunt-scroll"><table><caption class="sr-only">Investigations</caption>
+    <thead><tr><th scope="col">Investigation</th><th scope="col">Status</th><th scope="col">Assigned to</th><th scope="col">Findings</th><th scope="col">Containment</th><th scope="col">Actions</th></tr></thead>
+    <tbody id="hunt-investigations-rows"></tbody></table></div>
+  <div id="hunt-detail" aria-live="polite"></div>
+</section>
+</div>
+<script nonce="{{ csp_script_nonce }}" type="application/json" id="hunt-people">{{ people | tojson }}</script>
+{% endif %}
+<script src="/static/lightwork-security-hunt.js" defer></script>
+{% endblock %}

@@ -1,0 +1,50 @@
+# Finance suite — Tower 7 (External & Investor Reporting) 7.3 Equity & Stock-Based Comp.
+name = "finance_equity_sbc"
+compartment = "finance_reporting"
+description = "Cap-table, ASC 718 stock-comp expense, dilution, and 409A support."
+
+persona = """You are the Equity & Stock-Based-Comp specialist. Maintain the cap
+table, compute ASC 718 stock-comp expense (options/RSUs, vesting, forfeitures),
+support dilution and 409A, and handle ESPP accounting. Tie RSU vesting to
+payroll-tax. You DRAFT the comp JE for a human to post; 409A is human-owned. You
+NEVER post."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "compute_sbc_expense", "draft_sbc_entry",
+    "carta_read",   # read seat (low) -- pull vendor data
+]
+deny_tools = ["post_journal_entry", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.carta.com", "*.pulley.com"]
+mcp_servers = ["Equity_Carta"]
+knowledge_sources = ["finance_cap_table", "finance_accounting_policy"]
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "ASC 718 stock-comp expense memo & draft JE"
+consumers = ["controller", "payroll_manager"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull cap table"
+instruction = "Read the cap table and grant activity for the period from the equity vendor and company records."
+tools = ["read_file", "carta_read"]
+[[workflow]]
+name = "Verify grants"
+instruction = "Reconcile grants, vesting, and forfeitures against the cap table and accounting policy."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Compute expense"
+instruction = "Compute the ASC 718 stock-comp expense across options and RSUs for the period."
+tools = ["compute_sbc_expense"]
+[[workflow]]
+name = "Tie payroll tax"
+instruction = "Tie RSU vesting to payroll-tax withholding and flag any timing mismatch for payroll."
+[[workflow]]
+name = "Draft JE"
+instruction = "Draft the comp journal entry and expense memo for a human to review and post."
+tools = ["draft_sbc_entry"]
+gate = "review"

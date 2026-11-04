@@ -1,0 +1,17 @@
+# Editor draft recovery
+
+Flow Designer, Workflow Builder (including playbooks), and schema-guided forms keep encrypted recovery copies after edits. A page reload or browser restart offers Restore, Keep current draft, comparison, and Discard. A restore only changes the editor; it cannot save a live resource, execute a workflow, approve a request, or publish consent content.
+
+The default-on `features.draft_recovery` setting is available in Settings and the advanced installer wizard. Disabling it denies recovery reads and writes. Existing encrypted copies remain on disk. Ordinary resource Save controls continue to work.
+
+Copies are scoped to the current tenant, authenticated principal, and authentication mode. The page carries an opaque context digest; a changed workspace/account rejects old-page requests. API responses are private and must not be cached. Each editor has a hashed slot under `data_dir("draft-recovery", context)`; payload files use the existing AES-GCM encryption and private key custody even when general at-rest encryption is disabled. Missing encryption fails closed. Backups must include the applicable tenant data and the deployment's encryption-key recovery procedure.
+
+Writes compare the last reviewed revision under a cross-process lock. An uncertain save retries the identical operation reference, payload, and expected revision. A stale tab cannot replace a newer recovery copy. Discard retains a revision tombstone so an old tab cannot recreate a removed copy using an obsolete token. Limits are 1 MiB per copy, bounded nesting and item counts, and 2,000 slots per account/workspace. Reaching the slot limit requires administrator archival; recovery does not silently evict another draft.
+
+Password/file input values are excluded by form adapters. Nested credential fields, embedded credential JSON, and common credential formats are refused by storage; use saved connection references. Uploads must be selected again after a restart. A form containing an unsupported credential reports that recovery is paused rather than claiming the entire draft was stored. No localStorage or sessionStorage copy of these drafts is written.
+
+Recovered workflow/playbook edits retain their original saved-version tokens. Workflow saves and agent override writes reject a changed resource. Agent writes and resets compare their generation inside the existing store lock, and receipts are captured under that lock. Legacy API callers may omit the additive generation argument; the new app editors always supply it. Flow restoration also verifies its original saved version before replacing the canvas and refuses a restore if newer local edits arrived during verification. Incompatible copies remain available for comparison; there is no automatic version upgrade or conflict merge.
+
+Consent publishing uses a tenant-scoped, paginated catalog for saved properties and immutable resource versions. Choosing a record fills an unsaved form and exposes the selected version for review. Selecting existing content to revise explicitly prepares a new version and a new request reference. Search and version responses never refresh the versions of an already prepared publication automatically. Structured validation errors identify fields, retain entries and exact retry references, and focus the first invalid control.
+
+Live provider behavior and customer acceptance are not qualified.

@@ -1,0 +1,40 @@
+# Sales / GTM suite — gtm_support_triage.
+name = "gtm_support_triage"
+compartment = "gtm_support"
+description = "Tier-1 support triage and deflection."
+
+persona = """You are the Support Triage specialist: triage tickets, answer from the knowledge base, and escalate (Zendesk/Intercom); disclose you are an AI assistant, escalate the novel, and make no commitments. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "triaged ticket queue with draft replies"
+consumers = ["support_manager", "support_agent"]
+cadence = "daily"
+gate = "review"
+
+[[workflow]]
+name = "Read ticket"
+instruction = "Pull the inbound ticket, customer history, and reported symptom to understand the request."
+tools = ["read_file"]
+[[workflow]]
+name = "Match knowledge"
+instruction = "Search the knowledge base for an approved answer and cite the article used to resolve the issue."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft or escalate"
+instruction = "Draft a grounded reply that discloses the AI assistant and makes no commitments, or escalate novel issues to a human."
+tools = ["read_file"]
+[[workflow]]
+name = "Hand off queue"
+instruction = "Route the triaged queue with draft replies and escalations to the support agent for review and send."
+gate = "review"

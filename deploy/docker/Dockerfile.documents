@@ -1,0 +1,17 @@
+# Native document worker; contains no Lightwork config, customer files or keys.
+# Build: docker build -f deploy/docker/Dockerfile.documents -t lightwork-documents:local .
+# Pin DOCUMENT_BASE to an approved digest for a released deployment.
+ARG DOCUMENT_BASE=debian:bookworm-slim
+FROM ${DOCUMENT_BASE}
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       python3 python3-uno libreoffice-calc libreoffice-writer libreoffice-impress libreoffice-draw \
+       texlive-latex-base poppler-utils tesseract-ocr tesseract-ocr-eng \
+       fonts-dejavu-core ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 worker \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin worker \
+    && mkdir /workspace && chown worker:worker /workspace
+ENV HOME=/home/worker
+USER worker
+WORKDIR /workspace

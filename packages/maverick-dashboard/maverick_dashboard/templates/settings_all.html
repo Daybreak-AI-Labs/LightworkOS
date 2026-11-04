@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}All settings · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_settings_all_row.html" import setting_row, part_block %}
+  <link rel="stylesheet" href="/static/lightwork-settings-all.css">
+  {% call hero('Settings', 'All settings',
+               subtitle='Every product setting in one place',
+               lede='Change how Lightwork works without editing files or running the installer.
+                     Each setting shows its current value and where that value comes from.') %}
+    {{ state('Changed on this page',
+             changed_count ~ ' of ' ~ setting_count ~ ' settings',
+             badge='Using your installer and default values' if changed_count == 0 else 'Changed here',
+             badge_class='idle' if changed_count == 0 else 'ok',
+             copy='Reset puts a setting back to its default. Settings marked as affecting safety ask you to confirm first.') }}
+  {% endcall %}
+
+  <p>{{ back_link('/settings', 'Settings') }}</p>
+  {% include "_voice_channel_setup.html" %}
+
+  <section class="panel" id="settings-signin-guide" aria-labelledby="settings-signin-title">
+    <h2 id="settings-signin-title">Set up company sign-in</h2>
+    <p>Register Lightwork with your sign-in provider, save its details under People &amp; access below, then check the connection. A connection check reads the provider's published details; it cannot prove that a person can sign in. A local-only installation cannot switch over on this check alone: it needs a verified alternate sign-in or recovery path first. After a verified sign-in and an explicit administrator grant, use the reviewed activation and restricted recovery controls below.</p>
+    <div class="settings-all-index">
+      <h3>Company account (OpenID Connect)</h3>
+      <label for="settings-oidc-return">Return address to register with your provider</label>
+      <input class="input" id="settings-oidc-return" data-signin-address="oidc" readonly>
+      <button class="btn btn--ghost" type="button" data-signin-copy="oidc">Copy return address</button>
+      <p>Save the copied address in <a href="/settings/all?id=auth.oidc.redirect_uri">Return address after sign-in</a>, and register the same address with your provider. Then <a href="/settings/all?id=auth.oidc.issuer">enter the provider address and application details</a>. Use the provider's application name for both Lightwork's name and accepted sign-in audience, unless your provider specifies a different audience.</p>
+      <button class="btn btn--ghost" type="button" data-signin-check="oidc">Check provider connection</button>
+      <button class="btn btn--ghost" type="button" data-signin-try>Try company sign-in</button>
+      <a class="btn btn--ghost" data-signin-provider-link hidden target="_blank" rel="noopener noreferrer">Continue to your sign-in provider</a>
+      <p>This opens your provider in another tab and verifies a real sign-in against the saved details. It keeps your current access and does not turn company sign-in on or grant anyone access. Save the provider details first; unsaved edits are not tested.</p>
+      <p data-signin-results role="status" aria-live="polite"></p>
+      <button class="btn btn--ghost" type="button" data-signin-refresh>Refresh sign-in results</button>
+      <ol data-signin-history></ol>
+      <p data-signin-status="oidc" role="status" aria-live="polite"></p>
+    </div>
+    <div class="settings-all-index">
+      <h3>Single sign-on (SAML)</h3>
+      <p><a href="#company-saml-setup">Use the guided single sign-on setup</a> to upload your provider's document, keep it inactive, verify a real sign-in and review activation. Current local access stays available while you prepare and test the connection.</p>
+      <p>Open Lightwork at its public secure web address before using the values below. An unsecured local address cannot be registered as the single sign-on return address.</p>
+      <label for="settings-saml-return">Return address to register with your provider</label>
+      <input class="input" id="settings-saml-return" data-signin-address="saml-return" readonly>
+      <button class="btn btn--ghost" type="button" data-signin-copy="saml-return">Copy return address</button>
+      <label for="settings-saml-name">Lightwork's identity to register with your provider</label>
+      <input class="input" id="settings-saml-name" data-signin-address="saml-name" readonly>
+      <button class="btn btn--ghost" type="button" data-signin-copy="saml-name">Copy identity</button>
+      <p>Save the copied return address in <a href="/settings/all?id=auth.saml.acs_url">Single sign-on return address</a> and the copied identity in <a href="/settings/all?id=auth.saml.sp_entity_id">Lightwork's name for single sign-on</a>. Register those same values with your provider. Then <a href="/settings/all?id=auth.saml.idp_metadata_url">enter your provider's metadata address</a>; using that address avoids moving a file onto the server.</p>
+      <button class="btn btn--ghost" type="button" data-signin-check="saml">Check provider metadata</button>
+      {% if saml_login_active %}<a class="btn btn--ghost" href="/saml/login" target="_blank" rel="noopener">Try a real sign-in</a>{% endif %}
+      <p data-signin-status="saml" role="status" aria-live="polite"></p>
+    </div>
+    <div class="settings-all-index">
+      <h3>Company proxy</h3>
+      <p><a href="/settings/all?id=auth.proxy.enabled">Review proxy sign-in</a> only if the proxy is the sole route to Lightwork. Enter the header it sends and the exact proxy addresses Lightwork should trust. This page cannot verify a proxy sign-in from outside that route.</p>
+    </div>
+    <p class="muted">Before requiring sign-in for everyone, add the intended administrators under <a href="/users">Users</a> and verify a real sign-in. Lightwork refuses settings changes that would remove the current administrator's only access.</p>
+  </section>
+
+  <details id="settings-tools" class="panel">
+    <summary>Configuration profiles, presets and history</summary>
+    <p>Profiles contain selected supported preferences only. Credentials, personal names, policy documents and deployment identities are excluded. Imported values use the same review, conflict checks and permissions as ordinary settings.</p>
+    <p><button class="btn btn--ghost" type="button" data-profile-export>Export selected preferences</button> Leave selections empty to export every supported preference. Use each row's Export preference checkbox to select fields.</p>
+    <label>Profile file <input type="file" accept=".json,application/json" data-profile-file></label>
+    <button class="btn btn--ghost" type="button" data-profile-import>Review imported profile</button>
+    <p><button class="btn btn--ghost" type="button" data-presets>Compare outcome presets</button> <button class="btn btn--ghost" type="button" data-history>View settings history</button></p>
+    <div data-preset-items></div><ol data-history-items></ol>
+    <p data-tools-status role="status" aria-live="polite"></p>
+  </details>
+  <section class="settings-all-index panel" aria-labelledby="settings-all-find">
+    <h2 id="settings-all-find">Find a setting</h2>
+    <form class="settings-all-filters" id="settings-all-filter-form" method="get" action="/settings/all">
+      <label class="settings-all-field" for="settings-all-search">Search by name or description
+        <input class="input" id="settings-all-search" name="q" type="search" maxlength="100" value="{{ query }}"
+               placeholder="Safety, retention, alerts…" aria-controls="settings-all-groups">
+      </label>
+      <label class="settings-all-field" for="settings-all-group">Show
+        <select class="select" id="settings-all-group" name="group" aria-controls="settings-all-groups">
+          <option value="">All groups</option>
+          {% for g in groups %}<option value="{{ g.slug }}" {% if g.slug == group %}selected{% endif %}>{{ g.name }}</option>{% endfor %}
+          <option value="modules">Modules</option>
+        </select>
+      </label>
+      <label class="settings-all-check" for="settings-all-changed">
+        <input type="checkbox" id="settings-all-changed" name="changed" value="1" {% if only_changed %}checked{% endif %}> Only settings changed here
+      </label>
+      <button class="btn btn--ghost" type="submit">Find</button>
+    </form>
+    <p class="muted" id="settings-all-filter-status" role="status" aria-live="polite"></p>
+  </section>
+
+  <details class="panel settings-all-about">
+    <summary>What can't be changed here</summary>
+    <p class="muted">
+      A setting marked &ldquo;Set by your server's deployment settings&rdquo; is fixed by whoever
+      runs your server, so it can only be changed there. So are the main encryption key and the
+      folder Lightwork keeps its files in: they protect or start Lightwork itself.
+    </p>
+    <p class="muted">
+      Sign-in, administrator and key settings are checked before they are saved. A change that
+      would lock you out, or leave saved records unreadable, is refused until its test passes. You are asked to confirm before you are signed out.
+    </p>
+    <p class="muted">
+      AI service keys, models, the spending cap per task, features, abilities, connections and plugins
+      have their own sections on the <a href="/settings">Settings</a> page and their own pages.
+      The sign-in details of the six chat apps are on the Channels page. The security suite's on and off
+      switches are on the Security page.
+    </p>
+  </details>
+
+  <div class="panel" role="status" aria-live="polite" id="settings-all-status" hidden></div>
+  <section class="panel" id="settings-original-requests" aria-labelledby="settings-original-title">
+    <h2 id="settings-original-title">My original settings requests</h2>
+    <p class="muted">Read the original outcome after an interrupted save. Current values, service restarts and independent approvals are checked separately. Reading an original request never repeats it.</p>
+    <label for="settings-original-choice">Recent request</label>
+    <select class="select" style="max-width:100%;min-width:0;width:100%" id="settings-original-choice"><option value="">Choose a request</option></select>
+    <button class="btn btn--ghost" type="button" id="settings-original-refresh">Refresh requests</button>
+    <button class="btn btn--ghost" type="button" id="settings-original-read" disabled>Read original result</button>
+    <button class="btn btn--ghost" type="button" id="settings-original-previous" disabled>Previous requests</button>
+    <button class="btn btn--ghost" type="button" id="settings-original-next" disabled>Older requests</button>
+    <p class="muted" id="settings-original-page"></p>
+    <p id="settings-original-status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel" id="settings-runtime-status" aria-labelledby="settings-runtime-title">
+    <h2 id="settings-runtime-title">Saved and running configuration</h2>
+    <p data-runtime-summary role="status">Check which running services have acknowledged saved changes.</p>
+    <button class="btn btn--ghost" type="button" data-runtime-refresh>Check configuration status</button>
+    <div data-runtime-items></div>
+  </section>
+  {% include "_company_signin_migration.html" %}
+  {% include "_company_saml_setup.html" %}
+  <p><label><input type="checkbox" id="settings-recovery-opt"> Keep encrypted recovery copies of ordinary settings drafts</label>
+    <span class="muted">Credentials, policy controls and imported documents are excluded. Review recovered drafts before saving.</span></p>
+  <div id="settings-all-groups" data-rows-url="/settings/all/rows"
+       data-request-context="{{ settings_request_context }}"
+       {% if focus_id %}data-focus="{{ focus_id }}"{% endif %} {% if served %}data-served="1"{% endif %}>
+  {% for g in groups %}
+  <section class="settings-all-group" data-group="{{ g.slug }}" data-loaded="{{ '1' if g.loaded else '0' }}"
+           aria-labelledby="group-{{ g.slug }}">
+    <div class="section-head"><h2 id="group-{{ g.slug }}">{{ g.name }}</h2></div>
+    <div class="panel">
+      <p class="muted settings-all-lead">{{ g.intro }}</p>
+      <p class="settings-all-load" data-group-load {% if g.loaded %}hidden{% endif %}>
+        <a class="btn btn--ghost" href="/settings/all?group={{ g.slug }}#group-{{ g.slug }}"
+           data-load-group="{{ g.slug }}">Show the {{ g.count }} settings in {{ g.name }}</a>
+        {% if g.changed %}<span class="muted">{{ g.changed }} changed here</span>{% endif %}
+      </p>
+      {% if g.subgroups | length > 1 %}
+      <p class="settings-all-part-pick">
+        <label for="part-{{ g.slug }}">Show
+          <select class="select" id="part-{{ g.slug }}" data-subgroup-pick>
+            <option value="">Everything in {{ g.name }}</option>
+            {% for sub in g.subgroups %}<option value="{{ sub.slug }}">{{ sub.name }}</option>{% endfor %}
+          </select>
+        </label>
+      </p>
+      {% endif %}
+      <div data-group-rows>
+        <div data-rows="">{% for s in g.settings if not s.subgroup %}{{ setting_row(s, g) }}{% endfor %}</div>
+        {% for sub in g.subgroups %}
+        {% set part = g.settings | selectattr('subgroup_slug', 'equalto', sub.slug) | list %}
+        {% if part %}{{ part_block(g, sub, sub.order, part) }}{% endif %}
+        {% endfor %}
+      </div>
+      <p class="settings-all-group-actions">
+        <button class="btn btn--primary" type="button" data-save-group="{{ g.slug }}">Save changes in {{ g.name }}</button>
+        <button class="btn btn--ghost" type="button" data-reset-group="{{ g.slug }}">Reset {{ g.name }} to product defaults</button>
+        <button class="btn btn--ghost" type="button" data-inherit-group="{{ g.slug }}">Use inherited values in {{ g.name }}</button>
+      </p>
+    </div>
+  </section>
+  {% endfor %}
+
+  <section class="settings-all-group" data-group="modules" aria-labelledby="group-modules">
+    <div class="section-head"><h2 id="group-modules">Modules</h2></div>
+    <div class="panel">
+      <p class="muted settings-all-lead">Turn whole parts of Lightwork on or off. Turning one on also turns on the parts it needs.</p>
+      {% if not modules %}
+      <p class="muted">No modules can be switched from here.</p>
+      {% endif %}
+      {% for m in modules %}
+      <div class="settings-all-row" data-module="{{ m.section }}"
+           data-search="{{ (m.label ~ ' module ' ~ m.needs | join(' ')) | lower }}" data-source="{{ 'here' }}">
+        <div class="settings-all-about-row">
+          <span class="settings-all-label" id="mod-{{ loop.index }}-label">{{ m.label }}</span>
+          {% if m.needs %}<p class="muted settings-all-help" id="mod-{{ loop.index }}-help">Also turns on: {{ m.needs | join(', ') }}</p>{% endif %}
+          <p class="settings-all-meta">
+            <span>Now: <strong data-value-text>{% if m.enabled is none %}Unknown{% elif m.enabled %}On{% else %}Off{% endif %}</strong></span>
+          </p>
+        </div>
+        <div class="settings-all-control">
+          <label class="settings-all-switch" for="mod-{{ loop.index }}">
+            <input type="checkbox" role="switch" id="mod-{{ loop.index }}" data-module-toggle
+                   aria-labelledby="mod-{{ loop.index }}-label"
+                   {% if m.needs %}aria-describedby="mod-{{ loop.index }}-help"{% endif %}
+                   {% if m.enabled %}checked{% endif %} {% if m.enabled is none %}disabled{% endif %}>
+            <span>On</span>
+          </label>
+          <p class="muted settings-all-row-status" role="status" aria-live="polite" data-row-status></p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  </div>
+
+  <p class="muted" id="settings-all-empty" hidden>No settings match. Clear the search to see every setting.</p>
+  <script src="/static/lightwork-settings-runtime.js" defer></script>
+  <script src="/static/lightwork-settings-catalog-requests.js" defer></script>
+  <script src="/static/lightwork-settings-review.js" defer></script>
+  <script src="/static/lightwork-settings-all.js" defer></script>
+  <script src="/static/lightwork-company-signin-migration.js" defer></script>
+  <script src="/static/lightwork-company-saml-setup.js" defer></script>
+  <script src="/static/lightwork-theme-preview.js" defer></script>
+{% endblock %}

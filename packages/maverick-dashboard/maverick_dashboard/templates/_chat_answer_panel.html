@@ -1,0 +1,187 @@
+{# Shared full-page/live result projection. All values remain autoescaped. #}
+<section id="answer-panel" data-goal="{{ goal.id }}" data-updated-at="{{ goal.updated_at }}"
+         data-version="{{ answer_version|default('') }}" data-context="{{ conversation_context }}"
+         data-run-details-version="{{ answer_run_details_version|default('') }}"
+         data-status="{{ goal.status }}" data-structured="{{ '1' if rendered and rendered.structured else '0' }}"
+         data-operate="{{ '1' if can_operate else '0' }}">
+    {% if handoff_closed %}<p id="handoff-closed-notice" role="status">{{ ui('Responsibility was accepted by {actor}. This original conversation is closed to further execution and its history remains private.', actor=handoff_closed.actor) }} <a href="/task-handoffs">{{ ui("View the handoff receipt") }}</a>.</p>{% endif %}
+    {% set preparation_text = submission.detail.message if submission is defined and submission else '' %}
+    <div id="result-section" class="answer" style="display: {% if goal.result and not stop and goal.result != preparation_text %}block{% else %}none{% endif %};">
+      {% if not stop %}
+      {% if rendered and rendered.structured %}
+        {% include "_deliverable.html" %}
+        <p id="deliverable-stale" class="muted" style="display: none; margin-top: var(--space-3);">
+          {{ ui("Deliverable updated —") }} <a href="/chat/goal/{{ goal.id }}">{{ ui("reload to view it") }}</a>.
+        </p>
+      {% else %}
+        <span class="sr-only" id="answer-result-label">{{ ui("Goal result") }}</span><div id="result" tabindex="0" aria-labelledby="answer-result-label" class="prose" data-markdown lang="und" dir="auto" data-user-content>{{ goal.result or '' }}</div>
+      {% endif %}
+      <div id="answer-run-details-slot">{% include "_chat_answer_run_details.html" %}</div>
+      {# How far to trust this answer, read from the task's own record:
+         whether the extra check reviewed it, which agent version answered,
+         and whether the backup model stood in (answer_checks.py). #}
+      {% if answer_check %}
+      <div class="answer-facts" id="answer-facts">
+        <p class="answer-check" id="answer-check" data-state="{{ answer_check.state }}">
+          <span class="answer-check__label">{{ ui(answer_check.label) }}</span><span class="answer-check__reason">{{ ui(answer_check.reason) }}</span>
+        </p>
+        {% if answer_fallback %}<p class="answer-fallback" id="answer-fallback">{{ ui('The backup AI model was used for this answer because the main one was unavailable.') }}</p>{% endif %}
+        {% if answer_agent %}
+        <p class="answer-agent" id="answer-agent">
+          {# Owner glossary: a built-in pack is a specialist; anything else is an agent. #}
+          {% if answer_agent.kind == 'specialist' %}{{ ui('Specialist history: {agent}', agent=answer_agent.agent) }}{% else %}{{ ui('Agent history: {agent}', agent=answer_agent.agent) }}{% endif %} ·
+          {% if answer_agent.updated_text %}{{ ui('Last recorded change: {date}', date=answer_agent.updated_text) }}{% else %}{{ ui('no recorded changes') }}{% endif %}
+        </p>
+        {% if answer_agent.history_note %}<p class="muted">{{ ui(answer_agent.history_note) }}</p>{% endif %}
+        {% if answer_agent.since_last_use %}
+        {# The first answer after a change says so, once; hiding it is remembered in this browser. #}
+        <div class="answer-agent__notice" id="answer-agent-notice" role="note" data-notice-key="agent-change:{{ answer_agent.agent }}:{{ answer_agent.since_last_use[0].ts }}">
+          <p>{% if answer_agent.kind == 'specialist' %}{{ ui('This specialist changed since you last used it:') }}{% else %}{{ ui('This agent changed since you last used it:') }}{% endif %}
+            {% for row in answer_agent.since_last_use %}{{ row.date_text }}, {{ row.changes | join('; ') }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+          <button type="button" class="btn btn--ghost" data-hide-notice>{{ ui('Hide this notice') }}</button>
+        </div>
+        {% endif %}
+        {% if answer_agent.changed_since %}
+        <p class="answer-agent__since" id="answer-agent-since">{% if answer_agent.kind == 'specialist' %}{{ ui('This specialist has changed since this answer:') }}{% else %}{{ ui('This agent has changed since this answer:') }}{% endif %}
+          {% for row in answer_agent.changed_since %}{{ row.date_text }}, {{ row.changes | join('; ') }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+        {% endif %}
+        {% if answer_agent.changes %}
+        <details class="answer-agent__changes">
+          <summary>{% if answer_agent.kind == 'specialist' %}{{ ui('What changed in this specialist') }}{% else %}{{ ui('What changed in this agent') }}{% endif %}</summary>
+          <ul>{% for row in answer_agent.changes %}<li>{{ row.date_text }}: {{ row.changes | join('; ') }}</li>{% endfor %}</ul>
+        </details>
+        {% endif %}
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if deliverable and deliverable.gate %}
+        <div class="signoff" id="signoff">
+          {% if signoff %}
+            <div class="signoff__head">
+              <span class="badge {{ 'success' if signoff.decision == 'approved' else 'failure' }}">{{ signoff.decision | humanize }}</span>
+              <span class="muted">by {{ (signoff.decided_by | identity).name if signoff.decided_by else 'a reviewer' }} · <span data-product-date="{{ signoff.created_at }}"></span></span>
+            </div>
+            {% if signoff.note %}<p class="signoff__note muted" lang="und" dir="auto" data-user-content>{{ signoff.note }}</p>{% endif %}
+            {% if signoff.decision == 'approved' and rendered.table %}
+              <a class="btn btn--ghost" href="/api/v1/goals/{{ goal.id }}/deliverable.csv">{{ ui("Download for hand-off (CSV)") }}</a>
+            {% endif %}
+          {% elif goal.status == 'done' and can_operate %}
+            <p class="signoff__prompt">{{ ui('A manager must approve this before it is acted on.' if deliverable.gate == 'approval' else 'A reviewer must approve this before it is acted on.') }}</p>
+            <textarea lang="und" dir="auto" data-user-content id="signoff-note" class="input" rows="2" placeholder="Optional review note…" aria-label="Review note"></textarea>
+            <div class="signoff__actions">
+              <button id="signoff-approve" class="btn btn--primary" type="button" data-decision="approved">{{ ui("Approve") }}</button>
+              <button id="signoff-reject" class="btn btn--ghost" type="button" data-decision="rejected">{{ ui("Reject") }}</button>
+            </div>
+          {% else %}
+            <p class="signoff__prompt muted">{% if goal.status == 'done' %}An authorized task owner must review this result before sharing.{% else %}{{ ui('Approval opens when the result is finished.') }}{% endif %}</p>
+          {% endif %}
+          <div class="signoff__actions">
+            <button id="signoff-copilot" class="btn btn--ghost" type="button">{{ ui("Review result with Copilot") }}</button>
+            <button id="signoff-recover" class="btn btn--ghost" type="button" hidden>{{ ui("Check my original decision") }}</button>
+          </div>
+          <p id="signoff-msg" role="status" aria-live="polite" class="muted" style="min-height: 1em; margin: var(--space-2) 0 0;"></p>
+        </div>
+      {% endif %}
+      {% if goal.status in ('done', 'blocked', 'failed') %}
+        {% if goal.status in ('blocked', 'failed') %}
+        <p><a class="btn btn--ghost" href="/tasks/{{ goal.id }}/diagnostics">{{ ui("Review safe task diagnostics") }}</a> · <a class="btn btn--ghost" href="/help?task={{ goal.id }}#issue-report">{{ ui("Prepare support report") }}</a> · <a class="btn btn--ghost" href="/help?task={{ goal.id }}#get-help" data-get-help>{{ ui('Get help from a person') }}</a></p>
+        {% endif %}
+        {# Always-available thumbs up/down (unlike the gated approval above): any
+           finished result can be rated, and the verdict grounds a real outcome
+           into the learning loop. #}
+        {% if can_operate %}<div id="feedback" class="feedback" role="group" aria-label="{{ ut('Rate this result') }}" lang="{{ ul('Rate this result') }}">
+          <span class="feedback__q muted">{{ ui("Was this useful?") }}</span>
+          <button id="feedback-up" class="btn btn--ghost" type="button" style="min-height:44px;min-width:44px;"
+                  data-rating="up" aria-label="{{ ut('Yes, useful') }}" lang="{{ ul('Yes, useful') }}">👍</button>
+          <button id="feedback-down" class="btn btn--ghost" type="button" style="min-height:44px;min-width:44px;"
+                  data-rating="down" aria-label="{{ ut('No, not useful') }}" lang="{{ ul('No, not useful') }}">👎</button>
+          <button id="feedback-review" class="btn btn--ghost" type="button" style="min-height:44px;">{{ ui('Review saved feedback') }}</button>
+          <button id="feedback-copilot" class="btn btn--ghost" type="button" style="min-height:44px;">{{ ui('Give feedback with Copilot') }}</button>
+          <div id="feedback-saved" class="muted" style="flex-basis:100%;overflow-wrap:anywhere;"></div>
+          <form id="feedback-form" hidden style="flex-basis:100%;min-width:0;">
+            <p id="feedback-choice" class="muted"></p>
+            <div class="feedback-reason__chips" role="group" aria-labelledby="feedback-reason-q">
+              <p id="feedback-reason-q">{{ ui('What was wrong? This is optional.') }}</p>
+              {% for key, label in feedback_reasons %}
+              <button type="button" class="btn btn--ghost feedback-reason__chip" data-reason="{{ key }}" aria-pressed="false">{{ ui(label) }}</button>
+              {% endfor %}
+            </div>
+            <label for="feedback-note">{{ ui('What should be better? (optional)') }}</label>
+            <textarea id="feedback-note" class="input" rows="3" maxlength="500" lang="und" dir="auto" data-user-content
+                      aria-describedby="feedback-note-help" style="width:100%;box-sizing:border-box;"></textarea>
+            <p id="feedback-note-help" class="muted">{{ ui("Up to 500 characters. Describe what would help. Feedback does not edit this answer or confirm that training completed.") }}</p>
+            <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);">
+              <button id="feedback-save" class="btn btn--primary" type="submit" style="min-height:44px;">{{ ui('Save feedback') }}</button>
+              <button id="feedback-cancel" class="btn btn--ghost" type="button" style="min-height:44px;">{{ ui('Cancel') }}</button>
+            </div>
+          </form>
+          <button id="feedback-recover" class="btn btn--ghost" type="button" hidden style="min-height:44px;">{{ ui('Check my original feedback') }}</button>
+          <span id="feedback-msg" role="status" aria-live="polite" class="muted" style="flex-basis:100%;min-height:1em;"></span>
+          <p id="feedback-hand-off" hidden style="flex-basis:100%;margin:0;">{{ ui("Still not right? A person can help, with this task attached.") }} <a class="btn btn--ghost" href="/help?task={{ goal.id }}#get-help" data-get-help>{{ ui('Get help from a person') }}</a></p>
+        </div>{% endif %}
+        {% if goal.result %}<div class="answer-actions" role="group" aria-label="{{ ut('Answer actions') }}">
+          <button id="copy-result" class="btn btn--ghost" type="button">{{ ui('Copy answer') }}</button>
+          <button id="print-result" class="btn btn--ghost" type="button">{{ ui('Print conversation') }}</button>
+          {% if can_download_chat_answer %}<a id="download-word-result" class="btn btn--ghost" href="/chat/goal/{{ goal.id }}/download.docx" download="lightwork-answer-{{ goal.id }}.docx">{{ ui('Download Word document') }}</a>
+          <a id="download-result" class="btn btn--ghost" href="/chat/goal/{{ goal.id }}/download.md" download="lightwork-answer-{{ goal.id }}.md">{{ ui('Download Markdown') }}</a>{% endif %}
+          <button id="read-aloud" class="btn btn--ghost" type="button"
+                  data-voice-only="{{ '1' if voice_only else '0' }}"
+                  aria-label="{{ ut('Read the result aloud') }}" aria-pressed="false" lang="{{ ul('Read the result aloud') }}">🔊 {{ ui("Read aloud") }}</button>
+          {% if can_operate %}<button id="edit-toggle" class="btn btn--ghost" type="button">✎ {{ ui("Edit & save") }}</button>{% endif %}
+          {% if goal.status == 'done' and can_operate %}<button id="share-open" class="btn btn--ghost" type="button" aria-controls="share-panel" aria-expanded="false">{{ ui('Share') }}</button>{% endif %}
+        </div>
+        <textarea id="saved-answer-source" class="input" rows="8" style="width:100%" readonly hidden aria-label="{{ ut('Saved answer text to copy') }}">{{ chat_answer_text }}</textarea>
+        <span id="answer-action-msg" class="muted" role="status" aria-live="polite"></span>
+        {% if can_download_chat_answer %}<p class="muted">{{ ui('Word keeps your answer editable with headings and lists. Complex layouts remain as text; Markdown keeps the original formatting.') }}</p>{% endif %}
+        {% if chat_answer_download_note %}<p class="muted">{{ chat_answer_download_note }}</p>{% endif %}{% endif %}
+        {% if can_operate %}
+        <div id="edit-box" style="display:none; margin-top: var(--space-3);">
+          <textarea lang="und" dir="auto" data-user-content id="edit-text" class="input" rows="8" aria-label="Edit the deliverable"
+                    style="width:100%;">{{ goal.result or '' }}</textarea>
+          <div style="display:flex; gap:var(--space-2); margin-top: var(--space-2);">
+            <button id="edit-save" class="btn btn--primary" type="button">{{ ui("Save my version") }}</button>
+            <span id="edit-msg" role="status" aria-live="polite" class="muted"></span>
+          </div>
+          <p class="muted" style="font-size: var(--text-sm); margin-top: var(--space-2);">{{ ui("Your revision is saved as the current result. Any learning use is separate and governed by your organization's policy; saving does not mean training completed.") }}</p>
+        </div>
+        {% endif %}
+      {% endif %}
+      {% endif %}
+    </div>
+    {% if artifacts %}
+    <div class="artifacts" aria-label="{{ ut('Files and results') }}" lang="{{ ul('Files and results') }}">
+      <div class="artifacts__head">{{ ui("Files and results") }} <span class="badge">{{ artifacts|length }}</span></div>
+      {% for a in artifacts %}
+        <div class="artifact">
+          <div class="artifact__head">
+            <span class="artifact__title" lang="und" dir="auto" data-user-content>{{ a.title or 'Untitled' }}</span>
+            <span class="badge">{{ ui({'markdown': 'Document', 'table': 'Table', 'text': 'Text', 'code': 'Code', 'json': 'Data', 'csv': 'Table'}.get(a.kind, a.kind | humanize)) }}</span>
+            <span class="muted artifact__ver">{{ ui('Version {version} of {total}', version=a.version, total=a.versions) if a.versions > 1 else ui('Version {version}', version=a.version) }}</span>
+          </div>
+          {% if a.table %}
+            <div class="deliverable__table-wrap">
+              <table class="deliverable__table">
+                <thead><tr>{% for h in a.table.headers %}<th scope="col" lang="und" dir="auto" data-user-content>{{ h }}</th>{% endfor %}</tr></thead>
+                <tbody>
+                  {% for row in a.table.rows %}<tr>{% for cell in row %}<td lang="und" dir="auto" data-user-content>{{ cell }}</td>{% endfor %}</tr>{% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% elif a.kind in ('code', 'json', 'csv') %}
+            <pre class="artifact__body" tabindex="0" lang="und" dir="auto" data-user-content><code>{{ a.prose }}</code></pre>
+          {% else %}
+            <div class="artifact__body prose" tabindex="0" data-markdown lang="und" dir="auto" data-user-content>{{ a.prose }}</div>
+          {% endif %}
+          {% if a.versions > 1 %}
+            <details class="artifact__history" data-goal="{{ goal.id }}" data-title="{{ a.title }}">
+              <summary>{{ ui('Version history ({count})',count=a.versions) }}</summary>
+              <div class="artifact__history-body muted">{{ ui("Loading…") }}</div>
+            </details>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if can_operate %}<p class="print-control"><a class="btn btn--ghost" href="/deliverable-bundles?goal={{ goal.id }}">{{ ui("Prepare selected deliverable bundle") }}</a></p>{% endif %}
+</section>

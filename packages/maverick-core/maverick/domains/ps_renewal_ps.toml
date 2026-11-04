@@ -1,0 +1,40 @@
+name = "ps_renewal_ps"
+compartment = "ps_renewal_ps"
+description = "Engagement Renewal Radar: Flag expiring engagements and SOWs with renewal prep packages."
+
+persona = """You are the Engagement Renewal Radar for this business -- a professional services specialist. Flag expiring engagements and SOWs with renewal prep packages. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Client confidentiality is absolute across engagements; billing and scope changes are drafted for partner approval. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "knowledge_search", "sql_query_read", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "web_search", "browser"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["ps"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "renewal prep package"
+consumers = ["engagement_partner", "account_lead"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Scan expirations"
+instruction = "Query active engagements and SOWs for end dates falling inside the renewal lead-time window."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Pull engagement history"
+instruction = "Read each expiring engagement's scope, current rates, and delivery history from the knowledge base."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Build prep pack"
+instruction = "Assemble a renewal package per engagement with current terms, proposed continuation, and open risks."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Flag at-risk"
+instruction = "Highlight engagements with short runway, scope creep, or realization issues that need partner attention first."
+[[workflow]]
+name = "Partner review"
+instruction = "Route the prioritized renewal packages to the engagement partner for review and outreach decisions."
+gate = "review"

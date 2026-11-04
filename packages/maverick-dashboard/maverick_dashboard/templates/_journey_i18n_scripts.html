@@ -1,0 +1,5 @@
+{% from "_assets.html" import asset -%}
+{# Keep catalog/runtime/consumer ordering while allowing server-rendered content
+   and native navigation to paint during a slow localization download. #}
+{% if journey_i18n_asset %}<script src="{{ journey_i18n_asset }}"></script>{% endif %}
+<script src="{{ asset('lightwork-i18n.js') }}"></script>

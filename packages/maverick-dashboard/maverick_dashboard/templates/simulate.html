@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Test a safety rule · Lightwork{% endblock %}
+{% block head_extra %}
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+  .research-simulation-table { table-layout: fixed; }
+  .research-simulation-table td:first-child { width: 13rem; }
+  .research-simulation-table td:last-child { overflow-wrap: anywhere; }
+  .sim-form { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); align-items: end; }
+  .sim-form label { display: grid; gap: .3rem; }
+  @media (max-width: 480px) {
+    .research-simulation-table td:first-child { width: 38%; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+  {{ hero('Safety', 'Test a safety rule',
+          lede='See whether Lightwork would allow an action, block it, or ask a person first. Nothing actually runs.') }}
+
+  <div class="panel">
+    <form method="get" action="/simulate" class="sim-form" id="sim-form">
+      <label for="sim-surface">Where the action happens
+        <select class="select" id="sim-surface" name="surface">
+          {% for value, label in surfaces %}
+          <option value="{{ value }}" {{ 'selected' if (surface or 'browser') == value else '' }}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label for="sim-action">What the agent does
+        <select class="select" id="sim-action" name="action" required>
+          {% for group in action_groups %}
+          <optgroup label="{{ group.label }}" data-surface="{{ group.surface }}">
+            {% for value, label in group.actions %}
+            <option value="{{ value }}" data-surface="{{ group.surface }}" {{ 'selected' if action == value and (surface or 'browser') == group.surface else '' }}>{{ label }}</option>
+            {% endfor %}
+          </optgroup>
+          {% endfor %}
+        </select>
+      </label>
+      <label for="sim-target">What it acts on (web address or text, optional)
+        <input class="input" type="text" id="sim-target" name="target" value="{{ target or '' }}" maxlength="500" placeholder="For example: Pay now">
+      </label>
+      <button class="btn btn--primary" type="submit">Test this action</button>
+    </form>
+  </div>
+
+  {% if plain and not plain.error %}
+  <div class="panel" role="status" data-testid="simulation-boundary">
+    <h2><span class="badge">Simulation only</span></h2>
+    <p><strong>No live action ran and no external system changed.</strong></p>
+    <p>This preview is a test. It cannot be accepted as a live business outcome.</p>
+  </div>
+  <div class="panel">
+    <h2>Decision: <span class="badge {{ plain.badge }}">{{ plain.decision }}</span></h2>
+    <table>
+      <tbody>
+        <tr><th scope="row">Where</th><td>{{ plain.surface }}</td></tr>
+        <tr><th scope="row">Action</th><td>{{ plain.action }}</td></tr>
+        {% if plain.target %}<tr><th scope="row">Acts on</th><td>{{ plain.target }}</td></tr>{% endif %}
+        <tr><th scope="row">Risk</th><td><span class="badge {{ 'danger' if plain.risk == 'High' else '' }}">{{ plain.risk }}</span></td></tr>
+        <tr><th scope="row">Safety setting</th><td>{{ plain.setting }} <span class="muted">(your administrator chooses this when installing Lightwork)</span></td></tr>
+        <tr><th scope="row">Why</th><td>{{ plain.why }}</td></tr>
+        <tr><th scope="row">Live effect</th><td>No</td></tr>
+        <tr><th scope="row">Business outcome</th><td>Not eligible for acceptance</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% elif plain and plain.error %}
+  <div class="panel" role="alert" data-testid="simulation-boundary">
+    <p><span class="badge danger">{{ plain.error }}</span></p>
+    <p>Nothing ran. A test like this can never count as a live business outcome.</p>
+  </div>
+  {% endif %}
+
+  <details class="panel" data-testid="research-simulation-launcher" {{ 'open' if research_result or research_error else '' }}>
+    <summary><strong>Run a practice study (sample data only)</strong></summary>
+    <p>Lightwork runs a short made-up study so you can see how approval, cost tracking and checking work. It never uses your data or connects to anything.</p>
+    <form method="post" action="/simulate/research" class="sim-form">
+      <label for="sim-research-component">Study type
+        <select class="select" id="sim-research-component" name="component">
+          <option value="tabular" {{ 'selected' if research_component == 'tabular' else '' }}>Simple study</option>
+          <option value="feature-prefix" {{ 'selected' if research_component == 'feature-prefix' else '' }}>Study that falls back step by step</option>
+        </select>
+      </label>
+      <button class="btn btn--primary" type="submit">Approve and run practice study</button>
+    </form>
+  </details>
+
+  {% if research_result %}
+  <div class="panel" role="status" data-testid="research-simulation-boundary">
+    <h2><span class="badge">Simulation only</span> Practice study finished</h2>
+    <p><strong>No live action ran and no external system changed.</strong></p>
+    <p>This result comes from made-up sample data. It cannot be accepted as a live business outcome.</p>
+    <table class="research-simulation-table" data-testid="research-simulation-table">
+      <tbody>
+        <tr><th scope="row">Sample data</th><td>Built-in made-up software world; no customer or provider data</td></tr>
+        <tr><th scope="row">Result</th><td><span class="badge {{ 'ok' if research_result.success else 'warn' }}">{{ 'Finished' if research_result.success else (research_result.status | humanize) }}</span></td></tr>
+        <tr><th scope="row">Kept separate</th><td>{{ 'Yes' if research_result.component_process_isolated else 'No' }}</td></tr>
+        <tr><th scope="row">Result checked</th><td>{{ 'Passed' if research_result.oracle_passed else 'Did not pass' }}</td></tr>
+        <tr><th scope="row">Approved by</th><td>{{ research_result.approver_principal | identity }} (a named person must approve)</td></tr>
+        <tr><th scope="row">Step history</th><td>{{ 'Complete' if research_result.action_lineage_valid else 'Incomplete' }}</td></tr>
+        <tr><th scope="row">Cost</th><td>$0 (practice only)</td></tr>
+        <tr><th scope="row">Live effect</th><td>No</td></tr>
+        <tr><th scope="row">Business outcome</th><td>Not eligible for acceptance</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% elif research_error %}
+  <div class="panel" role="alert" data-testid="research-simulation-boundary">
+    <p><span class="badge danger">{{ research_error }}</span></p>
+    <p>No practice or live action was completed.</p>
+  </div>
+  {% endif %}
+
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var surface = document.getElementById('sim-surface');
+    var action = document.getElementById('sim-action');
+    if (!surface || !action) return;
+    function sync() {
+      var chosen = surface.value, firstVisible = null, keep = false;
+      Array.prototype.forEach.call(action.querySelectorAll('optgroup'), function (g) {
+        var show = g.getAttribute('data-surface') === chosen;
+        g.hidden = !show; g.disabled = !show;
+      });
+      Array.prototype.forEach.call(action.options, function (o) {
+        if (o.getAttribute('data-surface') !== chosen) return;
+        if (!firstVisible) firstVisible = o;
+        if (o.selected) keep = true;
+      });
+      if (!keep && firstVisible) firstVisible.selected = true;
+    }
+    surface.addEventListener('change', sync);
+    sync();
+  })();
+  </script>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}About · DSAR Concierge{% endblock %}
+{% block content %}
+  <h1>The agent on its own — and what Lightwork adds</h1>
+  <p class="sub">{{ caps_summary.mode }}</p>
+
+  <div class="panel">
+    <h2>Active in this mode</h2>
+    {% for label in caps_summary.active %}
+      <div class="evt">✓ {{ label }}</div>
+    {% endfor %}
+  </div>
+
+  {% if caps_summary.gated %}
+  <div class="panel">
+    <h2>Added when running with the Lightwork platform</h2>
+    {% for label in caps_summary.gated %}
+      <div class="evt">◇ {{ label }}</div>
+    {% endfor %}
+    <p class="note">These turn on when the Lightwork platform is installed and
+      <code>DSAR_STANDALONE</code> is not set.</p>
+  </div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lightwork.ai/schemas/native-consent-authority-refresh-v1.schema.json",
+  "title": "Lightwork native consent authority refresh",
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reference": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "sdkVersion": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+    "platform": {
+      "type": "string",
+      "enum": ["android", "fireos", "ios", "roku", "tizen", "tvos", "webos"]
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request", "response"],
+  "properties": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "device_id", "expected_revision", "application_ref", "tenant_id",
+        "application_id", "platform", "install_subject_sha256", "public_key_hex",
+        "attestation_nonce", "attestation_evidence_sha256",
+        "attestation_material_b64url", "issued_at", "expires_at"
+      ],
+      "properties": {
+        "device_id": { "$ref": "#/$defs/reference" },
+        "expected_revision": { "$ref": "#/$defs/revision" },
+        "application_ref": { "$ref": "#/$defs/reference" },
+        "tenant_id": { "$ref": "#/$defs/reference" },
+        "application_id": { "type": "string", "minLength": 3, "maxLength": 255 },
+        "platform": { "$ref": "#/$defs/platform" },
+        "install_subject_sha256": { "$ref": "#/$defs/digest" },
+        "public_key_hex": { "$ref": "#/$defs/digest" },
+        "attestation_nonce": { "$ref": "#/$defs/reference" },
+        "attestation_evidence_sha256": { "$ref": "#/$defs/digest" },
+        "attestation_material_b64url": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 87384
+        },
+        "issued_at": { "type": "number", "exclusiveMinimum": 0 },
+        "expires_at": { "type": "number", "exclusiveMinimum": 0 },
+        "sdk_version": { "$ref": "#/$defs/sdkVersion" }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "device"],
+      "properties": {
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema", "application_ref", "tenant_id", "property_id", "application_id",
+            "platform", "public_client_credential_sha256", "public_client_revision",
+            "public_client_record_sha256", "property_revision", "property_sha256",
+            "publication_sha256", "publication_bundle_sha256", "configuration_sha256",
+            "policy_id", "policy_version", "policy_sha256", "standards_contract_sha256",
+            "minimum_sdk_version", "default_locale", "locales", "authority_sha256"
+          ],
+          "properties": {
+            "schema": { "const": "lightwork.native-consent-application.v1" },
+            "application_ref": { "$ref": "#/$defs/reference" },
+            "tenant_id": { "$ref": "#/$defs/reference" },
+            "property_id": { "$ref": "#/$defs/reference" },
+            "application_id": { "type": "string", "minLength": 3, "maxLength": 255 },
+            "platform": { "$ref": "#/$defs/platform" },
+            "public_client_credential_sha256": { "$ref": "#/$defs/digest" },
+            "public_client_revision": { "$ref": "#/$defs/revision" },
+            "public_client_record_sha256": { "$ref": "#/$defs/digest" },
+            "property_revision": { "$ref": "#/$defs/revision" },
+            "property_sha256": { "$ref": "#/$defs/digest" },
+            "publication_sha256": { "$ref": "#/$defs/digest" },
+            "publication_bundle_sha256": { "$ref": "#/$defs/digest" },
+            "configuration_sha256": { "$ref": "#/$defs/digest" },
+            "policy_id": { "$ref": "#/$defs/reference" },
+            "policy_version": { "$ref": "#/$defs/revision" },
+            "policy_sha256": { "$ref": "#/$defs/digest" },
+            "standards_contract_sha256": { "$ref": "#/$defs/digest" },
+            "minimum_sdk_version": { "$ref": "#/$defs/sdkVersion" },
+            "default_locale": { "type": "string", "minLength": 2, "maxLength": 35 },
+            "locales": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 2, "maxLength": 35 }
+            },
+            "authority_sha256": { "$ref": "#/$defs/digest" }
+          }
+        },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "device_id", "application_ref", "application_authority_sha256", "tenant_id",
+            "application_id", "platform", "install_subject_sha256", "public_key_hex",
+            "key_revision", "sdk_version", "revision", "attestation_authority",
+            "attestation_evidence_sha256", "attestation_valid_until", "created_at"
+          ],
+          "properties": {
+            "device_id": { "$ref": "#/$defs/reference" },
+            "application_ref": { "$ref": "#/$defs/reference" },
+            "application_authority_sha256": { "$ref": "#/$defs/digest" },
+            "tenant_id": { "$ref": "#/$defs/reference" },
+            "application_id": { "type": "string", "minLength": 3, "maxLength": 255 },
+            "platform": { "$ref": "#/$defs/platform" },
+            "install_subject_sha256": { "$ref": "#/$defs/digest" },
+            "public_key_hex": { "$ref": "#/$defs/digest" },
+            "key_revision": { "$ref": "#/$defs/revision" },
+            "sdk_version": { "$ref": "#/$defs/sdkVersion" },
+            "revision": { "$ref": "#/$defs/revision" },
+            "attestation_authority": { "$ref": "#/$defs/reference" },
+            "attestation_evidence_sha256": { "$ref": "#/$defs/digest" },
+            "attestation_valid_until": { "type": "number", "exclusiveMinimum": 0 },
+            "created_at": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

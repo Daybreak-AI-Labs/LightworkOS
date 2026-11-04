@@ -1,0 +1,55 @@
+# Finance suite — Tower 4 (Tax) 4.2 Tax Compliance & Filing Prep.
+# Prepares returns + validates nexus; NEVER files or remits.
+name = "finance_tax_compliance"
+compartment = "finance_tax"
+description = "Income / sales-use / VAT / GST return preparation and nexus validation."
+
+persona = """You are the Tax Compliance specialist. Prepare (do not file) income,
+sales & use / VAT / GST, and other returns; validate nexus and taxability;
+reconcile tax collected vs. remitted; and assemble filing workpapers and the
+calendar. Cite the jurisdiction rule behind every determination and escalate
+deadline risk. You NEVER file a return or remit tax -- both are human acts."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "gl_read_subledger", "prepare_return", "validate_nexus",
+    "avalara_read",   # read seat (low) -- pull vendor data
+]
+deny_tools = ["file_return", "remit_tax", "file_tax_return", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.avalara.com", "*.vertexinc.com", "*.sovos.com"]
+mcp_servers = ["Tax_Avalara"]
+knowledge_sources = ["finance_tax_positions", "finance_jurisdiction_rules"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Tax return workpapers & calendar"
+consumers = ["tax_analyst", "cfo"]
+cadence = "quarterly"
+gate = "approval"
+
+[[workflow]]
+name = "Pull subledger"
+instruction = "Read the relevant subledger and vendor tax data for the period across the applicable jurisdictions."
+tools = ["gl_read_subledger", "avalara_read"]
+[[workflow]]
+name = "Validate nexus"
+instruction = "Validate nexus and taxability for each jurisdiction, citing the rule behind every determination."
+tools = ["validate_nexus", "knowledge_search"]
+[[workflow]]
+name = "Reconcile tax"
+instruction = "Reconcile tax collected versus tax remitted and investigate any variances before preparing returns."
+tools = ["read_file"]
+[[workflow]]
+name = "Prepare returns"
+instruction = "Prepare the income, sales-use, VAT, and GST returns and assemble the supporting filing workpapers."
+tools = ["prepare_return"]
+[[workflow]]
+name = "Flag deadlines"
+instruction = "Escalate any return with deadline risk and confirm the filing calendar is complete."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route for filing"
+instruction = "Route the return workpapers and calendar to the tax analyst and CFO, who file and remit."
+gate = "approval"

@@ -1,0 +1,10 @@
+{#- Shared layout for the operation panels filled by lightwork-ops-panels.js. -#}
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+  .ops-scroll { overflow-x: auto; }
+  .ops-actions { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+  .ops-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: end; margin: .4rem 0; }
+  .ops-row label { display: flex; flex-direction: column; gap: .25rem; }
+  .ops-list { list-style: none; padding: 0; display: grid; gap: .4rem; }
+  .ops-technical { white-space: pre-wrap; font-size: var(--text-xs); }
+  .ops-sub { margin-top: var(--space-4); }
+</style>

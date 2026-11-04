@@ -1,0 +1,25 @@
+{# What past tasks by this agent or specialist usually cost, from recorded
+   costs in this workspace (maverick.typical_cost). History, never a
+   prediction. Import it with:
+
+     {% from "_typical_cost.html" import typical_cost_text %}
+     {{ typical_cost_text(typical) }}
+#}
+{% macro typical_cost_text(tc) -%}
+{%- if tc and tc.enough -%}
+Past tasks usually cost {{ tc.low | money }} to {{ tc.high | money }}, {{ tc.median | money }} in the middle (based on {{ tc.runs }} finished {{ 'task' if tc.runs == 1 else 'tasks' }} in this workspace). This is past spending, not a prediction.
+{%- elif tc -%}
+Not enough past tasks to estimate yet: {{ tc.runs }} of the {{ tc.min_runs }} finished tasks needed.
+{%- else -%}
+Past costs could not be read.
+{%- endif -%}
+{%- endmacro %}
+{# The same line for the person starting a task: what their own past tasks
+   cost, shown under the chat's Start button. #}
+{% macro own_typical_cost_text(tc) -%}
+{%- if tc and tc.enough -%}
+Your past tasks usually cost {{ tc.low | money }} to {{ tc.high | money }}, {{ tc.median | money }} in the middle (from your last {{ tc.runs }} finished {{ 'task' if tc.runs == 1 else 'tasks' }}). This is past spending, not a prediction.
+{%- elif tc -%}
+No cost range yet: {{ tc.runs }} of the {{ tc.min_runs }} finished tasks needed to show what your tasks usually cost. It appears here once more of your tasks finish.
+{%- endif -%}
+{%- endmacro %}

@@ -1,0 +1,58 @@
+{#- AI governance operations (maverick gateway status / callers, maverick
+    explainability fairness / sensitivity / reasons, maverick underwriting-pack
+    export). Filled by lightwork-ops-panels.js. -#}
+{% include "_ops_styles.html" %}
+<section class="panel" id="ops-ai-gov" aria-labelledby="ops-ai-gov-title">
+  <h2 id="ops-ai-gov-title">AI gateway, fairness checks and insurance pack</h2>
+
+  <h3 id="ops-gateway-title">Apps using the AI gateway</h3>
+  <p class="muted">Apps built elsewhere can send their AI requests through Lightwork&rsquo;s gateway so each one is
+    checked and counted. What the apps asked is never stored.</p>
+  <div id="ops-gateway" role="status" aria-live="polite" aria-labelledby="ops-gateway-title">Loading…</div>
+
+  <h3 class="ops-sub" id="ops-explain-title">Check an AI system&rsquo;s decisions</h3>
+  <div id="ops-explain">
+    <div class="ops-row">
+      <label for="ops-explain-asset">Save the result as evidence for
+        <select id="ops-explain-asset" class="select" data-ops-assets><option value="">Do not save</option></select></label>
+    </div>
+    <h4 id="ops-fair-title">Are groups chosen at similar rates?</h4>
+    <p class="muted">For each group, enter how many people were chosen (for example approved or hired) and how many
+      were in the group. A group chosen at less than four-fifths the rate of the most-chosen group is flagged.</p>
+    <div class="ops-row muted" aria-hidden="true"><span>Group</span><span>Chosen</span><span>In the group</span></div>
+    <div id="ops-fair-groups" aria-labelledby="ops-fair-title"></div>
+    <div class="ops-actions">
+      <button type="button" class="btn btn--ghost" id="ops-fair-add">Add a group</button>
+      <button type="button" class="btn btn--primary" id="ops-fair-run">Check fairness</button>
+    </div>
+    <h4 class="ops-sub" id="ops-sheet-title">Which inputs drive the decisions?</h4>
+    <p class="muted">Choose a spreadsheet (CSV) with one row per decision: a column per input and a column with the
+      decision&rsquo;s score. Numbers only.</p>
+    <div class="ops-row">
+      <label for="ops-sheet-file">Spreadsheet
+        <input type="file" id="ops-sheet-file" class="input" accept=".csv,text/csv"></label>
+      <label for="ops-sheet-score">Score column
+        <select id="ops-sheet-score" class="select"></select></label>
+      <button type="button" class="btn btn--ghost" id="ops-sens-run">Rank the inputs</button>
+    </div>
+    <div class="ops-row">
+      <label for="ops-sheet-row">Explain one decision
+        <select id="ops-sheet-row" class="select"></select></label>
+      <button type="button" class="btn btn--ghost" id="ops-reasons-run">Show the main reasons</button>
+    </div>
+    <div id="ops-explain-out" role="status" aria-live="polite"></div>
+  </div>
+
+  <h3 class="ops-sub" id="ops-pack-title">Insurance evidence pack</h3>
+  <p class="muted">A signed summary of your AI systems, their evidence, open findings and people&rsquo;s decisions,
+    for an insurer. It is prepared in the background; a download button appears when it is ready.</p>
+  <p class="muted">Incident reporting covers both retained reporting registers. If either enabled register cannot be read, the pack marks that section incomplete; it does not establish that no incidents or deadlines exist. Recorded filings do not prove an authority received them.</p>
+  <div class="ops-row">
+    <label for="ops-pack-asset">Cover
+      <select id="ops-pack-asset" class="select" data-ops-assets><option value="">Every AI system</option></select></label>
+    <button type="button" class="btn btn--primary" id="ops-pack-start">Prepare the pack</button>
+  </div>
+  <p id="ops-pack-msg" role="status" aria-live="polite" class="muted"></p>
+  <p id="ops-pack-link"></p>
+</section>
+<script src="/static/lightwork-ops-panels.js" defer></script>

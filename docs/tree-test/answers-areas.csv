@@ -1,0 +1,62 @@
+Role,Task,Correct answer(s)
+Employee,E1. You asked Lightwork to draft a supplier email this morning. Check whether it is finished.,Work > Tasks > Tasks
+Employee,E2. Download the finished report Lightwork made for you last week.,Work > Results > Results
+Employee,E3. A payment Lightwork wants to make is waiting for your OK. Find it.,Work > Approvals > Approvals | Work > Approvals > Action Center
+Employee,E4. Give Lightwork a new piece of work to do.,Ask > Ask > Chat | Ask > Ask > Task builder
+Employee,E5. Set up a job that runs on its own every Monday morning.,Work > Automations
+Employee,E6. Look at the step-by-step process Lightwork follows when your team onboards a customer.,Work > Workflows > Workflows | Work > Workflows > Workflow builder
+Employee,E7. Keep all the work for a client launch together in one place.,Work > Projects > Projects | Work > Projects > Project workspaces
+Employee,E8. See which helpers are available to your team.,Agents > Workforce > Workforce
+Employee,E9. Build your own agent that answers supplier questions.,Agents > Build an agent > Agent Factory
+Employee,E10. Find a company document Lightwork can use to answer questions.,Agents > Knowledge > Knowledge
+Employee,E11. Make the text on every page larger for yourself.,Account > Preferences > Your preferences
+Employee,E12. Find a conversation you had with Lightwork two weeks ago.,Ask > Conversations > My conversations
+Employee,E13. Check how much of your budget your work has used.,Costs & value > Budget > Your budget | Costs & value > Spend
+Employee,E14. Get an email when a task needs you.,Account > Notifications > Your notifications
+Employee,E15. See everything on your plate today in one place.,Home > Home > Today | Home > Home > My work
+Employee,E16. Start from a ready-made example instead of a blank request.,Ask > Start from a template > Templates
+Approver,A1. Approve or turn down a request that is waiting for you.,Work > Approvals > Approvals
+Approver,A2. See every decision waiting for you across tasks and workflows.,Work > Approvals > Approvals | Work > Approvals > Action Center
+Approver,A3. Find out what Lightwork may do without asking anyone first.,Rules & safety > What Lightwork can do > Permissions
+Approver,A4. Something looks wrong. Stop all agents at once.,Rules & safety > Agent controls
+Approver,A5. Replay what happened step by step in a task you approved yesterday.,Evidence & audit > Task replay > Task replay
+Approver,A6. Find the signed record that proves who approved a decision.,Evidence & audit > Trust receipts
+Approver,A7. See the full history of actions taken in this workspace.,Evidence & audit > Activity log
+Approver,A8. Check whether a screening rule blocked a message.,Rules & safety > Screening > Safety
+Approver,A9. Try out a new safety rule before it is turned on.,Rules & safety > Test a rule > Test a safety rule
+Approver,A10. See what an outside company's agent is allowed to reach.,Rules & safety > Outside agents > Outside agents | Rules & safety > Outside agents > Agent trust
+Approver,A11. Look at the regulations your company must follow.,Rules & safety > Regulations and rules
+Approver,A12. See what Lightwork has learned and changed about how it works.,Evidence & audit > Learning history
+Approver,A13. Open the result of a task you approved.,Work > Results > Results
+Approver,A14. Check warnings that an agent behaved unusually.,Rules & safety > Safety monitoring
+Approver,A15. See how much time and money finished work has saved.,Costs & value > Savings
+Privacy officer,P1. A customer asks for a copy of all the data you hold about them. Start handling the request.,Privacy > Requests > Privacy requests
+Privacy officer,P2. Find every system where a customer's email address is stored.,Privacy > Find personal data
+Privacy officer,P3. Update the privacy notice on your website.,Privacy > Notices > Privacy notices
+Privacy officer,P4. Change the cookie banner on your website.,Privacy > Consent > Website banner settings | Privacy > Consent > Banner and preference center | Privacy > Consent > Consent and preferences
+Privacy officer,P5. Record that a person opted out of marketing everywhere.,Privacy > Consent > Opt out everywhere
+Privacy officer,P6. Check which of your apps track people without consent.,Privacy > Consent > App tracking checks
+Privacy officer,P7. Handle deletion requests that arrive from the California state registry.,Privacy > Requests > California DROP requests
+Privacy officer,P8. Set the rules for how personal data may be used for analytics.,Privacy > Data use rules > Data use rules
+Privacy officer,P9. Look up what a new privacy law requires.,Privacy > Law research > Privacy law research
+Privacy officer,P10. Review how a new vendor will handle your customers' data before signing.,Risk & compliance > Vendors > AI vendor onboarding | Risk & compliance > Assessments > Assessments
+Privacy officer,P11. Get an overview of your privacy program for the board.,Privacy > Overview > Privacy
+Privacy officer,P12. Check the terms of an existing vendor contract.,Risk & compliance > Vendors > Contracts and engagements
+Privacy officer,P13. Show an auditor who looked at personal data and when.,Evidence & audit > Activity log | Evidence & audit > Content access
+Privacy officer,P14. Send a person a secure copy of their data.,Privacy > Requests > Send people their data
+Privacy officer,P15. Change many customers' consent at once after an import error.,Privacy > Consent > Bulk consent changes
+Admin,D1. Invite a new colleague to Lightwork.,Settings > People & roles > Users
+Admin,D2. Let people talk to Lightwork from your company's Slack.,Settings > Chat apps > Channels
+Admin,D3. Add the key for a new AI provider.,Settings > AI providers > Providers | Settings > General > Settings
+Admin,D4. Set a monthly cap on how much Lightwork may spend.,Costs & value > Spending limits
+Admin,D5. Connect Lightwork to your CRM so agents can read customer records.,Settings > Connections
+Admin,D6. Create a separate workspace for a subsidiary.,Settings > Workspaces > Workspaces
+Admin,D7. Restore a workspace from a backup.,Settings > Backup & recovery > Workspace recovery
+Admin,D8. Choose which pages each role can see.,Settings > General > Settings
+Admin,D9. Review this month's invoice.,Costs & value > Billing
+Admin,D10. See how much each AI provider has cost.,Costs & value > Provider spending
+Admin,D11. Store signed contracts securely so agents can use them.,Evidence & audit > Document vault
+Admin,D12. Give agents access to one of your company's internal tools.,Agents > Tools > Tool servers | Agents > Tools > Tools | Agents > Tools > Plugins
+Admin,D13. Check that everything is ready before you switch on a new workflow.,Settings > Setup > Workflow readiness
+Admin,D14. Choose which employees get a personal companion.,Settings > People & roles > Employee companions
+Admin,D15. Sign yourself out of a laptop you lost.,Account > Sessions | Account > Devices > Your paired devices

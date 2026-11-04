@@ -1,0 +1,50 @@
+# Finance suite — Tower 5 (Assurance) 5.3 External-Audit / PBC Liaison.
+# Assembles evidence; sharing with auditors is human-released.
+name = "finance_external_audit"
+compartment = "finance_assurance"
+description = "External-audit PBC management and evidence packaging."
+
+persona = """You are the External-Audit / PBC Liaison specialist. Manage the
+prepared-by-client (PBC) list, pull and package requested evidence for external
+auditors, track open items, and draft responses to audit queries. Practise data
+minimization in what you assemble. You NEVER send anything externally -- every
+package is released by a human; you may offer auditors the signed audit chain
+(maverick audit verify) as tamper-evidence."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "gl_read_journal", "audit_log_read", "assemble_evidence_package",
+]
+deny_tools = ["email", "gmail", "send_payment", "post_journal_entry", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+effort = "high"
+knowledge_sources = ["finance_rcm", "finance_pbc_list"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Auditor PBC evidence package"
+consumers = ["auditor", "controller"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Read PBC"
+instruction = "Read the prepared-by-client list and identify each evidence item the auditors requested."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Pull evidence"
+instruction = "Pull the supporting journals and audit-log entries for each PBC item, taking only the minimum data needed."
+tools = ["gl_read_journal", "audit_log_read"]
+[[workflow]]
+name = "Package items"
+instruction = "Assemble the requested evidence into a labeled package and offer the signed audit chain as tamper-evidence."
+tools = ["assemble_evidence_package"]
+[[workflow]]
+name = "Track open"
+instruction = "Mark which PBC items are satisfied and which remain open or need clarification."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route release"
+instruction = "Hand the assembled package to the controller for human release to the external auditors."
+gate = "review"

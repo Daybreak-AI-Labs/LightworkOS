@@ -1,0 +1,52 @@
+{#- Where this page sits in the job-named navigation ([dashboard] navigation =
+    "areas"; both shells include this only in that mode). A child page shows
+    the breadcrumb "Area › Section"; every page in an area shows the area's
+    sections, and the pages of its own section, as local tabs; the area's hub
+    also lists every page in the area. All of it comes from the registry and
+    nav_areas holds only pages this person may open (navigation_api). -#}
+{% set _here = nav_areas.here if nav_areas else none %}
+{% if _here %}
+{% set _area = _here.area %}
+{% set _section = _here.section %}
+<div class="areanav">
+  {% if not _here.hub %}
+  <nav class="areanav__crumbs" aria-label="{{ ut('Breadcrumb') }}" lang="{{ ul('Breadcrumb') }}">
+    <ol>
+      <li><a href="{{ _area.href }}">{{ ui(_area.title) }}</a></li>
+      {% if _section and _section.title != _area.title %}
+      <li>{% if _section.href != _here.path %}<a href="{{ _section.href }}">{{ ui(_section.title) }}</a>{% else %}<span aria-current="location">{{ ui(_section.title) }}</span>{% endif %}</li>
+      {% endif %}
+    </ol>
+  </nav>
+  {% endif %}
+  {% if _area.sections | length > 1 %}
+  <nav class="areanav__tabs" aria-label="{{ ut('{area} sections', area=ut(_area.title)) }}" lang="{{ ul('{area} sections') }}">
+    <ul>
+      {% for _item in _area.sections %}
+      <li><a href="{{ _item.href }}"{% if _section and _item.title == _section.title %} class="active" aria-current="true"{% endif %}>{{ ui(_item.title) }}{% if _item.off %} <span class="nav-off">{{ ui('Off') }}</span>{% endif %}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+  {% if _section and _section.links | length > 1 %}
+  <nav class="areanav__pages" aria-label="{{ ut('Pages in {section}', section=ut(_section.title)) }}" lang="{{ ul('Pages in {section}') }}">
+    <ul>
+      {% for _link in _section.links %}
+      <li><a href="{{ _link.href }}"{% if _link.href == _here.path %} class="active" aria-current="true"{% endif %}>{{ ui(_link.label) }}{% if _link.off %} <span class="nav-off">{{ ui('Off') }}</span>{% endif %}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+  {% endif %}
+  {% if _here.hub and _area.sections | length > 1 %}
+  <details class="areanav__all">
+    <summary>{{ ui('All pages in {area}', area=ut(_area.title)) }}</summary>
+    {% for _item in _area.sections %}
+    <section aria-label="{{ ut(_item.title) }}">
+      <p class="areanav__heading">{{ ui(_item.title) }}</p>
+      <ul>{% for _link in _item.links %}<li><a href="{{ _link.href }}">{{ ui(_link.label) }}</a>{% if _link.off %} <span class="nav-off">{{ ui('Off') }}</span>{% endif %}</li>{% endfor %}</ul>
+    </section>
+    {% endfor %}
+  </details>
+  {% endif %}
+</div>
+{% endif %}

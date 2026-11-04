@@ -1,0 +1,480 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Policy links · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+{% set ppl_admin = policy_links_can_admin if policy_links_can_admin is defined else true %}
+{% set ppl_audit = policy_links_can_audit if policy_links_can_audit is defined else true %}
+{#- The title sits outside the disabled workbench so the gate can follow it
+    without its Turn on button being disabled with the rest. -#}
+{{ hero('Tech risk and compliance', 'Policy links',
+        lede='Write a policy, have it approved, and publish it at a web address that stays the same when you publish a new version. Earlier versions are kept for your records.') }}
+{% if not policy_publication_links_enabled %}
+{{ module_gate('tech_risk_compliance.policy_publication_links', 'Policy links',
+               detail='Publishes your approved policies at a lasting web address. Decide who looks after storage, backups and old versions before turning it on.',
+               can_activate=ppl_admin) }}
+{% endif %}
+<fieldset class="governance-workbench feature-gated-workbench" id="ppl-root" data-feature-enabled="{{ 'true' if policy_publication_links_enabled else 'false' }}" data-can-admin="{{ 'true' if ppl_admin else 'false' }}" data-can-audit="{{ 'true' if ppl_audit else 'false' }}"{% if not policy_publication_links_enabled %} disabled aria-disabled="true"{% endif %}>
+  <legend class="sr-only">Policy links</legend>
+  <p>{{ back_link('/compliance', 'Compliance') }}</p>
+  <p id="ppl-status" class="muted" role="status" aria-live="polite"></p>
+
+  <section class="panel" aria-labelledby="ppl-policies-heading">
+    <div class="section-head">
+      <h2 id="ppl-policies-heading">Policies</h2>
+      <button class="btn btn--primary" type="button" id="ppl-new-policy"{% if not ppl_admin %} disabled{% endif %}>Write a policy</button>
+    </div>
+    <p class="muted">Each saved version is kept exactly as written. Depending on its approval setting, one or two people other than the author must approve it before it can be published.</p>
+    <div id="ppl-policies"><p class="muted">Loading policies…</p></div>
+    <form id="ppl-artifact" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not ppl_admin %} disabled{% endif %}>
+        <legend class="sr-only">Policy version</legend>
+        <h3 class="cw-wide" id="ppl-artifact-title">Write a policy</h3>
+        <input type="hidden" name="policy_id">
+        <input type="hidden" name="version" value="1">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label class="cw-wide">Title<input class="input" name="title" required maxlength="1024" placeholder="Information Security Policy"></label>
+        <label class="cw-wide">Policy text<textarea class="textarea" name="body_text" rows="10" required maxlength="262144"></textarea>
+          <span class="muted">Plain text. Formatting marks are shown as typed.</span>
+        </label>
+        <fieldset class="cw-wide"><legend>Who must approve it</legend>
+          <div class="cw-checks">
+            <label><input type="radio" name="approval_mode" value="four_eyes" checked> Two other people</label>
+            <label><input type="radio" name="approval_mode" value="approval"> One other person</label>
+            <label><input type="radio" name="approval_mode" value="none"> Nobody (publish straight away)</label>
+          </div>
+        </fieldset>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Save version</button>
+          <button class="btn btn--ghost" type="button" data-ppl-close="ppl-artifact">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="ppl-links-heading">
+    <div class="section-head">
+      <h2 id="ppl-links-heading">Links</h2>
+      <button class="btn btn--primary" type="button" id="ppl-new-link"{% if not ppl_admin %} disabled{% endif %}>Create a link</button>
+    </div>
+    <p class="muted">A link always shows the version you publish on it. A private link can only be read by tools you give its access code to.</p>
+    <div id="ppl-links"><p class="muted">Loading links…</p></div>
+    <form id="ppl-link" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not ppl_admin %} disabled{% endif %}>
+        <legend class="sr-only">Create a link</legend>
+        <h3 class="cw-wide">Create a link</h3>
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Policy<select class="select" name="policy_id" required></select></label>
+        <fieldset><legend>Who can read it</legend>
+          <div class="cw-checks">
+            <label><input type="radio" name="visibility" value="public" checked> Anyone with the address</label>
+            <label><input type="radio" name="visibility" value="private"> Only with an access code</label>
+          </div>
+        </fieldset>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Create link</button>
+          <button class="btn btn--ghost" type="button" data-ppl-close="ppl-link">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+    <form id="ppl-publish" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not ppl_admin %} disabled{% endif %}>
+        <legend class="sr-only">Publish a version</legend>
+        <h3 class="cw-wide" id="ppl-publish-title">Publish a version</h3>
+        <input type="hidden" name="link_id">
+        <input type="hidden" name="expected_pointer_revision">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Version<select class="select" name="version" required></select></label>
+        <fieldset><legend>When</legend>
+          <div class="cw-checks">
+            <label><input type="radio" name="when" value="now" checked> Now</label>
+            <label><input type="radio" name="when" value="later"> At a set time</label>
+          </div>
+        </fieldset>
+        <label data-when="later" hidden>Publish at<input class="input" type="datetime-local" name="scheduled_for"></label>
+        <label>Stop showing it on (optional)<input class="input" type="datetime-local" name="expires_at"></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Publish policy</button>
+          <button class="btn btn--ghost" type="button" data-ppl-close="ppl-publish">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+    <form id="ppl-schedule" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not ppl_admin %} disabled{% endif %}>
+        <legend class="sr-only">Schedule an end</legend>
+        <h3 class="cw-wide" id="ppl-schedule-title">Schedule an end</h3>
+        <input type="hidden" name="link_id">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>What should happen
+          <select class="select" name="action">
+            <option value="expiry">Stop showing the current version</option>
+            <option value="revocation">Turn the link off for good</option>
+          </select>
+        </label>
+        <label>At<input class="input" type="datetime-local" name="scheduled_for" required></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Schedule publishing</button>
+          <button class="btn btn--ghost" type="button" data-ppl-close="ppl-schedule">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+    <div id="ppl-secret" class="cw-secret cw-editor" hidden role="status" aria-live="polite">
+      <strong>Access code (shown once)</strong>
+      <code id="ppl-secret-value"></code>
+      <div class="cw-actions"><button class="btn btn--primary" type="button" id="ppl-copy-secret">Copy access code</button><button class="btn btn--ghost" type="button" id="ppl-hide-secret">I have saved it</button></div>
+      <p class="muted">This code is shown once. Save it now in the tool that will read this link; Lightwork keeps no copy. If it is lost, create a new access code.</p>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="ppl-jobs-heading">
+    <div class="section-head">
+      <h2 id="ppl-jobs-heading">Scheduled changes</h2>
+      <button class="btn" type="button" id="ppl-run-due">Run scheduled changes now</button>
+    </div>
+    <p class="muted">Scheduled changes run on their own. An end date or turn-off stops the link at its time even if nothing runs.</p>
+    <div id="ppl-jobs"><p class="muted">Loading…</p></div>
+  </section>
+
+  <section class="panel" aria-labelledby="ppl-records-heading">
+    <h2 id="ppl-records-heading">History and upkeep</h2>
+    <div class="cw-actions">
+      <button class="btn" type="button" id="ppl-show-audit"{% if not ppl_audit %} disabled{% endif %}>Show change history</button>
+      <button class="btn" type="button" id="ppl-show-access"{% if not ppl_audit %} disabled{% endif %}>Show when links were read</button>
+      <button class="btn" type="button" id="ppl-integrity"{% if not ppl_audit %} disabled{% endif %}>Check that records are intact</button>
+    </div>
+    {% if not ppl_audit %}<p class="muted">You need audit access to see the history.</p>{% endif %}
+    <div id="ppl-history" class="cw-result"></div>
+    <form id="ppl-retention" class="cw-editor" novalidate>
+      <fieldset class="cw-form"{% if not ppl_admin %} disabled{% endif %}>
+        <legend class="sr-only">Clean up old records</legend>
+        <h3 class="cw-wide">Clean up old records</h3>
+        <label>Older than<input class="input" type="date" name="before" required></label>
+        <div class="cw-actions">
+          <button class="btn btn--danger" type="submit" value="access">Delete reading history</button>
+          <button class="btn btn--danger" type="submit" value="content">Remove unused old policy text</button>
+        </div>
+        <p class="muted cw-wide">A summary of deleted reading history is kept so the record stays complete. Policy text still shown on a link is never removed.</p>
+      </fieldset>
+    </form>
+  </section>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">Your name is recorded with every change automatically; the author of a version cannot approve it. Reading a link never makes Lightwork contact other sites. Access codes are shown once and never stored. Before relying on this for customers, make sure storage is encrypted and backed up and that recovery has been tested.</p>
+  </details>
+</fieldset>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/policy-publication-links";
+  // The shared consent JSON client (mvFetchJSON): a non-2xx or malformed response is never success.
+  async function call(path, options) {
+    return window.LightworkConsentWorkbench.client(API)(path, options);
+  }
+  var CW = window.LightworkConsentWorkbench;
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (CW && document.getElementById("ppl-root")) { if (window.mvFetchJSON) start(); else document.addEventListener("DOMContentLoaded", start); }
+
+  function start() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $("ppl-root"), status = $("ppl-status");
+    var canAdmin = root.dataset.canAdmin === "true", canAudit = root.dataset.canAudit === "true";
+    var state = {artifacts: [], links: [], jobs: []};
+    function say(text, isError) { CW.say(status, text, isError); }
+    function fail(error, action) { return CW.fail(status, error, action); }
+    document.querySelectorAll("[data-ppl-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.pplClose).hidden = true; }); });
+    function reference(form) { form.elements.idempotency_key.value = CW.reference(); }
+    function titleOf(policyId) {
+      var latest = state.artifacts.filter(function (a) { return a.policy_id === policyId; }).sort(function (a, b) { return b.version - a.version; })[0];
+      return latest ? latest.title : CW.human(policyId);
+    }
+    function address(link) { return window.location.origin + (link.stable_path || ("/api/v1/public/policies/" + link.link_id)); }
+
+    async function load() {
+      if (root.dataset.featureEnabled !== "true") {
+        ["ppl-policies", "ppl-links", "ppl-jobs"].forEach(function (id) { $(id).replaceChildren(CW.el("p", "muted", "Turn on policy links above to start.")); });
+        return;
+      }
+      if (!canAudit) {
+        ["ppl-policies", "ppl-links", "ppl-jobs"].forEach(function (id) { $(id).replaceChildren(CW.el("p", "muted", "You need audit access to see policies and links.")); });
+        return;
+      }
+      try {
+        var results = await Promise.all([call("/artifacts?limit=500"), call("/links?limit=500"), call("/jobs?limit=500")]);
+        state.artifacts = results[0].items || []; state.links = results[1].items || []; state.jobs = results[2].items || [];
+        renderPolicies(); renderLinks(); renderJobs();
+      } catch (error) { fail(error, "load policy links"); }
+    }
+
+    // ----- Policies and versions -----
+    function approvalText(a) {
+      if (a.rejection_count > 0) return CW.badge("Rejected", "danger");
+      if (a.ready_to_publish) return CW.badge(a.required_approvals ? "Approved" : "Ready", "ok");
+      return CW.badge(a.approval_count + " of " + a.required_approvals + " approvals", "warn");
+    }
+    function renderPolicies() {
+      CW.table($("ppl-policies"), state.artifacts, {label: "Policy versions", name: function (a) { return a.title + " version " + a.version; },
+        columns: [
+          {label: "Policy", value: function (a) { return a.title; }},
+          {label: "Version", value: function (a) { return String(a.version); }},
+          {label: "Saved", value: function (a) { return CW.when(a.created_at); }},
+          {label: "Approval", value: approvalText},
+        ],
+        actions: [
+          {label: "Approve", kind: "primary", when: function (a) { return canAdmin && !a.ready_to_publish && a.rejection_count === 0; }, run: function (a, b) { CW.busy(b, function () { return review(a, "approve"); }); }},
+          {label: "Reject", when: function (a) { return canAdmin && !a.ready_to_publish && a.rejection_count === 0; }, run: function (a, b) { CW.busy(b, function () { return review(a, "reject"); }); }},
+          {label: "New version", when: function () { return canAdmin; }, run: function (a) { openArtifact(a); }},
+        ],
+        empty: {title: "No policies yet.", body: "Write your first policy, then publish it at a link.", action: canAdmin ? {label: "Write a policy", run: function () { openArtifact(null); }} : null}});
+    }
+    function openArtifact(previous) {
+      var form = $("ppl-artifact"), f = form.elements;
+      form.reset(); reference(form);
+      if (previous) {
+        var latest = Math.max.apply(null, state.artifacts.filter(function (a) { return a.policy_id === previous.policy_id; }).map(function (a) { return a.version; }));
+        f.policy_id.value = previous.policy_id; f.version.value = String(latest + 1); f.title.value = previous.title;
+        Array.prototype.forEach.call(f.approval_mode, function (r) { r.checked = r.value === previous.approval_mode; });
+        $("ppl-artifact-title").textContent = "New version of " + previous.title;
+      } else {
+        f.policy_id.value = ""; f.version.value = "1";
+        $("ppl-artifact-title").textContent = "Write a policy";
+      }
+      CW.open(form, "input[name=title]");
+    }
+    $("ppl-new-policy").addEventListener("click", function () { openArtifact(null); });
+    $("ppl-artifact").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      if (!f.title.value.trim() || !f.body_text.value.trim()) { say("Enter a title and the policy text.", true); return; }
+      var policyId = f.policy_id.value || CW.slug(f.title.value, "policy");
+      if (!f.policy_id.value && state.artifacts.some(function (a) { return a.policy_id === policyId; })) { say("A policy with that title already exists. Use “New version” on it instead.", true); return; }
+      var mode = Array.prototype.filter.call(f.approval_mode, function (r) { return r.checked; })[0].value;
+      try {
+        await call("/artifacts", {method: "POST", json: {policy_id: policyId, version: Number(f.version.value), title: f.title.value.trim(), body_text: f.body_text.value, approval_mode: mode, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true;
+        say(mode === "none" ? "Version saved. You can publish it now." : "Version saved. Ask " + (mode === "four_eyes" ? "two other people" : "another person") + " to approve it.");
+        await load();
+      } catch (error) { fail(error, "save the version"); }
+    });
+    async function review(a, decision) {
+      var reason = await window.mvForm((decision === "approve" ? "Approve " : "Reject ") + a.title + " version " + a.version, [{key: "note", label: "Comment (optional)", type: "text"}], {okText: decision === "approve" ? "Approve" : "Reject"});
+      if (reason === null) return;
+      var payload = {decision: decision, idempotency_key: CW.reference()};
+      // A written comment is recorded as a fingerprint, computed here.
+      if (reason.note) payload.rationale_sha256 = await CW.sha256("lightwork.policy-review-comment.v1\n" + reason.note);
+      try {
+        await call("/artifacts/" + encodeURIComponent(a.policy_id) + "/versions/" + a.version + "/reviews", {method: "POST", json: payload});
+        say(decision === "approve" ? "Approval recorded." : "Rejection recorded."); await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not record your review. The author cannot review their own version, and each person reviews once.", true); return; }
+        fail(error, "record your review");
+      }
+    }
+
+    // ----- Links -----
+    var LINK_STATUS = {active: ["Live", "ok"], revoked: ["Turned off", "idle"], expired: ["Ended", "idle"]};
+    function renderLinks() {
+      CW.table($("ppl-links"), state.links, {label: "Links", name: function (l) { return titleOf(l.policy_id); },
+        columns: [
+          {label: "Policy", value: function (l) { return titleOf(l.policy_id); }},
+          {label: "Who Can Read", value: function (l) { return l.visibility === "private" ? "Only with an access code" : "Anyone with the address"; }},
+          {label: "Showing", value: function (l) { return l.current_version ? "Version " + l.current_version : "Nothing published yet"; }},
+          {label: "Ends", value: function (l) { return CW.when(l.scheduled_revoke_at || l.expires_at) || "—"; }},
+          {label: "Status", value: function (l) { var m = LINK_STATUS[l.effective_status] || [CW.human(l.effective_status), "idle"]; return CW.badge(m[0], m[1]); }},
+        ],
+        actions: [
+          {label: "Copy address", run: function (l) { window.mvCopy(address(l)); }},
+          {label: "Publish a version", kind: "primary", when: function (l) { return canAdmin && l.status === "active"; }, run: openPublish},
+          {label: "Schedule an end", when: function (l) { return canAdmin && l.status === "active"; }, run: openSchedule},
+          {label: "New access code", when: function (l) { return canAdmin && l.status === "active" && l.visibility === "private"; }, run: function (l, b) { CW.busy(b, function () { return rotate(l); }); }},
+          {label: "Check address", when: function (l) { return l.status === "active"; }, run: function (l, b) { CW.busy(b, function () { return checkAddress(l); }); }},
+          {label: "Turn off", kind: "danger", when: function (l) { return canAdmin && l.status === "active"; }, run: function (l, b) { CW.busy(b, function () { return revoke(l); }); }},
+        ],
+        empty: {title: "No links yet.", body: "Create a link to give a policy a lasting web address.", action: canAdmin && state.artifacts.length ? {label: "Create a link", run: openLink} : null}});
+    }
+    function showSecret(code) {
+      if (!code) return;
+      $("ppl-secret-value").textContent = code; $("ppl-secret").hidden = false; CW.open($("ppl-secret"), "button");
+    }
+    $("ppl-copy-secret").addEventListener("click", function () { window.mvCopy($("ppl-secret-value").textContent); });
+    $("ppl-hide-secret").addEventListener("click", function () { $("ppl-secret-value").textContent = ""; $("ppl-secret").hidden = true; });
+    function openLink() {
+      var form = $("ppl-link"), f = form.elements, seen = [];
+      if (!state.artifacts.length) { say("Write a policy first.", true); return; }
+      form.reset(); reference(form);
+      CW.fill(f.policy_id, state.artifacts.filter(function (a) { if (seen.indexOf(a.policy_id) >= 0) return false; seen.push(a.policy_id); return true; }).map(function (a) { return {value: a.policy_id, label: titleOf(a.policy_id)}; }));
+      CW.open(form, "select");
+    }
+    $("ppl-new-link").addEventListener("click", openLink);
+    $("ppl-link").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      var visibility = Array.prototype.filter.call(f.visibility, function (r) { return r.checked; })[0].value;
+      try {
+        var result = await call("/links", {method: "POST", json: {policy_id: f.policy_id.value, visibility: visibility, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true;
+        say("Link created. Publish a version on it to make it show your policy.");
+        showSecret(result.private_capability);
+        await load();
+      } catch (error) { fail(error, "create the link"); }
+    });
+    function readyVersions(policyId) { return state.artifacts.filter(function (a) { return a.policy_id === policyId && a.ready_to_publish; }).sort(function (a, b) { return b.version - a.version; }); }
+    function openPublish(link) {
+      var form = $("ppl-publish"), f = form.elements, versions = readyVersions(link.policy_id);
+      if (!versions.length) { say("No approved version of “" + titleOf(link.policy_id) + "” yet. Get a version approved first.", true); return; }
+      form.reset(); reference(form);
+      f.link_id.value = link.link_id; f.expected_pointer_revision.value = String(link.pointer_revision);
+      CW.fill(f.version, versions.map(function (a) { return {value: String(a.version), label: "Version " + a.version + " – saved " + CW.when(a.created_at)}; }));
+      $("ppl-publish-title").textContent = "Publish on the link for " + titleOf(link.policy_id);
+      form.querySelector("[data-when=later]").hidden = true;
+      CW.open(form, "select");
+    }
+    Array.prototype.forEach.call($("ppl-publish").elements.when, function (r) { r.addEventListener("change", function () { $("ppl-publish").querySelector("[data-when=later]").hidden = r.value !== "later" || !r.checked; }); });
+    $("ppl-publish").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, later = Array.prototype.filter.call(f.when, function (r) { return r.checked; })[0].value === "later";
+      var expires = f.expires_at.value ? CW.toSeconds(f.expires_at.value) : null, at = later ? CW.toSeconds(f.scheduled_for.value) : null;
+      if (later && !(at > Date.now() / 1000)) { say("Choose a time in the future to publish.", true); return; }
+      if (expires !== null && !(expires > (at || Date.now() / 1000))) { say("The end time must be after the publish time.", true); return; }
+      var link = state.links.filter(function (l) { return l.link_id === f.link_id.value; })[0];
+      if (!later && !(await CW.confirm("Publish version " + f.version.value + " of “" + titleOf(link.policy_id) + "” now? " + (link.visibility === "public" ? "Anyone with the address will see it." : "Tools with the access code will see it."), "Publish now"))) return;
+      var body = {version: Number(f.version.value), expected_pointer_revision: Number(f.expected_pointer_revision.value), idempotency_key: f.idempotency_key.value};
+      if (expires !== null) body.expires_at = expires;
+      try {
+        if (later) { body.scheduled_for = at; await call("/links/" + encodeURIComponent(f.link_id.value) + "/schedules/publication", {method: "POST", json: body}); }
+        else await call("/links/" + encodeURIComponent(f.link_id.value) + "/publish", {method: "POST", json: body});
+        form.hidden = true; say(later ? "Publication scheduled." : "Version " + body.version + " is now published."); await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not publish. The version still needs its approvals, or the link changed since you opened it. Refresh and try again.", true); return; }
+        fail(error, "publish");
+      }
+    });
+    function openSchedule(link) {
+      var form = $("ppl-schedule"), f = form.elements;
+      form.reset(); reference(form); f.link_id.value = link.link_id;
+      $("ppl-schedule-title").textContent = "Schedule an end for " + titleOf(link.policy_id);
+      if (!link.current_version) f.action.value = "revocation";
+      CW.open(form, "select");
+    }
+    $("ppl-schedule").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, at = CW.toSeconds(f.scheduled_for.value);
+      var link = state.links.filter(function (l) { return l.link_id === f.link_id.value; })[0];
+      if (!(at > Date.now() / 1000)) { say("Choose a time in the future.", true); return; }
+      var body = {scheduled_for: at, idempotency_key: f.idempotency_key.value};
+      if (f.action.value === "revocation") {
+        if (!(await CW.confirm("Turn off the link for “" + titleOf(link.policy_id) + "” on " + CW.when(at) + "? After that time the address stops working for good.", "Schedule turn-off"))) return;
+        body.expected_revision = link.revision;
+      } else {
+        if (!link.current_version) { say("Nothing is published on this link yet.", true); return; }
+        body.version = link.current_version; body.expected_pointer_revision = link.pointer_revision;
+      }
+      try { await call("/links/" + encodeURIComponent(link.link_id) + "/schedules/" + f.action.value, {method: "POST", json: body}); form.hidden = true; say("Scheduled."); await load(); }
+      catch (error) { fail(error, "schedule the change"); }
+    });
+    async function rotate(link) {
+      if (!(await CW.confirm("Create a new access code for the link to “" + titleOf(link.policy_id) + "”? The old code stops working straight away.", "Create new code"))) return;
+      try {
+        var result = await call("/links/" + encodeURIComponent(link.link_id) + "/rotate-capability", {method: "POST", json: {expected_revision: link.revision, idempotency_key: CW.reference()}});
+        say("New access code created."); showSecret(result.private_capability); await load();
+      } catch (error) { fail(error, "create a new access code"); }
+    }
+    async function revoke(link) {
+      if (!(await CW.confirm("Turn off the link to “" + titleOf(link.policy_id) + "” now? The address stops working for good and cannot be turned back on. Create a new link if you need one later.", "Turn off"))) return;
+      try { await call("/links/" + encodeURIComponent(link.link_id) + "/revoke", {method: "POST", json: {expected_revision: link.revision, idempotency_key: CW.reference()}}); say("Link turned off."); await load(); }
+      catch (error) { fail(error, "turn off the link"); }
+    }
+    async function checkAddress(link) {
+      try {
+        var result = await call("/links/" + encodeURIComponent(link.link_id));
+        if (result.public_registry_status === "verified") { say("The address for “" + titleOf(link.policy_id) + "” works."); return; }
+        if (!canAdmin) { say("The address for “" + titleOf(link.policy_id) + "” is not working. Ask an administrator to repair it.", true); return; }
+        if (!(await CW.confirm("The address for “" + titleOf(link.policy_id) + "” is not working. Repair it now?", "Repair"))) return;
+        await call("/links/" + encodeURIComponent(link.link_id) + "/bind-public-path", {method: "POST"});
+        say("Address repaired.");
+      } catch (error) { fail(error, "check the address"); }
+    }
+
+    // ----- Scheduled changes -----
+    var JOB_ACTIONS = {publish: "Publish a version", expire: "Stop showing the version", revoke: "Turn the link off"};
+    var JOB_STATE = {pending: ["Waiting", "warn"], leased: ["Running", "info"], applied: ["Done", "ok"], failed: ["Did not run", "danger"], cancelled: ["Cancelled", "idle"]};
+    function linkPolicy(linkId) { var l = state.links.filter(function (x) { return x.link_id === linkId; })[0]; return l ? titleOf(l.policy_id) : "Removed link"; }
+    function renderJobs() {
+      CW.table($("ppl-jobs"), state.jobs, {label: "Scheduled changes", name: function (j) { return JOB_ACTIONS[j.action] + " " + linkPolicy(j.link_id); },
+        columns: [
+          {label: "Change", value: function (j) { return JOB_ACTIONS[j.action] + (j.target_version ? " (version " + j.target_version + ")" : ""); }},
+          {label: "Link", value: function (j) { return linkPolicy(j.link_id); }},
+          {label: "When", value: function (j) { return CW.when(j.scheduled_for); }},
+          {label: "Status", value: function (j) { var m = JOB_STATE[j.state] || [CW.human(j.state), "idle"]; return CW.badge(m[0], m[1]); }},
+        ],
+        actions: [
+          {label: "Schedule again", when: function (j) { return canAdmin && j.state === "failed"; }, run: function (j) {
+            var link = state.links.filter(function (l) { return l.link_id === j.link_id; })[0];
+            if (!link) { say("That link no longer exists.", true); return; }
+            if (j.action === "publish") openPublish(link); else openSchedule(link);
+          }},
+        ],
+        empty: {title: "Nothing scheduled.", body: "Use “Publish a version” or “Schedule an end” on a link to plan a change."}});
+    }
+    $("ppl-run-due").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        try {
+          var result = await call("/jobs/run-due", {method: "POST", json: {limit: 20, lease_seconds: 60, approval_retry_seconds: 60}});
+          var count = (result.outcomes || []).length;
+          say(count ? count + " scheduled changes processed." : "Nothing was due."); await load();
+        } catch (error) { fail(error, "run the scheduled changes"); }
+      });
+    });
+
+    // ----- History and upkeep -----
+    function events(host, rows, spec) { CW.table(host, rows, spec); }
+    $("ppl-show-audit").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        try {
+          var result = await call("/audit?after_sequence=0&limit=500");
+          events($("ppl-history"), (result.events || []).slice().reverse(), {label: "Change history", columns: [
+            {label: "When", value: function (e) { return CW.when(e.created_at); }},
+            {label: "What Happened", value: function (e) { return CW.human(e.event_type); }},
+            {label: "Policy", value: function (e) { return e.details && e.details.policy_id ? titleOf(e.details.policy_id) : linkPolicy(e.subject_id); }},
+          ], empty: {title: "No changes recorded yet."}});
+        } catch (error) { fail(error, "load the history"); }
+      });
+    });
+    $("ppl-show-access").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        try {
+          var result = await call("/access?after_sequence=0&limit=500");
+          events($("ppl-history"), (result.events || []).slice().reverse(), {label: "When links were read", columns: [
+            {label: "When", value: function (e) { return CW.when(e.created_at); }},
+            {label: "Link", value: function (e) { return linkPolicy(e.link_id); }},
+            {label: "Result", value: function (e) { return CW.human(e.outcome); }},
+            {label: "Access Code Used", value: function (e) { return e.credential_present ? "Yes" : "No"; }},
+          ], empty: {title: "Nobody has read a link yet."}});
+        } catch (error) { fail(error, "load the reading history"); }
+      });
+    });
+    $("ppl-integrity").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        try { var result = await call("/integrity"); var ok = result && result.valid !== false; CW.say($("ppl-history"), ok ? "All records are intact." : "The check found a problem. Contact support before changing anything.", !ok); }
+        catch (error) { CW.fail($("ppl-history"), error, "check the records"); }
+      });
+    });
+    $("ppl-retention").elements.before.value = CW.toInput(Date.now() / 1000 - 365 * 86400, true);
+    $("ppl-retention").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, kind = event.submitter && event.submitter.value === "content" ? "content" : "access", before = CW.toSeconds(form.elements.before.value);
+      if (!(before > 0)) { say("Choose a date.", true); return; }
+      var message = kind === "access" ? "Delete the history of when links were read before " + CW.when(before) + "? This cannot be undone." : "Remove old policy text from before " + CW.when(before) + " that no link shows any more? This cannot be undone; the record that each version existed is kept.";
+      if (!(await CW.confirm(message, kind === "access" ? "Delete history" : "Remove old text"))) return;
+      try { await call("/retention/" + kind, {method: "POST", json: {before: before, limit: 500}}); say(kind === "access" ? "Old reading history deleted." : "Unused old policy text removed."); }
+      catch (error) { fail(error, "clean up old records"); }
+    });
+
+    load();
+  }
+})();
+</script>
+{% endblock %}

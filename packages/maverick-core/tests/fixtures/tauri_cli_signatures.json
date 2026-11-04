@@ -1,0 +1,18 @@
+[
+  {
+    "producer": "@tauri-apps/cli 2.11.4 signer generate/sign",
+    "scope": "Synthetic bytes and disposable test key; not an installer or release identity. Private key deleted.",
+    "filename": "fixture-installer.msi",
+    "payload_base64": "U3ludGhldGljIE1TSS1zaGFwZWQgYnl0ZXM7IGNyeXB0b2dyYXBoaWMgaW50ZXJvcGVyYWJpbGl0eSBvbmx5LCBub3QgYW4gaW5zdGFsbGFibGUgcGFja2FnZS4K",
+    "public_key": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1MTA2ODhFNTE5REJGNjIKUldSaXY1MVJqbWdRZFF5dkVWUnZyZERncTNSSVRESVEwMnpTZStmb0VHeTF1aE1tOTBNd2szZ3IK",
+    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSaXY1MVJqbWdRZGRER1c2bmJCM0VwQk5TQzl3OU4rR0hJaTFaZ0VCNGdramZ4VXFxZ29zdGpGRk1valJqQlZHUFNBZVJ6SkVFSVYxZ0N6M0lrQWFjNzJPN2RCNWVGSndJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NjU4NzQxCWZpbGU6Zml4dHVyZS1pbnN0YWxsZXIubXNpCkVlS0d4dzdndGJXUDE1QXZqcHZZOCt4UnY0WXNkbjEwbGpHTmtaQTdtTEoyNTU4a041b1NabEFubldJcUdaS2dGc0x5MjZPRXd2Tmh5MERtWDlpSUNBPT0K"
+  },
+  {
+    "producer": "@tauri-apps/cli 2.11.4 signer generate/sign",
+    "scope": "Synthetic bytes and disposable test key; not an installer or release identity. Private key deleted.",
+    "filename": "fixture-caf\u00e9.msi",
+    "payload_base64": "U3ludGhldGljIE1TSS1zaGFwZWQgYnl0ZXM7IGNyeXB0b2dyYXBoaWMgaW50ZXJvcGVyYWJpbGl0eSBvbmx5LCBub3QgYW4gaW5zdGFsbGFibGUgcGFja2FnZS4K",
+    "public_key": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc1MTA2ODhFNTE5REJGNjIKUldSaXY1MVJqbWdRZFF5dkVWUnZyZERncTNSSVRESVEwMnpTZStmb0VHeTF1aE1tOTBNd2szZ3IK",
+    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSaXY1MVJqbWdRZFVnOEtzSG53WjR3eEdpaWQxZnRvY2hPMG1rNDZkQXpWYWdqTldITzVQL1lRbmJha0JmZ2t4cWtKbHU5MHBzd2k1WGVlVkxIZ21zQzdTQW9vTFp0U0FVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4NjU4NzQxCWZpbGU6Zml4dHVyZS1jYWbDqS5tc2kKN1J5RjRVYnJCUDNvUitrV2pCTjladmZ6S05uVHVJWTRzd1FRSUU0azUxK2RFUTk0KzRiZHNaY28wWlBrM0NTRmluVnBtYm9QY2ZVR2NmbHZBUk5pQnc9PQo="
+  }
+]

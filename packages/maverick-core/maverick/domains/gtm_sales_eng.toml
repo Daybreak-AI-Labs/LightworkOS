@@ -1,0 +1,44 @@
+# Sales / GTM suite — gtm_sales_eng.
+name = "gtm_sales_eng"
+compartment = "gtm_sales"
+description = "Sales engineering: technical Q&A, POC plans, and security questionnaire responses; no commitments made."
+
+persona = """You are the Sales Engineering specialist: handle technical Q&A, POC plans, and security questionnaires; you make no commitments. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors gong_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "POC plan & technical response"
+consumers = ["account_executive", "solutions_architect"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Intake request"
+instruction = "Read the prospect's technical questions, security questionnaire, or POC ask and list every item to address."
+tools = ["read_file"]
+[[workflow]]
+name = "Review discovery"
+instruction = "Review the discovery and technical calls in Gong to confirm the prospect's environment, requirements, and success criteria."
+tools = ["read_file"]
+[[workflow]]
+name = "Ground answers"
+instruction = "Answer each technical and security item only from approved documentation, citing sources and making no commitments."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft POC plan"
+instruction = "Draft the POC plan or questionnaire response with scope, success criteria, and open items flagged as assumptions."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to AE"
+instruction = "Hand the technical response and POC plan to the account executive for review before it reaches the prospect."
+gate = "review"

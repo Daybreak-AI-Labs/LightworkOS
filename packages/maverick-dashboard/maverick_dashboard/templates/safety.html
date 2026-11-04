@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Safety · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Agent Shield', 'Safety',
+               subtitle='The screening layer',
+               lede='What Agent Shield — the safety layer that screens what
+                     agents read, do, and say — stopped, taken from the
+                     sealed activity record kept on this server.') %}
+    {{ state('Current state',
+             total ~ ' block' ~ ('' if total == 1 else 's') ~ (' on ' ~ day if day else ' today'),
+             badge=('shield stopped something' if total else 'all clear'),
+             badge_class=('warn' if total else 'ok'),
+             copy='What agents read: ' ~ by_stage.get('input', 0) ~ ' · What agents did: ' ~
+                  by_stage.get('tool', 0) ~ ' · What agents said: ' ~
+                  by_stage.get('output', 0) ~ ' — every stop is sealed in the
+                  activity record.') }}
+  {% endcall %}
+  <p class="muted">This page shows audit metadata. Employee prompts, what was sent to tools and detailed reasons remain private.</p>
+  {% if can_open_page('/simulate') %}<p>Want to know whether an action would be stopped? <a href="/simulate">Test a safety rule</a> before anyone runs it.</p>{% endif %}
+
+  <div class="section-head"><h2>Which day</h2></div>
+  <div class="panel">
+    <form method="get" action="/safety" style="display: flex; gap: 1rem; align-items: end; flex-wrap: wrap;">
+      <label>
+        <div class="muted" style="font-size: 0.85rem;">Day</div>
+        <input class="input" type="date" name="day" value="{{ day or '' }}" />
+      </label>
+      <label>
+        <div class="muted" style="font-size: 0.85rem;">How far back to look</div>
+        <select class="input" name="n">
+          {% for opt, label in [(200, 'Latest 200 records'), (1000, 'Latest 1,000 records'), (5000, 'Latest 5,000 records')] %}
+            <option value="{{ opt }}"{% if n == opt %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+          {% if n not in [200, 1000, 5000] %}<option value="{{ n }}" selected>Latest {{ n }} records</option>{% endif %}
+        </select>
+      </label>
+      <button type="submit" class="btn">Show</button>
+      {% if day %}<a class="btn btn--ghost" href="/safety">Back to today</a>{% endif %}
+    </form>
+  </div>
+
+  <div class="section-head"><h2>Stopped {% if day %}on {{ day }}{% else %}today{% endif %}</h2></div>
+  <div class="panel">
+    <p style="font-size: 2rem; margin: 0.2rem 0;">{{ total }}</p>
+    <div class="muted" style="display: flex; gap: 1.5rem; flex-wrap: wrap;">
+      <span>What agents read: <strong>{{ by_stage.get('input', 0) }}</strong></span>
+      <span>What agents did: <strong>{{ by_stage.get('tool', 0) }}</strong></span>
+      <span>What agents said: <strong>{{ by_stage.get('output', 0) }}</strong></span>
+    </div>
+  </div>
+
+  {% if top_reasons %}
+  <div class="section-head"><h2>Top reasons</h2></div>
+  <div class="panel">
+    <table>
+      <thead><tr><th scope="col">Reason</th><th scope="col">Times</th></tr></thead>
+      <tbody>
+      {% for reason, count in top_reasons %}
+        <tr><td>{{ reason }}</td><td>{{ count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Recent blocks</h2></div>
+  <div class="panel">
+    {% if events %}
+      <table>
+        <thead>
+          <tr><th scope="col">When</th><th scope="col">Where</th><th scope="col">Reason</th><th scope="col">How sure</th></tr>
+        </thead>
+        <tbody>
+        {% for ev in events %}
+          <tr>
+            <td class="muted" style="white-space: nowrap;">{{ ev.ts | datetime }}</td>
+            <td>{{ {'input': 'What it read', 'tool': 'What it did', 'output': 'What it said'}.get(ev.stage, ev.stage|humanize if ev.stage else '-') }}</td>
+            <td>{{ ev.reason or '-' }}</td>
+            <td class="muted">
+              {% set s = ev.score | default(none) %}
+              {% if s is not none %}{{ "%.0f" | format(s * 100) }}%{% else %}-{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">
+        Nothing was stopped on this day. Every stop is sealed in the
+        <a href="/audit">activity record</a> kept on this server, so a quiet
+        day is provable, not assumed.
+      </p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="fa-calibration-title">How well screening is tuned</h2></div>
+  <section class="panel" aria-labelledby="fa-calibration-title">
+    <p class="muted">Tests the screening against a set of known attacks and ordinary messages. See how many attacks each level catches and how often it stops something harmless. Nothing is changed.</p>
+    <p class="fa-row"><button type="button" class="btn btn--primary" id="fa-calibration-run">Test the screening</button></p>
+    <p class="muted" id="fa-calibration-status" role="status" aria-live="polite"></p>
+    <div id="fa-calibration-out"></div>
+  </section>
+  <style>
+    .fa-scroll { overflow-x: auto; }
+    .fa-inline { list-style: none; padding: 0; margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .fa-list { margin: var(--space-2) 0; }
+    .fa-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+    .fa-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .fa-grow { flex: 1 1 18rem; }
+    .fa-technical { margin-top: var(--space-2); }
+  </style>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+
+{% endblock %}

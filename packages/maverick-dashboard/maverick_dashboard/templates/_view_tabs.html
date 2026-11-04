@@ -1,0 +1,12 @@
+{#- Views of one page as links (Approvals and All decisions; a project's
+    Tasks and Plan). `items` is a list of (key, label, href); `current` names
+    the view shown. Drawn as the shared sub_nav bar (_tabs.html). -#}
+{% from "_tabs.html" import sub_nav %}
+{% macro view_tabs(label, items, current) %}
+{%- set ns = namespace(links=[], current='') %}
+{%- for key, text, href in items %}
+{%- set ns.links = ns.links + [(href, text)] %}
+{%- if key == current %}{% set ns.current = href %}{% endif %}
+{%- endfor %}
+{{ sub_nav(label, [('', ns.links)], ns.current) }}
+{%- endmacro %}

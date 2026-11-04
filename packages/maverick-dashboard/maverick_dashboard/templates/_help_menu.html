@@ -1,0 +1,17 @@
+{# The Help menu in both shells: help for this page, a person to ask, and the
+   service-status page when one is set ([support] status_page_url). "Get help
+   from a person" prepares a request on the Help page with this page, its task
+   and the last error reference filled in (lightwork-help-menu.js); nothing is
+   sent automatically. #}
+<details class="prefs help-menu" id="help-menu">
+  <summary class="{{ help_menu_class|default('iconbtn') }}" aria-label="{{ ut('Help') }}" title="{{ ut('Help') }}" lang="{{ ul('Help') }}">{% if help_menu_text %}{{ ui('Help') }}{% else %}<svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-facts"></use></svg>{% endif %}</summary>
+  <div class="prefs__panel help-menu__panel" role="group" aria-label="{{ ut('Help') }}" lang="{{ ul('Help') }}">
+    {% if request and request.url.path in ('/start', '/chat', '/goals', '/connections', '/automations', '/learned') %}
+    <button class="btn btn--ghost help-menu__item" type="button" data-product-tour-open>Take a quick tour</button>
+    {% else %}<a class="help-menu__item" href="/start#product-tour">Take a quick tour</a>{% endif %}
+    {% if help_topic %}<a class="help-menu__item" href="/help#how-{{ help_topic.slug }}" data-help-topic="{{ help_topic.slug }}">{{ ui('How this works') }}: {{ help_topic.title }}</a>{% endif %}
+    <a class="help-menu__item" href="/help#get-help" data-get-help>{{ ui('Get help from a person') }}</a>
+    <a class="help-menu__item" href="/help"{% if request and request.url.path == '/help' %} aria-current="page"{% endif %} aria-label="{{ ut('Help and diagnostics') }}" lang="{{ ul('Help and diagnostics') }}">{{ ui('Help and diagnostics') }}</a>
+    {% if support_status_page_url %}<a class="help-menu__item" href="{{ support_status_page_url }}" target="_blank" rel="noopener noreferrer" data-service-status-link>{{ ui('Service status') }}<span class="sr-only"> (opens in a new tab)</span></a>{% endif %}
+  </div>
+</details>

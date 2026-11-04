@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Compartments · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Agent factory', 'Compartments',
+               subtitle='Each agent and specialist in its own protected space',
+               lede='Each agent and specialist works in its own protected space with
+                     only the tools and information it needs. If one is misused
+                     during a task, Lightwork shuts it off without affecting the others.') %}
+    {{ state('Current state',
+             domain_page.catalog_total ~ (' agent or specialist' if domain_page.catalog_total == 1 else ' agents and specialists'),
+             badge='Protected' if domain_page.catalog_total else 'None yet',
+             badge_class='ok' if domain_page.catalog_total else 'idle',
+             copy='Shutting off a misused agent or specialist happens automatically during a task.
+                   To stop one from using a tool at all, change it in the Agent Factory
+                   or block the tool on the Permissions page.') }}
+  {% endcall %}
+  <div class="panel{% if not domain_page.catalog_total %} empty{% endif %}">
+    {% if domain_page.catalog_total %}
+      <form method="get" action="/compartments" aria-label="Search agents and specialists" class="cmp-search">
+        <label for="domain-query" class="cmp-field">
+          <span>Search agents and specialists</span>
+          <input class="input" id="domain-query" name="q" type="search"
+                 maxlength="128" value="{{ domain_page.query }}"
+                 placeholder="Name or what it does" />
+        </label>
+        <label for="domain-per-page" class="cmp-field">
+          <span>Show</span>
+          <select class="select" id="domain-per-page" name="per_page">
+            {% for n in (25, 50, 100) %}<option value="{{ n }}"{% if domain_page.per_page == n %} selected{% endif %}>{{ n }} per page</option>{% endfor %}
+          </select>
+        </label>
+        <button class="btn btn--primary" type="submit">Search domains</button>
+        {% if domain_page.query %}<a class="btn btn--ghost" href="/compartments">Clear</a>{% endif %}
+      </form>
+      <p class="muted" role="status">
+        {% if domain_page.returned %}
+          Showing {{ domain_page.first }}–{{ domain_page.last }} of
+          {{ domain_page.filtered_total }} matching agents and specialists
+        {% else %}
+          Showing 0 of {{ domain_page.filtered_total }} matching agents and specialists
+        {% endif %}
+        ({{ domain_page.catalog_total }} in total).
+      </p>
+    {% endif %}
+    {% if domains %}
+    <table>
+      <thead><tr>
+        <th scope="col">Agent or specialist</th>
+        <th scope="col">Protected space</th>
+        <th scope="col">Made by</th>
+        <th scope="col">Highest risk</th>
+        <th scope="col">Tools</th>
+        <th scope="col">Information</th>
+        <th scope="col">Actions</th>
+      </tr></thead>
+      <tbody>
+      {% for d in domains %}
+        {% set label = d | pack_label %}
+        <tr>
+          <td>
+            <strong>{{ label }}</strong>
+            {% if d.description %}
+              <div class="muted cmp-wide">{{ d.description }}</div>
+            {% endif %}
+            {% if d.output.deliverable %}
+              <div class="muted cmp-wide">
+                <strong>Delivers:</strong> {{ d.output.deliverable }}
+                {%- if d.output.consumers %} to {{ d.output.consumers|map('humanize')|join(', ') }}{% endif -%}
+                {%- if d.output.cadence %} ({{ d.output.cadence | humanize | lower }}){% endif -%}
+                {%- if d.output.gate %} · needs {{ d.output.gate | humanize | lower }}{% endif -%}
+              </div>
+            {% endif %}
+            {% if d.persona %}<details class="muted cmp-wide"><summary>Technical details</summary><p>Instructions it follows:</p><p>{{ d.persona }}</p></details>{% endif %}
+          </td>
+          <td><span class="badge">{{ d.compartment | humanize }}</span></td>
+          <td class="muted">{{ 'Built-in' if d.authoring == 'manual' else 'Created in Agent Factory' }}</td>
+          <td>{% if d.max_risk %}<span class="badge {{ 'blocked' if d.max_risk in ('high', 'critical') else ('warn' if d.max_risk == 'medium' else 'active') }}">{{ d.max_risk | humanize }} risk</span>{% else %}—{% endif %}</td>
+          <td class="muted cmp-tools">
+            {% if d.allow_tools %}<div>Can use: {{ d.allow_tools|map('humanize')|join(', ') }}</div>{% endif %}
+            {% if d.deny_tools %}<div>Can't use: {{ d.deny_tools|map('humanize')|join(', ') }}</div>{% endif %}
+            {% if not d.allow_tools and not d.deny_tools %}Standard tools{% endif %}
+          </td>
+          <td class="muted">{{ d.knowledge_sources|map('humanize')|join(', ') or '—' }}</td>
+          <td><a class="btn btn--ghost" href="/agents?name={{ d.name | urlencode }}" aria-label="Open {{ label }} in the Agent Factory">Open</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% elif domain_page.catalog_total %}
+      <p class="muted">No agents or specialists match this search. <a class="btn btn--ghost" href="/compartments">Show all</a></p>
+    {% else %}
+      <div class="mv-empty">
+        <p class="mv-empty__title">No agents or specialists yet</p>
+        <p class="mv-empty__body">Each department you add gets its own protected specialists.</p>
+        <p><a class="btn btn--primary" href="/agents">Open the Agent Factory</a></p>
+      </div>
+    {% endif %}
+    {% if domain_page.page_count > 1 %}
+      <nav aria-label="Result pages" class="cmp-pages">
+        {% if domain_page.page > 1 %}
+          <a class="btn btn--ghost"
+             href="/compartments?q={{ domain_page.query | urlencode }}&amp;per_page={{ domain_page.per_page }}&amp;page={{ domain_page.page - 1 }}">Previous</a>
+        {% endif %}
+        <span class="muted">Page {{ domain_page.page }} of {{ domain_page.page_count }}</span>
+        {% if domain_page.page < domain_page.page_count %}
+          <a class="btn btn--ghost"
+             href="/compartments?q={{ domain_page.query | urlencode }}&amp;per_page={{ domain_page.per_page }}&amp;page={{ domain_page.page + 1 }}">Next</a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  </div>
+  <style>
+    .cmp-search { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; margin-bottom: var(--space-3); }
+    .cmp-field { display: grid; gap: var(--space-1); }
+    .cmp-wide { max-width: 30rem; margin-top: var(--space-1); }
+    .cmp-tools { max-width: 24rem; }
+    .cmp-pages { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+  </style>
+{% endblock %}

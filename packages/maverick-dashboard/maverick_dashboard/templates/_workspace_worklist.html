@@ -1,0 +1,173 @@
+{# Department-workspace chassis, top half: the assessment worklist. One
+   chassis serves every department workspace (Privacy, Finance, ...); the page
+   passes `sessions` and `stats`. The old hero stat tiles moved into each
+   page's live executive board (GET /api/v1/dashboards/{department}). Pair
+   with _workspace_memory_catalog.html, which carries the bottom half + JS. #}
+<style>
+  /* Department workspace — the module view over assessment records. */
+  .pw-risk { white-space: nowrap; }
+  .pw-risk .badge + .badge { margin-inline-start: var(--space-1); }
+  .pw-age-warn { color: var(--warn); font-weight: var(--font-medium); }
+  .pw-cat { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+  .pw-cat .chip { border: 1px solid var(--border); border-radius: var(--radius-pill);
+                  padding: 0.3rem 0.8rem; font-size: var(--text-sm); background: var(--surface-2); }
+  .pw-cat .chip b { color: var(--brand); font-weight: var(--font-semibold); }
+  .pw-owner { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); }
+  .pw-assign-btn { padding: 0.2rem 0.6rem; font-size: var(--text-xs); }
+</style>
+{% from "_empty_state.html" import empty_state %}
+
+
+  <div class="section-head"><h2>Worklist</h2></div>
+  <div class="panel">
+    <details id="pw-start" style="margin-bottom: var(--space-4);">
+      <summary>Start an assessment</summary>
+      <p class="muted">Choose a questionnaire and the subject to assess. Answer its questions in the app, then review the findings.</p>
+      <form id="pw-start-form">
+        <div class="field">
+          <label for="pw-start-type">Questionnaire</label>
+          <select id="pw-start-type" class="select" required style="min-width:0; max-width:100%;">
+            <option value="">Choose a questionnaire</option>
+            {% for t in templates %}<option value="{{ t.type }}">{{ t.title }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="pw-start-subject">What are you assessing?</label>
+          <input id="pw-start-subject" class="input" required maxlength="300" placeholder="A vendor, system, process, or project" style="min-width:0; max-width:100%;">
+        </div>
+        <button id="pw-start-submit" class="btn" type="submit">Start assessment</button>
+      </form>
+    </details>
+    <p id="pw-start-msg" class="muted" role="status" aria-live="polite"></p>
+    <button id="pw-start-open" class="btn" type="button" hidden>Open new assessment</button>
+    {% from "_tabs.html" import panel_tabs %}
+    {{ panel_tabs('Filter worklist', [
+         ('all', 'All (' ~ stats.total ~ ')'), ('pending_review', 'Needs review (' ~ stats.pending ~ ')'),
+         ('needs_more', 'Awaiting answers (' ~ stats.needs_more ~ ')'),
+         ('high', 'High risk after safeguards (' ~ stats.high_residual ~ ')'),
+         ('due', 'Due for re-review (' ~ stats.review_due ~ ')'), ('mine', 'Mine (' ~ stats.mine ~ ')'),
+         ('unassigned', 'Unassigned (' ~ stats.unassigned ~ ')')], 'all',
+       id='pw-filter', data='filter', controls='pw-worklist', cls='pw-filters') }}
+    <div id="pw-worklist" role="tabpanel" aria-labelledby="pw-filter-tab-all">
+    {% if sessions %}
+    <table id="pw-table">
+      <thead>
+        <tr>
+          <th scope="col">Questionnaire</th><th scope="col">Subject</th>
+          <th scope="col">Risk before → after safeguards</th>
+          <th scope="col">Status</th><th scope="col">Reviewer</th>
+          <th scope="col">Follow-ups</th>
+          <th scope="col">Age / next review</th><th scope="col"><span class="sr-only">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set rows = worklist if worklist is defined else sessions %}
+        {% set _titles = {} %}{% for t in templates %}{% set _ = _titles.update({t.type: t.title}) %}{% endfor %}
+        {% for s in rows %}
+        <tr data-status="{{ s.status }}" data-residual="{{ s.residual_risk }}" data-due="{{ '1' if s.review_due else '' }}"
+            data-assignee="{{ s.assignee or '' }}" data-mine="{{ '1' if s.mine else '' }}"
+            data-revision="{{ s.revision }}">
+          <td>{{ _titles.get(s.type) or (s.type | humanize) }}</td>
+          <td>{{ s.subject }}</td>
+          <td class="pw-risk">
+            {% if s.total is defined and s.total and s.answered < s.total %}
+            <span class="badge warn">Incomplete · {{ s.answered }} of {{ s.total }} resolved</span>
+            {% else %}
+            <span class="badge {{ 'blocked' if s.inherent_risk == 'high' else 'warn' if s.inherent_risk == 'medium' else 'done' }}">{{ s.inherent_risk | humanize }}</span>
+            <span aria-hidden="true" class="muted">→</span>
+            <span class="badge {{ 'blocked' if s.residual_risk == 'high' else 'warn' if s.residual_risk == 'medium' else 'done' }}">{{ s.residual_risk | humanize }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if s.status == 'approved' %}
+              <span class="badge done">Approved</span>
+            {% elif s.status == 'rejected' %}
+              <span class="badge blocked">Rejected</span>
+            {% elif s.status == 'needs_more' %}
+              <span class="badge warn">Awaiting answers</span>
+            {% else %}
+              <span class="badge info">Needs review</span>
+            {% endif %}
+          </td>
+          <td class="pw-owner">
+            {% if s.assignee %}
+              <span class="badge {{ 'info' if s.mine else '' }}">{{ (s.assignee | identity).name }}{% if s.mine %} (you){% endif %}</span>
+            {% else %}
+              <span class="muted">Unassigned</span>
+            {% endif %}
+            <button class="btn btn--ghost pw-assign-btn" data-assessment="{{ s.id }}"
+                    data-current="{{ s.assignee or '' }}" data-subject="{{ s.subject }}" type="button"
+                    aria-label="Assign the {{ s.subject }} assessment">Assign</button>
+          </td>
+          <td>{{ s.open_followups or '—' }}</td>
+          <td {% if s.review_due or (s.status in ('pending_review', 'needs_more') and s.age_days is not none and s.age_days > 7) %}class="pw-age-warn"{% endif %}>
+            {% if s.review_in_days is not none %}
+              {% set _d = s.review_in_days if s.review_in_days >= 0 else (0 - s.review_in_days) %}
+              {{ ('Re-review in ' ~ _d ~ (' day' if _d == 1 else ' days')) if s.review_in_days >= 0 else ('Re-review ' ~ _d ~ (' day' if _d == 1 else ' days') ~ ' overdue') }}
+            {% else %}
+              {{ (s.age_days ~ (' day old' if s.age_days == 1 else ' days old')) if s.age_days is not none else '—' }}
+            {% endif %}</td>
+          <td><button class="btn pw-review-btn" data-assessment="{{ s.id }}" type="button"
+                      aria-label="Review the {{ s.subject }} assessment">Review</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if rows | length < sessions | length %}
+      <p class="muted" style="font-size:var(--text-sm);">Showing the {{ rows | length }} most
+        actionable of {{ sessions | length }} records — open work and anything due for
+        re-review first. The stats above count everything.</p>
+    {% endif %}
+    {% else %}
+      {% call empty_state('No assessments yet',
+                          'Assessments you start appear here with their risk before and after safeguards, status and reviewer. Choose a questionnaire and a subject to start the first one.') %}
+        <button class="btn mv-empty__action" type="button" id="pw-start-empty">Start an assessment</button>
+      {% endcall %}
+    {% endif %}
+    </div>
+  </div>
+  <script nonce="{{ csp_script_nonce }}">
+  (function assessmentIntake() {
+    const form = document.getElementById('pw-start-form');
+    const type = document.getElementById('pw-start-type'), subject = document.getElementById('pw-start-subject');
+    const submit = document.getElementById('pw-start-submit'), message = document.getElementById('pw-start-msg');
+    const openButton = document.getElementById('pw-start-open');
+    let busy = false, createdId = null;
+    function openCreated() { if (createdId && window.mvAssessmentReview) window.mvAssessmentReview.open(createdId); }
+    openButton.addEventListener('click', openCreated);
+    function openStart() { const box = document.getElementById('pw-start'); box.open = true; type.focus(); }
+    const startEmpty = document.getElementById('pw-start-empty');
+    if (startEmpty) startEmpty.addEventListener('click', openStart);
+    // The page header's "Start an assessment" (href="#pw-start") opens the form too.
+    document.addEventListener('click', function (event) {
+      const link = event.target.closest && event.target.closest('a[href="#pw-start"]');
+      if (!link) return;
+      event.preventDefault(); openStart();
+    });
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      if (busy || !form.reportValidity()) return;
+      const name = subject.value.trim(), kind = type.value;
+      if (!name || !kind) { message.textContent = 'Choose a questionnaire and enter its subject.'; return; }
+      function cell(value) { return '"' + value.replace(/"/g, '""') + '"'; }
+      const csv = 'subject,type\n' + cell(name) + ',' + cell(kind);
+      busy = true; submit.disabled = type.disabled = subject.disabled = true;
+      message.textContent = 'Starting assessment…';
+      let created = false;
+      try {
+        const response = await fetch('/api/v1/assess/bulk-import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ csv: csv })
+        });
+        if (!response.ok) throw new Error(window.mvErrorText ? window.mvErrorText(response, 'start the assessment') : 'Could not start the assessment. Try again.');
+        const data = await response.json(), row = data && data.created && data.created[0];
+        if (!data || data.created_count !== 1 || data.error_count !== 0 || !Array.isArray(data.created) || data.created.length !== 1 || !row || typeof row.id !== 'string' || !row.id || row.subject !== name || row.type !== kind) {
+          throw new Error('The assessment could not be confirmed. Refresh the worklist before trying again.');
+        }
+        createdId = row.id; created = true; subject.value = ''; openButton.hidden = false;
+        message.textContent = 'Assessment created. Complete the questionnaire, then review the findings.';
+      } catch (error) { message.textContent = error && error.name !== 'TypeError' && error.message ? error.message : 'Could not start the assessment. Try again when your connection is restored.'; }
+      finally { busy = false; submit.disabled = type.disabled = subject.disabled = false; }
+      if (created) openCreated();
+    });
+  })();
+  </script>

@@ -1,0 +1,44 @@
+# Legal — Tower 2 (Commercial Contracts / CLM) — Obligations & Renewals.
+# Integration targets (connectors to build): CLM; finance (revenue/spend impact).
+name = "legal_obligations"
+compartment = "legal_contracts"
+description = "Extract obligations/key terms; track renewals, milestones, and auto-renews."
+
+persona = """You are the Contract Obligations & Renewals specialist. Extract obligations and key
+terms (renewals, auto-renews, milestones, price escalators, SLAs/penalties) and track critical
+dates. You analyze and DRAFT alerts and summaries; you take no action on a contract and make no
+commitment. Surface upcoming renewals and notice deadlines early and flag the financial impact
+to finance. Research and analysis, not legal advice. Live connectors ironclad_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "obligations & renewals tracker"
+consumers = ["legal_counsel", "contracts_manager", "finance_manager"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull contracts"
+instruction = "Retrieve in-scope contracts and their executed documents from the CLM system."
+tools = ["read_file"]
+[[workflow]]
+name = "Extract terms"
+instruction = "Extract obligations, renewals, auto-renews, milestones, price escalators, and SLA penalties with their critical dates."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Track dates"
+instruction = "Compute upcoming renewal, notice, and milestone deadlines and surface those approaching first."
+[[workflow]]
+name = "Flag impact"
+instruction = "Flag the financial impact of each upcoming renewal or escalator for finance."
+[[workflow]]
+name = "Counsel review"
+instruction = "Route the renewals tracker and notice alerts to counsel and finance for review."
+gate = "review"

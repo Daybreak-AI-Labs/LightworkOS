@@ -1,0 +1,21 @@
+{# Alerts sent about one record (the deadline-alert ledger). Expects `record_alerts`, a list. #}
+<div class="section-head"><h2>Alerts</h2></div>
+<div class="panel{% if not record_alerts %} empty{% endif %}" id="record-alerts">
+  {% if record_alerts %}
+  <table class="table">
+    <thead><tr><th scope="col">When</th><th scope="col">What</th><th scope="col">Sent to</th><th scope="col">Channels</th></tr></thead>
+    <tbody>
+    {% for a in record_alerts %}
+      <tr>
+        <td>{{ a.sent_at | datetime('absolute') }}</td>
+        <td>{{ a.message }}</td>
+        <td>{{ a.recipient }}{% if a.recipient_kind == 'owner' %} <span class="muted">(workspace owner)</span>{% endif %}</td>
+        <td>{% if (a.mode or '').endswith('-unconfirmed') %}Not confirmed. Check the channel before sending it again.{% else %}{{ a.backends }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No alerts have been sent about this record yet. Alerts go out when a deadline is close, due today or missed.</p>
+  {% endif %}
+</div>

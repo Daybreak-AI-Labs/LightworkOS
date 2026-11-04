@@ -1,0 +1,69 @@
+name: GitHub Action
+
+# Smoke-tests the composite action in deploy/github-action against itself.
+# The full swarm needs a provider key + budget (out of scope for CI), so this
+# exercises the dry-run path: it proves action.yml is well-formed, Lightwork
+# installs, and the command-resolution logic runs for both the freeform-goal
+# and template entry points -- the parts that break without an LLM.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/github-action/**'
+      - '.github/workflows/github-action.yml'
+  pull_request:
+    paths:
+      - 'deploy/github-action/**'
+      - '.github/workflows/github-action.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-action-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # The composite action installs every first-party distribution from its
+      # own checkout. This smoke test therefore exercises the same fail-closed
+      # source install used by downstream callers.
+      - name: Freeform goal (dry-run)
+        id: freeform
+        uses: ./deploy/github-action
+        with:
+          goal: "Smoke test -- do not run"
+          max-dollars: "0.01"
+          dry-run: "true"
+
+      - name: Template + params (dry-run)
+        uses: ./deploy/github-action
+        with:
+          template: code-review
+          params: |
+            branch=main
+          dry-run: "true"
+
+      - name: Missing goal AND template (must fail)
+        id: missing
+        continue-on-error: true
+        uses: ./deploy/github-action
+        with:
+          dry-run: "true"
+
+      - name: Assert the missing-input case was rejected
+        shell: bash
+        run: |
+          if [ "${{ steps.missing.outcome }}" != "failure" ]; then
+            echo "::error::action should fail when neither goal nor template is provided"
+            exit 1
+          fi
+          echo "OK: missing-input correctly rejected"

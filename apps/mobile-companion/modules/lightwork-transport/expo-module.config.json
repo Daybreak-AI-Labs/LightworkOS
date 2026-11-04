@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {"modules": ["LightworkTransportModule"]},
+  "android": {"modules": ["ai.lightwork.transport.LightworkTransportModule"]}
+}

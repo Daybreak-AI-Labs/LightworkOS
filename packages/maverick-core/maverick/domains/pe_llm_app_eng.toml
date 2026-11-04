@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_llm_app_eng.
+name = "pe_llm_app_eng"
+compartment = "pe_engineering"
+description = "LLM application / prompt engineering."
+
+persona = """You are the LLM-Application Engineering specialist: build LLM-powered features -- RAG pipelines, prompt engineering, eval (RAGAS/LLM-judge), and guardrails. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "LLM feature PR with eval report"
+consumers = ["engineering_lead", "product_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Map context"
+instruction = "Read the feature spec, map the repo, and search knowledge for existing prompt, RAG, and guardrail patterns to reuse."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Build pipeline"
+instruction = "Implement the RAG or prompt pipeline and guardrails in the sandbox with surgical edits."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Run evals"
+instruction = "Run the RAGAS and LLM-judge eval suite and capture pass rates, regressions, and guardrail coverage."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Check regressions"
+instruction = "Compare eval scores against the baseline and fix any prompt or retrieval regression before opening the PR."
+tools = ["code_exec"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a PR with the eval report attached and route it to the engineering lead for review and merge approval."
+gate = "review"

@@ -1,0 +1,12 @@
+{
+  "title": "review the task",
+  "description": "a synthetic lost response",
+  "idempotency_key": "contract-submission-1",
+  "write_count_after_interruption": 1,
+  "receipt": {
+    "state": "accepted",
+    "submission_state": "dispatch_claimed",
+    "goal": {"id": 52, "status": "pending"},
+    "execution_confirmed": false
+  }
+}

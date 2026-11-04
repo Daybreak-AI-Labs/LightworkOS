@@ -1,0 +1,13 @@
+ticket_id,opened,channel,category,product,priority,first_response_minutes,resolved,summary
+T-9001,2026-09-01,email,delivery,shelving,normal,45,yes,Delivery arrived two days late
+T-9002,2026-09-02,chat,billing,cartons,normal,10,yes,Charged twice for one order
+T-9003,2026-09-03,email,delivery,shelving,high,120,yes,Delivery missing two units
+T-9004,2026-09-05,phone,product,label printer,normal,5,yes,Printer will not connect to wifi
+T-9005,2026-09-08,email,delivery,shelving,normal,240,no,Delivery date changed without notice
+T-9006,2026-09-09,chat,billing,shelving,low,15,yes,Invoice PDF would not open
+T-9007,2026-09-10,email,delivery,cartons,high,300,no,Order not delivered on promised date
+T-9008,2026-09-12,chat,product,label printer,normal,8,yes,Printer firmware update failed
+T-9009,2026-09-15,email,delivery,shelving,high,360,no,Delivery late for the second time
+T-9010,2026-09-16,phone,account,shelving,low,6,yes,Password reset
+T-9011,2026-09-18,email,delivery,cartons,normal,180,no,Tracking link shows no updates
+T-9012,2026-09-19,chat,product,label printer,normal,12,yes,Labels printing off centre

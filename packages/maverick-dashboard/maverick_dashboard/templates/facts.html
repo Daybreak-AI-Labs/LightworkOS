@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Facts · Lightwork{% endblock %}
+{% block content %}
+<div id="facts-workspace" data-context="{{ fact_context }}" data-can-edit="{{ 'true' if can_create_goal else 'false' }}">
+  <h1 class="page-title">Facts</h1>
+  <p class="page-subtitle">Details Lightwork remembers about your business across tasks.</p>
+  {% if can_create_goal %}
+  <section class="panel" aria-labelledby="fact-editor-title">
+    <h2 id="fact-editor-title">Add a fact</h2>
+    <form id="fact-editor">
+      <div class="field"><label for="fact-name">Name</label><input class="input" id="fact-name" required maxlength="200" autocomplete="off"></div>
+      <div class="field"><label for="fact-detail">Detail</label><textarea class="input" id="fact-detail" required maxlength="20000" rows="3"></textarea></div>
+      <p class="muted">Facts are shared within this workspace. Keep access keys and other secrets out of these notes.</p>
+      <div class="mv-row__actions"><button class="btn btn--primary" id="fact-save" type="submit">Save fact</button><button class="btn btn--ghost" id="fact-cancel" type="button" hidden>Cancel edit</button></div>
+    </form>
+    <section id="fact-conflict" hidden aria-labelledby="fact-conflict-title">
+      <h3 id="fact-conflict-title">This fact changed</h3><p>Your draft is preserved above. Compare it with the current saved detail before choosing your next action.</p>
+      <pre id="fact-current" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+      <button type="button" class="btn" id="fact-rebase">I reviewed the current detail; keep editing my draft</button>
+    </section>
+  </section>
+  {% endif %}
+  <p id="fact-status" role="status" aria-live="polite"></p>
+  <section class="panel" aria-labelledby="fact-list-title">
+    <h2 id="fact-list-title">Saved facts</h2>
+    <form id="fact-search" class="mv-row__actions">
+      <label for="fact-query">Name<input class="input" id="fact-query" maxlength="200" type="search"></label>
+      <label for="fact-source">Source or author<input class="input" id="fact-source" maxlength="200" type="search"></label>
+      <label for="fact-tag">Tag<input class="input" id="fact-tag" maxlength="64" type="search"></label>
+      <label for="fact-before">Updated before<input class="input" id="fact-before" type="date"></label>
+      <button type="submit" class="btn">Find facts</button>
+    </form>
+    <p class="muted">Searches shared business fact names, tags and source information in this workspace. Personal and task working notes are excluded. Private encrypted values are not indexed. Up to 50 facts appear on each page.</p>
+    <button type="button" class="btn" id="fact-review-selection">Review selected facts</button>
+    <p id="facts-empty" class="muted"{% if fact_records %} hidden{% endif %}>No facts match this view. Try another name, source or tag, or add a fact above.</p>
+    <table id="fact-list"{% if not fact_records %} hidden{% endif %}>
+      <thead><tr><th scope="col">Select</th><th scope="col">Name</th><th scope="col">Detail</th><th scope="col">Last updated</th><th scope="col">Actions</th></tr></thead>
+      <tbody>{% for item in fact_records[:50] %}<tr data-key="{{ item.key }}" data-revision="{{ item.revision }}">
+        <td><input type="checkbox" data-select-fact aria-label="Select {{ item.key }}"></td>
+        <td class="fact-key">{{ item.key | humanize }}</td><td class="fact-value" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ item.value }}</td>
+        <td>{{ item.updated_at | datetime }}</td>
+        <td class="mv-row__actions"><button class="btn btn--ghost" type="button" data-view-fact>Details and history</button>{% if can_create_goal %}<button class="btn btn--ghost" type="button" data-edit-fact>Edit</button><button class="btn btn--ghost btn--danger" type="button" data-remove-fact>Remove fact</button>{% endif %}</td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    <div class="mv-row__actions"><button type="button" class="btn" id="fact-prev" disabled>Previous facts</button><button type="button" class="btn" id="fact-next"{% if fact_records|length <= 50 %} disabled{% endif %}>Next facts</button></div>
+  </section>
+  <section class="panel" id="fact-inspector" hidden aria-labelledby="fact-inspector-title"><h2 id="fact-inspector-title" tabindex="-1">Fact details and history</h2><div id="fact-inspector-body"></div></section>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-facts.js" defer></script>{% endblock %}

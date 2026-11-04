@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}My conversations · Lightwork{% endblock %}
+{% block content %}
+<section id="conversation-browser" data-context="{{ conversation_context }}" style="max-width:68rem">
+  {% from "_hero.html" import hero %}
+  {{ hero('Your work', 'My conversations',
+          lede='Names, pins and archive status apply to every turn in your conversation. Archiving hides a conversation from recents; it does not delete its history or change workspace retention and access rules.',
+          compact=true) }}
+  <form id="conversation-search" data-draft-recovery="off">
+    <label for="conversation-query">Search stored message history</label><input id="conversation-query" type="search" maxlength="200" class="input">
+    <label for="conversation-view">Show</label><select id="conversation-view" class="input"><option value="active">Active</option><option value="pinned">Pinned</option><option value="archived">Archived</option><option value="all">All</option></select>
+    <button type="submit" class="btn">Search</button>
+  </form>
+  <p id="conversation-search-status" role="status" aria-live="polite"></p>
+  <section id="conversation-results" aria-label="Matching conversations"></section>
+  <button id="conversation-more" type="button" class="btn" hidden>Continue through older history</button>
+  <p><a href="/chat">New conversation</a> · <a href="/my-work">My background work</a></p>
+</section>
+<style>#conversation-browser article{border-bottom:1px solid var(--border);padding-block:1rem}#conversation-browser label{display:block}#conversation-browser p{overflow-wrap:anywhere}</style>
+<script src="/static/lightwork-conversation-organization.js" defer></script>
+{% endblock %}

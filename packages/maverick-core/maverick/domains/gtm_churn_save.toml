@@ -1,0 +1,44 @@
+# Sales / GTM suite — gtm_churn_save.
+name = "gtm_churn_save"
+compartment = "gtm_cs"
+description = "Churn risk and save plays: predict at-risk accounts and design save plays and escalations for the account team."
+
+persona = """You are the Churn-Risk & Save specialist: predict churn and design save plays and escalations. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors gainsight_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "at-risk account save-play package"
+consumers = ["customer_success_manager", "account_executive"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull health signals"
+instruction = "Read account health, usage, support, and renewal-date signals from Gainsight and account files for the renewal cohort."
+tools = ["read_file"]
+[[workflow]]
+name = "Score churn risk"
+instruction = "Rank accounts by churn risk and tag the specific driver behind each at-risk account."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Check suppression"
+instruction = "Confirm each at-risk contact is not opted out before any outreach is proposed."
+tools = ["read_file"]
+[[workflow]]
+name = "Draft save play"
+instruction = "Draft a tailored save play per at-risk account with the offer, talking points, and escalation path."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to CSM"
+instruction = "Send the save-play package to the customer success manager for review before any contact or commitment."
+gate = "review"

@@ -1,0 +1,21 @@
+<section class="panel stack" id="generated-tools" aria-labelledby="gtr-title" data-generated-tool-removal>
+  <div class="section-head"><h2 id="gtr-title">Stop tools Lightwork wrote</h2></div>
+  <p>Stop future calls and remove a tool's retained files. Stopped files remain available for cleanup. Work already started can finish; completed work is not undone.</p>
+  <p class="muted">Only tools with verified ownership for your account are available. A withdrawn source does not permit reading or using its private body. Earlier decisions remain readable when tool generation is off.</p>
+  <p class="muted" id="gtr-identity">Older files with an unverified local owner remain withheld. An empty list does not mean those retained files are absent.</p>
+  <p id="gtr-status" role="status" aria-live="polite">Checking your retained tools…</p>
+  <div class="row wrap"><button type="button" class="btn btn--ghost" id="gtr-refresh">Refresh current tools</button><button type="button" class="btn btn--ghost" id="gtr-pending" hidden>Read original result</button></div>
+  <form id="gtr-form" class="stack">
+    <label for="gtr-tool">Owned tool</label><select id="gtr-tool" required></select>
+    <p class="muted" id="gtr-current"></p>
+    <label id="gtr-ack-label" hidden><input id="gtr-ack" type="checkbox"> The earlier attempt may already have stopped or removed this tool. It stays unknown. I am choosing a separate review of current cleanup.</label>
+    <button type="submit" class="btn" id="gtr-review" disabled>Review stopping and removal</button>
+  </form>
+  <div id="gtr-review-panel" class="stack" aria-live="polite"></div>
+  <section class="stack" aria-labelledby="gtr-history-title"><h3 id="gtr-history-title">Earlier stopping decisions</h3>
+    <label for="gtr-history">Original decision</label><select id="gtr-history"><option value="">Choose an earlier decision</option></select>
+    <div id="gtr-result" class="stack" aria-live="polite"></div>
+  </section>
+</section>
+<style>.gtr-review-row{border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-3);min-width:0}.gtr-review-row p{white-space:pre-wrap;overflow-wrap:anywhere}[data-generated-tool-removal] select{max-width:100%;width:100%}</style>
+<script src="/static/lightwork-generated-tool-removal.js" defer></script>

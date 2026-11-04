@@ -1,0 +1,16 @@
+{# The one set of tabs every task page shares: Result (the chat view),
+   Steps (step-by-step history), Plan (the map of smaller steps) and Problems.
+   `current` names the tab of the page including this. Each is its own page,
+   so this is the shared sub_nav bar (_tabs.html), under a link back to Tasks;
+   `task-tabs` is the wrapper print styles hide. #}
+{% from "_back_link.html" import back_link %}
+{% from "_tabs.html" import sub_nav %}
+{% macro task_tabs(goal, current) %}
+{% set hrefs = {'result': '/chat/goal/' ~ goal.id, 'steps': '/goals/' ~ goal.id ~ '/trajectory',
+                'plan': '/goals/' ~ goal.id ~ '/plan', 'problems': '/goals/' ~ goal.id ~ '/errors'} %}
+<div class="task-tabs">
+  <p>{{ back_link('/goals', 'Tasks') }}</p>
+  {{ sub_nav('Task pages', [('', [(hrefs.result, 'Result'), (hrefs.steps, 'Steps'), (hrefs.plan, 'Plan'),
+                                  (hrefs.problems, 'Problems')])], hrefs[current]) }}
+</div>
+{% endmacro %}

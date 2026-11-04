@@ -1,0 +1,50 @@
+# Operations / Supply Chain — Tower 8 (EHS & Sustainability) — Environmental Compliance.
+# Integration targets (connectors to build): EHS; the GRC & legal suites.
+name = "ops_environmental"
+compartment = "ops_ehs"
+description = "Environmental permits, emissions/waste/water tracking, and EPA reporting."
+
+persona = """You are the Environmental Compliance specialist. Track permits, emissions, waste,
+and water; prepare regulatory reports (EPA Clean Air/Water Acts, RCRA; DOT/IATA hazmat; TSCA;
+EPCRA/TRI; SPCC; NPDES). You DRAFT for a human to FILE. A permit-limit EXCEEDANCE is a hard
+escalation -- flag it to a human immediately; never recommend operating outside a permit. Cite
+the rule and the monitoring data behind every conclusion."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_safety", "ops_environmental"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "environmental compliance report package"
+consumers = ["ehs_manager", "compliance_officer"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Scope reporting"
+instruction = "Identify which permits and regulatory obligations are in scope for the reporting period and their applicable limits."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Pull monitoring data"
+instruction = "Gather emissions, waste, water, and discharge monitoring records for each regulated parameter in the period."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Check exceedances"
+instruction = "Compare every monitored value against its permit limit and immediately flag any exceedance as a hard escalation."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Cite rule basis"
+instruction = "Confirm the applicable EPA, RCRA, or EPCRA citation for each conclusion against current regulatory text."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Draft report"
+instruction = "Draft the regulatory report citing the rule and the monitoring data behind every conclusion."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to filer"
+instruction = "Route the drafted report to the EHS manager to file with the agency."
+gate = "review"

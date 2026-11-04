@@ -1,0 +1,53 @@
+# Caddy reverse proxy for the optional Lightwork web dashboard.
+#
+# Replace `maverick.example.com` with your domain. Caddy will obtain
+# and renew a Let's Encrypt cert automatically.
+#
+# Place at /etc/caddy/Caddyfile and reload:  caddy reload
+
+# Global server hardening — belt-and-suspenders against the "HTTP/2 Bomb"
+# class of header-amplification DoS. max_header_size caps total request-
+# header bytes, so a flood of 1-byte HPACK-indexed header references can't
+# balloon into a large server-side allocation; the timeouts bound how long
+# a client may take to send headers or sit idle, so a stalled connection
+# can't pin that memory. We deliberately do NOT set a write timeout: the
+# dashboard streams responses over SSE and a write deadline would sever
+# those long-lived streams.
+{
+    servers {
+        max_header_size 64KB
+        timeouts {
+            read_header 15s
+            read_body   1m
+            idle        2m
+        }
+    }
+}
+
+maverick.example.com {
+    # Health check passthrough: proxy to the dashboard's own /healthz so its
+    # real status reaches any upstream LB. A hardcoded `respond "ok" 200` here
+    # would mask the dashboard's deliberate 503 (DB unreachable / no provider
+    # key), defeating the point of a health probe.
+    handle /healthz {
+        reverse_proxy localhost:8765
+    }
+
+    # Dashboard (when shipped).
+    handle {
+        reverse_proxy localhost:8765
+    }
+
+    # Basic security headers.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+    }
+
+    log {
+        output file /var/log/caddy/maverick.log
+        format json
+    }
+}

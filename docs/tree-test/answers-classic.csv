@@ -1,0 +1,62 @@
+Role,Task,Correct answer(s)
+Employee,E1. You asked Lightwork to draft a supplier email this morning. Check whether it is finished.,Work > Tasks
+Employee,E2. Download the finished report Lightwork made for you last week.,Work > Results
+Employee,E3. A payment Lightwork wants to make is waiting for your OK. Find it.,Governance > Approvals | Work > Action Center
+Employee,E4. Give Lightwork a new piece of work to do.,Work > Chat | Work > Task builder
+Employee,E5. Set up a job that runs on its own every Monday morning.,Work > Automations
+Employee,E6. Look at the step-by-step process Lightwork follows when your team onboards a customer.,Work > Workflows | Work > Workflow builder
+Employee,E7. Keep all the work for a client launch together in one place.,Work > Projects | Work > Project workspaces
+Employee,E8. See which helpers are available to your team.,Work > Workforce
+Employee,E9. Build your own agent that answers supplier questions.,Work > Agent Factory
+Employee,E10. Find a company document Lightwork can use to answer questions.,Insights > Knowledge
+Employee,E11. Make the text on every page larger for yourself.,Work > Your preferences
+Employee,E12. Find a conversation you had with Lightwork two weeks ago.,Work > My conversations
+Employee,E13. Check how much of your budget your work has used.,Insights > Your budget | Insights > Spend
+Employee,E14. Get an email when a task needs you.,Work > Your notifications
+Employee,E15. See everything on your plate today in one place.,Work > Today | Work > My work
+Employee,E16. Start from a ready-made example instead of a blank request.,Library > Templates
+Approver,A1. Approve or turn down a request that is waiting for you.,Governance > Approvals
+Approver,A2. See every decision waiting for you across tasks and workflows.,Governance > Approvals | Work > Action Center
+Approver,A3. Find out what Lightwork may do without asking anyone first.,Administration > Permissions
+Approver,A4. Something looks wrong. Stop all agents at once.,Governance > Agent controls
+Approver,A5. Replay what happened step by step in a task you approved yesterday.,Governance > Task replay
+Approver,A6. Find the signed record that proves who approved a decision.,Governance > Trust receipts
+Approver,A7. See the full history of actions taken in this workspace.,Governance > Activity log
+Approver,A8. Check whether a screening rule blocked a message.,Governance > Safety
+Approver,A9. Try out a new safety rule before it is turned on.,Governance > Test a safety rule
+Approver,A10. See what an outside company's agent is allowed to reach.,AI oversight > Outside agents | Governance > Agent trust
+Approver,A11. Look at the regulations your company must follow.,Governance > Regulations and rules
+Approver,A12. See what Lightwork has learned and changed about how it works.,Governance > Learning history
+Approver,A13. Open the result of a task you approved.,Work > Results
+Approver,A14. Check warnings that an agent behaved unusually.,Governance > Safety monitoring
+Approver,A15. See how much time and money finished work has saved.,Insights > Savings
+Privacy officer,P1. A customer asks for a copy of all the data you hold about them. Start handling the request.,Privacy > Privacy requests
+Privacy officer,P2. Find every system where a customer's email address is stored.,Privacy > Find personal data
+Privacy officer,P3. Update the privacy notice on your website.,Privacy > Privacy notices
+Privacy officer,P4. Change the cookie banner on your website.,Consent > Website banner settings | Consent > Banner and preference center | Consent > Consent and preferences
+Privacy officer,P5. Record that a person opted out of marketing everywhere.,Consent > Opt out everywhere
+Privacy officer,P6. Check which of your apps track people without consent.,Consent > App tracking checks
+Privacy officer,P7. Handle deletion requests that arrive from the California state registry.,Privacy > California DROP requests
+Privacy officer,P8. Set the rules for how personal data may be used for analytics.,Privacy > Data use rules
+Privacy officer,P9. Look up what a new privacy law requires.,Privacy > Privacy law research
+Privacy officer,P10. Review how a new vendor will handle your customers' data before signing.,Third parties > AI vendor onboarding | Governance > Assessments
+Privacy officer,P11. Get an overview of your privacy program for the board.,Privacy > Privacy
+Privacy officer,P12. Check the terms of an existing vendor contract.,Third parties > Contracts and engagements
+Privacy officer,P13. Show an auditor who looked at personal data and when.,Governance > Activity log | Insights > Content access
+Privacy officer,P14. Send a person a secure copy of their data.,Privacy > Send people their data
+Privacy officer,P15. Change many customers' consent at once after an import error.,Consent > Bulk consent changes
+Admin,D1. Invite a new colleague to Lightwork.,Administration > Users
+Admin,D2. Let people talk to Lightwork from your company's Slack.,Library > Channels
+Admin,D3. Add the key for a new AI provider.,Insights > Providers | Administration > Settings
+Admin,D4. Set a monthly cap on how much Lightwork may spend.,Administration > Spending limits
+Admin,D5. Connect Lightwork to your CRM so agents can read customer records.,Administration > Connections
+Admin,D6. Create a separate workspace for a subsidiary.,Administration > Workspaces
+Admin,D7. Restore a workspace from a backup.,Administration > Workspace recovery
+Admin,D8. Choose which pages each role can see.,Administration > Settings
+Admin,D9. Review this month's invoice.,Insights > Billing
+Admin,D10. See how much each AI provider has cost.,Insights > Provider spending
+Admin,D11. Store signed contracts securely so agents can use them.,Administration > Document vault
+Admin,D12. Give agents access to one of your company's internal tools.,Advanced tools > Tool servers | Library > Tools | Advanced tools > Plugins
+Admin,D13. Check that everything is ready before you switch on a new workflow.,Insights > Workflow readiness
+Admin,D14. Choose which employees get a personal companion.,Administration > Employee companions
+Admin,D15. Sign yourself out of a laptop you lost.,Administration > Sessions | Work > Your paired devices

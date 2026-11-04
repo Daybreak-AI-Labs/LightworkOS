@@ -1,0 +1,1944 @@
+{% extends "chat_base.html" %}
+{% block title %}{{ thread_title or ('Goal #' ~ goal.id) }} · Lightwork{% endblock %}
+{% block head_extra %}
+<style>
+  /* Goal as a conversation — same column + composer language as /chat, so
+     arriving here from the composer reads as the conversation continuing
+     rather than a jump to a different screen. */
+  .convo { padding-bottom: var(--space-4); }
+  .msg--user .bubble__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .turn__meta { margin: var(--space-2) 0 0; font-size: var(--text-xs); }
+
+  .msg { margin-bottom: var(--space-5); }
+  .msg--user { display: flex; justify-content: flex-end; }
+  .msg--user .bubble {
+    --glass-tint: var(--brand-subtle); border: 1px solid var(--brand-border);
+    border-radius: 16px 16px var(--radius-xs) 16px; padding: var(--space-3) var(--space-4); max-width: 85%;
+  }
+  .bubble__title { font-weight: var(--font-medium); }
+  .bubble__desc { color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-2); white-space: pre-wrap; }
+
+  .agent__label { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--text-sm); font-weight: var(--font-medium); margin-bottom: var(--space-3); }
+  .worklog {
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    padding: var(--space-3) var(--space-4); font-size: var(--text-sm); color: var(--muted);
+  }
+  /* The work log is a list of steps in plain words, not a terminal dump. */
+  .steps { margin: 0; max-height: 460px; overflow-y: auto; }
+  .step { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 0 var(--space-3); padding: var(--space-2) 0; line-height: 1.5; }
+  .step + .step { border-top: 1px solid var(--hairline); }
+  .step__icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-top: 1px; color: var(--muted); }
+  .step__icon svg { width: 13px; height: 13px; }
+  .step__body { min-width: 0; }
+  .step__label { color: var(--text); font-weight: var(--font-medium); }
+  .step__agent { color: var(--muted); font-size: var(--text-xs); margin-inline-start: var(--space-2); }
+  .step__text { color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--space-0-5); }
+  .step--plan .step__icon { color: var(--brand-hi); }
+  .step--finding .step__icon, .step--artifact .step__icon { color: var(--accent); }
+  .step--verify .step__icon { color: var(--warn); }
+  .step--error .step__icon, .step--error .step__label { color: var(--danger); }
+  .step--withheld .step__text { font-style: italic; }
+  .raw-trace { margin-top: var(--space-3); border-top: 1px solid var(--hairline); padding-top: var(--space-2); }
+  .raw-trace > summary { cursor: pointer; width: max-content; color: var(--muted); font-size: var(--text-xs); }
+  .raw-trace__note { margin: var(--space-2) 0; font-size: var(--text-xs); }
+  .raw-trace__list { margin: 0; padding-inline-start: 1.5em; max-height: 320px; overflow-y: auto; }
+  .raw-trace__list li { margin-bottom: var(--space-2); }
+  .raw-trace__meta { font-size: var(--text-xs); color: var(--muted); }
+  .raw-trace__text { margin: var(--space-0-5) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--text-xs); }
+  .answer { margin-top: var(--space-4); font-size: var(--text-md); line-height: var(--leading-relaxed); color: var(--text); }
+  /* Rendered prose (markdown from the model): chat-client typography. */
+  .prose { font-family: inherit; overflow-wrap: anywhere; }
+  .prose[data-markdown] { white-space: pre-wrap; }
+  .prose > :first-child { margin-top: 0; }
+  .prose > :last-child { margin-bottom: 0; }
+  .prose p, .prose ul, .prose ol, .prose blockquote, .prose pre, .prose table { margin: 0 0 var(--space-4); }
+  .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 { margin: var(--space-5) 0 var(--space-2); line-height: 1.3; font-weight: var(--font-semibold); color: var(--text); }
+  .prose h2 { font-size: var(--text-xl); }
+  .prose h3 { font-size: var(--text-lg); }
+  .prose h4, .prose h5, .prose h6 { font-size: var(--text-md); }
+  .prose ul, .prose ol { padding-inline-start: 1.5em; }
+  .prose li { margin: var(--space-1) 0; }
+  .prose li > ul, .prose li > ol { margin: var(--space-1) 0 0; }
+  .prose li.task { list-style: none; margin-inline-start: -1.5em; }
+  .prose code { font-family: var(--font-mono); font-size: 0.9em; padding: 0.1em 0.35em; border-radius: var(--radius-sm); background: var(--surface-sunken); }
+  .prose pre { padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: var(--surface-sunken); border: 1px solid var(--hairline); overflow-x: auto; font-size: var(--text-sm); line-height: var(--leading); }
+  .prose pre code { padding: 0; background: transparent; font-size: inherit; }
+  .chat-code-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+  .chat-code-tools button { min-height: 44px; }
+  .chat-code-tools span { overflow-wrap: anywhere; }
+  .chat-code-fallback { width: 100%; min-height: 8rem; margin-bottom: var(--space-3); box-sizing: border-box; }
+  @media print { .chat-code-tools, .chat-code-fallback { display: none !important; } }
+  .prose blockquote { margin-inline: 0; padding: var(--space-1) var(--space-4); border-inline-start: 3px solid var(--border-strong); color: var(--muted); }
+  .prose table { display: block; overflow-x: auto; font-size: var(--text-sm); border-collapse: collapse; }
+  .prose th, .prose td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--hairline); text-align: start; vertical-align: top; }
+  .prose th { font-weight: var(--font-semibold); }
+  .prose hr { border: 0; border-top: 1px solid var(--hairline); margin: var(--space-5) 0; }
+  .prose a { color: var(--brand-hi); text-decoration: underline; text-underline-offset: 2px; }
+  /* The agent's question and your answer, kept in the conversation. */
+  .qa:empty { display: none; }
+  .qa { margin-bottom: var(--space-4); }
+  .qa__q { margin: 0 0 var(--space-3); font-size: var(--text-md); line-height: 1.65; }
+  .qa .msg--user { margin-bottom: var(--space-3); }
+
+  /* A pack's declared deliverable: a titled artifact, not a text dump. The
+     grid inherits base.html's table styling (tabular-nums) for clean columns. */
+  .deliverable {
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .deliverable__head {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--hairline);
+  }
+  .deliverable__label { font-weight: var(--font-semibold); color: var(--text); margin-inline-end: auto; }
+  .deliverable__meta { margin: 0; padding: var(--space-2) var(--space-4) 0; font-size: var(--text-sm); }
+  .deliverable__table-wrap { overflow-x: auto; padding: var(--space-2) var(--space-2) var(--space-3); }
+  .deliverable__table { font-size: var(--text-sm); }
+  .deliverable__table th, .deliverable__table td { white-space: nowrap; }
+  .deliverable__prose { padding: var(--space-3) var(--space-4); font-family: inherit; }
+
+  /* Sign-off: the human certify/reject step a gated deliverable calls for. */
+  .signoff {
+    margin-top: var(--space-4); padding: var(--space-4);
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+  }
+  .signoff__head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+  .signoff__note { margin: 0 0 var(--space-3); white-space: pre-wrap; }
+  .signoff__prompt { margin: 0 0 var(--space-3); font-size: var(--text-sm); }
+  .signoff__actions { display: flex; gap: var(--space-2); }
+  .signoff textarea.input { width: 100%; margin-bottom: var(--space-3); }
+
+  /* What to know before relying on the answer: check, agent version, backup model. */
+  .answer-facts { margin-top: var(--space-3); display: grid; gap: var(--space-1); font-size: var(--text-sm); color: var(--muted); }
+  .answer-facts p { margin: 0; }
+  .answer-check__label { font-weight: var(--font-semibold); color: var(--text); margin-inline-end: var(--space-2); }
+  .answer-check[data-state="checked"] .answer-check__label { color: var(--accent); }
+  .answer-check[data-state="concerns"] .answer-check__label { color: var(--warn); }
+  .answer-fallback { border-inline-start: 3px solid var(--warn); padding-inline-start: var(--space-2); color: var(--text); }
+  .answer-agent__changes summary { cursor: pointer; width: max-content; }
+  .answer-agent__changes ul { margin: var(--space-1) 0 0; padding-inline-start: 1.25em; }
+  /* Feedback: the always-available thumbs up/down on any finished result. */
+  .feedback { margin-top: var(--space-3); display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+  .feedback__q { font-size: var(--text-sm); }
+  .feedback .btn { font-size: var(--text-xs); padding: 0.25rem 0.5rem; border-color: transparent; color: var(--muted); }
+  .feedback .btn:hover { color: var(--text); border-color: var(--border); }
+  .more { margin-top: var(--space-3); }
+  .more > summary { cursor: pointer; list-style: none; width: max-content; color: var(--muted); font-size: var(--text-xs); }
+  .more > summary::-webkit-details-marker { display: none; }
+  .more[open] > summary { color: var(--text); }
+  .feedback .btn.is-active { border-color: var(--accent); background: var(--surface-sunken); }
+  .feedback-reason { margin-top: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); display: grid; gap: var(--space-2); max-width: 36rem; }
+  .feedback-reason__q { margin: 0; font-weight: var(--font-medium); }
+  .feedback-reason__chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+  .feedback-reason__chip[aria-pressed="true"] { border-color: var(--accent); background: var(--surface-sunken); color: var(--text); }
+  .feedback-reason__label { font-size: var(--text-sm); color: var(--muted); }
+  .feedback-reason__actions { display: flex; gap: var(--space-2); }
+
+  /* Artifacts: a goal's versioned, kind-tagged outputs. */
+  .artifacts { margin-top: var(--space-5); }
+  .artifacts__head { font-weight: var(--font-semibold); margin-bottom: var(--space-3); display: flex; align-items: center; gap: var(--space-2); }
+  .artifact { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; margin-bottom: var(--space-3); }
+  .artifact__head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--hairline); }
+  .artifact__title { font-weight: var(--font-medium); }
+  .artifact__ver { margin-inline-start: auto; font-size: var(--text-xs); }
+  .artifact__body { margin: 0; padding: var(--space-3) var(--space-4); white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: var(--text-sm); overflow-x: auto; }
+  .artifact__history { border-top: 1px solid var(--hairline); padding: var(--space-2) var(--space-4); }
+  .artifact__history summary { cursor: pointer; font-size: var(--text-sm); color: var(--accent); }
+  .artifact__version { margin-top: var(--space-3); }
+  .artifact__version-head { font-size: var(--text-xs); font-weight: var(--font-medium); margin-bottom: var(--space-1); }
+  .artifact__diff { margin: 0; padding: var(--space-2) var(--space-3); background: var(--bg); border-radius: var(--radius-sm); font-family: ui-monospace, monospace; font-size: var(--text-xs); white-space: pre-wrap; overflow-x: auto; }
+  .artifact__diff .add { color: var(--accent); }
+  .artifact__diff .del { color: var(--danger); }
+  .goal-project { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-4); }
+  .goal-project select { max-width: 16rem; }
+  .goal-share { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+  .goal-share .btn, .goal-project .input { font-size: var(--text-xs); padding: 0.3rem 0.6rem; }
+  .share-list { list-style: none; padding: 0; margin: var(--space-2) 0 0; width: 100%; }
+  .share-list li { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--muted); margin-bottom: var(--space-1); }
+  .share-review { max-height: min(60vh, 36rem); overflow: auto; width: 100%; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+  .share-review pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .spinner {
+    display: inline-block; width: 0.8em; height: 0.8em;
+    border: 2px solid var(--border); border-top-color: var(--brand);
+    border-radius: var(--radius-round); animation: spin 0.8s linear infinite; vertical-align: -0.1em;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* The reply composer appears (sticky, at the bottom) only when the agent
+     needs an answer — Lightwork goals run autonomously between asks. */
+  .ask { margin-top: 0; }
+  .ask__eyebrow { margin: 0 0 var(--space-1); color: var(--muted); font-size: var(--text-xs); font-weight: var(--font-semibold); text-transform: uppercase; letter-spacing: 0.08em; }
+  .ask__text { margin: 0 0 var(--space-2); color: var(--text); font-size: var(--text-base); line-height: var(--leading); }
+  .ask__question { margin-bottom: var(--space-2); }
+  .ask__row { display: flex; gap: var(--space-2); align-items: flex-end; }
+  .ask__field {
+    flex: 1; border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--text-base);
+    outline: none; padding: var(--space-2); resize: none; min-height: 40px; max-height: 220px; line-height: 1.5;
+  }
+  .ask__icon {
+    flex: none; width: 36px; height: 36px; border: 1px solid var(--border); border-radius: var(--radius-round); background: transparent;
+    color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    transition: color 0.14s ease, border-color 0.14s ease;
+  }
+  .ask__icon:hover { color: var(--text); border-color: var(--border-strong); }
+  .ask__stop {
+    flex: none; height: 36px; padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-pill);
+    background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: var(--text-sm);
+    transition: color 0.14s ease, border-color 0.14s ease;
+  }
+  .ask__stop:hover { color: var(--danger); border-color: var(--danger); }
+  .ask__stop:disabled { opacity: 0.5; cursor: default; }
+  .ask__hint { margin: var(--space-2) 0 0; min-height: 1em; font-size: var(--text-xs); color: var(--muted); }
+  .ask__send {
+    flex: none; width: 40px; height: 40px; border: 0; border-radius: var(--radius-round); cursor: pointer;
+    background: var(--brand); color: var(--brand-fg); display: inline-flex; align-items: center; justify-content: center;
+    transition: background 0.14s ease, transform 0.14s ease;
+  }
+  .ask__send:hover { background: var(--brand-hi); transform: translateY(-1px); }
+  .ask__send:active { transform: none; }
+  .ask__send:disabled { opacity: 0.45; cursor: default; transform: none; }
+  /* A step waiting on the Approvals page: who decides and by when. */
+  .approval-wait {
+    margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border); border-inline-start: 3px solid var(--warn); border-radius: var(--radius-md);
+  }
+  .approval-wait a { margin-inline-start: var(--space-1); }
+  /* A stopped run: a quiet notice with one obvious action, not a warning box. */
+  .halt-card {
+    margin-top: var(--space-4); padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border); border-inline-start: 3px solid var(--warn); border-radius: var(--radius-md);
+  }
+  .halt-card__title { font-weight: var(--font-semibold); color: var(--text); }
+  .halt-card__row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin-top: var(--space-3); }
+  .halt-card__budget summary { cursor: pointer; font-size: var(--text-sm); color: var(--muted); list-style: none; }
+  .halt-card__budget summary::-webkit-details-marker { display: none; }
+  .halt-card__budget[open] summary { color: var(--text); }
+  .halt-card__budget .field { margin-top: var(--space-2); max-width: 24rem; }
+  .halt-card [hidden] { display: none !important; }
+  .halt-card__progress { margin-top: var(--space-3); }
+  .halt-card__headline { margin: 0; color: var(--text); }
+  .halt-card__lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-3); margin-top: var(--space-2); }
+  .halt-card__label { margin: 0; font-size: var(--text-sm); font-weight: var(--font-semibold); color: var(--text); }
+  .halt-card__steps { margin: var(--space-1) 0 0; padding-left: var(--space-4); font-size: var(--text-sm); }
+  .halt-card__lists .muted { margin: var(--space-1) 0 0; font-size: var(--text-sm); }
+  @media (prefers-reduced-motion: no-preference) { .convo { animation: convoIn 0.4s ease; } }
+  @keyframes convoIn { from { transform: translateY(8px); } to { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+  /* ---- Redesign layer (chat-first): the raw trace collapses into a
+     glass "Show work" strip and the answer becomes the hero. Kept as an
+     additive block so every element id the scripts use is untouched. ---- */
+  /* Collapsible activity ("Show work") wrapping the live trace. */
+  /* A quiet line, not a card: "Working…" with the steps a click away. */
+  .activity {
+    border: 0; border-radius: var(--radius-md); overflow: hidden; margin-bottom: var(--space-3);
+    background-image: none; background-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .activity__bar {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-2) 0; cursor: pointer; list-style: none; color: var(--muted); font-size: var(--text-sm);
+  }
+  .activity__bar::-webkit-details-marker { display: none; }
+  .activity__now { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  /* While the run is live the current step shimmers, the way a chat client
+     shows "thinking"; still text, still readable when animation is off. */
+  .activity__now.is-live {
+    background-image: linear-gradient(90deg, var(--muted) 0%, var(--text) 45%, var(--muted) 90%);
+    background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: shimmer 1.8s linear infinite;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .activity__now.is-live { animation: none; background-image: none; color: var(--text); } }
+  .activity__now b { font-weight: var(--font-semibold); }
+  .activity__meta { margin-inline-start: auto; color: var(--muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .activity__toggle { color: var(--muted); font-size: var(--text-xs); display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .activity__caret { transition: transform 0.18s ease; }
+  .activity[open] .activity__caret { transform: rotate(180deg); }
+  /* The worklog now lives inside the collapsible; drop its own chrome so it
+     reads as the expanded body, not a nested box. */
+  .activity .worklog { border: 0; border-top: 1px solid var(--hairline); border-radius: 0; padding-inline: 0; background-image: none; background-color: transparent; }
+  /* The finished answer: the hero of the agent turn. */
+  #result-section.answer { font-size: var(--text-md); line-height: var(--leading-relaxed); }
+  /* Glass-lift the user bubble + deliverable/artifact cards to match. */
+  .msg--user .bubble { box-shadow: var(--shadow-sm), var(--glass-edge, 0 0 transparent); }
+  .deliverable, .artifact { box-shadow: var(--shadow-sm), var(--glass-edge, 0 0 transparent); }
+  /* Subtle run-meta footer under the answer (tokens/$/wall stamped by JS). */
+  .runmeta { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+    margin-top: var(--space-4); color: var(--muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+  .runmeta .zero { color: var(--accent); }
+  .answer-actions { margin-top: var(--space-3); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .answer-actions .btn { font-size: var(--text-sm); }
+  .turn-copy-source:not(.turn-copy-source--visible) { display: none !important; }
+  .turn-copy-source--visible { display: block; width: 100%; min-height: 8rem; margin-top: var(--space-2); }
+  .print-heading { display: none; }
+  .share-panel { margin-top: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
+  .share-panel summary { cursor: pointer; font-weight: var(--font-medium); }
+  .share-panel__note { margin: var(--space-2) 0; font-size: var(--text-sm); }
+  @media print {
+    @page { margin: 18mm; }
+    html, body.chat-shell { display: block !important; height: auto !important; overflow: visible !important; background: var(--print-paper) !important; color: var(--print-ink) !important; }
+    body.chat-shell main, .cs-scroll, .cs-column { display: block !important; width: auto !important; max-width: none !important; height: auto !important; overflow: visible !important; padding: 0 !important; margin: 0 !important; }
+    .cs-side, .cs-topbar, .cs-dock, .cs-backdrop, .navfinder, .mv-toasts, .mv-copilot, dialog,
+    .activity, .feedback, .answer-actions, .share-panel, .more, .planning-steps,
+    .task-tabs, .print-control, #newer-chat-turn, #conversation-inbox,
+    .halt-card, .goal-share, #edit-box, #attachments-panel, #goal-action-msg, #stream-error,
+    #answer-action-msg, #answer-refresh-notice, #answer-refresh-status, #loading-placeholder,
+    #stream-retry, #question-status, #question-retry, #answer-receipt-check, #answer-refresh,
+    #history-load, #history-status, #history-turns a { display: none !important; }
+    .convo, .msg, .answer, .prose, .artifact, .deliverable { color: var(--print-ink) !important; background: var(--print-paper) !important; box-shadow: none !important; }
+    .print-heading { display: block; padding-bottom: 10mm; margin-bottom: 9mm; border-bottom: 1px solid var(--print-rule); }
+    .print-heading h1 { margin: 2mm 0; color: var(--print-ink); font-size: 20pt; line-height: var(--leading-tight); }
+    .print-heading p, .bubble__desc, .agent__label { color: var(--print-muted) !important; }
+    .msg--user .bubble, .artifact, .deliverable { border-color: var(--print-rule) !important; background: var(--print-paper) !important; color: var(--print-ink) !important; box-shadow: none !important; }
+    .msg--user { display: block !important; }
+    .msg--user .bubble { max-width: none !important; border: 0 !important; border-inline-start: 3px solid var(--print-rule) !important; border-radius: 0 !important; padding: 0 0 0 6mm !important; }
+    .msg--user .bubble::before { content: 'You'; display: block; margin-bottom: 2mm; color: var(--print-muted); font-size: 9pt; font-weight: var(--font-semibold); }
+    .agent__label, .artifact__head, .deliverable__head { break-after: avoid; }
+    .prose pre, .artifact__body, .deliverable__table-wrap { overflow: visible !important; max-height: none !important; }
+    .prose pre, .artifact__body pre { white-space: pre-wrap !important; overflow-wrap: anywhere; }
+    .prose table, .deliverable__table { width: 100% !important; table-layout: fixed; }
+    .prose th, .prose td, .deliverable__table th, .deliverable__table td { white-space: normal !important; overflow-wrap: anywhere; }
+    .qa { color: var(--print-ink) !important; border-color: var(--print-rule) !important; }
+    .prose a { color: var(--print-ink) !important; }
+  }
+</style>
+{% endblock %}
+
+{% block chat %}
+{% if display_signed_in %}<p class="print-control"><a class="btn btn--ghost" href="/preferences?thread={{ goal.id }}">{{ ui('Conversation response style') }}</a></p>{% endif %}
+{% macro agent_mark() -%}
+      <svg width="16" height="16" viewBox="0 0 22 22" aria-hidden="true">
+        <rect x="1" y="1" width="20" height="20" rx="6.5" fill="var(--brand)"/>
+        <circle cx="11" cy="11" r="3.2" fill="none" stroke="#fff" stroke-width="1.8"/>
+      </svg>
+{%- endmacro %}
+<header class="print-heading">
+  <span>Lightwork conversation</span>
+  <h1>{{ thread_title or goal.title }}</h1>
+  <p>Printed from your Lightwork workspace</p>
+</header>
+<div class="convo">
+  {% from "_task_tabs.html" import task_tabs %}
+  {{ task_tabs(goal, 'result') }}
+  <p class="print-control"><button type="button" class="btn btn--ghost" data-copilot-toggle
+      aria-controls="mv-copilot" aria-expanded="false">{{ ui('Ask Copilot about this task') }}</button></p>
+  <div id="earlier-history" data-goal="{{ goal.id }}" data-before="{{ thread_turns[0].id if thread_turns else '' }}">
+    <button type="button" class="btn btn--ghost" id="history-load">{{ ui('Load earlier conversation') }}</button>
+    <p id="history-status" role="status" aria-live="polite">{{ ui('Earlier conversation is loaded in pages.') }}</p>
+    <div id="history-turns"></div>
+  </div>
+  {% if latest_chat_goal_id and latest_chat_goal_id != goal.id %}
+  <p class="muted" id="newer-chat-turn">{{ ui('You are viewing an earlier message.') }}
+    <a href="/chat/goal/{{ latest_chat_goal_id }}">{{ ui('Open the latest message in this chat') }}</a>.</p>
+  {% endif %}
+  {% if submission and (goal.status == 'draft' or submission.detail.coverage) %}
+  <section class="panel" id="submission-status" role="status">
+    {% if goal.status == 'draft' %}<h2>{{ ui('Submission saved as a draft') }}</h2>{% endif %}
+    <p>{{ submission.detail.message }}</p>
+    {% if submission.detail.coverage %}
+    <ul>{% for item in submission.detail.coverage %}<li><bdi lang="und" dir="auto" data-user-content>{{ item.filename }}</bdi>: {% if item.status in ('ready', 'admitted', 'complete', 'ok') %}{{ ui("Readable text ready") }}{% elif item.status in ('pending', 'queued') %}{{ ui("Still being read") }}{% else %}{{ ui("Could not be read ({status})", status=item.status|humanize|lower) }}{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if goal.status == 'draft' and can_operate %}
+    <p>{{ ui('AI work has not started. If all your files uploaded, try preparing the task again from this saved draft.') }}</p>
+    <form method="post" action="/chat/goal/{{ goal.id }}/recover-submission">
+      <button id="recover-submission-btn" class="btn" type="submit"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('Retry preparation') }}</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+  {# Hidden source of truth for the page script: the shared word for the run
+     (run_status.py), which the script replaces with the live one. #}
+  <span id="status" class="badge {{ goal.status }}" data-status="{{ goal.status }}" data-stop-kind="{{ stop.kind if stop else '' }}" hidden>{{ run_status_label(goal.status, stop.kind if stop else None) }}</span>
+
+  {# Earlier turns of this chat: what was asked before, and what Lightwork answered. #}
+  {% for t in thread_turns or [] %}
+    {% if t.role == 'user' %}
+  <div class="msg msg--user">
+    <div class="bubble"><div class="bubble__text" lang="und" dir="auto" data-user-content>{{ t.content }}</div></div>
+  </div>
+  {% for exchange in (thread_questions or {}).get(t.goal_id, []) %}
+  <div class="qa">
+    <p class="qa__q" lang="und" dir="auto" data-user-content>{{ exchange.question }}</p>
+    <div class="msg msg--user"><div class="bubble" lang="und" dir="auto" data-user-content>{{ exchange.answer }}</div></div>
+  </div>
+  {% endfor %}
+    {% else %}
+  <div class="msg msg--agent" data-chat-code-goal="{{ t.goal_id }}" data-chat-code-turn="{{ t.id }}">
+    <div class="agent__label">{{ agent_mark() }} Lightwork</div>
+    {% set historical_stop = (thread_stop_notes or {}).get(t.id) %}
+    {% if historical_stop %}
+    <section class="halt-card" role="status">
+      <p>{{ historical_stop.message }}</p>
+      {% if historical_stop.action %}<p>{{ historical_stop.action }}</p>{% endif %}
+      {% if t.goal_id %}<a class="btn btn--ghost" href="/chat/goal/{{ t.goal_id }}">{{ ui('Open task') }}</a>{% endif %}
+    </section>
+    {% else %}
+    <div class="prose" lang="und" dir="auto" data-user-content data-markdown>{{ t.content }}</div>
+    <div class="answer-actions" role="group" aria-label="Earlier answer actions">
+      <button type="button" class="btn btn--ghost turn-copy">Copy answer</button>
+      <button type="button" class="btn btn--ghost turn-print">Print conversation</button>
+      {% if t.goal_id %}
+      {% set download = (thread_downloads or {}).get(t.id, {}) %}
+      {% if download.allowed %}<a class="btn btn--ghost" href="/chat/goal/{{ t.goal_id }}/download.docx?turn_id={{ t.id }}">{{ ui('Download Word document') }}</a>
+      <a class="btn btn--ghost" href="/chat/goal/{{ t.goal_id }}/download.md?turn_id={{ t.id }}">{{ ui('Download Markdown') }}</a>{% endif %}
+      <a class="btn btn--ghost" href="/chat/goal/{{ t.goal_id }}">Open answer</a>
+      {% if can_operate %}<button type="button" class="btn btn--ghost" data-chat-message-action="branch" data-goal="{{ t.goal_id }}" data-turn="{{ t.id }}"{% if run_open %} disabled{% endif %}>Branch from here</button>{% endif %}
+      {% if download.note %}<span class="muted">{{ download.note }}</span>{% endif %}
+      {% endif %}
+      <span class="muted turn-copy-status" role="status" aria-live="polite"></span>
+    </div>
+    <textarea class="turn-copy-source" hidden aria-label="Earlier answer text to copy">{{ t.content }}</textarea>
+    {% endif %}
+  </div>
+    {% endif %}
+  {% endfor %}
+
+  <div class="msg msg--user">
+    <div class="bubble">
+      {# A sample task's description is the run's file instructions
+         (maverick.sample_outcomes.goal_description starts with SAMPLE_RULE);
+         the person asked only for the task itself. #}
+      {% if goal.title.startswith('Sample: ') and (goal.description or '').startswith('This task runs on bundled sample data.') %}
+      <div class="bubble__title" lang="und" dir="auto" data-user-content>{{ goal.title }}</div>
+      <div class="bubble__desc">{{ ui('Runs on made-up sample files. Everything it produces is marked as sample data.') }}</div>
+      {% elif goal.description and goal.description.startswith(goal.title) %}
+      <div class="bubble__text" lang="und" dir="auto" data-user-content>{{ goal.description }}</div>
+      {% else %}
+      <div class="bubble__title" lang="und" dir="auto" data-user-content>{{ goal.title }}</div>
+      {% if goal.description and goal.description != goal.title %}
+      <div class="bubble__desc" lang="und" dir="auto" data-user-content>{{ goal.description }}</div>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  {% if goal.id == latest_chat_goal_id %}<div class="answer-actions print-control" role="group" aria-label="Saved message actions">
+    <button type="button" class="btn btn--ghost" data-chat-message-action="edit" data-goal="{{ goal.id }}"{% if not can_operate %} disabled data-permission-disabled="1"{% elif run_open %} disabled{% endif %}>Edit and resend</button>
+    <button type="button" class="btn btn--ghost" data-chat-message-action="retry" data-goal="{{ goal.id }}"{% if not can_operate %} disabled data-permission-disabled="1"{% elif run_open %} disabled{% endif %}>Try again</button>
+    <button type="button" class="btn btn--ghost" data-chat-message-action="branch" data-goal="{{ goal.id }}"{% if not can_operate %} disabled data-permission-disabled="1"{% elif run_open %} disabled{% endif %}>Branch from here</button>
+  </div>{% endif %}
+  {% include "_chat_message_actions.html" %}
+
+  <details id="attachments-panel" style="display: none; margin: var(--space-2) 0;">
+    <summary style="cursor: pointer; color: var(--muted); font-size: var(--text-sm); width: max-content;">
+      📎 {{ ui('Attachments') }} (<span id="attachments-count" data-product-number="0">0</span>)
+    </summary>
+    <ul id="attachments-list" style="list-style: none; margin: var(--space-2) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1);"></ul>
+    <div style="display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2);">
+      <button type="button" id="attach-add-btn" class="btn btn--ghost"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('+ Add file') }}</button>
+      <input type="file" id="attach-add" multiple aria-label="{{ ut('Add files to this task') }}"
+             tabindex="-1"
+             style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0;"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %} />
+      <span id="attach-msg" role="status" aria-live="polite" class="muted" style="font-size: var(--text-xs);"></span>
+    </div>
+  </details>
+
+  <div class="msg msg--agent">
+    <div class="agent__label">
+      <svg width="16" height="16" viewBox="0 0 22 22" aria-hidden="true">
+        <rect x="1" y="1" width="20" height="20" rx="6.5" fill="var(--brand)"/>
+        <circle cx="11" cy="11" r="3.2" fill="none" stroke="#fff" stroke-width="1.8"/>
+      </svg>
+      Lightwork
+    </div>
+    <p class="print-control"><a href="/my-work">{{ ui('View my background work') }}</a></p>
+    <details class="print-control"><summary>{{ ui('Organize this conversation') }}</summary>
+      <p>{{ ui('Names, pins and archive status apply to all its turns. Archive hides it from recents without deleting task or audit history; workspace retention still applies. You can pin up to 20 conversations.') }}</p>
+      <form id="conversation-organization" data-goal="{{ goal.id }}" data-context="{{ conversation_context }}" data-draft-recovery="off">
+        <label for="conversation-name">{{ ui('Conversation name') }}</label><input id="conversation-name" class="input" maxlength="200" autocomplete="off">
+        <label><input id="conversation-pin" type="checkbox"> {{ ui('Pin this conversation') }}</label>
+        <label><input id="conversation-archive" type="checkbox"> {{ ui('Archive from recents') }}</label>
+        <button id="conversation-save" type="submit" class="btn" disabled>{{ ui('Save organization') }}</button>
+        <button id="conversation-refresh" type="button" class="btn btn--ghost">{{ ui('Refresh saved values') }}</button>
+        <button id="conversation-undo" type="button" class="btn btn--ghost" hidden>{{ ui('Undo last organization change') }}</button>
+        <p id="conversation-organization-status" role="status" aria-live="polite"></p>
+      </form>
+      <a href="/conversations">{{ ui('Browse, search and restore archived conversations') }}</a>
+    </details>
+    <script src="/static/lightwork-conversation-organization.js" defer></script>
+    <p id="task-authority" role="status" data-goal="{{ goal.id }}" data-operate="{{ '1' if can_operate else '0' }}">{% if not can_operate %}This task is read-only for your current account. Permission requests explains who can review access; your draft remains available.{% endif %}</p>
+    <p id="goal-action-msg" role="status" aria-live="polite" class="muted" style="min-height: 1em; margin: 0 0 0.75rem;"></p>
+    <p id="approval-wait" class="approval-wait" role="status" aria-live="polite" hidden></p>
+    <details class="activity" id="work-activity"{% if goal.status == 'draft' %} hidden{% endif %}>
+      <summary class="activity__bar" aria-label="{{ ut('Agent activity — expand to show the full work log') }}">
+        <span class="spinner" id="work-spin" aria-hidden="true"></span>
+        <span class="activity__now is-live" id="work-now">{{ ui('Working…') }}</span>
+        <span class="activity__meta" id="work-meta"></span>
+        <span class="activity__toggle">{{ ui('Show work') }}
+          <svg class="activity__caret" width="12" height="12" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </summary>
+      <div class="worklog">
+        <div id="events" role="log" aria-live="polite" aria-label="{{ ut('Goal progress') }}" tabindex="0"
+             class="steps" data-steps="0" data-withheld="0"></div>
+        <p id="loading-placeholder" class="muted" aria-busy="true" style="margin: 0;">
+          <span class="spinner" aria-hidden="true"></span> {{ ui('Working…') }}
+        </p>
+        {# Each step above is narrated in plain words; the text Lightwork
+           recorded for it (prompts, tool output) stays here, folded away. #}
+        <details class="raw-trace" id="raw-trace" hidden>
+          <summary>{{ ui('What each step recorded') }}</summary>
+          <p class="muted raw-trace__note">{{ ui('A short record of what each step did.') }}</p>
+          <ol class="raw-trace__list" id="raw-trace-list"></ol>
+        </details>
+      </div>
+    </details>
+    <div id="qa-thread" class="qa" aria-live="polite">
+      {% for exchange in answered_questions or [] %}
+      <p class="qa__q" lang="und" dir="auto" data-user-content>{{ exchange.question }}</p>
+      <div class="msg msg--user"><div class="bubble" lang="und" dir="auto" data-user-content>{{ exchange.answer }}</div></div>
+      {% endfor %}
+    </div>
+    <button type="button" id="stream-retry" class="btn btn--ghost" hidden>{{ ui('Reconnect updates') }}</button>
+    <p id="question-status" role="status" aria-live="polite"></p>
+    <button type="button" id="question-retry" class="btn btn--ghost" hidden>{{ ui('Retry loading question') }}</button>
+    <button type="button" id="answer-receipt-check" class="btn btn--ghost" hidden>{{ ui('Check answer receipt') }}</button>
+    <p class="muted print-control">{{ ui('Question answers can include documents, PDFs, images and text. Audio and video need a separately reviewed transcription task.') }}</p>
+    <p id="stream-error" role="alert" class="muted" style="display: none; margin: 0 0 var(--space-4); color: var(--danger);"></p>
+    <p id="answer-refresh-status" class="muted" role="status" aria-live="polite"></p>
+    <button type="button" id="answer-refresh" class="btn btn--ghost" hidden>{{ ui('Refresh saved result and controls') }}</button>
+    {% include "_chat_answer_panel.html" %}
+    <script src="/static/lightwork-answer-panel.js" defer></script>
+    <script src="/static/lightwork-chat-code-actions.js" defer></script>
+    <div id="halt-card" class="halt-card" style="display: none;" data-stop-kind="{{ stop.kind if stop else '' }}" data-resume-mode="{{ stop_progress.mode if stop_progress else 'retry' }}">
+      {% set pilot_prepared = stop and stop.kind == 'pilot_prepared' %}
+      {% set specialist_setup = stop and stop.kind in ('specialist_setup', 'specialist_needs_web_search', 'specialist_needs_connection') %}
+      {% set provider_stop = stop and stop.kind in ('provider_authentication', 'provider_rate_limit', 'provider_model_not_found', 'provider_unavailable', 'provider_connection', 'provider_configuration', 'provider_not_ready') %}
+      <div class="halt-card__title" id="halt-title">{{ ui('Ready to start' if pilot_prepared else "Can't start" if specialist_setup else 'Lightwork stopped') }}</div>
+      {# The reason is the mapped plain-language stop (maverick.stop_reasons),
+         never the kernel's raw text; the raw text is admin-only, below. #}
+      <p id="halt-reason" class="muted" style="margin: var(--space-1) 0 0;">{{ stop.message if stop else '' }}</p>
+      <p id="halt-action" class="muted" style="margin: var(--space-1) 0 0;">
+        <span id="halt-action-text">{{ stop.action if stop else '' }}</span>
+        <a id="halt-action-link" href="{{ stop.link if stop and stop.link else '#' }}"{% if not (stop and stop.link and (show_technical_details or not stop.link.startswith(('/settings', '/mcp')))) %} hidden{% endif %}>{{ stop.link_label if stop and stop.link_label else '' }}</a>
+      </p>
+      {# Take over with full context: what is done, what is left, and whether
+         Resume continues from saved progress (stop_progress.py). #}
+      <div id="halt-progress" class="halt-card__progress"{% if not stop_progress %} hidden{% endif %}>
+        <p id="halt-progress-headline" class="halt-card__headline">{% if stop_progress %}{{ ut(stop_progress.headline.text, **stop_progress.headline['values']) }}{% endif %}</p>
+        <div class="halt-card__lists">
+          <div>
+            <p class="halt-card__label">{{ ui('Done') }}</p>
+            <ul id="halt-progress-done" class="halt-card__steps" data-user-content>{% for line in (stop_progress.done if stop_progress else []) %}<li>{{ line }}</li>{% endfor %}</ul>
+            <p id="halt-progress-done-empty" class="muted"{% if stop_progress and stop_progress.done %} hidden{% endif %}>{{ ui('No step was finished.') }}</p>
+          </div>
+          <div>
+            <p class="halt-card__label">{{ ui('Not done yet') }}</p>
+            <ul id="halt-progress-remaining" class="halt-card__steps" data-user-content>{% for line in (stop_progress.remaining if stop_progress else []) %}<li>{{ line }}</li>{% endfor %}</ul>
+            <p id="halt-progress-remaining-note" class="muted"{% if not (stop_progress and stop_progress.remaining_note) %} hidden{% endif %}>{{ ui(stop_progress.remaining_note) if stop_progress and stop_progress.remaining_note else '' }}</p>
+          </div>
+        </div>
+        <p id="halt-progress-next" class="muted">{% if stop_progress %}{{ ut(stop_progress.next.text, **stop_progress.next['values']) }}{% endif %}</p>
+      </div>
+      <p id="halt-specialist-alternative" class="muted"{% if not specialist_setup %} hidden{% endif %}>
+        {{ ui('Need another route?') }} <a href="/agents">{{ ui('Browse agents and specialists') }}</a> {{ ui('or') }} <a href="/chat">{{ ui('start a different task') }}</a>. {{ ui("This task won't switch to another agent or specialist on its own.") }}
+      </p>
+      {% if show_technical_details %}
+      <details class="halt-card__technical" id="halt-technical"{% if not (stop and stop.technical) %} hidden{% endif %}>
+        <summary class="muted">{{ ui("Technical details") }}</summary>
+        <pre lang="und" dir="auto" data-user-content id="halt-technical-text" class="muted" style="white-space: pre-wrap; font-size: var(--text-sm);">{{ stop.technical if stop else '' }}</pre>
+      </details>
+      {% endif %}
+      {% if pilot_prepared %}
+      <p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">
+        {{ ui('This task was prepared without running it. Review and freeze its workflow pilot plan and spending limit before starting.') }} <a href="/outcome-pilots">{{ ui('Workflow pilot plan') }}</a>
+      </p>
+      {% endif %}
+      <details class="panel" data-budget-launch data-goal="{{ goal.id }}"{% if not (pilot_prepared or stop and stop.kind == 'spending_limit') %} hidden{% endif %}>
+        <summary>{{ ui('Review allowance before this attempt') }}</summary><p role="status" aria-live="polite"></p>
+        <div data-budget-summary></div><button class="btn btn--ghost" type="button">{{ ui('Refresh budget') }}</button>
+      </details>
+      <script src="/static/lightwork-budget-guidance.js" defer></script>
+      {% if can_operate %}<div id="halt-setup-check" class="halt-card__row"{% if not specialist_setup %} hidden{% endif %}>
+        <button id="halt-check-setup" class="btn btn--ghost" type="button">{{ ui('Check setup again') }}</button>
+        <span id="halt-setup-message" role="status" aria-live="polite" class="muted"></span>
+      </div>
+      <form id="halt-resume-form" class="halt-card__row" data-goal="{{ goal.id }}" data-context="{{ conversation_context }}"{% if specialist_setup %} hidden{% endif %}>
+        <button id="halt-resume" class="btn btn--primary" type="submit"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('Review task start' if pilot_prepared else 'Review retry after checking AI' if provider_stop else 'Resume task' if stop_progress and stop_progress.mode == 'resume' else 'Try again') }}</button>
+        <details class="halt-card__budget" id="halt-budget"{% if not stop or stop.kind != 'spending_limit' %} hidden{% endif %}>
+          <summary>{{ ui('Set a spending limit for this attempt') }}</summary>
+          <div class="field">
+            <label for="halt-resume-budget">{{ ui('Spending limit (USD, optional)') }}</label>
+            <input id="halt-resume-budget" class="input" type="number" min="0.01" step="0.01"{% if spend_ceiling is not none %} max="{{ '%.2f'|format(spend_ceiling) }}"{% endif %} placeholder="{% if spend_ceiling is not none %}{{ ut('Up to {amount}', amount='$' ~ spend_ceiling_text) }}{% else %}{{ ut('Optional task limit') }}{% endif %}" aria-describedby="halt-resume-budget-hint"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>
+            <p id="halt-resume-budget-hint" class="muted">{{ ui("This limits the next attempt. Your organization’s spending and safety limits still apply.") }}{% if spend_ceiling %} <span id="halt-inherited-limit">{{ ui("Leave it empty to use your workspace’s spending limit of {amount}.", amount='$' ~ spend_ceiling_text) }}</span>{% endif %}</p>
+          </div>
+        </details>
+        <span id="halt-resume-msg" role="status" aria-live="polite" class="muted" style="font-size: var(--text-sm);"></span>
+      </form>{% endif %}
+    </div>
+    {% if can_operate %}<details class="panel planning-steps" id="planning-steps" data-goal="{{ goal.id }}">
+      <summary>{{ ui('Show planning steps') }}</summary>
+      <p class="muted">{{ ui('See how Lightwork would plan this request: it lists the steps, works through each one, then reviews the result and revises the plan if needed. This only shows the plan; the task itself is not changed or restarted. It uses AI, counts toward your spending limits and costs at most $2.00.') }}</p>
+      <label for="ps-passes">{{ ui('How many review rounds') }}</label>
+      <select id="ps-passes" class="select"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>
+        <option value="1" lang="{{ ul('One round') }}">{{ ut('One round') }}</option>
+        <option value="2" selected lang="{{ ul('Up to two rounds') }}">{{ ut('Up to two rounds') }}</option>
+        <option value="3" lang="{{ ul('Up to three rounds') }}">{{ ut('Up to three rounds') }}</option>
+      </select>
+      <button type="button" class="btn btn--primary" id="ps-run"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('Show planning steps') }}</button>
+      <p id="ps-status" role="status" aria-live="polite" tabindex="-1"></p>
+      <div id="ps-result" hidden></div>
+    </details>{% endif %}
+    <details class="more" id="share-panel">
+      <summary>{{ ui('More') }}</summary>
+    {% if projects %}
+    <form method="post" action="/chat/goal/{{ goal.id }}/project" class="goal-project">
+      <label class="muted" for="goal-project-sel">{{ ui('Project') }}</label>
+      <select id="goal-project-sel" name="project_id" class="input"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>
+        <option value="" lang="{{ ul('— none —') }}">{{ ut('— none —') }}</option>
+        {% for p in projects %}
+          <option value="{{ p.id }}"{% if p.id == goal.project_id %} selected{% endif %}>{{ p.name or 'Untitled' }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit" id="goal-project-save" class="btn btn--ghost"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('Set') }}</button></noscript>
+    </form>
+    {% endif %}
+    <div class="goal-share" data-goal="{{ goal.id }}" data-can-operate="{{ '1' if can_operate else '0' }}">
+      {% if can_recover_task_files %}<a class="btn btn--ghost" href="/chat/goal/{{ goal.id }}/files">{{ ui('Review task files') }}</a>{% endif %}
+      <a class="btn btn--ghost" href="/goals/{{ goal.id }}/trajectory#goal-export">{{ ui('Download or share full history') }}</a>
+      {% if can_operate %}
+      <label for="share-scope">{{ ui('What to share') }}</label>
+      <select id="share-scope" class="input" aria-describedby="share-msg">
+        <option value="result" selected>{{ ui('Saved answer and files') }}</option>
+        <option value="conversation">{{ ui('Full conversation through this message') }}</option>
+      </select>
+      <button type="button" id="share-create" class="btn btn--ghost"{% if goal.status != 'done' or not goal.result %} hidden disabled{% endif %}>{{ ui('Review share link') }}</button>
+      <input type="text" id="share-url" class="input" readonly aria-label="{{ ut('Share link') }}"
+             style="display: none; max-width: 28rem;">
+      <button type="button" id="share-copy" class="btn btn--ghost" hidden>{{ ui('Copy link') }}</button>
+      <span id="share-msg" class="muted" role="status" aria-live="polite"></span>
+      <ul id="share-list" class="share-list">
+        {% for s in share_links %}
+          <li data-id="{{ s.id }}">Read-only link{% if s.created_at %} made {{ s.created_at | datetime }}{% endif %}
+            <button type="button" class="btn btn--ghost share-revoke" data-id="{{ s.id }}">{{ ui('Revoke') }}</button></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    <div class="task-ops">
+      <h3 class="task-ops__title">{{ ui('Task Health') }}</h3>
+      <p class="muted task-ops__note">{{ ui('A score out of 100 from how the task went: whether it finished, tool errors, and how much AI it used.') }}</p>
+      <button type="button" class="btn btn--ghost" id="task-health-check" data-goal="{{ goal.id }}">{{ ui("Check this task's health") }}</button>
+      <p id="task-health-status" class="muted" role="status" aria-live="polite"></p>
+      <div id="task-health-out"></div>
+    </div>
+    </details>
+    {% if can_operate %}<details class="more" id="code-sandbox" data-goal="{{ goal.id }}">
+      <summary>{{ ui('Run code for this task') }}</summary>
+      <p class="muted task-ops__note">{{ ui("Run small pieces of Python for this task in Lightwork's sandbox, step by step. Values carry over between steps. Every step is checked, recorded and counted against the task's limits.") }}</p>
+      <p id="code-sandbox-status" class="muted" role="status" aria-live="polite"></p>
+      <div id="code-sandbox-body"></div>
+    </details>{% endif %}
+  </div>
+  {% include "_conversation_inbox_panel.html" %}
+  {% if comments_enabled() %}{% from "_comments.html" import comments %}{{ comments('task', goal.id, 'Comments on this task') }}
+  <script src="/static/lightwork-comments.js" defer></script>{% endif %}
+
+</div>
+{% endblock %}
+
+{% block dock %}
+  {# One composer for the whole chat: it answers the agent's open question
+     when there is one, and otherwise sends the next message of this thread
+     (a follow-up goal run with the earlier turns as context). #}
+  <div id="composer" class="ask">
+    <p id="chat-read-only" class="muted" role="status"{% if can_operate %} hidden{% endif %}>{{ ui('You can read this conversation. Ask a workspace administrator for permission to send messages or change its work.') }}</p>
+    <div id="conversation-send-options" hidden>
+      <label for="conversation-send-mode">{{ ui('Use this message to') }}</label>
+      <select id="conversation-send-mode" class="input" aria-describedby="conversation-send-explanation"{% if not can_operate %} disabled{% endif %}>
+        <option value="guidance" lang="{{ ul('Send guidance to this task') }}">{{ ut('Send guidance to this task') }}</option>
+        <option value="queue" lang="{{ ul('Queue the next task') }}">{{ ut('Queue the next task') }}</option>
+        <option value="independent" lang="{{ ul('Start a separate task') }}">{{ ut('Start a separate task') }}</option>
+      </select>
+      <label for="conversation-independent-context" id="conversation-independent-context-label" hidden>{{ ui('Context for separate task') }}</label>
+      <select id="conversation-independent-context" class="input" hidden{% if not can_operate %} disabled{% endif %}>
+        <option value="none" lang="{{ ul('Only this message and selected files') }}">{{ ut('Only this message and selected files') }}</option><option value="conversation_snapshot" lang="{{ ul('Include this authorized conversation snapshot') }}">{{ ut('Include this authorized conversation snapshot') }}</option>
+      </select>
+      <p id="conversation-send-explanation" class="ask__hint"></p>
+    </div>
+    <div id="question-panel" class="ask__question" style="display: none;" role="alert" aria-live="assertive">
+      <p class="ask__eyebrow">{{ ui('Lightwork needs one thing from you') }}</p>
+      <p id="question-text" lang="und" dir="auto" data-user-content class="ask__text" role="status" aria-live="polite"></p>
+    </div>
+    {% from "_composer_recovery.html" import composer_recovery with context %}
+    {% call composer_recovery(can_create_goal and draft_recovery_context) %}
+    <form id="answer-form" class="ask__row" method="post" action="/chat/goal/{{ goal.id }}/reply" enctype="multipart/form-data">
+      <fieldset id="composer-controls" style="display: contents;"{% if not can_operate %} disabled{% endif %}>
+      <input type="hidden" name="submission_key" value="{{ submission_key }}" />
+      <details data-task-model-controls style="flex-basis: 100%; min-width: 0;">
+        <summary>{{ ui('AI for the next task') }}</summary>
+        <label>{{ ui('AI model') }}<select class="select" name="task_model" disabled><option value="">{{ ui('Use workspace settings') }}</option></select></label>
+        <label>{{ ui('Thinking depth') }}<select class="select" name="task_effort" disabled><option value="">{{ ui('Use the model’s usual thinking depth') }}</option></select></label>
+        <input type="hidden" name="task_model_context" value="">
+        <p class="muted" role="status">{{ ui('Reading available AI choices…') }}</p>
+        <button type="button" class="btn btn--ghost">{{ ui('Refresh AI choices') }}</button>
+      </details>
+      <label id="answer-input-label" class="sr-only" for="answer-input">{{ ui("Your answer to the agent's question, or your next message") }}</label>
+      <textarea id="answer-input" lang="und" dir="auto" data-user-content name="message" rows="1" required
+                placeholder="{{ ut('Lightwork is working… you can type while you wait' if run_open|default(true) else 'Message Lightwork…') }}"
+                aria-labelledby="answer-input-label"
+                aria-describedby="question-text" class="ask__field"></textarea>
+      <input type="file" name="files" id="reply-files" multiple aria-label="{{ ut('Attach files to your message') }}" tabindex="-1"
+             style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0;"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %} />
+      <button type="button" id="reply-attach" class="ask__icon" aria-label="{{ ut('Attach files') }}"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.7 5.3 6 11a2 2 0 0 1-2.83-2.83l5.66-5.66a3 3 0 0 1 4.24 4.24l-5.65 5.66" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button type="button" id="answer-mic" class="ask__icon" aria-label="{{ ut('Dictate by voice') }}"
+              aria-pressed="false" hidden{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="6" y="1.5" width="4" height="8" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+      <button id="cancel-btn" class="ask__stop" type="button"{% if not run_open %} hidden{% endif %}{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>{{ ui('Stop task') }}</button>
+      <button type="submit" id="answer-send" class="ask__send" aria-label="{{ ut('Send') }}"{% if not can_operate %} disabled data-permission-disabled="1"{% endif %}>
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+          <path d="M9 14.5V4M9 4l-4.5 4.5M9 4l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      </fieldset>
+    </form>
+    {% endcall %}
+    <p id="composer-hint" class="ask__hint" role="status" aria-live="polite"></p>
+    <p id="composer-run-note" class="ask__hint" role="status" aria-live="polite" hidden></p>
+  </div>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-thread-history.js" defer></script>
+<script src="/static/lightwork-task-model-selection.js" defer></script>
+<script src="/static/lightwork-conversation-inbox.js" defer></script>
+<script src="/static/lightwork-task-authority.js" defer></script>
+<script src="/static/lightwork-file-selection.js" defer></script>
+  <style>
+    .task-ops { margin-top: var(--space-3); }
+    .task-ops__title { font-size: var(--text-base); margin: var(--space-2) 0 var(--space-1); }
+    .task-ops__note { font-size: var(--text-sm); margin: 0 0 var(--space-2); }
+    .io-scroll { overflow-x: auto; }
+    .cs-output { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; overflow-y: auto; font-family: var(--font-mono, monospace); font-size: var(--text-sm); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); margin: var(--space-1) 0; }
+    .cs-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: var(--space-2) 0; }
+    .cs-step { border-top: 1px solid var(--border); padding-top: var(--space-2); margin-top: var(--space-2); }
+    .cs-field { display: flex; flex-direction: column; gap: var(--space-1); }
+  </style>
+  <script src="/static/lightwork-insight-ops.js" defer></script>
+  <script src="/static/lightwork-code-sandbox.js" defer></script>
+  <script src="/static/lightwork-planning-steps.js" defer></script>
+  <script src="{{ asset('lightwork-read-aloud.js') }}"></script>
+  <script src="{{ asset('lightwork-run-status.js') }}"></script>
+  <script nonce="{{ csp_script_nonce }}">
+    // Explicit product bindings. Source text is passed only to textContent/renderers.
+    function cgText(source,values) { return window.LightworkI18n ? window.LightworkI18n.text(source,values) : String(source||'').replace(/\{(\w+)\}/g,function(whole,key){return values&&Object.prototype.hasOwnProperty.call(values,key)?String(values[key]):whole;}); }
+    function cgCopy(node,source,values) { if(window.LightworkI18n)window.LightworkI18n.set(node,source,values);else node.textContent=cgText(source,values); }
+    function cgAppend(node,source,values) { var span=document.createElement('span');cgCopy(span,source,values);node.append(' ',span); }
+    function cgNumber(value,options) { return window.LightworkI18n ? window.LightworkI18n.number(value,options) : String(value); }
+    function cgDate(value) { return window.LightworkI18n ? window.LightworkI18n.formatDate(value) : (window.mvTimeAbsolute ? window.mvTimeAbsolute(value) : new Date(value*1000).toLocaleString()); }
+    // Plain-language failure text for this page (no status codes or server text).
+    function cgErr(failure, what) {
+      return window.mvErrorText ? window.mvErrorText(failure, what) : 'Could not ' + what + '. Try again.';
+    }
+  </script>
+  <script nonce="{{ csp_script_nonce }}">
+    (function() {
+      const goalId = {{ goal.id }};
+      const eventsEl = document.getElementById('events');
+      const placeholderEl = document.getElementById('loading-placeholder');
+      const streamErrorEl = document.getElementById('stream-error');
+      const statusEl = document.getElementById('status');
+      let resultEl = document.getElementById('result');  // null when structured
+      let resultSection = document.getElementById('result-section');
+      let deliverableStaleEl = document.getElementById('deliverable-stale');
+      // A structured deliverable (forecast/table/report) is rendered server-side
+      // as a grid; the live stream can't re-parse it client-side, so on a live
+      // change we prompt a reload rather than dumping raw text over the grid.
+      let STRUCTURED = {{ (rendered.structured if rendered else False)|tojson }};
+      const cancelBtn = document.getElementById('cancel-btn');
+      const questionPanel = document.getElementById('question-panel');
+      const questionText = document.getElementById('question-text');
+      const answerForm = document.getElementById('answer-form');
+      const answerInput = document.getElementById('answer-input');
+      const actionMsg = document.getElementById('goal-action-msg');
+      const haltCard = document.getElementById('halt-card');
+      const haltReasonEl = document.getElementById('halt-reason');
+      let sinceId = 0;
+      let lastSeenId = 0;  // highest event id rendered; dedups SSE replays
+      // A goal that finished before this page loaded starts settled, so the
+      // composer never flashes the working state on a finished chat.
+      let done = {{ (not run_open|default(true))|tojson }};
+      let pollDelay = 2000;
+      let currentQuestionId = null, currentQuestionVersion = null, pendingClarification = null;
+      let currentStatus = {{ goal.status|tojson }};
+      let canOperate = {{ can_operate|tojson }};
+      const preparationMessage = {{ (submission.detail.message if submission else '')|tojson }};
+      let lastResult = {{ ('' if stop else (goal.result or ''))|tojson }};
+      if (lastResult === preparationMessage) lastResult = '';
+      document.addEventListener('lightwork:task-access-lost', function () {
+        canOperate = false;
+        const readOnly = document.getElementById('chat-read-only');
+        if (readOnly) readOnly.hidden = false;
+        syncComposer();
+      });
+      // The plain-language stop for a stopped run (kind, message, action,
+      // link). Payloads refresh it; the raw result is never put on the page.
+      let lastStop = {{ stop|tojson }};
+      statusEl.dataset.stopKind = (lastStop && lastStop.kind) || '';
+      const SHOW_TECHNICAL = {{ (show_technical_details|default(false))|tojson }};
+
+      // Plain-words labels for the work log: one line per step, in the
+      // language of a person reading along, never the kernel's event names.
+      const KIND_LABELS = {
+        plan: 'Planning', finding: 'Finding', observation: 'Step',
+        error: 'Problem', verify: 'Checking', artifact: 'Produced',
+        status: 'Status', progress: 'Progress', note: 'Note', denial: 'Not allowed',
+        withheld: 'Progress',
+      };
+      const KIND_ICONS = {
+        plan: 'M3 8h10M8 3v10', finding: 'M3 8.5l3 3 7-7', observation: 'M8 4v4.5l3 1.5M8 2.5a5.5 5.5 0 110 11 5.5 5.5 0 010-11z',
+        error: 'M8 4v5M8 11.5v.5M8 2.5a5.5 5.5 0 110 11 5.5 5.5 0 010-11z', verify: 'M4 8.5l3 3 5-7', artifact: 'M4 3h5l3 3v7H4z',
+        withheld: 'M8 2.5a5.5 5.5 0 110 11 5.5 5.5 0 010-11zM5.5 8h5',
+      };
+      // One vocabulary with the sidebar's chat list (lightwork-run-status.js):
+      // the orchestrator's "active" reads "Working", never the raw word. If
+      // that file could not load, Stop still follows the working states.
+      const specialistSetupKinds = new Set(['specialist_setup', 'specialist_needs_web_search', 'specialist_needs_connection']);
+      const RunStatus = window.LightworkRunStatus || {
+        label: function (status, kind) { return status === 'blocked' && specialistSetupKinds.has(kind) ? "Can't start" : ({pending: 'Queued', active: 'Working', running: 'Working', done: 'Done', blocked: 'Paused', failed: 'Failed', cancelled: 'Stopped'}[status] || ''); },
+        stoppable: function (status, asking) { return ['pending', 'active', 'running'].includes(status) || (status === 'blocked' && asking === true); },
+        settled: function (status, asking) { return ['done', 'failed', 'cancelled'].includes(status) || (status === 'blocked' && asking !== true); },
+        syncRecents: function () { return false; }
+      };
+      // The kernel replaces model-derived events with one fixed sentence when
+      // the evidence gateway is on; the page folds those into a single line.
+      const WITHHELD = new Set({{ (withheld_markers or [])|tojson }});
+      const rawTraceList = document.getElementById('raw-trace-list');
+      const rawTrace = document.getElementById('raw-trace');
+
+      function stepIcon(kind) {
+        const span = document.createElement('span');
+        span.className = 'step__icon';
+        span.setAttribute('aria-hidden', 'true');
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 16 16');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', KIND_ICONS[kind] || KIND_ICONS.observation);
+        path.setAttribute('fill', 'none'); path.setAttribute('stroke', 'currentColor');
+        path.setAttribute('stroke-width', '1.5'); path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(path); span.appendChild(svg);
+        return span;
+      }
+
+      function setStatus(status) {
+        currentStatus = status;
+        statusEl.className = 'badge ' + status;
+        statusEl.dataset.status = status;
+        const stopKind = lastStop && lastStop.kind;
+        statusEl.dataset.stopKind = stopKind || '';
+        cgCopy(statusEl, RunStatus.label(status, stopKind));
+        RunStatus.syncRecents(document, goalId, status, stopKind);
+      }
+
+      function fmtAgent(a) {
+        if (!a) return '';
+        const dashIdx = a.indexOf('-');
+        return dashIdx > 0 ? a.slice(0, dashIdx) : a;
+      }
+
+      function hidePlaceholder() {
+        if (placeholderEl) {
+          placeholderEl.style.display = 'none';
+          placeholderEl.removeAttribute('aria-busy');
+        }
+      }
+
+      function showStreamError(text) {
+        // Persistent, visible error shown only when BOTH SSE and polling
+        // have given up — otherwise transient blips stay silent.
+        hidePlaceholder();
+        if (streamErrorEl) {
+          cgCopy(streamErrorEl,text);
+          streamErrorEl.style.display = 'block';
+        }
+      }
+
+      function showHaltCard(stopped) {
+        if (haltCard) haltCard.style.display = stopped ? 'block' : 'none';
+        ['planning-steps', 'code-sandbox'].forEach(function (id) {
+          const panel = document.getElementById(id);
+          if (panel) panel.hidden = stopped;
+        });
+      }
+
+      function renderHalted() {
+        // A 'blocked' goal with no open question has actually stopped
+        // (budget/time cap, killswitch, or error). Make that legible instead
+        // of leaving the "Working…" spinner running and Cancel enabled forever.
+        hidePlaceholder();
+        done = true;
+        cancelBtn.disabled = true;
+        if (resultSection) resultSection.style.display = 'none';
+        renderStop(lastStop);
+        showHaltCard(true);
+        loadStopProgress();
+      }
+
+      // The finished and remaining steps of a stopped task (stop_progress.py).
+      var progressLoaded = false;
+      async function loadStopProgress() {
+        if (progressLoaded || !window.mvFetchJSON) return;
+        progressLoaded = true;
+        try {
+          const body = await window.mvFetchJSON('/api/v1/goals/' + goalId + '/stop-progress', {cache: 'no-store'}, 'show what the task finished');
+          renderStopProgress(body && body.progress);
+        } catch (e) { progressLoaded = false; }
+      }
+      function fillSteps(list, lines) {
+        list.replaceChildren();
+        (lines || []).forEach(function (line) { const li = document.createElement('li'); li.textContent = line; list.appendChild(li); });
+      }
+      function renderStopProgress(p) {
+        const box = document.getElementById('halt-progress');
+        if (!box || !p) return;
+        cgCopy(document.getElementById('halt-progress-headline'), p.headline.text, p.headline.values);
+        fillSteps(document.getElementById('halt-progress-done'), p.done);
+        fillSteps(document.getElementById('halt-progress-remaining'), p.remaining);
+        document.getElementById('halt-progress-done-empty').hidden = (p.done || []).length > 0;
+        const note = document.getElementById('halt-progress-remaining-note');
+        note.hidden = !p.remaining_note; if (p.remaining_note) cgCopy(note, p.remaining_note);
+        cgCopy(document.getElementById('halt-progress-next'), p.next.text, p.next.values);
+        haltCard.dataset.resumeMode = p.mode;
+        box.hidden = false;
+        document.dispatchEvent(new CustomEvent('lightwork:task-stop-changed'));
+      }
+
+      function renderStop(stop) {
+        const s = stop && typeof stop === 'object' ? stop : {};
+        const setup = specialistSetupKinds.has(s.kind);
+        const prepared = s.kind === 'pilot_prepared';
+        haltCard.dataset.stopKind = s.kind || '';
+        const haltTitle = document.getElementById('halt-title');
+        if (haltTitle) cgCopy(haltTitle,prepared ? 'Ready to start' : setup ? "Can't start" : 'Lightwork stopped');
+        haltReasonEl.textContent = s.message || 'The task stopped before producing a result.';
+        const actionText = document.getElementById('halt-action-text');
+        const actionLink = document.getElementById('halt-action-link');
+        if (actionText) actionText.textContent = s.action || '';
+        if (actionLink) {
+          if (s.link) { actionLink.href = s.link; actionLink.textContent = s.link_label || s.link; actionLink.hidden = !SHOW_TECHNICAL && (s.link.startsWith('/settings') || s.link.startsWith('/mcp')); }
+          else { actionLink.hidden = true; }
+        }
+        const alternative = document.getElementById('halt-specialist-alternative');
+        if (alternative) alternative.hidden = !setup;
+        const setupCheck = document.getElementById('halt-setup-check');
+        const resumeForm = document.getElementById('halt-resume-form');
+        if (setupCheck) setupCheck.hidden = !setup;
+        if (resumeForm) resumeForm.hidden = setup;
+        document.dispatchEvent(new CustomEvent('lightwork:task-stop-changed'));
+        const budgetLaunch = haltCard.querySelector('[data-budget-launch]');
+        if (budgetLaunch) budgetLaunch.hidden = !prepared && s.kind !== 'spending_limit';
+        const budget = document.getElementById('halt-budget');
+        if (budget) budget.hidden = s.kind !== 'spending_limit';
+        const technical = document.getElementById('halt-technical');
+        if (technical) {
+          const text = SHOW_TECHNICAL ? (s.technical != null ? s.technical : lastResult) : '';
+          document.getElementById('halt-technical-text').textContent = text || '';
+          technical.hidden = !text;
+        }
+        if (currentStatus === 'blocked') setStatus(currentStatus);
+      }
+
+      let withheldRow = null;  // the one folded line standing in for withheld steps
+      let stepCount = 0;
+
+      function stepRow(kind, label, text, agent, productText=false) {
+        const row = document.createElement('div');
+        row.className = 'step step--' + kind;
+        row.dataset.kind = kind;
+        row.appendChild(stepIcon(kind));
+        const body = document.createElement('div');
+        body.className = 'step__body';
+        const head = document.createElement('div');
+        const lab = document.createElement('span');
+        lab.className = 'step__label';
+        cgCopy(lab,label);
+        head.appendChild(lab);
+        if (agent && agent !== 'orchestrator') {
+          const who = document.createElement('span');
+          who.className = 'step__agent';
+          who.textContent = agent;who.lang='und';who.dir='auto';who.dataset.userContent='';
+          head.appendChild(who);
+        }
+        body.appendChild(head);
+        if (text) {
+          const t = document.createElement('div');
+          t.className = 'step__text';
+          if(productText)cgCopy(t,text);else{t.textContent=text;t.lang='und';t.dir='auto';t.dataset.userContent='';}
+          body.appendChild(t);
+        }
+        row.appendChild(body);
+        return row;
+      }
+
+      // The recorded text of each step (briefs, tool output, raw markdown) is
+      // kept under "What each step recorded", never in the plain step list.
+      function recordRaw(e) {
+        if (!rawTraceList) return;
+        const item = document.createElement('li');
+        const meta = document.createElement('span');
+        meta.className = 'raw-trace__meta';
+        meta.textContent = String(e.kind || '') + ' · ' + String(e.agent || '');
+        meta.lang = 'und'; meta.dir = 'auto'; meta.dataset.userContent = '';
+        const body = document.createElement('pre');
+        body.className = 'raw-trace__text';
+        body.textContent = String(e.content || '');
+        body.lang = 'und'; body.dir = 'auto'; body.dataset.userContent = '';
+        item.append(meta, body);
+        rawTraceList.appendChild(item);
+        if (rawTrace) rawTrace.hidden = false;
+      }
+      // The server narrates each step in plain words (step_narration.py); an
+      // older payload without one still gets a plain kind label, never raw text.
+      function plainStep(e) {
+        const step = e && e.step && typeof e.step === 'object' ? e.step : null;
+        if (step && typeof step.text === 'string') return step;
+        return {text: KIND_LABELS[String(e.kind || '')] || 'Worked on a step', group: '', plural: '', hidden: false};
+      }
+      let lastStepRow = null;  // a run of the same step reads as one counted line
+      function appendEvent(e) {
+        // Internal trace bookkeeping isn't conversation content — skip it.
+        if (e && (e.kind === 'trace_meta' || fmtAgent(e.agent) === 'system')) return;
+        hidePlaceholder();
+        const content = String(e.content || '');
+        recordRaw(e);
+        if (WITHHELD.has(content.trim())) {
+          stepCount += 1;
+          eventsEl.dataset.steps = String(stepCount);
+          const n = Number(eventsEl.dataset.withheld || 0) + 1;
+          eventsEl.dataset.withheld = String(n);
+          const text = cgText(n===1?'{count} step completed. Step details will appear when the answer is ready.':'{count} steps completed. Step details will appear when the answer is ready.',{count:cgNumber(n)});
+          if (!withheldRow) withheldRow = stepRow('withheld', KIND_LABELS.withheld, text, '',true);
+          else cgCopy(withheldRow.querySelector('.step__text'),text);
+          eventsEl.appendChild(withheldRow);  // stays the latest line
+          lastStepRow = null;
+          return;
+        }
+        const step = plainStep(e);
+        if (step.hidden || !step.text) return;
+        stepCount += 1;
+        eventsEl.dataset.steps = String(stepCount);
+        const kind = String(e.kind || 'observation');
+        if (step.group && step.plural && lastStepRow && lastStepRow === eventsEl.lastElementChild &&
+            lastStepRow.dataset.group === step.group) {
+          const count = Number(lastStepRow.dataset.count || 1) + 1;
+          lastStepRow.dataset.count = String(count);
+          cgCopy(lastStepRow.querySelector('.step__label'), step.plural, {count: cgNumber(count)});
+          return;
+        }
+        // A helper's steps name the helper; the main agent's steps need no name.
+        const helper = !/-0-[0-9a-f]{6}$/.test(String(e.agent || '')) && typeof e.who === 'string' &&
+          e.who !== 'Lightwork' && step.text.indexOf(e.who) !== 0 ? e.who : '';
+        const row = stepRow(kind, step.text, '', helper);
+        row.dataset.group = step.group || '';
+        row.dataset.count = '1';
+        eventsEl.appendChild(row);
+        lastStepRow = row;
+      }
+
+      document.addEventListener('lightwork:answer-panel-updated', function () {
+        resultEl = document.getElementById('result'); resultSection = document.getElementById('result-section');
+        deliverableStaleEl = document.getElementById('deliverable-stale');
+        const panel = document.getElementById('answer-panel'); STRUCTURED = !!(panel && panel.dataset.structured === '1');
+      });
+      function renderResult(text) {
+        if (!resultEl) return;
+        if (window.lwMarkdown) window.lwMarkdown.renderInto(resultEl, text);
+        else resultEl.textContent = text;
+      }
+      // Server-rendered prose (the result, a deliverable) upgrades in place.
+      if (window.lwMarkdown) window.lwMarkdown.upgrade(document);
+
+      const qaThread = document.getElementById('qa-thread');
+      function recordExchange(question, answer) {
+        if (!qaThread) return;
+        const q = document.createElement('p');
+        q.className = 'qa__q';
+        q.textContent = question;q.lang='und';q.dir='auto';q.dataset.userContent='';
+        qaThread.appendChild(q);
+        const wrap = document.createElement('div');
+        wrap.className = 'msg msg--user';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = answer;bubble.lang='und';bubble.dir='auto';bubble.dataset.userContent='';
+        wrap.appendChild(bubble);
+        qaThread.appendChild(wrap);
+      }
+      function resumeFollowing() {
+        // Answering the last open question restarts the run server-side; pick
+        // the live stream back up so the page keeps following it in place.
+        done = false;
+        setStatus('pending');
+        showHaltCard(false);
+        cancelBtn.disabled = false;
+        syncComposer();
+        openStream();
+      }
+
+      async function pollQuestions(reviewChange = false) {
+        if (questionLoading) return;
+        questionLoading = true;
+        const status = document.getElementById('question-status');
+        const retry = document.getElementById('question-retry');
+        const control = new AbortController();
+        const timeout = setTimeout(function () { control.abort(); }, 12000);
+        try {
+          const r = await fetch('/api/v1/goals/' + goalId + '/open_questions', {credentials: 'same-origin', cache: 'no-store', signal: control.signal});
+          if (!r.ok || r.redirected) {
+            if (r.status === 401 || r.status === 403 || r.redirected) { currentQuestionId = null; questionText.textContent = ''; questionPanel.style.display = 'none'; }
+            throw new Error(r.status === 401 || r.redirected ? 'Sign in again to load this question.' : r.status === 403 ? 'Access to this question is no longer available.' : 'Could not refresh the question. Last shown question may be out of date. Refresh the page and try again.');
+          }
+          const j = await r.json();
+          if (!Array.isArray(j.open_questions)) throw new Error('The question response could not be read. Retry loading it.');
+          const qs = ['cancelled', 'done', 'failed'].includes(currentStatus) ? [] : j.open_questions;
+          if (submitting || (pendingClarification && pendingClarification.unconfirmed)) {
+            cgCopy(status,'Check the pending answer receipt before answering another question.');
+            return;
+          }
+          if (!reviewChange && qs.length && currentQuestionId != null &&
+              (qs[0].id !== currentQuestionId || qs[0].version !== currentQuestionVersion) && answerInput.value.trim()) {
+            questionsFresh = false; retry.hidden = false;
+            cgCopy(status,'The current question changed. Your draft is kept. Refresh and review the question before sending it.');
+            return;
+          }
+          questionsFresh = true; if(j.last_answer)cgCopy(status,j.last_answer.file_count===1?'Earlier answer accepted with {count} prepared file on {time}. Any recovered composer draft is kept for you to review.':'Earlier answer accepted with {count} prepared files on {time}. Any recovered composer draft is kept for you to review.',{count:cgNumber(j.last_answer.file_count),time:cgDate(j.last_answer.created_at)});else cgCopy(status,''); retry.hidden = true;
+          if (qs.length) {
+            showHaltCard(false);
+            progressLoaded = false;
+            const changed = currentQuestionId !== qs[0].id;
+            currentQuestionId = qs[0].id;
+            currentQuestionVersion = qs[0].version;
+            questionPanel.style.display = 'block';
+            if (changed) questionText.textContent = qs[0].question;
+            // An alert's "answer" link (#question-panel) lands on the answer box.
+            if (changed && location.hash === '#question-panel') {
+              questionPanel.scrollIntoView({block: 'center'});
+              answerInput.focus({preventScroll: true});
+            }
+          } else {
+            currentQuestionId = null;
+            questionPanel.style.display = 'none';
+            if (currentStatus === 'blocked') renderHalted();
+          }
+          syncComposer();
+        } catch (e) {
+          questionsFresh = false;
+          cgCopy(status,e.name === 'AbortError' ? 'Loading the question timed out. Your draft has been kept.' : (e.message || 'Could not load the question. Your draft has been kept. Refresh the page and try again.'));
+          retry.hidden = false;
+        } finally { clearTimeout(timeout); questionLoading = false; syncComposer(); }
+      }
+
+      document.getElementById('question-retry').addEventListener('click', function () { pollQuestions(true); });
+      const sendBtn = document.getElementById('answer-send');
+      const composerHint = document.getElementById('composer-hint');
+      const replyFiles = document.getElementById('reply-files');
+      const replyAttach = document.getElementById('reply-attach');
+      let submitting = false;
+      let stopRequested = false;
+      // A risky step parked on the Approvals page (see approval_waits.py).
+      let approvalWait = null, approvalWaitLoading = false;
+      const approvalWaitEl = document.getElementById('approval-wait');
+      function approvalWaitText(item) {
+        const count = cgNumber(item.remaining);
+        if (item.who === 'you') return cgText('A step needs approval. Waiting for your approval on the Approvals page.');
+        if (item.who === 'more') return cgText(item.remaining === 1
+          ? 'A step needs approval. Waiting for {count} more approval on the Approvals page; yours can count.'
+          : 'A step needs approval. Waiting for {count} more approvals on the Approvals page; yours can count.', {count: count});
+        if (item.who === 'others') return cgText(item.remaining === 1
+          ? 'A step needs approval. Waiting for {count} other person to approve it on the Approvals page.'
+          : 'A step needs approval. Waiting for {count} other people to approve it on the Approvals page.', {count: count});
+        return cgText('A step needs approval. Waiting for an approver on the Approvals page.');
+      }
+      function deadlineText(ts) {
+        // The shared time helpers (lightwork-ui.js): the viewer's own zone,
+        // plus how long is left ("in 4 minutes").
+        if (window.mvTimeAbsolute && window.mvTimeRelative) {
+          const absolute = window.mvTimeAbsolute(ts), relative = window.mvTimeRelative(ts);
+          if (absolute) return relative ? absolute + ' (' + relative + ')' : absolute;
+        }
+        return cgDate(ts);
+      }
+      let approvalWaitShown = '';
+      function showApprovalWait(item) {
+        const changed = JSON.stringify(item || null) !== JSON.stringify(approvalWait);
+        approvalWait = item || null;
+        if (!approvalWaitEl) return;
+        const sentence = approvalWait ? approvalWaitText(approvalWait) + (approvalWait.decide_by
+          ? ' ' + cgText('If nobody decides by {time}, the step is refused and nothing runs.',
+            {time: deadlineText(approvalWait.decide_by)}) : '') : '';
+        // Checked every few seconds; redrawn only when the words change (the
+        // time left), so a screen reader is not told the same thing again.
+        if (sentence !== approvalWaitShown) {
+          approvalWaitShown = sentence;
+          approvalWaitEl.replaceChildren();
+          approvalWaitEl.hidden = !approvalWait;
+          if (approvalWait) {
+            const text = document.createElement('span');
+            text.textContent = sentence;
+            const link = document.createElement('a');
+            link.href = approvalWait.href || '/approvals';
+            link.textContent = cgText('Open the Approvals page');
+            approvalWaitEl.append(text, ' ', link);
+          }
+          const now = document.getElementById('work-now');
+          if (now && !done) cgCopy(now, approvalWait ? 'Waiting for approval…' : 'Working…');
+        }
+        if (changed) syncComposer();
+      }
+      async function pollApprovalWait() {
+        if (approvalWaitLoading || !approvalWaitEl) return;
+        if (done) { showApprovalWait(null); return; }
+        approvalWaitLoading = true;
+        try {
+          // A refusal or a redirect keeps what is shown; the next tick retries.
+          const j = await window.mvFetchJSON('/api/v1/goals/' + goalId + '/approval-wait', {cache: 'no-store', onAccess: function () {}, accessStatuses: []});
+          showApprovalWait(!done && Array.isArray(j.waiting) && j.waiting.length ? j.waiting[0] : null);
+        } catch (_) { /* the next tick retries */ } finally { approvalWaitLoading = false; }
+      }
+      let questionsFresh = false;
+      let questionLoading = false;
+
+      function submissionError(detail, fallback) {
+        if (typeof detail === 'string') return detail;
+        if (Array.isArray(detail)) {
+          return detail.map(function (error) {
+            return error && typeof error.msg === 'string' ? error.msg : '';
+          }).filter(Boolean).join('; ') || fallback;
+        }
+        if (detail && typeof detail.message === 'string') return detail.message;
+        return fallback;
+      }
+      // A refused follow-up keeps the server's own plain sentence ("Shorten
+      // the message to ...") and falls back to the page's plain wording.
+      function replyFailureText(response, body) {
+        const plain = window.mvPlainDetail ? window.mvPlainDetail(submissionError(body && body.detail, '')) : '';
+        return plain || cgErr(response, 'send your message');
+      }
+
+      function composerMessage(text, danger, values) {
+        if (!composerHint) return;
+        composerHint.style.color = danger ? 'var(--danger)' : '';
+        cgCopy(composerHint,text || '',values);
+      }
+      // The composer follows the run: answer an open question, wait (Stop
+      // available) while Lightwork works, or send the next message.
+      function syncComposer() {
+        if (submitting) return;
+        const asking = currentQuestionId != null;
+        const running = !done && !asking;
+        // Stop is there in every working state (queued, working, paused for
+        // your answer) and gone once the run is over or has already stopped.
+        const stoppable = !(lastStop && specialistSetupKinds.has(lastStop.kind)) &&
+          RunStatus.stoppable(currentStatus, asking);
+        const inbox = window.mvConversationInbox;
+        const inboxReady = !!(inbox && inbox.available);
+        if (replyAttach) { replyAttach.disabled = !canOperate; replyAttach.title = cgText(asking ? 'Attach a document, PDF, image or text file to your answer' : 'Attach files to your next message'); }
+        if (replyFiles) replyFiles.disabled = !canOperate;
+        answerInput.placeholder = cgText(asking ? 'Reply to Lightwork…'
+          : running ? (inboxReady ? 'Add guidance, queue the next task, or start separate work…' : 'Lightwork is working… you can type while you wait')
+          : 'Message Lightwork…');
+        if (sendBtn) sendBtn.disabled = !canOperate || (running && !inboxReady);
+        if (inbox) inbox.updateComposer({asking:asking,running:running,status:currentStatus});
+        cancelBtn.hidden = !stoppable || !canOperate;
+        cancelBtn.disabled = !stoppable || stopRequested || !canOperate;
+        const runNote = document.getElementById('composer-run-note');
+        if (runNote) {
+          // Say why Send is unavailable while the task works, and where Stop is.
+          const explain = running && !inboxReady && canOperate && stoppable;
+          runNote.hidden = !explain;
+          if (explain) cgCopy(runNote, approvalWait
+            ? 'Waiting for approval. Send works again when this task finishes; to end it now, press Stop.'
+            : inbox && inbox.disabledByPolicy
+              ? 'Sending during a task is turned off for this workspace. Send works again when this task finishes; to end it now, press Stop.'
+              : 'Send works again when this task finishes. To end it now, press Stop.');
+          else runNote.textContent = '';
+        }
+        answerInput.disabled = !canOperate || submitting;
+        const controls = document.getElementById('composer-controls');
+        if (controls) controls.disabled = !canOperate;
+        answerForm.dataset.mode = asking ? 'answer' : 'reply';
+      }
+      document.addEventListener('lightwork:conversation-inbox-ready', syncComposer);
+      function resetField() {
+        answerInput.value = '';
+        answerInput.style.height = '';
+        if (replyFiles) replyFiles.value = '';
+        composerMessage('');
+      }
+      answerInput.addEventListener('input', function () {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 220) + 'px';
+      });
+      answerInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          answerForm.requestSubmit();
+        }
+      });
+      if (replyAttach && replyFiles) {
+        replyAttach.addEventListener('click', function () { replyFiles.click(); });
+        replyFiles.addEventListener('change', function () {
+          const names = Array.prototype.map.call(replyFiles.files, function (f) { return f.name; });
+          composerMessage(names.length ? 'Attached: {files}' : '',false,{files:names.join(', ')});
+        });
+      }
+
+      function clarificationSignature() {
+        return JSON.stringify([answerInput.value.trim(), currentQuestionId, currentQuestionVersion,
+          Array.from(replyFiles ? replyFiles.files : []).map(function (file) { return [file.name,file.size,file.type,file.lastModified]; })]);
+      }
+      async function acceptClarificationReceipt(receipt, attempt) {
+        const unchanged = clarificationSignature() === attempt.signature;
+        if (unchanged) {
+          if (answerForm.mvRecovery) await answerForm.mvRecovery.clear();
+          resetField();
+          window.dispatchEvent(new CustomEvent('lightwork:composer-sent', {detail:{form:answerForm,recoveryCleared:true}}));
+        }
+        pendingClarification = null; document.getElementById('answer-receipt-check').hidden = true;
+        currentQuestionId = null; currentQuestionVersion = null; questionPanel.style.display = 'none';
+        recordExchange(attempt.question, attempt.answer);
+        cgCopy(actionMsg,receipt.attachment_ids.length===1?'Answer and {count} prepared file accepted.':'Answer and {count} prepared files accepted.',{count:cgNumber(receipt.attachment_ids.length)});
+        cgAppend(actionMsg,receipt.admitted?'A restart was reserved; task updates show its actual progress.':'Waiting for the remaining question or current worker checkpoint.');
+        if(!unchanged)cgAppend(actionMsg,'Your newer draft has been kept.');
+        if (receipt.admitted) resumeFollowing();
+        else { await pollQuestions(); syncComposer(); }
+      }
+      document.getElementById('answer-receipt-check').addEventListener('click', async function () {
+        if (!pendingClarification || submitting) return;
+        const attempt = pendingClarification, button = this; button.disabled = true;
+        const controller = new AbortController(), timeout = setTimeout(function () { controller.abort(); },12000);
+        try {
+          const response = await fetch('/api/v1/goals/' + goalId + '/answer-receipts/' + encodeURIComponent(attempt.operation),
+            {credentials:'same-origin',cache:'no-store',signal:controller.signal});
+          const receipt = await response.json();
+          if (response.ok && receipt.received && receipt.operation_id === attempt.operation) await acceptClarificationReceipt(receipt, attempt);
+          else if (response.ok) cgCopy(actionMsg,'No accepted answer receipt is available yet. The original request may still be finishing. Keep the draft and retry the same answer to check safely.');
+          else window.mvRenderError(actionMsg,response,'check the answer receipt',receipt);
+        } catch (failure) { cgCopy(actionMsg,'The answer receipt could not be checked. Keep the draft and retry this check.'); }
+        finally { clearTimeout(timeout); button.disabled = false; }
+      });
+      answerForm.addEventListener('submit', async function(ev) {
+        ev.preventDefault();
+        if (submitting || !canOperate) return;
+        const text = answerInput.value.trim();
+        if (!text) return;
+        if (currentQuestionId != null) {
+          if (!questionsFresh || !currentQuestionVersion) { composerMessage('Refresh the question before answering. Your answer has been kept.', true); return; }
+          const signature = clarificationSignature();
+          if (pendingClarification && pendingClarification.unconfirmed && signature !== pendingClarification.signature) {
+            composerMessage('Check the earlier answer receipt before sending an edited answer. Your draft and files have been kept.', true); return;
+          }
+          if (!pendingClarification || signature !== pendingClarification.signature) pendingClarification = {
+            operation: crypto.randomUUID(), questionId: currentQuestionId, questionVersion: currentQuestionVersion,
+            signature: signature, answer: text, question: questionText.textContent, unconfirmed: false
+          };
+          const attempt = pendingClarification;
+          const body = new FormData(answerForm);
+          body.set('question_id', String(attempt.questionId)); body.set('answer', text);
+          body.set('expected_question', attempt.questionVersion); body.set('operation_id', attempt.operation);
+          body.set('expected_context', {{ conversation_context|tojson }});
+          const controls = Array.from(answerForm.querySelectorAll('input,select,textarea,button'));
+          const before = controls.map(function (control) { return control.disabled; });
+          controls.forEach(function (control) { control.disabled = true; });
+          submitting = true; cgCopy(actionMsg,'Preparing the selected evidence and saving your answer.');
+          const controller = new AbortController(), timeout = setTimeout(function () { controller.abort(); }, 45000);
+          try {
+            const r = await fetch('/api/v1/goals/' + goalId + '/answer-with-files', {
+              method: 'POST', body: body, credentials: 'same-origin', signal: controller.signal
+            });
+            const receipt = await r.json().catch(function () { return {}; });
+            if (receipt.detail && receipt.detail.code === 'context_changed') {
+              resetField(); pendingClarification = null;
+              cgCopy(actionMsg,'Your signed-in workspace changed. Reopen the task before sending private content.');
+              return;
+            }
+            if (r.redirected) {
+              attempt.unconfirmed = true; document.getElementById('answer-receipt-check').hidden = false;
+              cgCopy(actionMsg,'Sign in again to check the answer receipt. Your draft and files have been kept.'); return;
+            }
+            if (r.ok && receipt.received && receipt.operation_id === attempt.operation) {
+              await acceptClarificationReceipt(receipt, attempt);
+            } else {
+              attempt.unconfirmed = r.status >= 500;
+              document.getElementById('answer-receipt-check').hidden = !attempt.unconfirmed;
+              window.mvRenderError(actionMsg, r, 'save your answer', receipt);
+              if (r.status === 409 && !attempt.unconfirmed) questionsFresh = false;
+            }
+          } catch (_) {
+            attempt.unconfirmed = true; document.getElementById('answer-receipt-check').hidden = false;
+            cgCopy(actionMsg,'The answer receipt is unconfirmed. Your text and files are kept. Check the receipt or retry the same answer; an accepted answer will not restart twice.');
+          } finally {
+            clearTimeout(timeout); submitting = false;
+            controls.forEach(function (control, index) { control.disabled = before[index]; }); syncComposer();
+          }
+          return;
+        }
+        // Guidance and queued messages are for a task that is still working;
+        // once it has finished, the next message is an ordinary follow-up.
+        if (!done && window.mvConversationInbox && window.mvConversationInbox.available) {
+          submitting = true;
+          try { await window.mvConversationInbox.send(answerForm); }
+          finally { submitting = false; syncComposer(); }
+          return;
+        }
+        if (!done) {
+          composerMessage('Background message availability has not been confirmed. Refresh messages or wait for this task to finish; your draft is kept.', true);
+          return;
+        }
+        // The next message of this chat: a follow-up goal, run with the
+        // earlier turns as context. The server answers with the new page.
+        // Disabled controls are excluded from native form serialization.
+        const formData = new FormData(answerForm);
+        let navigatingAfterReceipt = false;
+        const submittedControls = Array.from(answerForm.querySelectorAll('input,select,textarea,button'));
+        const disabledBefore = submittedControls.map(function (control) { return control.disabled; });
+        submittedControls.forEach(function (control) { control.disabled = true; });
+        submitting = true;
+        if (sendBtn) sendBtn.disabled = true;
+        answerInput.disabled = true;
+        composerMessage('Sending…');
+        try {
+          const r = await fetch(answerForm.action, { method: 'POST', body: formData });
+          if (r.redirected) {
+            const destination = new URL(r.url, window.location.origin);
+            if (destination.origin === window.location.origin && /^\/chat\/goal\/\d+$/.test(destination.pathname)) {
+              if (answerForm.mvRecovery) await answerForm.mvRecovery.clear();
+              window.dispatchEvent(new CustomEvent('lightwork:composer-sent', {detail: {form: answerForm, recoveryCleared: true}})); navigatingAfterReceipt = true; window.location.href = r.url; return;
+            }
+            composerMessage('Your sign-in changed. The message was not confirmed; your draft has been kept.', true); return;
+          }
+          const j = await r.json().catch(function () { return {}; });
+          composerMessage(replyFailureText(r, j), true);
+        } catch (e) {
+          composerMessage('Could not send — check your connection and try again.', true);
+        } finally {
+          submitting = false;
+          if (!navigatingAfterReceipt) {
+            submittedControls.forEach(function (control, index) { control.disabled = disabledBefore[index]; });
+            syncComposer();
+          }
+        }
+      });
+
+      cancelBtn.addEventListener('click', async function() {
+        if (!canOperate) return;
+        // One action: Stop acts at once. The halt card then lists the
+        // finished and remaining steps and offers Resume or Try again.
+        cancelBtn.disabled = true;
+        cgCopy(actionMsg,'Stopping. Lightwork stops after the step it is on.');
+        let accepted = false;
+        try {
+          const r = await fetch('/api/v1/goals/' + goalId + '/cancel', { method: 'POST' });
+          if (r.ok || r.status === 204) {
+            accepted = true; stopRequested = true;
+            cgCopy(actionMsg,'Stop requested. The current step may still be cleaning up. Already completed external changes are not undone. You can resume or try again below once it stops.');
+            currentQuestionId = null; questionPanel.style.display = 'none';
+            openPollingFallback(true); return;
+          }
+          const j = await r.json().catch(function () { return {}; });
+          actionMsg.style.color = 'var(--danger)';
+          cgCopy(actionMsg,cgErr(r, 'stop the task'));
+        } catch (e) {
+          actionMsg.style.color = 'var(--danger)';
+          cgCopy(actionMsg,'The stop response was lost. Checking task state; the request may have been accepted.');
+          openPollingFallback(true);
+        } finally {
+          if (!accepted) cancelBtn.disabled = false;
+        }
+      });
+
+      // SSE replaces the 2s/5s polling loop. The server holds one TCP
+      // connection open and pushes only when there's something new;
+      // EventSource handles reconnect automatically. Falls back to
+      // polling if SSE isn't available (very old browsers, blocked
+      // by a corporate proxy).
+      function applyPayload(d) {
+        if (!d || typeof d !== 'object') return;
+        // A successful payload (even with zero events) means we're
+        // connected: clear the "Waiting…" placeholder and any stale error.
+        hidePlaceholder();
+        if (streamErrorEl) streamErrorEl.style.display = 'none';
+        lastPayloadAt = Date.now();
+        clearTimeout(reconnectTimer); reconnectTimer = null;
+        document.getElementById('stream-retry').hidden = true;
+        const evs = Array.isArray(d.events) ? d.events : [];
+        for (const e of evs) {
+          // Skip ids we've already rendered, so an SSE reconnect that
+          // resends a batch can't double up the log.
+          if (e && e.id != null) {
+            if (e.id <= lastSeenId) continue;
+            lastSeenId = e.id;
+          }
+          appendEvent(e);
+        }
+        if (evs.length > 0 && d.next_id != null) sinceId = d.next_id;
+        // #events is itself the scroll container (max-height + overflow-y:auto);
+        // its parent doesn't scroll, so scroll the element itself.
+        eventsEl.scrollTop = eventsEl.scrollHeight;
+        if (Object.prototype.hasOwnProperty.call(d, 'stop')) lastStop = d.stop && typeof d.stop === 'object' ? d.stop : null;
+        if (d.status) {
+          setStatus(d.status);
+          if (!['blocked', 'failed', 'cancelled'].includes(d.status)) { showHaltCard(false); progressLoaded = false; }
+        }
+        if (d.result && d.result !== preparationMessage) {
+          const changed = d.result !== lastResult;
+          lastResult = d.result;
+          // A clean finish shows its result; a stopped run's result is the
+          // kernel's stop text, which the halt card explains instead (d.stop).
+          // While the run is still open the result is the answer being
+          // written, streamed by the server as the model produces it.
+          if (d.status !== 'blocked' && !d.stop) {
+            resultSection.style.display = 'block';
+            if (STRUCTURED) {
+              // Server-rendered grid is authoritative; prompt a reload if the
+              // deliverable changed after this page loaded.
+              if (changed && deliverableStaleEl) deliverableStaleEl.style.display = 'block';
+            } else if (resultEl) {
+              if (changed) renderResult(d.result);
+              if (d.terminal === true) resultEl.removeAttribute('aria-busy');
+              else resultEl.setAttribute('aria-busy', 'true');
+            }
+          }
+        } else if (d.result === '' && lastResult) {
+          // The answer preview was withdrawn (Shield blocked a later part of
+          // it): take the text already shown off the page.
+          lastResult = '';
+          if (resultEl && !STRUCTURED) resultEl.textContent = '';
+          resultSection.style.display = 'none';
+        }
+        if (d.status === 'blocked') {
+          pollQuestions();
+        }
+        if (d.terminal === true) {
+          done = true;
+          cancelBtn.disabled = true;
+          showApprovalWait(null);
+        }
+        if (['failed', 'cancelled'].includes(currentStatus)) renderHalted();
+        if (stopRequested && currentStatus === 'cancelled') cgCopy(actionMsg,'Stop recorded. Cleanup may still be finishing; already completed changes are not undone.');
+        if (stopRequested && currentStatus === 'done') cgCopy(actionMsg,'The task completed before the stop took effect. Review its result and any external changes.');
+        syncComposer();
+        document.dispatchEvent(new CustomEvent('lightwork:task-projection', {detail: {
+          status: d.status, terminal: d.terminal === true, result: d.result,
+          artifactsChanged: evs.some(function (event) { return event.kind === 'artifact'; })
+        }}));
+      }
+
+      let stream = null;
+      let reconnectTimer = null, pollTimer = null, polling = false, lastPayloadAt = null;
+      function openStream() {
+        polling = false; clearTimeout(pollTimer); clearTimeout(reconnectTimer);
+        if (typeof EventSource === 'undefined') return openPollingFallback();
+        if (stream) { try { stream.close(); } catch (_) {} }
+        const es = new EventSource('/api/goal/' + goalId + '/events/stream?since=' + sinceId);
+        stream = es;
+        es.onmessage = function(ev) {
+          try { applyPayload(JSON.parse(ev.data)); } catch (_) {}
+        };
+        es.addEventListener('terminal', function(ev) {
+          try { applyPayload(JSON.parse(ev.data)); } catch (_) {}
+          es.close();
+        });
+        es.onerror = function() {
+          // EventSource auto-reconnects; if it permanently fails (network
+          // gone, server down), fall back to polling so the UI still works.
+          if (stream !== es) return;
+          showStreamError('Updates interrupted. Task state is unknown until reconnected.' + (lastPayloadAt ? ' Last refreshed ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(lastPayloadAt) : new Date(lastPayloadAt).toLocaleTimeString()) + '.' : ''));
+          document.getElementById('stream-retry').hidden = false;
+          if (es.readyState === EventSource.CLOSED) openPollingFallback();
+          else if (!reconnectTimer) reconnectTimer = setTimeout(function () { if (stream === es) openPollingFallback(); }, 10000);
+        };
+      }
+
+      let pollFailures = 0;
+      const MAX_POLL_FAILURES = 5;  // ~25s of dead polling before we surface it
+
+      function openPollingFallback(force) {
+        if (stream) { stream.close(); stream = null; }
+        clearTimeout(reconnectTimer); reconnectTimer = null;
+        if (polling) return;
+        polling = true;
+        async function poll() {
+          if (!polling || (done && !force)) { polling = false; return; }
+          if (document.visibilityState === 'hidden') { pollTimer = setTimeout(poll, 5000); return; }
+          const controller = new AbortController();
+          const timeout = setTimeout(function () { controller.abort(); }, 12000);
+          try {
+            const resp = await fetch('/api/goal/' + goalId + '/events?since=' + sinceId,
+              {credentials: 'same-origin', cache: 'no-store', signal: controller.signal});
+            if ([401, 403, 404].includes(resp.status) || resp.redirected) {
+              showStreamError(resp.status === 401 || resp.redirected ? 'Sign in again to reconnect task updates.' : 'Task access is no longer available.');
+              eventsEl.replaceChildren(); if (resultSection) resultSection.style.display = 'none';
+              document.dispatchEvent(new CustomEvent('lightwork:task-access-lost'));
+              polling = false; document.getElementById('stream-retry').hidden = false; return;
+            }
+            if (!resp.ok) throw new Error('unavailable');
+            applyPayload(await resp.json()); pollFailures = 0; force = false;
+            if (done) { polling = false; return; }
+          } catch (_) {
+            pollFailures++;
+            showStreamError('Updates are unavailable. The task may still be running. Your draft has been kept. Refresh the page to see the latest.');
+            document.getElementById('stream-retry').hidden = false;
+            if (pollFailures >= MAX_POLL_FAILURES) { polling = false; return; }
+          } finally { clearTimeout(timeout); }
+          pollTimer = setTimeout(poll, Math.min(30000, pollDelay * Math.max(1, pollFailures)));
+        }
+        poll();
+      }
+      document.getElementById('stream-retry').addEventListener('click', function () { pollFailures = 0; openPollingFallback(true); });
+      window.addEventListener('pagehide', function () { polling = false; clearTimeout(pollTimer); clearTimeout(reconnectTimer); if (stream) stream.close(); });
+      if (['failed', 'cancelled'].includes(currentStatus)) renderHalted();
+
+      syncComposer();
+      // A thread with earlier turns opens on its latest message, like a chat.
+      if ({{ (thread_turns or [])|length }} > 0) {
+        var scroller = document.getElementById('cs-scroll');
+        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      }
+      openStream();
+      // A goal already 'blocked' on load resolves to either a question or a
+      // halt card right away, instead of waiting for the next poll tick.
+      if (currentStatus === 'blocked') pollQuestions();
+      if (!done) pollApprovalWait();
+      // Poll questions on a longer cadence so the form picks up on
+      // ask_user that happens between event ticks; the same tick notices a
+      // step parked on the Approvals page.
+      setInterval(function() { if (!done && document.visibilityState !== 'hidden') { pollQuestions(); pollApprovalWait(); } }, 5000);
+    })();
+  </script>
+  <script src="/static/lightwork-task-resume.js" defer></script>
+
+  <script nonce="{{ csp_script_nonce }}">
+    // Earlier answers retain the exact text shown in the conversation.
+    (function () {
+      // The project picker submits on change; the share link selects itself on click.
+      var projectSelect = document.getElementById('goal-project-sel');
+      if (projectSelect) projectSelect.addEventListener('change', function () { this.form.requestSubmit(); });
+      var shareUrl = document.getElementById('share-url');
+      if (shareUrl) shareUrl.addEventListener('click', function () { this.select(); });
+      Array.prototype.forEach.call(document.querySelectorAll('.turn-copy, .turn-print'), function (button) {
+        button.addEventListener('click', function () {
+          if (button.classList.contains('turn-print')) {
+            var printStatus = button.closest('.answer-actions')?.querySelector('.turn-copy-status');
+            if (window.LightworkThreadHistory) window.LightworkThreadHistory.printConversation(printStatus);
+            else if (printStatus) printStatus.textContent = 'Printing is still loading. Try again in a moment, or reload this conversation.';
+            return;
+          }
+          var group = button.closest('.answer-actions');
+          var source = group && group.nextElementSibling;
+          var status = group && group.querySelector('.turn-copy-status');
+          if (!source || !status) return;
+          function selectSource() {
+            source.hidden = false; source.classList.add('turn-copy-source--visible');
+            source.focus(); source.select();
+            status.textContent = 'Copy was unavailable. The answer is selected; press Ctrl+C or Command+C.';
+          }
+          if (!navigator.clipboard || !navigator.clipboard.writeText) { selectSource(); return; }
+          navigator.clipboard.writeText(source.value).then(function () {
+            status.textContent = 'Copied.';
+          }).catch(selectSource);
+        });
+      });
+    })();
+  </script>
+
+  <script nonce="{{ csp_script_nonce }}">
+    // "Show work" strip: mirror the latest trace line into the collapsed
+    // summary (so a glance shows the current step, not a firehose) and
+    // auto-collapse once the goal reaches a terminal state. Purely additive —
+    // it observes the existing #events / #status nodes the stream script owns.
+    (function () {
+      var activity = document.getElementById('work-activity');
+      var events = document.getElementById('events');
+      var status = document.getElementById('status');
+      var nowEl = document.getElementById('work-now');
+      var metaEl = document.getElementById('work-meta');
+      var spin = document.getElementById('work-spin');
+      if (!activity || !events || !nowEl) return;
+      // The shared words (lightwork-run-status.js); without that file the
+      // strip still settles on the finished states with the same words.
+      var RunStatus = window.LightworkRunStatus || {
+        settled: function (st) { return ['done', 'completed', 'failed', 'error', 'cancelled', 'blocked'].indexOf(st) >= 0; },
+        label: function (st, kind) { return st === 'blocked' && ['specialist_setup', 'specialist_needs_web_search', 'specialist_needs_connection'].includes(kind) ? "Can't start" : ({done: 'Done', completed: 'Done', blocked: 'Paused', failed: 'Failed', error: 'Failed', cancelled: 'Stopped'}[st] || ''); }
+      };
+
+      function stepTotal() { return Number(events.dataset && events.dataset.steps || 0) || events.children.length; }
+      function steps(n) { return cgText(n===1?'{count} step':'{count} steps',{count:cgNumber(n)}); }
+      function refreshFromEvents() {
+        var lines = events.children;
+        if (lines.length) {
+          var kind = lines[lines.length - 1].dataset.kind;
+          var progress = { plan: 'Planning the next step…', finding: 'Preparing an answer…',
+            observation: 'Working through the steps…', error: 'An issue needs attention — open Show work for details.',
+            verify: 'Checking the result…', artifact: 'Preparing a result…' };
+          cgCopy(nowEl,progress[kind] || 'Working…');
+          cgCopy(metaEl,steps(stepTotal()));
+        }
+      }
+      function settle() {
+        var st = (status && ((status.dataset && status.dataset.status) || status.textContent) || '').trim().toLowerCase();
+        if (!RunStatus.settled(st, false)) {
+          // Back at work (a resumed run): the strip is live again.
+          if (nowEl.classList) nowEl.classList.add('is-live');
+          if (spin) spin.style.display = '';
+          return false;
+        }
+        activity.open = false;
+        if (nowEl.classList) nowEl.classList.remove('is-live');
+        if (spin) spin.style.display = 'none';
+        cgCopy(nowEl,'Work log: {steps}',{steps:steps(stepTotal())});
+        // The same word as the badge and the chat list ("Done", "Stopped", ...).
+        cgCopy(metaEl, RunStatus.label(st, status && status.dataset && status.dataset.stopKind));
+        return true;
+      }
+
+      // Collapse the trace by default once the first steps stream in, so the
+      // answer stays the hero; the user can still expand it any time.
+      var autoCollapsed = false;
+      new MutationObserver(function () {
+        refreshFromEvents();
+        if (!autoCollapsed && events.children.length >= 3 && !settle()) {
+          activity.open = false; autoCollapsed = true;
+        }
+      }).observe(events, { childList: true });
+
+      if (status) new MutationObserver(settle).observe(status, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-status'] });
+      // Handle a goal that loaded already-finished.
+      settle();
+    })();
+  </script>
+
+
+
+
+
+  <script src="/static/lightwork-deliverable-sharing.js" defer></script>
+  <script nonce="{{ csp_script_nonce }}">
+    // Attachments panel: list the goal's files (uploads + machine-generated
+    // transcript/extract companions), download each, add more to a goal.
+    (function () {
+      var goalId = {{ goal.id }};
+      var panel = document.getElementById('attachments-panel');
+      var list = document.getElementById('attachments-list');
+      var count = document.getElementById('attachments-count');
+      var addBtn = document.getElementById('attach-add-btn');
+      var input = document.getElementById('attach-add');
+      var msg = document.getElementById('attach-msg');
+      if (!panel || !list) return;
+      var denied = false, generation = 0, requests = new Set(), loading = false, refreshAgain = false;
+      var pending = [], uploading = false, progress = null, t = null, polls = 0;
+      function clearPrivate() {
+        denied = true; generation++; requests.forEach(function (controller) { controller.abort(); });
+        clearInterval(t); list.replaceChildren(); count.textContent = ''; input.value = '';
+        pending.forEach(function (item) { item.file = null; }); pending = [];
+        if (progress) progress.replaceChildren();
+        addBtn.disabled = true; input.disabled = true;
+        cgCopy(msg, 'Task access is no longer available.');
+      }
+      async function fileRequest(options) {
+        if (denied) throw new Error('Task access is no longer available.');
+        var ticket = generation, controller = new AbortController(); requests.add(controller);
+        try {
+          var body = await window.mvFetchJSON('/api/v1/goals/' + goalId + '/attachments', Object.assign({cache: 'no-store', signal: controller.signal,
+            timeout: options && options.method === 'POST' ? 60000 : 12000, accessStatuses: [401, 403, 404], onAccess: clearPrivate}, options), 'load the attached files');
+          if (denied || ticket !== generation) throw new Error('Task access is no longer available.');
+          return body;
+        } catch (error) {
+          if (error.accessChanged || denied || ticket !== generation) throw new Error('Task access is no longer available.');
+          throw error;
+        } finally { requests.delete(controller); }
+      }
+
+      function fmtSize(n) {
+        if(window.LightworkI18n)return window.LightworkI18n.number(n>=1048576?n/1048576:n>=1024?n/1024:n,{style:'unit',unit:n>=1048576?'megabyte':n>=1024?'kilobyte':'byte',unitDisplay:'short',maximumFractionDigits:n>=1048576?1:0});
+        if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+        if (n >= 1024) return Math.round(n / 1024) + ' KB';
+        return n + ' B';
+      }
+      function isCompanion(name) {
+        return /\.(transcript|extracted)\.txt$/.test(name);
+      }
+      function render(items) {
+        list.textContent = '';
+        count.textContent = cgNumber(items.length);count.lang=window.LightworkI18n?window.LightworkI18n.locale:'en';
+        panel.style.display = 'block';
+        if (!items.length) {
+          var empty = document.createElement('li');
+          empty.className = 'muted';
+          cgCopy(empty,'No files attached to this task yet. Use + Add file to add one; adding a file does not confirm the runner has read it.');
+          list.appendChild(empty);
+        }
+        items.forEach(function (a) {
+          var li = document.createElement('li');
+          li.style.cssText = 'display:flex;align-items:center;gap:0.5rem;font-size:var(--text-sm);';
+          var link = document.createElement('a');
+          link.href = '/api/v1/goals/' + goalId + '/attachments/' + a.id + '/download';
+          link.textContent = a.filename;link.lang='und';link.dir='auto';link.dataset.userContent='';
+          link.setAttribute('download', a.filename);
+          li.appendChild(link);
+          var meta = document.createElement('span');
+          meta.className = 'muted';
+          meta.style.fontSize = 'var(--text-xs)';
+          if(isCompanion(a.filename))cgCopy(meta,'{size} · auto-generated',{size:fmtSize(a.size_bytes)});else{meta.textContent=fmtSize(a.size_bytes);meta.lang=window.LightworkI18n?window.LightworkI18n.locale:'en';}
+          li.appendChild(meta);
+          list.appendChild(li);
+        });
+      }
+      async function refresh() {
+        if (denied || document.hidden) return;
+        if (loading) { refreshAgain = true; return; }
+        loading = true;
+        try {
+          var items = await fileRequest();
+          if (!Array.isArray(items)) throw new Error('Attachments could not be loaded. You can still add a file or retry by reloading.');
+          render(items);
+        } catch (error) {
+            if (denied) return;
+            panel.style.display = 'block';
+            list.textContent = '';
+            var failed = document.createElement('li');
+            failed.className = 'muted';
+            cgCopy(failed,'Attachments could not be loaded. You can still add a file or retry by reloading.');
+            list.appendChild(failed);
+            // A dropped connection, timeout or unreadable reply gets the shared wording, not the browser's.
+            cgCopy(msg,error && /^(TypeError|AbortError|SyntaxError)$/.test(error.name) ? cgErr(error,'load the attached files') : String(error.message || error));
+        } finally {
+          loading = false;
+          if (refreshAgain) { refreshAgain = false; refresh(); }
+        }
+      }
+      if (addBtn && input) {
+        addBtn.addEventListener('click', function () { input.click(); });
+        progress = document.createElement('ul');
+        progress.setAttribute('aria-label',cgText('Upload progress'));progress.lang=window.LightworkI18n?window.LightworkI18n.languageFor('Upload progress'):'en'; msg.after(progress);
+        function row(item) {
+          cgCopy(item.row,'{name} — {state}',{name:item.name,state:cgText({queued:'Queued',uploading:'Uploading',complete:'Complete',failed:'Failed'}[item.state]||item.state)});
+          if (item.state === 'failed') {
+            var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn btn--ghost';
+            cgCopy(retry,'Retry {name}',{name:item.name});
+            retry.addEventListener('click', function () { item.state = 'queued'; row(item); drain(); });
+            item.row.append(retry);
+          }
+        }
+        async function drain() {
+          if (uploading || denied) return;
+          uploading = true; addBtn.disabled = true;
+          try {
+            for (var item of pending) {
+              if (denied) return;
+              if (item.state !== 'queued') continue;
+              item.state = 'uploading'; row(item);
+              try {
+                var fd = new FormData(); fd.append('file', item.file, item.name);
+                await fileRequest({method: 'POST', body: fd});
+                item.state = 'complete'; item.file = null;
+              } catch (_) { item.state = 'failed'; }
+              if (denied) return;
+              row(item);
+            }
+            cgCopy(msg,pending.some(function (i) { return i.state === 'failed'; })
+              ? 'Some files were not confirmed. Retry only those files. Previously admitted files are preserved.'
+              : 'Files added to this task. Extracted text may still be preparing; this does not confirm the runner has read them.');
+            refresh(); pollCompanions();
+          } finally { uploading = false; addBtn.disabled = denied; }
+        }
+        input.addEventListener('change', function () {
+          if (denied) { input.value = ''; return; }
+          Array.from(input.files).forEach(function (file) {
+            var item = {file: file, name: file.name, state: 'queued', row: document.createElement('li')};
+            pending.push(item); progress.append(item.row); row(item);
+          });
+          input.value = ''; drain();
+        });
+      }
+      refresh();
+      // Companions land seconds after upload; refresh a few times so they appear.
+      function pollCompanions() {
+        clearInterval(t); polls = 0;
+        t = setInterval(function () {
+          refresh();
+          if (++polls >= 6) clearInterval(t);
+        }, 5000);
+      }
+      pollCompanions();
+      document.addEventListener('lightwork:task-projection', function (event) {
+        if (event.detail && (event.detail.terminal || event.detail.artifactsChanged)) refresh();
+      });
+      document.addEventListener('lightwork:answer-panel-updated', refresh);
+      document.addEventListener('lightwork:task-access-lost', clearPrivate);
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
+      window.addEventListener('focus', refresh);
+      window.addEventListener('pagehide', clearPrivate);
+    })();
+  </script>
+  <script nonce="{{ csp_script_nonce }}">
+    {% include "_voice_mic.js" %}
+
+    // Voice: dictate a clarifying-question answer (mic → browser-side 16 kHz
+    // WAV encode → /api/v1/voice/transcribe, retrying while the local model
+    // warms; browser speech recognition as terminal fallback) and read the
+    // finished result aloud (/api/v1/voice/speak). Transcripts fill the
+    // input for review — never auto-send.
+    (function () {
+      var mic = document.getElementById('answer-mic');
+      var input = document.getElementById('answer-input');
+      var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      var canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+      if (mic && input && (canRecord || SpeechRec)) {
+        mic.hidden = false;
+        var recorder = null, chunks = [], stream = null, busy = false;
+        function setRec(on) {
+          mic.setAttribute('aria-pressed', on ? 'true' : 'false');
+          mic.style.color = on ? 'var(--danger)' : '';
+        }
+        function fill(text) {
+          text = (text || '').trim();
+          if (text) { input.value = text; input.focus(); }
+        }
+        function fallback() {
+          if (!SpeechRec) return;
+          var rec = new SpeechRec();
+          rec.lang = window.LightworkI18n ? window.LightworkI18n.locale : document.documentElement.lang || 'en';
+          setRec(true);
+          rec.onresult = function (e) { fill(e.results[0][0].transcript); };
+          rec.onend = function () { setRec(false); };
+          rec.start();
+        }
+        function upload(blob) {
+          busy = true;
+          lwVoiceUpload(blob, {
+            filename: 'answer.webm',
+            onFallback: fallback,
+            onResult: fill,
+          })
+            .catch(function () {
+              if (window.mvToast) window.mvToast(cgText('We couldn\u2019t turn your recording into text. Try again, or type your answer.'), { error: true });
+            })
+            .finally(function () { busy = false; });
+        }
+        mic.addEventListener('click', function () {
+          if (busy) return;
+          if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+          if (!canRecord) { fallback(); return; }
+          navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+            stream = s; chunks = [];
+            recorder = new MediaRecorder(s);
+            recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+            recorder.onstop = function () {
+              setRec(false);
+              stream.getTracks().forEach(function (t) { t.stop(); });
+              if (chunks.length) upload(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+            };
+            recorder.start();
+            setRec(true);
+          }).catch(fallback);
+        });
+      }
+
+      function setupReadAloud() { if (window.lwReadAloud) window.lwReadAloud(document.getElementById('read-aloud')); }
+      setupReadAloud();
+      document.addEventListener('lightwork:answer-ready', setupReadAloud);
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}Lightwork recovery{% endblock %}</title>
+<link rel="stylesheet" href="/static/lightwork.css">{% block head_extra %}{% endblock %}
+<style>.recovery-shell{padding:var(--space-4,1rem);background:var(--bg);color:var(--text)}.recovery-shell__header{display:flex;flex-wrap:wrap;gap:var(--space-3,.75rem);align-items:center;margin-bottom:var(--space-4,1rem)}.recovery-shell__header nav{display:flex;flex-wrap:wrap;gap:var(--space-2,.5rem)}</style>{% include "_journey_i18n.html" %}
+</head>
+<body class="recovery-shell">
+{% if lang and lang != 'en' %}<aside class="locale-coverage" aria-label="Translation coverage">{{ ui('Some controls are translated. Other sections remain in English. These draft translations need language and consequence-copy review.') }} {{ ui('User-written content is kept in its original language.') }}</aside>{% endif %}<header class="panel recovery-shell__header"><strong>Lightwork</strong> <span class="badge warn">Recovery mode</span>
+<nav aria-label="Recovery pages"><a class="btn btn--ghost" href="/workspace/recovery">Workspace recovery</a><a class="btn btn--ghost" href="/provider-spending">Provider spending</a></nav>
+<span class="muted">Other pages open again after you close recovery mode in the Lightwork desktop app.</span></header>
+<main id="content" tabindex="-1">{% include "_practice_banner.html" %}{% block content %}{% endblock %}</main>{% include "_journey_i18n_scripts.html" %}{% if practice_mode %}<script src="{{ static_url('lightwork-practice.js') if static_url is defined else '/static/lightwork-practice.js' }}" defer></script>{% endif %}{% block scripts_extra %}{% endblock %}</body></html>

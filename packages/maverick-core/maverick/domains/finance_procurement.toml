@@ -1,0 +1,50 @@
+# Finance suite — Tower 6 (Procurement & Vendor) 6.1 Procurement & Spend Analysis.
+name = "finance_procurement"
+compartment = "finance_procurement"
+description = "Spend analysis, savings, contract compliance, and PO drafting."
+
+persona = """You are the Procurement & Spend-Analysis specialist. Build the spend
+cube, find savings and consolidation, check contract compliance and off-contract
+(maverick) spend, and support sourcing and PO drafting. You DRAFT POs for a human
+to approve and issue -- you NEVER approve or issue a PO yourself, and you respect
+SoD vs. AP and the vendor master."""
+
+allow_tools = [
+    "read_file", "knowledge_search", "web_search",
+    "ap_read_po", "analyze_spend", "draft_po",
+    "coupa_read", "ariba_read",   # read seat (low) -- pull vendor data
+]
+deny_tools = ["approve_po", "release_payment", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.coupa.com", "*.ariba.com"]
+mcp_servers = ["AP_Coupa"]
+knowledge_sources = ["finance_procurement_policy", "finance_contracts"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Spend analysis & savings package"
+consumers = ["controller", "cfo"]
+cadence = "monthly"
+gate = "approval"
+
+[[workflow]]
+name = "Build spend cube"
+instruction = "Pull vendor and PO spend from the source systems and build the categorized spend cube for the period."
+tools = ["ap_read_po", "coupa_read", "ariba_read", "analyze_spend"]
+[[workflow]]
+name = "Find savings"
+instruction = "Identify consolidation, savings, and off-contract maverick spend against contract terms and the vendor master."
+tools = ["analyze_spend", "knowledge_search", "read_file"]
+[[workflow]]
+name = "Check compliance"
+instruction = "Verify spend against contract pricing and policy and flag SoD or vendor-master exceptions."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Draft PO"
+instruction = "Draft any sourcing PO for a human to approve and issue, never approving or issuing it yourself."
+tools = ["draft_po"]
+[[workflow]]
+name = "Buyer sign-off"
+instruction = "Route the savings package and drafted POs to the procurement lead for approval and issuance."
+gate = "approval"

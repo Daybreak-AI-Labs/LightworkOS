@@ -1,0 +1,41 @@
+{% if dsar.kind in ('access', 'portability') and dsar.status in ('fulfilled', 'closed') %}
+<section class="panel" id="dsar-package-handoff" data-request="{{ dsar.id }}" aria-labelledby="dsar-handoff-heading">
+  <h2 id="dsar-handoff-heading">Review and record the package handoff</h2>
+  <p class="muted">Keep a statement about the exact collected package you handed off through an approved secure channel. Lightwork records your statement; it does not send the package or verify that the requester received it.</p>
+  {% if can_record_package_handoff %}
+  <button class="btn btn--ghost" type="button" data-handoff-check>Review package and saved statements</button>
+  <div data-handoff-details hidden>
+    <p data-handoff-scope class="notice notice--warning"></p>
+    <p data-handoff-counts></p>
+    <ul data-handoff-history class="dsar-list"></ul>
+    <form data-handoff-form hidden>
+      <label class="settings-field"><span>Secure channel you used</span>
+        <select class="input" name="channel" required>
+          <option value="secure_portal">Secure requester portal</option>
+          <option value="encrypted_email">Encrypted email</option>
+          <option value="approved_transfer">Approved secure file transfer</option>
+          <option value="in_person">Verified in-person handoff</option>
+        </select>
+      </label>
+      <label class="settings-field"><span>When you handed off this package</span>
+        <input class="input" name="handed_at" type="datetime-local" required>
+      </label>
+      <label class="settings-field"><span>Where the evidence is kept</span>
+        <input class="input" name="reference" minlength="3" maxlength="200" required placeholder="For example: support ticket 4521" aria-describedby="dsar-handoff-reference-help">
+      </label>
+      <p class="muted" id="dsar-handoff-reference-help">Use a short internal reference. Do not paste personal data, passwords or links that grant access.</p>
+      <label class="settings-field"><input type="checkbox" name="reviewed" required> I reviewed this exact collected package and its disclosure limits.</label>
+      <label class="settings-field"><input type="checkbox" name="identity_checked" required> I checked the recipient's identity and destination.</label>
+      <label class="settings-field"><input type="checkbox" name="sent" required> I already handed off this package through the chosen channel.</label>
+      <button class="btn btn--primary" type="submit">Review statement</button>
+    </form>
+  </div>
+  <p data-handoff-status role="status" aria-live="polite"></p>
+  {% else %}
+  <p class="muted">Ask an authorized privacy reviewer to review this package and record its secure handoff.</p>
+  {% endif %}
+</section>
+{% if can_record_package_handoff %}
+<script src="{{ asset('lightwork-dsar-handoff.js') }}" defer></script>
+{% endif %}
+{% endif %}

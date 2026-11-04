@@ -1,0 +1,1783 @@
+{% extends "base.html" %}
+{% block title %}Agent Factory · Lightwork{% endblock %}
+
+{# One workflow-step row (Advanced editor). ``s`` is a step dict or ``none``
+   (the empty row cloned for "Add step"). Macro keeps live rows + <template>
+   in sync. #}
+{% macro wf_row(s) %}
+  <div class="wf-step" style="border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem; margin: 0.5rem 0;">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-end;">
+      <label style="flex: 1; min-width: min(100%, 12rem);">Step name<br>
+        <input type="text" class="input wf-name" style="width: 100%;" value="{{ s.name if s else '' }}">
+      </label>
+      <label style="min-width: min(100%, 9rem);">Does a person check it?<br>
+        <select class="input wf-gate" style="width: 100%;" aria-label="Does a person check it? “{{ s.name if s else 'Unnamed step' }}”">
+          <option value="">No check</option>
+          {% for g, label in [('approval', 'Someone must approve'), ('review', 'Someone reviews')] %}
+          <option value="{{ g }}"{% if s and s.gate == g %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div style="display: flex; gap: 0.25rem;">
+        <button type="button" class="btn btn--ghost wf-up" aria-label="Move up: “{{ s.name if s else 'Unnamed step' }}”">Move up</button>
+        <button type="button" class="btn btn--ghost wf-down" aria-label="Move down: “{{ s.name if s else 'Unnamed step' }}”">Move down</button>
+        <button type="button" class="btn btn--ghost btn--danger wf-del" aria-label="Remove step: “{{ s.name if s else 'Unnamed step' }}”">Remove step</button>
+      </div>
+    </div>
+    <label style="display: block; margin-top: 0.4rem;">What to do in this step
+      <textarea class="input wf-instruction" rows="2" style="width: 100%;">{{ s.instruction if s else '' }}</textarea>
+    </label>
+    <input type="hidden" class="wf-tools" value="{{ (s.tools | join(' ')) if s else '' }}">
+    <div class="wf-tool-chips af-toolpick" data-target=".wf-tools" style="margin-top: 0.4rem;" aria-label="Actions used in this step"></div>
+  </div>
+{% endmacro %}
+
+{% block content %}
+{% if can_open_page('/starter-teams') %}<p><a class="btn" href="/starter-teams">Review a starter team and try its sample</a></p>{% endif %}
+<style>
+  .agent-access { margin-bottom: var(--space-3); }
+  .agent-access > summary { cursor: pointer; }
+  .agent-access__head { font-size: var(--text-md, 1rem); margin: var(--space-4) 0 var(--space-2); }
+  .agent-access__list { margin: 0; padding-inline-start: 1.2rem; }
+  /* Agent Factory — the two-column "build a specialist + department roster"
+     composition. Glass throughout; every agent-form id the save/validate
+     script reads is preserved (the tool chips + approval toggle sync into the
+     hidden inputs). */
+  :where(body){
+    --glass: color-mix(in srgb, var(--panel) 68%, transparent);
+    --glass-soft: color-mix(in srgb, var(--panel) 54%, transparent);
+    --glass-border: color-mix(in srgb, var(--text) 13%, transparent);
+    --glass-edge: inset 0 1px 0 0 color-mix(in srgb, #ffffff 8%, transparent);
+  }
+  .af-lede{ margin: 0 0 var(--space-5); }
+  .af-lede p{ margin: var(--space-1) 0 0; color: var(--muted); max-width: 46rem; }
+  .af-grid{ display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: var(--space-5); align-items: start; }
+  .af-grid > *, .af-card, .af-picker, .fld { min-width: 0; }
+  /* The specialist search (lightwork-agent-picker.js): an opaque list under
+     the field, so the field itself never moves while results change. */
+  .af-combo{ position: relative; flex: 1; min-width: 0; }
+  .af-combo .input{ width: 100%; }
+  .af-combo__list{ position: absolute; z-index: 30; inset-inline: 0; top: calc(100% + 4px); margin: 0;
+    padding: var(--space-1) 0; list-style: none; max-height: 18rem; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+  .af-combo__option{ display: flex; flex-direction: column; gap: var(--space-0-5); min-height: 24px;
+    padding: var(--space-2) var(--space-3); cursor: pointer; }
+  .af-combo__option:hover{ background: var(--row-hover); }
+  .af-combo__option[aria-selected="true"]{ background: var(--brand-subtle); outline: 2px solid var(--brand); outline-offset: -2px; }
+  .af-combo__note{ color: var(--muted); font-size: var(--text-xs); }
+  .af-combo__status{ min-height: 1.4em; margin: var(--space-1) 0 0; }
+  @media (max-width: 880px){ .af-grid{ grid-template-columns: minmax(0, 1fr); } }
+  .af-card{ border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
+    background: var(--glass-soft); box-shadow: var(--shadow-sm), var(--glass-edge);
+    -webkit-backdrop-filter: blur(14px) saturate(150%); backdrop-filter: blur(14px) saturate(150%);
+    padding: var(--space-5); }
+  .af-card__title{ font-weight: var(--font-semibold); font-size: var(--text-lg); margin: 0 0 var(--space-4); }
+  .fld{ margin: 0 0 var(--space-4); }
+  .fld > label{ display: block; font-weight: var(--font-semibold); margin-bottom: var(--space-2); }
+  .fld .sub{ font-weight: var(--font-normal); color: var(--muted); }
+  #agent-model-choices, #agent-tool-services{ min-inline-size: 0; border: 0; padding: 0; margin: var(--space-4) 0; }
+  #agent-model-choices legend, #agent-tool-services legend{ font-weight: var(--font-semibold); margin-bottom: var(--space-2); }
+  #agent-model-choices > label{ display: block; margin-bottom: var(--space-2); }
+  @media (max-width: 560px){ .topbar__controls{ column-gap: var(--space-0-5); } }
+  .af-card input[type="text"], .af-card textarea, .af-card select{
+    width: 100%; min-width: 0; max-width: 100%; background: var(--surface-sunken); border: 1px solid var(--border); color: var(--text);
+    border-radius: var(--radius-md); padding: 0.55rem 0.7rem; font: inherit;
+    transition: border-color .13s ease, box-shadow .13s ease; }
+  .af-card input:focus, .af-card textarea:focus, .af-card select:focus{
+    outline: none; border-color: var(--brand-border); box-shadow: 0 0 0 3px var(--brand-subtle); }
+  #f-persona{ min-height: 7rem; line-height: 1.5; resize: vertical; }
+  .agent-tests { margin: var(--space-3) 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .agent-tests h3 { margin-top: 0; }
+  .agent-tests__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+
+  /* tool chips */
+  .chips{ display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .chip{ display: inline-flex; align-items: center; gap: 6px; padding: 0.4rem 0.75rem;
+    border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface-sunken);
+    color: var(--text); font-size: var(--text-sm); cursor: pointer;
+    transition: border-color .12s ease, background .12s ease; }
+  .chip:hover{ border-color: var(--border-strong); }
+  .chip.on{ border-color: var(--brand-border); background: var(--brand-subtle); }
+  .chip .tick{ color: var(--brand-hi); font-weight: var(--font-bold); }
+  .chip.add{ border-style: dashed; color: var(--muted); }
+
+  /* guardrails */
+  .guard-row{ display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: 0.55rem 0; }
+  .guard-row + .guard-row{ border-top: 1px solid var(--hairline); }
+  .guard-row .tt{ flex: 1; min-width: min(100%, 8rem); } .guard-row .tt small{ display: block; color: var(--muted); }
+  .switch{ width: 42px; height: 24px; border-radius: var(--radius-pill); background: var(--border);
+    position: relative; cursor: pointer; flex: none; border: 0; transition: background .16s; }
+  .switch::after{ content: ""; position: absolute; top: 2px; inset-inline-start: 2px; width: 20px; height: 20px;
+    border-radius: var(--radius-round); background: #fff; transition: transform .16s; }
+  .switch[aria-pressed="true"]{ background: var(--brand); }
+  .switch[aria-pressed="true"]::after{ transform: translateX(18px); }
+  [dir="rtl"] .switch[aria-pressed="true"]::after{ transform: translateX(-18px); }
+  .risk-seg{ display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+  .risk-seg button{ font: inherit; font-size: var(--text-sm); padding: 0.35rem 0.8rem; background: transparent;
+    color: var(--muted); border: 0; cursor: pointer; }
+  .risk-seg button.on{ background: var(--brand); color: var(--brand-fg); font-weight: var(--font-semibold); }
+  .model-badge{ display: inline-flex; align-items: center; gap: 6px; padding: 0.22rem 0.6rem;
+    border-radius: var(--radius-pill); font-size: var(--text-xs); font-weight: var(--font-semibold);
+    color: var(--accent); background: var(--success-subtle);
+    border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent); text-decoration: none; }
+
+  .advanced{ border: 1px solid var(--glass-border); border-radius: var(--radius-md);
+    background: var(--glass); margin: 0 0 var(--space-4); overflow: hidden; }
+  .advanced > summary{ cursor: pointer; list-style: none; padding: 0.6rem var(--space-4);
+    display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--text-sm); }
+  .advanced > summary::-webkit-details-marker{ display: none; }
+  .advanced > summary::before{ content: "⚙"; }
+  .advanced__caret{ margin-inline-start: auto; transition: transform .18s ease; }
+  .advanced[open] .advanced__caret{ transform: rotate(180deg); }
+  .advanced__body{ padding: 0 var(--space-4) var(--space-4); }
+  .af-actions{ display: flex; gap: var(--space-2); flex-wrap: wrap;
+    padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
+
+  /* departments roster */
+  .roster__head{ display: flex; align-items: center; justify-content: space-between; margin: 0 0 var(--space-3); }
+  .roster__head h2{ margin: 0; font-size: var(--text-lg); font-weight: var(--font-semibold);
+    text-transform: none; letter-spacing: 0; color: var(--text); }
+  .dept{ border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--glass-soft);
+    box-shadow: var(--shadow-sm), var(--glass-edge); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    padding: var(--space-4); margin-bottom: var(--space-3); }
+  .dept__head{ display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+  .dept__avatar{ width: 38px; height: 38px; border-radius: 10px; flex: none; display: grid; place-items: center;
+    background: var(--brand-subtle); color: var(--brand-hi); font-weight: var(--font-semibold); }
+  .dept__name{ font-weight: var(--font-semibold); }
+  .dept__sub{ color: var(--muted); font-size: var(--text-sm); }
+  .dept__preview{ color: var(--muted); font-size: var(--text-sm); margin: var(--space-3) 0;
+    text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dept__foot{ display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .dept__addon{ color: var(--muted); font-size: var(--text-xs); align-self: center; }
+
+  /* Ekko is the discovery front door into the factory.  The card mirrors the
+     dark, violet-edged Work Discovery treatment while remaining a semantic
+     link (keyboard/focus behavior comes for free). */
+  .af-ekko{ position: relative; overflow: hidden; display: grid;
+    grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4);
+    margin: 0 0 var(--space-4); padding: var(--space-4) var(--space-5);
+    border: 1px solid var(--brand-border); border-radius: var(--radius-lg);
+    background: linear-gradient(120deg, color-mix(in srgb, var(--panel) 88%, transparent),
+      color-mix(in srgb, var(--brand) 13%, var(--surface-1)));
+    color: var(--text); text-decoration: none; box-shadow: var(--shadow-sm), var(--glass-edge); }
+  .af-ekko::before{ content: ""; position: absolute; inset: 0 0 auto; height: 3px;
+    background: linear-gradient(90deg, var(--brand-hi), var(--accent), transparent 78%); }
+  .af-ekko:hover{ border-color: var(--brand-hi); }
+  .af-ekko:focus-visible{ outline: 3px solid var(--ring); outline-offset: 3px; }
+  .af-ekko__eyebrow{ color: var(--brand-hi); font-size: var(--text-xs); font-weight: 750;
+    letter-spacing: .12em; text-transform: uppercase; }
+  .af-ekko__title{ display: flex; align-items: baseline; gap: var(--space-2); margin-top: .12rem; }
+  .af-ekko__title strong{ font-size: var(--text-xl); letter-spacing: .04em; }
+  .af-ekko__title em{ color: var(--accent); }
+  .af-ekko p{ margin: var(--space-1) 0 0; color: var(--muted); max-width: 48rem; }
+  @media (max-width: 640px){ .af-ekko{ grid-template-columns: 1fr; } }
+</style>
+
+  {% from "_hero.html" import hero, state %}
+  {# The main action: a new custom agent. While a specialist is open, saving
+     it is the main action, so the header link steps back to a plain button. #}
+  {% set agents_actions %}<a class="btn{% if not selected %} btn--primary{% endif %}" href="/agents?new=1#agent-form">Build a custom agent</a>{% endset %}
+  {% call hero('Build your workforce', 'Agent Factory',
+               subtitle='Build agents and tailor specialists',
+               lede='Describe an agent in plain English — its job, the
+                     tools it can reach, and its guardrails — and Lightwork
+                     tailors it for you. Saving updates only what you change;
+                     anything that would weaken the safety limits is
+                     rejected, not saved.',
+               actions=agents_actions if (editable and not creating) else '') %}
+    {{ state('Current state', 'Safety limits enforced',
+             badge='guarded', badge_class='ok',
+             copy='Edits that widen tool access or raise the maximum risk level
+                   are rejected at save time — these limits only ever
+                   tighten.') }}
+  {% endcall %}
+  {% if can_open_page('/roles') %}<p><a href="/roles">See the kinds of agent</a> that share every task and the model each one uses.</p>{% endif %}
+
+  <a class="af-ekko" href="/ekko" id="ekko-work-discovery-card">
+    <span>
+      <span class="af-ekko__eyebrow">Digital workforce intelligence</span>
+      <span class="af-ekko__title"><strong>EKKO</strong><em>Work Discovery</em></span>
+      <p>Listens to approved work activity and maps recurring processes into evidence-backed first passes
+        for Lightwork flows, agents and specialists.</p>
+    </span>
+    <span class="btn" aria-hidden="true">Open Work Discovery →</span>
+  </a>
+
+  {% if not editable %}
+  <p><span class="badge">read-only</span> <span class="muted">Agent editing is turned off by your administrator — viewing only.</span></p>
+  {% endif %}
+
+  {% if rejected_agents %}
+  <section class="af-card" id="agent-setup-review" aria-labelledby="agent-setup-review-title" style="margin-bottom: var(--space-4);">
+    <h2 id="agent-setup-review-title" class="af-card__title">Agents and specialists paused for setup review</h2>
+    <p class="muted">These cannot run. Restore a specialist to its original setup, or remove an unavailable custom agent.</p>
+    {% for item in rejected_agents %}
+    <div style="display:flex; align-items:center; gap:var(--space-3); flex-wrap:wrap; padding:var(--space-2) 0; border-top:1px solid var(--hairline);">
+      <strong>{{ item.name | humanize }}</strong>
+      {% if item.generation %}
+      <button type="button" class="btn btn--ghost" data-agent-change="{{ item.name }}" data-agent-change-action="{{ 'reset_builtin' if item.is_builtin else 'remove_custom' }}">
+        {{ 'Review discard and built-in reset' if item.is_builtin else 'Review discard of damaged setup' }}
+      </button>
+      {% else %}
+      <span class="muted">Installation support must repair this setup.</span>
+      {% endif %}
+      <span class="muted af-recover-status" role="status" aria-live="polite"></span>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <details class="af-card" id="jd-card" style="margin-bottom: var(--space-4);">
+    <summary style="cursor: pointer; font-weight: 600;">Hire from a job description
+      <span class="muted" style="font-weight: 400;">— paste a job description to meet the agents and specialists you already have, or draft a new agent</span>
+    </summary>
+    <div style="margin-top: 0.8rem;">
+      <div class="fld">
+        <label for="jd-text">Job description <span class="sub">— paste the text, or upload a file below</span></label>
+        <textarea id="jd-text" rows="7" placeholder="Paste the role's summary and responsibilities — bullet points become the draft's playbook steps."></textarea>
+      </div>
+      <div class="fld" style="display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center;">
+        <label for="jd-file" class="sub">or upload</label>
+        <input id="jd-file" type="file" accept=".txt,.md,.pdf,.docx,.doc,.odt">
+        <span style="flex: 1;"></span>
+        <button type="button" class="btn" id="jd-match">Find matches</button>
+        {% if editable %}
+        <button type="button" class="btn" id="jd-draft">Draft a new agent</button>
+        {% endif %}
+      </div>
+      <div id="jd-msg" role="status" aria-live="polite" class="muted" style="min-height: 1.2rem;"></div>
+      <div id="jd-results"></div>
+    </div>
+  </details>
+
+  {% if editable %}
+  <details class="af-card" id="biz-setup" style="margin-bottom: var(--space-4);">
+    <summary style="cursor: pointer; font-weight: 600;">Set up an agent for your business
+      <span class="muted" style="font-weight: 400;">— describe what you do, review the draft, then add it with your documents</span>
+    </summary>
+    <form id="biz-form" style="margin-top: 0.8rem;" novalidate>
+      <div class="fld"><label for="biz-name">Name for your new agent</label>
+        <input id="biz-name" class="input" type="text" maxlength="120" placeholder="For example, Acme customer support" required>
+        <p class="sub">Give it a name that sets it apart from the agents and specialists already in your workspace.</p></div>
+      <div class="fld"><label for="biz-what">What does the business do?</label>
+        <textarea id="biz-what" class="textarea" rows="4" maxlength="4000"></textarea></div>
+      <div class="fld"><label for="biz-industry">Industry (optional)</label>
+        <input id="biz-industry" class="input" type="text" maxlength="120"></div>
+      <div class="fld"><label for="biz-ai">How to draft it</label>
+        <select id="biz-ai" class="select">
+          <option value="ai">Draft it with AI (counts toward your spending limits, at most $0.50)</option>
+          <option value="plain">Draft it from a standard outline (no AI)</option>
+        </select></div>
+      <button type="submit" class="btn" id="biz-draft">Draft the agent</button>
+    </form>
+    <p id="biz-status" role="status" aria-live="polite" tabindex="-1" class="muted"></p>
+    <div id="biz-review" hidden>
+      <div id="biz-summary"></div>
+      <div class="fld"><label for="biz-docs">Documents it should know (optional, up to 10)</label>
+        <input id="biz-docs" type="file" multiple accept=".txt,.md,.pdf,.docx,.doc,.odt,.csv,.png,.jpg,.jpeg"></div>
+      <button type="button" class="btn" id="biz-approve">Add this agent</button>
+      <button type="button" class="btn btn--ghost" id="biz-discard">Discard the draft</button>
+    </div>
+  </details>
+  {% endif %}
+
+  <details class="panel" id="agent-override-change" style="margin-block:var(--space-3);overflow-wrap:anywhere">
+    <summary>Original agent changes and recovery</summary>
+    <p id="aoc-status" role="status" aria-live="polite">Loading your original requests…</p>
+    <label for="aoc-original">Original removal or reset</label>
+    <select class="input" id="aoc-original" style="max-width:100%"><option value="">Choose an original change</option></select>
+    <div class="af-actions"><button type="button" class="btn" id="aoc-read">Read original outcome</button><button type="button" class="btn btn--ghost" id="aoc-refresh">Refresh original requests</button></div>
+    <section id="aoc-review"></section><section id="aoc-result" aria-live="polite"></section>
+  </details>
+  <div class="af-grid">
+    <!-- ============ LEFT: build an agent or tailor a specialist ============ -->
+    <div class="af-card">
+      {% set kind_word = 'agent' if creating else selected_kind %}
+      <div class="af-card__title">{{ 'Tailor a specialist' if (selected and selected_kind == 'specialist') else ('Edit an agent' if selected else 'Build an agent or tailor a specialist') }}</div>
+      <p class="muted" style="font-size: var(--text-sm); margin: calc(-1 * var(--space-3)) 0 var(--space-4);">
+        Three steps: describe the job, choose the tools it may use, set its
+        guardrails. Nothing changes until you save.
+      </p>
+
+      <div class="fld af-picker">
+        {% if agents %}
+        <label for="agent-picker">Start from an existing one <span class="sub">— search {{ agents|length }} agents and specialists</span></label>
+        <div style="display:flex; gap:var(--space-2); align-items:center;">
+          {# Search as you type: each search asks /agents/picker for the best
+             matches (the page no longer ships all 2,000+ specialists).
+             Navigation happens on a chosen match or an exact name. #}
+          <div class="af-combo">
+            <input id="agent-picker" type="text" autocomplete="off" spellcheck="false" class="input"
+                   role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="agent-picker-list"
+                   aria-label="Choose an agent or specialist to tailor" data-picker-src="/agents/picker"
+                   placeholder="Type to search, for example “forecasting” or “onboarding”"
+                   value="{{ selected.picker_label if selected else '' }}">
+            <ul id="agent-picker-list" class="af-combo__list" role="listbox" aria-label="Matching agents and specialists" hidden></ul>
+          </div>
+          <button type="button" class="btn" id="agent-picker-open">Open</button>
+          {% if editable %}
+          <span class="sub">or</span>
+          <a class="btn" href="/agents?new=1#agent-form" id="btn-new-agent">＋ New custom agent</a>
+          {% endif %}
+        </div>
+        <p class="sub af-combo__status" id="agent-picker-status" role="status" aria-live="polite"></p>
+        <label class="sub" style="display:inline-flex;align-items:center;gap:var(--space-2);margin-top:var(--space-2);">
+          <input id="agent-show-needs-setup" type="checkbox"> Show those that need setup
+        </label>
+        <script src="{{ static_url('lightwork-agent-picker.js') if static_url is defined else '/static/lightwork-agent-picker.js' }}" defer></script>
+        {% set ready_count = agents | selectattr('readiness.state', 'equalto', 'action_ready') | list | length %}
+        {% set setup_count = agents | selectattr('readiness.state', 'equalto', 'needs_setup') | list | length %}
+        {% set unknown_count = agents | selectattr('readiness.state', 'equalto', 'unknown') | list | length %}
+        <p class="sub" style="margin:var(--space-1) 0 0;">{{ ready_count }} can start · {{ setup_count }} {{ 'needs' if setup_count == 1 else 'need' }} setup · {{ unknown_count }} {{ 'needs' if unknown_count == 1 else 'need' }} a setup check. Search for one to see what it needs. Live connections, permissions and the AI service are checked when work starts.</p>
+        {% elif editable %}
+        <a class="btn" href="/agents?new=1#agent-form" id="btn-new-agent">＋ New custom agent</a>
+        {% endif %}
+      </div>
+
+      {% if selected %}
+      <div class="panel" style="margin-bottom:var(--space-3);">
+        <strong>{{ selected.readiness.label }}</strong>
+        {% if selected.readiness.state == 'needs_setup' %}
+        {% if selected.readiness.missing_labels %}
+        <p class="muted">Required actions are unavailable here: {{ selected.readiness.missing_labels | join(', ') }}.</p>
+        {% else %}<p class="muted">This {{ kind_word }} cannot start while its department is turned off.</p>{% endif %}
+        <a href="{{ selected.readiness.fix_url }}">Review setup</a>
+        {% elif selected.readiness.state == 'unknown' %}
+        <p class="muted">Lightwork could not check this {{ kind_word }}'s required actions. Ask an administrator to review setup before assigning work. <a href="{{ selected.readiness.fix_url }}">Review setup</a></p>
+        {% else %}
+        <p class="muted">The required actions are present. Live connections, permissions and the AI service are checked when work starts.</p>
+        {% endif %}
+      </div>
+      <div style="display:flex; gap:var(--space-2); align-items:center; margin-bottom:var(--space-3);">
+        <button type="button" class="btn" id="btn-jobcard">📋 View job card</button>
+        <span class="sub">the {{ kind_word }}'s job description, manager scorecard &amp; cost tier</span>
+      </div>
+      {% if access %}
+      <details class="panel agent-access" id="agent-access">
+        <summary><strong>Check access</strong> <span class="badge">{{ access.label }}{% if access.customized %} · Customized{% endif %}</span> <span class="sub">— what this {{ access.noun }} can do, and which rule allows it</span></summary>
+        <h3 class="agent-access__head">Independence by risk</h3>
+        <table>
+          <caption class="sr-only">How this {{ access.noun }} handles consequential actions at each risk level</caption>
+          <thead><tr><th scope="col">Actions</th><th scope="col">Level</th><th scope="col">What it does</th><th scope="col">Rule that sets it</th></tr></thead>
+          <tbody>
+          {% for t in access.tiers %}
+            <tr><th scope="row">{{ t.title }}</th><td><span class="badge">{{ t.label }}</span></td><td>{{ t.means }}</td><td>{{ t.rule }}.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <p class="sub">Allowed actions, the highest risk it may take ({{ access.max_risk if access.max_risk else 'not set' }}), approvals and its refusals apply at every level.</p>
+        <h3 class="agent-access__head">Actions</h3>
+        <p><strong>{{ access.readiness.label or 'Setup check unavailable' }}.</strong>
+          {% if access.required %}Its steps need: {{ access.required | map('humanize') | join(', ') }}.{% else %}Its steps need no particular action.{% endif %}
+          {% if access.readiness.missing_labels %}Not available here yet: {{ access.readiness.missing_labels | join(', ') }}.{% endif %}</p>
+        <p>{% if access.allowed %}It may use: {{ access.allowed | map('humanize') | join(', ') }}.{% else %}It may use only the actions its steps need.{% endif %}
+          {% if access.blocked %}Never: {{ access.blocked | map('humanize') | join(', ') }}.{% endif %}</p>
+        <h3 class="agent-access__head">Spending limits</h3>
+        {% if access.spending_error %}
+        <p role="alert"><strong>That didn't work.</strong> The spending limits could not be read, so paid work stops until they can be read again.</p>
+        {% else %}
+        <ul class="agent-access__list">
+          <li>{% if access.task_ceiling is not none %}Each task it works on stops at <strong>{{ access.task_ceiling | money }}</strong>, the spending limit per task for everyone.{% else %}There is no spending limit per task.{% endif %}</li>
+          <li>{% if access.workspace_limit %}The whole workspace may spend {{ access.workspace_limit.limit.amount | money }} {{ 'per day' if access.workspace_limit.limit.period == 'day' else 'per month' }}: {{ access.workspace_limit.remaining | money }} left.{% else %}The workspace has no spending limit.{% endif %}</li>
+          {% from "_typical_cost.html" import typical_cost_text %}<li class="typical-cost" id="agent-typical-cost">{{ typical_cost_text(typical_cost) }}</li>
+          <li>Tasks it works on also count against the spending limit of the person who starts them. There is no separate limit for one {{ access.noun }}.</li>
+        </ul>
+        {% if access.workspace_limit %}{% from "_spend_freshness.html" import spend_freshness %}{{ spend_freshness(access.workspace_limit.spend_recorded_at, live=true) }}{% endif %}
+        {% endif %}
+      </details>
+      {% endif %}
+      {% endif %}
+      {% if selected or creating %}
+      <div id="agent-msg" role="status" aria-live="polite" class="muted" style="min-height: 1.2rem;"></div>
+      <form id="agent-form" data-name="{{ selected.name if selected else '' }}" data-generation="{{ selected.generation if selected else 'new' }}" data-creating="{{ '1' if creating else '' }}" data-has-base="{{ '1' if selected and selected.base_allow_tools is not none else '0' }}" data-base-allow="{{ selected.base_allow_tools | join(' ') if selected and selected.base_allow_tools is not none else '' }}" data-base-risk="{{ selected.base_max_risk or '' if selected else '' }}" data-kind="{{ kind_word }}" data-mv-validate>
+        {# The shared form-field pattern -- each problem next to its field and in a summary that takes focus. #}
+        {% from "_form_field.html" import error_summary %}{{ error_summary('agent-form-errors') }}
+        {% if published_work_available %}
+        <p><a class="btn btn--ghost" id="agent-published-work" href="/chat?specialist={{ selected.name | urlencode }}">Work with this {{ kind_word }}</a></p>
+        <p class="muted">Opens a new message with this published {{ kind_word }} selected. Starting work uses its published settings, spending limits, permitted sources and approval rules. Unsaved edits and unpublished drafts are kept separate.</p>
+        {% endif %}
+        {% if creating %}
+        <div class="fld">
+          <label for="f-new-id">Short name <span class="sub">— filled in from the name below; change it if you like</span></label>
+          <input id="f-new-id" type="text" class="input" placeholder="onboarding assistant" autocomplete="off" spellcheck="false">
+        </div>
+        {% endif %}
+        <div class="fld">
+          <label for="f-description">Name <span class="sub">— a short summary of the role</span></label>
+          <input id="f-description" name="description" type="text" value="{{ selected.description if selected else '' }}" required
+                 data-error-required="Give the {{ kind_word }} a name, for example Onboarding assistant.">
+        </div>
+        <div class="fld">
+          <label for="f-persona">What should it do? <span class="sub">— plain English</span></label>
+          <textarea id="f-persona" name="persona" rows="6" required data-error-required="Describe what the {{ kind_word }} should do, in a sentence or two."
+                    placeholder="Describe the job in plain English — what it handles, how it should behave, what 'done' looks like.">{{ selected.persona if selected else '' }}</textarea>
+          <p class="sub" style="margin: var(--space-1) 0 0; font-size: var(--text-sm);">The clearer the brief, the better the {{ kind_word }} — say what it handles, and what a finished result looks like.</p>
+        </div>
+
+        <div class="fld">
+          <label>Allowed actions <span class="sub">— what it can use</span></label>
+          <div class="chips" id="skill-chips" aria-label="Tools this {{ kind_word }} can use"></div>
+          {# The chips sync into this hidden input, which the save script reads. #}
+          <input id="f-allow" name="allow_tools" type="hidden" value="{{ selected.allow_tools|join(' ') if selected else '' }}">
+          <p class="sub" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">{% if selected and selected.base_allow_tools is not none %}You can remove or restore this specialist’s built-in actions here. To give it different actions, create a custom agent.{% else %}Select an action to allow it; select it again to remove access. Anything not allowed here stays out of reach.{% endif %}</p>
+          <p class="sub" id="agent-actions-error" role="alert" hidden></p>
+        </div>
+
+        <fieldset class="fld" id="agent-tool-services">
+          <legend>Connected tool services</legend>
+          <p class="sub">Choose the services this {{ kind_word }} may use. Your team’s permissions and approval rules still apply.</p>
+          <div id="agent-tool-service-choices"></div>
+          <p class="sub"><a href="/mcp">Manage connections</a></p>
+          <details>
+            <summary>Setup and access limits</summary>
+            <p class="sub">Configured services are checked when new work starts. Choosing one does not connect or test it. Their actions are high risk unless an administrator changes that classification; this {{ kind_word }}’s risk limits and blocked actions still apply.</p>
+            <p class="sub" id="agent-tool-service-status" role="status">Reading the current service choices…</p>
+          </details>
+        </fieldset>
+
+        <div class="fld">
+          <label>Guardrails <span class="sub">— the safety limits it works within</span></label>
+          <div class="guard-row">
+            <span class="tt">Highest risk it may take
+              <small>The maximum risk allowed for its actions.</small></span>
+            {% set cur_risk = selected.max_risk if selected else 'low' %}
+            <span class="risk-seg" id="risk-seg" role="group" aria-label="Maximum risk level">
+              {% for r in ['low', 'medium', 'high'] %}
+              <button type="button" data-risk="{{ r }}"{% if cur_risk == r %} class="on" aria-pressed="true"{% else %} aria-pressed="false"{% endif %}>{{ r | capitalize }}</button>
+              {% endfor %}
+            </span>
+            <select id="f-risk" name="max_risk" hidden aria-label="Maximum risk level">
+              {% for r in ['low', 'medium', 'high'] %}
+              <option value="{{ r }}"{% if cur_risk == r %} selected{% endif %}>{{ r | capitalize }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <p class="sub" id="agent-risk-error" role="alert" hidden></p>
+          <div class="guard-row">
+            <span class="tt">Include a final human review
+              <small>Adds review instructions to the last step. For an enforced pause, use an approval step in a flow.</small></span>
+            <button type="button" class="switch" id="g-approval" aria-pressed="false"
+                    aria-label="Include final human review instructions"></button>
+          </div>
+          <fieldset class="fld" id="agent-model-choices">
+            <legend>AI choices</legend>
+            <label for="f-model">This {{ kind_word }}</label>
+            <select id="f-model" class="input" aria-describedby="agent-model-help"></select>
+            <p class="sub" id="agent-model-help">Choose the AI this {{ kind_word }} uses. Leave a choice at the workspace setting to follow your shared preferences. A choice made for a specific task or by your installation administrator takes priority; the complete review shows the AI used for answer checks.</p>
+            <details><summary>AI for supporting work</summary><p class="sub">Choose an AI for each supporting part when this {{ kind_word }} delegates work. Another agent or specialist uses its own choices.</p><div id="agent-supporting-models"></div></details>
+          </fieldset>
+        </div>
+
+        {% set auto = selected.autonomy if selected else none %}
+        <section class="panel" id="agent-autonomy"
+                 data-default="{{ auto.default if auto else 'suggest' }}"
+                 data-low="{{ auto.low if auto and auto.low else '' }}"
+                 data-medium="{{ auto.medium if auto and auto.medium else '' }}"
+                 data-high="{{ auto.high if auto and auto.high else '' }}"
+                 data-onboarding="{{ 'true' if not auto or auto.onboarding else 'false' }}"
+                 data-overridden="{{ '1' if selected and 'autonomy' in selected.overridden else '0' }}"
+                 data-config-override="{{ '1' if auto and auto.config_override else '0' }}"
+                 data-pack="{{ auto.pack | tojson | forceescape if auto else '' }}">
+          <h3>Independence</h3>
+          <p class="sub">Set how this {{ kind_word }} handles consequential actions. Allowed actions, risk limits, approvals and hard refusals still apply.</p>
+          {% if auto and not auto.levels_enabled %}
+          <p class="muted" role="status">Independence levels are off for this workspace. These choices take effect only after an installation administrator turns on <a href="/settings/all?id=workforce.levels">Per-agent independence levels</a>.</p>
+          {% endif %}
+          {% if auto and auto.config_override %}
+          <p class="muted" role="status">This {{ kind_word }} has a server-configured independence policy. An installation administrator must remove that override before editing it here.</p>
+          {% endif %}
+          {% for risk, title in [('default', 'Usual actions'), ('low', 'Low-risk actions'), ('medium', 'Medium-risk actions'), ('high', 'High-risk actions')] %}
+          {% set chosen = auto[risk] if auto else ('suggest' if risk == 'default' else none) %}
+          <div class="fld">
+            <label for="f-auto-{{ risk }}">{{ title }}</label>
+            <select id="f-auto-{{ risk }}" class="input"{% if not editable or (auto and auto.config_override) %} disabled{% endif %}>
+              {% if risk != 'default' %}<option value=""{% if not chosen %} selected{% endif %}>Use usual level</option>{% endif %}
+              {% for level, label in [('observe', 'Watch only'), ('suggest', 'Suggest; a person acts'), ('request', 'Ask before acting'), ('auto', 'Act on its own')] %}
+              <option value="{{ level }}"{% if chosen == level %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% endfor %}
+          <label class="sub" for="f-auto-onboarding">
+            <input id="f-auto-onboarding" type="checkbox"{% if not auto or auto.onboarding %} checked{% endif %}{% if not editable or (auto and auto.config_override) %} disabled{% endif %}>
+            Supervise this {{ kind_word }} while it is new
+          </label>
+          <p class="sub">Supervision lowers each chosen level by one step. An overall approval record can support ending supervision only when every level is Ask or lower. Act on its own needs proof for the specific actions it would take.</p>
+        </section>
+
+        <details class="advanced">
+          <summary>More — blocked actions and the step-by-step playbook
+            <svg class="advanced__caret" width="12" height="12" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </summary>
+          <div class="advanced__body">
+            <div class="fld">
+              <label>Actions it may never use</label>
+              <input id="f-deny" name="deny_tools" type="hidden" value="{{ selected.deny_tools|join(' ') if selected else '' }}">
+              <div class="af-toolpick" id="deny-chips" data-target="#f-deny" aria-label="Actions it may never use"></div>
+            </div>
+            <fieldset style="border: 1px solid var(--border); border-radius: 6px; margin: 0.5rem 0; padding: 0.6rem 0.8rem;">
+              <legend>Workflow playbook <span class="muted">— ordered steps the agent follows</span></legend>
+              <div id="wf-steps">
+                {% if selected %}{% for s in selected.workflow %}{{ wf_row(s) }}{% endfor %}{% endif %}
+              </div>
+              {% if editable %}<button type="button" class="btn btn--ghost" id="wf-add">Add a step</button>{% endif %}
+            </fieldset>
+            {% if editable and selected and selected.workflow %}
+            <p><a class="btn btn--ghost" href="/workflow-builder?edit_agent={{ selected.name | urlencode }}">Edit playbook in builder</a></p>
+            {% endif %}
+          </div>
+        </details>
+
+        {% if editable %}
+        {% if selected and not creating %}
+        {# The saved test set and its latest result, before publishing.
+           Changed instructions need a passing run of every saved test on
+           exactly these words, or a reason that goes to the activity record. #}
+        <section class="agent-tests" id="agent-tests" aria-labelledby="agent-tests-title">
+          <h3 id="agent-tests-title">Tests before publishing</h3>
+          <p id="agent-tests-status" role="status" aria-live="polite">Reading the saved test results…</p>
+          {% if can_open_page is defined and can_open_page('/workforce') %}
+          <p class="agent-tests__actions">
+            <a class="btn btn--ghost" id="agent-tests-run" href="/workforce?specialist={{ selected.name | urlencode }}&amp;compare=1#wo-compare">Test these instructions</a>
+            <a id="agent-tests-open" href="/workforce?specialist={{ selected.name | urlencode }}#wo-my-tests">Open the saved tests</a>
+          </p>
+          {% endif %}
+          <p id="agent-tests-restore" hidden><button type="button" class="btn btn--ghost" id="agent-tests-restore-btn">Restore the instructions you were testing</button></p>
+        </section>
+        {% endif %}
+        <div class="af-actions">
+          <button type="button" class="btn btn--primary" id="btn-save">Save draft</button>
+          <button type="button" class="btn" id="btn-validate">Check settings</button>
+          {% if not creating and selected %}<button type="button" class="btn {{ 'btn--ghost' if selected.is_builtin else 'btn--danger' }}" id="btn-reset"
+            data-agent-change="{{ selected.name }}" data-agent-change-action="{{ 'reset_builtin' if selected.is_builtin else 'remove_custom' }}">{{ 'Reset to built-in' if selected.is_builtin else 'Remove custom agent' }}</button>{% endif %}
+        </div>
+        {% else %}
+        <p class="muted">Editing is disabled in this deployment.</p>
+        {% endif %}
+      </form>
+
+      {% if editable %}
+      <section class="panel" id="specialist-drafts" data-specialist-drafts aria-labelledby="specialist-drafts-title" style="margin-top: var(--space-4);">
+        <h3 id="specialist-drafts-title">Preview, try and publish</h3>
+        <p>Keep a draft before changing the {{ kind_word }} people use. Preview shows every entered setting together with the other settings being preserved.</p>
+        <p>Answer checks send the draft instructions and fictional questions to your configured AI service. They use no real tools, files, company knowledge or shared learning. Checks that test tool use get recording test stubs that run nothing real. A plausible answer does not prove connected actions work.</p>
+        <label for="sd-title">Draft name (optional)</label><input class="input" id="sd-title" data-sd-title maxlength="120" placeholder="For example, Clearer invoice follow-up">
+        <div class="af-actions" style="margin-block: var(--space-3);">
+          <button class="btn" type="button" data-sd-action="preview">Preview entered draft</button>
+          <button class="btn btn--ghost" type="button" data-sd-action="refresh">Refresh retained versions</button>
+        </div>
+        <label for="sd-task">Fictional sample request</label><textarea class="input" id="sd-task" data-sd-task rows="3" maxlength="4000" placeholder="Ask about a made-up situation. Do not enter private company information."></textarea>
+        <div class="af-actions" style="margin-block: var(--space-3);">
+          <button class="btn" type="button" data-sd-action="try">Try entered draft</button>
+          <button class="btn" type="button" data-sd-action="check">Check every saved question on entered draft</button>
+        </div>
+        <p class="muted">One shared check allowance: at most $0.25, 10,000 input tokens, 640 output tokens and two minutes. A stopped or partial run does not count as a complete passing check.</p>
+        <p><a href="/workforce{% if selected %}?specialist={{ selected.name | urlencode }}{% endif %}#wo-my-tests">Add or edit saved answer questions in Workforce</a></p>
+        <label for="sd-draft">Saved draft</label><select class="input" id="sd-draft" data-sd-draft><option value="">Choose…</option></select>
+        <div class="af-actions" style="margin-block: var(--space-3);"><button class="btn" type="button" data-sd-action="load">Load draft into editor</button><button class="btn" type="button" data-sd-action="publish">Review Publish</button></div>
+        <label for="sd-earlier">Earlier definition</label><select class="input" id="sd-earlier" data-sd-earlier><option value="">Choose…</option></select>
+        <button class="btn" type="button" data-sd-action="restore" style="margin-block: var(--space-3);">Review Restore</button>
+        <label for="sd-reason">Reason for proceeding without a complete passing check (optional)</label><textarea class="input" id="sd-reason" data-sd-reason rows="2" maxlength="300"></textarea>
+        <label><input type="checkbox" data-sd-acknowledge> I read any earlier unconfirmed original and acknowledge that earlier work may already exist. This is a separate new intent.</label>
+        <p class="muted">Publication requires the current passing-test policy or your explicit recorded reason. Restoring also requires a fresh full review; it does not discard all tailoring.</p>
+        <p data-sd-status role="status" aria-live="polite"></p>
+        <div data-sd-review tabindex="-1"></div>
+        <button class="btn" type="button" data-sd-read-original hidden>Read this original decision</button>
+        <label for="sd-original">Earlier original decision</label><select class="input" id="sd-original" data-sd-original><option value="">Choose…</option></select>
+        <div data-sd-result aria-live="polite"></div>
+      </section>
+      <style>.specialist-draft-review-row{padding-block:var(--space-3);border-bottom:1px solid var(--border);overflow-wrap:anywhere}.specialist-draft-review-row h3{margin-top:0}.specialist-draft-review-row dl{margin-block:var(--space-2)}.specialist-draft-review-row dt{font-weight:600}.specialist-draft-review-row dd{margin-inline-start:var(--space-3)}#specialist-drafts .input{display:block;width:100%;margin-block:var(--space-2)}#specialist-drafts [data-sd-review]>label{display:block;margin-block:var(--space-3)}#specialist-drafts [data-sd-review]>button{margin:var(--space-1)}</style>
+      {% endif %}
+
+      {% if selected and (selected.errors or selected.warnings) %}
+      <div class="panel" style="margin-top: 1rem;">
+        {% for e in selected.plain_errors %}<div>⛔ {{ e }}</div>{% endfor %}
+        {% for w in selected.plain_warnings %}<div class="muted">⚠ {{ w }}</div>{% endfor %}
+        <details class="muted"><summary>Technical details</summary>
+          {% for e in selected.errors %}<div>{{ e }}</div>{% endfor %}
+          {% for w in selected.warnings %}<div>{{ w }}</div>{% endfor %}
+        </details>
+      </div>
+      {% endif %}
+      {% if selected %}
+      {# Who changed this agent or specialist, when, and what -- the same record answers cite. #}
+      <section class="panel" id="agent-changelog" aria-labelledby="agent-changelog-title" style="margin-top: 1rem;">
+        <h3 id="agent-changelog-title" style="margin-top: 0;">Change history</h3>
+        {% if agent_changes %}
+        <ul class="agent-changelog__list">
+          {% for row in agent_changes %}
+          <li><span class="muted">{{ row.ts | datetime }} · {{ 'Every agent and specialist' if row.agent == '*' else ('This specialist' if selected_kind == 'specialist' else 'This agent') }} · {{ (row.by | identity).name if (row.by and show_change_authors) else ('An administrator' if row.by else 'The administrator on this computer') }}</span>
+            <div>{{ row.changes | join('; ') }}</div></li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No changes recorded yet. Saved changes to this {{ selected_kind }}'s instructions, allowed actions or AI model appear here, and answers show when the {{ selected_kind }} last changed.</p>
+        {% endif %}
+      </section>
+      {% endif %}
+      {% else %}
+      <p class="muted">Pick an agent or specialist above to tailor it — or start a <a href="/agents?new=1#agent-form">new custom agent</a>.</p>
+      {% endif %}
+    </div>
+
+    <!-- ============ RIGHT: your departments ============ -->
+    <div>
+      <div class="roster__head">
+        <h2>Your departments</h2>
+        <a class="btn btn--ghost" href="/workforce" style="font-size: var(--text-sm);">Manage →</a>
+      </div>
+      <div id="dept-roster">
+        <p class="muted" id="dept-loading">Loading departments…</p>
+      </div>
+      <dialog id="dept-dialog" aria-labelledby="dept-dlg-title"
+              style="border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 0; width: min(560px, calc(100vw - 2rem)); max-height: min(80vh, 720px); background: var(--bg); color: var(--text); box-shadow: var(--shadow-lg); margin: auto; overflow: hidden;">
+        <div style="display: flex; flex-direction: column; max-height: min(80vh, 720px);">
+        <div style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border);">
+          <span class="dept__avatar" id="dept-dlg-avatar"></span>
+          <div style="flex: 1; min-width: 0;">
+            <h3 id="dept-dlg-title" style="margin: 0; font-size: var(--text-lg); text-transform: none; letter-spacing: 0; color: var(--text);"></h3>
+            <div class="muted" id="dept-dlg-sub" style="font-size: var(--text-sm);"></div>
+          </div>
+          <button class="btn btn--ghost" id="dept-dlg-close" aria-label="Close department details">✕</button>
+        </div>
+        <div style="padding: var(--space-4) var(--space-5); overflow-y: auto; flex: 1; min-height: 0;">
+          <p class="muted" id="dept-dlg-charter" style="margin-top: 0;"></p>
+          <div class="muted" style="font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: var(--space-2);">Specialists on this team</div>
+          <ul id="dept-dlg-members" style="margin: 0; padding-inline-start: 1.2rem; text-transform: capitalize;"></ul>
+        </div>
+        <div style="display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; padding: var(--space-3) var(--space-5); border-top: 1px solid var(--border);">
+          <span class="muted" id="dept-dlg-msg" role="status" aria-live="polite" style="margin-inline-end: auto; font-size: var(--text-sm);"></span>
+          <a class="btn btn--ghost" href="/workforce" style="font-size: var(--text-sm);">Open Workforce ↗</a>
+          <button class="btn btn--primary" id="dept-dlg-deploy" type="button">Deploy team</button>
+        </div>
+        </div>
+      </dialog>
+    </div>
+  </div>
+
+  {% if (selected or creating) and editable %}
+  <template id="wf-row-tpl">{{ wf_row(none) }}</template>
+  {% endif %}
+
+  <script src="/static/lightwork-department-team-updates.js"></script>
+  <script nonce="{{ csp_script_nonce }}">
+    // ---- shared page helpers: plain errors, readable names, action pickers ----
+    function plainError(failure, what) {
+      return window.mvErrorText ? window.mvErrorText(failure, what) : 'Could not ' + what + '. Try again.';
+    }
+    function humanName(v) {
+      if (window.mvHuman) return window.mvHuman(v);
+      v = String(v || '').replace(/[_.-]+/g, ' ').trim();
+      return v.charAt(0).toUpperCase() + v.slice(1);
+    }
+    var afToolList = null;
+    function toolChoices() {
+      if (!afToolList) {
+        // The editor mounts while the page is parsed, before the shell's
+        // helpers (lightwork-ui.js) load at the end of the page.
+        var shellReady = window.mvFetchJSON ? Promise.resolve()
+          : new Promise(function (done) { document.addEventListener('DOMContentLoaded', done); });
+        afToolList = shellReady.then(function () { return window.mvFetchJSON('/api/v1/tools'); })
+          .catch(function () { return { tools: [] }; })
+          .then(function (j) {
+            return (j.tools || []).map(function (t) { return { value: t.name, label: humanName(t.name) }; })
+              .sort(function (a, b) { return a.label.localeCompare(b.label); });
+          }).catch(function () { return []; });
+      }
+      return afToolList;
+    }
+    // An action picker: the chosen actions as removable chips plus a dropdown
+    // to add one, kept in step with a hidden space-separated input.
+    function mountToolPick(box) {
+      if (!box || box.dataset.mounted) return;
+      box.dataset.mounted = '1';
+      var target = box.dataset.target || '';
+      var hidden = target.charAt(0) === '#' ? document.querySelector(target)
+        : (box.closest('.wf-step') || document).querySelector(target);
+      if (!hidden) return;
+      var readOnly = !document.getElementById('btn-save');
+      function current() { return (hidden.value || '').split(/\s+/).filter(Boolean); }
+      function paint() {
+        box.textContent = '';
+        var chosen = current();
+        var chips = document.createElement('div'); chips.className = 'chips';
+        chosen.forEach(function (name) {
+          var chip = document.createElement('button'); chip.type = 'button'; chip.className = 'chip on';
+          chip.textContent = humanName(name) + (readOnly ? '' : ' — remove');
+          chip.setAttribute('aria-label', 'Remove ' + humanName(name));
+          if (readOnly) chip.disabled = true;
+          chip.addEventListener('click', function () {
+            hidden.value = current().filter(function (x) { return x !== name; }).join(' '); paint();
+          });
+          chips.appendChild(chip);
+        });
+        if (!chosen.length) { var none = document.createElement('span'); none.className = 'sub'; none.textContent = 'None chosen.'; chips.appendChild(none); }
+        box.appendChild(chips);
+        if (readOnly) return;
+        var sel = document.createElement('select'); sel.className = 'input';
+        sel.setAttribute('aria-label', box.getAttribute('aria-label') ? 'Add to: ' + box.getAttribute('aria-label') : 'Add an action');
+        var first = document.createElement('option'); first.value = ''; first.textContent = 'Add an action…'; sel.appendChild(first);
+        toolChoices().then(function (list) {
+          list.forEach(function (t) {
+            if (chosen.indexOf(t.value) !== -1) return;
+            var o = document.createElement('option'); o.value = t.value; o.textContent = t.label; sel.appendChild(o);
+          });
+        });
+        sel.addEventListener('change', function () {
+          if (!sel.value) return;
+          var next = current(); if (next.indexOf(sel.value) === -1) next.push(sel.value);
+          hidden.value = next.join(' '); paint();
+        });
+        box.appendChild(sel);
+      }
+      paint();
+      document.addEventListener('lightwork:specialist-draft-loaded', paint);
+    }
+    function mountToolPicks() { document.querySelectorAll('.af-toolpick').forEach(mountToolPick); }
+
+    // The prebuilt-specialist search is static/lightwork-agent-picker.js.
+
+    // ---- JD hiring: match the roster / draft a new specialist from a JD ----
+    // Runs BEFORE the chips/risk initializers below so a drafted pack stashed in
+    // sessionStorage can prefill the form inputs those initializers read.
+    (function () {
+      var jdText = document.getElementById('jd-text');
+      var jdFile = document.getElementById('jd-file');
+      var jdMsg = document.getElementById('jd-msg');
+      var results = document.getElementById('jd-results');
+      var matchBtn = document.getElementById('jd-match');
+      var draftBtn = document.getElementById('jd-draft');
+
+      function esc(s) {
+        return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) {
+          return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+        });
+      }
+      function say(text, ok) {
+        if (jdMsg) { if (window.mvStatus) window.mvStatus(jdMsg, text, {error: !ok}); else jdMsg.textContent = text; jdMsg.style.color = ok ? 'var(--accent)' : 'var(--danger)'; }
+      }
+
+      // --- prefill the editor from a drafted pack (set BEFORE initializers run) ---
+      (function prefill() {
+        var raw = sessionStorage.getItem('jd-draft');
+        if (!raw) return;
+        var form = document.getElementById('agent-form');
+        if (!form || form.dataset.creating !== '1') return;
+        sessionStorage.removeItem('jd-draft');
+        var saved; try { saved = JSON.parse(raw); } catch (e) { return; }
+        var d = saved.draft || saved;
+        function set(id, v) { var el = document.getElementById(id); if (el && v != null) el.value = v; }
+        set('f-new-id', d.name);
+        set('f-description', d.description);
+        set('f-persona', d.persona);
+        set('f-allow', (d.allow_tools || []).join(' '));
+        set('f-deny', (d.deny_tools || []).join(' '));
+        if (Array.isArray(d.mcp_servers)) form.dataset.toolServices = JSON.stringify(d.mcp_servers);
+        if (d.max_risk) {
+          set('f-risk', d.max_risk);
+          var seg = document.getElementById('risk-seg');
+          if (seg) seg.querySelectorAll('button[data-risk]').forEach(function (b) {
+            var on = b.dataset.risk === d.max_risk;
+            b.classList.toggle('on', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+          });
+        }
+        var stepsEl = document.getElementById('wf-steps');
+        var tpl = document.getElementById('wf-row-tpl');
+        if (stepsEl && tpl && Array.isArray(d.workflow)) {
+          d.workflow.forEach(function (s) {
+            var frag = tpl.content.cloneNode(true);
+            frag.querySelector('.wf-name').value = s.name || '';
+            frag.querySelector('.wf-instruction').value = s.instruction || '';
+            frag.querySelector('.wf-tools').value = (s.tools || []).join(' ');
+            frag.querySelector('.wf-gate').value = s.gate || '';
+            stepsEl.appendChild(frag);
+          });
+        }
+        var m = document.getElementById('agent-msg');
+        if (m) {
+          if (saved.source === 'ai') m.textContent = 'AI draft ready. Review its work steps and limits before saving.';
+          else if (saved.source === 'bullet_points') m.textContent = (saved.aiAttempted
+            ? 'AI drafting was unavailable. We used the job description’s bullet points instead. Review each step before saving.'
+            : 'Built from the job description’s bullet points without AI. Review each step before saving.');
+          else m.textContent = 'This is a standard outline; the job description did not provide enough clear work steps. Add the real steps before saving.';
+        }
+      })();
+
+      if (!matchBtn) return;
+
+      function renderMatches(list) {
+        if (!list.length) {
+          results.innerHTML = '<p class="muted">No matches — draft a new agent instead.</p>';
+          return;
+        }
+        var rows = list.map(function (m, i) {
+          var relevance = { strong: 'Strong shared terms', partial: 'Some shared terms', weak: 'Few shared terms' }[m.relevance] || 'Review this match';
+          var terms = (m.matched_terms || []).slice(0, 6).join(', ');
+          var readiness = m.readiness || {};
+          var ready = readiness.state === 'action_ready';
+          var fix = typeof readiness.fix_url === 'string' && readiness.fix_url.charAt(0) === '/'
+            ? readiness.fix_url : '/settings';
+          var setup = ready ? '' : '<div class="muted" style="font-size: var(--text-sm);">'
+            + (readiness.state === 'needs_setup'
+              ? 'Needs setup' + (readiness.missing_labels && readiness.missing_labels.length
+                ? ': ' + esc(readiness.missing_labels.join(', ')) : '') + '.'
+              : 'Setup could not be checked. Refresh the page and try again.')
+            + ' <a href="' + esc(fix) + '">Review setup</a> before assigning work.</div>';
+          return '<div class="panel" style="margin: 0.5rem 0; padding: 0.6rem 0.8rem;">'
+            + '<div style="display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;">'
+            + '<strong><a href="/agents?name=' + encodeURIComponent(m.name) + '">' + esc(m.display_name || humanName(m.name)) + '</a></strong>'
+            + (m.department ? '<span class="muted">' + esc(m.department) + '</span>' : '')
+            + '<span class="muted" style="margin-left: auto;">' + relevance + '</span>'
+            + '<button type="button" class="btn jd-hire-btn" data-pack="' + esc(m.name) + '"'
+            + (ready ? '' : ' disabled title="Review setup before assigning this one"') + '>Add to team…</button>'
+            + '</div>'
+            + '<div class="muted" style="font-size: var(--text-sm);">' + esc(m.description || '') + '</div>'
+            + (terms ? '<div class="muted" style="font-size: var(--text-xs);">Matched on: ' + esc(terms) + '</div>' : '')
+            + setup
+            + '</div>';
+        }).join('');
+        results.innerHTML = '<p class="muted" style="margin-top: 0.6rem;">Existing agents and specialists, ranked by relevance. Shared terms are a clue, not a readiness check.</p>' + rows;
+      }
+
+      matchBtn.addEventListener('click', function () {
+        var text = (jdText.value || '').trim();
+        var file = jdFile.files && jdFile.files[0];
+        say('Matching against the roster…', true);
+        var req;
+        if (!text && file) {
+          var fd = new FormData();
+          fd.append('file', file);
+          fd.append('k', '5');
+          req = fetch('/api/v1/agents/jd/match-from-file', { method: 'POST', body: fd });
+        } else if (text) {
+          req = fetch('/api/v1/agents/jd/match', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jd_text: text, k: 5 }),
+          });
+        } else {
+          say('Paste a job description or choose a file first.', false);
+          return;
+        }
+        req.then(function (r) { return r.json().catch(function () { throw new Error('The result could not be confirmed. Refresh the page to check.'); }).then(function (j) { return { ok: r.ok, r: r, j: j }; }); })
+          .then(function (res) {
+            if (!res.ok) { say(plainError(res.r, 'match the job description'), false); return; }
+            say('', true);
+            renderMatches(res.j.matches || []);
+          })
+          .catch(function (e) { say(plainError(e, 'match the job description'), false); });
+      });
+
+      results.addEventListener('click', function (e) {
+        var btn = e.target.closest('.jd-hire-btn');
+        if (!btn) return;
+        var pack = btn.dataset.pack;
+        var ask = fetch('/api/v1/fleets').then(function (r) { return r.ok ? r.json() : { fleets: [] }; })
+          .catch(function () { return { fleets: [] }; })
+          .then(function (data) {
+            var teams = (data.fleets || []).map(function (f) { return f.name; }).filter(Boolean);
+            var fields = [];
+            if (teams.length) fields.push({ key: 'existing', label: 'Team', type: 'select',
+              options: [{ value: '', label: 'Create a new team…' }].concat(teams.map(function (t) { return { value: t, label: t }; })),
+              default: teams[0] });
+            fields.push({ key: 'team', label: teams.length ? 'New team name (only if creating one)' : 'New team name',
+              type: 'text', required: !teams.length, placeholder: 'Finance team' });
+            return mvForm('Add ' + humanName(pack) + ' to a team', fields, { okText: 'Add' });
+          });
+        ask.then(function (vals) {
+          var team = vals && ((vals.existing || '').trim() || (vals.team || '').trim());
+          if (!team) return;
+          fetch('/api/v1/fleets/' + encodeURIComponent(team) + '/agents', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pack: pack }),
+          }).then(function (r) { return r.json().catch(function () { throw new Error('The result could not be confirmed. Refresh the page to check.'); }).then(function (j) { return { ok: r.ok, r: r, j: j }; }); })
+            .then(function (res) {
+              if (res.ok) say(humanName(pack) + ' added to the team “' + team + '”.', true);
+              else say(plainError(res.r, 'add it to the team'), false);
+            })
+            .catch(function (e) { say(plainError(e, 'add it to the team'), false); });
+        });
+      });
+
+      if (draftBtn) draftBtn.addEventListener('click', function () {
+        var text = (jdText.value || '').trim();
+        if (!text) { say('Paste the job description first — the draft is built from it.', false); return; }
+        var ask = mvForm('Draft a new agent', [
+              { key: 'title', label: 'Role title', type: 'text', required: true,
+                placeholder: 'e.g. Accounts Payable Specialist' },
+            ], { okText: 'Draft' });
+        ask.then(function (vals) {
+          var title = vals && (vals.title || '').trim();
+          if (!title) return;
+          say('Drafting a new agent from the job description…', true);
+          fetch('/api/v1/agents/jd/draft', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role_title: title, jd_text: text }),
+          }).then(function (r) { return r.json().catch(function () { throw new Error('The result could not be confirmed. Refresh the page to check.'); }).then(function (j) { return { ok: r.ok, r: r, j: j }; }); })
+            .then(function (res) {
+              if (!res.ok) { say(plainError(res.r, 'draft the agent'), false); return; }
+              sessionStorage.setItem('jd-draft', JSON.stringify({
+                draft: res.j.draft || {}, source: res.j.draft_source,
+                aiAttempted: !!res.j.ai_attempted,
+              }));
+              location.href = '/agents?new=1#agent-form';
+            })
+            .catch(function (e) { say(plainError(e, 'draft the agent'), false); });
+        });
+      });
+    })();
+
+    // ---- tool chips: sync a friendly chip UI into the hidden #f-allow input ----
+    (function () {
+      var host = document.getElementById('skill-chips');
+      var input = document.getElementById('f-allow');
+      if (!host || !input) return;
+      var SUGGEST = ['web_search', 'email', 'browser', 'read_file', 'list_dir', 'write_file', 'code_exec', 'shell'];
+      var sel = (input.value || '').split(/\s+/).filter(Boolean);
+      var form = document.getElementById('agent-form');
+      var baseTools = form && form.dataset.hasBase === '1'
+        ? new Set((form.dataset.baseAllow || '').split(/\s+/).filter(Boolean)) : null;
+      var installed = null;
+
+      function sync() { input.value = sel.join(' '); }
+      document.addEventListener('lightwork:specialist-draft-loaded', function () { sel = input.value.split(/\s+/).filter(Boolean); render(); });
+      function render() {
+        host.textContent = '';
+        var seen = {};
+        sel.forEach(function (t) { seen[t] = 1; addChip(t, true); });
+        SUGGEST.forEach(function (t) {
+          if (installed && installed.has(t) && !seen[t] && (!baseTools || baseTools.has(t))) addChip(t, false);
+        });
+        if (baseTools && Array.from(baseTools).every(function (t) { return seen[t]; })) return;
+        var add = document.createElement('button');
+        add.type = 'button'; add.className = 'chip add'; add.textContent = '+ Add another action';
+        add.addEventListener('click', async function () {
+          var tools = await toolChoices();
+          if (!tools.length) { mvToast('The list of actions could not be loaded. Try again in a moment.', { error: true }); return; }
+          var choices = tools.filter(function (t) {
+            return sel.indexOf(t.value) === -1 && (!baseTools || baseTools.has(t.value));
+          });
+          if (!choices.length) { mvToast('There are no more built-in actions to restore for this specialist.', { error: true }); return; }
+          var vals = await mvForm('Allow another action', [
+            { key: 'name', label: 'Action', type: 'select', required: true,
+              options: choices },
+          ], { okText: 'Allow' });
+          if (vals === null) return;
+          var name = (vals.name || '').trim();
+          if (name && sel.indexOf(name) === -1 && (!baseTools || baseTools.has(name))) {
+            sel.push(name); sync(); render();
+          }
+        });
+        host.appendChild(add);
+      }
+      function addChip(tool, on) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'chip' + (on ? ' on' : '');
+        if (on) { var t = document.createElement('span'); t.className = 'tick'; t.textContent = '✓'; b.appendChild(t); }
+        var labels = { web_search: 'Search the web', email: 'Email', browser: 'Browse websites',
+          read_file: 'Read files', list_dir: 'Find files', write_file: 'Change files',
+          code_exec: 'Run code', shell: 'Run commands' };
+        b.appendChild(document.createTextNode((installed && !installed.has(tool) ? 'Unavailable: ' : '')
+          + (labels[tool] || humanName(tool))));
+        b.setAttribute('aria-pressed', String(on));
+        b.addEventListener('click', function () {
+          var i = sel.indexOf(tool);
+          if (i === -1) sel.push(tool); else sel.splice(i, 1);
+          sync(); render();
+        });
+        host.appendChild(b);
+      }
+      render();
+      toolChoices().then(function (tools) {
+        installed = tools.length ? new Set(tools.map(function (tool) { return tool.value; })) : null;
+        render();
+      });
+    })();
+
+    // ---- risk segmented control -> hidden #f-risk select ----
+    (function () {
+      var seg = document.getElementById('risk-seg');
+      var sel = document.getElementById('f-risk');
+      if (!seg || !sel) return;
+      var form = document.getElementById('agent-form');
+      var baseRisk = form && form.dataset.baseRisk;
+      var riskRank = { low: 0, medium: 1, high: 2 };
+      if (Object.prototype.hasOwnProperty.call(riskRank, baseRisk)) {
+        seg.querySelectorAll('button[data-risk]').forEach(function (button) {
+          if (riskRank[button.dataset.risk] > riskRank[baseRisk]) {
+            button.disabled = true;
+            button.title = 'This specialist’s built-in safety limit cannot be raised here.';
+          }
+        });
+      }
+      seg.addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-risk]');
+        if (!b || b.disabled) return;
+        sel.value = b.dataset.risk;
+        seg.querySelectorAll('button').forEach(function (x) {
+          x.classList.toggle('on', x === b);
+          x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
+        });
+      });
+    })();
+
+    // ---- "require approval" toggle: reflect + apply a review gate on save ----
+    (function () {
+      var t = document.getElementById('g-approval');
+      var steps = document.getElementById('wf-steps');
+      if (!t) return;
+      // On load: if any workflow step already carries an approval/review gate, show it on.
+      if (steps) {
+        var gated = Array.prototype.some.call(steps.querySelectorAll('.wf-gate'),
+          function (g) { return g.value === 'approval' || g.value === 'review'; });
+        t.setAttribute('aria-pressed', gated ? 'true' : 'false');
+      }
+      t.addEventListener('click', function () {
+        t.setAttribute('aria-pressed', t.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+      });
+      window.__afApprovalOn = function () { return t.getAttribute('aria-pressed') === 'true'; };
+    })();
+
+    // ---- departments roster (real: /api/v1/departments + deploy) ----
+    (function () {
+      var host = document.getElementById('dept-roster');
+      if (!host) return;
+      // Quote-safe: escapes " and ' too, so values are safe in both element
+      // content and double/single-quoted attributes (data-key etc.).
+      function esc(s) {
+        return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) {
+          return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+        });
+      }
+      function initials(s) { return (s || '?').trim().slice(0, 2).toUpperCase(); }
+      // A member pack name like "aero_supplier_quality_aero" reads as
+      // "supplier quality" on the card: strip the suite prefix + underscores.
+      function memberLabel(name, key) {
+        var s = String(name || '');
+        var prefix = s.indexOf('_') > 0 ? s.slice(0, s.indexOf('_') + 1) : '';
+        if (prefix && key && key.indexOf(prefix.slice(0, -1)) === 0) s = s.slice(prefix.length);
+        else if (prefix) s = s.slice(prefix.length);
+        return s.replace(/_/g, ' ');
+      }
+      function blockedTeam(d) {
+        return Number.isInteger(d.ready_specialists) && Number.isInteger(d.unknown_specialists)
+          && d.ready_specialists === 0 && d.unknown_specialists === 0;
+      }
+      function readinessText(d, total) {
+        if (!Number.isInteger(d.ready_specialists)) return '';
+        return d.ready_specialists + ' of ' + total + ' can start'
+          + (d.unknown_specialists ? '; ' + d.unknown_specialists + ' need a setup check' : '');
+      }
+      function render(list) {
+        if (!list.length) {
+          var title = 'No departments yet', body = 'Your specialist packs appear here as teams you can deploy. Open Workforce to see what each department covers.';
+          if (window.mvEmpty) host.replaceChildren(window.mvEmpty(title, body, { label: 'Open Workforce', href: '/workforce' }, { compact: true }));
+          else host.textContent = title + '. ' + body;
+          return;
+        }
+        host.innerHTML = list.map(function (d) {
+          var members = d.members || [];
+          var n = members.length || d.headcount || 0;
+          var preview = members.slice(0, 3).map(function (m) { return memberLabel(m, d.key); }).join(' · ');
+          if (n > 3) preview += ' +' + (n - 3) + ' more';
+          var unavailable = blockedTeam(d);
+          var disable = unavailable ? ' disabled title="Set up at least one specialist before deploying this team"' : '';
+          var deploy = d.entitled
+            ? '<button type="button" class="btn dep-deploy" data-key="' + esc(d.key) + '" aria-label="Deploy ' + esc(d.title) + ' team" style="font-size:var(--text-sm);"' + disable + '>Deploy team</button>'
+            : '<button type="button" class="btn dep-deploy" data-key="' + esc(d.key) + '" aria-label="Deploy ' + esc(d.title) + ' team" style="font-size:var(--text-sm);"' + disable + '>Deploy team</button><span class="dept__addon">add-on required</span>';
+          return '<div class="dept" data-key="' + esc(d.key) + '">'
+            + '<div class="dept__head"><span class="dept__avatar">' + esc(initials(d.title)) + '</span>'
+            + '<span><div class="dept__name">' + esc(d.title) + '</div>'
+            + '<div class="dept__sub">' + esc(d.charter || (n + ' specialists')) + '</div>'
+            + (readinessText(d, n) ? '<div class="dept__sub">' + esc(readinessText(d, n)) + '</div>' : '') + '</span></div>'
+            + (preview ? '<p class="dept__preview">' + esc(preview) + '</p>' : '')
+            + '<div class="dept__foot">' + deploy
+            + '<button type="button" class="btn btn--ghost dep-details" data-key="' + esc(d.key) + '" aria-label="View ' + esc(d.title) + ' details" style="font-size:var(--text-sm);">Details</button></div>'
+            + '<div class="dep-msg muted" role="status" aria-live="polite" style="font-size:var(--text-xs);margin-top:var(--space-2);"></div>'
+            + '</div>';
+        }).join('');
+      }
+      var byKey = {};
+      fetch('/api/v1/departments').then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (list) {
+          list = Array.isArray(list) ? list : [];
+          list.forEach(function (d) { byKey[d.key] = d; });
+          render(list);
+        })
+        .catch(function () { host.innerHTML = '<p class="muted">Could not load departments.</p>'; });
+
+      // Department details pop-out: the full roster + charter, deploy in
+      // place — no page jump.
+      var dlg = document.getElementById('dept-dialog');
+      var dlgDeploy = document.getElementById('dept-dlg-deploy');
+      var dlgKey = null;
+      function openDept(key) {
+        var d = byKey[key];
+        if (!d || !dlg) return;
+        dlgKey = key;
+        document.getElementById('dept-dlg-avatar').textContent = initials(d.title);
+        document.getElementById('dept-dlg-title').textContent = d.title || key;
+        var members = d.members || [];
+        var n = members.length || d.headcount || 0;
+        document.getElementById('dept-dlg-sub').textContent =
+          n + ' specialist' + (n === 1 ? '' : 's') +
+          (readinessText(d, n) ? ' · ' + readinessText(d, n) : '') +
+          (d.entitled ? '' : ' · add-on required');
+        document.getElementById('dept-dlg-charter').textContent = d.charter || '';
+        var ul = document.getElementById('dept-dlg-members');
+        ul.innerHTML = '';
+        members.forEach(function (m) {
+          var li = document.createElement('li');
+          li.textContent = memberLabel(m, d.key);
+          ul.appendChild(li);
+        });
+        if (!members.length) {
+          var li = document.createElement('li');
+          li.className = 'muted';
+          li.textContent = 'Roster loads on deploy.';
+          ul.appendChild(li);
+        }
+        document.getElementById('dept-dlg-msg').textContent = '';
+        dlgDeploy.disabled = dlgDeploy.dataset.inFlight === 'true' || blockedTeam(d);
+        dlgDeploy.setAttribute('aria-label', 'Deploy ' + (d.title || key) + ' team');
+        dlg.showModal();
+      }
+      host.addEventListener('click', function (e) {
+        var det = e.target.closest('.dep-details');
+        if (det) { openDept(det.dataset.key); return; }
+        var card = e.target.closest('.dept');
+        if (card && !e.target.closest('button') && !e.target.closest('a')) openDept(card.dataset.key);
+      });
+      document.getElementById('dept-dlg-close').addEventListener('click', function () { dlg.close(); });
+      dlgDeploy.addEventListener('click', async function () {
+        if (!dlgKey) return;
+        if (!window.LWDepartmentTeamUpdates) { document.getElementById('dept-dlg-msg').textContent = 'The team review could not load. Reload this page before saving the team.'; return; }
+        var source = host.querySelector('.dep-details[data-key="' + dlgKey + '"]') || dlgDeploy;
+        dlg.close(); await window.LWDepartmentTeamUpdates.open(dlgKey, source);
+      });
+      host.addEventListener('click', async function (e) {
+        var btn = e.target.closest('.dep-deploy');
+        if (!btn) return;
+        if (!window.LWDepartmentTeamUpdates) { var unavailable=btn.closest('.dept').querySelector('.dep-msg'); if(unavailable)unavailable.textContent='The team review could not load. Reload this page before saving the team.'; return; }
+        await window.LWDepartmentTeamUpdates.open(btn.dataset.key, btn);
+      });
+    })();
+    mountToolPicks();
+  </script>
+
+  {% if (selected or creating) and editable %}
+  {# Server values for the editor script below, so that script stays plain JavaScript. #}
+  <script nonce="{{ csp_script_nonce }}" type="application/json" id="agent-editor-data">{{ {"services": (selected.mcp_servers if selected else []), "model_options": (model_options | default([])), "model_roles": (model_roles | default([])), "models": (selected.models if selected else {})} | tojson }}</script>
+  <script nonce="{{ csp_script_nonce }}">
+    // ---- save / validate / reset (real agent-override endpoints) ----
+    (function () {
+      const form = document.getElementById('agent-form');
+      if (!form) return;
+      const creating = form.dataset.creating === '1';
+      const idInput = document.getElementById('f-new-id');
+      const msg = document.getElementById('agent-msg');
+      let retainedDraftName = '';
+      let editorPrivateLocked = false;
+      const editorData = JSON.parse((document.getElementById('agent-editor-data') || {}).textContent || '{}');
+      let serviceDraft = editorData.services || [];
+      if (form.dataset.toolServices) { try { serviceDraft = JSON.parse(form.dataset.toolServices); } catch (_) {} }
+      let serviceChoices = null;
+      function renderServices() {
+        const host = document.getElementById('agent-tool-service-choices'); host.replaceChildren();
+        const rows = new Map((serviceChoices || []).map(row => [row.value, row]));
+        serviceDraft.forEach(name => { if (!rows.has(name)) rows.set(name, {value: name, label: name.replace(/[_-]/g, ' ') + (serviceChoices ? ' · Setup unavailable' : ' · Setup not yet checked'), available: false}); });
+        rows.forEach(row => {
+          const label = document.createElement('label'), choice = document.createElement('input');
+          choice.type = 'checkbox'; choice.value = row.value; choice.checked = serviceDraft.includes(row.value);
+          choice.disabled = editorPrivateLocked || (!row.available && !choice.checked); label.style.display = 'block';
+          label.append(choice, document.createTextNode(' ' + row.label)); host.append(label);
+          choice.addEventListener('change', () => {
+            serviceDraft = choice.checked ? [...serviceDraft, row.value] : serviceDraft.filter(name => name !== row.value);
+            renderServices(); host.dispatchEvent(new Event('input', {bubbles: true}));
+          });
+        });
+        document.getElementById('agent-tool-service-status').textContent = serviceChoices === null ? 'Refresh the complete draft to read current service choices.' : rows.size ? 'Your entered selections are kept when service choices refresh. Unavailable saved services can be removed.' : 'No tool services are configured. Add one in Tool servers, then refresh this draft.';
+      }
+      renderServices();
+      // The target agent name: the pre-selected pack, or (new mode) the id typed
+      // in. Normalized to the lowercase/underscore shape packs use.
+      function targetName() {
+        if (!creating) return form.dataset.name;
+        if (retainedDraftName && idInput.value.trim() === retainedDraftName) return retainedDraftName;
+        return (idInput ? idInput.value : '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+      }
+      const modelOptions = editorData.model_options || [];
+      const modelRoles = editorData.model_roles || [];
+      let modelDraft = editorData.models || {};
+      function modelSelect(field, value) {
+        field.replaceChildren(new Option('Use the workspace choice', ''));
+        modelOptions.forEach(([spec, label]) => field.add(new Option(label, spec)));
+        if (value && !modelOptions.some(([spec]) => spec === value)) {
+          const retained = new Option('Saved choice · ' + value.split(':').pop().replace(/[-_]/g, ' '), value); retained.disabled = true; field.add(retained);
+        }
+        field.value = value || '';
+      }
+      function applyModels(models) {
+        modelDraft = {...(models || {})};
+        modelSelect(document.getElementById('f-model'), modelDraft[targetName()]);
+        const host = document.getElementById('agent-supporting-models'); host.replaceChildren();
+        const roles = new Map(modelRoles.map(row => [row.role, row.label]));
+        Object.keys(modelDraft).forEach(role => { if (!roles.has(role)) roles.set(role, role.replace(/[_.-]/g, ' ')); });
+        let index = 0;
+        roles.forEach((label, role) => {
+          if (role === targetName()) return;
+          const row = document.createElement('div'); row.className = 'fld';
+          const title = document.createElement('label'), choice = document.createElement('select');
+          choice.id = 'f-supporting-model-' + index++; choice.className = 'input'; choice.dataset.modelRole = role;
+          title.htmlFor = choice.id; title.textContent = label; modelSelect(choice, modelDraft[role]); row.append(title, choice); host.append(row);
+        });
+      }
+      function gatherModels() {
+        const models = {...modelDraft};
+        document.querySelectorAll('#agent-supporting-models [data-model-role]').forEach(choice => {
+          if (choice.value) models[choice.dataset.modelRole] = choice.value; else delete models[choice.dataset.modelRole];
+        });
+        const role = targetName(), choice = document.getElementById('f-model').value;
+        if (role) { if (choice) models[role] = choice; else delete models[role]; }
+        return models;
+      }
+      applyModels(modelDraft);
+      const words = (s) => s.split(/\s+/).filter(Boolean);
+      function show(text, ok) { if (window.mvStatus) window.mvStatus(msg, text, {error: !ok}); else msg.textContent = text; msg.style.color = ok ? 'var(--accent)' : 'var(--danger)'; }
+      function fieldMessage(field, text) {
+        ['agent-actions-error', 'agent-risk-error'].forEach(function (id) {
+          var note = document.getElementById(id);
+          if (note) { note.hidden = true; note.textContent = ''; }
+        });
+        var note = document.getElementById(field === 'actions' ? 'agent-actions-error'
+          : field === 'risk' ? 'agent-risk-error' : '');
+        if (note) { note.textContent = text; note.hidden = false; note.style.color = 'var(--danger)'; }
+      }
+      function kindWord() {
+        var form = document.getElementById('agent-form');
+        return form && form.dataset.kind === 'specialist' ? 'specialist' : 'agent';
+      }
+      function saveProblem(detail) {
+        var raw = typeof detail === 'string' ? detail : '';
+        var added = raw.match(/allow_tools cannot add tools beyond the built-in pack:\s*([^;]+)/i);
+        if (added) return {
+          field: 'actions',
+          text: 'This specialist cannot gain ' + added[1].split(/,\s*/).map(humanName).join(', ')
+            + '. Remove that action from Allowed actions. Its built-in limits can only be tightened.',
+        };
+        var denied = raw.match(/declared tool ['"]([^'"]+)['"] is denied by this pack/i);
+        if (denied) return { field: 'actions', text: humanName(denied[1])
+          + ' is blocked for this ' + kindWord() + '. Remove it from Allowed actions or the work steps.' };
+        if (/max_risk cannot be raised/i.test(raw)) return {
+          field: 'risk', text: 'This specialist’s built-in risk limit cannot be raised. Choose a lower level or create a custom agent.',
+        };
+        if (/exceeds max_risk/i.test(raw)) return {
+          field: 'risk', text: 'An allowed action needs a higher risk level. Remove that action, or choose a higher level if this ' + kindWord() + ' permits it.',
+        };
+        if (/deny_tools cannot remove/i.test(raw)) return {
+          field: 'actions', text: 'A built-in blocked action cannot be unblocked here. Keep its original safety limit.',
+        };
+        return { field: '', text: 'These settings could not be saved. Choose Check settings to review what needs changing.' };
+      }
+
+      const stepsEl = document.getElementById('wf-steps');
+      const addBtn = document.getElementById('wf-add');
+      const draftsBox = document.getElementById('specialist-drafts');
+      function stepLabel(row) {
+        const rows = Array.from(stepsEl.querySelectorAll('.wf-step'));
+        const name = row.querySelector('.wf-name').value.trim();
+        return (name ? '“' + name + '”' : 'Unnamed step') + ' (step ' + (rows.indexOf(row) + 1) + ' of ' + rows.length + ')';
+      }
+      function refreshSteps() {
+        if (!stepsEl) return;
+        const rows = Array.from(stepsEl.querySelectorAll('.wf-step'));
+        const locked = !!form.closest('[inert]') || !!(draftsBox && (draftsBox.hidden || draftsBox.getAttribute('aria-busy') === 'true'));
+        if (addBtn) addBtn.disabled = locked;
+        rows.forEach((row, index) => {
+          const label = stepLabel(row);
+          const unavailable = locked || row.querySelector('.wf-name').matches(':disabled');
+          row.querySelector('.wf-name').setAttribute('aria-label', 'Step name: ' + label);
+          row.querySelector('.wf-instruction').setAttribute('aria-label', 'What to do in this step: ' + label);
+          row.querySelector('.wf-gate').setAttribute('aria-label', 'Does a person check it? ' + label);
+          const up = row.querySelector('.wf-up'), down = row.querySelector('.wf-down');
+          up.setAttribute('aria-label', 'Move up: ' + label); up.disabled = unavailable || index === 0;
+          down.setAttribute('aria-label', 'Move down: ' + label); down.disabled = unavailable || index === rows.length - 1;
+          const remove = row.querySelector('.wf-del'); remove.setAttribute('aria-label', 'Remove step: ' + label); remove.disabled = unavailable;
+        });
+      }
+      function stepsChanged(text, focus) {
+        refreshSteps();
+        stepsEl.dispatchEvent(new Event('input', {bubbles: true}));
+        show(text, true);
+        if (focus) (focus.disabled ? focus.closest('.wf-step').querySelector('.wf-name') : focus).focus();
+      }
+      refreshSteps();
+      if (draftsBox) new MutationObserver(refreshSteps).observe(draftsBox, {attributes: true, attributeFilter: ['aria-busy', 'hidden']});
+      document.addEventListener('lightwork:specialist-draft-loaded', refreshSteps);
+      if (stepsEl) stepsEl.addEventListener('input', event => {
+        if (event.target.classList.contains('wf-name')) refreshSteps();
+      });
+      if (addBtn) addBtn.addEventListener('click', () => {
+        const row = document.getElementById('wf-row-tpl').content.firstElementChild.cloneNode(true);
+        stepsEl.appendChild(row);
+        mountToolPicks();
+        stepsChanged('Added ' + stepLabel(row) + '.', row.querySelector('.wf-name'));
+      });
+      mountToolPicks();
+      // The short name follows the specialist's name until someone edits it.
+      const descInput = document.getElementById('f-description');
+      let idTouched = false;
+      if (idInput) idInput.addEventListener('input', () => { idTouched = !!idInput.value.trim(); });
+      if (idInput && descInput) descInput.addEventListener('input', () => {
+        if (!idTouched) idInput.value = descInput.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').slice(0, 4).join(' ');
+      });
+      if (stepsEl) stepsEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button'); if (!btn || btn.disabled) return;
+        const row = btn.closest('.wf-step');
+        if (!row || row.parentNode !== stepsEl) return;
+        if (btn.classList.contains('wf-del')) {
+          const label = stepLabel(row), next = row.nextElementSibling || row.previousElementSibling;
+          row.remove();
+          stepsChanged('Removed ' + label + '. ' + stepsEl.children.length + ' steps remain.', next ? next.querySelector('.wf-name') : addBtn);
+          return;
+        }
+        if (btn.classList.contains('wf-up') && row.previousElementSibling)
+          row.parentNode.insertBefore(row, row.previousElementSibling);
+        else if (btn.classList.contains('wf-down') && row.nextElementSibling)
+          row.parentNode.insertBefore(row.nextElementSibling, row);
+        else return;
+        stepsChanged('Moved ' + stepLabel(row) + '.', btn);
+      });
+
+      function gatherWorkflow() {
+        const steps = [];
+        stepsEl && stepsEl.querySelectorAll('.wf-step').forEach((row) => {
+          const stepName = row.querySelector('.wf-name').value.trim();
+          if (!stepName) return;
+          steps.push({
+            name: stepName,
+            instruction: row.querySelector('.wf-instruction').value,
+            tools: words(row.querySelector('.wf-tools').value),
+            gate: row.querySelector('.wf-gate').value || null,
+          });
+        });
+        // "Require approval to finish": gate the final step (or add a review step).
+        if (window.__afApprovalOn && window.__afApprovalOn()) {
+          if (steps.length) { if (!steps[steps.length - 1].gate) steps[steps.length - 1].gate = 'review'; }
+          else steps.push({ name: 'Final review', instruction: 'A person approves the result before it is finished.', tools: [], gate: 'review' });
+        }
+        return steps;
+      }
+
+      function payload() {
+        const autoBox = document.getElementById('agent-autonomy');
+        const policy = autoBox && {
+          default: document.getElementById('f-auto-default').value,
+          low: document.getElementById('f-auto-low').value || null,
+          medium: document.getElementById('f-auto-medium').value || null,
+          high: document.getElementById('f-auto-high').value || null,
+          onboarding: document.getElementById('f-auto-onboarding').checked,
+        };
+        let autonomy = null;
+        if (policy && autoBox.dataset.configOverride === '1') {
+          // The server policy wins. Preserve an existing pack setting without
+          // copying the server's higher-priority values into the tenant pack.
+          if (autoBox.dataset.overridden === '1') autonomy = JSON.parse(autoBox.dataset.pack);
+        } else if (policy) {
+          const changed = policy.default !== autoBox.dataset.default ||
+            (policy.low || '') !== autoBox.dataset.low ||
+            (policy.medium || '') !== autoBox.dataset.medium ||
+            (policy.high || '') !== autoBox.dataset.high ||
+            String(policy.onboarding) !== autoBox.dataset.onboarding;
+          if (changed || autoBox.dataset.overridden === '1') autonomy = policy;
+        }
+        return {
+          expected_generation: creating ? 'new' : form.dataset.generation,
+          description: document.getElementById('f-description').value,
+          persona: document.getElementById('f-persona').value,
+          allow_tools: words(document.getElementById('f-allow').value),
+          deny_tools: words(document.getElementById('f-deny').value),
+          max_risk: document.getElementById('f-risk').value,
+          workflow: gatherWorkflow(),
+          models: gatherModels(),
+          mcp_servers: [...serviceDraft],
+          ...(autonomy ? { autonomy } : {}),
+        };
+      }
+      function beginMutation(button) {
+        if (button.dataset.inFlight === 'true') return false;
+        button.dataset.inFlight = 'true';
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        return true;
+      }
+      function finishMutation(button) {
+        delete button.dataset.inFlight;
+        button.removeAttribute('aria-busy');
+        button.disabled = false;
+      }
+      async function call(method, path, body) {
+        let data;
+        try { data = await window.mvFetchJSON(path, { method, body }, 'save these settings'); }
+        catch (failure) {
+          if (failure.unreadable) throw new Error('The result could not be confirmed. Refresh the page to check.');
+          var problem = failure.status === 422 ? saveProblem(failure.detail)
+            : { field: '', text: failure.status ? plainError({ status: failure.status, detail: failure.detail }, 'save these settings') : plainError(failure, 'reach Lightwork') };
+          var refused = new Error(problem.text);
+          refused.field = problem.field;
+          throw refused;
+        }
+        return { status: 200, data };
+      }
+      // The shared pattern finds missing answers first; nothing typed is cleared.
+      function formReady() { return !window.mvFieldErrors || window.mvFieldErrors.validate(form); }
+      document.getElementById('btn-validate').addEventListener('click', async () => {
+        if (!formReady()) return;
+        try {
+          fieldMessage('', '');
+          const name = targetName();
+          if (!name) { show('Give your ' + kindWord() + ' a name first.', false); return; }
+          const { data } = await call('POST', `/api/v1/agents/${name}/validate`, payload());
+          if (data.errors && data.errors.length) {
+            var problem = saveProblem(data.errors.join('; '));
+            show(problem.text, false);
+            fieldMessage(problem.field, problem.text);
+          }
+          else if (data.warnings && data.warnings.length) show('Looks good, with notes: ' + data.warnings.join('; '), true);
+          else show('Looks good.', true);
+        } catch (error) {
+          show(error instanceof Error ? error.message : 'That didn\'t work. Refresh the page and try again.', false);
+          fieldMessage(error && error.field, error && error.message);
+        }
+      });
+      // ---- tests before publishing ----
+      const testsStatus = document.getElementById('agent-tests-status');
+      const proposedKey = (n) => 'lightwork-proposed-instructions:' + n;
+      function testsLine(v) {
+        let text = v.message;
+        if (v.latest && v.latest.started_at) {
+          const when = window.mvTimeRelative ? window.mvTimeRelative(v.latest.started_at) : '';
+          text += ' Last run on these instructions: ' + v.latest.passed + ' of ' + v.latest.total + ' passed' + (when ? ', ' + when : '') + '.';
+        }
+        if (v.blocked) text += ' Publishing these changes needs a passing run, or a reason that is written to the activity record.';
+        else if (!v.gate_on && v.instructions_changed) text += ' This workspace does not require passing tests before publishing.';
+        return text;
+      }
+      async function publishCheck() {
+        return window.mvFetchJSON(`/api/v1/agents/${targetName()}/publish-check`, { method: 'POST', body: payload() }, 'read the saved test results');
+      }
+      let testsTimer = null;
+      async function refreshTests() {
+        if (!testsStatus) return;
+        try { testsStatus.textContent = testsLine(await publishCheck()); }
+        catch (failure) { testsStatus.textContent = window.mvErrorText ? window.mvErrorText(failure, 'read the saved test results') : 'The saved test results could not be read.'; }
+      }
+      if (testsStatus && !creating) {
+        // The shared fetch helper loads after this page script.
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refreshTests);
+        else refreshTests();
+        document.getElementById('f-persona').addEventListener('input', () => {
+          clearTimeout(testsTimer); testsTimer = setTimeout(refreshTests, 600);
+        });
+        const runLink = document.getElementById('agent-tests-run');
+        if (runLink) runLink.addEventListener('click', () => {
+          // Hand the unsaved instructions to the comparison in Workforce.
+          try { window.sessionStorage.setItem(proposedKey(targetName()), document.getElementById('f-persona').value); } catch (_) { /* no storage: the comparison starts empty */ }
+        });
+        let pending = null;
+        try { pending = window.sessionStorage.getItem(proposedKey(targetName())); } catch (_) { pending = null; }
+        const restore = document.getElementById('agent-tests-restore');
+        if (pending && restore && pending.trim() !== document.getElementById('f-persona').value.trim()) {
+          restore.hidden = false;
+          document.getElementById('agent-tests-restore-btn').addEventListener('click', () => {
+            document.getElementById('f-persona').value = pending;
+            restore.hidden = true;
+            refreshTests();
+            document.getElementById('f-persona').focus();
+          });
+        }
+      }
+      // Changed instructions without a passing run: test them, or publish with a reason.
+      async function publishDecision() {
+        if (creating) return { ok: true, extra: {} };
+        const verdict = await publishCheck();
+        if (!verdict.blocked) return { ok: true, extra: {}, line: verdict.tests ? ' ' + testsLine(verdict) : '' };
+        const answers = window.mvForm ? await window.mvForm('Publish without a passing test run?', [
+          { key: 'reason', label: 'Why publish these instructions before every saved test passes?', type: 'text', required: true,
+            help: testsLine(verdict) + ' To test them first, cancel and choose Test these instructions.' },
+        ], { okText: 'Publish without passing tests' }) : null;
+        if (!answers || !String(answers.reason || '').trim()) {
+          show('Nothing was published. Test these instructions first, or give a reason to publish without passing tests.', false);
+          const link = document.getElementById('agent-tests-run');
+          if (link) link.focus();
+          return { ok: false };
+        }
+        return { ok: true, extra: { publish_without_passing_tests: true, override_reason: String(answers.reason).trim() }, skipConfirm: true };
+      }
+      // What taking actions away would have stopped, from the activity
+      // record of the last 30 days. Report only; "" when nothing is
+      // taken away or it can't be worked out.
+      const startAllow = words(document.getElementById('f-allow').value);
+      const startDeny = words(document.getElementById('f-deny').value);
+      async function toolChangePreview(name) {
+        const now = payload();
+        const lost = startAllow.filter((t) => !now.allow_tools.includes(t))
+          .concat(now.deny_tools.filter((t) => !startDeny.includes(t)));
+        if (creating || !lost.length) return '';
+        try {
+          const data = await window.mvFetchJSON('/api/v1/policy-preview/tools?tools=' + encodeURIComponent(lost.join(',')) +
+            '&agent=' + encodeURIComponent(name), {}, 'work out what this changes');
+          const what = lost.length === 1 ? 'the action it loses' : 'the ' + lost.length + ' actions it loses';
+          if (!data.recorded) return 'There is no tool use in the activity record for the last 30 days to compare ' + what + ' with. ';
+          return 'In the last 30 days it used ' + what + ' ' + data.calls + (data.calls === 1 ? ' time' : ' times') + ' in ' +
+            data.tasks + (data.tasks === 1 ? ' task' : ' tasks') + ' for ' + data.people + (data.people === 1 ? ' person. ' : ' people. ');
+        } catch (_) { return ''; }
+      }
+      const saveBtn = document.getElementById('btn-save');
+      let loadedDraftProfile = null;
+      window.LWSpecialistDraftEditor = {
+        name: targetName,
+        identify: name => { if (!editorPrivateLocked && creating && idInput && !idInput.value.trim()) { retainedDraftName = name; idInput.value = name; idTouched = true; } },
+        get: () => { if (editorPrivateLocked) throw new Error('Reopen Agent Factory after current access is restored.'); return {...(loadedDraftProfile || {}), ...payload()}; },
+        toolServices: value => { if (editorPrivateLocked || !Array.isArray(value?.choices)) return false; serviceChoices = value.choices; renderServices(); return true; },
+        clearPrivate: () => {
+          editorPrivateLocked = true; loadedDraftProfile = null; modelDraft = {}; serviceDraft = []; serviceChoices = null; retainedDraftName = ''; form.dataset.name = '';
+          document.getElementById('agent-tool-service-choices').replaceChildren(); document.getElementById('agent-tool-service-status').textContent = '';
+          form.querySelectorAll('input, textarea, select').forEach(field => { field.value = ''; if ('checked' in field) field.checked = false; });
+          document.getElementById('f-model').replaceChildren(); document.getElementById('agent-supporting-models').replaceChildren(); stepsEl.replaceChildren();
+          form.querySelectorAll('input, textarea, select, button').forEach(field => { field.disabled = true; }); form.hidden = true;
+          show('Your account, workspace or access changed. Reopen Agent Factory after access is restored.', false);
+        },
+        apply: value => {
+          if (editorPrivateLocked) return false;
+          if (creating && idInput) { retainedDraftName = value.name; idInput.value = value.name; idTouched = true; }
+          loadedDraftProfile = structuredClone(value);
+          serviceDraft = [...(value.mcp_servers || [])]; renderServices();
+          applyModels(value.models);
+          document.getElementById('f-description').value = value.description;
+          document.getElementById('f-persona').value = value.persona;
+          document.getElementById('f-allow').value = value.allow_tools.join(' ');
+          document.getElementById('f-deny').value = value.deny_tools.join(' ');
+          document.getElementById('f-risk').value = value.max_risk;
+          document.querySelectorAll('#risk-seg [data-risk]').forEach(button => { const on = button.dataset.risk === value.max_risk; button.classList.toggle('on', on); button.setAttribute('aria-pressed', String(on)); });
+          stepsEl.replaceChildren();
+          value.workflow.forEach(step => {
+            const row = document.getElementById('wf-row-tpl').content.firstElementChild.cloneNode(true);
+            row.querySelector('.wf-name').value = step.name; row.querySelector('.wf-instruction').value = step.instruction;
+            row.querySelector('.wf-tools').value = step.tools.join(' '); row.querySelector('.wf-gate').value = step.gate || ''; stepsEl.append(row);
+          });
+          mountToolPicks();
+          if (value.autonomy) {
+            ['default','low','medium','high'].forEach(risk => { document.getElementById('f-auto-' + risk).value = value.autonomy[risk] || ''; });
+            document.getElementById('f-auto-onboarding').checked = value.autonomy.onboarding;
+          }
+          document.dispatchEvent(new CustomEvent('lightwork:specialist-draft-loaded'));
+        }
+      };
+      saveBtn.addEventListener('click', async () => {
+        if (!formReady()) return;
+        const name = targetName();
+        if (!name) { show('Give your ' + kindWord() + ' a name first.', false); return; }
+        if (window.LWSpecialistDrafts) { await window.LWSpecialistDrafts.reviewEntered('save'); return; }
+        show('The complete draft controls are unavailable. Refresh Agent Factory before saving.', false);
+        return;
+      });
+    })();
+  </script>
+  {% endif %}
+  <section class="panel" id="specialist-original-history" data-specialist-original-history hidden aria-labelledby="specialist-original-title">
+    <h2 id="specialist-original-title">Your original specialist decisions</h2>
+    <p>Read the retained outcome without repeating a Save draft, answer request or publication. Private source details are withheld when current access is unavailable.</p>
+    <label for="specialist-original-choice">Original decision</label><select id="specialist-original-choice" class="input"><option value="">Choose…</option></select>
+    <button type="button" class="btn" data-specialist-history-refresh>Refresh original decisions</button>
+    <p data-specialist-history-status role="status" aria-live="polite"></p><div data-specialist-history-result></div>
+  </section>
+
+  {% if selected %}
+  <style>
+    #jobcard-dlg { border:none; border-radius:var(--radius-lg); padding:0;
+                   max-width:720px; width:92vw; box-shadow:var(--shadow-lg);
+                   background:var(--panel); color:var(--text); }
+    #jobcard-dlg::backdrop { background:var(--scrim); }
+    .jc-wrap { padding:var(--space-5); }
+    .jc-head { display:flex; align-items:flex-start; gap:var(--space-3); }
+    .jc-head h2 { margin:0; font-size:var(--text-xl); }
+    .jc-role { color:var(--muted); font-size:var(--text-sm); margin-top: var(--space-0-5); }
+    .jc-close { margin-inline-start:auto; border:0; background:transparent;
+                color:var(--muted); font-size:1.3rem; cursor:pointer; }
+    .jc-cards { display:grid; grid-template-columns:repeat(4,1fr);
+                gap:var(--space-2); margin:var(--space-4) 0; }
+    .jc-stat { background:var(--surface-sunken); border:1px solid var(--hairline);
+               border-radius:var(--radius-md); padding:var(--space-3); }
+    .jc-stat .n { font-size:var(--text-lg); font-weight:var(--font-semibold);
+                  font-variant-numeric:tabular-nums; }
+    .jc-stat .l { font-size:var(--text-xs); color:var(--muted);
+                  text-transform:uppercase; letter-spacing:0.04em; }
+    .jc-sec { margin-top:var(--space-4); }
+    .jc-sec h3 { font-size:var(--text-xs); text-transform:uppercase;
+                 letter-spacing:0.06em; color:var(--muted);
+                 margin:0 0 var(--space-2); }
+    .jc-sec p { margin:0; font-size:var(--text-sm); line-height:1.5; }
+    .jc-steps { margin:0; padding-inline-start:1.1rem; font-size:var(--text-sm); }
+    .jc-steps li { margin-bottom: var(--space-1); }
+    .jc-chips { display:flex; flex-wrap:wrap; gap:6px; }
+    .jc-chip { font-size:var(--text-xs); border:1px solid var(--hairline);
+               border-radius:var(--radius-pill); padding: var(--space-0-5) 10px;
+               background:var(--surface-sunken); }
+    .jc-chip.deny { border-color:var(--danger); color:var(--danger); }
+    .jc-tier { display:inline-flex; align-items:center; gap:6px; }
+    .jc-tier select { font-size:var(--text-sm); }
+    .jc-band { font-size:var(--text-xs); font-weight:var(--font-semibold);
+               border-radius:var(--radius-pill); padding: var(--space-0-5) 10px; }
+    .jc-band.low { background:var(--success-subtle); color:var(--accent); }
+    .jc-band.medium { background:var(--info-subtle); color:var(--info); }
+    .jc-band.high { background:var(--warn-subtle); color:var(--warn); }
+    .jc-band.very_high { background:var(--danger-subtle); color:var(--danger); }
+    .jc-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-4); }
+    @media (max-width:640px){ .jc-cards{grid-template-columns:repeat(2,1fr);}
+      .jc-grid2{grid-template-columns:1fr;} }
+  </style>
+  <dialog id="jobcard-dlg" aria-labelledby="jc-name">
+    <div class="jc-wrap">
+      <div class="jc-head">
+        <div>
+          <h2 id="jc-name">…</h2>
+          <div class="jc-role" id="jc-role"></div>
+        </div>
+        <button type="button" class="btn btn--ghost jc-close" id="jc-close">Close</button>
+      </div>
+      <div class="jc-sec"><h3>Can this {{ 'specialist' if selected_kind == 'specialist' else 'agent' }} start?</h3>
+        <p><strong>{{ selected.readiness.label }}</strong></p>
+        {% if selected.readiness.state == 'needs_setup' %}
+        {% if selected.readiness.missing_labels %}<p class="muted">Required actions: {{ selected.readiness.missing_labels | join(', ') }}. <a href="{{ selected.readiness.fix_url }}">Review setup</a></p>
+        {% else %}<p class="muted">This department is turned off. <a href="{{ selected.readiness.fix_url }}">Review setup</a></p>{% endif %}
+        {% elif selected.readiness.state == 'unknown' %}
+        <p class="muted">Lightwork could not check the required actions. Ask an administrator to review setup before assigning work. <a href="{{ selected.readiness.fix_url }}">Review setup</a></p>
+        {% else %}
+        <p class="muted">This checks required actions only; live connections, permissions and the AI service are checked when work starts.</p>
+        {% endif %}
+      </div>
+      <div class="jc-sec"><h3>Independence</h3>
+        {% if selected.autonomy.levels_enabled %}
+        {% set level_names = {'observe': 'Watch only', 'suggest': 'Suggest', 'request': 'Ask before acting', 'auto': 'Act on its own'} %}
+        <p>Current levels: low-risk actions — {{ level_names[selected.autonomy.effective.low] }};
+          medium-risk actions — {{ level_names[selected.autonomy.effective.medium] }};
+          high-risk actions — {{ level_names[selected.autonomy.effective.high] }}.</p>
+        {% if selected.autonomy.onboarding %}<p class="muted">Supervision is on, so the chosen levels are lowered one step.</p>{% endif %}
+        {% else %}
+        <p>Independence levels are off. Consequential actions are staged for a person.</p>
+        {% endif %}
+        {% if editable %}<p><a href="#agent-autonomy" id="jc-autonomy-open">Review independence settings</a></p>{% endif %}
+      </div>
+      <div class="jc-cards" id="jc-stats"></div>
+      <p class="muted" id="jc-stats-note">Finishing a task does not prove the result was useful. A result that needs approval counts only after a person approves it; this card does not estimate savings or return on investment without customer evidence.</p>
+      {% include "_agent_activity.html" %}
+      <div class="jc-sec"><h3>Cost level</h3>
+        <div class="jc-tier">
+          <span class="jc-band" id="jc-band"></span>
+          <span class="sub" id="jc-model"></span>
+          <span style="margin-inline-start:auto;"></span>
+          {% if can_set_model_cost_tier %}<label class="sub" for="jc-band-set">Cost band for this model across Lightwork</label>
+          <select id="jc-band-set" class="ctl">
+            <option value="">Automatic</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="very_high">Very High</option>
+          </select>
+          {% endif %}
+        </div>
+        <p class="muted">This is the configured agent route now. A task can use a different model when routing or a task override applies.{% if can_set_model_cost_tier %} Changing its cost band affects every specialist and workspace that uses that model.{% endif %}</p>
+      </div>
+      <div class="jc-sec"><h3>Mission</h3><p id="jc-mission"></p></div>
+      <div class="jc-sec"><h3>Responsibilities</h3><ol class="jc-steps" id="jc-resp"></ol></div>
+      <div class="jc-grid2">
+        <div class="jc-sec"><h3>Delivers</h3><p id="jc-deliver"></p></div>
+        <div class="jc-sec"><h3>Guardrails — never does</h3><div class="jc-chips" id="jc-guard"></div></div>
+      </div>
+      <div class="jc-sec"><h3>Tools it can use</h3><div class="jc-chips" id="jc-tools"></div></div>
+    </div>
+  </dialog>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var NAME = {{ selected.name | tojson }};
+    var dlg = document.getElementById('jobcard-dlg');
+    var CAN_SET = false;
+    function el(id){ return document.getElementById(id); }
+    function chips(box, items, cls){
+      box.textContent='';
+      (items||[]).forEach(function(t){
+        var s=document.createElement('span'); s.className='jc-chip'+(cls?' '+cls:'');
+        s.textContent=t; box.appendChild(s);
+      });
+      if(!(items||[]).length){ box.textContent='—'; }
+    }
+    function stat(n,l){ return '<div class="jc-stat"><div class="n">'+n+
+      '</div><div class="l">'+l+'</div></div>'; }
+    function money(v){
+      if(v==null) return '—';
+      var amount=Number(v);
+      if(!Number.isFinite(amount)) return '—';
+      if(amount>0&&amount<0.01) return '<$0.01';
+      return '$'+amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    }
+    function render(d){
+      var jd=d.job_description||{}, sc=d.scorecard||{}, ct=d.cost_tier||{};
+      el('jc-name').textContent=jd.name||NAME;
+      el('jc-role').textContent=(jd.role||'')+(jd.suite?(' · '+jd.suite):'');
+      el('jc-mission').textContent=jd.mission||'—';
+      var resp=el('jc-resp'); resp.textContent='';
+      (jd.responsibilities||[]).forEach(function(w){
+        var li=document.createElement('li'); li.textContent=w.name?(w.name+' — '+(w.instruction||'')):String(w); resp.appendChild(li);
+      });
+      if(!(jd.responsibilities||[]).length){ resp.innerHTML='<li class="sub">No steps listed yet. Add steps to its playbook in the editor.</li>'; }
+      el('jc-deliver').textContent=(jd.deliverable||'—')+
+        (jd.cadence?(' · '+jd.cadence):'')+(jd.gate?(' · needs '+(jd.gate==='approval'?'someone to approve':'someone to review')):'');
+      chips(el('jc-tools'), (jd.tools||[]).map(function(t){ return window.mvHuman?mvHuman(t):t; }));
+      chips(el('jc-guard'), jd.guardrails, 'deny');
+      el('jc-stats').innerHTML =
+        stat(Number(sc.runs)||0, 'Tasks') +
+        stat(Number(sc.completed)||0, 'Finished tasks') +
+        stat(Number(sc.delivered)||0, 'Approved results') +
+        stat(money(sc.cost), 'AI cost');
+      var band=ct.band||'unknown';
+      var b=el('jc-band'); b.className='jc-band '+band; b.textContent=ct.model?(ct.label||band)+' cost':'Model unavailable';
+      el('jc-model').textContent=ct.model?('Configured agent model: '+ct.model):'The configured model could not be checked. Refresh the page and try again.';
+      var bandSet=el('jc-band-set');
+      if(bandSet){bandSet.value=ct.overridden?band:'';bandSet.dataset.original=bandSet.value;bandSet.dataset.model=ct.model||'';bandSet.disabled=!ct.model;}
+    }
+    function open(){
+      dlg.showModal();
+      el('jc-name').textContent='Loading…';
+      window.mvFetchJSON('/api/v1/agents/'+encodeURIComponent(NAME)+'/jobcard').then(render)
+        .catch(function(){ el('jc-name').textContent='Could not load the job card. Close it and try again.'; });
+    }
+    var btn=el('btn-jobcard'); if(btn) btn.addEventListener('click', open);
+    var autoLink=el('jc-autonomy-open'); if(autoLink) autoLink.addEventListener('click', function(){ dlg.close(); });
+    el('jc-close').addEventListener('click', function(){ dlg.close(); });
+    dlg.addEventListener('click', function(e){ if(e.target===dlg) dlg.close(); });
+    var bandSet=el('jc-band-set'); if(bandSet)bandSet.addEventListener('change', async function(){
+      var model=this.dataset.model; if(!model) return;
+      var band=this.value||null;
+      var before=this.dataset.original||'';
+      if(!(await mvConfirm('Change the cost band for '+model+' across every specialist and workspace that uses it?', {okText:'Change cost band'}))){this.value=before;return;}
+      fetch('/api/v1/model-cost-tiers', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({model:model, band:band})})
+        .then(function(r){ if(r.ok) return r.json(); throw r; })
+        .then(function(ct){
+          var b=el('jc-band'); b.className='jc-band '+ct.band; b.textContent=(ct.label||ct.band)+' cost';
+          el('jc-model').textContent='Configured agent model: '+ct.model;
+          bandSet.dataset.original=band||'';
+        })
+        .catch(function(e){ bandSet.value=before; window.mvFail ? mvFail(e, 'change the cost level') : null; });
+    });
+  })();
+  </script>
+  {% endif %}
+<script src="/static/lightwork-business-agent.js" defer></script>
+<script src="/static/lightwork-agent-override-changes.js" defer></script>
+<script src="/static/lightwork-agent-activity.js" defer></script>
+{% endblock %}

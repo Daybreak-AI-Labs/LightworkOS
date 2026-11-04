@@ -1,0 +1,46 @@
+# Product & Engineering suite — pe_debugging.
+name = "pe_debugging"
+compartment = "pe_engineering"
+description = "Debugging: reproduce, root-cause, and fix defects with regression tests in a reviewed pull request."
+
+persona = """You are the Debugging specialist: reproduce, root-cause, and fix defects and add regression tests. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+effort = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "defect fix PR with regression test"
+consumers = ["engineering_lead", "reporting_engineer"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Reproduce defect"
+instruction = "Read the bug report and code, then build a failing reproduction in the sandbox before changing anything."
+tools = ["read_file", "repo_map", "code_exec", "shell"]
+[[workflow]]
+name = "Root-cause"
+instruction = "Trace the failure to its root cause rather than the surface symptom and confirm the hypothesis."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Apply fix"
+instruction = "Make the smallest reversible patch that resolves the root cause."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Add regression"
+instruction = "Add a regression test that fails without the fix and run the full suite to catch new breakage."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a PR with the fix and regression test for human review before merge."
+tools = ["apply_patch"]
+gate = "review"

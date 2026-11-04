@@ -1,0 +1,72 @@
+**
+
+# Root metadata and the reviewed runtime constraint set.
+!pyproject.toml
+!requirements/
+!requirements/ci.txt
+
+# The complete eight-distribution runtime cohort. Keep the other apps, VCS data,
+# local state, caches, test output, credentials, and generated artifacts out of
+# the root-context image build by allowing only these source trees.
+!packages/
+!packages/maverick-core/
+!packages/maverick-core/**
+!packages/maverick-shield/
+!packages/maverick-shield/**
+!packages/maverick-channels/
+!packages/maverick-channels/**
+!packages/maverick-evolve/
+!packages/maverick-evolve/**
+!packages/maverick-dashboard/
+!packages/maverick-dashboard/**
+!packages/maverick-mcp/
+!packages/maverick-mcp/**
+!packages/maverick-knowledge/
+!packages/maverick-knowledge/**
+!apps/
+!apps/installer-cli/
+!apps/installer-cli/**
+
+# Re-exclude development/build residue that may sit inside an allowed package.
+**/tests
+**/tests/**
+**/__pycache__
+**/__pycache__/**
+**/build
+**/build/**
+**/dist
+**/dist/**
+**/*.egg-info
+**/*.egg-info/**
+**/maverick_agent-*
+**/maverick_agent-*/**
+
+# The manifest-driven wheel builder is the only build helper in the context.
+!release-cohort.toml
+!scripts/
+!scripts/install_release_cohort.py
+
+# Runtime entrypoint is an exact additional input, not the full deployment tree.
+!deploy/
+!deploy/docker/
+!deploy/docker/entrypoint.sh
+
+# Final high-precedence exclusions apply even inside the package allowlist.
+# Never send nested VCS metadata, credentials, private keys, or runtime state
+# to a remote BuildKit cache.
+**/.git
+**/.git/**
+**/.env
+**/.env.*
+**/.maverick
+**/.maverick/**
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.sqlite
+**/*.sqlite-*
+**/*.db
+**/*.db-*
+**/audit.jsonl
+**/world.jsonl

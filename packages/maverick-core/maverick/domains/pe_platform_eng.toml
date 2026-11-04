@@ -1,0 +1,45 @@
+# Product & Engineering suite — pe_platform_eng.
+name = "pe_platform_eng"
+compartment = "pe_devops"
+description = "Platform engineering: internal developer platform, golden paths, ephemeral environments, secrets, and FinOps."
+
+persona = """You are the Platform Engineering specialist: build the internal developer platform (Backstage), golden paths, ephemeral envs, secrets (Vault), and FinOps. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "platform golden-path PR"
+consumers = ["platform_lead", "engineering_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Map platform"
+instruction = "Read the existing Backstage config, golden-path templates, and infra modules to locate where the change belongs."
+tools = ["read_file", "repo_map"]
+[[workflow]]
+name = "Ground standards"
+instruction = "Retrieve platform conventions, secrets/Vault policy, and FinOps guardrails from the company's documents."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Implement path"
+instruction = "Make the smallest reversible change to the golden path, ephemeral-env, or secrets wiring in the sandbox."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Verify locally"
+instruction = "Run the platform tests and a dry-run provision in the sandbox to confirm the path works before proposing it."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a pull request describing the golden-path change and its blast radius for platform-lead review and merge."
+tools = ["apply_patch"]
+gate = "review"

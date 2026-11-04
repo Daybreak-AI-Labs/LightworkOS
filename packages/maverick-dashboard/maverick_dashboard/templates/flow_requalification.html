@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Recheck affected rules · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Recheck affected rules', lede='Keep useful evidence for unchanged work, check the parts affected by a change, and compare the result with a separate complete rerun.') }}
+<style>#rule-requalification,#rule-requalification form,#rule-requalification label{display:grid;gap:var(--space-2);min-width:0;overflow-wrap:anywhere}#rule-requalification select,#rule-requalification button{min-width:0;max-width:100%;width:100%;box-sizing:border-box;white-space:normal}#rule-requalification dd{margin-left:0;white-space:pre-wrap}#rule-requalification input[type=checkbox]{flex:none}</style>
+<section id="rule-requalification" class="panel">
+  <p class="muted">Check changed rules on an original case, keep eligible evidence for unchanged work, and compare the complete answers. Both calculations run. Your published workflow stays unchanged.</p>
+  <form id="rule-requalification-form">
+    <label>Saved workflow<select name="flow" class="input" required><option value="">Choose a workflow</option></select></label>
+    <p id="rq-versions" class="muted"></p><div id="rq-components"></div>
+    <label>Original real case<select name="practice" class="input"><option value="">Choose a real run</option></select></label>
+    <label id="rq-semantic-choice" hidden><span><input type="checkbox" name="semantic_reuse"> Check every supported input before reusing changed rule evidence</span><span class="muted">Useful when a rule was rewritten without changing its answers. Uses extra local calculation time, and always keeps the separate complete comparison.</span></label>
+    <button id="rq-retain" class="btn btn--primary" type="button">Review and keep original case evidence</button>
+    <label>Original case evidence available for reuse<select name="evidence" class="input"><option value="">Choose prior evidence</option></select></label>
+    <button id="rq-recheck" class="btn btn--primary" type="button">Review affected checks</button>
+    <button id="rq-withdraw" class="btn btn--ghost" type="button">Review withdrawal of evidence reuse</button>
+    <button id="rq-refresh" class="btn btn--ghost" type="button">Refresh current choices</button>
+  </form>
+  <div id="rq-review" hidden></div><p id="rq-status" role="status" aria-live="polite"></p><p id="rq-error" role="alert" class="danger-text"></p>
+  <section id="rq-result" hidden></section>
+  <label>Original requests<select id="rq-history" class="input"><option value="">Choose original request</option></select></label>
+  <button id="rq-read" type="button" class="btn btn--ghost">Check original result</button>
+  <a id="rq-release" class="btn btn--ghost" href="/research#local-flow-release">Open independent release and restore controls</a>
+  <a class="btn btn--ghost" href="/learning/flow-checks">Open complete workflow comparison</a>
+  <details><summary>Supported work and recovery</summary><p class="muted">This installed single-computer path supports a linear root of bounded taught rules, set-value steps and included owned rule workflows with named inputs and results. Included workflows may use the existing bounded simple routes. Connected actions, AI fallback, retries, waiting, cycles, transformed expressions and unscoped included inputs require other controls. Up to sixty-four defined steps, sixteen included workflows and eight levels; real initial values stay within 8 KB. A fifteen-second local budget and bounded step checks apply. Unchanged successful components are reused only while their exact source, input values, original case, policy and explicit reuse permission still match. Changed output values require dependent components to run again. A separate complete rerun uses the same values. Disagreement, failure and unknown results remain visible; agreement is not independent correctness. Withdrawing evidence stops future reuse without erasing the original record. If a reply is interrupted, check the original request; it never repeats that request.</p></details>
+</section>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-flow-requalification.js"></script>{% endblock %}

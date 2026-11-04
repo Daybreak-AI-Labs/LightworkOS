@@ -1,0 +1,299 @@
+{
+  "models": {
+    "GoalEventOut": {
+      "properties": {
+        "agent": {
+          "title": "Agent",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "integer"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "kind",
+        "content",
+        "ts"
+      ],
+      "title": "GoalEventOut",
+      "type": "object"
+    },
+    "GoalEventsResponse": {
+      "$defs": {
+        "GoalEventOut": {
+          "properties": {
+            "agent": {
+              "title": "Agent",
+              "type": "string"
+            },
+            "content": {
+              "title": "Content",
+              "type": "string"
+            },
+            "id": {
+              "title": "Id",
+              "type": "integer"
+            },
+            "kind": {
+              "title": "Kind",
+              "type": "string"
+            },
+            "ts": {
+              "title": "Ts",
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "agent",
+            "kind",
+            "content",
+            "ts"
+          ],
+          "title": "GoalEventOut",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/GoalEventOut"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "has_more": {
+          "default": false,
+          "title": "Has More",
+          "type": "boolean"
+        },
+        "needs_input": {
+          "default": false,
+          "title": "Needs Input",
+          "type": "boolean"
+        },
+        "next_id": {
+          "title": "Next Id",
+          "type": "integer"
+        },
+        "open_question_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Open Question Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason Code"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Result"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stop"
+        },
+        "terminal": {
+          "default": false,
+          "title": "Terminal",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "status",
+        "result",
+        "next_id",
+        "events"
+      ],
+      "title": "GoalEventsResponse",
+      "type": "object"
+    },
+    "GoalOut": {
+      "properties": {
+        "created_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "title": "Id",
+          "type": "integer"
+        },
+        "limits": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limits"
+        },
+        "needs_input": {
+          "default": false,
+          "title": "Needs Input",
+          "type": "boolean"
+        },
+        "open_question_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Open Question Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason Code"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "risk_reasons": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Reasons"
+        },
+        "risk_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Tier"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Updated At"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "title"
+      ],
+      "title": "GoalOut",
+      "type": "object"
+    }
+  },
+  "version": 1
+}

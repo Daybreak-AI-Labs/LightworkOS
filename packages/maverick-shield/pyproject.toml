@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maverick-shield"
+version = "0.1.7"
+description = "Agent Shield integration + builtin fallback rules for Lightwork"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Lightwork Authors" }]
+readme = "README.md"
+# Built-in rules ship as part of this package. agent-shield SDK is opt-in.
+dependencies = []
+
+[project.optional-dependencies]
+scan = ["agent-shield>=14.0"]
+
+[project.urls]
+Homepage = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Issues = "https://github.com/Daybreak-AI-Labs/LightworkOS/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maverick_shield*"]
+
+[tool.setuptools.package-data]
+# Ship the red-team corpus inside wheels (editable installs read it from disk).
+maverick_shield = ["redteam_corpus.jsonl"]

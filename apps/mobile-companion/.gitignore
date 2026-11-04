@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+dist/
+*.tsbuildinfo
+
+# Reproducibly generated native projects; source is Expo config + local module.
+/android/
+/ios/
+/.native-template/
+!package-lock.json

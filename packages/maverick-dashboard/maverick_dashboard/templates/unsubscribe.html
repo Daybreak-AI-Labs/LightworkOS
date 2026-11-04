@@ -1,0 +1,26 @@
+{% extends "public_base.html" %}
+{% block title %}Notifications · Lightwork{% endblock %}
+{% block public_label %}Notifications{% endblock %}
+{% block public_footer %}Notifications{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 40rem; margin: 0 auto;" aria-labelledby="unsubscribe-title">
+  {% if problem %}
+  <h1 id="unsubscribe-title">This link can't change your notifications</h1>
+  <p>{{ problem }}</p>
+  {% elif done %}
+  <h1 id="unsubscribe-title" tabindex="-1">{{ done }}</h1>
+  <p class="muted">{{ detail }}</p>
+  {% if undo_token %}
+  <form method="post" action="/unsubscribe/{{ undo_token }}">
+    <button class="btn" type="submit">Undo</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <h1 id="unsubscribe-title">{{ question }}</h1>
+  <p class="muted">{{ detail }}</p>
+  <form method="post" action="/unsubscribe/{{ token }}">
+    <button class="btn btn--primary" type="submit">{{ button }}</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

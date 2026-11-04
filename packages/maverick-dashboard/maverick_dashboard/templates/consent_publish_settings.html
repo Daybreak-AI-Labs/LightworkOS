@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Website banner settings · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set ps_admin = publish_settings_can_admin %}
+{% set ps_audit = publish_settings_can_audit %}
+<div class="governance-workbench" id="publish-settings-shell"
+     data-api-base="{{ api_base }}" data-copilot-page="/consent/publish-settings"
+     data-sdk-version="{{ publish_settings_sdk_version | default('1.0.0') }}"
+     data-can-admin="{{ 'true' if ps_admin else 'false' }}" data-can-audit="{{ 'true' if ps_audit else 'false' }}">
+  {{ hero('Consent publishing', 'Website banner settings',
+          lede='Choose how the consent banner behaves on each website: which trackers it controls, when to ask people again, and how its cookie works. Settings are saved as versions, and you choose which version is live.') }}
+  {% include "_consent_nav.html" %}
+  {% if module_off %}{% from "_module_gate.html" import module_gate %}{{ module_gate("consent_preferences.publishing.web_settings", "Website banner settings", detail="Lets you publish and roll back the settings your website's consent banner uses.") }}{% endif %}
+  <p id="publish-settings-runtime-status" class="muted" role="status" aria-live="polite">Checking that website banner settings are available…</p>
+  {% if not ps_admin %}<p class="muted">Only an administrator can create or switch settings.</p>{% endif %}
+
+  <fieldset class="feature-gated-workbench" id="publish-settings-operations" disabled>
+    <legend class="sr-only">Website banner settings</legend>
+
+    <section class="panel" aria-labelledby="publish-settings-site-title">
+      <h2 id="publish-settings-site-title">Website</h2>
+      <label class="cw-toolbar">Website<select class="select" id="publish-settings-property-id"></select></label>
+      <p id="publish-settings-head" class="muted" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel" aria-labelledby="publish-settings-versions-title">
+      <div class="section-head">
+        <h2 id="publish-settings-versions-title">Settings versions</h2>
+        <div class="cw-actions">
+          <button class="btn btn--primary" id="publish-settings-new" type="button"{% if not ps_admin %} disabled{% endif %}>Create settings</button>
+          <button class="btn btn--danger" id="publish-settings-withdraw" type="button" hidden{% if not ps_admin %} disabled{% endif %}>Turn settings off</button>
+        </div>
+      </div>
+      <div id="publish-settings-versions-table"><p class="muted">Choose a website to see its settings.</p></div>
+    </section>
+
+    <section class="panel cw-editor" id="publish-settings-create-panel" hidden aria-labelledby="publish-settings-create-title">
+      <h2 id="publish-settings-create-title">New settings</h2>
+      <form id="publish-settings-create-form" autocomplete="off" novalidate>
+        <fieldset class="cw-form" id="publish-settings-create-controls"{% if not ps_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Settings</legend>
+          <label>Banner code version<select class="select" id="publish-settings-sdk-version" name="sdk_version"></select></label>
+          <input type="hidden" id="publish-settings-expected-revision" name="expected_head_revision" value="0">
+          <input type="hidden" id="publish-settings-idempotency" name="idempotency_key" data-auto-reference>
+
+          <fieldset class="cw-wide">
+            <legend>Trackers on this website</legend>
+            <p class="muted">Tick the trackers your website uses and choose what each one is for.</p>
+            <div id="publish-settings-trackers" class="cw-form">
+              {% for tracker, label in [("google_analytics", "Google Analytics"), ("google_tag_manager", "Google Tag Manager"), ("linkedin_insight", "LinkedIn Insight Tag"), ("meta_pixel", "Meta Pixel"), ("microsoft_clarity", "Microsoft Clarity"), ("tiktok_pixel", "TikTok Pixel")] %}
+              <div class="cw-row" data-tracker="{{ tracker }}">
+                <label><input type="checkbox" name="common_trackers" value="{{ tracker }}"> {{ label }}</label>
+                <label>Used for<select class="select" name="analytics_category_assignments" data-tracker="{{ tracker }}">
+                  <option value="">Not set</option><option value="analytics">Measuring visits</option><option value="advertising">Advertising</option>
+                  <option value="functional">Site features</option><option value="essential">Essential</option>
+                </select></label>
+              </div>
+              {% endfor %}
+            </div>
+            <label><input id="publish-settings-analytics-enabled" name="analytics_tracking_enabled" type="checkbox"> Turn on measuring visits for people who agree</label>
+          </fieldset>
+
+          <fieldset class="cw-wide">
+            <legend>Ask people again after a while</legend>
+            <div id="publish-settings-geolocation"></div>
+            <button class="btn" id="publish-settings-geo-add" type="button">Add a region</button>
+          </fieldset>
+
+          <fieldset class="cw-wide">
+            <legend>How the banner works on your site</legend>
+            <label><input id="publish-settings-spa-reload" name="spa_reload_on_route_change" type="checkbox"> My site changes pages without reloading (a single-page app)</label>
+            <label>Check for updated choices<select class="select" id="publish-settings-refresh-seconds" name="automatic_refresh_seconds">
+              <option value="">Only when a page loads</option><option value="300">Every 5 minutes</option><option value="3600">Every hour</option><option value="86400">Once a day</option>
+            </select></label>
+          </fieldset>
+
+          <details class="governance-details cw-wide">
+            <summary>Advanced cookie and security options</summary>
+            <div class="cw-form">
+              <label>When browsers send the consent cookie<select class="select" id="publish-settings-same-site" name="cookie_same_site">
+                <option value="lax" selected>Normal (recommended)</option><option value="strict">Only on this site</option><option value="none">Also from other sites</option>
+              </select></label>
+              <label>Share choices across<select class="select" id="publish-settings-domain-separation" name="cookie_domain_separation">
+                <option value="host_only">This exact address only</option><option value="property_domain">All addresses of this website</option>
+              </select></label>
+              <label class="cw-wide"><input id="publish-settings-csp-required" name="csp_nonce_required" type="checkbox"> My site uses a strict content security policy and gives the banner a one-time code on each page</label>
+            </div>
+          </details>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Save as a new version</button>
+            <button class="btn btn--ghost" id="publish-settings-cancel" type="button">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="publish-settings-audit-title">
+      <h2 id="publish-settings-audit-title">History</h2>
+      <fieldset id="publish-settings-audit-controls" class="cw-actions"{% if not ps_audit %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Settings history checks</legend>
+        <button class="btn" id="publish-settings-integrity" type="button">Check history is intact</button>
+        <button class="btn" id="publish-settings-recovery" type="button">Check backups are ready</button>
+      </fieldset>
+      <p id="publish-settings-operation-status" class="muted" role="status" aria-live="polite"></p>
+      <div id="publish-settings-history-table"></div>
+      {% if not ps_audit %}<p class="muted">You need audit access to see the history.</p>{% endif %}
+      <details class="governance-details">
+        <summary>About this page’s safeguards</summary>
+        <ul>
+          <li>Settings are tied to the banner version that is published. If the banner is withdrawn or changed, these settings stop being used until you save them again.</li>
+          <li>Lightwork never asks for or stores your site’s one-time security codes.</li>
+          <li>Saved versions cannot be changed; switching versions is recorded in the history.</li>
+        </ul>
+      </details>
+    </section>
+  </fieldset>
+  <noscript><p class="muted">Turn on JavaScript to use these controls.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-consent-workbench.js" defer></script>
+<script src="/static/lightwork-consent-publish-settings.js" defer></script>
+{% endblock %}

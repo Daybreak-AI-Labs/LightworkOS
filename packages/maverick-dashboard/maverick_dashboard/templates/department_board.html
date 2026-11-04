@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% set board_titles = {'overview':'Overview', 'spend':'Spend', 'workforce':'Workforce', 'savings':'Savings', 'oversight':'Oversight'} %}
+{% block title %}{{ board_titles[board] }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% call hero('Your permitted work', board_titles[board],
+    subtitle='An operating picture within your access', lede=scope_notice) %}{% endcall %}
+<style>
+  .department-board__toolbar { display:flex; flex-wrap:wrap; align-items:end; gap:var(--space-3); margin-block:var(--space-4); }
+  .department-board__toolbar label { display:grid; gap:var(--space-2); }
+  .department-board__toolbar select { min-width:10rem; }
+  .department-board__list { display:grid; gap:var(--space-3); padding:0; list-style:none; }
+  .department-board__list li { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; padding-block:var(--space-2); border-bottom:1px solid var(--border); }
+  .department-board__list a { overflow-wrap:anywhere; }
+  .department-board__metric { margin:0; font-size:1.65rem; font-weight:600; }
+  .department-board__card { min-width:0; }
+  #department-board-shell { min-width:0; overflow-wrap:anywhere; }
+  #department-board-shell .bd-kpis { grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr)); }
+</style>
+<section id="department-board-shell" data-board="{{ board }}" data-context="{{ board_context }}" aria-label="{{ board_titles[board] }} within your access">
+  <nav aria-label="Your work boards">{% for key,label in board_titles.items() %}{% if key != 'oversight' or can_operate %}<a href="/{{ key }}"{% if board == key %} aria-current="page"{% endif %}>{{ label }}</a> · {% endif %}{% endfor %}<a href="/chat">Open your work</a></nav>
+  <div class="department-board__toolbar">
+    <label for="department-board-days"{% if board == 'oversight' %} hidden{% endif %}>Report period
+      <select class="select" id="department-board-days"><option value="30">30 days</option><option value="90" selected>90 days</option><option value="180">6 months</option><option value="365">1 year</option></select>
+    </label>
+    <button type="button" class="btn" id="department-board-refresh">Refresh report</button>
+    <button type="button" class="btn" data-copilot-toggle>Ask Copilot</button>
+  </div>
+  <p id="department-board-status" role="status" aria-live="polite">Reading your permitted work…</p>
+  <p id="department-board-error" role="alert" hidden></p>
+  <p id="department-board-reload" hidden><a href="/{{ board }}">Reload with current access</a></p>
+  <div id="department-board-notices" class="muted" role="status"></div>
+  <div class="bd-kpis" id="department-board-metrics" aria-label="Report figures"></div>
+  <div class="viz-grid">
+    <section class="panel viz-card department-board__card"><h2>{{ {'overview':'Where your work stands', 'spend':'How your attempts ended', 'workforce':'Your specialists', 'savings':'Your recorded comparisons', 'oversight':'Requests needing review'}[board] }}</h2><div id="department-board-statuses"></div></section>
+    <section class="panel viz-card department-board__card"><h2>{{ {'overview':'Your departments', 'spend':'Known spending by task', 'workforce':'Recorded attempt prices', 'savings':'What the comparisons establish', 'oversight':'Your stop records'}[board] }}</h2><div id="department-board-groups"></div></section>
+    <section class="panel viz-card viz-card--wide department-board__card"><h2>{{ {'overview':'Recent permitted tasks', 'spend':'Spending over time', 'workforce':'Recent permitted tasks', 'savings':'Current task results', 'oversight':'Your active tasks'}[board] }}</h2><div id="department-board-records"></div></section>
+  </div>
+  <p class="muted">{% if board == 'overview' %}Status counts cover all your permitted tasks on record. The period figures count tasks created in the period and currently finished tasks last updated in the period. A finished task can have several attempts.{% elif board == 'spend' %}The period includes finished attempts started during the selected range. Running attempts appear separately. A retry can produce several attempts for one task.{{ ' ' ~ cost_notice }}{% elif board == 'workforce' %}{{ cost_notice }}{% elif board == 'savings' %}{{ savings_notice }} {% if can_compare %}<a href="/outcome-pilots">Open Workflow pilots to record or review a comparison</a>.{% else %}Ask an administrator for permission to operate before recording or reviewing comparisons.{% endif %}{% else %}{{ oversight_notice }} <a href="/approvals">Open Approvals</a>.{% endif %}</p>
+</section>
+<script src="/static/lightwork-department-board.js"></script>
+{% endblock %}

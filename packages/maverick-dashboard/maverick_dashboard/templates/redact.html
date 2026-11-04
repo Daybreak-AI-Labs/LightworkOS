@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Redaction check · Lightwork{% endblock %}
+{% block content %}
+  <h1 class="page-title">Redaction check</h1>
+  <p class="page-subtitle">Paste text to find passwords, keys and personal details, choose which kinds to hide, and copy the cleaned result. Nothing you paste is stored.</p>
+  <div class="panel">
+    <label for="redact-input">Text to check</label>
+    <textarea id="redact-input" class="input" rows="8" style="width:100%"></textarea>
+    <fieldset id="kind-fieldset" hidden style="border:0;padding:0;margin:0.5rem 0"><legend>Hide these kinds of details</legend><div id="kind-toggles"></div></fieldset>
+    <button id="redact-preview" type="button" class="btn btn--primary">Check text</button>
+    <div class="section-head"><h2>Cleaned text <span id="proof-badge" class="muted"></span></h2><button id="redact-copy" type="button" class="btn btn--ghost" hidden>Copy cleaned text</button></div>
+    <pre id="redact-output" style="white-space:pre-wrap"></pre>
+  </div>
+  <script nonce="{{ csp_script_nonce }}">
+    const input = document.getElementById("redact-input");
+    const toggles = document.getElementById("kind-toggles");
+    const output = document.getElementById("redact-output");
+    const badge = document.getElementById("proof-badge");
+    const previewBtn = document.getElementById("redact-preview");
+    const copyBtn = document.getElementById("redact-copy");
+    const fieldset = document.getElementById("kind-fieldset");
+    const words = (k) => { const t = String(k || "").replace(/[_-]+/g, " ").trim(); return t.charAt(0).toUpperCase() + t.slice(1); };
+    copyBtn.addEventListener("click", () => {
+      if (window.mvCopy) window.mvCopy(output.textContent, "Cleaned text copied");
+      else if (navigator.clipboard) navigator.clipboard.writeText(output.textContent);
+    });
+    let kinds = [];
+    let inflight = false;
+    async function preview(selected) {
+      if (inflight) return;              // one request at a time (button + toggles share it)
+      inflight = true;
+      previewBtn.disabled = true; previewBtn.setAttribute("aria-busy", "true");
+      badge.className = "muted"; badge.textContent = "Checking…";
+      try {
+        const res = await fetch("/api/v1/redact/preview", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({text: input.value, kinds: selected || []}),
+        });
+        let d;
+        try { d = await res.json(); }
+        catch (e) {
+          const msg = "Could not read the result. Try again.";
+          badge.className = "badge failure"; badge.textContent = msg;
+          mvToast(msg, { error: true });
+          return;
+        }
+        if (!res.ok) {
+          const msg = window.mvErrorText ? window.mvErrorText({ status: res.status, headers: res.headers }, "check the text") : "Could not check the text. Try again.";
+          badge.className = "badge failure"; badge.textContent = msg;
+          mvToast(msg, { error: true });
+          return;
+        }
+        const findings = (d && d.findings) || [];
+        kinds = [...new Set(findings.map(f => f.kind))];
+        toggles.replaceChildren(...kinds.map(k => {
+          const id = "kind-" + k.replace(/[^a-z0-9]/gi, "-");
+          const label = document.createElement("label");
+          label.style.marginRight = "0.75rem";
+          const box = document.createElement("input");
+          box.type = "checkbox"; box.id = id; box.value = k;
+          box.checked = !selected || selected.includes(k);
+          box.addEventListener("change", () => {
+            const chosen = [...toggles.querySelectorAll("input:checked")].map(b => b.value);
+            preview(chosen);
+          });
+          label.append(box, " " + words(k));
+          return label;
+        }));
+        fieldset.hidden = !kinds.length;
+        output.textContent = d.redacted || "";
+        copyBtn.hidden = !output.textContent;
+        badge.className = "muted";
+        badge.textContent = d.proven_clean ? "(nothing sensitive left)" :
+          "(still contains: " + ((d.residual || []).map(words).join(", ")) + ")";
+      } catch (e) {
+        badge.className = "badge failure";
+        badge.textContent = "Can't reach Lightwork. Check your connection and try again.";
+        mvToast("Could not check the text — Lightwork can't be reached. Check your connection and try again.", { error: true });
+      } finally {
+        inflight = false;
+        previewBtn.disabled = false; previewBtn.removeAttribute("aria-busy");
+      }
+    }
+    previewBtn.addEventListener("click", () => preview(null));
+  </script>
+{% endblock %}

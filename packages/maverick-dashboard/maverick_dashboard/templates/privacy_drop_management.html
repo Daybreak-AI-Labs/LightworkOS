@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block title %}California DROP requests · Lightwork{% endblock %}
+{% block head_extra %}
+<style>
+  .drop-shell { display: grid; gap: var(--space-4, 1rem); min-width: 0; overflow-wrap: anywhere; }
+  .drop-fields { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); align-items: end; }
+  .drop-fields label, .drop-checks label { display: flex; flex-direction: column; gap: .25rem; }
+  .drop-checks { border: 0; padding: 0; margin: .75rem 0 0; display: grid; gap: .35rem; }
+  .drop-checks label { flex-direction: row; align-items: center; gap: .5rem; }
+  .drop-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .75rem; }
+  .drop-list { margin: .5rem 0 0; padding-left: 1.2rem; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+{% from "_hero.html" import hero %}
+{{ hero('Privacy', 'California DROP requests',
+        subtitle='California Delete Request and Opt-out Platform (DROP)',
+        lede="Handle deletion and opt-out requests received through California's DROP system, and keep evidence of each result.") }}
+<p>{{ back_link('/privacy', 'Privacy') }}</p>
+
+<details class="panel">
+  <summary>About this page&rsquo;s safeguards</summary>
+  <ul class="drop-list">
+    <li>People&rsquo;s names and contact details never enter this page. Lightwork keeps only fingerprints of the files you add.</li>
+    <li>Every change to data brokers, requests and the signing key needs approval from a second administrator.</li>
+    <li>A request can only be closed once a second administrator has approved evidence of the result.</li>
+    <li>Records here show what your team did. They do not prove that California received or accepted the result.</li>
+  </ul>
+</details>
+
+<div id="drop-workbench" class="drop-shell" data-api-base="{{ api_base }}"
+     data-can-operate="{{ 'true' if drop_can_operate else 'false' }}"
+     data-can-audit="{{ 'true' if drop_can_audit else 'false' }}"
+     data-can-admin="{{ 'true' if drop_can_admin else 'false' }}">
+  <p id="drop-readiness" class="muted" role="status" aria-live="polite">Checking whether DROP requests are set up…</p>
+  <p id="drop-status" class="muted" role="status" aria-live="polite"></p>
+
+  <div class="section-head"><h2>Requests</h2>
+    {% if drop_can_admin %}<button type="button" class="btn btn--primary" id="drop-import">Add a DROP request</button>{% endif %}</div>
+  {% if not drop_can_operate and not drop_can_audit %}
+  <p class="muted">You can see a request&rsquo;s progress when someone shares its request number with you. Ask an administrator for access to the full list.</p>
+  {% endif %}
+  <div class="panel" id="drop-requests"><p class="muted">Loading…</p></div>
+
+  {% if drop_can_admin %}
+  <section class="panel" id="drop-import-panel" hidden aria-labelledby="drop-import-title">
+    <h2 id="drop-import-title">Add a DROP request</h2>
+    <p class="muted">Enter the details DROP gave you. A second administrator approves the request before your team can start on it.</p>
+    <form id="drop-import-form" autocomplete="off">
+      <div class="drop-fields">
+        <label for="drop-import-number">DROP request number
+          <input id="drop-import-number" class="input" type="number" min="1" max="2147483647" step="1" required>
+        </label>
+        <label for="drop-import-broker">Data broker
+          <select id="drop-import-broker" class="select" required><option value="">Loading…</option></select>
+        </label>
+        <label for="drop-import-type">What the person asked for
+          <select id="drop-import-type" class="select" required>
+            <option value="DataDeletion">Delete their data</option>
+            <option value="OptOut">Stop selling or sharing their data</option>
+          </select>
+        </label>
+        <label for="drop-import-language">Reply language
+          <select id="drop-import-language" class="select" required>
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="zh">Chinese</option>
+            <option value="vi">Vietnamese</option>
+            <option value="tl">Tagalog</option>
+            <option value="ko">Korean</option>
+          </select>
+        </label>
+        <label for="drop-import-template">Reply template number from DROP
+          <input id="drop-import-template" class="input" maxlength="36" required placeholder="As shown in DROP">
+        </label>
+        <label for="drop-import-until">Handle by
+          <input id="drop-import-until" class="input" type="date" required>
+        </label>
+        <label for="drop-import-match">Identity match file from DROP
+          <input id="drop-import-match" class="input" type="file" required>
+        </label>
+        <label for="drop-import-evidence">Copy of the DROP record
+          <input id="drop-import-evidence" class="input" type="file" required>
+        </label>
+      </div>
+      <div class="drop-actions">
+        <button type="submit" class="btn btn--primary">Send for approval</button>
+        <button type="button" class="btn btn--ghost" data-close="drop-import-panel">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel" id="drop-outcome-panel" hidden aria-labelledby="drop-outcome-title">
+    <h2 id="drop-outcome-title">Record the result</h2>
+    <p class="muted" id="drop-outcome-for"></p>
+    <form id="drop-outcome-form" autocomplete="off">
+      <div class="drop-fields">
+        <label for="drop-outcome-status">Result
+          <select id="drop-outcome-status" class="select" required>
+            <option value="DELETED">Data deleted</option>
+            <option value="OPTED_OUT">Opted out of selling or sharing</option>
+            <option value="EXEMPTED">Exempt (legal reason to keep the data)</option>
+            <option value="NOT_FOUND">No data found for this person</option>
+          </select>
+        </label>
+        <label for="drop-outcome-observed">Date the result was confirmed
+          <input id="drop-outcome-observed" class="input" type="date" required>
+        </label>
+        <label for="drop-outcome-until">Evidence valid until
+          <input id="drop-outcome-until" class="input" type="date" required>
+        </label>
+        <label for="drop-outcome-evidence">Evidence of the result
+          <input id="drop-outcome-evidence" class="input" type="file" required>
+        </label>
+      </div>
+      <fieldset class="drop-checks">
+        <legend>What has been checked</legend>
+        <label><input type="checkbox" id="drop-check-search"> Every system that could hold the data was searched</label>
+        <label><input type="checkbox" id="drop-check-providers"> Every connected system finished its part</label>
+        <label><input type="checkbox" id="drop-check-deletion"> Deletion was confirmed</label>
+        <label><input type="checkbox" id="drop-check-optout"> Opt-out was confirmed</label>
+        <label><input type="checkbox" id="drop-check-exemption"> Exemption was approved</label>
+      </fieldset>
+      <div class="drop-actions">
+        <button type="submit" class="btn btn--primary">Send for approval</button>
+        <button type="button" class="btn btn--ghost" data-close="drop-outcome-panel">Cancel</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if drop_can_audit or drop_can_admin %}
+  <div class="section-head"><h2>Waiting for a second administrator</h2></div>
+  <p class="muted">Changes proposed by one administrator take effect only after a different administrator approves them.</p>
+  <div class="panel" id="drop-waiting"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>Data brokers</h2>
+    {% if drop_can_admin %}<button type="button" class="btn btn--ghost" id="drop-add-broker">Add a data broker</button>{% endif %}</div>
+  <div class="panel" id="drop-brokers"><p class="muted">Loading…</p></div>
+
+  {% if drop_can_admin %}
+  <section class="panel" id="drop-broker-panel" hidden aria-labelledby="drop-broker-title">
+    <h2 id="drop-broker-title">Add a data broker</h2>
+    <p class="muted">Add the data broker registration your requests arrive under. A second administrator approves it.</p>
+    <form id="drop-broker-form" autocomplete="off">
+      <div class="drop-fields">
+        <label for="drop-broker-name">Broker name
+          <input id="drop-broker-name" class="input" maxlength="80" required placeholder="For example: Acme Data">
+        </label>
+        <label for="drop-broker-until">Registration valid until
+          <input id="drop-broker-until" class="input" type="date" required>
+        </label>
+        <label for="drop-broker-registration">Registration document
+          <input id="drop-broker-registration" class="input" type="file" required>
+        </label>
+        <label for="drop-broker-evidence">Proof the registration is yours
+          <input id="drop-broker-evidence" class="input" type="file" required>
+        </label>
+      </div>
+      <div class="drop-actions">
+        <button type="submit" class="btn btn--primary">Send for approval</button>
+        <button type="button" class="btn btn--ghost" data-close="drop-broker-panel">Cancel</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+  {% endif %}
+
+  {% if drop_can_audit %}
+  <div class="panel drop-actions">
+    <button type="button" class="btn btn--ghost" id="drop-integrity">Check the records are intact</button>
+  </div>
+  {% endif %}
+
+  {% if drop_can_audit or drop_can_admin %}
+  <details class="panel" id="drop-keys-panel">
+    <summary>Advanced: approval signing key</summary>
+    <p class="muted">Lightwork signs who proposed and approved each change with this key. Replacing it is rare and needs a second administrator.</p>
+    <div id="drop-keys"><p class="muted">Open this section to load the key history.</p></div>
+    {% if drop_can_admin %}
+    <div class="drop-actions"><button type="button" class="btn btn--ghost" id="drop-rotate">Replace the signing key</button></div>
+    {% endif %}
+  </details>
+  {% endif %}
+</div>
+<noscript><p class="panel">This page needs JavaScript turned on.</p></noscript>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-privacy-drop-management.js" defer></script>
+{% endblock %}

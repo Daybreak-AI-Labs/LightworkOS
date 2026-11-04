@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_dsar.
+name = "itgrc_dsar"
+compartment = "itgrc_privacy"
+description = "Data-subject access / portability / erasure."
+
+persona = """You are the Data-Subject Rights specialist: fulfill GDPR Art 15/17/20 and CCPA access/delete requests; propose erasures (erasure is irreversible and human-gated). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "DSAR fulfillment package"
+consumers = ["privacy_officer", "compliance_officer"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Verify requester"
+instruction = "Read the request intake and identity-verification evidence to confirm the data subject and the right being exercised."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Classify request"
+instruction = "Determine whether this is an access, portability, or erasure request and the applicable GDPR Art 15/17/20 or CCPA timeline."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Locate records"
+instruction = "Map the systems and data stores holding the subject's personal data to assemble the response set."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Draft response"
+instruction = "Compile the disclosure or portable export and propose erasures, flagging records under legal-hold or retention duty that cannot be deleted."
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Route the package and any proposed erasure to the privacy officer since erasure is irreversible and human-gated."
+gate = "approval"

@@ -1,0 +1,97 @@
+name: MCP client (Java)
+
+# Executes the Java/JVM MCP client example against a live `maverick mcp` stdio
+# server. Mirrors .github/workflows/mcp-clients.yml (TypeScript + Go); kept as a
+# separate workflow because the JVM toolchain (setup-java + Maven) is heavier
+# and the Java client was added later.
+#
+# Only the no-LLM flow runs (initialize -> tools/list -> maverick_facts_get);
+# maverick_start needs a provider key + budget and is out of scope for CI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/maverick-core/**'
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/java/**'
+      - 'docs/clients/java-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - '.github/workflows/mcp-client-java.yml'
+  pull_request:
+    # The client-parity contract is the MCP wire protocol, which lives in
+    # maverick-mcp; a blanket 'packages/maverick-core/**' filter fired this
+    # JVM-toolchain job on essentially every Python PR. This is not a required
+    # check, so a core change that alters the exposed surface is still caught by
+    # the push:main run above without paying for a JDK build on every unrelated
+    # core PR.
+    paths:
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/java/**'
+      - 'docs/clients/java-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - '.github/workflows/mcp-client-java.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+jobs:
+  java:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: "temurin"
+          java-version: "21.0.12+8.0.LTS"
+          cache: "maven"
+      - name: Install Lightwork (kernel + MCP server)
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -I -m pip install -e ./packages/maverick-core
+          python -I -m pip install --no-deps -e ./packages/maverick-mcp
+          python -I -m pip check
+          python -I scripts/verify_constraint_closure.py
+      - name: Verify bounded and orphan-free Java cleanup
+        working-directory: examples/clients/java
+        run: |
+          status=0
+          timeout --kill-after=5s 60s \
+            mvn --batch-mode --no-transfer-progress --strict-checksums \
+              test-compile exec:java@cleanup-acceptance || status=$?
+          if pgrep -af '[M]averickChild.*--maverick-child'; then
+            pkill -KILL -f '[M]averickChild.*--maverick-child'
+            echo "Java cleanup acceptance left an orphan maverick child" >&2
+            exit 1
+          fi
+          exit "$status"
+      - name: Run the Java MCP client end-to-end
+        working-directory: examples/clients/java
+        run: |
+          status=0
+          timeout --kill-after=5s 90s \
+            mvn --batch-mode --no-transfer-progress --strict-checksums \
+              compile exec:java || status=$?
+          if pgrep -af '[T]aggedMcpLauncher|[m]averick.*mcp'; then
+            pkill -KILL -f '[T]aggedMcpLauncher|[m]averick.*mcp'
+            echo "Java live MCP smoke left an orphan maverick child" >&2
+            exit 1
+          fi
+          exit "$status"

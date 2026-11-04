@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ ut('Your budget') }} - Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('', ui('Your budget before work starts'),
+        lede=ui('Review policy ceilings, reserved allowance and upcoming work. This preview never raises a limit or starts a paid request.'),
+        compact=true) }}
+{% from "_spend_freshness.html" import spend_freshness %}
+{{ spend_freshness(spend_recorded_at, live=true) }}
+  {% include "_practice_cost.html" %}
+<section class="panel" id="budget-guidance" data-goal="{{ goal_id or '' }}">
+  <p><a href="/chat">{{ ui('Start a conversation') }}</a> · <a href="/automations">{{ ui('Manage schedules') }}</a> · <a href="/spend">{{ ui('Spend and cost evidence') }}</a></p>
+  <form id="budget-preview-form" data-product-validation>
+    <label>{{ ui('Requested task ceiling (USD, optional)') }} <input class="input" name="max_dollars" type="number" min="0" step="0.01"></label>
+    <label>{{ ui('Requested time ceiling (seconds, optional)') }} <input class="input" name="max_wall_seconds" type="number" min="0" step="1"></label>
+    <p class="muted">{{ ui("These fields compare proposed limits. Set the reviewed limit in the launch or resume control when available; this page does not change a task's settings.") }}</p>
+    <button class="btn btn--primary" type="submit">{{ ui('Refresh preview') }}</button>
+  </form>
+  <p id="budget-status" role="status" aria-live="polite"></p>
+  <div id="budget-preview"></div>
+  <h2>{{ ui('Upcoming work before the daily reset') }}</h2>
+  <div id="budget-forecast"></div>
+  <h2>{{ ui('Accounting help requests') }}</h2>
+  <p>{{ ui("Requests share only the provider, accounting period and your receipt references with an installation administrator. Task text, credentials and other workspaces' ledger details stay out of this request.") }}</p>
+  <div id="budget-cases"></div>
+</section>
+<script src="/static/lightwork-budget-guidance.js" defer></script>
+{% endblock %}

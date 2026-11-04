@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-launch-oauth-return"
+description = "Enables the launch_oauth_return command without any pre-configured scope."
+commands.allow = ["launch_oauth_return"]
+
+[[permission]]
+identifier = "deny-launch-oauth-return"
+description = "Denies the launch_oauth_return command without any pre-configured scope."
+commands.deny = ["launch_oauth_return"]

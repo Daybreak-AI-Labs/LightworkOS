@@ -1,0 +1,279 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'benchmarks/GOVERNANCE_FRONTIER_RESULTS.md'
+      - 'benchmarks/results/governance-frontier-v1/**'
+      - 'mkdocs.yml'
+      - 'mkdocs.public.yml'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'CODE_OF_CONDUCT.md'
+      - 'SECURITY.md'
+      - 'LICENSE'
+      - 'TRADEMARK.md'
+      - 'CLA.md'
+      - 'requirements/docs.txt'
+      - '.github/workflows/docs.yml'
+  # Also on PRs, so a --strict build failure blocks the merge instead of
+  # surfacing only after it.
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'benchmarks/GOVERNANCE_FRONTIER_RESULTS.md'
+      - 'benchmarks/results/governance-frontier-v1/**'
+      - 'mkdocs.yml'
+      - 'mkdocs.public.yml'
+      - 'README.md'
+      - 'CONTRIBUTING.md'
+      - 'CODE_OF_CONDUCT.md'
+      - 'SECURITY.md'
+      - 'LICENSE'
+      - 'TRADEMARK.md'
+      - 'CLA.md'
+      - 'requirements/docs.txt'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install MkDocs Material
+        run: |
+          python -m pip install --upgrade 'pip==26.2.2'
+          python -m pip install --requirement requirements/docs.txt
+      - name: Symlink top-level community files into docs/
+        # MkDocs only serves files under docs/; we symlink so we don't
+        # duplicate content in two places.
+        run: |
+          set -e
+          mkdir -p docs
+          for f in CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md \
+                   TRADEMARK.md CLA.md; do
+            if [ -f "$f" ] && [ ! -e "docs/$f" ]; then
+              ln -s "../$f" "docs/$f"
+            fi
+          done
+      - name: Stage the reviewed public-document allowlist
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path, PurePosixPath
+
+          repository = Path.cwd().resolve()
+          docs = Path("docs").resolve()
+          stage = Path(".public-docs")
+          stage.mkdir()
+          destinations: set[str] = set()
+          reviewed_non_markdown = {
+              ("LICENSE", "license.md"),
+              (
+                  "clients/examples/rest_lifecycle.py",
+                  "clients/examples/rest_lifecycle.py",
+              ),
+              (
+                  "clients/examples/lightwork.ts",
+                  "clients/examples/lightwork.ts",
+              ),
+              (
+                  "clients/examples/external_agent_loop.py",
+                  "clients/examples/external_agent_loop.py",
+              ),
+              (
+                  "benchmarks/results/governance-frontier-v1/"
+                  "measured-manifest.json",
+                  "benchmarks/results/governance-frontier-v1/"
+                  "measured-manifest.json",
+              ),
+              (
+                  "benchmarks/results/governance-frontier-v1/"
+                  "trusted-publisher.pub",
+                  "benchmarks/results/governance-frontier-v1/"
+                  "trusted-publisher.pub",
+              ),
+              (
+                  "benchmarks/results/governance-frontier-v1/"
+                  "verify_manifest.py",
+                  "benchmarks/results/governance-frontier-v1/"
+                  "verify_manifest.py",
+              ),
+          }
+
+          for line_number, raw in enumerate(
+              (docs / "public-docs.txt").read_text(encoding="utf-8").splitlines(),
+              start=1,
+          ):
+              line = raw.strip()
+              if not line or line.startswith("#"):
+                  continue
+              source_name, separator, destination_name = line.partition("|")
+              destination_name = destination_name if separator else source_name
+              repository_source = source_name.startswith("@repo/")
+              source_value = (
+                  source_name.removeprefix("@repo/")
+                  if repository_source
+                  else source_name
+              )
+              source_rel = PurePosixPath(source_value)
+              destination_rel = PurePosixPath(destination_name)
+              for label, relative in (
+                  ("source", source_rel),
+                  ("destination", destination_rel),
+              ):
+                  if (
+                      relative.is_absolute()
+                      or ".." in relative.parts
+                  ):
+                      raise SystemExit(
+                          f"public-docs.txt:{line_number}: unsafe {label} {relative}"
+                      )
+              non_markdown = (
+                  source_rel.suffix.lower() != ".md"
+                  or destination_rel.suffix.lower() != ".md"
+              )
+              if non_markdown and (
+                  source_rel.as_posix(),
+                  destination_rel.as_posix(),
+              ) not in reviewed_non_markdown:
+                  raise SystemExit(
+                      f"public-docs.txt:{line_number}: unreviewed non-Markdown "
+                      f"mapping {source_rel} -> {destination_rel}"
+                  )
+              destination_key = destination_rel.as_posix()
+              if destination_key in destinations:
+                  raise SystemExit(
+                      f"public-docs.txt:{line_number}: duplicate {destination_key}"
+                  )
+              destinations.add(destination_key)
+
+              source_root = repository if repository_source else docs
+              source = source_root.joinpath(*source_rel.parts)
+              if not source.is_file():
+                  raise SystemExit(
+                      f"public-docs.txt:{line_number}: missing source {source_rel}"
+                  )
+              resolved_source = source.resolve(strict=True)
+              if not resolved_source.is_relative_to(repository):
+                  raise SystemExit(
+                      f"public-docs.txt:{line_number}: source escapes repository "
+                      f"{source_rel}"
+                  )
+              target = stage.joinpath(*destination_rel.parts)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(source.read_bytes())
+
+          staged = {
+              path.relative_to(stage).as_posix()
+              for path in stage.rglob("*")
+              if path.is_file()
+          }
+          if staged != destinations:
+              raise SystemExit(
+                  f"staged public docs differ from allowlist: "
+                  f"extra={sorted(staged - destinations)}, "
+                  f"missing={sorted(destinations - staged)}"
+              )
+          print(f"staged {len(staged)} explicitly public documents/assets")
+          PY
+      - name: Build the published documentation site
+        # mkdocs.yml describes the full documentation set. The public overlay
+        # builds only the pages staged from docs/public-docs.txt, so a page
+        # that is not allowlisted is absent from the Pages artifact rather
+        # than merely hidden from navigation.
+        run: mkdocs build --strict --config-file mkdocs.public.yml --site-dir _site
+      - name: Verify the Pages artifact contains only allowlisted documents
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path, PurePosixPath
+
+          manifest = Path("docs/public-docs.txt")
+          expected: set[str] = set()
+          expected_assets: set[str] = set()
+          for raw in manifest.read_text(encoding="utf-8").splitlines():
+              line = raw.strip()
+              if not line or line.startswith("#"):
+                  continue
+              source_name, separator, destination_name = line.partition("|")
+              relative = PurePosixPath(destination_name if separator else source_name)
+              if relative.suffix.lower() != ".md":
+                  expected_assets.add(relative.as_posix())
+              elif relative.as_posix() == "index.md":
+                  expected.add("index.html")
+              else:
+                  expected.add(relative.with_suffix("").as_posix() + "/index.html")
+
+          site = Path("_site")
+          actual = {
+              path.relative_to(site).as_posix()
+              for path in site.rglob("*.html")
+              if path.name != "404.html"
+          }
+          if actual != expected:
+              raise SystemExit(
+                  "public HTML differs from allowlist: "
+                  f"extra={sorted(actual - expected)}, "
+                  f"missing={sorted(expected - actual)}"
+              )
+          for relative in sorted(expected_assets):
+              staged_asset = Path(".public-docs", *PurePosixPath(relative).parts)
+              published_asset = Path("_site", *PurePosixPath(relative).parts)
+              if not published_asset.is_file():
+                  raise SystemExit(f"public asset was not published: {relative}")
+              if published_asset.read_bytes() != staged_asset.read_bytes():
+                  raise SystemExit(
+                      f"public asset differs from reviewed source: {relative}"
+                  )
+          print(
+              f"verified {len(actual)} public pages and "
+              f"{len(expected_assets)} exact evidence assets"
+          )
+          PY
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        if: github.event_name != 'pull_request'
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    # Build on PRs, publish only from main: a PR must not be able to replace
+    # the live site, and Pages deployment needs write permissions a fork PR
+    # does not get. workflow_dispatch stays able to republish by hand.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        # Keep Pages/OIDC write authority out of the PR build job. This runs
+        # only for main deployments and enables Pages on first use.
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+        with:
+          enablement: true
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

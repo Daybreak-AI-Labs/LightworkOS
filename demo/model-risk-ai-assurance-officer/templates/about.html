@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Capabilities &middot; Model Risk &amp; AI Assurance Officer{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="tag">{{ caps.mode }}</p>
+  <h1>Capability and authority matrix</h1>
+  <p><strong>Analysis backend:</strong> <code>{{ caps.analysis_backend }}</code>. <strong>Authority:</strong> {{ caps.authority }}. This self-contained app never imports Lightwork core and never gains platform authority.</p>
+</section>
+<section class="notice" aria-label="Important boundary">
+  <strong>No certification, legal verdict, or DGM execution.</strong> NIST AI RMF, ISO/IEC 42001, and EU AI Act references are versioned advisory metadata. Legal role and applicability are human-asserted and default to <code>undetermined</code>. Current official sources and qualified counsel must be consulted because standards, guidance, and implementation timing change. A readiness report never promotes, deploys, rolls back, files, tickets, messages, or calls a provider.
+</section>
+<section class="card">
+  <h2>Capability matrix</h2>
+  <table>
+    <caption>Every advertised capability, implementation binding, and authority boundary</caption>
+    <thead><tr><th>Capability</th><th>Status</th><th>Implementation</th><th>Authority</th></tr></thead>
+    <tbody>{% for item in caps.capabilities %}<tr><td>{{ item.label }}</td><td>{{ "Included here" if item.active else "Integrated Lightwork only / prohibited" }}</td><td><code>{{ item.implementation }}</code></td><td>{{ item.authority }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+<section class="card">
+  <h2>Versioned advisory framework catalog</h2>
+  <table><thead><tr><th>Framework</th><th>Version represented</th><th>Mapping</th><th>Status note</th></tr></thead><tbody>
+    {% for item in caps.framework_catalog %}<tr><td><a href="{{ item.url }}">{{ item.name }}</a></td><td>{{ item.version }}</td><td>{{ item.mapping_type }}</td><td>{{ item.status_note }}</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+<section class="grid">
+  <article class="card"><h2>Included locally</h2><ul>{% for item in caps.active %}<li>{{ item }}</li>{% endfor %}</ul></article>
+  <article class="card"><h2>Available with the full platform or unavailable</h2><ul>{% for item in caps.gated %}<li>{{ item }}</li>{% endfor %}</ul></article>
+</section>
+{% endblock %}

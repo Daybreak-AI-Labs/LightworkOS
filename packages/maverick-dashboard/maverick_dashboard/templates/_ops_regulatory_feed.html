@@ -1,0 +1,32 @@
+{#- Bring reviewed regulatory alerts into impact records (maverick
+    regulatory-feed sync). Filled by lightwork-ops-panels.js. -#}
+{% include "_ops_styles.html" %}
+<section class="panel" id="ops-feed" aria-labelledby="ops-feed-title" data-ops-needs="installation_admin">
+  <h2 id="ops-feed-title">Turn regulation alerts into impact records</h2>
+  <p class="muted">Choose which alerts to use and what your rule covers. Each matching alert gets an impact record
+    for review, evidence that may be out of date is flagged, and a customer notice is drafted.</p>
+  <div class="ops-row">
+    <label for="ops-feed-queue">Alerts
+      <select id="ops-feed-queue" class="select">
+        <option value="accepted">Reviewed and accepted</option>
+        <option value="in_review">Being reviewed</option>
+        <option value="open">Not reviewed yet</option>
+      </select></label>
+    <button type="button" class="btn btn--ghost" id="ops-feed-look">Look at the alerts</button>
+  </div>
+  <div id="ops-feed-form" hidden>
+    <div class="ops-row">
+      <label for="ops-feed-regimes">Regulations
+        <select id="ops-feed-regimes" class="select" multiple size="5"></select></label>
+      <label for="ops-feed-domains">Areas of work
+        <select id="ops-feed-domains" class="select" multiple size="5"></select></label>
+      <label for="ops-feed-assets">AI systems affected (optional)
+        <select id="ops-feed-assets" class="select" multiple size="5" data-ops-assets></select></label>
+    </div>
+    <label for="ops-feed-notices" class="ops-actions"><input type="checkbox" id="ops-feed-notices">
+      Also send the customer notices now</label>
+    <p><button type="button" class="btn btn--primary" id="ops-feed-run">Create impact records</button></p>
+  </div>
+  <div id="ops-feed-msg" role="status" aria-live="polite" class="muted"></div>
+</section>
+<script src="/static/lightwork-ops-panels.js" defer></script>

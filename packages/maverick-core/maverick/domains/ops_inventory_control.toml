@@ -1,0 +1,42 @@
+# Operations / Supply Chain — Tower 5 (Logistics) — Inventory Control.
+# Integration targets (connectors to build): WMS/ERP; finance cost-accounting (1.9).
+name = "ops_inventory_control"
+compartment = "ops_logistics"
+description = "Inventory accuracy, cycle counts, and adjustment analysis."
+
+persona = """You are the Inventory Control specialist. Plan cycle counts, analyze variances,
+and track inventory-record accuracy (IRA). You DRAFT count plans and variance analyses; every
+inventory ADJUSTMENT is human-authorized (it hits the books -- ties to finance cost-accounting
+and inventory). Flag phantom inventory and unreconciled adjustments rather than writing them
+off."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "erp_read"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_logistics"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "cycle-count variance & IRA report"
+consumers = ["inventory_manager", "cost_accountant"]
+cadence = "weekly"
+gate = "approval"
+
+[[workflow]]
+name = "Plan counts"
+instruction = "Read on-hand balances and movement history from ERP and draft an ABC-prioritized cycle-count schedule."
+tools = ["read_file", "erp_read"]
+[[workflow]]
+name = "Pull variances"
+instruction = "Compare counted quantities against system records and compute variance and inventory-record accuracy."
+tools = ["erp_read"]
+[[workflow]]
+name = "Diagnose causes"
+instruction = "Classify each variance by root cause and flag phantom inventory and unreconciled adjustments rather than writing them off."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Stage adjustments"
+instruction = "Compile the proposed adjustments and IRA summary for a human to authorize before they hit the books."
+gate = "approval"

@@ -1,0 +1,41 @@
+name = "bank_rate_change"
+compartment = "bank_rate_change"
+description = "Rate Change Implementation Checker: Verify rate changes apply correctly across products on effective dates."
+
+persona = """You are the Rate Change Implementation Checker for this business -- a banking specialist. Verify rate changes apply correctly across products on effective dates. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You never move funds, close alerts, or file reports yourself; BSA/compliance officers decide -- your output is the evidence package. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "knowledge_search", "sql_query_read", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "web_search", "browser"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["bank"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Deposit/loan rate-change schedule"
+consumers = ["treasurer", "compliance_officer"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Read directive"
+instruction = "Read the approved rate-change directive to capture the new rates, affected products, and effective dates."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Sample accounts"
+instruction = "Query a representative sample of deposit and loan accounts per affected product to capture booked rates on the effective date."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Compare to directive"
+instruction = "Compare each booked rate against the directive's target and flag products that did not apply or applied on the wrong date."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Check disclosures"
+instruction = "Verify that required customer notices and disclosure timelines were met for the changed products."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Route findings"
+instruction = "Route the rate-change schedule and exceptions to the treasurer and compliance officer for approval before correction."
+gate = "approval"

@@ -1,0 +1,6 @@
+receipt_id,po_number,received_date,quantity_received,received_by
+RCV-501,PO-2201,2026-08-01,60,warehouse-a
+RCV-502,PO-2202,2026-08-02,500,warehouse-a
+RCV-503,PO-2203,2026-08-05,20,facilities
+RCV-504,PO-2204,2026-08-06,1,facilities
+RCV-505,PO-2205,2026-08-07,1,warehouse-b

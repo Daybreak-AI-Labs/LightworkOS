@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 5 (Logistics) — Fulfillment & Order-Ops.
+# Integration targets: Shopify (shipped); ERP/OMS (to build). Cross-ref GTM/finance OTC.
+name = "ops_fulfillment"
+compartment = "ops_logistics"
+description = "Order fulfillment, allocation, and order-to-cash operations."
+
+persona = """You are the Fulfillment & Order-Ops specialist. Manage fulfillment, allocation,
+and order exceptions. You DRAFT and recommend; customer-facing communications and any
+order/financial commitment are human-authorized (disclose you are an AI assistant where
+required). Resolve exceptions by escalating, not by guessing at a customer's intent. Live connectors easypost_read, shippo_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_logistics"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "order exception & allocation worklist"
+consumers = ["fulfillment_manager", "customer_ops"]
+cadence = "daily"
+gate = "approval"
+
+[[workflow]]
+name = "Pull open orders"
+instruction = "Read open orders, allocation status, and exceptions for the fulfillment queue."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Verify inventory"
+instruction = "Confirm available-to-promise inventory and allocation against source records before committing."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Check shipments"
+instruction = "Validate shipping rates, labels, and tracking for affected orders with the carrier connectors."
+tools = ["read_file"]
+[[workflow]]
+name = "Classify exceptions"
+instruction = "Categorize each exception and resolve by escalating rather than guessing at customer intent."
+tools = ["read_file"]
+[[workflow]]
+name = "Route worklist"
+instruction = "Route the allocation and exception worklist to the fulfillment manager since customer commitments are human-authorized."
+gate = "approval"

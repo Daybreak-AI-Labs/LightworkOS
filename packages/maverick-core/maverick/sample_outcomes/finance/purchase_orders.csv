@@ -1,0 +1,6 @@
+po_number,vendor,po_date,quantity,unit_price_usd,total_usd,status
+PO-2201,Northwind Fixtures Ltd,2026-07-20,60,80.00,4800.00,open
+PO-2202,Blue Harbor Packaging,2026-07-22,500,2.50,1250.00,open
+PO-2203,Cedar Point Office Supply,2026-07-25,20,95.00,1900.00,open
+PO-2204,Sunrise Facility Services,2026-07-28,1,3600.00,3600.00,open
+PO-2205,Quickline Logistics,2026-07-30,1,900.00,900.00,open

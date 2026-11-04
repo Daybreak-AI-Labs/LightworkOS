@@ -1,0 +1,13 @@
+<section class="panel" id="learning-acquisition" aria-labelledby="learning-acquisition-heading">
+  <h2 id="learning-acquisition-heading">Automatic skill preparation</h2>
+  <p class="muted">Check what is needed before Lightwork can add a matching skill from a trusted publisher.</p>
+  {% if learning_can_manage %}
+  <p id="learning-acquisition-status" role="status" aria-live="polite">Checking current skill preparation…</p>
+  <p class="muted" id="learning-acquisition-detail"></p>
+  <div class="lrn__actions">
+    <button class="btn btn--ghost" id="learning-acquisition-refresh" type="button">Refresh status</button>
+    <a class="btn btn--ghost" id="learning-acquisition-remedy" href="/settings/all?id=skills.trusted_pubkeys">Review trusted skill publishers</a>
+  </div>
+  {% else %}<p class="muted">Ask your administrator to review automatic skill preparation and trusted publishers.</p>{% endif %}
+</section>
+<script defer src="/static/lightwork-learning-acquisition.js"></script>

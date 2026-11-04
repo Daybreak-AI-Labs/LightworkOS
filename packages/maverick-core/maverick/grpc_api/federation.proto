@@ -1,0 +1,124 @@
+// Maverick federation — swarm-to-swarm goal delegation (maverick-federation/1).
+//
+// Two Maverick swarms peer by listing each other under [federation] peers
+// (name + target + shared token); the protocol layer lives in
+// maverick/federation.py and this file is its wire contract. Three RPCs:
+//
+//   Hello        — discovery handshake. Returns the receiver's A2A Agent Card
+//                  (the same JSON document a2a.build_agent_card serves at
+//                  /.well-known/agent-card.json) plus the protocol version
+//                  string. Callers MUST refuse a peer that speaks a different
+//                  protocol or whose card fails A2A validation
+//                  (a2a.parse_remote_card) — never delegate against a card
+//                  you couldn't read.
+//   DelegateGoal — hand one goal to the peer swarm. requested_tools are
+//                  REQUIRED capabilities: the receiver resolves them against
+//                  its local grant narrow-only (capability_boot.negotiate_boot)
+//                  and refuses the delegation when any is not grantable, so a
+//                  delegated goal never runs half-equipped or over-privileged.
+//                  Accepted => the receiver created a local goal row and
+//                  dispatched it; refused => a human-readable reason.
+//   GoalStatus   — point-in-time status of a previously accepted delegation.
+//
+// Auth — fail-CLOSED shared token. Every request carries auth_token; the
+// receiver constant-time-compares it against each configured peer's token and
+// the matching [federation] peers entry IDENTIFIES the caller (audit rows name
+// the peer from local config, never from the wire). A missing or unknown
+// token is refused: DelegateGoal in-band (accepted=false, reason); Hello and
+// GoalStatus abort UNAUTHENTICATED. The token rides in the message body, not
+// transport metadata, so the contract survives non-gRPC bindings.
+//
+// Audit reciprocity — both halves of a delegation land in the audit logs with
+// matching fields: the caller records {peer_node, correlation_id, direction:
+// "sent"} and the receiver records {peer_node, correlation_id, direction:
+// "received"} (kind "federation_delegate"), so comparing the two nodes' logs
+// shows a node that dropped its half of a cross-swarm event.
+//
+// Generate Python stubs with:
+//   python -m grpc_tools.protoc -I<dir containing maverick/> \
+//     --python_out=. --grpc_python_out=. maverick/grpc_api/federation.proto
+// (maverick.federation compiles them on demand when the [grpc] extra is
+// installed; no generated code is checked in.)
+syntax = "proto3";
+
+package maverick.federation.v1;
+
+service MaverickFederation {
+  // Discovery + version handshake. Requires a valid peer token.
+  rpc Hello(HelloRequest) returns (PeerInfo);
+
+  // Delegate one goal to this swarm. Refusals (auth, capability, bad request)
+  // are in-band: accepted=false with a reason.
+  rpc DelegateGoal(DelegateRequest) returns (DelegateResult);
+
+  // Status of an accepted delegation. Requires a valid peer token.
+  rpc GoalStatus(StatusRequest) returns (StatusReply);
+}
+
+message HelloRequest {
+  string node = 1;        // caller's self-declared node name (diagnostic only;
+                          // identity is established by auth_token)
+  string protocol = 2;    // protocol the caller speaks ("maverick-federation/1")
+  string auth_token = 3;  // shared per-peer token (see Auth above)
+}
+
+message PeerInfo {
+  string node = 1;             // receiver's node name
+  string protocol = 2;         // "maverick-federation/1"
+  string agent_card_json = 3;  // receiver's A2A Agent Card as JSON; callers
+                               // validate it before delegating against it
+}
+
+message DelegateRequest {
+  string goal_title = 1;            // required; refused when empty
+  string goal_description = 2;
+  string correlation_id = 3;        // required, caller-generated, unique per
+                                    // delegation — the shared id that links the
+                                    // two audit halves
+  repeated string requested_tools = 4;  // REQUIRED capabilities; the receiver
+                                        // refuses unless its local grant can
+                                        // supply every one (narrow-only)
+  string max_risk = 5;              // optional risk ceiling for the delegated
+                                    // run ("low"|"medium"|"high"|"critical");
+                                    // "" = receiver default. Can only tighten
+                                    // the receiver's own ceiling, never raise it.
+  int64 deadline_ms = 6;            // 0 = none; else the receiver caps the run's
+                                    // wall clock at this budget and the caller
+                                    // uses it as the RPC deadline too
+  string auth_token = 7;
+
+  // Signed-identity (maverick-federation-delegate/1) — additive, optional for
+  // back-compat. The caller signs the canonical delegation envelope with its
+  // audit Ed25519 key; the receiver verifies the signature against the pinned
+  // public key in its [agent_trust] registry for this peer. When the peer has a
+  // pinned key (or [agent_trust] require_signed is set), an absent or invalid
+  // signature is REFUSED — so a leaked shared token alone can no longer
+  // impersonate the peer. created_at gates replay freshness.
+  string sig = 8;          // Ed25519 signature hex over the canonical envelope
+  string pubkey = 9;       // signer's raw Ed25519 public key hex (informational;
+                           // verified against the pinned key, never trusted alone)
+  string key_id = 10;      // signer key fingerprint
+  double created_at = 11;  // epoch seconds; receiver rejects stale/early requests
+}
+
+message DelegateResult {
+  bool accepted = 1;
+  int64 goal_id = 2;  // receiver-LOCAL goal ID, also set for a pending held
+                      // reservation; 0 means its identity is not known here
+  string reason = 3;  // refusal, pending-audit, or uncertain-execution detail;
+                      // retry a pending/unknown request with the SAME correlation
+  string outcome_state = 4; // rejected|pending|accepted|unknown; never infer refusal from a lost response
+  string audit_state = 5; // pending|accepted|unknown
+  string execution_state = 6; // held|not_started|dispatched|unknown; acceptance is not completed work
+}
+
+message StatusRequest {
+  int64 goal_id = 1;  // the goal_id a DelegateResult returned
+  string auth_token = 2;
+}
+
+message StatusReply {
+  string status = 1;  // pending|active|done|blocked|failed|cancelled, or
+                      // "unknown" when the receiver has no such goal
+  string result = 2;  // final result text once terminal ("" otherwise)
+}

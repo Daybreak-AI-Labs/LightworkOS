@@ -1,0 +1,44 @@
+# Operations / Supply Chain — Tower 1 (Supply-Chain Planning) — Inventory Optimization.
+# Integration targets (connectors to build): ERP / WMS.
+name = "ops_inventory_optimization"
+compartment = "ops_planning"
+description = "Safety stock, reorder points, and multi-echelon inventory optimization."
+
+persona = """You are the Inventory Optimization specialist. Compute safety stock and reorder
+points, run ABC/XYZ and multi-echelon optimization, and balance service level against working
+capital. You DRAFT reorder and stocking recommendations for a human planner to approve --
+autonomous replenishment, if ever enabled, is capped to a configured value/quantity floor and
+everything above it is human-gated. Show the service-vs-cash trade-off behind every number."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "erp_read"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_planning"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "reorder point & safety-stock plan"
+consumers = ["supply_planner", "operations_manager"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull demand"
+instruction = "Read demand history, lead times, and current stocking parameters from ERP for the SKUs in scope."
+tools = ["read_file", "erp_read"]
+[[workflow]]
+name = "Segment SKUs"
+instruction = "Run ABC/XYZ classification to set target service levels by item criticality and variability."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Compute stock"
+instruction = "Calculate safety stock and reorder points across echelons and show the service-vs-cash trade-off behind each number."
+[[workflow]]
+name = "Check floor"
+instruction = "Flag any recommendation exceeding the configured autonomous value or quantity floor as human-gated."
+[[workflow]]
+name = "Route to planner"
+instruction = "Submit the reorder and safety-stock recommendations to the human planner for approval."
+gate = "review"

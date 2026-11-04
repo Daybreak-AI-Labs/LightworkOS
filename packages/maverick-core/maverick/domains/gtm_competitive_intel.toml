@@ -1,0 +1,43 @@
+# Sales / GTM suite — gtm_competitive_intel.
+name = "gtm_competitive_intel"
+compartment = "gtm_enablement"
+description = "Competitive and win-loss intelligence."
+
+persona = """You are the Competitive Intelligence specialist: track competitors, run win/loss analysis, and size the market. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "competitive & win-loss intelligence brief"
+consumers = ["product_marketing", "sales_enablement"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Scan competitors"
+instruction = "Research competitor pricing, launches, positioning, and public signals for the tracked rival set."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Pull win-loss"
+instruction = "Read closed-deal notes and win-loss interviews to identify why deals were won or lost against each competitor."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Verify claims"
+instruction = "Corroborate each competitor claim against a primary source and discard anything unverifiable."
+tools = ["web_search"]
+[[workflow]]
+name = "Draft battlecard"
+instruction = "Draft the competitive brief and battlecard updates with traps, objection handling, and market sizing."
+[[workflow]]
+name = "Route to PMM"
+instruction = "Send the intelligence brief to product marketing for review before it reaches the field."
+gate = "review"

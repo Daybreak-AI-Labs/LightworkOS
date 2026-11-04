@@ -1,0 +1,1413 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}AI governance · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .gov-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr)); gap:var(--space-4); }
+  .gov-form { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr)); gap:var(--space-3); margin:var(--space-3) 0; align-items:end; }
+  .gov-form label { display:flex; flex-direction:column; gap:var(--space-1); font-size:var(--text-sm); }
+  .gov-form label.gov-check { flex-direction:row; align-items:center; gap:var(--space-2); }
+  .gov-form__wide { grid-column:1 / -1; }
+  /* Held-delivery comparisons carry long record numbers and fingerprints: wrap them so phones never scroll sideways. */
+  #gov-grc-comparison { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+  .gov-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center; }
+  .gov-table { overflow-x:auto; }
+  .gov-table caption { text-align:left; color:var(--muted); padding:0 0 var(--space-2); }
+  .gov-cite { color:var(--muted); font-size:var(--text-sm); font-weight: var(--font-normal); }
+  .gov-element { margin:var(--space-3) 0; }
+  .gov-element textarea, .gov-element input { width:100%; }
+  .gov-render { max-height:28rem; overflow:auto; padding:var(--space-3); border:1px solid var(--border); border-radius: var(--radius-md); }
+  .gov-trainings { display:grid; gap:var(--space-2); }
+  .gov-training-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto; gap:var(--space-2); align-items:end; }
+  .gov-role-choices { max-height:16rem; overflow:auto; margin:var(--space-2) 0; }
+  .gov-role-choices label { overflow-wrap:anywhere; }
+  .gov-role-choices label[hidden] { display:none; }
+</style>
+
+{% set ASSET_NAMES = {} %}{% for a in governed_assets %}{% set _ = ASSET_NAMES.update({a.asset_id: a.display_name or 'Unnamed AI system'}) %}{% endfor %}
+{% macro asset_name(asset_id) %}<span data-asset-id="{{ asset_id }}">{{ ASSET_NAMES.get(asset_id, 'An AI system not in your inventory') }}</span>{% endmacro %}
+{% macro asset_select(label, help='') %}
+  <label>{{ label }}
+    <select class="select" name="asset_id" required>
+      {% if governed_assets %}<option value="">Choose an AI system</option>{% for a in governed_assets %}<option value="{{ a.asset_id }}">{{ a.display_name or 'Unnamed AI system' }}{% if a.asset_type %} ({{ a.asset_type|humanize }}){% endif %}</option>{% endfor %}
+      {% else %}<option value="">No AI systems registered yet</option>{% endif %}
+    </select>
+    {% if help %}<span class="muted">{{ help }}</span>{% endif %}
+    {% if not governed_assets %}<a class="btn btn--ghost" href="/security/assurance">Register an AI system</a>{% endif %}
+  </label>
+{% endmacro %}
+{% set STATUS = {'draft': 'In progress', 'completed': 'Complete', 'outdated': 'Reopened — needs updating', 'recorded': 'Recorded', 'reassessment_required': 'Needs a new assessment', 'declared': 'Declared — nothing filed yet', 'initial_reported': 'First report filed', 'complete_reported': 'Full report filed', 'withdrawn': 'Withdrawn', 'pending': 'Waiting to send', 'dispatching': 'Sending', 'dispatch_unconfirmed': 'Sent — not confirmed', 'delivered_unconfirmed': 'Delivered — not confirmed', 'delivered': 'Delivered', 'failed': 'Failed', 'current': 'Up to date', 'expired': 'Expired', 'missing': 'Not done'} %}
+{% set ROUTE = {'internal_control_annex_vi': 'Internal check by your organisation (no outside body)', 'notified_body_annex_vii': 'Assessment by an independent body', 'sectoral_annex_i': 'Covered by product-specific EU law'} %}
+{% set ANNEX_III = {1: 'Biometrics', 2: 'Critical infrastructure', 3: 'Education and training', 4: 'Employment and managing workers', 5: 'Access to essential services', 6: 'Law enforcement', 7: 'Migration, asylum and border control', 8: 'Justice and democratic processes'} %}
+{% set BASIS = {'provider_high_risk': 'We provide a high-risk AI system', 'provider_not_high_risk': 'We provide a system we have judged not to be high-risk', 'public_authority_deployer': 'We are a public body using a high-risk AI system', 'annex_iii_point_2_national': 'Critical infrastructure system'} %}
+{% set REGISTRY = {'eu_database': 'EU database', 'national': 'National registry'} %}
+{% set DUTY = {'technical_documentation': 'Technical documentation of the model', 'downstream_information': 'Information for companies building on the model', 'copyright_policy': 'Copyright policy', 'training_content_summary': 'Public summary of training content', 'model_evaluation': 'Model evaluation and adversarial testing', 'systemic_risk_mitigation': 'Assessing and reducing systemic risks', 'incident_reporting': 'Tracking and reporting serious incidents', 'cybersecurity_protection': 'Cybersecurity protection', 'use_per_instructions': "Used as the provider's instructions say", 'operation_monitoring': 'Operation is monitored', 'log_retention': 'Logs are kept long enough', 'affected_person_information': 'People affected are told', 'authority_cooperation': 'Cooperation with authorities', 'input_data_control': 'Input data is relevant and representative', 'worker_information': 'Workers are informed', 'registration_check': 'Registration was checked', 'dpia_information': 'Information for the data protection impact assessment'} %}
+{% macro duty_list(keys) %}{% for key in keys %}{{ DUTY.get(key, key|humanize) }}{% if not loop.last %}; {% endif %}{% else %}—{% endfor %}{% endmacro %}
+
+{{ hero('Legal, privacy and compliance', 'AI governance', lede='Keep the records the EU AI Act asks for: impact assessments, technical documentation, approval routes, registrations, staff AI training and serious-incident reports. Every entry is saved under your name. Lightwork records filings you make with authorities; it does not send them for you.') }}
+
+<p id="gov-flash" role="status" aria-live="polite" class="muted"></p>
+
+{% include "_runtime_enforcement.html" %}
+
+<section class="panel" aria-labelledby="gov-attention-title">
+  <div class="section-head"><h2 id="gov-attention-title">Needs attention</h2>
+    <button class="btn btn--ghost" type="button" id="gov-refresh-attention">Refresh</button></div>
+  <p id="gov-attention-status" role="status" aria-live="polite" class="muted"></p>
+  <div id="gov-attention-summary">
+  {% set incidents = attention.sections.serious_incidents %}
+  {% if attention.attention_count %}
+  <p class="gov-actions">
+    {% if incidents and incidents.enabled %}
+    {% if incidents.overdue_count %}<span class="badge failed">{{ incidents.overdue_count }} incident report{{ 's' if incidents.overdue_count != 1 }} overdue</span>{% endif %}
+    {% if incidents.due_soon_count %}<span class="badge warn">{{ incidents.due_soon_count }} incident report{{ 's' if incidents.due_soon_count != 1 }} due soon</span>{% endif %}
+    {% endif %}
+    {% set lit = attention.sections.ai_literacy %}
+    {% if lit and lit.enabled %}
+    {% if lit.missing %}<span class="badge failed">{{ lit.missing }} training{{ 's' if lit.missing != 1 }} not done</span>{% endif %}
+    {% if lit.expired %}<span class="badge warn">{{ lit.expired }} training{{ 's' if lit.expired != 1 }} expired</span>{% endif %}
+    {% if lit.expiring_soon %}<span class="badge idle">{{ lit.expiring_soon }} expiring within 30 days</span>{% endif %}
+    {% endif %}
+    {% set conf = attention.sections.eu_conformity %}
+    {% if conf and conf.enabled %}
+    {% if conf.outdated_frias %}<span class="badge warn">{{ conf.outdated_frias|length }} assessment{{ 's' if conf.outdated_frias|length != 1 }} reopened</span>{% endif %}
+    {% if conf.reassessment_required %}<span class="badge warn">{{ conf.reassessment_required|length }} system{{ 's' if conf.reassessment_required|length != 1 }} need a new assessment</span>{% endif %}
+    {% endif %}
+    {% set vend = attention.sections.vendors %}
+    {% if vend and vend.enabled %}
+    {% if vend.contracts_overdue %}<span class="badge failed">{{ vend.contracts_overdue|length }} supplier contract{{ 's' if vend.contracts_overdue|length != 1 }} past renewal</span>{% endif %}
+    {% if vend.contracts_due_soon %}<span class="badge warn">{{ vend.contracts_due_soon|length }} supplier contract{{ 's' if vend.contracts_due_soon|length != 1 }} renewing soon</span>{% endif %}
+    {% endif %}
+    {% set dmap = attention.sections.data_map %}
+    {% if dmap and dmap.enabled and dmap.unlinked_flagged_assets %}
+    <span class="badge warn">{{ dmap.unlinked_flagged_assets }} flagged data store{{ 's' if dmap.unlinked_flagged_assets != 1 }} not linked</span>
+    {% endif %}
+  </p>
+  {% else %}
+  <p class="muted">{% if incidents and not incidents.complete %}No alerts were found in the records that could be read. Incident reporting needs a current check.{% else %}Nothing needs attention in the available records right now. Items appear here when a control fails or a review is due.{% endif %}</p>
+  {% endif %}
+  {% if incidents and incidents.unavailable_registers %}<p class="badge warn" role="status">Incident reporting is incomplete. {% for register in incidents.unavailable_registers %}{{ 'Serious-incident declarations' if register == 'declarations' else 'Article 73 incident records' }} could not be read.{% if not loop.last %} {% endif %}{% endfor %} Refresh to check again; unavailable records may contain deadlines.</p>{% endif %}
+  {% if incidents and incidents.enabled %}<p class="muted">{{ incidents.notice }}{% if incidents.listed_ids_truncated %} Totals include every supported retained record; detailed alert references show the first 50 in deadline order.{% endif %}</p>{% endif %}
+  {% for name, section in attention.sections.items() %}{% if section.error %}
+  <p class="muted">{{ name|humanize }} alerts could not be loaded. The other alerts are shown above.</p>
+  {% endif %}{% endfor %}
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="fria-title">
+  <h2 id="fria-title">Impact on people's rights <span class="gov-cite">Fundamental rights impact assessment, EU AI Act Art. 27</span></h2>
+  {% if not eu_conformity_enabled %}
+  {{ module_gate('eu_conformity', 'EU AI Act workflows', detail='Record how an AI system may affect people’s rights.') }}
+  {% else %}
+  {% if fria_error %}<p class="muted">{{ fria_error }}</p>{% endif %}
+  {% if fria_records %}
+  <div class="gov-table"><table>
+    <caption>Assessments in this workspace</caption>
+    <thead><tr><th scope="col">AI system</th><th scope="col">Where it is used</th><th scope="col">Status</th><th scope="col">Progress</th><th scope="col">Actions</th></tr></thead>
+    <tbody>
+    {% for row in fria_records %}<tr data-record="{{ row.id }}">
+      <th scope="row">{{ asset_name(row.asset_id) }}</th><td>{{ row.context|humanize }}</td>
+      <td><span class="badge {% if row.status == 'completed' %}ok{% elif row.status == 'outdated' %}warn{% else %}idle{% endif %}">{{ STATUS.get(row.status, row.status|humanize) }}</span></td>
+      <td>{{ row.progress }} of 6 questions answered</td>
+      <td><button class="btn btn--ghost" type="button" data-fria-open-record="{{ row.id }}" data-revision="{{ row.revision }}" aria-label="Work on the assessment for {{ ASSET_NAMES.get(row.asset_id, 'this AI system') }}">Work on it</button></td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="muted">No assessments yet. Start one below; it takes under a minute.</p>{% endif %}
+  <form id="fria-open" class="gov-form">
+    {{ asset_select('Which AI system is being assessed?') }}
+    <label>Where will it be used?
+      <input class="input" name="context" required maxlength="120" placeholder="For example: Loan application triage">
+      <span class="muted">The process or team that will use it.</span>
+    </label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Start an assessment</button>
+      <span id="fria-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  <div id="fria-editor" hidden>
+    <h3 id="fria-editor-title" tabindex="-1">Assessment</h3>
+    <p class="muted">Answer each question in your own words. The assessment can be marked complete once all six are answered.</p>
+    <div id="fria-elements"></div>
+    <div class="gov-actions">
+      <button class="btn" type="button" id="fria-save">Save answers</button>
+      <button class="btn" type="button" id="fria-complete">Mark complete</button>
+      <button class="btn" type="button" id="fria-outdate">Something changed — reopen it</button>
+      <button class="btn" type="button" id="fria-notify">Record that you told the authority</button>
+      <button class="btn btn--ghost" type="button" id="fria-draft">Read the written assessment</button>
+      <button class="btn btn--ghost" type="button" id="fria-download">Download it</button>
+    </div>
+    <p id="fria-editor-status" class="muted" role="status" aria-live="polite"></p>
+    <div id="fria-draft-view" class="gov-render" hidden></div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel" aria-labelledby="annex-title">
+  <h2 id="annex-title">Technical documentation <span class="gov-cite">Annex IV checklist</span></h2>
+  {% if not eu_conformity_enabled %}
+  {{ module_gate('eu_conformity', 'EU AI Act workflows', detail='Keep links to each AI system’s technical documentation.') }}
+  {% else %}
+  <form id="annex-open" class="gov-form">
+    {{ asset_select('Which AI system?', help='Opens its nine-item documentation checklist.') }}
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Open the checklist</button>
+      <span id="annex-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  <div id="annex-editor" hidden>
+    <h3 id="annex-editor-title" tabindex="-1">Checklist</h3>
+    <p class="muted">For each item, give a link to where that documentation lives. You are recording where it is, not writing it here.</p>
+    <div id="annex-items"></div>
+    <div class="gov-actions">
+      <button class="btn btn--ghost" type="button" id="annex-render">Read the summary</button>
+      <button class="btn btn--ghost" type="button" id="annex-download">Download the summary</button>
+    </div>
+    <p id="annex-editor-status" class="muted" role="status" aria-live="polite"></p>
+    <div id="annex-render-view" class="gov-render" hidden></div>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel" aria-labelledby="route-title">
+  <h2 id="route-title">Approval route before launch <span class="gov-cite">Conformity assessment, Art. 43</span></h2>
+  {% if not eu_conformity_enabled %}
+  {{ module_gate('eu_conformity', 'EU AI Act workflows', detail='Record the approval route chosen before launch.') }}
+  {% else %}
+  {% if art43_routes %}
+  <div class="gov-table"><table>
+    <caption>Recorded approval routes</caption>
+    <thead><tr><th scope="col">AI system</th><th scope="col">Route</th><th scope="col">High-risk area</th><th scope="col">Status</th><th scope="col">Changes since</th><th scope="col">Actions</th></tr></thead>
+    <tbody>
+    {% for row in art43_routes %}<tr>
+      <th scope="row">{{ asset_name(row.asset_id) }}</th><td>{{ ROUTE.get(row.route, row.route|humanize) }}</td>
+      <td>{{ ANNEX_III.get(row.annex_iii_point, 'Covered by product-specific law') if row.annex_iii_point is not none else 'Covered by product-specific law' }}</td>
+      <td><span class="badge {% if row.status == 'recorded' %}ok{% else %}warn{% endif %}">{{ STATUS.get(row.status, row.status|humanize) }}</span></td>
+      <td>{{ row.modifications }}</td>
+      <td><button class="btn btn--ghost" type="button" data-route-change="{{ row.asset_id }}" aria-label="Record a change to {{ ASSET_NAMES.get(row.asset_id, 'this AI system') }}">Record a change</button></td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="muted">No approval routes recorded yet. Record which route applies before a system goes to market.</p>{% endif %}
+  <form id="route-record" class="gov-form">
+    {{ asset_select('Which AI system?') }}
+    <label>Which route?
+      <select class="select" name="route">
+        {% for token in conformity_routes %}<option value="{{ token }}">{{ ROUTE.get(token, token|humanize) }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>High-risk area
+      <select class="select" name="annex_iii_point">
+        <option value="">Not listed — covered by product-specific law</option>
+        {% for number, name in ANNEX_III.items() %}<option value="{{ number }}">{{ name }}</option>{% endfor %}
+      </select>
+      <span class="muted">Biometric systems may use the internal check only where harmonised standards or common specifications were applied.</span>
+    </label>
+    <label class="gov-form__wide">Why does this route apply?
+      <textarea class="textarea" name="rationale" required rows="2" maxlength="2000"></textarea>
+    </label>
+    <label class="gov-check"><input type="checkbox" name="harmonised"> Harmonised standards were applied</label>
+    <label class="gov-check"><input type="checkbox" name="common_specs"> Common specifications were applied</label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Record the route</button>
+      <span id="route-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  <p id="route-modify-status" class="muted" role="status" aria-live="polite"></p>
+  {% endif %}
+</section>
+
+<section class="panel" aria-labelledby="market-title">
+  <h2 id="market-title">After launch <span class="gov-cite">Monitoring plan Art. 72, registration Art. 49, instructions for use Art. 13</span></h2>
+  {% if not eu_conformity_enabled %}
+  {{ module_gate('eu_conformity', 'EU AI Act workflows', detail='Keep monitoring plans and registration records here.') }}
+  {% else %}
+  <h3>Monitoring plan</h3>
+  {% if pmm_plans %}
+  <div class="gov-table"><table>
+    <caption>Recorded monitoring plans; each plan lives where its link points</caption>
+    <thead><tr><th scope="col">AI system</th><th scope="col">Plan</th><th scope="col">Reviews</th><th scope="col">Actions</th></tr></thead>
+    <tbody>
+    {% for row in pmm_plans %}<tr>
+      <th scope="row">{{ asset_name(row.asset_id) }}</th><td>{{ row.plan_reference }}</td><td>{{ row.reviews }}</td>
+      <td><button class="btn btn--ghost" type="button" data-pmm-review="{{ row.asset_id }}" data-revision="{{ row.revision }}" aria-label="Record a review of the plan for {{ ASSET_NAMES.get(row.asset_id, 'this AI system') }}">Record a review</button></td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="muted">No monitoring plans recorded yet. Record one below for each AI system you watch after launch.</p>{% endif %}
+  <form id="pmm-record" class="gov-form">
+    {{ asset_select('Which AI system?') }}
+    <label>Link to the plan
+      <input class="input" name="plan_reference" required maxlength="512" placeholder="https://…">
+    </label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Record the plan</button>
+      <span id="pmm-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  <p id="pmm-review-status" class="muted" role="status" aria-live="polite"></p>
+
+  <h3>Registration</h3>
+  {% if registrations %}
+  <div class="gov-table"><table>
+    <caption>Recorded registrations</caption>
+    <thead><tr><th scope="col">AI system</th><th scope="col">Why it is registered</th><th scope="col">Where</th><th scope="col">Registration number</th></tr></thead>
+    <tbody>
+    {% for row in registrations %}<tr>
+      <th scope="row">{{ asset_name(row.asset_id) }}</th><td>{{ BASIS.get(row.basis, row.basis|humanize) }} <span class="gov-cite">{{ row.citation }}</span></td>
+      <td>{{ REGISTRY.get(row.registry, row.registry|humanize) }}</td><td>{{ row.reference }}</td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="muted">No registrations recorded yet. Record one below when an AI system is registered with a regulator.</p>{% endif %}
+  <form id="registration-record" class="gov-form">
+    {{ asset_select('Which AI system?') }}
+    <label>Why is it registered?
+      <select class="select" name="basis">
+        {% for token, meta in registration_bases.items() %}
+        <option value="{{ token }}" data-registry="{{ meta[1] }}">{{ BASIS.get(token, token|humanize) }} — {{ REGISTRY.get(meta[1], meta[1]|humanize) }}</option>
+        {% endfor %}
+      </select>
+      <span class="muted">The registry follows from the reason you choose.</span>
+    </label>
+    <label>Registration number
+      <input class="input" name="reference" required maxlength="512" placeholder="The number the registry gave you">
+    </label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Record the registration</button>
+      <span id="registration-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+
+  <h3>Instructions for use</h3>
+  <form id="ifu-open" class="gov-form">
+    {{ asset_select('Which AI system?', help='Opens the six-item checklist of what the instructions must cover.') }}
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Open the checklist</button>
+      <span id="ifu-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  <div id="ifu-editor" hidden>
+    <h4 id="ifu-editor-title" tabindex="-1">Checklist</h4>
+    <div id="ifu-items"></div>
+    <p id="ifu-editor-status" class="muted" role="status" aria-live="polite"></p>
+  </div>
+
+  <h3>Everything for an auditor</h3>
+  <form id="bundle-download" class="gov-form">
+    {{ asset_select('Which AI system?', help='One file with every governance record for the system: assessments, checklists, route, monitoring plan, registration and incident reports.') }}
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Download all records</button>
+      <span id="bundle-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel" aria-labelledby="gpai-title">
+  <h2 id="gpai-title">General-purpose AI models you provide <span class="gov-cite">Art. 53 and Art. 55</span></h2>
+  {% if not eu_conformity_enabled %}
+  {{ module_gate('eu_conformity', 'EU AI Act workflows', detail='Track the duties that apply to models you provide.') }}
+  {% else %}
+  {% if gpai_registers %}
+  <div class="gov-table"><table>
+    <caption>How many duties have evidence, per model</caption>
+    <thead><tr><th scope="col">Model</th><th scope="col">Systemic risk</th><th scope="col">Duties with evidence</th><th scope="col">Still missing</th></tr></thead>
+    <tbody>
+    {% for row in gpai_registers %}<tr>
+      <th scope="row">{{ asset_name(row.asset_id) }}</th>
+      <td>{{ 'Yes' if row.systemic_risk else 'No' }}</td>
+      <td><span class="badge {% if row.complete %}ok{% else %}warn{% endif %}">{{ row.asserted }} of {{ row.total }}</span></td>
+      <td>{{ duty_list(row.missing) }}</td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  <form id="gpai-assert" class="gov-form">
+    <label>Model
+      <select class="select" name="record_id" required>
+        {% for row in gpai_registers %}
+        <option value="{{ row.id }}" data-revision="{{ row.revision }}">{{ ASSET_NAMES.get(row.asset_id, 'An AI system not in your inventory') }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Duty
+      <select class="select" name="obligation" required>
+        {% for key, pair in gpai_obligations.items() %}<option value="{{ key }}">{{ DUTY.get(key, key|humanize) }}</option>{% endfor %}
+        {% for key, pair in gpai_systemic_obligations.items() %}<option value="{{ key }}">{{ DUTY.get(key, key|humanize) }} (systemic risk)</option>{% endfor %}
+      </select>
+    </label>
+    <label>Link to the evidence
+      <input class="input" name="reference" required maxlength="512" placeholder="https://…">
+    </label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Record the evidence</button>
+      <span id="gpai-assert-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  {% else %}<p class="muted">No models tracked yet. Add each general-purpose model you provide below.</p>{% endif %}
+  <form id="gpai-open" class="gov-form">
+    {{ asset_select('Which general-purpose model?') }}
+    <label class="gov-check"><input type="checkbox" name="systemic_risk"> It has systemic risk (adds four more duties)</label>
+    <label class="gov-check"><input type="checkbox" name="open_source_exempt"> It is free and open-source (not allowed together with systemic risk)</label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Start tracking this model</button>
+      <span id="gpai-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel" aria-labelledby="deployer-title">
+  <h2 id="deployer-title">High-risk AI systems you use <span class="gov-cite">Deployer duties, Art. 26</span></h2>
+  {% if not eu_conformity_enabled %}
+  {{ module_gate('eu_conformity', 'EU AI Act workflows', detail='Track duties for high-risk AI systems your organisation uses.') }}
+  {% else %}
+  {% if deployer_registers %}
+  <div class="gov-table"><table>
+    <caption>Duty progress and the people named to oversee each system</caption>
+    <thead><tr><th scope="col">AI system</th><th scope="col">Duties with evidence</th><th scope="col">Human oversight</th><th scope="col">Still missing</th></tr></thead>
+    <tbody>
+    {% for row in deployer_registers %}<tr>
+      <th scope="row">{{ asset_name(row.asset_id) }}</th>
+      <td><span class="badge {% if row.complete %}ok{% else %}warn{% endif %}">{{ row.asserted }} of {{ row.total }}</span></td>
+      <td>{% if row.oversight_persons %}{{ row.oversight_persons | join(', ') }}{% else %}<span class="badge failed">Nobody named yet</span>{% endif %}</td>
+      <td>{{ duty_list(row.missing) }}</td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  <form id="deployer-oversight" class="gov-form">
+    <label>AI system
+      <select class="select" name="record_id" required>
+        {% for row in deployer_registers %}
+        <option value="{{ row.id }}" data-revision="{{ row.revision }}">{{ ASSET_NAMES.get(row.asset_id, 'An AI system not in your inventory') }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Who oversees it (full names, separated by commas)
+      <input class="input" name="persons" required maxlength="1000" placeholder="Ada Lovelace, Grace Hopper">
+      <span class="muted">The law asks for named people, not a team or document.</span>
+    </label>
+    <label>Link to evidence of their training and authority
+      <input class="input" name="reference" required maxlength="512" placeholder="https://…">
+    </label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Name the overseers</button>
+      <span id="deployer-oversight-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  <form id="deployer-assert" class="gov-form">
+    <label>AI system
+      <select class="select" name="record_id" required>
+        {% for row in deployer_registers %}
+        <option value="{{ row.id }}" data-revision="{{ row.revision }}">{{ ASSET_NAMES.get(row.asset_id, 'An AI system not in your inventory') }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Duty
+      <select class="select" name="obligation" required>
+        {% for key, pair in deployer_obligations.items() %}<option value="{{ key }}">{{ DUTY.get(key, key|humanize) }}</option>{% endfor %}
+        {% for key, triple in deployer_conditional_obligations.items() %}<option value="{{ key }}">{{ DUTY.get(key, key|humanize) }} (only if it applies)</option>{% endfor %}
+      </select>
+    </label>
+    <label>Link to the evidence
+      <input class="input" name="reference" required maxlength="512" placeholder="https://…">
+    </label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Record the evidence</button>
+      <span id="deployer-assert-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  {% else %}<p class="muted">No systems tracked yet. Add each high-risk system you use below.</p>{% endif %}
+  <form id="deployer-open" class="gov-form">
+    {{ asset_select('Which high-risk system do you use?', help='Extra duties are added only for the situations you tick.') }}
+    <label class="gov-check"><input type="checkbox" name="workplace_use"> It is used at work, on staff</label>
+    <label class="gov-check"><input type="checkbox" name="public_authority"> We are a public body</label>
+    <label class="gov-check"><input type="checkbox" name="controls_input_data"> We control the data it is given</label>
+    <label class="gov-check"><input type="checkbox" name="requires_dpia"> A data protection impact assessment is needed</label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Start tracking this system</button>
+      <span id="deployer-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  {% endif %}
+</section>
+
+<div class="gov-grid">
+<section class="panel" aria-labelledby="literacy-title">
+  <h2 id="literacy-title">Staff AI training <span class="gov-cite">AI literacy, Art. 4</span></h2>
+  {% if not ai_literacy_enabled %}
+  {{ module_gate('ai_literacy', 'Staff AI training tracking', detail='Record the training each role needs and the evidence that staff completed it.') }}
+  {% else %}
+  {% if literacy_error %}
+  <p role="status"><strong>Training status is unknown.</strong> Lightwork could not check the complete training record. A complete evidence download is unavailable. Review the records before relying on this report.</p>
+  <p class="muted">This view supports up to 500 roles, 2,000 people and 2,000 training completions.</p>
+  <a class="btn btn--ghost" href="/security/governance#literacy-title">Check the records again</a>
+  {% else %}
+  {% if literacy_plane_status.reconciliation_required %}
+  <p class="muted"><strong>Evidence review needed.</strong> These training records are not yet compliance evidence. Add the training provider, course version, expiry date and certificate for each one before relying on them.</p>
+  {% else %}
+  <p class="muted">Training records and reviewed compliance evidence are kept separately.</p>
+  {% endif %}
+  {% set tracked_people = literacy_gaps.persons if literacy_gaps and literacy_gaps.persons else [] %}
+  {% if literacy_gaps and literacy_gaps.person_count %}
+  <p class="gov-actions">{{ literacy_gaps.person_count }} {{ 'person' if literacy_gaps.person_count == 1 else 'people' }} tracked
+    <span class="badge ok">{{ literacy_gaps.counts.current }} up to date</span>
+    <span class="badge warn">{{ literacy_gaps.counts.expired }} expired</span>
+    <span class="badge failed">{{ literacy_gaps.counts.missing }} not done</span></p>
+  <div class="gov-table"><table>
+    <caption>Who still needs training</caption>
+    <thead><tr><th scope="col">Person</th><th scope="col">Roles</th><th scope="col">Needs attention</th></tr></thead>
+    <tbody>
+    {% for person in literacy_gaps.persons %}{% if person.gap_count %}<tr>
+      <th scope="row">{{ person.person }}</th><td>{% for role in person.roles %}{{ role|humanize }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td>{% for training in person.trainings %}{% if training.status != 'current' %}<span class="badge {% if training.status == 'expired' %}warn{% else %}failed{% endif %}">{{ training.title or training.training|humanize }}: {{ STATUS.get(training.status, training.status|humanize) }}</span> {% endif %}{% endfor %}</td>
+    </tr>{% endif %}{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="muted">Nobody has been given a role that needs training yet.</p>{% endif %}
+
+  <h3>Training a role needs</h3>
+  <form id="literacy-require" class="gov-form">
+    <label>Role
+      <select class="select" name="role_choice">
+        {% for role in literacy_roles %}<option value="{{ role }}">{{ role|humanize }}</option>{% endfor %}
+        <option value="">A new role…</option>
+      </select>
+    </label>
+    <label>New role name
+      <input class="input" name="role_new" maxlength="100" placeholder="For example: Loan officer">
+    </label>
+    <fieldset class="gov-form__wide gov-trainings" id="literacy-training-rows">
+      <legend>Trainings this role needs</legend>
+    </fieldset>
+    <div class="gov-form__wide gov-actions"><button class="btn btn--ghost" type="button" id="literacy-add-training">Add a training</button>
+      <button class="btn" type="submit">Save the role's training</button>
+      <span id="literacy-require-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+
+  <h3>Give someone roles</h3>
+  <form id="literacy-assign" class="gov-form">
+    <label>Person
+      <select class="select" name="person_choice">
+        {% for person in tracked_people %}<option value="{{ person.person }}">{{ person.person }}</option>{% endfor %}
+        <option value="">Someone new…</option>
+      </select>
+    </label>
+    <label>New person (email address)
+      <input class="input" name="person_new" maxlength="128" type="email" placeholder="name@example.com">
+    </label>
+    <fieldset class="gov-form__wide">
+      <legend>Roles</legend>
+      {% if literacy_roles %}
+      <label>Find a role<input class="input" type="search" id="literacy-role-search" maxlength="128" aria-describedby="literacy-role-count" placeholder="Type part of its name"></label>
+      <p class="muted" id="literacy-role-count" role="status" aria-live="polite"></p>
+      <div class="gov-role-choices" id="literacy-role-choices">
+      {% for role in literacy_roles %}<label class="gov-check"><input type="checkbox" name="roles" value="{{ role }}"> <span>{{ role|humanize }}</span></label>{% endfor %}
+      </div>
+      {% else %}<p class="muted">Add a role above first.</p>{% endif %}
+    </fieldset>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit"{% if not literacy_roles %} disabled{% endif %}>Save roles</button>
+      <span id="literacy-assign-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+
+  <h3>Record a finished training</h3>
+  <form id="literacy-complete" class="gov-form">
+    <label>Person
+      <select class="select" name="person" required>
+        {% for person in tracked_people %}<option value="{{ person.person }}">{{ person.person }}</option>{% else %}<option value="">Give someone a role first</option>{% endfor %}
+      </select>
+    </label>
+    <label>Find a training
+      <input class="input" id="literacy-training-search" type="search" maxlength="256" placeholder="Type part of its name" aria-describedby="literacy-training-count">
+    </label>
+    <label>Training
+      <select class="select" id="literacy-training-choice" name="training" required aria-describedby="literacy-training-count">
+        <option value="">{% if literacy_training_keys %}Choose a training{% else %}Add a training to a role first{% endif %}</option>
+        {% for training in literacy_training_keys[:100] %}<option value="{{ training.key }}">{{ training.title or training.key|humanize }}</option>{% endfor %}
+      </select>
+    </label>
+    <p class="muted gov-form__wide" id="literacy-training-count" role="status" aria-live="polite">{% if literacy_training_keys|length > 100 %}Showing the first 100 of {{ literacy_training_keys|length }} trainings. Type more of the name to find another training.{% endif %}</p>
+    <script nonce="{{ csp_script_nonce }}" type="application/json" id="literacy-training-choices">{{ literacy_training_keys|tojson }}</script>
+    <label>Finished on
+      <input class="input" name="completed_at" type="date" required>
+    </label>
+    <label>Link to the certificate or course record
+      <input class="input" name="evidence_ref" required maxlength="512" placeholder="https://…">
+    </label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Record it</button>
+      <button class="btn btn--ghost" type="button" id="literacy-download">Download the training evidence</button>
+      <span id="literacy-complete-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="panel" id="serious-incidents" aria-labelledby="incident-title">
+  <h2 id="incident-title">Serious incidents <span class="gov-cite">Reporting deadlines, Art. 73</span></h2>
+  {% if not ai_incident_enabled %}
+  {{ module_gate('ai_incident_reporting', 'Serious-incident reporting', detail='Track deadlines and record reports your team makes to authorities.') }}
+  {% else %}
+  {% if ai_incident_error %}<p class="muted">{{ ai_incident_error }}</p>{% endif %}
+  {% if ai_incident_declarations %}
+  <div class="gov-table"><table>
+    <caption>Declared serious incidents, most urgent first</caption>
+    <thead><tr><th scope="col">What happened</th><th scope="col">Country</th><th scope="col">Status</th><th scope="col">Deadline</th><th scope="col">Actions</th></tr></thead>
+    <tbody>
+    {% for row in ai_incident_declarations %}<tr data-record="{{ row.id }}">
+      <th scope="row">{{ ai_incident_categories.get(row.category, {}).get('label') or row.category|humanize }}</th>
+      <td>{{ row.member_state }}</td>
+      <td>{{ STATUS.get(row.status, row.status|humanize) }}</td>
+      <td>{% if row.status == 'initial_reported' %}First report filed; full report to follow{% elif row.status == 'complete_reported' %}Full report filed{% elif row.status == 'withdrawn' %}Withdrawn{% elif row.overdue %}<span class="badge failed">Overdue</span>{% else %}{{ row.clock_label|replace('d left', ' days left') }}{% endif %}</td>
+      <td class="gov-actions">{% if row.status in ('declared', 'initial_reported') %}
+        {% if row.status == 'declared' %}<button class="btn btn--ghost" type="button" data-incident-submit="{{ row.id }}" data-kind="initial" data-revision="{{ row.revision }}">Record first report</button>{% endif %}
+        <button class="btn btn--ghost" type="button" data-incident-submit="{{ row.id }}" data-kind="complete" data-revision="{{ row.revision }}">Record full report</button>
+        {% if row.status == 'declared' %}<button class="btn btn--ghost" type="button" data-incident-withdraw="{{ row.id }}" data-revision="{{ row.revision }}">Withdraw</button>{% endif %}
+      {% else %}<span class="muted">—</span>{% endif %}</td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="muted">No serious incidents declared. The reporting deadline counts from when you became aware.</p>{% endif %}
+  <form id="incident-declare" class="gov-form">
+    <label>Which incident?
+      <select class="select" name="incident_id" required>
+        {% for incident in assurance_incidents %}<option value="{{ incident.id }}">{{ incident.summary or 'Incident' }}{% if incident.severity %} ({{ incident.severity|humanize }}){% endif %}</option>
+        {% else %}<option value="">No incidents recorded yet</option>{% endfor %}
+      </select>
+      <span class="muted">Incidents come from the <a href="/security/assurance">assurance cockpit</a>.</span>
+    </label>
+    <label>What kind of harm?
+      <select class="select" name="category" required>
+        {% for token, meta in ai_incident_categories.items() %}
+        <option value="{{ token }}">{{ meta.label or token|humanize }} — report within {{ meta.window_days }} days</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>When did you become aware?
+      <input class="input" name="became_aware_at" type="datetime-local" required>
+      <span class="muted">The deadline counts from when you became aware, not when it happened.</span>
+    </label>
+    <label>Country
+      <select class="select" name="member_state" required>
+        {% for code, name in [('AT','Austria'),('BE','Belgium'),('BG','Bulgaria'),('HR','Croatia'),('CY','Cyprus'),('CZ','Czechia'),('DK','Denmark'),('EE','Estonia'),('FI','Finland'),('FR','France'),('DE','Germany'),('GR','Greece'),('HU','Hungary'),('IE','Ireland'),('IT','Italy'),('LV','Latvia'),('LT','Lithuania'),('LU','Luxembourg'),('MT','Malta'),('NL','Netherlands'),('PL','Poland'),('PT','Portugal'),('RO','Romania'),('SK','Slovakia'),('SI','Slovenia'),('ES','Spain'),('SE','Sweden')] %}<option value="{{ code }}">{{ name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="gov-form__wide">Which authority you will report to
+      <input class="input" name="authority" required maxlength="512" placeholder="For example: Bundesnetzagentur">
+    </label>
+    <label>Did the AI system cause it?
+      <select class="select" name="causal_link">
+        <option value="under_investigation">Still being investigated</option>
+        <option value="reasonably_likely">Reasonably likely</option>
+        <option value="established">Yes, established</option>
+      </select>
+    </label>
+    <label class="gov-check"><input type="checkbox" name="widespread"> It is widespread (shortens the deadline to 2 days)</label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit"{% if not assurance_incidents %} disabled{% endif %}>Declare serious incident</button>
+      <span id="incident-status" class="muted" role="status" aria-live="polite"></span></div>
+  </form>
+  {% endif %}
+</section>
+</div>
+
+<section class="panel" aria-labelledby="agent-actions-title">
+  <h2 id="agent-actions-title">Agent actions: policy and traceability</h2>
+  <p class="muted">Check what your organisation's policy would decide for an agent action, see what a task did, and find everything that used a skill.</p>
+  <div class="gov-grid">
+    <form id="agent-check" class="gov-form" aria-labelledby="agent-check-title">
+      <h3 id="agent-check-title" class="gov-form__wide">Would this action be allowed?</h3>
+      <label>Action<select class="select" name="action" required><option value="">Loading actions…</option></select></label>
+      <label>Treat it as<select class="select" name="risk"><option value="">Its usual risk</option><option value="low">Low risk</option><option value="medium">Medium risk</option><option value="high">High risk</option></select></label>
+      <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Check</button></div>
+      <p class="gov-form__wide" id="agent-check-result" role="status" aria-live="polite"></p>
+    </form>
+    <form id="agent-lineage" class="gov-form" aria-labelledby="agent-lineage-title">
+      <h3 id="agent-lineage-title" class="gov-form__wide">What did a task do?</h3>
+      <label class="gov-form__wide">Task<select class="select" name="goal" required><option value="">Loading tasks…</option></select></label>
+      <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Show its actions</button></div>
+      <div class="gov-form__wide" id="agent-lineage-result" role="status" aria-live="polite"></div>
+    </form>
+    <form id="agent-impact" class="gov-form" aria-labelledby="agent-impact-title">
+      <h3 id="agent-impact-title" class="gov-form__wide">What used this skill?</h3>
+      <label class="gov-form__wide">Skill<select class="select" name="skill" required><option value="">Loading skills…</option></select></label>
+      <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Find actions</button></div>
+      <div class="gov-form__wide" id="agent-impact-result" role="status" aria-live="polite"></div>
+    </form>
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="grc-title">
+  <h2 id="grc-title">Sending records to your GRC system</h2>
+  {% if not grc_sync_enabled %}
+  <p class="muted">Sending to an outside governance, risk and compliance system (such as ServiceNow) is not set up. When it is, findings, accepted risks and incidents are copied there with a link back to Lightwork.</p>
+  <p><a class="btn" href="/start">Set up a connection</a></p>
+  {% else %}
+  {% if grc_error %}<p class="muted">{{ grc_error }}</p>{% endif %}
+  {% if grc_status and grc_status.outbound %}
+  <p class="gov-actions">
+    <span class="badge ok">{{ grc_status.outbound.delivered }} delivered</span>
+    <span class="badge warn">{{ grc_status.outbound.delivered_unconfirmed + grc_status.outbound.dispatch_unconfirmed + grc_status.outbound.dispatching }} waiting for a check</span>
+    <span class="badge failed">{{ grc_status.outbound.failed }} failed</span>
+    <span class="badge idle">{{ grc_status.outbound.pending }} waiting to send</span></p>
+  {% endif %}
+  {% if grc_outbound %}
+  <div class="gov-table"><table>
+    <caption>Latest records sent and their number in the other system</caption>
+    <thead><tr><th scope="col">Record</th><th scope="col">Reference</th><th scope="col">Status</th><th scope="col">Number in the other system</th></tr></thead>
+    <tbody>
+    {% for row in grc_outbound %}<tr>
+      <th scope="row">{{ row.kind|humanize }}</th><td>{{ row.source_id }}</td><td>{{ STATUS.get(row.status, row.status|humanize) }}</td>
+      <td>{{ row.remote_id or "—" }}</td>
+    </tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}<p class="muted">Nothing has been sent yet. Records sent with the form below are listed here.</p>{% endif %}
+  <form id="gov-grc-run" class="gov-form">
+    <details class="gov-form__wide"><summary>Options</summary>
+      <label>Most records to send this time<input class="input" type="number" name="limit" min="1" max="200" step="1" value="50" required></label>
+    </details>
+    <label class="gov-form__wide gov-check"><input type="checkbox" name="confirm_dispatch" required>
+      I agree to send eligible findings, accepted risks and incidents to the outside system.</label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="submit">Send records now</button>
+      <span class="muted">Only an administrator can send. Anything that might have been sent twice is held for a check.</span></div>
+  </form>
+  <p id="gov-grc-status" role="status" aria-live="polite"></p>
+  <ul id="gov-grc-problems"></ul>
+  <details hidden><summary>Technical details</summary><pre class="gov-render" id="gov-grc-output"></pre></details>
+  <h3>Check a delivery that wasn't confirmed</h3>
+  <p class="muted">Compare what Lightwork tried to send with the record in the other system. An exact match can be confirmed by an administrator; anything else stays held.</p>
+  <form id="gov-grc-recovery" class="gov-form">
+    <label>Delivery to check<select class="select" name="delivery" required>
+      <option value="">Choose a held delivery</option>
+      {% for row in grc_outbound %}
+      {% if row.status in ['dispatching', 'dispatch_unconfirmed', 'delivered_unconfirmed'] %}
+      <option value="{{ row.id }}" data-revision="{{ row.revision }}">{{ row.kind|humanize }} — {{ row.source_id }} ({{ STATUS.get(row.status, row.status|humanize) }})</option>
+      {% endif %}{% endfor %}
+    </select></label>
+    <label>Record number in the other system <span class="muted">Optional for ServiceNow.</span>
+      <input class="input" name="remote_id" maxlength="128" autocomplete="off" pattern="[A-Za-z0-9_.:\-]{4,128}" placeholder="For example: INC0012345"></label>
+    <div class="gov-form__wide gov-actions"><button class="btn" type="button" id="gov-grc-inspect">Compare</button></div>
+    <div class="gov-form__wide" id="gov-grc-comparison" tabindex="-1"></div>
+    <label class="gov-form__wide">Note<textarea class="textarea" name="note" required maxlength="2000" rows="3"></textarea></label>
+    <div class="gov-form__wide gov-actions">
+      <button class="btn" type="button" id="gov-grc-confirm" disabled>Confirm it was delivered</button>
+      <button class="btn" type="button" id="gov-grc-keep-held">Save note and keep it held</button>
+    </div>
+    <p class="gov-form__wide" id="gov-grc-recovery-status" role="status" aria-live="polite"></p>
+  </form>
+  {% endif %}
+</section>
+
+<script nonce="{{ csp_script_nonce }}">
+(() => {
+  const prefix = "/api/v1/security/governance";
+  const assurance = "/api/v1/security/assurance";
+  const FRIA_ELEMENTS = {{ fria_elements|tojson }};
+  const ANNEX_ITEMS = {{ annex_iv_items|tojson }};
+  const IFU_ITEMS = {{ ifu_items|tojson }};
+  const ASSET_NAMES = {{ ASSET_NAMES|tojson }};
+  const nameOf = assetId => ASSET_NAMES[assetId] || "this AI system";
+  const status = (id, text) => { const el = document.getElementById(id); if (el && window.mvStatus) window.mvStatus(el, text); else if (el) el.textContent = text; };
+  const say = (id, error, action) => status(id, "Could not " + action + ". " + ((error && error.message) || "Try again."));
+  // Requests go through the shell's mvFetchJSON (lightwork-ui.js), which loads
+  // after the page content; a failure is one plain sentence without the action.
+  const shellReady = window.mvFetchJSON ? Promise.resolve() : new Promise(done => document.addEventListener("DOMContentLoaded", done));
+  const send = async (url, options) => { await shellReady; return window.mvFetchJSON(url, options); };
+  const post = (base, path, body) => send(base + path, {
+    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+  });
+  const get = (base, path) => send(base + path, {});
+  const epoch = value => Math.floor(new Date(value).getTime() / 1000);
+  const ask = (title, fields) => (typeof window.mvForm === "function" ? window.mvForm(title, fields) : Promise.resolve(null));
+  const confirmed = (message, okText) => (typeof window.mvConfirm === "function"
+    ? window.mvConfirm(message, {okText}) : Promise.resolve(window.confirm(message)));
+  // Keep the success message across the reload that refreshes the tables.
+  const done = message => {
+    try { window.sessionStorage.setItem("gov-flash", message); } catch (_) { /* storage unavailable */ }
+    window.location.reload();
+  };
+  try {
+    const flash = window.sessionStorage.getItem("gov-flash");
+    if (flash) { status("gov-flash", flash); window.sessionStorage.removeItem("gov-flash"); }
+  } catch (_) { /* storage unavailable */ }
+  const refreshAttention = document.getElementById("gov-refresh-attention");
+  refreshAttention.addEventListener("click", async () => {
+    if (refreshAttention.disabled) return;
+    refreshAttention.disabled = true;
+    status("gov-attention-status", "Checking alerts…");
+    try {
+      const result = await get(prefix, "/alerts");
+      if (!result || !Number.isInteger(result.attention_count) || !result.sections) throw new Error("The alerts could not be read. Try again.");
+      const summary = document.getElementById("gov-attention-summary");
+      summary.replaceChildren();
+      const count = document.createElement("p");
+      const incidents = result.sections.serious_incidents;
+      const incomplete = incidents && incidents.complete === false;
+      count.textContent = result.attention_count ? `${result.attention_count} item${result.attention_count === 1 ? "" : "s"} need attention.` : incomplete ? "No alerts were found in the records that could be read. Incident reporting needs a current check." : "Nothing needs attention in the available records right now.";
+      summary.appendChild(count);
+      const labels = {
+        serious_incidents: {label:"Serious incidents",fields:{overdue_count:"reports overdue",due_soon_count:"reports due soon"}},
+        ai_literacy: {label:"Staff AI training",fields:{missing:"trainings not done",expired:"trainings expired",expiring_soon:"trainings expiring soon"}},
+        eu_conformity: {label:"EU AI Act",fields:{outdated_frias:"assessments reopened",reassessment_required:"systems needing a new assessment"}},
+        vendors: {label:"Suppliers",fields:{contracts_overdue:"contracts past renewal",contracts_due_soon:"contracts renewing soon"}},
+        data_map: {label:"Data map",fields:{unlinked_flagged_assets:"flagged data stores not linked"}},
+      };
+      Object.entries(labels).forEach(([name, definition]) => {
+        const section = result.sections[name];
+        if (!section) return;
+        if (name === "serious_incidents" && section.unavailable_registers && section.unavailable_registers.length) {
+          const warning = document.createElement("p"); warning.className = "badge warn";
+          warning.textContent = "Incident reporting is incomplete. " + section.unavailable_registers.map(value => value === "declarations" ? "Serious-incident declarations could not be read." : "Article 73 incident records could not be read.").join(" ") + " Refresh to check again; unavailable records may contain deadlines.";
+          summary.appendChild(warning);
+        }
+        if (section.error) {
+          const warning = document.createElement("p"); warning.className = "muted";
+          warning.textContent = `${definition.label} alerts could not be loaded. The other alerts are shown.`;
+          summary.appendChild(warning); return;
+        }
+        Object.entries(definition.fields).forEach(([key, label]) => {
+          const number = Array.isArray(section[key]) ? section[key].length : section[key];
+          if (!number) return;
+          const item = document.createElement("p"); item.textContent = `${definition.label}: ${number} ${label}.`; summary.appendChild(item);
+        });
+        if (name === "serious_incidents" && section.enabled) {
+          const notice = document.createElement("p"); notice.className = "muted";
+          notice.textContent = section.notice + (section.listed_ids_truncated ? " Totals include every supported retained record; detailed alert references show the first 50 in deadline order." : "");
+          summary.appendChild(notice);
+        }
+      });
+      status("gov-attention-status", "Alerts refreshed.");
+    }
+    catch (error) { status("gov-attention-status", error.message || "Alerts could not be refreshed. Refresh the page and try again."); }
+    finally { refreshAttention.disabled = false; }
+  });
+  const grcRun = document.getElementById("gov-grc-run");
+  if (grcRun) grcRun.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = grcRun.querySelector('button[type="submit"]');
+    if (button.disabled || !grcRun.reportValidity()) return;
+    button.disabled = true;
+    status("gov-grc-status", "Sending records…");
+    const problems = document.getElementById("gov-grc-problems");
+    problems.replaceChildren();
+    document.getElementById("gov-grc-output").textContent = "";
+    try {
+      const result = await post(prefix, "/grc-sync/run", {
+        limit: Number(grcRun.elements.limit.value),
+        confirm_dispatch: grcRun.elements.confirm_dispatch.checked,
+      });
+      const unconfirmed = (result.delivered || []).filter(row => row.status === "delivered_unconfirmed").length;
+      status("gov-grc-status", `${Math.max(0, (result.delivered_count || 0) - unconfirmed)} confirmed, ${unconfirmed} awaiting delivery confirmation, ${result.unchanged_count || 0} already up to date, ${result.blocked_count || 0} held for review, ${result.failure_count || 0} failed. Reload the page to update the table.`);
+      [...(result.blocked || []), ...(result.failures || [])].forEach(row => {
+        const item = document.createElement("li");
+        item.textContent = `${row.source_id}: ${row.reason}`;
+        problems.appendChild(item);
+      });
+      document.getElementById("gov-grc-output").textContent = JSON.stringify(result, null, 2);
+      grcRun.elements.confirm_dispatch.checked = false;
+    } catch (error) { status("gov-grc-status", error.message || "Sending could not finish. Check the records above before trying again."); }
+    finally { button.disabled = false; }
+  });
+  const download = (filename, text, type) => {
+    const blob = new Blob([text], {type: type || "text/plain"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
+  const fileName = (text, suffix) => String(text || "record").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) + suffix;
+  // Show a written document (headings, lists, paragraphs) as formatted text.
+  const renderDocument = (holder, text) => {
+    holder.replaceChildren();
+    let list = null;
+    String(text || "").split("\n").forEach(raw => {
+      const line = raw.replace(/\*\*/g, "").trimEnd();
+      const heading = line.match(/^(#{1,4})\s+(.*)$/);
+      if (heading) {
+        list = null;
+        const node = document.createElement(heading[1].length <= 2 ? "h4" : "h5");
+        node.textContent = heading[2]; holder.appendChild(node); return;
+      }
+      const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+      if (bullet) {
+        if (!list) { list = document.createElement("ul"); holder.appendChild(list); }
+        const item = document.createElement("li"); item.textContent = bullet[1]; list.appendChild(item); return;
+      }
+      list = null;
+      if (!line.trim()) return;
+      const para = document.createElement("p"); para.textContent = line; holder.appendChild(para);
+    });
+    holder.hidden = false;
+  };
+
+  // ---- Impact on people's rights (FRIA) ----------------------------------
+  let friaRecord = null;
+  const friaOpen = document.getElementById("fria-open");
+  if (friaOpen) friaOpen.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(friaOpen);
+    const context = String(fields.get("context") || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 120);
+    if (!context) { status("fria-status", "Say where it will be used, using letters or numbers."); return; }
+    try {
+      status("fria-status", "Starting the assessment…");
+      await post(prefix, "/fria", {asset_id: String(fields.get("asset_id")), context});
+      done("Assessment started. Choose “Work on it” to answer the questions.");
+    } catch (error) { say("fria-status", error, "start the assessment"); }
+  });
+  const loadFria = async recordId => {
+    const body = await get(prefix, "/fria/" + encodeURIComponent(recordId));
+    const record = body.record;
+    friaRecord = record;
+    const readOnly = record.status === "completed";
+    document.getElementById("fria-editor").hidden = false;
+    const title = document.getElementById("fria-editor-title");
+    title.textContent = "Assessment for " + nameOf(record.asset_id) + (readOnly ? " (complete)" : "");
+    const holder = document.getElementById("fria-elements"); holder.replaceChildren();
+    Object.entries(FRIA_ELEMENTS).forEach(([key, meta]) => {
+      const wrap = document.createElement("div"); wrap.className = "gov-element";
+      const label = document.createElement("label");
+      label.textContent = meta.prompt + " ";
+      const cite = document.createElement("span"); cite.className = "gov-cite"; cite.textContent = meta.citation;
+      label.appendChild(cite);
+      const area = document.createElement("textarea");
+      area.className = "textarea"; area.dataset.element = key; area.maxLength = 8000; area.disabled = readOnly;
+      const existing = (record.elements || {})[key];
+      if (existing && existing.content) area.value = existing.content;
+      label.appendChild(area); wrap.appendChild(label); holder.appendChild(wrap);
+    });
+    status("fria-editor-status", readOnly ? "This assessment is complete. Choose “Something changed — reopen it” before changing answers." : "");
+    document.getElementById("fria-draft-view").hidden = true;
+    title.focus();
+  };
+  document.querySelectorAll("[data-fria-open-record]").forEach(button =>
+    button.addEventListener("click", async () => {
+      try { await loadFria(button.dataset.friaOpenRecord); }
+      catch (error) { say("fria-status", error, "open the assessment"); }
+    }));
+  const friaSave = document.getElementById("fria-save");
+  if (friaSave) friaSave.addEventListener("click", async () => {
+    if (!friaRecord) return;
+    if (friaRecord.status === "completed") {
+      status("fria-editor-status", "This assessment is complete. Choose “Something changed — reopen it” before changing answers.");
+      return;
+    }
+    friaSave.disabled = true;
+    try {
+      let revision = friaRecord.revision; let saved = 0;
+      for (const area of document.querySelectorAll("#fria-elements textarea")) {
+        const key = area.dataset.element; const value = area.value.trim();
+        const existing = (friaRecord.elements || {})[key];
+        if (!value || (existing && existing.content === value)) continue;
+        const updated = await post(prefix, "/fria/" + encodeURIComponent(friaRecord.id) + "/elements",
+          {element: key, content: value, expected_revision: revision});
+        revision = updated.revision; friaRecord = updated; saved += 1;
+      }
+      status("fria-editor-status", saved ? `Saved ${saved} answer${saved === 1 ? "" : "s"} under your name.` : "Nothing new to save.");
+    } catch (error) { say("fria-editor-status", error, "save your answers"); }
+    finally { friaSave.disabled = false; }
+  });
+  const friaComplete = document.getElementById("fria-complete");
+  if (friaComplete) friaComplete.addEventListener("click", async () => {
+    if (!friaRecord) return;
+    try {
+      await post(prefix, "/fria/" + encodeURIComponent(friaRecord.id) + "/complete",
+        {expected_revision: friaRecord.revision});
+      done("Assessment marked complete.");
+    } catch (error) {
+      say("fria-editor-status", error.status === 422 || error.status === 409 ? new Error("Answer and save all six questions first.") : error, "mark it complete");
+    }
+  });
+  const friaOutdate = document.getElementById("fria-outdate");
+  if (friaOutdate) friaOutdate.addEventListener("click", async () => {
+    if (!friaRecord) return;
+    const values = await ask("Reopen this assessment", [
+      {key: "reason", label: "What changed?", type: "text", required: true, help: "For example: the system is now used for a new group of people."},
+    ]);
+    if (!values || !String(values.reason || "").trim()) return;
+    try {
+      await post(prefix, "/fria/" + encodeURIComponent(friaRecord.id) + "/outdate",
+        {reason: String(values.reason).trim(), expected_revision: friaRecord.revision});
+      done("Assessment reopened. Update the answers that changed.");
+    } catch (error) { say("fria-editor-status", error, "reopen it"); }
+  });
+  const friaNotify = document.getElementById("fria-notify");
+  if (friaNotify) friaNotify.addEventListener("click", async () => {
+    if (!friaRecord) return;
+    const values = await ask("Record that you told the authority", [
+      {key: "authority", label: "Which authority did you tell?", type: "text", required: true},
+      {key: "reference", label: "Reference number they gave you", type: "text", required: true},
+    ]);
+    if (!values || !String(values.authority || "").trim() || !String(values.reference || "").trim()) return;
+    try {
+      await post(prefix, "/fria/" + encodeURIComponent(friaRecord.id) + "/notification",
+        {authority: String(values.authority).trim(), reference: String(values.reference).trim(),
+         submitted_at: Math.floor(Date.now() / 1000), expected_revision: friaRecord.revision});
+      friaRecord = null;
+      done("Recorded that you told the authority. Lightwork did not send anything itself.");
+    } catch (error) { say("fria-editor-status", error, "record it"); }
+  });
+  const friaDraft = document.getElementById("fria-draft");
+  if (friaDraft) friaDraft.addEventListener("click", async () => {
+    if (!friaRecord) return;
+    try {
+      const body = await get(prefix, "/fria/" + encodeURIComponent(friaRecord.id) + "/draft");
+      renderDocument(document.getElementById("fria-draft-view"), body.draft);
+    } catch (error) { say("fria-editor-status", error, "show the written assessment"); }
+  });
+  const friaDownload = document.getElementById("fria-download");
+  if (friaDownload) friaDownload.addEventListener("click", async () => {
+    if (!friaRecord) return;
+    try {
+      const body = await get(prefix, "/fria/" + encodeURIComponent(friaRecord.id) + "/draft");
+      download(fileName(nameOf(friaRecord.asset_id), "-rights-impact-assessment.md"), body.draft);
+    } catch (error) { say("fria-editor-status", error, "download it"); }
+  });
+
+  // ---- Checklists (technical documentation, instructions for use) ------------
+  const checklist = (kind, items, body, titleId, holderId, statusId) => {
+    let record = body.record;
+    const title = document.getElementById(titleId);
+    const heading = state => { title.textContent = nameOf(record.asset_id) + ": " + state.asserted + " of " + state.total + " documented"; };
+    heading(body.status);
+    const holder = document.getElementById(holderId); holder.replaceChildren();
+    Object.entries(items).forEach(([key, meta]) => {
+      const wrap = document.createElement("div"); wrap.className = "gov-element";
+      const label = document.createElement("label");
+      label.textContent = meta[1] + " ";
+      const cite = document.createElement("span"); cite.className = "gov-cite"; cite.textContent = meta[0];
+      label.appendChild(cite);
+      const input = document.createElement("input");
+      input.className = "input"; input.dataset.item = key; input.maxLength = 512;
+      input.placeholder = "Link to where this is documented";
+      const existing = (record.items || {})[key];
+      if (existing && existing.reference) input.value = existing.reference;
+      const save = document.createElement("button");
+      save.type = "button"; save.className = "btn btn--ghost"; save.textContent = "Save";
+      save.setAttribute("aria-label", "Save: " + meta[1]);
+      save.addEventListener("click", async () => {
+        if (!input.value.trim()) { status(statusId, "Add a link first."); return; }
+        save.disabled = true;
+        try {
+          const current = await get(prefix, "/" + kind + "/" + encodeURIComponent(record.id));
+          const state = await post(prefix, "/" + kind + "/" + encodeURIComponent(record.id) + "/items",
+            {item: key, reference: input.value.trim(), expected_revision: current.status.revision});
+          heading(state);
+          status(statusId, "Saved under your name.");
+        } catch (error) { say(statusId, error, "save it"); }
+        finally { save.disabled = false; }
+      });
+      label.appendChild(input); wrap.appendChild(label); wrap.appendChild(save);
+      holder.appendChild(wrap);
+    });
+    title.focus();
+    return record;
+  };
+  let annexRecord = null;
+  const annexOpen = document.getElementById("annex-open");
+  if (annexOpen) annexOpen.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(annexOpen);
+    try {
+      status("annex-status", "Opening the checklist…");
+      const body = await post(prefix, "/annex-iv", {asset_id: String(fields.get("asset_id"))});
+      document.getElementById("annex-editor").hidden = false;
+      annexRecord = checklist("annex-iv", ANNEX_ITEMS, body, "annex-editor-title", "annex-items", "annex-editor-status");
+      status("annex-status", "");
+    } catch (error) { say("annex-status", error, "open the checklist"); }
+  });
+  const annexRender = document.getElementById("annex-render");
+  if (annexRender) annexRender.addEventListener("click", async () => {
+    if (!annexRecord) return;
+    try {
+      const body = await get(prefix, "/annex-iv/" + encodeURIComponent(annexRecord.id) + "/render");
+      renderDocument(document.getElementById("annex-render-view"), body.rendered);
+    } catch (error) { say("annex-editor-status", error, "show the summary"); }
+  });
+  const annexDownload = document.getElementById("annex-download");
+  if (annexDownload) annexDownload.addEventListener("click", async () => {
+    if (!annexRecord) return;
+    try {
+      const body = await get(prefix, "/annex-iv/" + encodeURIComponent(annexRecord.id) + "/render");
+      download(fileName(nameOf(annexRecord.asset_id), "-technical-documentation.md"), body.rendered);
+    } catch (error) { say("annex-editor-status", error, "download the summary"); }
+  });
+  const ifuOpen = document.getElementById("ifu-open");
+  if (ifuOpen) ifuOpen.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(ifuOpen);
+    try {
+      status("ifu-status", "Opening the checklist…");
+      const body = await post(prefix, "/ifu", {asset_id: String(fields.get("asset_id")).trim()});
+      document.getElementById("ifu-editor").hidden = false;
+      checklist("ifu", IFU_ITEMS, body, "ifu-editor-title", "ifu-items", "ifu-editor-status");
+      status("ifu-status", "");
+    } catch (error) { say("ifu-status", error, "open the checklist"); }
+  });
+
+  // ---- Approval route --------------------------------------------------------
+  const routeRecord = document.getElementById("route-record");
+  if (routeRecord) routeRecord.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(routeRecord);
+    const point = String(fields.get("annex_iii_point") || "").trim();
+    try {
+      status("route-status", "Recording the route…");
+      await post(prefix, "/routes",
+        {asset_id: String(fields.get("asset_id")).trim(),
+         route: String(fields.get("route")),
+         annex_iii_point: point ? Number(point) : null,
+         harmonised_standards_applied: fields.get("harmonised") === "on",
+         common_specifications_applied: fields.get("common_specs") === "on",
+         rationale: String(fields.get("rationale") || "").trim()});
+      done("Approval route recorded.");
+    } catch (error) {
+      say("route-status", error.status === 422 ? new Error("That route can't be used for this kind of system. Check the high-risk area and the standards you applied.") : error, "record the route");
+    }
+  });
+  document.querySelectorAll("[data-route-change]").forEach(button =>
+    button.addEventListener("click", async () => {
+      const asset = button.dataset.routeChange;
+      const values = await ask("Record a change to " + nameOf(asset), [
+        {key: "reason", label: "What changed?", type: "text", required: true},
+        {key: "predetermined", label: "The provider planned this change and it is in the technical documentation", type: "bool", default: false},
+      ]);
+      if (!values || !String(values.reason || "").trim()) return;
+      try {
+        status("route-modify-status", "Recording the change…");
+        const current = await get(prefix, "/routes/" + encodeURIComponent(asset));
+        await post(prefix, "/routes/" + encodeURIComponent(asset) + "/modification",
+          {reason: String(values.reason).trim(), predetermined: values.predetermined === true,
+           expected_revision: current.record.revision});
+        done(values.predetermined === true ? "Change recorded." : "Change recorded. This system now needs a new assessment.");
+      } catch (error) { say("route-modify-status", error, "record the change"); }
+    }));
+
+  // ---- Monitoring plan, registration, auditor bundle -------------------------
+  const pmmRecord = document.getElementById("pmm-record");
+  if (pmmRecord) pmmRecord.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(pmmRecord);
+    try {
+      status("pmm-status", "Recording the plan…");
+      await post(prefix, "/pmm",
+        {asset_id: String(fields.get("asset_id")).trim(),
+         plan_reference: String(fields.get("plan_reference") || "").trim()});
+      done("Monitoring plan recorded.");
+    } catch (error) { say("pmm-status", error, "record the plan"); }
+  });
+  document.querySelectorAll("[data-pmm-review]").forEach(button =>
+    button.addEventListener("click", async () => {
+      const asset = button.dataset.pmmReview;
+      const values = await ask("Record a review of the monitoring plan for " + nameOf(asset), [
+        {key: "outcome", label: "Outcome", type: "select", default: "no_change", options: [
+          {value: "no_change", label: "Reviewed — no change"}, {value: "plan_updated", label: "Reviewed — plan updated"}]},
+        {key: "plan_reference", label: "New link to the plan (only if it moved)", type: "text"},
+      ]);
+      if (!values) return;
+      try {
+        status("pmm-review-status", "Recording the review…");
+        const moved = String(values.plan_reference || "").trim();
+        await post(prefix, "/pmm/" + encodeURIComponent(asset) + "/review",
+          {outcome: values.outcome === "plan_updated" ? "plan_updated" : "no_change",
+           plan_reference: moved || null, expected_revision: Number(button.dataset.revision)});
+        done("Review recorded.");
+      } catch (error) { say("pmm-review-status", error, "record the review"); }
+    }));
+  const registrationRecord = document.getElementById("registration-record");
+  if (registrationRecord) registrationRecord.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(registrationRecord);
+    const basis = registrationRecord.elements.basis;
+    try {
+      status("registration-status", "Recording the registration…");
+      await post(prefix, "/registrations",
+        {asset_id: String(fields.get("asset_id")).trim(),
+         basis: String(basis.value),
+         registry: String(basis.selectedOptions[0].dataset.registry || "eu_database"),
+         reference: String(fields.get("reference") || "").trim()});
+      done("Registration recorded.");
+    } catch (error) { say("registration-status", error, "record the registration"); }
+  });
+  const bundleForm = document.getElementById("bundle-download");
+  if (bundleForm) bundleForm.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(bundleForm);
+    const asset = String(fields.get("asset_id") || "").trim();
+    try {
+      status("bundle-status", "Putting the records together…");
+      const bundle = await get(prefix, "/bundle/" + encodeURIComponent(asset));
+      download(fileName(nameOf(asset), "-governance-records.json"), JSON.stringify(bundle, null, 2), "application/json");
+      status("bundle-status", "Downloaded.");
+    } catch (error) { say("bundle-status", error, "download the records"); }
+  });
+
+  // ---- Staff AI training ----------------------------------------------------
+  const roleSearch = document.getElementById("literacy-role-search");
+  const roleChoices = document.getElementById("literacy-role-choices");
+  if (roleSearch && roleChoices) {
+    const labels = [...roleChoices.querySelectorAll("label")];
+    const filterRoles = () => {
+      const query = roleSearch.value.trim().toLocaleLowerCase(); let matching = 0, selected = 0;
+      labels.forEach(label => {
+        const input = label.querySelector('input[name="roles"]');
+        const matches = label.textContent.toLocaleLowerCase().includes(query) || input.value.toLocaleLowerCase().includes(query);
+        if (matches) matching++; if (input.checked) selected++;
+        label.hidden = !matches && !input.checked;
+      });
+      status("literacy-role-count", matching + " of " + labels.length + " roles match. " + selected + " selected. Selected roles stay visible.");
+    };
+    roleSearch.addEventListener("input", filterRoles); roleChoices.addEventListener("change", filterRoles); filterRoles();
+  }
+  const trainingSearch = document.getElementById("literacy-training-search");
+  const trainingChoice = document.getElementById("literacy-training-choice");
+  const trainingData = document.getElementById("literacy-training-choices");
+  if (trainingSearch && trainingChoice && trainingData) {
+    const choices = JSON.parse(trainingData.textContent);
+    const trainingLabel = item => item.title || item.key.replace(/[_-]+/g, " ");
+    const filterTrainings = () => {
+      const selected = choices.find(item => item.key === trainingChoice.value);
+      const query = trainingSearch.value.trim().toLocaleLowerCase();
+      const matches = choices.filter(item => trainingLabel(item).toLocaleLowerCase().includes(query) || item.key.toLocaleLowerCase().includes(query));
+      const shown = matches.slice(0, 100);
+      trainingChoice.replaceChildren(new Option(choices.length ? "Choose a training" : "Add a training to a role first", ""));
+      if (selected && !shown.some(item => item.key === selected.key)) trainingChoice.append(new Option(trainingLabel(selected), selected.key));
+      shown.forEach(item => trainingChoice.append(new Option(trainingLabel(item), item.key)));
+      if (selected) trainingChoice.value = selected.key;
+      status("literacy-training-count", matches.length > 100
+        ? "Showing the first 100 of " + matches.length + " matching trainings. Type more of the name to find another training."
+        : matches.length + " matching " + (matches.length === 1 ? "training." : "trainings.") + (selected ? " Your selected training is kept." : ""));
+    };
+    trainingSearch.addEventListener("input", filterTrainings); filterTrainings();
+  }
+  const slug = text => String(text || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100);
+  const trainingRows = document.getElementById("literacy-training-rows");
+  const addTrainingRow = () => {
+    if (!trainingRows) return;
+    const row = document.createElement("div"); row.className = "gov-training-row";
+    const nameLabel = document.createElement("label"); nameLabel.textContent = "Training name";
+    const name = document.createElement("input"); name.className = "input"; name.maxLength = 100; name.dataset.field = "title";
+    nameLabel.appendChild(name);
+    const validLabel = document.createElement("label"); validLabel.textContent = "Valid for";
+    const valid = document.createElement("select"); valid.className = "select"; valid.dataset.field = "validity";
+    [["365", "1 year"], ["180", "6 months"], ["730", "2 years"], ["", "Never expires"]].forEach(([value, label]) => valid.appendChild(new Option(label, value)));
+    validLabel.appendChild(valid);
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "btn btn--ghost"; remove.textContent = "Remove";
+    remove.addEventListener("click", () => { row.remove(); });
+    row.append(nameLabel, validLabel, remove);
+    trainingRows.appendChild(row);
+    name.focus();
+  };
+  const addTraining = document.getElementById("literacy-add-training");
+  if (addTraining) { addTraining.addEventListener("click", addTrainingRow); addTrainingRow(); }
+  const literacyRequire = document.getElementById("literacy-require");
+  if (literacyRequire) literacyRequire.addEventListener("submit", async event => {
+    event.preventDefault();
+    const role = literacyRequire.elements.role_choice.value || slug(literacyRequire.elements.role_new.value);
+    if (!role) { status("literacy-require-status", "Choose a role or type a new role name."); return; }
+    const trainings = [...trainingRows.querySelectorAll(".gov-training-row")].map(row => {
+      const title = row.querySelector('[data-field="title"]').value.trim();
+      const days = row.querySelector('[data-field="validity"]').value;
+      return {key: slug(title), title, validity_days: days ? Number(days) : null};
+    }).filter(item => item.key);
+    if (!trainings.length) { status("literacy-require-status", "Add at least one training with a name."); return; }
+    try {
+      status("literacy-require-status", "Saving…");
+      await post(prefix, "/literacy/requirements", {role, trainings, expected_revision: 0});
+      done("Training saved for the role.");
+    } catch (error) {
+      if (error && error.status === 409 && await confirmed("This role already has a training list. Replace it with this one?", "Replace")) {
+        try {
+          const listing = await get(prefix, "/literacy/requirements");
+          const existing = (listing.requirements || []).find(row => row.role === role);
+          if (!existing) throw new Error("That role no longer exists. Refresh the page.");
+          await post(prefix, "/literacy/requirements", {role, trainings, expected_revision: existing.revision});
+          done("Training list replaced for the role."); return;
+        } catch (retryError) { say("literacy-require-status", retryError, "replace the training list"); return; }
+      }
+      say("literacy-require-status", error, "save the training");
+    }
+  });
+  const literacyAssign = document.getElementById("literacy-assign");
+  if (literacyAssign) literacyAssign.addEventListener("submit", async event => {
+    event.preventDefault();
+    const person = String(literacyAssign.elements.person_choice.value || literacyAssign.elements.person_new.value || "").trim();
+    const roles = [...literacyAssign.querySelectorAll('input[name="roles"]:checked')].map(input => input.value);
+    if (!person) { status("literacy-assign-status", "Choose a person or type their email address."); return; }
+    if (!roles.length) { status("literacy-assign-status", "Tick at least one role."); return; }
+    try {
+      status("literacy-assign-status", "Saving…");
+      await post(prefix, "/literacy/assignments", {person, roles, expected_revision: 0});
+      done("Roles saved.");
+    } catch (error) { say("literacy-assign-status", error, "save the roles"); }
+  });
+  const literacyComplete = document.getElementById("literacy-complete");
+  if (literacyComplete) literacyComplete.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(literacyComplete);
+    try {
+      status("literacy-complete-status", "Recording…");
+      await post(prefix, "/literacy/completions",
+        {person: String(fields.get("person")), training: String(fields.get("training")),
+         completed_at: epoch(String(fields.get("completed_at")) + "T12:00:00"),
+         evidence_ref: String(fields.get("evidence_ref"))});
+      done("Training recorded.");
+    } catch (error) { say("literacy-complete-status", error, "record the training"); }
+  });
+  const literacyDownload = document.getElementById("literacy-download");
+  if (literacyDownload) literacyDownload.addEventListener("click", async () => {
+    try {
+      const body = await get(prefix, "/literacy/evidence");
+      download("staff-ai-training-evidence.json", body.evidence, "application/json");
+    } catch (error) { say("literacy-complete-status", error, "download the evidence"); }
+  });
+
+  // ---- Serious incidents ----------------------------------------------------
+  const incidentDeclare = document.getElementById("incident-declare");
+  if (incidentDeclare) incidentDeclare.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(incidentDeclare);
+    try {
+      status("incident-status", "Declaring — the deadline starts from when you became aware…");
+      await post(assurance, "/ai-incidents",
+        {incident_id: String(fields.get("incident_id")),
+         category: String(fields.get("category")),
+         widespread: fields.get("widespread") === "on",
+         became_aware_at: epoch(String(fields.get("became_aware_at"))),
+         causal_link: String(fields.get("causal_link")),
+         member_state: String(fields.get("member_state")).toUpperCase(),
+         authority: String(fields.get("authority"))});
+      done("Serious incident declared. The reporting deadline is shown in the table.");
+    } catch (error) { say("incident-status", error, "declare the incident"); }
+  });
+  document.querySelectorAll("[data-incident-submit]").forEach(button =>
+    button.addEventListener("click", async () => {
+      const kind = button.dataset.kind === "complete" ? "complete" : "initial";
+      const values = await ask(kind === "complete" ? "Record the full report" : "Record the first report", [
+        {key: "reference", label: "Reference number the authority gave you", type: "text", required: true},
+      ]);
+      if (!values || !String(values.reference || "").trim()) return;
+      try {
+        await post(assurance, "/ai-incidents/" + encodeURIComponent(button.dataset.incidentSubmit) + "/submissions",
+          {kind, submitted_at: Math.floor(Date.now() / 1000), reference: String(values.reference).trim(),
+           expected_revision: Number(button.dataset.revision)});
+        done(kind === "complete" ? "Full report recorded." : "First report recorded.");
+      } catch (error) { say("incident-status", error, "record the report"); }
+    }));
+  document.querySelectorAll("[data-incident-withdraw]").forEach(button =>
+    button.addEventListener("click", async () => {
+      const values = await ask("Withdraw this declaration", [
+        {key: "rationale", label: "Why is it withdrawn?", type: "text", required: true},
+      ]);
+      if (!values || !String(values.rationale || "").trim()) return;
+      try {
+        await post(assurance, "/ai-incidents/" + encodeURIComponent(button.dataset.incidentWithdraw) + "/withdraw",
+          {rationale: String(values.rationale).trim(), expected_revision: Number(button.dataset.revision)});
+        done("Declaration withdrawn.");
+      } catch (error) { say("incident-status", error, "withdraw it"); }
+    }));
+
+  // ---- General-purpose models and deployer duties ---------------------------
+  const revisionOf = select =>
+    Number(select.selectedOptions[0] ? select.selectedOptions[0].dataset.revision : 0);
+  const gpaiOpen = document.getElementById("gpai-open");
+  if (gpaiOpen) gpaiOpen.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(gpaiOpen);
+    try {
+      status("gpai-status", "Starting…");
+      await post(prefix, "/gpai", {
+        asset_id: String(fields.get("asset_id")),
+        systemic_risk: fields.get("systemic_risk") !== null,
+        open_source_exempt: fields.get("open_source_exempt") !== null,
+      });
+      done("Model added. Record evidence for each duty.");
+    } catch (error) { say("gpai-status", error, "start tracking the model"); }
+  });
+  const gpaiAssert = document.getElementById("gpai-assert");
+  if (gpaiAssert) gpaiAssert.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(gpaiAssert);
+    const select = gpaiAssert.querySelector("select[name=record_id]");
+    try {
+      status("gpai-assert-status", "Recording…");
+      await post(prefix, "/gpai/" + encodeURIComponent(String(fields.get("record_id"))) + "/obligations", {
+        obligation: String(fields.get("obligation")),
+        reference: String(fields.get("reference")),
+        expected_revision: revisionOf(select),
+      });
+      done("Evidence recorded.");
+    } catch (error) { say("gpai-assert-status", error, "record the evidence"); }
+  });
+  const deployerOpen = document.getElementById("deployer-open");
+  if (deployerOpen) deployerOpen.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(deployerOpen);
+    try {
+      status("deployer-status", "Starting…");
+      await post(prefix, "/deployer", {
+        asset_id: String(fields.get("asset_id")),
+        workplace_use: fields.get("workplace_use") !== null,
+        public_authority: fields.get("public_authority") !== null,
+        controls_input_data: fields.get("controls_input_data") !== null,
+        requires_dpia: fields.get("requires_dpia") !== null,
+      });
+      done("System added. Name its overseers and record evidence for each duty.");
+    } catch (error) { say("deployer-status", error, "start tracking the system"); }
+  });
+  const deployerOversight = document.getElementById("deployer-oversight");
+  if (deployerOversight) deployerOversight.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(deployerOversight);
+    const select = deployerOversight.querySelector("select[name=record_id]");
+    const persons = String(fields.get("persons") || "").split(",")
+      .map(part => part.trim()).filter(Boolean);
+    try {
+      status("deployer-oversight-status", "Saving…");
+      await post(prefix, "/deployer/" + encodeURIComponent(String(fields.get("record_id"))) + "/oversight", {
+        persons,
+        reference: String(fields.get("reference")),
+        expected_revision: revisionOf(select),
+      });
+      done("Overseers named.");
+    } catch (error) { say("deployer-oversight-status", error, "name the overseers"); }
+  });
+  const deployerAssert = document.getElementById("deployer-assert");
+  if (deployerAssert) deployerAssert.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(deployerAssert);
+    const select = deployerAssert.querySelector("select[name=record_id]");
+    try {
+      status("deployer-assert-status", "Recording…");
+      await post(prefix, "/deployer/" + encodeURIComponent(String(fields.get("record_id"))) + "/obligations", {
+        obligation: String(fields.get("obligation")),
+        reference: String(fields.get("reference")),
+        expected_revision: revisionOf(select),
+      });
+      done("Evidence recorded.");
+    } catch (error) { say("deployer-assert-status", error, "record the evidence"); }
+  });
+
+  // ---- Agent actions: policy check, task history, skill impact --------------
+  const actions = "/api/v1/security/governance/agent-actions";
+  const human = value => (typeof window.mvHuman === "function" ? window.mvHuman(value) : String(value || "").replace(/[_-]+/g, " "));
+  const when = ts => (typeof window.mvWhen === "function" ? window.mvWhen(ts) : "");
+  const fill = (select, items, empty) => {
+    select.replaceChildren();
+    if (!items.length) { select.appendChild(new Option(empty, "")); return; }
+    items.forEach(([value, label]) => select.appendChild(new Option(label, value)));
+  };
+  const agentCheck = document.getElementById("agent-check");
+  if (agentCheck) {
+    get("/api/v1", "/tools").then(body => fill(agentCheck.elements.action,
+      (body.tools || []).map(tool => [tool.name, human(tool.name) + " (" + human(tool.risk) + " risk)"]), "No actions available"))
+      .catch(() => fill(agentCheck.elements.action, [], "Actions could not be loaded"));
+    get("/api/v1", "/goals?limit=50").then(rows => fill(document.querySelector("#agent-lineage select"),
+      (Array.isArray(rows) ? rows : []).map(goal => [String(goal.id), goal.title || "Untitled task"]), "No tasks yet"))
+      .catch(() => fill(document.querySelector("#agent-lineage select"), [], "Tasks could not be loaded"));
+    get("/api/v1", "/skills").then(rows => fill(document.querySelector("#agent-impact select"),
+      (Array.isArray(rows) ? rows : []).map(skill => [skill.name, human(skill.name)]), "No skills installed"))
+      .catch(() => fill(document.querySelector("#agent-impact select"), [], "Skills could not be loaded"));
+    const DECISION = {allow: "Allowed.", deny: "Blocked.", require_human: "Allowed only after a person approves it."};
+    agentCheck.addEventListener("submit", async event => {
+      event.preventDefault();
+      const action = agentCheck.elements.action.value;
+      if (!action) return;
+      const query = new URLSearchParams({action});
+      if (agentCheck.elements.risk.value) query.set("risk", agentCheck.elements.risk.value);
+      try {
+        const verdict = await get(actions, "/check?" + query);
+        status("agent-check-result", human(action) + ": " + (DECISION[verdict.decision] || "Unknown.") + (verdict.reason ? " " + verdict.reason : ""));
+      } catch (error) { say("agent-check-result", error, "check the action"); }
+    });
+    const CHAIN = {valid: "The record is complete and has not been changed.", broken: "Warning: this record has been changed since it was written.", missing: "No actions were recorded for this task.", unavailable: "The record could not be read. Refresh the page and try again."};
+    const listInto = (id, lines, note) => {
+      const holder = document.getElementById(id); holder.replaceChildren();
+      if (note) { const p = document.createElement("p"); p.textContent = note; holder.appendChild(p); }
+      if (lines.length) {
+        const list = document.createElement("ol");
+        lines.forEach(text => { const item = document.createElement("li"); item.textContent = text; list.appendChild(item); });
+        holder.appendChild(list);
+      }
+    };
+    document.getElementById("agent-lineage").addEventListener("submit", async event => {
+      event.preventDefault();
+      const goal = event.currentTarget.elements.goal.value;
+      if (!goal) return;
+      try {
+        const body = await get(actions, "/lineage/" + encodeURIComponent(goal));
+        listInto("agent-lineage-result", (body.items || []).map(link =>
+          human(link.action) + (link.skills.length ? " — using " + link.skills.map(human).join(", ") : "") +
+          (link.sources.length ? " — from " + link.sources.join(", ") : "") + (link.ts ? " (" + when(link.ts) + ")" : "")),
+          CHAIN[body.chain] || CHAIN.unavailable);
+      } catch (error) { say("agent-lineage-result", error, "load the task's actions"); }
+    });
+    document.getElementById("agent-impact").addEventListener("submit", async event => {
+      event.preventDefault();
+      const skill = event.currentTarget.elements.skill.value;
+      if (!skill) return;
+      try {
+        const body = await get(actions, "/impact?" + new URLSearchParams({name: skill, kind: "skill"}));
+        listInto("agent-impact-result", (body.items || []).map(hit => "Task " + hit.goal_id + ": " + human(hit.action) + (hit.ts ? " (" + when(hit.ts) + ")" : "")),
+          body.count ? body.count + " recorded action" + (body.count === 1 ? "" : "s") + " used " + human(skill) + "." : "Nothing recorded has used " + human(skill) + ".");
+      } catch (error) { say("agent-impact-result", error, "search the actions"); }
+    });
+  }
+})();
+</script>
+<script src="/static/lightwork-grc-recovery.js" defer></script>
+<script src="/static/lightwork-runtime-enforcement.js" defer></script>
+{% endblock %}

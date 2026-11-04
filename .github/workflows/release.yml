@@ -1,0 +1,765 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release (e.g., v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # publish.yml uses this same repo-wide group. A tag build, downstream
+  # signing/registry publish, and any retry therefore serialize as one release
+  # state machine instead of mutating the same draft concurrently.
+  group: lightwork-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+# Release installs must resolve through the same reviewed dependency set as CI.
+# Exact direct build-tool pins below make intent visible; the constraint also
+# closes transitive-dependency drift.
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+jobs:
+  validate-release-tag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release-ref.outputs.tag }}
+      version: ${{ steps.release-ref.outputs.version }}
+      sha: ${{ steps.release-ref.outputs.sha }}
+      prerelease: ${{ steps.release-ref.outputs.prerelease }}
+      release-state: ${{ steps.release-state.outputs.state }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - id: release-ref
+        name: Validate release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+
+          python -I scripts/release_version.py \
+            --tag "$tag" \
+            --github-output "$GITHUB_OUTPUT"
+
+          # checkout fetch-depth: 0 fetched all branches/tags with its scoped
+          # token before removing credentials. Do not re-authenticate git here.
+          git show-ref --verify --quiet "refs/tags/$tag" || {
+            echo "Release tag does not exist in the checked-out repository: $tag" >&2
+            exit 1
+          }
+          git show-ref --verify --quiet refs/remotes/origin/main || {
+            echo "origin/main was not fetched for release provenance validation" >&2
+            exit 1
+          }
+          tag_sha="$(git rev-list -n 1 "refs/tags/$tag")"
+
+          if ! git merge-base --is-ancestor "$tag_sha" refs/remotes/origin/main; then
+            echo "Release tag $tag ($tag_sha) is not reachable from origin/main" >&2
+            exit 1
+          fi
+
+          if [[ "$EVENT_NAME" == "push" && "$EVENT_SHA" != "$tag_sha" ]]; then
+            echo "Pushed tag $tag resolves to $tag_sha, not workflow SHA $EVENT_SHA" >&2
+            exit 1
+          fi
+
+          # A keyless certificate is bound to the workflow run's Git ref, not
+          # the later checkout. A manual release therefore must be dispatched
+          # with "Use workflow from" set to this exact tag; dispatching from
+          # main would produce a refs/heads/main identity that the verifier
+          # correctly rejects.
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            expected_ref="refs/tags/$tag"
+            if [[ "$EVENT_REF" != "$expected_ref" ]]; then
+              echo "Manual release must run from $expected_ref, not $EVENT_REF" >&2
+              exit 1
+            fi
+            if [[ "$EVENT_SHA" != "$tag_sha" ]]; then
+              echo "Manual release SHA $EVENT_SHA does not match $tag at $tag_sha" >&2
+              exit 1
+            fi
+          fi
+
+          # Read every cohort/version file from the immutable release commit.
+          git checkout --detach "$tag_sha"
+
+          export RELEASE_VERSION="${tag#v}"
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          expected = os.environ["RELEASE_VERSION"]
+          cohort = tomllib.loads(Path("release-cohort.toml").read_text(encoding="utf-8"))
+          if cohort["version"] != expected:
+              raise SystemExit(
+                  f"tag version {expected!r} != release-cohort.toml {cohort['version']!r}"
+              )
+          if len(cohort["packages"]) != 8:
+              raise SystemExit("release cohort must contain exactly eight public packages")
+          for package in cohort["packages"]:
+              path = Path(package["path"]) / "pyproject.toml"
+              project = tomllib.loads(path.read_text(encoding="utf-8"))["project"]
+              if project["name"] != package["distribution"]:
+                  raise SystemExit(
+                      f"{path}: expected distribution {package['distribution']!r}, "
+                      f"found {project['name']!r}"
+                  )
+              if project["version"] != expected:
+                  raise SystemExit(
+                      f"{path}: version {project['version']!r} != tag {expected!r}"
+                  )
+          print(f"release cohort OK: 8 packages at {expected}")
+          PY
+
+          echo "sha=$tag_sha" >> "$GITHUB_OUTPUT"
+      - id: release-state
+        name: Inspect the exact-tag GitHub release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.release-ref.outputs.prerelease }}
+          RELEASE_TAG: ${{ steps.release-ref.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I scripts/github_release_state.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --expected-prerelease "$PRERELEASE" \
+            --allow-state absent \
+            --allow-state draft \
+            --allow-state published \
+            --github-output "$GITHUB_OUTPUT"
+
+  docker-image:
+    needs: validate-release-tag
+    if: needs.validate-release-tag.outputs.release-state != 'published'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image: ${{ steps.stage.outputs.image }}
+      stage-tag: ${{ steps.stage.outputs.tag }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.sha }}
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: stage
+        name: Define the immutable staging image
+        shell: bash
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lightworkos"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "tag=$image:sha-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - id: build
+        name: Build and stage the immutable container
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: true
+          # Multi-architecture python:3.12-slim OCI index, resolved from the
+          # Docker registry on 2026-07-29. Dependabot/release review should
+          # advance this digest deliberately with the dependency constraints.
+          build-args: >-
+            PYTHON_DIGEST=@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+          tags: ${{ steps.stage.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.validate-release-tag.outputs.tag }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+  # PyPI publishing lives in publish.yml (Trusted Publishing / OIDC). That
+  # workflow is triggered only after this complete Release workflow succeeds,
+  # so no Python registry bytes can escape ahead of a failed release build.
+
+  binaries:
+    needs: validate-release-tag
+    if: needs.validate-release-tag.outputs.release-state != 'published'
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: "3.12.13"
+            architecture: x64
+            artifact: maverick-linux-x86_64
+          - os: macos-15
+            python: "3.12.10"
+            architecture: arm64
+            artifact: maverick-macos-arm64
+          - os: windows-2022
+            python: "3.12.10"
+            architecture: x64
+            artifact: maverick-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          # 3.12.10 is the last official Windows/macOS binary in this branch.
+          # Later 3.12 security releases in actions/python-versions are Linux-only.
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.architecture }}
+      - name: Install Lightwork + deps
+        shell: bash
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          # NOT editable (-e): PyInstaller can't collect editable installs,
+          # which is why the binary crashed with "No module named 'maverick'".
+          # A regular install puts the packages in site-packages where the
+          # analyzer (and the spec's collect_submodules) can find them. Supply
+          # the complete release cohort in one resolver transaction so every
+          # distribution's declared base dependencies are installed.
+          python scripts/install_release_cohort.py \
+            --target-python python \
+            --core-extra release-runtime
+          # PyInstaller and its transitive helpers are constrained in
+          # requirements/ci.txt so rebuilding a tag cannot silently consume a
+          # new packager or hook set.
+          python -m pip install --constraint requirements/ci.txt \
+            'pyinstaller==6.22.3'
+          python -m pip check
+          python scripts/verify_constraint_closure.py
+          python -c "from maverick.providers import verify_release_runtime; verify_release_runtime()"
+          python -c "from importlib.metadata import version; assert version('pywhispercpp') == '1.5.1'; print('pywhispercpp:', version('pywhispercpp'))"
+      - name: Diagnostic - verify sqlite3 is importable at build time
+        shell: bash
+        run: |
+          # Prove sqlite3 is available BEFORE pyinstaller runs. If this
+          # fails, the Python install on the runner doesn't have sqlite3
+          # support compiled in -- which is what would silently cause
+          # --hidden-import sqlite3 to be a no-op (you can't bundle what
+          # doesn't exist in the source Python). The v0.1.0/v0.1.1
+          # release binaries failed precisely this way on all 3 OSes.
+          python -c "import sqlite3; print('sqlite3 version:', sqlite3.sqlite_version)"
+          python -c "import _sqlite3; print('_sqlite3 ok')"
+      - name: Build single-file binary
+        shell: bash
+        working-directory: build
+        run: |
+          # Spec file gives the analyzer an unambiguous hiddenimports list.
+          # Previous attempts via --hidden-import on the CLI silently no-op'd
+          # under --collect-all interaction; the spec file pattern is what
+          # the PyInstaller docs recommend for non-trivial builds.
+          pyinstaller --clean --noconfirm --distpath ../dist maverick.spec
+      - name: Smoke-test the binary covers all subcommands
+        shell: bash
+        run: |
+          ./dist/maverick --help
+          ./dist/maverick version
+          ./dist/maverick dashboard --help
+          ./dist/maverick mcp --help
+          ./dist/maverick release-runtime-check
+          voice_status="$(./dist/maverick voice status)"
+          printf '%s\n' "$voice_status"
+          grep -F "pywhispercpp engine (installed)" <<<"$voice_status"
+      - name: Rename artifact
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv dist/maverick.exe "dist/${{ matrix.artifact }}"
+          else
+            mv dist/maverick "dist/${{ matrix.artifact }}"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+
+  release-runtime-sbom:
+    # Dependency code runs in an isolated read-only job and can affect only
+    # this SBOM artifact. It cannot mutate the separately uploaded binaries
+    # that cross into the privileged signing job.
+    needs: validate-release-tag
+    if: needs.validate-release-tag.outputs.release-state != 'published'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Generate the isolated release-runtime SBOM
+        env:
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3' 'cyclonedx-bom==7.6.0'
+          python -I scripts/verify_constraint_closure.py
+          SBOM_ENV="$RUNNER_TEMP/lightwork-release-sbom"
+          python -m venv "$SBOM_ENV"
+          "$SBOM_ENV/bin/python" -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python scripts/install_release_cohort.py \
+            --source-root . \
+            --target-python "$SBOM_ENV/bin/python" \
+            --constraint requirements/ci.txt \
+            --core-extra release-runtime
+          "$SBOM_ENV/bin/python" -I scripts/verify_constraint_closure.py
+          "$SBOM_ENV/bin/maverick" release-runtime-check
+          cyclonedx-py environment "$SBOM_ENV/bin/python" \
+            --pyproject packages/maverick-core/pyproject.toml \
+            -o "maverick-sbom-${RELEASE_TAG}.cdx.json"
+          test -s "maverick-sbom-${RELEASE_TAG}.cdx.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-runtime-sbom
+          path: maverick-sbom-*.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-published-release:
+    # A rerun of an already-published tag is verification-only. In particular,
+    # it never rebuilds mutable staging tags or asks action-gh-release to
+    # clobber public assets (which also keeps retries compatible with GitHub's
+    # immutable-release setting).
+    needs: validate-release-tag
+    if: needs.validate-release-tag.outputs.release-state == 'published'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.sha }}
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify the published release without mutating it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.validate-release-tag.outputs.sha }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets="$RUNNER_TEMP/lightwork-published-assets"
+          metadata="$RUNNER_TEMP/lightwork-published-release.json"
+          rm -rf "$assets"
+          mkdir "$assets"
+          gh release view "$RELEASE_TAG" \
+            --json tagName,isDraft,isPrerelease,assets > "$metadata"
+          gh release download "$RELEASE_TAG" \
+            --dir "$assets"
+          python -I scripts/verify_github_release_assets.py \
+            --asset-root "$assets" \
+            --metadata "$metadata" \
+            --tag "$RELEASE_TAG" \
+            --revision "$RELEASE_SHA" \
+            --expected-state published
+          (
+            cd "$assets"
+            checksum="maverick-release-${RELEASE_TAG}.sha256"
+            sha256sum --check "$checksum"
+            while IFS='  ' read -r _ artifact; do
+              "$GITHUB_WORKSPACE/deploy/verify-release.sh" \
+                "$artifact" "$RELEASE_TAG"
+            done < "$checksum"
+            "$GITHUB_WORKSPACE/deploy/verify-release.sh" \
+              "$checksum" "$RELEASE_TAG"
+          )
+          identity='^https://github.com/[Dd]aybreak-[Aa][Ii]-[Ll]abs/[Ll]ightwork[Oo][Ss]/\.github/workflows/publish\.yml@refs/heads/main$'
+          shopt -s nullglob
+          bundles=("$assets"/*.cosign.bundle)
+          if [ "${#bundles[@]}" -ne 18 ]; then
+            echo "Expected 18 Python cosign bundles, found ${#bundles[@]}" >&2
+            exit 1
+          fi
+          for bundle in "${bundles[@]}"; do
+            artifact="${bundle%.cosign.bundle}"
+            cosign verify-blob \
+              --bundle "$bundle" \
+              --certificate-identity-regexp "$identity" \
+              --certificate-oidc-issuer \
+                "https://token.actions.githubusercontent.com" \
+              "$artifact"
+          done
+
+  release:
+    # This workflow owns Docker images, single-file binaries, and the GitHub
+    # release that bundles them. Its successful
+    # completion is the authorization event consumed by publish.yml.
+    needs:
+      [
+        validate-release-tag,
+        docker-image,
+        binaries,
+        release-runtime-sbom,
+      ]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: >-
+      always() &&
+      needs.validate-release-tag.outputs.release-state != 'published' &&
+      needs.docker-image.result == 'success' &&
+      needs.binaries.result == 'success' &&
+      needs.release-runtime-sbom.result == 'success'
+    permissions:
+      contents: write   # create the GitHub Release
+      packages: write   # attach the keyless signature to the staged GHCR digest
+      id-token: write   # keyless cosign signing (Sigstore OIDC, no stored keys)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate-release-tag.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Prepare isolated producer directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/release-inputs" dist
+          mkdir -p "$RUNNER_TEMP/release-inputs" dist
+      - name: Download the Linux binary producer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: maverick-linux-x86_64
+          path: ${{ runner.temp }}/release-inputs/binary-linux
+      - name: Download the macOS binary producer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: maverick-macos-arm64
+          path: ${{ runner.temp }}/release-inputs/binary-macos
+      - name: Download the Windows binary producer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: maverick-windows-x86_64.exe
+          path: ${{ runner.temp }}/release-inputs/binary-windows
+      - name: Download the release-runtime SBOM producer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: release-runtime-sbom
+          path: ${{ runner.temp }}/release-inputs/sbom
+      - name: Validate exact producer cohorts and assemble trusted release inputs
+        env:
+          RELEASE_INPUT_ROOT: ${{ runner.temp }}/release-inputs
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I - <<'PY'
+          import hashlib
+          import os
+          import shutil
+          import stat
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          version = tag.removeprefix("v")
+          input_root = Path(os.environ["RELEASE_INPUT_ROOT"])
+          output_root = Path("dist")
+          expected = {
+              "binary-linux": {"maverick-linux-x86_64"},
+              "binary-macos": {"maverick-macos-arm64"},
+              "binary-windows": {"maverick-windows-x86_64.exe"},
+              "sbom": {f"maverick-sbom-{tag}.cdx.json"},
+          }
+
+          if input_root.is_symlink() or not input_root.is_dir():
+              raise SystemExit(f"release input root is not a real directory: {input_root}")
+          actual_producers = {entry.name for entry in input_root.iterdir()}
+          if actual_producers != set(expected):
+              raise SystemExit(
+                  "release producer directory mismatch: "
+                  f"expected={sorted(expected)!r}, actual={sorted(actual_producers)!r}"
+              )
+          if output_root.is_symlink() or not output_root.is_dir():
+              raise SystemExit(f"release output root is not a real directory: {output_root}")
+          if any(output_root.iterdir()):
+              raise SystemExit("release output root must be empty before assembly")
+
+          def digest(path: Path) -> bytes:
+              value = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      value.update(chunk)
+              return value.digest()
+
+          sources: dict[str, Path] = {}
+          for producer_name, expected_names in expected.items():
+              producer = input_root / producer_name
+              if producer.is_symlink() or not producer.is_dir():
+                  raise SystemExit(
+                      f"release producer is not a real directory: {producer_name}"
+                  )
+              entries = list(producer.iterdir())
+              actual_names = {entry.name for entry in entries}
+              if actual_names != expected_names:
+                  raise SystemExit(
+                      f"release producer {producer_name!r} filename mismatch: "
+                      f"expected={sorted(expected_names)!r}, "
+                      f"actual={sorted(actual_names)!r}"
+                  )
+              for source in entries:
+                  mode = source.lstat().st_mode
+                  if source.is_symlink() or not stat.S_ISREG(mode):
+                      raise SystemExit(
+                          f"release producer {producer_name!r} contains "
+                          f"a non-regular file: {source.name!r}"
+                      )
+                  if source.stat().st_size <= 0:
+                      raise SystemExit(
+                          f"release producer {producer_name!r} contains "
+                          f"an empty file: {source.name!r}"
+                      )
+                  if source.name in sources:
+                      raise SystemExit(
+                          f"release filename collision between producers: {source.name!r}"
+                      )
+                  sources[source.name] = source
+
+          for name, source in sorted(sources.items()):
+              destination = output_root / name
+              try:
+                  with source.open("rb") as source_stream, destination.open(
+                      "xb"
+                  ) as destination_stream:
+                      shutil.copyfileobj(source_stream, destination_stream)
+              except FileExistsError as exc:
+                  raise SystemExit(
+                      f"refusing to overwrite assembled release input: {name!r}"
+                  ) from exc
+              source_digest = digest(source)
+              destination_digest = digest(destination)
+              if destination_digest != source_digest:
+                  raise SystemExit(f"release input copy verification failed: {name!r}")
+
+          assembled = {entry.name for entry in output_root.iterdir()}
+          if assembled != set(sources):
+              raise SystemExit(
+                  "assembled release input mismatch: "
+                  f"expected={sorted(sources)!r}, actual={sorted(assembled)!r}"
+              )
+          print(f"assembled {len(assembled)} allowlisted release inputs")
+          PY
+      - name: List trusted release inputs
+        run: ls -la dist/
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Record the signed container promotion plan
+        env:
+          CONTAINER_DIGEST: ${{ needs.docker-image.outputs.digest }}
+          CONTAINER_IMAGE: ${{ needs.docker-image.outputs.image }}
+          CONTAINER_STAGE_TAG: ${{ needs.docker-image.outputs.stage-tag }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CONTAINER_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          version="${RELEASE_TAG#v}"
+          target_tags=("$CONTAINER_IMAGE:$version")
+          TARGET_TAGS="$(printf '%s\n' "${target_tags[@]}")"
+          export TARGET_TAGS
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "schema_version": 1,
+              "digest": os.environ["CONTAINER_DIGEST"],
+              "image": os.environ["CONTAINER_IMAGE"],
+              "promotion_required_before_publish": True,
+              "source_revision": os.environ["GITHUB_SHA"],
+              "staging_tag": os.environ["CONTAINER_STAGE_TAG"],
+              "target_tags": os.environ["TARGET_TAGS"].splitlines(),
+              "version": os.environ["RELEASE_TAG"].removeprefix("v"),
+          }
+          target = Path("dist") / f"maverick-container-{os.environ['RELEASE_TAG']}.json"
+          target.write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(f"wrote {target}")
+          PY
+      - name: Generate a complete release checksum manifest
+        env:
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for expected in \
+            dist/maverick-linux-x86_64 \
+            dist/maverick-macos-arm64 \
+            dist/maverick-windows-x86_64.exe; do
+            test -s "$expected"
+          done
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          root = Path("dist")
+          target = root / f"maverick-release-{os.environ['RELEASE_TAG']}.sha256"
+          files = sorted(
+              path
+              for path in root.rglob("*")
+              if path.is_file()
+              and path != target
+              and path.suffix not in {".pem", ".sig"}
+          )
+          if len(files) < 5:
+              raise SystemExit(f"incomplete release artifact set: only {len(files)} files")
+          lines = [
+              f"{hashlib.sha256(path.read_bytes()).hexdigest()}  "
+              f"{path.relative_to(root).as_posix()}"
+              for path in files
+          ]
+          target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"checksummed {len(files)} release artifacts into {target}")
+          PY
+          (cd dist && sha256sum --check "maverick-release-${RELEASE_TAG}.sha256")
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the immutable container digest (keyless, Sigstore)
+        env:
+          CONTAINER_DIGEST: ${{ needs.docker-image.outputs.digest }}
+          CONTAINER_IMAGE: ${{ needs.docker-image.outputs.image }}
+          COSIGN_YES: "true"
+        run: cosign sign --yes "$CONTAINER_IMAGE@$CONTAINER_DIGEST"
+      - name: Sign release artifacts (keyless, Sigstore)
+        # Keyless signing: cosign mints a short-lived cert bound to THIS
+        # workflow's OIDC identity and logs the signature to the public Rekor
+        # transparency log -- no long-lived private key to store or leak. For
+        # each binary, checksum manifest, and SBOM
+        # gets a detached `.sig` (signature) and `.pem` (signing certificate);
+        # users verify with
+        # `cosign verify-blob` (see deploy/verify-release.sh).
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          artifacts=(dist/maverick-*)
+          if [ "${#artifacts[@]}" -eq 0 ]; then
+            echo "No release artifacts found to sign" >&2
+            exit 1
+          fi
+          for f in "${artifacts[@]}"; do
+            echo "signing $f"
+            cosign sign-blob --yes \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.pem" \
+              "$f"
+            test -s "$f.sig"
+            test -s "$f.pem"
+          done
+      - name: Recheck the exact-tag state before any release mutation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INITIAL_STATE: ${{ needs.validate-release-tag.outputs.release-state }}
+          PRERELEASE: ${{ needs.validate-release-tag.outputs.prerelease }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I scripts/github_release_state.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --expected-prerelease "$PRERELEASE" \
+            --allow-state "$INITIAL_STATE"
+      - name: Reset only an existing draft's uploaded assets
+        if: needs.validate-release-tag.outputs.release-state == 'draft'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate-release-tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata="$(
+            gh release view "$RELEASE_TAG" \
+              --json tagName,isDraft,assets
+          )"
+          METADATA="$metadata" RELEASE_TAG="$RELEASE_TAG" python -I - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["METADATA"])
+          if payload["tagName"] != os.environ["RELEASE_TAG"]:
+              raise SystemExit("refusing to reset assets on a different release tag")
+          if not payload["isDraft"]:
+              raise SystemExit("refusing to mutate an already-published release")
+          for asset in payload["assets"]:
+              print(asset["name"])
+          PY
+          while IFS= read -r asset; do
+            [ -n "$asset" ] || continue
+            gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+          done < <(
+            METADATA="$metadata" python -I -c \
+              'import json,os; print(*[a["name"] for a in json.loads(os.environ["METADATA"])["assets"]], sep="\n")'
+          )
+      - name: Create the signed release as a draft
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          # The validation job resolves manual dispatches and tag pushes
+          # to the same v* tag that every build job checked out.
+          tag_name: ${{ needs.validate-release-tag.outputs.tag }}
+          # Binaries, SHA-256 manifest, CycloneDX SBOMs, and their Sigstore
+          # signatures/certificates.
+          files: |
+            dist/maverick-*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: true
+          prerelease: ${{ needs.validate-release-tag.outputs.prerelease }}
+          make_latest: false

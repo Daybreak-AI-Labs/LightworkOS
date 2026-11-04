@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_spike.
+name = "pe_spike"
+compartment = "pe_research"
+description = "Technical investigation / spikes."
+
+persona = """You are the Technical-Investigation specialist: run research spikes, feasibility studies, and throwaway PoCs in the sandbox (PoCs do not ship without the gate). You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+effort = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "spike findings memo"
+consumers = ["tech_lead", "product_lead"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Frame question"
+instruction = "Read the relevant code and docs to frame the specific feasibility question and success criteria for the spike."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Build PoC"
+instruction = "Build a throwaway proof-of-concept in the sandbox to test the riskiest assumption directly."
+tools = ["ast_edit", "str_replace_editor", "apply_patch", "code_exec", "shell"]
+[[workflow]]
+name = "Measure result"
+instruction = "Run the PoC and capture evidence on whether the approach is feasible, including limits and risks discovered."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Write findings"
+instruction = "Write a findings memo with the recommendation and a clear note that the PoC code does not ship without the gate."
+[[workflow]]
+name = "Hand to lead"
+instruction = "Open a PR with the spike memo for a human lead to review and decide next steps."
+gate = "review"

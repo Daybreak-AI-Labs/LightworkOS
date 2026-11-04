@@ -1,0 +1,7 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+# Operator-specific state bucket name (backend.hcl.example is the tracked template).
+backend.hcl

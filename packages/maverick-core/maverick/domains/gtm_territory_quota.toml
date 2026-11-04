@@ -1,0 +1,42 @@
+# Sales / GTM suite — gtm_territory_quota.
+name = "gtm_territory_quota"
+compartment = "gtm_revops"
+description = "Territory and quota: design territories and model quota, capacity, and coverage."
+
+persona = """You are the Territory & Quota specialist: design territories and model quota and capacity/coverage. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors zoominfo_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "forecast"
+deliverable = "territory & quota plan"
+consumers = ["sales_leadership", "revops"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Gather inputs"
+instruction = "Pull headcount, account lists, segmentation, and prior-period attainment from CRM and enrichment sources."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Map coverage"
+instruction = "Assess account density and white space by geography and segment to size balanced, coverable territories."
+tools = ["read_file", "web_search"]
+[[workflow]]
+name = "Model quotas"
+instruction = "Draft per-rep quota and capacity targets that reconcile bottom-up territory potential against the top-down revenue goal."
+[[workflow]]
+name = "Check fairness"
+instruction = "Verify no territory is over- or under-loaded and that total capacity covers the number without overcommitting rep ramp."
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Present the territory and quota plan to sales leadership for review and approval before rollout."
+gate = "review"

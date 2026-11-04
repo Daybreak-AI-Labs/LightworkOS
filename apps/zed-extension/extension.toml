@@ -1,0 +1,15 @@
+# Zed extension manifest. Zed extensions are Rust compiled to WASM
+# (wasm32-wasip2) against the zed_extension_api crate; see README.md for the
+# build/install steps and for what the WASI sandbox does and does not allow.
+id = "maverick"
+name = "Lightwork"
+version = "0.1.6"
+schema_version = 1
+authors = ["The Lightwork Authors"]
+description = "Drive the Lightwork agent runtime from Zed: the Lightwork MCP server as an assistant context server, plus terminal tasks for the CLI."
+repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+
+# Registers the Lightwork MCP server (`maverick mcp`, stdio transport) as a
+# Zed assistant context server. The command is produced by src/lib.rs;
+# Zed itself spawns the process (extensions run sandboxed and cannot).
+[context_servers.maverick]

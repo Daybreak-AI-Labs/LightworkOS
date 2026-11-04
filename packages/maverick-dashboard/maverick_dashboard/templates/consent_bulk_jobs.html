@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Bulk consent changes · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+<div class="governance-workbench" id="consent-bulk-jobs-shell"
+     data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
+     data-request-context="{{ request_context }}"
+     data-can-audit="{{ 'true' if bulk_jobs_can_audit else 'false' }}"
+     data-can-admin="{{ 'true' if bulk_jobs_can_admin else 'false' }}">
+  {{ hero('Consent operations', 'Bulk consent changes',
+          lede='Export consent records or change many people’s choices at once. Follow each bulk change’s progress, cancel one that has not finished, and see its history.') }}
+  {% include "_consent_nav.html" %}
+  {% if bulk_jobs_enabled is defined and not bulk_jobs_enabled %}
+  {{ module_gate('consent_preferences.bulk_jobs', 'Bulk consent changes',
+                 detail='Lets administrators export or change many people’s consent records in one bulk change.',
+                 can_activate=bulk_jobs_can_admin) }}
+  {% endif %}
+  <p class="muted" id="cbj-readiness-detail" role="status" aria-live="polite">Checking whether bulk changes are available…</p>
+  <section class="panel" id="cbj-submission-recovery" hidden aria-labelledby="cbj-submission-title">
+    <h2 id="cbj-submission-title">Check your submitted job</h2>
+    <p id="cbj-submission-note" role="status">The submission result has not been confirmed. Check its saved record before starting another job.</p>
+    <button class="btn" type="button" id="cbj-check-submission">Check submitted job</button>
+  </section>
+
+  <section class="panel" id="cbj-allowance-recovery" hidden aria-labelledby="cbj-allowance-title">
+    <h2 id="cbj-allowance-title">Check your allowance change</h2>
+    <p id="cbj-allowance-note" role="status">The original reply was not confirmed. Checking this result never adds records again.</p>
+    <button class="btn" type="button" id="cbj-check-allowance">Check allowance change</button>
+  </section>
+
+  <fieldset class="feature-gated-workbench" id="cbj-operations" disabled>
+    <legend class="sr-only">Bulk consent changes</legend>
+
+    <section class="panel" aria-labelledby="cbj-list-title">
+      <div class="section-head">
+        <h2 id="cbj-list-title">Bulk changes</h2>
+        <div class="cw-actions">
+          <label>Show
+            <select class="select" id="cbj-state-filter">
+              <option value="">All bulk changes</option><option value="queued">Waiting</option><option value="running">Running</option>
+              <option value="succeeded">Finished</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option>
+            </select>
+          </label>
+          <button class="btn btn--ghost" type="button" data-copilot-toggle>Prepare with Copilot</button>
+          <button class="btn btn--primary" type="button" id="cbj-new"{% if not bulk_jobs_can_admin %} disabled{% endif %}>Start a bulk change</button>
+        </div>
+      </div>
+      {% if not bulk_jobs_can_admin %}<p class="muted">Only an administrator can start, run or cancel bulk changes.</p>{% endif %}
+      <div id="cbj-job-list"><p class="muted">Loading bulk changes…</p></div>
+      <div class="cw-actions" aria-label="Job pages">
+        <button class="btn btn--ghost" type="button" id="cbj-jobs-latest">Latest jobs</button>
+        <button class="btn" type="button" id="cbj-jobs-older" hidden>Older jobs</button>
+        <span class="muted" id="cbj-jobs-page" role="status" aria-live="polite"></span>
+      </div>
+      <div id="cbj-detail" class="cw-editor" hidden tabindex="-1">
+        <h3 id="cbj-detail-title">Bulk change details</h3>
+        <div id="cbj-detail-body"></div>
+        <div class="cw-actions"><button class="btn btn--ghost" type="button" data-cbj-close="cbj-detail">Close</button></div>
+      </div>
+    </section>
+
+    <form id="cbj-create" class="panel" hidden novalidate autocomplete="off">
+      <fieldset class="cw-form"{% if not bulk_jobs_can_admin %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Start a bulk change</legend>
+        <h2 class="cw-wide">Start a bulk change</h2>
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <fieldset class="cw-wide"><legend>1. What do you want to do?</legend>
+          <div class="cw-checks" id="cbj-operation-choices">
+            <label><input type="radio" name="operation" value="export_receipts" checked> Export people’s consent records</label>
+            <label><input type="radio" name="operation" value="edit_preferences"> Change their choices</label>
+            <label><input type="radio" name="operation" value="delete_subject"> Erase their stored identifier</label>
+            <label><input type="radio" name="operation" value="change_identifier_type"> Change how they are identified</label>
+            <label><input type="radio" name="operation" value="reactivate"> Bring back an earlier choice</label>
+            <label><input type="radio" name="operation" value="clear_expiration"> Remove an end date from a choice</label>
+          </div>
+        </fieldset>
+
+        <fieldset class="cw-wide" data-for="people"><legend>2. Choose the people</legend>
+          <div class="cw-toolbar">
+            <label>Find<input class="input" type="search" id="cbj-people-search" maxlength="128" placeholder="Type part of a person reference"></label>
+            <button class="btn btn--ghost" type="button" id="cbj-find-people">Find people</button>
+            <button class="btn btn--ghost" type="button" id="cbj-select-shown">Select all shown</button>
+            <button class="btn btn--ghost" type="button" id="cbj-clear-people">Clear</button>
+            <label>Or upload a list<input class="input" type="file" id="cbj-people-file" accept=".csv,.txt,text/csv,text/plain"></label>
+          </div>
+          <p class="muted" id="cbj-people-help">Tick the people to include. A list file has one person reference per line.</p>
+          <div class="cw-checks" id="cbj-people"></div>
+          <div class="cw-toolbar" aria-label="People pages">
+            <button class="btn btn--ghost" type="button" id="cbj-people-prev" disabled>Previous people</button>
+            <p class="muted" id="cbj-people-page" role="status" aria-live="polite"></p>
+            <button class="btn btn--ghost" type="button" id="cbj-people-next" disabled>Next people</button>
+          </div>
+          <p class="muted" id="cbj-people-count" role="status" aria-live="polite">No one selected.</p>
+          <details><summary id="cbj-selected-title">Selected people</summary><div class="cw-checks" id="cbj-selected-people"></div></details>
+        </fieldset>
+
+        <fieldset class="cw-wide" data-for="identifiers" hidden><legend>2. Upload the people and their new identifiers</legend>
+          <label>List file<input class="input" type="file" id="cbj-identifier-file" accept=".csv,.txt,text/csv,text/plain"></label>
+          <p class="muted">One line per person: their reference, a comma, then their new identifier (for example an email address). The identifier is turned into a fingerprint in your browser and is never sent as typed.</p>
+          <p class="muted">If you identify someone again after erasure, their past choices stay in the audit history but no longer give permission. Ask them for consent again.</p>
+          <label>They will be<select class="select" name="identity_kind"><option value="known">Known people (signed in or identified)</option><option value="anonymous">Anonymous visitors</option></select></label>
+          <p class="muted" id="cbj-identifier-count" role="status" aria-live="polite">No file chosen.</p>
+        </fieldset>
+
+        <div class="cw-wide" data-for="export_receipts">
+          <label>Records per person
+            <select class="select" name="receipt_limit"><option value="10">Latest 10</option><option value="50">Latest 50</option><option value="100" selected>Latest 100</option><option value="500">Latest 500</option></select>
+          </label>
+          <p class="muted">You can export up to the latest 500 records per person. Starting from a saved position is not available.</p>
+        </div>
+
+        <div class="cw-wide cw-form" data-for="edit_preferences" hidden>
+          <label>Consent policy<select class="select" name="policy_key"></select></label>
+          <label>Use of data<select class="select" name="purpose_id"></select></label>
+          <label>New choice
+            <select class="select" name="action"><option value="grant">Allow</option><option value="deny">Refuse</option><option value="withdraw">Withdraw earlier permission</option></select>
+          </label>
+          <label>Channel<select class="select" name="channel"></select></label>
+          <label>Region<select class="select" name="jurisdiction"></select></label>
+          <label>Country<select class="select" name="country_code"></select></label>
+        </div>
+
+        <div class="cw-wide" data-for="delete_subject" hidden>
+          <p class="muted">This stops use of their choices and replaces their stored identifier. Past consent records stay available for audit.</p>
+          <label>Why
+            <select class="select" name="reason_code">
+              <option value="subject-request">The person asked for deletion</option>
+              <option value="retention-ended">We no longer need to keep it</option>
+              <option value="duplicate-record">Duplicate record</option>
+              <option value="legal-requirement">Legal requirement</option>
+            </select>
+          </label>
+        </div>
+
+        <fieldset class="cw-wide" data-for="receipts" hidden><legend>3. Choose the choices to change</legend>
+          <button class="btn btn--ghost" type="button" id="cbj-load-receipts">Show the chosen people’s choices</button>
+          <p class="muted">Looking at people’s records is logged in their access history.</p>
+          <div id="cbj-receipt-pages" hidden>
+            <label>Person<select class="select" id="cbj-receipt-person"></select></label>
+            <div class="cw-toolbar" aria-label="Choice pages">
+              <button class="btn btn--ghost" type="button" id="cbj-receipt-latest">Latest choices</button>
+              <button class="btn btn--ghost" type="button" id="cbj-receipt-older" disabled>Older choices</button>
+              <p class="muted" id="cbj-receipt-page" role="status" aria-live="polite"></p>
+            </div>
+          </div>
+          <div class="cw-checks" id="cbj-receipts"></div>
+          <details><summary id="cbj-selected-receipts-title">Selected choices</summary><div class="cw-checks" id="cbj-selected-receipts"></div></details>
+          <label data-for="reactivate" hidden>Bring back on<input class="input" type="datetime-local" name="reactivation_at"></label>
+        </fieldset>
+
+        <label>Run<select class="select" name="when"><option value="now">As soon as possible</option><option value="later">At a set time</option></select></label>
+        <label data-when="later" hidden>Start at<input class="input" type="datetime-local" name="scheduled_for"></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Review bulk change</button>
+          <button class="btn btn--ghost" type="button" data-cbj-close="cbj-create">Cancel</button>
+        </div>
+        <section id="cbj-review" class="cw-wide panel" hidden tabindex="-1" aria-labelledby="cbj-review-title">
+          <h3 id="cbj-review-title">Review the selected changes</h3>
+          <p id="cbj-review-summary"></p>
+          <div class="table-scroll" style="max-height:24rem;overflow:auto">
+            <table><caption class="sr-only">Every record included in this job</caption>
+              <thead><tr><th scope="col">Person</th><th scope="col">What will happen</th></tr></thead>
+              <tbody id="cbj-review-rows"></tbody>
+            </table>
+          </div>
+          <div class="cw-actions" style="margin-top:var(--space-3)">
+            <button class="btn btn--primary" type="button" id="cbj-start-reviewed">Start reviewed job</button>
+            <button class="btn btn--ghost" type="button" id="cbj-edit-reviewed">Change selection</button>
+          </div>
+        </section>
+      </fieldset>
+    </form>
+
+    <section class="panel" aria-labelledby="cbj-credit-title">
+      <div class="section-head">
+        <h2 id="cbj-credit-title">Record allowance</h2>
+        <button class="btn" type="button" id="cbj-add-credits"{% if not bulk_jobs_can_admin %} disabled{% endif %}>Add to the allowance</button>
+      </div>
+      <p class="muted" id="cbj-credit-detail">Loading…</p>
+      <p class="muted">Each selected person or choice uses one allowance unit, even when many are included in one job.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="cbj-upkeep-title">
+      <h2 id="cbj-upkeep-title">Upkeep</h2>
+      <div class="cw-actions">
+        <button class="btn" id="cbj-run-next" type="button"{% if not bulk_jobs_can_admin %} disabled{% endif %}>Run the next scheduled change now</button>
+        <button class="btn" id="cbj-recover" type="button"{% if not bulk_jobs_can_admin %} disabled{% endif %}>Restart stuck changes</button>
+        <button class="btn" id="cbj-verify-integrity" type="button">Check that the history is intact</button>
+      </div>
+      <form id="cbj-retention" class="cw-form" novalidate>
+        <label>Finished changes whose keeping period ended before<input class="input" id="cbj-retention-before" type="date"></label>
+        <div class="cw-actions">
+          <button class="btn btn--danger" id="cbj-purge" type="submit"{% if not bulk_jobs_can_admin %} disabled{% endif %}>Delete old changes</button>
+        </div>
+      </form>
+      <p class="cw-result" id="cbj-operation-status" role="status" aria-live="polite"></p>
+    </section>
+  </fieldset>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">Bulk changes only use your workspace’s own records, and each kind of change runs only once it has been set up. Checking status never adds to the allowance. Large exports are downloaded as files. Completed changes are not undone when a bulk change is cancelled.</p>
+  </details>
+  <noscript><p class="panel">Turn on JavaScript to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}
+  <script src="/static/lightwork-consent-workbench.js" defer></script>
+  <script src="/static/lightwork-consent-bulk-jobs.js" defer></script>
+{% endblock %}

@@ -1,0 +1,7 @@
+invoice_id,vendor,po_number,invoice_date,amount_usd,description
+INV-1041,Northwind Fixtures Ltd,PO-2201,2026-08-03,4800.00,60 steel shelving units
+INV-1042,Blue Harbor Packaging,PO-2202,2026-08-04,1250.00,500 shipping cartons
+INV-1043,Northwind Fixtures Ltd,PO-2201,2026-08-05,4800.00,60 steel shelving units
+INV-1044,Cedar Point Office Supply,PO-2203,2026-08-06,2100.00,20 ergonomic chairs
+INV-1045,Sunrise Facility Services,PO-2204,2026-08-07,3600.00,August cleaning contract
+INV-1046,Quickline Logistics,PO-2205,2026-08-08,900.00,Freight for August deliveries

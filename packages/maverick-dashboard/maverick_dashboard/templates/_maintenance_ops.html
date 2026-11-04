@@ -1,0 +1,138 @@
+{#- Settings > Maintenance: installation operations that also exist on the command line.
+    Filled by lightwork-maintenance-ops.js; every button calls the same kernel
+    work as the matching command. Global administrators only (the page's other
+    maintenance panels follow the same rule). Each section-head is followed by
+    its panel so the Settings search and tabs treat these like the others. -#}
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-services-title">Lightwork's services</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="services" aria-labelledby="ops-services-title">
+    <p class="muted settings-lead">Start, stop or restart the parts of Lightwork that run alongside this app. These include profiling, the core activity monitor and the model proxy while their setting is on. A service your IT team runs some other way isn't shown here and isn't affected.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-ops-run="services">Refresh</button></p>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="services"></p>
+    <div data-ops-out="services"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-version-title">Version and release parts</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="version" aria-labelledby="ops-version-title">
+    <p class="muted settings-lead">Which version of Lightwork is installed, and whether every part of the full release is present and working.</p>
+    <p class="settings-row-form">
+      <button type="button" class="btn" data-ops-run="version">Show installed version</button>
+      <button type="button" class="btn" data-ops-run="release">Check the release parts</button>
+    </p>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="version"></p>
+    <div data-ops-out="version"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-canary-title">Release checks</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="canary" aria-labelledby="ops-canary-title">
+    <p class="muted settings-lead">Record how fast and how costly tasks are today, then after an update compare against that baseline to see whether anything got worse. Measured from tasks finished in the last 30 days.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-ops-run="canary-baseline">Record today's performance as the baseline</button></p>
+    <form class="settings-row-form" data-ops-form="canary-compare">
+      <label class="settings-field"><span>Baseline to compare with</span>
+        <select class="select" name="baseline" data-ops-baselines required><option value="">Loading…</option></select></label>
+      <label class="settings-field"><span>Allowed change before it counts as worse</span>
+        <select class="select" name="tolerance">
+          <option value="0.05">5%</option>
+          <option value="0.1" selected>10%</option>
+          <option value="0.2">20%</option>
+          <option value="0.3">30%</option>
+        </select></label>
+      <button type="submit" class="btn">Compare with the baseline</button>
+    </form>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="canary"></p>
+    <div data-ops-out="canary"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-setup-title">Setup checks</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="setup" aria-labelledby="ops-setup-title">
+    <p class="muted settings-lead">Checks, without contacting anyone, that this installation is set up to run tasks and to run assurance reviews. The same checks appear on <a href="/start">Get started</a>.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-ops-run="setup">Run setup checks</button></p>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="setup"></p>
+    <div data-ops-out="setup"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-config-title">Whole configuration</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="config" aria-labelledby="ops-config-title">
+    <p class="muted settings-lead">Every setting that differs from the built-in defaults, its current value and where it comes from. Passwords and keys show only whether they are set. Change settings in <a href="/settings/all">All settings</a>.</p>
+    <p class="settings-row-form">
+      <button type="button" class="btn" data-ops-run="config">Show every setting</button>
+      <button type="button" class="btn" data-ops-run="settings-file">Check the settings file for updates</button>
+    </p>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="config"></p>
+    <div data-ops-out="config"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-database-title">Records database</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="database" aria-labelledby="ops-database-title">
+    <p class="muted settings-lead">Waiting database updates, and whether a shared database keeps each workspace's records separate.</p>
+    <p class="settings-row-form">
+      <button type="button" class="btn" data-ops-run="database-updates">Check for waiting updates</button>
+      <button type="button" class="btn" data-ops-run="separation">Check workspace separation</button>
+    </p>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="database"></p>
+    <div data-ops-out="database"></div>
+    <h3 id="ops-older-title">Older records without a workspace</h3>
+    <p class="muted">Records made before workspaces were turned on belong to no workspace. Assign them to one so they stay visible once workspaces are kept separate in the shared database.</p>
+    <form class="settings-row-form" data-ops-form="older-records" aria-labelledby="ops-older-title">
+      <label class="settings-field"><span>Workspace</span>
+        <select class="select" name="workspace" data-ops-workspaces required><option value="">Loading…</option></select></label>
+      <button type="submit" class="btn">See what would be assigned</button>
+      <button type="button" class="btn" data-ops-run="older-assign" hidden>Assign them</button>
+    </form>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="older-records"></p>
+    <div data-ops-out="older-records"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-moves-title">Moving records to the shared database</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="moves" aria-labelledby="ops-moves-title">
+    <h3 id="ops-learning-title">What Lightwork has learned</h3>
+    <p class="muted">Moves improvements learned on this computer into the shared records so every installation uses them. The old files are kept as backups. Safe while Lightwork is running.</p>
+    <p class="settings-row-form">
+      <button type="button" class="btn" data-ops-run="learning">Check what is waiting</button>
+      <button type="button" class="btn" data-ops-run="learning-move" hidden>Move learned items</button>
+    </p>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="learning"></p>
+    <h3 id="ops-tasks-title">Chat-agent task records</h3>
+    <p class="muted">Moves a workspace's records of work requested by outside agents into the shared database. This can only run while Lightwork is stopped, so it is scheduled here and runs the next time Lightwork starts.</p>
+    <form class="settings-row-form" data-ops-form="task-records" aria-labelledby="ops-tasks-title">
+      <label class="settings-field"><span>Workspace</span>
+        <select class="select" name="workspace" data-ops-workspaces required><option value="">Loading…</option></select></label>
+      <button type="submit" class="btn">Schedule for the next start</button>
+      <button type="button" class="btn btn--ghost" data-ops-run="task-cancel" hidden>Cancel the scheduled move</button>
+    </form>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="task-records"></p>
+    <div data-ops-out="task-records"></div>
+    <h3 id="ops-consent-title">Consent records</h3>
+    <p class="muted">Copies each workspace's consent records from files on this computer into the shared consent database chosen in <a href="/settings/all">All settings</a>. Choosing that database doesn't move anything by itself, so run this after Lightwork restarts. Each part is copied whole or not at all, only where the shared database is still empty, and the files here are kept. Safe while Lightwork is running.</p>
+    <p class="settings-row-form">
+      <button type="button" class="btn" data-ops-run="consent">See what would be copied</button>
+      <button type="button" class="btn" data-ops-run="consent-move" hidden>Copy consent records</button>
+    </p>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="consent"></p>
+    <div data-ops-out="consent"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="ops-upkeep-title">Upkeep</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-ops="upkeep" aria-labelledby="ops-upkeep-title">
+    <ul class="maintenance-list maintenance-checks">
+      <li><span class="maintenance-label">Message receipts</span>
+        <span class="muted">Clears the stored text of chat messages that were delivered long ago. The record that each was delivered is kept.</span>
+        <button type="button" class="btn" data-ops-run="receipts">Tidy up message receipts</button></li>
+      <li><span class="maintenance-label">Connection components</span>
+        <span class="muted">Prepares the components other systems use to connect, so nothing has to be built while Lightwork runs.</span>
+        <button type="button" class="btn" data-ops-run="components">Prepare connection components</button></li>
+      <li><span class="maintenance-label">Encryption key fingerprint</span>
+        <span class="muted">Identifies the encryption key your IT team gave this installation, without revealing it.</span>
+        <button type="button" class="btn" data-ops-run="fingerprint">Show the fingerprint</button></li>
+      <li><span class="maintenance-label">Local AI model server</span>
+        <span class="muted">Shows what Lightwork would start to run AI models on this computer. Nothing is started.</span>
+        <button type="button" class="btn" data-ops-run="local-models">Show the plan</button></li>
+    </ul>
+    <p class="muted" role="status" aria-live="polite" data-ops-status="upkeep"></p>
+    <div data-ops-out="upkeep"></div>
+  </div>
+  <style>
+    .ops-scroll { overflow-x: auto; }
+    .ops-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .ops-fingerprint { display: block; overflow-wrap: anywhere; margin: var(--space-2) 0; }
+  </style>
+  <script src="/static/lightwork-maintenance-ops.js" defer></script>

@@ -1,0 +1,16 @@
+# Code owners by path. MAINTAINERS.md lists the maintainers and their areas.
+*                                       @cdayAI
+
+# Per-area owners.
+/packages/maverick-core/                @cdayAI
+/packages/maverick-shield/              @cdayAI
+/packages/maverick-channels/            @cdayAI
+/packages/maverick-dashboard/           @cdayAI
+/packages/maverick-mcp/                 @cdayAI
+/packages/maverick-evolve/              @cdayAI
+/packages/maverick-knowledge/           @cdayAI
+/apps/installer-cli/                    @cdayAI
+/apps/installer-desktop/                @cdayAI
+/deploy/                                @cdayAI
+/.github/workflows/                     @cdayAI
+SECURITY.md                             @cdayAI

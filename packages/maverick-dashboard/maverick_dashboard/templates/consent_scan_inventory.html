@@ -1,0 +1,541 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Tracker scans · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set si_on = consent_scan_inventory_enabled %}
+{% set si_admin = consent_can_admin if consent_can_admin is defined else true %}
+{% set si_audit = consent_can_audit if consent_can_audit is defined else true %}
+<div class="governance-workbench" id="csi-root" data-enabled="{{ 'true' if si_on else 'false' }}" data-can-admin="{{ 'true' if si_admin else 'false' }}" data-can-audit="{{ 'true' if si_audit else 'false' }}">
+  {{ hero('Consent review', 'Tracker scans',
+          lede='Scan your websites on a schedule to find the trackers they load, review each one, and add the reviewed trackers to your consent tracker list.') }}
+  {% include "_consent_nav.html" %}
+  {% if not si_on %}
+  {{ module_gate('consent_preferences.scanner', 'Website tracker scans',
+                 detail='Visits your websites on a schedule to find the trackers they load. Decide which sites to scan and how long to keep results first.',
+                 can_activate=si_admin) }}
+  {% endif %}
+  <p id="csi-status" class="muted" role="status" aria-live="polite"></p>
+  <fieldset class="feature-gated-workbench" id="csi-controls"{% if not si_on %} disabled aria-disabled="true"{% endif %}>
+    <legend class="sr-only">Tracker scans</legend>
+
+    <section class="panel" aria-labelledby="csi-sites-heading">
+      <div class="section-head">
+        <h2 id="csi-sites-heading">Websites</h2>
+        <button class="btn btn--primary" type="button" id="csi-new-site"{% if not si_admin %} disabled{% endif %}>Add a website</button>
+      </div>
+      <p class="muted">Scanning visits your website like a browser would. Only the addresses you list here are visited.</p>
+      <div id="csi-sites"><p class="muted">Loading websites…</p></div>
+
+      <form id="csi-property" class="cw-editor" hidden novalidate>
+        <fieldset class="cw-form"{% if not si_admin %} disabled{% endif %}>
+          <legend class="sr-only">Website</legend>
+          <h3 class="cw-wide" id="csi-property-title">Add a website</h3>
+          <input type="hidden" name="property_id">
+          <input type="hidden" name="expected_revision" value="0">
+          <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+          <label class="cw-wide" data-new-only>Name<input class="input" name="site_name" maxlength="100" placeholder="Main website"></label>
+          <label class="cw-wide">Website addresses, one per line<textarea class="textarea" name="origins" rows="2" placeholder="https://www.example.com"></textarea>
+            <span class="muted">Only pages at these addresses are visited.</span></label>
+          <label class="cw-wide">Pages to start from, one per line<textarea class="textarea" name="start_urls" rows="2" placeholder="https://www.example.com/"></textarea>
+            <span class="muted">Leave empty to start from each address’s home page.</span></label>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Save website</button>
+            <button class="btn btn--ghost" type="button" data-csi-close="csi-property">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+
+      <form id="csi-schedule" class="cw-editor" hidden novalidate>
+        <fieldset class="cw-form"{% if not si_admin %} disabled{% endif %}>
+          <legend class="sr-only">Scan schedule</legend>
+          <h3 class="cw-wide" id="csi-schedule-title">Scan schedule</h3>
+          <input type="hidden" name="schedule_id">
+          <input type="hidden" name="property_id">
+          <input type="hidden" name="expected_revision" value="0">
+          <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+          <label>How often
+            <select class="select" name="interval_seconds">
+              <option value="86400">Every day</option>
+              <option value="604800" selected>Every week</option>
+              <option value="1209600">Every two weeks</option>
+              <option value="2592000">Every month</option>
+            </select>
+          </label>
+          <label>Next scan<input class="input" type="datetime-local" name="next_due_at" required></label>
+          <label class="cw-checks"><input type="checkbox" name="enabled" checked> Scans are on</label>
+          <details class="cw-wide"><summary>More options</summary>
+            <div class="cw-form">
+              <label>Pages to visit
+                <select class="select" name="max_pages"><option value="25">Up to 25</option><option value="100" selected>Up to 100</option><option value="500">Up to 500</option><option value="1000">Up to 1,000</option></select>
+              </label>
+              <label>Links to follow from the start page
+                <select class="select" name="max_depth"><option value="1">1 click deep</option><option value="2">2 clicks deep</option><option value="4" selected>4 clicks deep</option><option value="6">6 clicks deep</option></select>
+              </label>
+              <label>Time allowed per page
+                <select class="select" name="page_timeout_seconds"><option value="10">10 seconds</option><option value="30" selected>30 seconds</option><option value="60">1 minute</option></select>
+              </label>
+              <label>Tries before giving up
+                <select class="select" name="max_attempts"><option value="1">1</option><option value="3" selected>3</option><option value="5">5</option></select>
+              </label>
+            </div>
+          </details>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Save schedule</button>
+            <button class="btn btn--ghost" type="button" data-csi-close="csi-schedule">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="csi-jobs-heading">
+      <div class="section-head">
+        <h2 id="csi-jobs-heading">Scans</h2>
+        <button class="btn" type="button" id="csi-run-due"{% if not si_admin %} disabled{% endif %}>Run due scans now</button>
+      </div>
+      <div id="csi-jobs"><p class="muted">Loading scans…</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="csi-trackers-heading" id="csi-trackers-panel" hidden>
+      <div class="section-head">
+        <h2 id="csi-trackers-heading">Trackers found</h2>
+        <button class="btn btn--ghost" type="button" data-csi-close="csi-trackers-panel">Close</button>
+      </div>
+      <p class="muted">Every tracker starts as “not reviewed”. Nothing is added to your consent tracker list until it has been reviewed and you apply the results. Suggested changes to your privacy notice appear under <a href="/consent/scan-notice-proposals">Disclosure suggestions</a>.</p>
+      <div id="csi-trackers"></div>
+      <h3>Scan results</h3>
+      <div id="csi-reports"></div>
+      <div id="csi-diff" class="cw-result" role="status" aria-live="polite"></div>
+
+      <form id="csi-review" class="cw-editor" hidden novalidate>
+        <fieldset class="cw-form"{% if not si_admin %} disabled{% endif %}>
+          <legend class="sr-only">Review a tracker</legend>
+          <h3 class="cw-wide" id="csi-review-title">Review a tracker</h3>
+          <input type="hidden" name="property_id">
+          <input type="hidden" name="tracker_key">
+          <input type="hidden" name="report_id">
+          <input type="hidden" name="expected_version" value="0">
+          <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+          <label>What it is
+            <select class="select" name="classification">
+              <option value="essential">Essential for the site to work</option>
+              <option value="functional">Remembers choices and settings</option>
+              <option value="analytics" selected>Measures visits (analytics)</option>
+              <option value="advertising">Advertising</option>
+              <option value="other">Something else</option>
+              <option value="not_a_tracker">Not a tracker</option>
+            </select>
+          </label>
+          <label>What to do
+            <select class="select" name="registry_action">
+              <option value="observe_only">Just record the review</option>
+              <option value="approved">Allow it in the tracker list</option>
+              <option value="blocked">Block it in the tracker list</option>
+              <option value="retired">Retire it from the tracker list</option>
+            </select>
+          </label>
+          <label>Review again by<input class="input" type="date" name="valid_until" required></label>
+          <div class="cw-wide" data-registry hidden>
+            <div class="cw-form">
+              <label>Tracker in your list<select class="select" name="tracker_id"></select></label>
+              <label data-new-tracker>Name for the new tracker<input class="input" name="tracker_name" maxlength="100" placeholder="Site analytics"></label>
+              <label>Company that runs it<input class="input" name="vendor_name" maxlength="100" placeholder="Example Analytics Ltd"></label>
+              <fieldset class="cw-wide"><legend>Used for</legend><div class="cw-checks" id="csi-review-purposes"></div></fieldset>
+              <p class="muted cw-wide">Changing the tracker list needs two people: after you save, a different administrator approves it below.</p>
+            </div>
+          </div>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Save review</button>
+            <button class="btn btn--ghost" type="button" data-csi-close="csi-review">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="csi-approvals-heading">
+      <h2 id="csi-approvals-heading">Reviews waiting for a second person</h2>
+      <div id="csi-approvals"><p class="muted">Loading…</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="csi-upkeep-heading">
+      <h2 id="csi-upkeep-heading">History and upkeep</h2>
+      <div class="cw-actions">
+        <button class="btn" type="button" id="csi-audit"{% if not si_audit %} disabled{% endif %}>Check that records are intact</button>
+      </div>
+      <form id="csi-retention" class="cw-form" novalidate>
+        <label>Scan data older than<input class="input" type="date" name="before" required></label>
+        <div class="cw-actions">
+          <button class="btn btn--danger" type="submit"{% if not si_admin %} disabled{% endif %}>Delete old scan data</button>
+        </div>
+      </form>
+      <p class="muted">Reviews and the change history are always kept.</p>
+      <div id="csi-upkeep-result" class="cw-result" role="status" aria-live="polite"></div>
+    </section>
+  </fieldset>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">Only “Scan now” and “Run due scans now” visit your websites; listing and reviewing never do. A result counts as complete only when every page loaded without problems, and even then a scan cannot prove a tracker is absent. The person who records a review is taken from their sign-in; changing the tracker list needs a second, different administrator to approve. Scanning pages behind a sign-in is not available yet.</p>
+  </details>
+</div>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/consent/scan-inventory";
+  // The shared consent JSON client (mvFetchJSON): a non-2xx or malformed response is never success.
+  async function call(path, options) {
+    return window.LightworkConsentWorkbench.client(API)(path, options);
+  }
+  var CW = window.LightworkConsentWorkbench;
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (CW && document.getElementById("csi-root")) { if (window.mvFetchJSON) start(); else document.addEventListener("DOMContentLoaded", start); }
+
+  function start() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $("csi-root"), status = $("csi-status");
+    var canAdmin = root.dataset.canAdmin === "true", canAudit = root.dataset.canAudit === "true";
+    var state = {sites: [], schedules: [], jobs: [], reports: [], site: null, findings: {}, trackers: [], purposes: [], requests: []};
+    var CLASSES = {essential: "Essential", functional: "Functional", analytics: "Analytics", advertising: "Advertising", other: "Other", not_a_tracker: "Not a tracker"};
+    var ACTIONS = {observe_only: "Recorded only", approved: "Allowed", blocked: "Blocked", retired: "Retired"};
+    var KINDS = {network: "Loads from another address", cookie: "Cookie", storage: "Stored in the browser"};
+    var INTERVALS = {"86400": "Every day", "604800": "Every week", "1209600": "Every two weeks", "2592000": "Every month"};
+    var JOB_STATUS = {queued: ["Waiting", "warn"], leased: ["Running", "info"], succeeded: ["Done", "ok"], dead_letter: ["Did not finish", "danger"]};
+    function say(text, isError) { CW.say(status, text, isError); }
+    function fail(error, action) { return CW.fail(status, error, action); }
+    function lines(text) { return String(text || "").split(/\r?\n/).map(function (x) { return x.trim(); }).filter(Boolean); }
+    document.querySelectorAll("[data-csi-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.csiClose).hidden = true; }); });
+    function reference(form) { form.elements.idempotency_key.value = CW.reference(); }
+    function scheduleOf(propertyId) { return state.schedules.filter(function (s) { return s.property_id === propertyId; })[0]; }
+    function siteName(propertyId) { return CW.human(propertyId); }
+    function lastReport(propertyId) { return state.reports.filter(function (r) { return r.property_id === propertyId; })[0]; }
+
+    async function load() {
+      if (root.dataset.enabled !== "true") {
+        ["csi-sites", "csi-jobs", "csi-approvals"].forEach(function (id) { $(id).replaceChildren(CW.el("p", "muted", "Turn on website tracker scans above to start.")); });
+        return;
+      }
+      if (!canAudit) {
+        ["csi-sites", "csi-jobs", "csi-approvals"].forEach(function (id) { $(id).replaceChildren(CW.el("p", "muted", "You need audit access to see websites and scans.")); });
+        return;
+      }
+      try {
+        var results = await Promise.all([call("/properties?limit=500"), call("/schedules?limit=500"), call("/jobs?limit=200"), call("/reports?limit=500"), call("/review-requests?limit=200")]);
+        state.sites = results[0].items || []; state.schedules = results[1].items || []; state.jobs = results[2].items || []; state.reports = results[3].items || []; state.requests = results[4].items || [];
+        renderSites(); renderJobs(); renderApprovals();
+      } catch (error) { fail(error, "load the scans"); }
+    }
+
+    // ----- Websites and schedules -----
+    function renderSites() {
+      CW.table($("csi-sites"), state.sites, {label: "Websites", name: function (p) { return siteName(p.property_id); },
+        columns: [
+          {label: "Website", value: function (p) { return siteName(p.property_id); }},
+          {label: "Addresses", value: function (p) { return (p.origins || []).join(", "); }},
+          {label: "How Often", value: function (p) { var s = scheduleOf(p.property_id); return s ? (s.enabled ? (INTERVALS[String(s.interval_seconds)] || "Every " + Math.round(s.interval_seconds / 86400) + " days") : "Paused") : "Not scheduled"; }},
+          {label: "Next Scan", value: function (p) { var s = scheduleOf(p.property_id); return s && s.enabled ? CW.when(s.next_due_at) : "—"; }},
+          {label: "Last Scan", value: function (p) { var r = lastReport(p.property_id); return r ? CW.when(r.completed_at) : "Never"; }},
+        ],
+        actions: [
+          {label: "Scan now", kind: "primary", when: function (p) { return canAdmin && !!scheduleOf(p.property_id); }, run: function (p, b) { CW.busy(b, function () { return scanNow(p); }); }},
+          {label: function (p) { return scheduleOf(p.property_id) ? "Change schedule" : "Set a schedule"; }, when: function () { return canAdmin; }, run: openSchedule},
+          {label: "Trackers found", run: function (p, b) { CW.busy(b, function () { return showTrackers(p); }); }},
+          {label: "Change", when: function () { return canAdmin; }, run: openProperty},
+        ],
+        empty: {title: "No websites yet.", body: "Add a website, then set how often to scan it.", action: canAdmin ? {label: "Add a website", run: function () { openProperty(null); }} : null}});
+    }
+    function openProperty(site) {
+      var form = $("csi-property"), f = form.elements;
+      form.reset(); reference(form);
+      form.querySelectorAll("[data-new-only]").forEach(function (n) { n.hidden = !!site; });
+      f.property_id.value = site ? site.property_id : ""; f.expected_revision.value = String(site ? site.revision : 0);
+      if (site) { f.origins.value = (site.origins || []).join("\n"); f.start_urls.value = (site.start_urls || []).join("\n"); }
+      $("csi-property-title").textContent = site ? "Change " + siteName(site.property_id) : "Add a website";
+      CW.open(form);
+    }
+    $("csi-new-site").addEventListener("click", function () { openProperty(null); });
+    $("csi-property").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, origins = lines(f.origins.value);
+      if (!f.property_id.value && !f.site_name.value.trim()) { say("Give the website a name.", true); return; }
+      if (!origins.length) { say("Enter at least one website address, like https://www.example.com.", true); return; }
+      var starts = lines(f.start_urls.value);
+      if (!starts.length) starts = origins.map(function (o) { return o.replace(/\/+$/, "") + "/"; });
+      var propertyId = f.property_id.value || CW.slug(f.site_name.value, "website");
+      try {
+        await call("/properties/" + encodeURIComponent(propertyId), {method: "PUT", json: {origins: origins, start_urls: starts, expected_revision: Number(f.expected_revision.value) || 0, idempotency_key: f.idempotency_key.value}});
+        form.hidden = true; say(f.property_id.value ? "Website saved." : "Website added. Now set how often to scan it."); await load();
+      } catch (error) {
+        if (error && error.status === 422) { say("Check the addresses: each must start with https:// and the start pages must be on those addresses.", true); return; }
+        fail(error, "save the website");
+      }
+    });
+    function openSchedule(site) {
+      var form = $("csi-schedule"), f = form.elements, s = scheduleOf(site.property_id);
+      form.reset(); reference(form);
+      f.property_id.value = site.property_id;
+      f.schedule_id.value = s ? s.schedule_id : CW.slug(site.property_id + " schedule", "schedule");
+      f.expected_revision.value = String(s ? s.revision : 0);
+      $("csi-schedule-title").textContent = "Scan schedule for " + siteName(site.property_id);
+      if (s) {
+        if (INTERVALS[String(s.interval_seconds)]) f.interval_seconds.value = String(s.interval_seconds);
+        f.enabled.checked = !!s.enabled;
+        ["max_pages", "max_depth", "page_timeout_seconds"].forEach(function (k) { var v = String((s.limits || {})[k]); if (Array.prototype.some.call(f[k].options, function (o) { return o.value === v; })) f[k].value = v; });
+        if (Array.prototype.some.call(f.max_attempts.options, function (o) { return o.value === String(s.max_attempts); })) f.max_attempts.value = String(s.max_attempts);
+      }
+      f.next_due_at.value = CW.toInput(s && s.next_due_at > Date.now() / 1000 ? s.next_due_at : Date.now() / 1000 + 3600);
+      CW.open(form, "select");
+    }
+    $("csi-schedule").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, due = CW.toSeconds(f.next_due_at.value);
+      if (!(due > 0)) { say("Choose when the next scan should run.", true); return; }
+      try {
+        await call("/schedules/" + encodeURIComponent(f.schedule_id.value), {method: "PUT", json: {
+          property_id: f.property_id.value, interval_seconds: Number(f.interval_seconds.value), next_due_at: due,
+          expected_revision: Number(f.expected_revision.value) || 0, idempotency_key: f.idempotency_key.value,
+          limits: {max_pages: Number(f.max_pages.value), max_depth: Number(f.max_depth.value), page_timeout_seconds: Number(f.page_timeout_seconds.value), max_network_events: 5000, settle_milliseconds: 1000},
+          authenticated_scan_consent: false, max_attempts: Number(f.max_attempts.value), retry_base_seconds: 30, retry_max_seconds: 3600, lease_seconds: 300, enabled: f.enabled.checked}});
+        form.hidden = true; say("Schedule saved."); await load();
+      } catch (error) { fail(error, "save the schedule"); }
+    });
+    async function scanNow(site) {
+      if (!(await CW.confirm("Scan " + siteName(site.property_id) + " now? Lightwork will visit " + (site.origins || []).join(", ") + " like a browser. The next scheduled scan then follows the usual interval from now.", "Scan now"))) return;
+      say("Scanning " + siteName(site.property_id) + "… this can take a few minutes.");
+      try {
+        var result = await call("/properties/" + encodeURIComponent(site.property_id) + "/scan-now", {method: "POST", json: {}});
+        say(scanSummary(result.outcomes || []), !(result.outcomes || []).some(function (o) { return o.succeeded; }));
+        await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Set a scan schedule for this website first, and make sure scans are on.", true); return; }
+        fail(error, "scan the website");
+      }
+    }
+    function scanSummary(outcomes) {
+      if (!outcomes.length) return "Nothing was due to scan.";
+      var done = outcomes.filter(function (o) { return o.succeeded; }), partial = done.filter(function (o) { return !o.coverage.coverage_complete; });
+      var text = done.length + " of " + outcomes.length + " scans finished.";
+      if (partial.length) text += " " + partial.length + " could not check every page, so some trackers may be missing.";
+      if (done.length < outcomes.length) text += " Scans that did not finish will be tried again.";
+      return text;
+    }
+    $("csi-run-due").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        if (!(await CW.confirm("Run every scan that is due now? Lightwork will visit those websites like a browser.", "Run scans"))) return;
+        try { var result = await call("/jobs/run-due", {method: "POST", json: {limit: 5}}); say(scanSummary(result.outcomes || [])); await load(); }
+        catch (error) { fail(error, "run the scans"); }
+      });
+    });
+
+    // ----- Scans (jobs) -----
+    function renderJobs() {
+      CW.table($("csi-jobs"), state.jobs, {label: "Scans", name: function (j) { return siteName(j.property_id) + " " + CW.when(j.scheduled_for); },
+        columns: [
+          {label: "Website", value: function (j) { return siteName(j.property_id); }},
+          {label: "Due", value: function (j) { return CW.when(j.scheduled_for); }},
+          {label: "Tries", value: function (j) { return j.attempts + " of " + j.max_attempts; }},
+          {label: "Status", value: function (j) { var m = JOB_STATUS[j.status] || [CW.human(j.status), "idle"]; return CW.badge(m[0], m[1]); }},
+        ],
+        actions: [
+          {label: "Try again", when: function (j) { return canAdmin && j.status === "dead_letter"; }, run: function (j, b) { CW.busy(b, function () { return retry(j); }); }},
+        ],
+        empty: {title: "No scans yet.", body: "Scans appear here when they are due. Use “Scan now” on a website to start one."}});
+    }
+    async function retry(job) {
+      try { await call("/dead-letters/" + encodeURIComponent(job.job_id) + "/replay", {method: "POST", json: {expected_revision: job.revision, idempotency_key: CW.reference()}}); say("The scan will be tried again. Use “Run due scans now” to run it straight away."); await load(); }
+      catch (error) { fail(error, "try the scan again"); }
+    }
+
+    // ----- Trackers found, reviews and results -----
+    async function reportFindings(reportId) {
+      if (!reportId || state.findings[reportId]) return state.findings[reportId] || {};
+      var report = await call("/reports/" + encodeURIComponent(reportId));
+      var map = {};
+      (((report.scanner_report || {}).findings) || []).forEach(function (f) { map[f.tracker_key] = f; });
+      state.findings[reportId] = map;
+      return map;
+    }
+    function trackerLabel(finding) {
+      if (!finding) return "Tracker";
+      return (finding.host || "This website") + (finding.kind && KINDS[finding.kind] ? " – " + KINDS[finding.kind].toLowerCase() : "");
+    }
+    async function showTrackers(site) {
+      state.site = site;
+      $("csi-trackers-heading").textContent = "Trackers found on " + siteName(site.property_id);
+      $("csi-trackers-panel").hidden = false;
+      $("csi-trackers").replaceChildren(CW.el("p", "muted", "Loading…"));
+      CW.say($("csi-diff"), "");
+      try {
+        var results = await Promise.all([call("/properties/" + encodeURIComponent(site.property_id) + "/discoveries?limit=200"), call("/reports?property_id=" + encodeURIComponent(site.property_id) + "&limit=50")]);
+        var discoveries = results[0].items || [], reports = results[1].items || [];
+        var reviewLists = await Promise.all(discoveries.map(function (d) { return call("/properties/" + encodeURIComponent(site.property_id) + "/discoveries/" + d.tracker_key + "/reviews?limit=1").catch(function () { return {items: []}; }); }));
+        var findingMaps = {};
+        for (var i = 0; i < discoveries.length; i++) {
+          var rid = discoveries[i].last_report_id;
+          if (!findingMaps[rid]) findingMaps[rid] = await reportFindings(rid);
+          discoveries[i].finding = findingMaps[rid][discoveries[i].tracker_key];
+          discoveries[i].review = (reviewLists[i].items || [])[0] || null;
+        }
+        CW.table($("csi-trackers"), discoveries, {label: "Trackers found", name: function (d) { return trackerLabel(d.finding); },
+          columns: [
+            {label: "Tracker", value: function (d) { return trackerLabel(d.finding); }},
+            {label: "Run By", value: function (d) { return d.finding && d.finding.first_party ? "Your website" : "Another company"; }},
+            {label: "Last Seen", value: function (d) { return CW.when(d.last_seen_at); }},
+            {label: "Review", value: function (d) {
+              if (!d.review) return CW.badge("Not reviewed", "warn");
+              var fresh = d.review.valid_until > Date.now() / 1000;
+              return CW.badge((CLASSES[d.review.classification] || "") + " · " + (ACTIONS[d.review.registry_action] || "") + (fresh ? "" : " · review is out of date"), fresh ? "ok" : "warn");
+            }},
+          ],
+          actions: [{label: function (d) { return d.review ? "Review again" : "Review"; }, kind: "primary", when: function () { return canAdmin; }, run: function (d, b) { CW.busy(b, function () { return openReview(d); }); }}],
+          empty: {title: "No trackers found yet.", body: "Scan this website to find the trackers it loads."}});
+        CW.table($("csi-reports"), reports, {label: "Scan results", name: function (r) { return CW.when(r.completed_at); },
+          columns: [
+            {label: "Scanned", value: function (r) { return CW.when(r.completed_at); }},
+            {label: "Pages Checked", value: function (r) { return r.pages_captured + " of " + r.pages_attempted; }},
+            {label: "Trackers Seen", value: function (r) { return String(r.finding_count); }},
+            {label: "Every Page Checked", value: function (r) { return r.coverage && r.coverage.coverage_complete ? "Yes" : "No"; }},
+          ],
+          actions: [
+            {label: "Compare with previous", when: function (r) { return reports.indexOf(r) < reports.length - 1; }, run: function (r, b) { CW.busy(b, function () { return compare(r, reports[reports.indexOf(r) + 1]); }); }},
+            {label: "Apply reviewed results", when: function () { return canAdmin; }, run: function (r, b) { CW.busy(b, function () { return bridge(r); }); }},
+          ],
+          empty: {title: "No scan results yet."}});
+        CW.open($("csi-trackers-panel"), "button");
+      } catch (error) { $("csi-trackers").replaceChildren(CW.el("p", "danger-text", CW.errorText(error, "load the trackers"))); }
+    }
+    async function compare(newer, older) {
+      try {
+        var diff = await call("/reports/diff?older_report_id=" + encodeURIComponent(older.report_id) + "&newer_report_id=" + encodeURIComponent(newer.report_id) + "&limit=200");
+        var text = "Compared with the scan on " + CW.when(older.completed_at) + ": " + diff.added_count + " new, " + diff.removed_count + " no longer seen, " + diff.unchanged_count + " unchanged.";
+        if (!diff.coverage_complete) text += " One of these scans did not check every page, so “no longer seen” may not mean removed.";
+        CW.say($("csi-diff"), text);
+      } catch (error) { CW.fail($("csi-diff"), error, "compare the scans"); }
+    }
+    async function bridge(report) {
+      if (!(await CW.confirm("Apply the reviewed trackers from the scan on " + CW.when(report.completed_at) + " to your consent tracker list? Only trackers with an up-to-date review that allows, blocks or retires them are changed; unreviewed ones stay as they are.", "Apply results"))) return;
+      try {
+        var result = await call("/reports/" + encodeURIComponent(report.report_id) + "/bridge", {method: "POST", json: {idempotency_key: CW.reference(), limit: 500}});
+        CW.say($("csi-diff"), (result.registered_count || 0) + " trackers updated in your tracker list.");
+      } catch (error) { CW.fail($("csi-diff"), error, "apply the results"); }
+    }
+    async function loadChoices() {
+      if (state.choicesLoaded) return;
+      try {
+        var both = await Promise.all([window.mvFetchJSON("/api/v1/consent/trackers?limit=500", {cache: "no-store"}).catch(function (error) { if (!error.status) throw error; return {trackers: []}; }), window.mvFetchJSON("/api/v1/consent/policies?limit=500", {cache: "no-store"}).catch(function (error) { if (!error.status) throw error; return {policies: []}; })]);
+        state.trackers = both[0].trackers || both[0].items || [];
+        var purposes = {};
+        (both[1].policies || []).forEach(function (p) { Object.keys(p.purposes || {}).forEach(function (k) { purposes[k] = true; }); });
+        state.purposes = Object.keys(purposes).sort();
+        state.choicesLoaded = true;
+      } catch (_error) { state.trackers = []; state.purposes = []; }
+    }
+    function syncReviewForm() {
+      var form = $("csi-review"), f = form.elements, registry = f.registry_action.value !== "observe_only";
+      if (f.classification.value === "not_a_tracker" && registry) f.registry_action.value = "observe_only";
+      form.querySelector("[data-registry]").hidden = f.registry_action.value === "observe_only";
+      form.querySelector("[data-new-tracker]").hidden = f.tracker_id.value !== "";
+    }
+    async function openReview(d) {
+      await loadChoices();
+      var form = $("csi-review"), f = form.elements;
+      form.reset(); reference(form);
+      f.property_id.value = d.property_id; f.tracker_key.value = d.tracker_key; f.report_id.value = d.last_report_id;
+      f.expected_version.value = String(d.review ? d.review.version : 0);
+      if (d.review) { f.classification.value = d.review.classification; f.registry_action.value = d.review.registry_action; }
+      CW.fill(f.tracker_id, state.trackers.map(function (t) { return {value: t.tracker_id, label: CW.human(t.tracker_id) + (t.vendor_id ? " (" + CW.human(t.vendor_id) + ")" : "")}; }), "Add as a new tracker");
+      if (d.review && d.review.tracker_id) f.tracker_id.value = d.review.tracker_id;
+      if (d.review && d.review.vendor_id) f.vendor_name.value = CW.human(d.review.vendor_id);
+      var box = $("csi-review-purposes"); box.replaceChildren();
+      if (!state.purposes.length) box.appendChild(CW.el("p", "muted", "Publish a consent policy first to choose what trackers are used for."));
+      state.purposes.forEach(function (p) { var label = CW.el("label"), input = document.createElement("input"); input.type = "checkbox"; input.name = "purpose_ids"; input.value = p; input.checked = !!(d.review && (d.review.purpose_ids || []).indexOf(p) >= 0); label.append(input, " " + CW.human(p)); box.appendChild(label); });
+      f.valid_until.value = CW.toInput(Date.now() / 1000 + 180 * 86400, true);
+      $("csi-review-title").textContent = "Review " + trackerLabel(d.finding);
+      syncReviewForm();
+      CW.open(form, "select");
+    }
+    ["classification", "registry_action", "tracker_id"].forEach(function (name) { $("csi-review").elements[name].addEventListener("change", syncReviewForm); });
+    $("csi-review").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements, action = f.registry_action.value, until = CW.toSeconds(f.valid_until.value) + 86399;
+      if (!(until > Date.now() / 1000) || until > Date.now() / 1000 + 366 * 86400) { say("Choose a “Review again by” date within the next year.", true); return; }
+      var body = {classification: f.classification.value, registry_action: action, report_id: f.report_id.value, valid_until: until, expected_version: Number(f.expected_version.value) || 0};
+      var base = "/properties/" + encodeURIComponent(f.property_id.value) + "/discoveries/" + f.tracker_key.value;
+      try {
+        if (action === "observe_only") {
+          await call(base + "/review", {method: "POST", json: Object.assign(body, {idempotency_key: f.idempotency_key.value, purpose_ids: []})});
+          form.hidden = true; say("Review saved.");
+        } else {
+          var trackerId = f.tracker_id.value || CW.slug(f.tracker_name.value, "");
+          if (!trackerId) { say("Choose a tracker from your list or name a new one.", true); return; }
+          if (!f.vendor_name.value.trim()) { say("Enter the company that runs this tracker.", true); return; }
+          var existing = state.trackers.filter(function (t) { return t.tracker_id === trackerId; })[0];
+          var purposes = Array.prototype.filter.call(form.querySelectorAll("[name=purpose_ids]"), function (c) { return c.checked; }).map(function (c) { return c.value; });
+          await call(base + "/review-requests", {method: "POST", json: Object.assign(body, {tracker_id: trackerId, vendor_id: CW.slug(f.vendor_name.value, "company"), purpose_ids: purposes, authority_expected_revision: existing ? existing.revision : 0})});
+          form.hidden = true; say("Review saved. A different administrator must now approve it below.");
+        }
+        await load(); if (state.site) await showTrackers(state.site);
+      } catch (error) {
+        if (error && error.status === 409) { say("Someone reviewed this tracker since you opened it. Refresh and try again.", true); return; }
+        fail(error, "save the review");
+      }
+    });
+
+    // ----- Second-person approvals -----
+    function renderApprovals() {
+      var pending = state.requests.filter(function (r) { return r.status === "pending"; });
+      CW.table($("csi-approvals"), pending, {label: "Reviews waiting for a second person", name: function (r) { return siteName(r.property_id) + " " + CLASSES[r.payload.classification]; },
+        columns: [
+          {label: "Website", value: function (r) { return siteName(r.property_id); }},
+          {label: "Tracker", value: function (r) { return CW.human(r.payload.tracker_id) + " (" + CW.human(r.payload.vendor_id) + ")"; }},
+          {label: "Review", value: function (r) { return (CLASSES[r.payload.classification] || "") + " · " + (ACTIONS[r.payload.registry_action] || ""); }},
+          {label: "Asked", value: function (r) { return CW.when(r.created_at) + (r.requested_by_me ? " by you" : ""); }},
+        ],
+        actions: [
+          {label: "Approve", kind: "primary", when: function (r) { return canAdmin && !r.requested_by_me; }, run: function (r, b) { CW.busy(b, function () { return approveRequest(r); }); }},
+          {label: "Withdraw", when: function (r) { return canAdmin; }, run: function (r, b) { CW.busy(b, function () { return withdrawRequest(r); }); }},
+        ],
+        empty: {title: "Nothing waiting.", body: "Reviews that change your tracker list wait here for a different administrator."}});
+    }
+    async function approveRequest(r) {
+      if (!(await CW.confirm("Approve this review of " + CW.human(r.payload.tracker_id) + " as " + (CLASSES[r.payload.classification] || "") + " (" + (ACTIONS[r.payload.registry_action] || "").toLowerCase() + ")? You are the second reviewer.", "Approve"))) return;
+      try { await call("/review-requests/" + encodeURIComponent(r.request_id) + "/approve", {method: "POST"}); say("Review approved and recorded."); await load(); }
+      catch (error) {
+        if (error && error.status === 409) { say("Could not approve. The person who asked cannot approve their own review, or the tracker was reviewed again since.", true); return; }
+        fail(error, "approve the review");
+      }
+    }
+    async function withdrawRequest(r) {
+      if (!(await CW.confirm("Withdraw this review request? Nothing is recorded.", "Withdraw"))) return;
+      try { await call("/review-requests/" + encodeURIComponent(r.request_id) + "/withdraw", {method: "POST"}); say("Request withdrawn."); await load(); }
+      catch (error) { fail(error, "withdraw the request"); }
+    }
+
+    // ----- Upkeep -----
+    $("csi-audit").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        try { await call("/audit?limit=500"); CW.say($("csi-upkeep-result"), "All records are intact."); }
+        catch (error) { CW.fail($("csi-upkeep-result"), error, "check the records"); }
+      });
+    });
+    $("csi-retention").elements.before.value = CW.toInput(Date.now() / 1000 - 180 * 86400, true);
+    $("csi-retention").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var before = CW.toSeconds(event.currentTarget.elements.before.value);
+      if (!(before > 0)) { say("Choose a date.", true); return; }
+      try {
+        var due = await call("/retention/status", {method: "POST", json: {before: before, limit: 500}});
+        var count = (due.reports || []).length + (due.jobs || []).length;
+        if (!count) { CW.say($("csi-upkeep-result"), "There is no scan data older than " + CW.when(before) + "."); return; }
+        if (!(await CW.confirm("Delete " + count + " old scan results and finished scans from before " + CW.when(before) + "? This cannot be undone. Reviews and the change history are kept.", "Delete"))) return;
+        await call("/retention/purge", {method: "POST", json: {before: before, limit: 500}});
+        CW.say($("csi-upkeep-result"), "Old scan data deleted."); await load();
+      } catch (error) { CW.fail($("csi-upkeep-result"), error, "delete old scan data"); }
+    });
+
+    load();
+  }
+})();
+</script>
+{% endblock %}

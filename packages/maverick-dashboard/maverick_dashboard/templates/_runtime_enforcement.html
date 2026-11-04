@@ -1,0 +1,12 @@
+<section class="glass-card" id="runtime-enforcement" aria-labelledby="runtime-enforcement-title">
+  <h3 id="runtime-enforcement-title">Actual safeguard activity</h3>
+  <p>Read what happened when a connected agent asked Lightwork to take an action. A check or a waiting approval is separate from an action being sent.</p>
+  <p>Unknown results may include changes already made outside Lightwork. Check the connected service before sending again. This list never repeats an action.</p>
+  <div class="gov-actions">
+    <button class="btn" type="button" data-runtime-activity-refresh>Read current activity</button>
+    <button class="btn btn--ghost" type="button" data-runtime-activity-previous hidden>Newer activity</button>
+    <button class="btn btn--ghost" type="button" data-runtime-activity-next hidden>Older activity</button>
+  </div>
+  <p role="status" aria-live="polite" data-runtime-activity-status></p>
+  <div data-runtime-activity-items></div>
+</section>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}GRC Concierge{% endblock %}</title>
+  <style>
+    :root{color-scheme:light;--ink:#16223a;--muted:#52647d;--line:#d7deea;--brand:#1557a0;--surface:#fff;--soft:#eef4fc;--ok:#11643b;--bad:#a12828}
+    *{box-sizing:border-box}body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#f6f8fb;color:var(--ink)}
+    header,main{max-width:1120px;margin:auto;padding:1rem}header{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
+    a{color:var(--brand)}.skip{position:absolute;left:-9999px}.skip:focus{left:1rem;top:1rem;background:#fff;padding:.7rem;z-index:2}
+    .hero,.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:1.25rem;margin-bottom:1rem;box-shadow:0 3px 16px rgb(30 55 90 / 5%)}
+    .hero h1{font-size:clamp(1.8rem,4vw,2.7rem);line-height:1.1;max-width:760px}.hero p{max-width:780px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}.workflow{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.6rem;padding:0;list-style:none}.workflow a{display:block;background:var(--soft);border-radius:8px;padding:.7rem;font-weight:650}
+    .pill{display:inline-block;background:#e7f0ff;padding:.25rem .55rem;border-radius:999px}.muted,.hint{color:var(--muted)}.boundary{border-left:5px solid #d48b16;background:#fff8e8;padding:.9rem 1rem;margin:1rem 0}.success{color:var(--ok)}.error{color:var(--bad)}
+    form{display:grid;gap:1rem}label{font-weight:650;display:block}label .hint{display:block;font-weight:400;font-size:.9rem}input,select,textarea,button{font:inherit}input,select,textarea{display:block;width:100%;max-width:720px;border:1px solid #9aabc1;border-radius:7px;padding:.65rem;background:#fff;color:var(--ink)}textarea{min-height:9rem;resize:vertical}button{justify-self:start;border:0;border-radius:7px;background:var(--brand);color:#fff;padding:.7rem 1rem;font-weight:700;cursor:pointer}button:disabled{opacity:.6;cursor:wait}
+    fieldset{border:1px solid var(--line);border-radius:9px;padding:1rem}legend{font-weight:750;padding:0 .35rem}.control{margin:.75rem 0;background:#fafcff}.control p{margin:.35rem 0}.answers{display:flex;gap:.8rem 1.2rem;flex-wrap:wrap}.answers label{font-weight:500}.answers input{display:inline;width:auto;margin-right:.25rem}
+    .result{border-radius:8px;background:var(--soft);padding:.8rem;min-height:2.8rem}.result:empty{display:none}.records{padding-left:1.2rem}.records li{margin:.55rem 0}.record-meta{color:var(--muted);font-size:.9rem}
+    .queue-item{border:1px solid var(--line);border-radius:9px;padding:1rem;margin:.8rem 0;background:#fafcff}.queue-item h3{margin-top:0}.actions{display:flex;gap:.7rem;flex-wrap:wrap}.secondary{background:#6b3340}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem}.metrics p{display:grid;margin:0;padding:.8rem;border:1px solid var(--line);border-radius:8px}.metrics strong{font-size:1.25rem}
+    table{width:100%;border-collapse:collapse;margin-top:.7rem}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:.55rem}th{background:#f3f6fa}
+    [hidden]{display:none!important}:focus-visible{outline:3px solid #f59e0b;outline-offset:2px}
+    @media(max-width:620px){header,main{padding:.75rem}.hero,.card{padding:1rem}.answers{display:grid;grid-template-columns:1fr 1fr}table{font-size:.9rem}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to workspace</a>
+  <header>
+    <strong>GRC Concierge</strong>
+    <nav aria-label="Primary"><a href="/">Workspace</a> &middot; <a href="/about">Capabilities</a></nav>
+  </header>
+  <main id="main">{% block content %}{% endblock %}</main>
+</body>
+</html>

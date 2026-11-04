@@ -1,0 +1,45 @@
+# Reference domain pack: generic business assistant.
+# The fallback domain when intake doesn't map to a specialist -- driven purely
+# by the business's uploaded documents.
+name = "generic"
+compartment = "generic"
+description = "General business assistant driven by intake and uploaded documents."
+
+persona = """You are a general business assistant for this company. Answer from
+the company's uploaded documents first and cite them; say plainly when the
+documents don't cover something rather than guessing. When a request clearly
+belongs to a business function (finance, legal, HR, sales, operations, IT,
+engineering, strategy), say so and recommend routing it to that suite's
+specialist instead of giving a shallow generalist answer. Keep answers
+concise, structured for the reader, and free of speculation presented as
+fact."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+# The generalist is read-only by design: anything that mutates state belongs
+# to a specialist pack with the right envelope and review path.
+deny_tools = ["shell", "apply_patch", "str_replace_editor", "browser", "write_file"]
+max_risk = "low"
+
+knowledge_sources = ["generic"]
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "document-grounded answer brief"
+consumers = ["business_owner", "operations_lead"]
+cadence = "on-demand"
+
+[[workflow]]
+name = "Parse request"
+instruction = "Determine what the user is actually asking and whether it belongs to a specialist business function."
+[[workflow]]
+name = "Search documents"
+instruction = "Search the company's uploaded documents first for a grounded answer and read the relevant passages."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Fill gaps"
+instruction = "Where the documents are silent, note the gap plainly and consult the web only for general public context."
+tools = ["web_search"]
+[[workflow]]
+name = "Compose or route"
+instruction = "Write a concise cited answer, or recommend routing to the correct specialist suite when the request is clearly a function's job."

@@ -1,0 +1,201 @@
+{
+  "name": "maverick",
+  "displayName": "Lightwork Agent",
+  "description": "Sidebar view + commands for Lightwork from inside VS Code.",
+  "version": "0.1.0",
+  "publisher": "cdayAI",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Daybreak-AI-Labs/LightworkOS",
+  "bugs": {
+    "url": "https://github.com/Daybreak-AI-Labs/LightworkOS/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Daybreak-AI-Labs/LightworkOS.git",
+    "directory": "apps/vscode-extension"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "agent",
+    "AI",
+    "maverick",
+    "claude",
+    "swarm"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:maverick.runs",
+    "onCommand:maverick.start"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "maverick.start",
+        "title": "Lightwork: Start goal..."
+      },
+      {
+        "command": "maverick.status",
+        "title": "Lightwork: Show status"
+      },
+      {
+        "command": "maverick.halt",
+        "title": "Lightwork: Arm local emergency stop (checkpoints)"
+      },
+      {
+        "command": "maverick.unhalt",
+        "title": "Lightwork: Clear emergency stop"
+      },
+      {
+        "command": "maverick.refreshRuns",
+        "title": "Lightwork: Refresh runs",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "maverick.openExport",
+        "title": "Lightwork: Export run as JSON..."
+      },
+      {
+        "command": "maverick.watchRun",
+        "title": "Lightwork: Watch run live"
+      },
+      {
+        "command": "maverick.stopWatch",
+        "title": "Lightwork: Stop live watch"
+      },
+      {
+        "command": "maverick.selectWorkspace",
+        "title": "Lightwork: Select local workspace"
+      },
+      {
+        "command": "maverick.configureDashboard",
+        "title": "Lightwork: Configure or rotate dashboard connection"
+      },
+      {
+        "command": "maverick.testDashboard",
+        "title": "Lightwork: Test dashboard connection"
+      },
+      {
+        "command": "maverick.disconnectDashboard",
+        "title": "Lightwork: Disconnect dashboard"
+      },
+      {
+        "command": "maverick.cancelTask",
+        "title": "Lightwork: Cancel selected dashboard task"
+      },
+      {
+        "command": "maverick.resumeTask",
+        "title": "Lightwork: Resume selected dashboard task"
+      },
+      {
+        "command": "maverick.runActions",
+        "title": "Lightwork: Choose local task action"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "maverick",
+          "title": "Lightwork",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "maverick": [
+        {
+          "id": "maverick.runs",
+          "name": "Recent runs",
+          "contextualTitle": "Lightwork runs"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "maverick.refreshRuns",
+          "when": "view == maverick.runs",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "maverick.openExport",
+          "when": "view == maverick.runs && viewItem == maverickRun",
+          "group": "inline"
+        },
+        {
+          "command": "maverick.watchRun",
+          "when": "view == maverick.runs && viewItem == maverickRun",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "Lightwork",
+      "properties": {
+        "maverick.cliPath": {
+          "type": "string",
+          "default": "maverick",
+          "scope": "machine",
+          "description": "Location of the Lightwork command-line tool. This computer setting cannot be overridden by workspace files."
+        },
+        "maverick.workspaceCwd": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run Lightwork in the open workspace folder."
+        },
+        "maverick.dashboardUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "scope": "machine",
+          "description": "Dashboard address for watching runs live. This computer setting cannot be overridden by workspace files."
+        },
+        "maverick.dashboardToken": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Access token provided by your dashboard administrator. This computer setting cannot be overridden by workspace files.",
+          "deprecationMessage": "Use Lightwork: Configure or rotate dashboard connection. Legacy values migrate to SecretStorage and are removed only after confirmed secure storage."
+        },
+        "maverick.dashboardName": {
+          "type": "string",
+          "default": "My dashboard",
+          "scope": "machine",
+          "description": "Name shown with the exact dashboard address in task selection and connection checks."
+        },
+        "maverick.maxDollars": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0.01,
+          "maximum": 100,
+          "description": "Requested per-run spending cap. Reviewed before every local start; deployment policy still applies."
+        },
+        "maverick.maxWallSeconds": {
+          "type": "integer",
+          "default": 1800,
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "Requested per-run time limit, reviewed before every local start."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}Connections · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .cx { max-width: 820px; }
+  .cx__sub { color: var(--muted); font-size: var(--text-sm); margin-bottom: var(--space-4); }
+  .cx__form { border: 1px solid var(--glass-border, var(--border)); border-radius: var(--radius-lg);
+              background: var(--glass-soft, var(--surface-1)); box-shadow: var(--glass-edge);
+              -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+              padding: var(--space-4); margin-bottom: var(--space-5); }
+  .cx__fld { margin-bottom: var(--space-3); }
+  .cx__fld label { display: block; font-size: var(--text-sm); font-weight: var(--font-semibold); margin-bottom: 3px; }
+  .cx__fld .sub { font-weight: var(--font-normal); color: var(--muted); }
+  .cx__grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+  .advanced{ border: 1px solid var(--glass-border, var(--border)); border-radius: var(--radius-md);
+    margin: var(--space-2) 0 var(--space-3); overflow: hidden; }
+  .advanced > summary{ cursor: pointer; list-style: none; padding: 0.5rem var(--space-3);
+    display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--text-sm); }
+  .advanced > summary::-webkit-details-marker{ display: none; }
+  .advanced > summary::before{ content: "⚙"; }
+  .advanced__body{ padding: 0 var(--space-3) var(--space-3); }
+  .cx__actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;
+    padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
+  .cx__list { list-style: none; padding: 0; margin: 0; }
+  .cx__row { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; min-width: 0;
+             border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3);
+             margin-bottom: var(--space-2); }
+  .cx__row .name { font-weight: var(--font-semibold); min-width: 0; overflow-wrap: anywhere; }
+  .cx__row .meta { color: var(--muted); font-size: var(--text-sm); flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+  .cx__row .cx__badge { max-width: 100%; box-sizing: border-box; white-space: normal; overflow-wrap: anywhere; }
+  .cx__msg { font-size: var(--text-sm); color: var(--muted); min-height: 1.2em; }
+  .cx__people { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: var(--space-1); max-height: 14rem; overflow: auto; }
+  .cx__people label { font-weight: normal; display: flex; gap: var(--space-2); }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% call hero('Integrations', 'Connections',
+             subtitle='Connect the services you use',
+             lede='Connect an account by signing in to it, or save a key from
+                   another service. Your workflows can then use the saved
+                   connection.') %}
+  {{ state('Account access', 'Saved connections',
+           badge='Stored securely', badge_class='ok',
+           copy='Keys are encrypted when you save them and never shown again.
+                 Administrators manage connections; workflows use them only
+                 with the access you approve.') }}
+{% endcall %}
+{% if enterprise_connectors_limited %}<p class="panel" role="note">While Enterprise mode is on, workflows run by signed-in people can't use the connector tools marked “Not available in Enterprise mode yet” on the <a href="/tools">Tools page</a>{% if enterprise_connector_examples %}, including {{ enterprise_connector_examples | join(', ') }},{% endif %} even with a saved connection.</p>{% endif %}
+
+<div class="cx">
+  {% set activation_draft = request.query_params.get('activation_draft', '') %}
+  {% if activation_draft.startswith('EAP-') and activation_draft|length == 52 %}<p class="panel"><a href="/get-started/employee?draft={{ activation_draft|urlencode }}">Return to your saved activation draft</a>. Connection setup does not restart a task; review the same draft after repair.</p>{% endif %}
+  {% if not connections_enabled %}
+  {# Connections off: one switch, one explanation. The key form and the
+     account sign-in section appear once it is on. #}
+  {% from "_module_gate.html" import module_gate %}
+  {{ module_gate('connections', 'Connections',
+                 detail='A connection is how Lightwork uses another service: either paste a key the service gave you, or sign in to the account so access renews itself. Account sign-in supports Google Drive, Google Cloud Storage, Jira Cloud and Microsoft 365 email.') }}
+  {% else %}
+  <p class="cx__sub">Connect a service with a <strong>key</strong> it gave you, or use <strong>account sign-in</strong> so access renews itself. Account sign-in supports Google Drive, Google Cloud Storage, Jira Cloud and Microsoft 365 email.</p>
+  {% include "_connection_setup.html" %}
+  {% include "_account_inventory.html" %}
+  {% if can_manage_keys %}<div class="section-head"><h2>Add a connection with a key</h2></div>{% endif %}
+  <form class="cx__form" id="cx-form" data-can-manage="{{ 'true' if can_manage_keys else 'false' }}"{% if not can_manage_keys %} hidden{% endif %} autocomplete="off" data-draft-recovery="off">
+    <div class="cx__fld">
+      <label for="cx-catalog-search">Find a service</label><input class="input" id="cx-catalog-search" type="search" placeholder="Search supported service names">
+      <label for="cx-preset">What are you connecting?</label>
+      <select class="select" id="cx-preset">
+        <option value="">Choose a service…</option>
+        <option value="custom">Another service (advanced)</option>
+      </select>
+    </div>
+    <div class="cx__fld">
+      <label for="cx-name">Name for this connection</label>
+      <input class="input" id="cx-name" placeholder="e.g. Salesforce EU" required maxlength="64" aria-describedby="cx-name-as">
+      <p class="cx__sub" id="cx-name-as"></p>
+    </div>
+    <div class="cx__fld">
+      <label for="cx-token">Key from the service <span class="sub">— encrypted, never shown again</span></label>
+      <input class="input" id="cx-token" type="password" placeholder="Paste the key">
+      <p class="cx__sub"><a id="cx-key-help" href="#" target="_blank" rel="noopener noreferrer" hidden>Where do I find this key?</a></p>
+      <p class="cx__sub" id="cx-credential-help"></p>
+    </div>
+    <fieldset id="cx-aws" hidden><legend>Amazon Web Services sign-in</legend>
+      <label for="cx-aws-access">Access key ID</label><input class="input" id="cx-aws-access" autocomplete="off" maxlength="128">
+      <label for="cx-aws-secret">Secret access key</label><input class="input" id="cx-aws-secret" type="password" autocomplete="off" maxlength="256">
+      <label for="cx-aws-region">Region</label>
+      <input class="input" id="cx-aws-region" list="cx-aws-regions" placeholder="e.g. us-east-1" pattern="[a-z]{2}(-[a-z]+)+-[0-9]+" maxlength="64">
+      <datalist id="cx-aws-regions">
+        <option value="">Choose the AWS region for this account…</option>
+        {% for code, name in [('us-east-1','US East (N. Virginia)'),('us-east-2','US East (Ohio)'),('us-west-1','US West (N. California)'),('us-west-2','US West (Oregon)'),('ca-central-1','Canada (Central)'),('eu-west-1','Europe (Ireland)'),('eu-west-2','Europe (London)'),('eu-west-3','Europe (Paris)'),('eu-central-1','Europe (Frankfurt)'),('eu-north-1','Europe (Stockholm)'),('ap-south-1','Asia Pacific (Mumbai)'),('ap-southeast-1','Asia Pacific (Singapore)'),('ap-southeast-2','Asia Pacific (Sydney)'),('ap-northeast-1','Asia Pacific (Tokyo)'),('sa-east-1','South America (São Paulo)')] %}
+        <option value="{{ code }}">{{ name }}</option>
+        {% endfor %}
+      </datalist>
+      <p class="cx__sub">Choose a suggestion or enter your AWS region. For security evidence, Lightwork fills in the service address from this choice. Other AWS partitions require a supported service address. Changing sharing alone preserves the saved credential.</p>
+      <label for="cx-aws-session">Session token (only if your IT team gave you one)</label><input class="input" id="cx-aws-session" type="password" autocomplete="off" maxlength="16384">
+      <p class="cx__sub">Use access that can read the storage or security source you choose. These values are encrypted and cleared after saving. Source selection and checks are separate from saving an account.</p>
+    </fieldset>
+
+    <details class="advanced" id="cx-advanced">
+      <summary>Who can use it, and other settings</summary>
+      <div class="advanced__body">
+        <div class="cx__fld">
+          <label for="cx-base" id="cx-base-label">Web address of the service</label>
+          <input class="input" id="cx-base" type="url" placeholder="https://…">
+          <p class="cx__sub" id="cx-hint"></p>
+        </div>
+        <div class="cx__fld" id="cx-connector-field" hidden>
+          <label for="cx-connector">Which tool uses it</label>
+          <select class="select" id="cx-connector"><option value="">Choose…</option></select>
+        </div>
+        <div class="cx__fld">
+          <label><input type="checkbox" id="cx-tenant-access"> Everyone in this workspace can use this connection</label>
+          <p class="cx__sub">Off by default. Only administrators can change or remove it either way.</p>
+        </div>
+        <fieldset class="cx__fld">
+          <legend>Also allow these people</legend>
+          {% if people %}
+          <div class="cx__people" id="cx-principals">
+            {% for person in people %}
+            <label><input type="checkbox" value="{{ person.principal }}"> {{ person.label }}</label>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="cx__sub" id="cx-principals">No one else has signed in yet. People appear here after they sign in.</p>
+          {% endif %}
+        </fieldset>
+      </div>
+    </details>
+
+    <div class="cx__actions">
+      <button class="btn btn--primary" type="submit">Save connection</button>
+      <button class="btn" type="button" id="cx-save-test">Save &amp; test</button>
+      <span class="cx__msg" id="cx-msg" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <div class="section-head"><h2>Saved connections</h2></div>
+  <p class="cx__msg" id="cx-inventory-status" role="status" aria-live="polite">Loading saved connections.</p>
+  <button class="btn" type="button" id="cx-retry">Refresh connections</button>
+  <section id="cx-conflict" class="panel" hidden aria-labelledby="cx-conflict-title">
+    <h3 id="cx-conflict-title">Review the changed connection</h3>
+    <p>Your unsaved draft is preserved below without its key. Saving stays blocked until you load the current record and review your changes again.</p>
+    <pre id="cx-conflict-draft"></pre>
+    <pre id="cx-conflict-current"></pre>
+    <button class="btn" type="button" id="cx-reload-edit">Load current record for review</button>
+  </section>
+  <ul class="cx__list" id="cx-list"></ul>
+  <p class="cx__sub" id="cx-empty" hidden>None yet — save your first connection above and it appears here, ready to test.</p>
+
+  <section aria-labelledby="to-connectors-title" id="to-connectors-panel" hidden>
+  <div class="section-head"><h2 id="to-connectors-title">Systems Lightwork may change</h2></div>
+  <div class="panel">
+    <p class="muted">Systems of record such as Salesforce or ServiceNow. Every change is checked first,
+      approved by a person when the risk calls for it, and recorded. Preview a change here to see what would
+      happen, without changing anything.</p>
+    <p id="to-connectors-status" class="muted" role="status" aria-live="polite">Loading…</p>
+    <div id="to-connectors"></div>
+    <form id="to-change-form" class="to-change" hidden>
+      <h3>Preview a change</h3>
+      <label class="to-label">System
+        <select class="select" name="connector"></select></label>
+      <label class="to-label">Kind of change
+        <select class="select" name="change">
+          <option value="update">Update a record</option>
+          <option value="create">Create a record</option>
+          <option value="replace">Replace a record</option>
+          <option value="delete">Delete a record</option>
+        </select></label>
+      <label class="to-label">Record type
+        <input class="input" type="text" name="record_type" maxlength="80" required placeholder="e.g. Opportunity or incident" autocomplete="off"></label>
+      <div id="to-change-record-wrap">
+        <label class="to-label">Record number in that system
+          <input class="input" type="text" name="record_id" maxlength="80" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <fieldset class="to-change__fields">
+        <legend>Fields to change</legend>
+        <div id="to-change-fields"></div>
+        <button type="button" class="btn btn--ghost" id="to-change-add-field">Add a field</button>
+      </fieldset>
+      <label class="to-check"><input type="checkbox" name="read_current_values" checked>
+        Also read the record's current values, to tell whether the change could be undone</label>
+      <p class="muted" id="to-change-read-note"></p>
+      <div><button type="submit" class="btn btn--primary">Preview this change</button></div>
+    </form>
+    <div id="to-change-out" aria-live="polite"></div>
+  </div>
+  </section>
+  {% endif %}
+</div>
+
+{% if connections_enabled %}
+<script src="/static/lightwork-connection-impact.js" defer></script>
+<script src="/static/lightwork-connections.js" defer></script>
+{% endif %}
+<style>
+  .to-change { display: flex; flex-direction: column; gap: var(--space-2); max-width: 40rem; margin-top: var(--space-4); }
+  .to-change__fields { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+  .to-field { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .to-field .input { flex: 1 1 10rem; }
+  .to-check { display: flex; gap: var(--space-2); align-items: flex-start; }
+  .to-label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); font-weight: var(--font-semibold); }
+  .to-scroll { overflow-x: auto; }
+</style>
+<script src="/static/lightwork-tool-ops.js" defer></script>
+{% endblock %}

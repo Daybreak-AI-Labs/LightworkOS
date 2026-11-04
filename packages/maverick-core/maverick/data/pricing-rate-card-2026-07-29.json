@@ -1,0 +1,293 @@
+{
+  "schema_version": 1,
+  "rate_card_version": "2026-09-13.1",
+  "retrieved_at": "2026-09-13T17:45:37Z",
+  "description": "Primary-source evidence and conservative billing ceilings for Lightwork model pricing. Rates are USD per one million tokens.",
+  "entries": [
+    {
+      "evidence_id": "openai-standard-ceiling-2026-09-13",
+      "source_url": "https://developers.openai.com/api/docs/pricing",
+      "retrieved_at": "2026-09-13T17:45:37Z",
+      "as_of": "2026-09-13",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M tokens; maximum Standard context tier, 1.25x cache-write input ceiling, plus 10 percent regional-processing uplift",
+      "applicability": "Direct OpenAI Standard processing; conservative budget ceiling, not an actual invoice rate. Excludes Fast/priority premiums and Batch/Flex discounts.",
+      "source_observations": {
+        "gpt-6-astra": {"short": [10.0, 50.0], "long": [20.0, 75.0], "long_cache_write_input": 25.0},
+        "gpt-5.6-terra": {"short": [2.0, 12.0], "long": [4.0, 18.0], "long_cache_write_input": 5.0},
+        "gpt-5.6-luna": {"short": [0.2, 1.2], "long": [0.4, 1.8], "long_cache_write_input": 0.5}
+      },
+      "rates": {"gpt-6-astra": [27.5, 82.5], "gpt-5.6-terra": [5.5, 19.8], "gpt-5.6-luna": [0.55, 1.98]}
+    },
+    {
+      "evidence_id": "openai-sol-promo-ceiling-2026-09-13",
+      "source_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
+      "retrieved_at": "2026-09-13T17:45:37Z",
+      "as_of": "2026-09-13",
+      "valid_until": "2026-11-21",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M tokens; maximum Standard context tier, 1.25x cache-write input ceiling, plus 10 percent regional-processing uplift",
+      "applicability": "Direct OpenAI Standard processing, including the documented gpt-5.6 alias. Promotional pricing is reviewed through 2026-11-21; billing refuses this quote after that date. Conservative budget ceiling, not an invoice rate; excludes Fast/priority premiums.",
+      "source_observations": {"short": [4.0, 20.0], "long": [8.0, 30.0], "long_cache_write_input": 10.0},
+      "rates": {"gpt-5.6-sol": [11.0, 33.0], "gpt-5.6": [11.0, 33.0]}
+    },
+    {
+      "evidence_id": "anthropic-direct-2026-07-29",
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M input/output tokens; standard direct API list price",
+      "applicability": "Direct Anthropic API; cache discounts and batch pricing excluded",
+      "rates": {
+        "claude-opus-4-8": [5.0, 25.0],
+        "claude-opus-4-8-fast": [10.0, 50.0],
+        "claude-opus-4-7": [5.0, 25.0],
+        "claude-opus-4-6": [5.0, 25.0],
+        "claude-opus-4-5": [5.0, 25.0],
+        "claude-sonnet-4-6": [3.0, 15.0],
+        "claude-haiku-4-5": [1.0, 5.0],
+        "claude-haiku-4-5-20251001": [1.0, 5.0]
+      }
+    },
+    {
+      "evidence_id": "anthropic-direct-2026-09-07",
+      "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrieved_at": "2026-09-07T00:00:00Z",
+      "as_of": "2026-09-07",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M input/output tokens; standard direct API list price",
+      "applicability": "Direct Anthropic API; cache discounts and batch pricing excluded",
+      "rates": {
+        "claude-opus-5": [5.0, 25.0],
+        "claude-sonnet-5": [2.0, 10.0],
+        "claude-fable-5-1": [10.0, 50.0]
+      }
+    },
+    {
+      "evidence_id": "openai-direct-ceiling-2026-07-29",
+      "source_url": "https://developers.openai.com/api/docs/pricing",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M input/output tokens; maximum documented context tier plus 10 percent regional-processing uplift",
+      "applicability": "Direct OpenAI Standard processing across documented context tiers and eligible regions; cache, batch, flex, and priority discounts or premiums excluded",
+      "source_observations": {
+        "gpt-5.5": {"short": [5.0, 30.0], "long": [10.0, 45.0]},
+        "gpt-5.4": {"short": [2.5, 15.0], "long": [5.0, 22.5]},
+        "gpt-5.4-pro": {"short": [30.0, 180.0], "long": [60.0, 270.0]},
+        "gpt-5.4-mini": {"short": [0.75, 4.5]},
+        "gpt-5.4-nano": {"short": [0.2, 1.25]},
+        "regional_processing_uplift": 0.1
+      },
+      "rates": {
+        "gpt-5.5": [11.0, 49.5],
+        "gpt-5.4": [5.5, 24.75],
+        "gpt-5.4-pro": [66.0, 297.0],
+        "gpt-5.4-mini": [0.825, 4.95],
+        "gpt-5.4-nano": [0.22, 1.375]
+      }
+    },
+    {
+      "evidence_id": "deepseek-current-2026-07-29",
+      "source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M uncached input/output tokens; direct API current model rows",
+      "applicability": "Direct DeepSeek API; cache-hit discounts excluded",
+      "rates": {
+        "deepseek-v4-flash": [0.14, 0.28],
+        "deepseek-v4-pro": [0.435, 0.87]
+      }
+    },
+    {
+      "evidence_id": "deepseek-deprecated-alias-estimates-2026-07-29",
+      "source_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 0.25,
+      "verified": false,
+      "pricing_basis": "Historical USD per 1M input/output token estimate",
+      "applicability": "Deprecated chat/reasoner aliases have no current exact rate row; estimate-only",
+      "rates": {
+        "deepseek-chat": [0.27, 1.1],
+        "deepseek-reasoner": [0.55, 2.19]
+      }
+    },
+    {
+      "evidence_id": "xai-current-2026-07-29",
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "retrieved_at": "2026-07-29T20:15:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M input/output tokens; maximum documented standard context tier",
+      "applicability": "Direct xAI API standard processing at 200K or more prompt tokens; cache, batch, priority, and tool charges excluded",
+      "source_observations": {
+        "grok-4.5": {"short": [2.0, 6.0], "long": [4.0, 12.0]},
+        "grok-build-0.1": {"short": [1.0, 2.0], "long": [2.0, 4.0]},
+        "grok-4.3": {"short": [1.25, 2.5], "long": [2.5, 5.0]},
+        "long_context_threshold_tokens": 200000
+      },
+      "rates": {
+        "grok-4.5": [4.0, 12.0],
+        "grok-build-0.1": [2.0, 4.0],
+        "grok-4.3": [2.5, 5.0]
+      }
+    },
+    {
+      "evidence_id": "xai-ambiguous-estimates-2026-07-29",
+      "source_url": "https://docs.x.ai/developers/pricing",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 0.2,
+      "verified": false,
+      "pricing_basis": "Historical USD per 1M input/output token estimate",
+      "applicability": "Alias, redirected, or unsupported model id without an exact current official row; estimate-only",
+      "rates": {
+        "grok-code-fast": [1.0, 2.0],
+        "grok-4-latest": [3.0, 15.0],
+        "grok-4-mini": [0.3, 0.5],
+        "grok-3": [3.0, 15.0]
+      }
+    },
+    {
+      "evidence_id": "google-gemini-flash-2026-07-29",
+      "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "USD per 1M input/output tokens; paid-tier direct API list price",
+      "applicability": "Gemini Developer API paid tier for Gemini 3.5 Flash; caching and batch prices excluded",
+      "rates": {
+        "gemini-3.5-flash": [1.5, 9.0]
+      }
+    },
+    {
+      "evidence_id": "google-unsupported-estimates-2026-07-29",
+      "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 0.2,
+      "verified": false,
+      "pricing_basis": "Historical USD per 1M input/output token estimate",
+      "applicability": "No exact current official row captured for this model id; estimate-only",
+      "rates": {
+        "gemini-3.5-pro": [2.5, 10.0],
+        "gemini-3-pro": [2.5, 10.0],
+        "gemini-3-flash": [0.15, 0.6]
+      }
+    },
+    {
+      "evidence_id": "moonshot-uncaptured-estimates-2026-07-29",
+      "source_url": "https://platform.moonshot.ai/pricing",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 0.2,
+      "verified": false,
+      "pricing_basis": "Historical USD per 1M input/output token estimate",
+      "applicability": "No matching current primary-source row captured during the 2026-07-29 review; estimate-only",
+      "rates": {
+        "kimi-k2": [0.6, 2.5],
+        "kimi-k1.5": [0.2, 2.0],
+        "moonshot-v1-8k": [0.3, 0.3],
+        "moonshot-v1-32k": [0.6, 0.6],
+        "moonshot-v1-128k": [1.2, 1.2]
+      }
+    },
+    {
+      "evidence_id": "openrouter-uncaptured-estimates-2026-07-29",
+      "source_url": "https://openrouter.ai/models",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 0.2,
+      "verified": false,
+      "pricing_basis": "Historical USD per 1M input/output token estimate",
+      "applicability": "No exact current primary-source model-page capture; estimate-only",
+      "rates": {
+        "minimax/minimax-m2.5": [0.3, 1.2],
+        "deepseek/deepseek-v4-pro": [0.14, 0.55],
+        "qwen/qwen3-coder-next": [0.2, 0.8]
+      }
+    },
+    {
+      "evidence_id": "local-api-metering-policy-2026-07-29",
+      "source_url": "maverick://pricing-policy/self-hosted-api-metering",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "Metered external API-token charge only",
+      "applicability": "Operator-hosted endpoint; excludes compute, energy, storage, and operations cost",
+      "rates": {
+        "qwen3-coder-next": [0.0, 0.0],
+        "qwen3-32b": [0.0, 0.0],
+        "llama-4-maverick": [0.0, 0.0]
+      }
+    },
+    {
+      "evidence_id": "codex-cli-subscription-policy-2026-07-29",
+      "source_url": "maverick://pricing-policy/codex-cli-subscription",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "Metered external API-token charge only",
+      "applicability": "Codex CLI subscription route; excludes subscription fee and local compute",
+      "rates": {},
+      "model_pattern": "codex_cli:.+",
+      "pattern_rates": [0.0, 0.0]
+    },
+    {
+      "evidence_id": "self-hosted-api-metering-policy-2026-07-29",
+      "source_url": "maverick://pricing-policy/self-hosted-api-metering",
+      "retrieved_at": "2026-07-29T16:00:00Z",
+      "as_of": "2026-07-29",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "Metered external API-token charge only",
+      "applicability": "Unknown model behind ollama, vllm, or tgi operator-hosted endpoint; excludes compute, energy, storage, and operations cost",
+      "rates": {},
+      "model_pattern": "(ollama|vllm|tgi):.+",
+      "pattern_rates": [0.0, 0.0]
+    },
+    {
+      "evidence_id": "openrouter-advertised-free-tier-policy-2026-09-16",
+      "source_url": "https://openrouter.ai/api/v1/models",
+      "retrieved_at": "2026-09-16T16:00:00Z",
+      "as_of": "2026-09-16",
+      "currency": "USD",
+      "confidence": 1.0,
+      "verified": true,
+      "pricing_basis": "Metered external API-token charge only; OpenRouter's own model listing advertises $0 prompt and $0 completion for the model",
+      "applicability": "OpenRouter models whose pricing in the provider's /api/v1/models listing, as cached by model discovery with the operator's key, is zero for both prompt and completion; excludes any OpenRouter account fee and a rate the provider changes after the cached listing",
+      "rates": {},
+      "model_pattern": "openrouter:.+",
+      "pattern_rates": [0.0, 0.0]
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Continuous evidence · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .trc-actions { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .trc-source-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,17rem),1fr)); gap:var(--space-3); }
+  .trc-source-fields label { display:flex; flex-direction:column; gap:var(--space-1); }
+  .trc-source-fields input, .trc-source-fields select { width:100%; min-width:0; }
+  .trc-check-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:var(--space-2); align-items:end; padding:var(--space-3) 0; border-bottom:1px solid var(--border); }
+  .trc-check-row label { min-width:0; display:flex; flex-direction:column; gap:var(--space-1); }
+  .trc-check-row select { width:100%; min-width:0; }
+  .trc-review-row { display:grid; grid-template-columns:minmax(8rem,1fr) minmax(0,2fr); gap:var(--space-2); margin:0; padding:var(--space-2) 0; border-bottom:1px solid var(--border); }
+  .trc-review-row dt { font-weight:600; }
+  .trc-review-row dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  #trc-source-review, #trc-source-original { overflow-wrap:anywhere; }
+  .trc-source-approval { max-width:42rem; max-height:calc(100dvh - 2rem); overflow:auto; }
+  .trc-source-approval .mv-confirm__row { flex-wrap:wrap; }
+  @media(max-width:600px) { .trc-check-row, .trc-review-row { grid-template-columns:minmax(0,1fr); } .trc-source-fields { grid-template-columns:minmax(0,1fr); } }
+</style>
+{{ hero('Compliance', 'Continuous evidence',
+        lede='Automatically collect evidence for your controls from AWS Security Hub, AWS Config, Azure Defender, Azure Policy, Google Cloud Security Command Center, GitHub security streams and Okta policy posture, plus Lightwork\'s own security checks.') }}
+
+<div class="trc-actions">
+  <button class="btn" id="trc-refresh" type="button"{% if not trc_continuous_evidence_enabled %} disabled aria-disabled="true"{% endif %}>Refresh</button>
+  <button class="btn btn--primary" id="trc-run-cycle" type="button" disabled aria-disabled="true">Collect evidence now</button>
+  {{ back_link('/compliance', 'Compliance') }}
+</div>
+<p id="trc-live-status" role="status" aria-live="polite"></p>
+<p class="muted">Collected evidence shows what was checked; it isn't a compliance certificate and doesn't prove every system is covered.</p>
+<p class="muted">After downtime, Lightwork requests the elapsed period in one collection, within the source's collection limits, then continues the configured schedule.</p>
+
+{% if not trc_continuous_evidence_enabled %}
+<div id="trc-root" data-api="/api/v1/compliance/continuous-evidence" data-enabled="false"
+     data-can-admin="{{ 'true' if trc_can_admin else 'false' }}" data-can-audit="{{ 'true' if trc_can_audit else 'false' }}">
+  <section class="panel" id="trc-source-original" hidden aria-labelledby="trc-source-original-title">
+    <h3 id="trc-source-original-title">Earlier setup result</h3>
+    <p id="trc-source-original-status" role="status" aria-live="polite"></p>
+    <div id="trc-source-original-rows"></div>
+    <button class="btn" id="trc-source-read-original" type="button">Read the original result</button>
+    <p class="muted">This only reads the earlier request. It does not save another setup or start collection.</p>
+  </section>
+</div>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-trc-continuous-evidence.js" defer></script>
+{{ module_gate('tech_risk_compliance.continuous_evidence', 'Continuous evidence',
+               detail='Collect evidence for your controls automatically. Turn it on, then choose a saved account and the checks it may collect here.',
+               status=acm_module_status) }}
+{% else %}
+<div id="trc-root" data-api="/api/v1/compliance/continuous-evidence" data-enabled="true"
+     data-can-admin="{{ 'true' if trc_can_admin else 'false' }}" data-can-audit="{{ 'true' if trc_can_audit else 'false' }}">
+  <section class="grid" aria-label="Continuous evidence status">
+    <div class="stat"><div class="num" id="trc-composition">—</div><div class="label" id="trc-composition-detail">Setup</div></div>
+    <div class="stat"><div class="num" id="trc-scheduler">—</div><div class="label" id="trc-scheduler-detail">Automatic collection</div></div>
+    <div class="stat"><div class="num" id="trc-feeds">—</div><div class="label" id="trc-feeds-detail">Connected sources</div></div>
+    <div class="stat"><div class="num" id="trc-cycle">—</div><div class="label" id="trc-cycle-detail">Last collection</div></div>
+  </section>
+
+  <div class="section-head"><h2>Sources</h2><button class="btn" id="trc-source-new" type="button"{% if not trc_can_admin %} disabled{% endif %}>Add a source</button></div>
+  <section class="panel" id="trc-source-editor" hidden aria-labelledby="trc-source-editor-title">
+    <h2 id="trc-source-editor-title" tabindex="-1">Connect evidence to your controls</h2>
+    <p class="muted">Choose a saved account, the systems to check and the controls that need evidence. Saving creates a setup for a different administrator to approve. It does not start collection.</p>
+    <p class="muted">Changing a saved source creates a new setup and pauses its earlier collection. Approval and Start collecting are separate decisions.</p>
+    <p class="muted">Entered choices are kept in this browser for this account and workspace. Account credentials stay in Connections.</p>
+    <form id="trc-source-form">
+      <div class="trc-source-fields">
+        <label for="trc-source-label">Name this source<input class="input" id="trc-source-label" maxlength="100" required autocomplete="off" placeholder="For example, Production cloud checks"></label>
+        <label for="trc-source-provider">Evidence provider<select class="input" id="trc-source-provider" required><option value="">Choose a provider</option></select></label>
+        <label for="trc-source-account">Saved account<select class="input" id="trc-source-account" required><option value="">Choose a saved account</option></select></label>
+      </div>
+      <p id="trc-source-account-help" class="muted"></p>
+      <p><a class="btn" id="trc-source-connect" href="/connections">Connect another account</a></p>
+      <div id="trc-source-scope" class="trc-source-fields"></div>
+      <div class="trc-actions" style="margin-top:var(--space-3)">
+        <button class="btn" id="trc-source-discover" type="button" disabled>Find checks in this account</button>
+        <span id="trc-source-check-status" role="status" aria-live="polite"></span>
+      </div>
+      <p class="muted">Finding checks reads only the chosen scope from this account. It does not change the provider's settings or authorize automatic collection.</p>
+      <div id="trc-source-bindings" aria-label="Checks and controls"></div>
+      <button class="btn" id="trc-source-add-binding" type="button" disabled>Add a check and control</button>
+      <p id="trc-source-coverage" class="muted"></p>
+      <label class="check" style="display:flex;gap:var(--space-2);align-items:flex-start;margin-top:var(--space-3)"><input type="checkbox" id="trc-source-background"><span>Allow this saved account to be used for these checks during future scheduled collections, after separate approval and Start collecting.</span></label>
+      <p id="trc-source-form-status" role="status" aria-live="polite"></p>
+      <div class="trc-actions" style="margin-top:var(--space-3)">
+        <button class="btn" id="trc-source-prepare" type="submit" disabled>Review complete setup</button>
+        <button class="btn" id="trc-source-close" type="button">Close and keep entered choices</button>
+      </div>
+    </form>
+    <section id="trc-source-review" hidden aria-labelledby="trc-source-review-title">
+      <h3 id="trc-source-review-title" tabindex="-1">Review the complete source setup</h3>
+      <p class="muted">Confirm the named account, every check and control, and the future collection permission. A different administrator must still approve the new setup.</p>
+      <div id="trc-source-review-rows"></div>
+      <p id="trc-source-review-expiry" class="muted"></p>
+      <label class="check" style="display:flex;gap:var(--space-2);align-items:flex-start"><input type="checkbox" id="trc-source-confirm"><span>I reviewed this complete setup and its consequences.</span></label>
+      <div class="trc-actions" style="margin-top:var(--space-3)">
+        <button class="btn" id="trc-source-save" type="button" disabled>Save setup for approval</button>
+        <button class="btn" id="trc-source-edit" type="button">Keep editing</button>
+      </div>
+    </section>
+  </section>
+  <section class="panel" id="trc-source-original" hidden aria-labelledby="trc-source-original-title">
+    <h3 id="trc-source-original-title">Earlier setup result</h3>
+    <p id="trc-source-original-status" role="status" aria-live="polite"></p>
+    <div id="trc-source-original-rows"></div>
+    <button class="btn" id="trc-source-read-original" type="button">Read the original result</button>
+    <p class="muted">This only reads the earlier request. It does not save another setup or start collection.</p>
+  </section>
+  <section class="panel" aria-label="Sources">
+    <div id="trc-sources"><p class="muted">Loading sources…</p></div>
+  </section>
+
+  <div class="section-head"><h2>Collection setups</h2></div>
+  <section class="panel" aria-label="Collection setups">
+    <p class="muted">Each source needs a collection setup that a second administrator approves before collection starts.</p>
+    <div id="trc-definitions"><p class="muted">Loading…</p></div>
+  </section>
+
+  <div class="section-head"><h2>Recent collections</h2><button type="button" class="btn" id="trc-retry" hidden>Retry failed collections</button></div>
+  <section class="panel" aria-label="Recent collections">
+    <div id="trc-runs"><p class="muted">Loading…</p></div>
+  </section>
+
+  <div class="section-head"><h2>Evidence changes</h2></div>
+  <section class="panel" aria-label="Evidence changes">
+    <div id="trc-alerts"><p class="muted">Loading…</p></div>
+  </section>
+
+  <details class="panel">
+    <summary><strong>Administrator tools</strong></summary>
+    <div class="trc-actions" style="margin-top:var(--space-3)">
+      <button type="button" class="btn" id="trc-integrity">Check records haven't been changed</button>
+      <label for="trc-purge-before">Delete records whose keep period ended before
+        <input class="input" type="date" id="trc-purge-before"></label>
+      <button type="button" class="btn btn--danger" id="trc-purge">Delete expired records</button>
+    </div>
+    <p class="muted" id="trc-admin-result" role="status" aria-live="polite"></p>
+  </details>
+</div>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-trc-continuous-evidence.js" defer></script>
+{% endif %}
+{% endblock %}

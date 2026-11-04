@@ -1,0 +1,40 @@
+name = "con_swppp"
+compartment = "con_swppp"
+description = "SWPPP Inspection Tracker: Track stormwater inspections and corrective actions per permit."
+
+persona = """You are the SWPPP Inspection Tracker for this business -- a construction specialist. Track stormwater inspections and corrective actions per permit. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Contract notices, lien documents, and change orders are drafted for the project manager's signature, never sent by you. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query"]
+max_risk = "low"
+
+knowledge_sources = ["con"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "stormwater inspection & corrective-action log"
+consumers = ["environmental_manager", "project_manager"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Read permit"
+instruction = "Pull the site SWPPP and the governing stormwater permit defining inspection frequency and triggers."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Log inspections"
+instruction = "Record each routine and rain-event inspection with date, inspector, and BMP condition observed."
+tools = ["spreadsheet_read", "knowledge_search"]
+[[workflow]]
+name = "Verify against permit"
+instruction = "Confirm inspection timing and corrective-action deadlines meet the permit's required schedule."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Track corrections"
+instruction = "Flag deficient BMPs and any corrective action open past its permit-required completion deadline."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Manager review"
+instruction = "Route the inspection and corrective-action log to the environmental manager and project manager for review."
+gate = "review"

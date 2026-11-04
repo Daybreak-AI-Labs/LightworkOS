@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Third-party lifecycle - Lightwork{% endblock %}
+{% block content %}
+<style>
+  .tpl-grid { display:grid; gap:var(--space-3); grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr)); }
+  .tpl-grid label, .tpl-field { display:grid; gap:.3rem; }
+  .tpl-question { border:1px solid var(--border); border-radius:var(--radius-sm); padding:var(--space-3); margin-bottom:var(--space-3); }
+  .tpl-actions { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+</style>
+{{ hero('Third-party management', 'Third-party lifecycle',
+        lede='Run vendor questionnaires, track each vendor from onboarding to offboarding, and follow up on the tasks that come out of them. Lightwork doesn\'t contact vendors from this page.') }}
+
+{% if not third_party_lifecycle_enabled %}
+{{ module_gate('third_party_management.lifecycle', 'Third-party lifecycle',
+               detail='Run vendor assessments, record decisions and plan offboarding.') }}
+{% else %}
+<div id="tpl-root" data-api="/api/v1/third-party/lifecycle"
+     data-can-admin="{{ 'true' if lifecycle_can_admin else 'false' }}"
+     data-can-audit="{{ 'true' if lifecycle_can_audit else 'false' }}">
+  <p class="muted" id="tpl-status" role="status" aria-live="polite">Loading…</p>
+  <section class="panel" id="tpl-reviewer-guidance" aria-labelledby="tpl-reviewer-title" hidden>
+    <h2 id="tpl-reviewer-title">A second person needs to review</h2>
+    <p id="tpl-reviewer-message"></p>
+    <p><a id="tpl-signin-link" class="btn btn--primary" href="/auth/local-owner" hidden>Set up individual sign-ins</a>
+       <a id="tpl-invite-link" class="btn btn--primary" href="/users" hidden>Add another administrator</a></p>
+  </section>
+
+  <div class="section-head"><h2>Questionnaires</h2><button type="button" class="btn btn--primary" id="tpl-new-template">Create questionnaire</button></div>
+  <section class="panel" aria-label="Questionnaires">
+    <div id="tpl-templates"><p class="muted">Loading questionnaires…</p></div>
+    <form id="tpl-template-form" hidden aria-labelledby="tpl-template-form-title">
+      <h3 id="tpl-template-form-title">New questionnaire</h3>
+      <div class="tpl-grid">
+        <label>Questionnaire name<input class="input" name="title" required maxlength="100" placeholder="For example: Security review"></label>
+      </div>
+      <div id="tpl-questions"></div>
+      <div class="tpl-actions">
+        <button type="button" class="btn" id="tpl-add-question">Add a question</button>
+        <button type="submit" class="btn btn--primary">Save questionnaire</button>
+        <button type="button" class="btn btn--ghost" id="tpl-template-cancel">Cancel</button>
+      </div>
+      <p class="muted">A new questionnaire must be approved by a different administrator before it can be used.</p>
+    </form>
+  </section>
+
+  <div class="section-head"><h2>Assessments</h2><button type="button" class="btn btn--primary" id="tpl-new-assessment">Create assessment</button></div>
+  <section class="panel" aria-label="Assessments">
+    <div id="tpl-assessments"><p class="muted">Loading assessments…</p></div>
+    <div id="tpl-assessment-detail" hidden></div>
+  </section>
+
+  <div class="section-head"><h2>Vendors being tracked</h2><button type="button" class="btn btn--primary" id="tpl-new-lifecycle">Start tracking a vendor</button></div>
+  <section class="panel" aria-label="Vendors being tracked">
+    <div id="tpl-lifecycles"><p class="muted">Loading vendors…</p></div>
+  </section>
+
+  <div class="section-head"><h2>Offboarding</h2></div>
+  <section class="panel" aria-label="Offboarding plans">
+    <div id="tpl-offboarding"><p class="muted">Loading offboarding plans…</p></div>
+    <div id="tpl-plan-detail" hidden></div>
+  </section>
+
+  <details class="panel" id="tpl-admin">
+    <summary><strong>Administrator tools</strong></summary>
+    <div class="tpl-actions" style="margin-top:var(--space-3)">
+      <button type="button" class="btn" id="tpl-integrity">Check records haven't been changed</button>
+      <label class="tpl-field" for="tpl-purge-before">Delete records whose keep period ended before
+        <input class="input" type="date" id="tpl-purge-before"></label>
+      <button type="button" class="btn btn--danger" id="tpl-purge">Delete expired records</button>
+    </div>
+    <p class="muted" id="tpl-admin-result" role="status" aria-live="polite"></p>
+  </details>
+</div>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-third-party-lifecycle.js" defer></script>
+{% endif %}
+{% endblock %}

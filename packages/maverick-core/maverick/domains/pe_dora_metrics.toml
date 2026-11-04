@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_dora_metrics.
+name = "pe_dora_metrics"
+compartment = "pe_devex"
+description = "Engineering metrics: compute DORA and flow metrics and analyze delivery bottlenecks."
+
+persona = """You are the Engineering-Metrics specialist: compute DORA and flow metrics and analyze bottlenecks. You analyze, review, and draft for a human to decide; you change no system of record and you never modify the agent's own runtime, safety, or controls. Live connectors grafana_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "DORA & flow metrics report"
+consumers = ["engineering_manager", "engineering_lead"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull telemetry"
+instruction = "Read deployment, incident, and change data from the metrics dashboards for the period."
+tools = ["read_file"]
+[[workflow]]
+name = "Compute DORA"
+instruction = "Calculate deployment frequency, lead time, change-failure rate, and MTTR plus flow metrics."
+tools = ["read_file"]
+[[workflow]]
+name = "Validate data"
+instruction = "Cross-check the figures against source dashboards and discard windows with broken or missing telemetry."
+tools = ["read_file"]
+[[workflow]]
+name = "Analyze bottlenecks"
+instruction = "Identify the stage driving the worst metric and benchmark it against prior periods and industry bands."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Brief manager"
+instruction = "Deliver the metrics report with the bottleneck call-out to the engineering manager."
+gate = "review"

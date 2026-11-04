@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Projects · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Your AI workforce', 'Projects',
+               subtitle='Keep related tasks together',
+               lede='Projects group related tasks — a close cycle, an
+                     audit, a deal. Open a project to see its tasks and
+                     how they are going at a glance.') %}
+    {{ state('Current state',
+             projects | length ~ ' project' ~ ('' if projects | length == 1 else 's'),
+             badge=((projects | sum(attribute='goal_count')) ~ ' tasks filed') if projects else 'none yet',
+             badge_class='ok' if projects else 'idle',
+             copy='Create a project below, then file tasks under it from any
+                   task page — related work stays together.') }}
+  {% endcall %}
+  <p><a class="btn btn--ghost" href="/project-reviews">Your project reviews</a> <a class="btn btn--ghost" href="/deliverable-bundles">Selected deliverable bundles</a> <a class="btn btn--ghost" href="/settings">Turn on reviews and bundles in Settings</a></p>
+
+  {% if project_plans %}
+  {# The job-named navigation keeps project workspaces here: the list of
+     project plans; each opens on its project's Plan tab. #}
+  <section class="panel" aria-labelledby="pw-title">
+    <div id="pw-root" data-project="" data-context="{{ project_context }}" data-plan-href="/projects/{id}?tab=plan">
+      <h2 id="pw-title" style="margin-top: 0;">Project outcomes and milestones</h2>
+      <p class="muted">Plan an outcome, connect the work that supports it, and keep the current accepted result in view.</p>
+      {% include "_project_workspace_body.html" %}
+    </div>
+  </section>
+  {% elif nav_mode != 'areas' %}
+  <p><a class="btn btn--ghost" href="/project-workspaces">Project outcomes and milestones</a></p>
+  {% endif %}
+  <div class="panel">
+    <h2 style="margin-top: 0;">New project</h2>
+    <form method="post" action="/projects" class="project-form">
+      <label class="project-field"><span class="muted">Name</span>
+        <input type="text" name="name" required maxlength="120"
+               placeholder="e.g. Q3 controllership close" class="input"></label>
+      <label class="project-field"><span class="muted">Department (optional)</span>
+        <input type="text" name="domain" placeholder="For example: Finance" maxlength="120" class="input"></label>
+      <label class="project-field"><span class="muted">Description (optional)</span>
+        <textarea name="description" rows="2" class="input"></textarea></label>
+      <button type="submit" class="btn btn--primary">Create project</button>
+    </form>
+  </div>
+
+  <div class="panel{% if not projects %} empty{% endif %}">
+    {% if projects %}
+      <table>
+        <thead><tr><th scope="col">Project</th><th scope="col">Department</th><th scope="col">Tasks</th><th scope="col">Status</th></tr></thead>
+        <tbody>
+        {% for p in projects %}
+          <tr>
+            <td><a href="/projects/{{ p.id }}">{{ p.name or 'Untitled' }}</a>
+              {% if p.description %}<div class="muted" style="font-size: var(--text-xs);">{{ p.description[:100] }}</div>{% endif %}</td>
+            <td class="muted">{{ p.domain|humanize if p.domain else '—' }}</td>
+            <td>{{ p.goal_count }}</td>
+            <td><span class="badge {{ p.status }}">{{ p.status|humanize }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="mv-empty"><p class="mv-empty__title">No projects yet</p>
+        <p class="mv-empty__body">Create one above to keep related tasks together.</p></div>
+    {% endif %}
+  </div>
+
+  <style>
+    .project-form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 32rem; }
+    .project-field { display: block; }
+    .project-field > span { display: block; margin-bottom: var(--space-1); font-size: var(--text-sm); }
+    .project-field .input { width: 100%; }
+  </style>
+{% endblock %}
+{% block scripts_extra %}{% if project_plans %}<script src="{{ asset('lightwork-project-workspaces.js') }}" defer></script>{% endif %}{% endblock %}

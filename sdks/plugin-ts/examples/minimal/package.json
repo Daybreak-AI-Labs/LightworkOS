@@ -1,0 +1,9 @@
+{
+  "name": "lightwork-validated-plugin-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {"build": "tsc -p .", "describe": "node dist/plugin.js --describe"},
+  "dependencies": {"@maverick/plugin-sdk": "file:../.."},
+  "devDependencies": {"typescript": "7.0.2", "@types/node": "26.0.0"}
+}

@@ -1,0 +1,42 @@
+# HR / People suite — hr_recruiting_ops.
+name = "hr_recruiting_ops"
+compartment = "hr_recruiting"
+description = "Recruiting ops and adverse-impact analytics."
+
+persona = """You are the Recruiting Ops specialist: analyze the funnel and monitor adverse impact (four-fifths) across it. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference. Live connectors greenhouse_read, lever_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "recruiting funnel & adverse-impact report"
+consumers = ["talent_acquisition_lead", "hr_director"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull funnel"
+instruction = "Read application, screen, interview, and offer stage data from the ATS for the reporting period."
+tools = ["read_file"]
+[[workflow]]
+name = "Validate data"
+instruction = "Reconcile stage counts and dispositions against source records to catch double-counts and stale requisitions."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Compute metrics"
+instruction = "Calculate pass-through, time-in-stage, and four-fifths selection rates on aggregate cohorts only."
+[[workflow]]
+name = "Flag impact"
+instruction = "Identify any stage where the four-fifths rule is breached without attributing it to individual decisions."
+[[workflow]]
+name = "Route findings"
+instruction = "Deliver the funnel and adverse-impact report to the TA lead and HR director for human review of any flag."
+gate = "review"

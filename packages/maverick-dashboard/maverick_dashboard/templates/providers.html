@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Providers · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_integration_readiness.html" import provider_status %}
+  {% call hero('Integrations', 'Providers', subtitle='AI services',
+               lede='Which AI services are set up, whether your organization
+                     allows them, and whether their last connection test worked.') %}
+    {{ state('Current state', workspace.summary,
+             badge=workspace.verdict_label,
+             badge_class=workspace.badge_class,
+             copy=(workspace.reason | e) ~ ((' <a href="' ~ workspace.next_action.href ~ '">' ~ workspace.next_action.label ~ '</a>') | safe if workspace.next_action else '')) }}
+  {% endcall %}
+
+  {% if tested %}
+  <div class="panel prov-saved" role="status"><strong>Connection test finished.</strong> The result is shown next to the provider.</div>
+  {% endif %}
+
+<section class="panel">
+  <div class="prov-head">
+    <h2>Your AI services</h2>
+    {% if is_admin %}<a class="btn btn--primary" href="/settings#settings-integrations">Add a provider</a>{% endif %}
+  </div>
+  <table>
+    <thead><tr><th scope="col">Provider</th><th scope="col">Key</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+    <tbody>
+    {% for provider in inventory %}
+      {% set label = provider.label or (provider.name | humanize) %}
+      <tr>
+        <td>{{ label }}</td>
+        <td>{% if provider.configured %}Saved, {{ provider.via | source_label or 'set up' }}{% else %}<span class="muted">Not set up</span>{% endif %}</td>
+        <td>{{ provider_status(provider) }}</td>
+        <td class="prov-actions">
+          {% if is_admin and provider.configured %}
+          <form method="post" action="/settings/providers/test">
+            <input type="hidden" name="provider" value="{{ provider.name }}" />
+            <input type="hidden" name="next" value="providers" />
+            <button type="submit" class="btn" aria-label="Test the {{ label }} connection">Test connection</button>
+          </form>
+          {% elif is_admin %}
+          <a class="btn btn--ghost" href="/settings#provider-{{ provider.name }}" aria-label="Set up {{ label }}">Set up</a>
+          {% else %}<span class="muted">Ask an administrator to change this.</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+<section class="panel">
+  <h2 class="prov-title">How each service is doing</h2>
+  {% if not rows %}
+    <p class="muted">No requests yet. Results appear here once tasks start using an AI service,
+      and start again from zero when Lightwork restarts.</p>
+    <p><a class="btn" href="/chat">Start a task</a></p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Provider</th>
+          <th scope="col">Model</th>
+          <th scope="col">Requests</th>
+          <th scope="col">Errors</th>
+          <th scope="col">Error rate</th>
+          <th scope="col">Typical response</th>
+          <th scope="col">Slowest 5% took</th>
+          <th scope="col">Total cost</th>
+          <th scope="col">Last used</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.provider | humanize }}</td>
+          <td>{{ (r.provider ~ ':' ~ r.model) | model_label }}</td>
+          <td>{{ r.calls }}</td>
+          <td>{{ r.errors }}</td>
+          <td>
+            {% if r.error_rate >= 0.1 %}
+              <span class="badge failure">{{ '%.1f' % (r.error_rate * 100) }}%</span>
+            {% elif r.error_rate > 0 %}
+              <span class="badge blocked">{{ '%.1f' % (r.error_rate * 100) }}%</span>
+            {% else %}
+              <span class="badge success">0%</span>
+            {% endif %}
+          </td>
+          <td>{{ '%.1f s' % (r.p50_ms / 1000) if r.p50_ms is not none else '—' }}</td>
+          <td>{{ '%.1f s' % (r.p95_ms / 1000) if r.p95_ms is not none else '—' }}</td>
+          <td>{{ r.total_dollars | money }}</td>
+          <td class="muted">{{ r.last_seen | datetime }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  <p class="muted prov-note">Spending limits and unfinished charges are on
+    <a href="/provider-spending">Provider spending</a>.</p>
+</section>
+<style>
+  .prov-saved { border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4); }
+  .prov-head { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; justify-content: space-between; }
+  .prov-head h2, .prov-title { margin-top: 0; }
+  .prov-actions form { display: inline; }
+  .prov-note { font-size: var(--text-sm); margin-bottom: 0; }
+</style>
+{% endblock %}

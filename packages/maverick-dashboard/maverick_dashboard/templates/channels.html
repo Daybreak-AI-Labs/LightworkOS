@@ -1,0 +1,623 @@
+{% extends "base.html" %}
+{% block title %}Channels · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_integration_readiness.html" import integration_readiness %}
+      {% macro channel_field(c, f) %}
+      <label class="ch-field">
+        <span>{{ f.label }}{% if f.hint %} <span class="muted">· saved ({{ f.hint }})</span>{% endif %}</span>
+        {% if c.name == 'email' and f.key == 'email_auth' %}
+        <select class="select" name="email_auth" data-email-auth aria-describedby="ch-email-email_auth-help">
+          <option value="password" {% if f.value != 'microsoft' %}selected{% endif %}>Password for another mail service</option>
+          <option value="microsoft" {% if f.value == 'microsoft' %}selected{% endif %}>Microsoft account sign-in</option>
+        </select>
+        {% elif c.name == 'email' and f.key == 'oauth_account' %}
+        <select class="select" name="oauth_account" data-email-account aria-describedby="ch-email-oauth_account-help">
+          <option value="">Choose a connected mailbox…</option>
+          {% for account in email_oauth_choices %}<option value="{{ account.value }}" data-mailbox="{{ account.email }}" {% if f.value == account.value %}selected{% endif %}>{{ account.label }}</option>{% endfor %}
+        </select>
+        <a href="/connections#connection-setup" class="btn btn--ghost">Connect or reconnect a Microsoft mailbox</a>
+        {% elif f.secret %}
+        <input class="input" type="password" name="{{ f.key }}" autocomplete="off"
+               placeholder="{% if f.configured %}Leave blank to keep the saved value{% else %}Paste here{% endif %}"
+               aria-describedby="ch-{{ c.name }}-{{ f.key }}-help" />
+        {% elif f.type == 'int' %}
+        <input class="input" type="number" name="{{ f.key }}" value="{{ f.value }}" min="1" max="65535"
+               aria-describedby="ch-{{ c.name }}-{{ f.key }}-help" />
+        {% elif f.type == 'url' %}
+        <input class="input" type="url" name="{{ f.key }}" value="{{ f.value }}" placeholder="https://"
+               aria-describedby="ch-{{ c.name }}-{{ f.key }}-help" />
+        {% elif f.type == 'list' %}
+        <textarea class="input" name="{{ f.key }}" rows="3"
+                  maxlength="60600" {% if f.people_locked %}disabled{% endif %}
+                  data-ch-people-input aria-describedby="ch-{{ c.name }}-{{ f.key }}-help">{{ f.value }}</textarea>
+        {% else %}
+        <input class="input" type="text" name="{{ f.key }}" value="{{ f.value }}"
+               aria-describedby="ch-{{ c.name }}-{{ f.key }}-help" />
+        {% endif %}
+        <span class="muted ch-help" id="ch-{{ c.name }}-{{ f.key }}-help">{{ f.help }}</span>
+      </label>
+      {% endmacro %}
+  <div id="channel-settings">
+  {% set configured_count = managed | selectattr('configured') | list | length %}
+  {% set verified_count = managed | selectattr('readiness.state', 'equalto', 'live_verified') | list | length %}
+  {% set failures = namespace(count=0) %}
+  {% for c in managed if c.readiness.state in ['dependency_failed', 'runtime_failed', 'live_failed', 'policy_denied'] %}
+    {% set failures.count = failures.count + 1 %}
+  {% endfor %}
+  {% set failed_count = failures.count %}
+  {% call hero('Meet people where they work', 'Channels',
+               subtitle='Slack, email and more',
+               lede='Connect the chat apps your team already uses, so people can
+                     ask Lightwork for work and get results right there.') %}
+    {{ state('Current state',
+             ('<span data-ch-summary>' ~ configured_count ~ ' turned on · ' ~ verified_count ~ ' working · ' ~ failed_count ~ ' failed</span>') | safe,
+             badge=('Working' if verified_count else ('Test failed' if failed_count else 'Not tested yet')),
+             badge_class=('ok' if verified_count else ('blocked' if failed_count else 'idle')),
+             copy='Saving your details doesn\'t prove messages get through.
+                   Use Test connection or Send a test message to check.') }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel ch-saved{{ ' ch-saved--failed' if saved_failed }}" role="{{ 'alert' if saved_failed else 'status' }}"
+       data-mv-toast="{{ saved }}"{% if saved_failed %} data-mv-toast-error="true"{% endif %}>
+    <strong>{{ 'Not done.' if saved_failed else 'Done.' }}</strong> {{ saved }}
+  </div>
+  {% endif %}
+  {% if channel_error %}<div class="panel ch-result--failed" role="alert">{{ channel_error }} Connection secrets were not redisplayed; enter them again only if needed.</div>{% endif %}
+
+  <div class="section-head"><h2>How to set one up</h2></div>
+  <div class="panel">
+    <ol class="ch-steps">
+      <li><strong>Choose a chat app below</strong> and tick <strong>Turn on</strong>.</li>
+      <li><strong>Paste the details that app gives you.</strong> Each field says where to find it.
+        Connection secrets are stored securely and never shown again. Leaving a secret blank keeps what's saved. A blank permitted-people list stops everyone from using that app.</li>
+      <li><strong>Press Save, then Test connection.</strong> Check message delivery below and apply changed details before sending a test.</li>
+      <li><strong>Message Lightwork from that app.</strong> Requests are handled the same way as tasks started here,
+        and replies come back in the same conversation.</li>
+    </ol>
+  </div>
+
+  <div class="section-head"><h2 id="channel-delivery">Message delivery</h2></div>
+  <div class="panel" aria-labelledby="channel-delivery">
+    {% if channel_runtime %}
+    <p role="status">Chat service started from this app: <strong>{{ 'Process running here' if channel_runtime.running else 'Not running here' }}</strong>.</p>
+    {% else %}
+    <p role="status">Lightwork could not check the chat service just now.</p>
+    {% endif %}
+    <p class="muted">A running process does not prove replies reach people. Send a test message after changing a connection. If your IT team runs this service separately, ask them to apply the change there.</p>
+    <a class="btn btn--primary" href="/settings?focus=ops-services-title">Manage the chat service</a>
+    <p class="muted" role="status" aria-live="polite" data-ch-intake-capacity>Checking message history…</p>
+    <a href="/settings/all?id=channels.max_intake_records">Set the saved-message limit</a>
+  </div>
+
+  {% for c in managed %}
+  <div class="section-head"><h2 id="channel-{{ c.name }}">{{ c.label }}</h2></div>
+  <div class="panel">
+    <form method="post" action="/channels/save" class="ch-form" data-channel="{{ c.name }}" data-ch-action="save" data-ch-context="{{ channel_context }}">
+      <input type="hidden" name="channel" value="{{ c.name }}" />
+      <input type="hidden" name="review_token" value="{{ channel_review }}" />
+      <label class="ch-toggle">
+        <input type="checkbox" name="enabled" {% if c.enabled %}checked{% endif %} aria-describedby="ch-{{ c.name }}-on" />
+        <span>Turn on</span>
+      </label>
+      <p class="muted ch-help" id="ch-{{ c.name }}-on">When on, people can message Lightwork through {{ c.label }}.
+        {% if c.via %}Settings are {{ c.via | source_label }}.{% endif %}
+        {% if c.help_link %}<a href="{{ c.help_link }}" target="_blank" rel="noopener noreferrer">Where do I find these details?</a>{% endif %}</p>
+      {% if c.name == 'email' %}
+      <p class="muted ch-help">Email can start work only when your mail server confirms the sender's address
+        and the address is on your <a href="/settings/all?id=channels.email.allowed_user_ids">permitted-people list</a>.
+        Messages without that confirmation are refused.</p>
+      <p class="muted ch-help">Microsoft mail uses account sign-in. Connect the mailbox in Connections,
+        choose it below, then save and apply the change. Your Microsoft administrator may need to allow
+        the app, incoming mail access and authenticated outgoing mail for this mailbox. Signing in does
+        not change those Microsoft rules or prove messages arrive.</p>
+      <label class="ch-field">Your email provider
+        <select class="select" data-email-preset>
+          <option value="">Choose to fill in the servers…</option>
+          <option value="gmail">Gmail / Google Workspace</option>
+          <option value="outlook">Outlook / Microsoft 365</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      {% endif %}
+      {% for f in c.fields if not f.advanced %}{{ channel_field(c, f) }}{% endfor %}
+      {% set advanced = c.fields | selectattr('advanced') | list %}
+      {% if advanced %}
+      <details class="ch-advanced"><summary>Advanced settings</summary>
+        {% for f in advanced %}{{ channel_field(c, f) }}{% endfor %}
+      </details>
+      {% endif %}
+      {% for f in c.fields if f.type == 'list' %}
+      <details class="ch-people-review" data-ch-people-review>
+        <summary>Review who can message Lightwork</summary>
+        <div data-ch-people-before>
+          <p><strong>Current list</strong> · <span data-ch-people-source>{{ f.people_source }}</span></p>
+          <ul data-ch-people-current>{% for person in f.people %}<li>{{ person }}</li>{% else %}<li>Nobody</li>{% endfor %}</ul>
+        </div>
+        <p><strong>After saving here</strong> · Set here</p>
+        <ul data-ch-people-after>{% for person in f.people %}<li>{{ person }}</li>{% else %}<li>Nobody</li>{% endfor %}</ul>
+        <p class="muted">A blank saved list denies everyone, including people permitted by the installer or a server list. This changes installation-wide access; it does not link an account or prove delivery. Changes take effect when the chat service applies them. A separately hosted service may have different deployment settings.</p>
+        {% if f.people_locked %}
+        <p class="muted">Your server's deployment settings own this list, so it cannot be changed here.</p>
+        {% else %}
+        <label class="ch-toggle"><input type="checkbox" name="confirm_people" value="yes"> <span>I reviewed the complete current and replacement lists.</span></label>
+        {% endif %}
+        <a href="/settings/all?id=channels.{{ c.name }}.{{ f.key }}">Manage this list and its inherited value</a>
+      </details>
+      {% endfor %}
+      <div class="ch-actions">
+        <button type="submit" class="btn btn--primary">Save {{ c.label }}</button>
+        <button type="button" class="btn" data-ch-save-refresh hidden>Review current settings</button>
+      </div>
+      <p class="ch-result" data-ch-save-result role="status" aria-live="polite"></p>
+    </form>
+
+    <div class="ch-status" data-ch-status="{{ c.name }}" data-ch-on="{{ '1' if c.configured else '0' }}">{{ integration_readiness(c.readiness) }}</div>
+
+    <div class="ch-actions">
+      <form method="post" action="/channels/test" data-ch-check="{{ c.name }}" {% if not c.configured %}hidden{% endif %}>
+        <input type="hidden" name="channel" value="{{ c.name }}" />
+        <button type="submit" class="btn">Test connection</button>
+        <span class="ch-result" data-ch-result role="status" aria-live="polite"></span>
+      </form>
+      {% if c.dashboard_set %}
+      <form method="post" action="/channels/clear" class="ch-form" data-channel="{{ c.name }}"
+            data-ch-action="clear" data-ch-context="{{ channel_context }}">
+        <input type="hidden" name="channel" value="{{ c.name }}" />
+        <input type="hidden" name="review_token" value="{{ channel_review }}" />
+        <details class="ch-people-review" data-ch-people-review>
+          <summary>Review removing the settings saved here</summary>
+          <div data-ch-people-before>
+            <p><strong>Current list</strong> · <span data-ch-people-source>{{ c.removal_people.before_source }}</span></p>
+            <ul data-ch-people-current>{% for person in c.removal_people.before %}<li>{{ person }}</li>{% else %}<li>Nobody</li>{% endfor %}</ul>
+          </div>
+          <div data-ch-inherited-after>
+            <p><strong>After removal</strong> · {{ c.removal_people.after_source }}</p>
+            <ul>{% for person in c.removal_people.after %}<li>{{ person }}</li>{% else %}<li>Nobody</li>{% endfor %}</ul>
+          </div>
+          <p class="muted">This removes the connection details saved here, including saved secrets. Installer or server connection settings apply again and may keep the app connected. The complete inherited people list above replaces the current list after the chat service applies the change. A separately hosted service may use different deployment settings.</p>
+          <label class="ch-toggle"><input type="checkbox" name="confirm_people" value="yes"> <span>I reviewed the complete lists and the return to installer or server settings.</span></label>
+        </details>
+        <div class="ch-actions">
+          <button type="submit" class="btn btn--danger">Remove saved settings</button>
+          <button type="button" class="btn" data-ch-save-refresh hidden>Review current settings</button>
+        </div>
+        <p class="ch-result" data-ch-save-result role="status" aria-live="polite"></p>
+      </form>
+      {% endif %}
+    </div>
+
+    {% if c.configured and c.name in sendable %}
+    <form method="post" action="/channels/send-test" class="ch-send" data-ch-check="{{ c.name }}"
+          data-channels-ok="Send test message" data-channels-confirm="Send a test message through {{ c.label }}? It goes to the {{ {'email': 'email address', 'sms': 'phone number', 'slack': 'Slack channel'}[c.name] }} you entered.">
+      <input type="hidden" name="channel" value="{{ c.name }}" />
+      <label class="ch-field">
+        {% if c.name == 'email' %}Send a test email to
+          <input class="input" type="email" name="to" required placeholder="you@company.com" autocomplete="email" />
+        {% elif c.name == 'sms' %}Send a test text to
+          <input class="input" type="tel" name="to" required placeholder="+15551234567" autocomplete="tel" />
+        {% else %}Send a test message to the Slack channel
+          <input class="input" type="text" name="to" required placeholder="#general" />
+        {% endif %}
+      </label>
+      <button type="submit" class="btn">Send a test message</button>
+      <span class="ch-result" data-ch-result role="status" aria-live="polite"></span>
+    </form>
+    {% elif c.configured and c.name in ['telegram', 'discord', 'whatsapp_cloud', 'mattermost'] %}
+    <a class="btn" href="#channel-message-tests" data-cmt-open="{{ c.name }}">Review a test message</a>
+    {% elif c.configured %}
+    <p class="muted ch-help">To check replies, send a message to your {{ c.label }} bot. Lightwork answers in the same conversation.</p>
+    {% endif %}
+
+    {% if c.name == 'teams' %}
+    <div class="section-head"><h3 id="teams-links">People linked to Teams</h3></div>
+    <p class="muted ch-help">Lightwork only knows a Teams user by their Microsoft Entra object ID. {% if oidc_channel_enabled %}The links below are for legacy notifications; task and approval access requires the person to connect from My work.{% else %}Link that ID
+      (or their sign-in address) to a Lightwork user so their messages and approval decisions are recorded
+      under the right person.{% endif %} Approvals from Teams also need <strong>Decide approvals in Microsoft Teams</strong>
+      turned on under All settings. Setup steps: <code>docs/channels/teams.md</code>.</p>
+    {% if teams_link_code %}
+    <div class="panel ch-saved" role="status"><strong>One-time code:</strong> <code>{{ teams_link_code }}</code>
+      — the person sends <code>link {{ teams_link_code }}</code> to the Lightwork bot in Teams.</div>
+    {% endif %}
+    {% if teams_links %}
+    <table>
+      <thead><tr><th scope="col">Teams account</th><th scope="col">Lightwork user</th><th scope="col">Can approve</th><th scope="col">Reachable</th><th scope="col"></th></tr></thead>
+      <tbody>
+      {% for link in teams_links %}
+        <tr>
+          <td><code>{{ link.teams_id }}</code>{% if link.upn %} <span class="muted">{{ link.upn }}</span>{% endif %}</td>
+          <td>{{ link.principal | identity }}</td>
+          <td>{% if link.approver %}<span class="badge active">Yes</span>{% else %}<span class="badge">No</span>{% endif %}</td>
+          <td>{% if link.can_be_reached %}<span class="badge active">Has chatted with the bot</span>{% else %}<span class="muted">Not yet</span>{% endif %}</td>
+          <td><form method="post" action="/channels/teams/unlink" data-channels-ok="Remove Teams link" data-channels-confirm="Remove this Teams link? The person can no longer decide approvals from Teams.">
+            <input type="hidden" name="teams_id" value="{{ link.teams_id }}" />
+            <button type="submit" class="btn btn--ghost">Remove</button></form></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Nobody is linked yet. Create a link code below and send it to the person.</p>
+    {% endif %}
+    <form method="post" action="/channels/teams/link" class="ch-form">
+      <label class="ch-field"><span>Teams account (Microsoft Entra object ID or sign-in address)</span>
+        <input class="input" type="text" name="teams_id" required placeholder="12345678-abcd-abcd-abcd-1234567890ab or alice@example.com" /></label>
+      <label class="ch-field"><span>Lightwork user</span>
+        <input class="input" type="text" name="principal" required list="teams-users" placeholder="user:alice" />
+        <datalist id="teams-users">{% for user in teams_users %}<option value="{{ user }}"></option>{% endfor %}</datalist></label>
+      <label class="ch-toggle"><input type="checkbox" name="approver" /> <span>Can approve requests from Teams</span></label>
+      <div class="ch-actions"><button type="submit" class="btn btn--primary">Link this account</button></div>
+    </form>
+    <form method="post" action="/channels/teams/link-code" class="ch-form">
+      <label class="ch-field"><span>Or create a one-time code for a Lightwork user to link themselves in chat</span>
+        <input class="input" type="text" name="principal" required list="teams-users" placeholder="user:alice" /></label>
+      <label class="ch-toggle"><input type="checkbox" name="approver" /> <span>Can approve requests from Teams</span></label>
+      <div class="ch-actions"><button type="submit" class="btn">Create a link code</button></div>
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% include "_channel_message_tests.html" %}
+
+  <div class="section-head"><h2 id="oidc-channel-links">Chat account connections</h2></div>
+  <div class="panel">
+    <p class="muted">{% if oidc_channel_enabled %}People connect their Slack or Microsoft Teams account from My work after signing in. Only accounts marked Connected can start tasks, while their owner still has workspace access. People can retry a pending confirmation from My work; an administrator can finish removing a disconnected record here.{% else %}Turn on single sign-on to let people connect a chat account for task access.{% endif %}</p>
+    {% if oidc_channel_notice %}<p role="alert">{{ oidc_channel_notice }}</p>{% elif oidc_channel_links %}
+    <table><thead><tr><th scope="col">Person</th><th scope="col">Chat app</th>
+      <th scope="col">Account</th><th scope="col">Workspace</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+      <tbody>{% for link in oidc_channel_links %}<tr>
+        <td>{{ link.principal | identity }}</td><td>{{ link.channel | capitalize }}</td>
+        <td>{{ link.sender_id }}</td><td>{{ link.provider_tenant }}</td>
+        <td>{% if link.status == 'active' %}Connected{% elif link.status == 'revoked' %}Disconnected{% else %}Pending audit{% endif %}</td><td>
+          <form method="post" action="/channels/oidc/revoke" data-channels-ok="Disconnect chat account" data-channels-confirm="Disconnect this chat account from Lightwork tasks?">
+            <input type="hidden" name="link_id" value="{{ link.id }}" />
+            <button type="submit" class="btn btn--danger">{% if link.status == 'active' %}Disconnect account{% else %}Finish removal{% endif %}</button>
+          </form>
+        </td></tr>{% endfor %}</tbody>
+    </table>
+    {% else %}<p class="muted">No chat accounts are connected for tasks. Connect a chat app above, then test it.</p>{% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="email-alerts">Email alerts and the daily summary</h2></div>
+  <div class="panel">
+    {% if mail_configured %}
+    <p class="muted">Lightwork can send alerts and each person's daily summary by email. Send a test
+      to check the mail settings (Settings &rsaquo; All settings &rsaquo; Integrations &rsaquo; Email alerts).</p>
+    <form method="post" action="/channels/test-email" class="ch-send"
+          data-channels-ok="Send test email" data-channels-confirm="Send a test email? It goes to the address you enter.">
+      <label class="ch-field">Send a test email to
+        <input class="input" type="email" name="to" required placeholder="you@company.com" autocomplete="email" />
+      </label>
+      <button type="submit" class="btn">Test email</button>
+    </form>
+    {% else %}
+    <p class="muted">Email sending is not set up. Add the mail server under Settings &rsaquo; All settings &rsaquo;
+      Integrations &rsaquo; Email alerts (host, port, sign-in, from address), then come back to test it.</p>
+    {% endif %}
+  </div>
+
+  {% include "_public_chat_admin.html" %}
+
+  {% if channel_inventory %}
+  <div class="section-head"><h2>Other chat apps set up during installation</h2></div>
+  <div class="panel">
+    <table>
+      <thead><tr><th scope="col">Chat app</th><th scope="col">Turned On</th><th scope="col">Status</th></tr></thead>
+      <tbody>
+      {% for channel in channel_inventory %}
+        <tr>
+          <td>{{ channel.name | humanize }}</td>
+          <td>{% if channel.configured %}<span class="badge active">Yes</span>{% else %}<span class="badge">No</span>{% endif %}</td>
+          <td>{{ integration_readiness(channel.readiness) }}
+            {% if channel.name == 'voice' %}
+            <p class="muted ch-help">Incoming calls can start work only from a listed number.
+              <a href="/settings/all?id=channels.voice.allowed_callers">Set permitted callers</a>
+              under Chat channels &rsaquo; Phone calls. An empty list blocks incoming work.
+              Caller ID alone does not verify a person.</p>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted ch-help">These are changed by whoever installed Lightwork.</p>
+  </div>
+  {% endif %}
+
+  </div>
+  <style>
+    .ch-saved { border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4); }
+    .ch-saved--failed { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+    .ch-steps { margin: 0; padding-left: 1.4rem; display: flex; flex-direction: column; gap: var(--space-2); }
+    .ch-form, .ch-send { display: flex; flex-direction: column; gap: var(--space-3); max-width: 36rem; }
+    .ch-form { min-width: 0; }
+    .ch-people-review { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+    .ch-people-review ul { padding-inline-start: var(--space-5); overflow-wrap: anywhere; }
+    .ch-form .ch-result { overflow-wrap: anywhere; }
+    .ch-send { margin-top: var(--space-3); }
+    .ch-toggle { display: flex; align-items: center; gap: var(--space-2); }
+    .ch-toggle input { width: 18px; height: 18px; accent-color: var(--brand); }
+    .ch-field { display: flex; flex-direction: column; gap: var(--space-1); }
+    .ch-help { font-size: var(--text-sm); margin: 0; }
+    .ch-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin-top: var(--space-3); }
+    .ch-status { margin-top: var(--space-3); }
+    .ch-advanced { display: grid; gap: var(--space-3); }
+    .ch-result { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); margin-inline-start: var(--space-2); }
+    .ch-result:empty { display: none; }
+    .ch-result--ok { color: var(--success); }
+    .ch-result--failed { color: var(--danger); }
+    .ch-spinner { width: 0.9rem; height: 0.9rem; border: 2px solid var(--border); border-top-color: var(--brand); border-radius: var(--radius-round); animation: ch-spin 0.8s linear infinite; }
+    @keyframes ch-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .ch-spinner { animation: none; } }
+  </style>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var root = document.getElementById('channel-settings'), generation = 0, controllers = new Set();
+    var forms = Array.from(root.querySelectorAll('form[data-channel]'));
+    function people(value) { return Array.from(new Set(value.split(/[,\r\n]+/).map(function (text) { return text.trim(); }).filter(Boolean))); }
+    function list(host, values) {
+      if (!host) return;
+      host.replaceChildren(); (values.length ? values : ['Nobody']).forEach(function (text) {
+        var item = document.createElement('li'); item.textContent = text; host.appendChild(item);
+      });
+    }
+    function say(form, text, failed) {
+      var result = form.querySelector('[data-ch-save-result]'); window.mvStatus ? window.mvStatus(result, text) : (result.textContent = text);
+      result.className = 'ch-result ' + (failed ? 'ch-result--failed' : 'ch-result--ok');
+    }
+    function pending(form, value) {
+      forms.filter(function (candidate) { return candidate.dataset.channel === form.dataset.channel; }).forEach(function (candidate) {
+        candidate.dataset.uncertain = value ? 'true' : '';
+        candidate.querySelector('[type=submit]').disabled = value || !!candidate.dataset.busy || candidate.dataset.removed === 'true';
+        if (value) candidate.querySelector('[data-ch-save-refresh]').hidden = false;
+      });
+      try {
+        if (value) sessionStorage.setItem('lightwork-channel-save-' + form.dataset.channel, form.dataset.chContext);
+        else sessionStorage.removeItem('lightwork-channel-save-' + form.dataset.channel);
+      } catch (_) {}
+    }
+    function clearPrivate() {
+      generation++; controllers.forEach(function (controller) { controller.abort(); });
+      forms.forEach(function (form) {
+        pending(form, false);
+        form.querySelectorAll('input,textarea,select').forEach(function (input) { input.value = ''; input.checked = false; });
+      });
+      root.replaceChildren(); var message = document.createElement('p'); message.className = 'panel'; message.setAttribute('role', 'alert');
+      message.textContent = 'Your account, workspace or access changed. Private channel settings were cleared. Reload Channels to continue.'; root.appendChild(message);
+      var link = document.createElement('a'); link.className = 'btn'; link.href = '/channels'; link.textContent = 'Reload Channels'; root.appendChild(link);
+    }
+    async function read(url, options, limit) {
+      var controller = new AbortController(); controllers.add(controller);
+      var timer = setTimeout(function () { controller.abort(); }, 20000);
+      try {
+        var response = await fetch(url, Object.assign({credentials: 'same-origin', cache: 'no-store', signal: controller.signal}, options));
+        if (response.redirected || response.status === 401 || response.status === 403) { clearPrivate(); throw new Error('Your sign-in or access changed. Reload Channels.'); }
+        var text = await response.text(); if (text.length > limit) throw new Error('The current channel settings were too large to verify. No save was repeated.');
+        return {response: response, text: text};
+      } finally { clearTimeout(timer); controllers.delete(controller); }
+    }
+    async function refresh(form, isCurrent) {
+      var started = generation, original = form.dataset.chContext;
+      var reply = await read('/channels', {headers: {Accept: 'text/html'}}, 2097152);
+      if (started !== generation || isCurrent && !isCurrent()) return false;
+      if (!reply.response.ok) throw new Error('Current settings could not be read. Your entered work is kept. Try reviewing current settings again.');
+      var documentCopy = new DOMParser().parseFromString(reply.text, 'text/html');
+      var matches = Array.from(documentCopy.querySelectorAll('form[data-channel]')).filter(function (candidate) { return candidate.dataset.channel === form.dataset.channel; });
+      var current = matches.find(function (candidate) { return candidate.dataset.chAction === form.dataset.chAction; });
+      var removed = form.dataset.chAction === 'clear' && !current; if (removed) current = matches[0];
+      if (!current || current.dataset.chContext !== original) { clearPrivate(); return false; }
+      var token = current.elements.review_token.value, before = current.querySelector('[data-ch-people-before]');
+      if (!token || token.length > 4000) throw new Error('The complete current comparison could not be verified. Your draft is kept.');
+      var target = form.querySelector('[data-ch-people-before]'); if (target && before) target.replaceChildren.apply(target, Array.from(before.childNodes));
+      var after = form.querySelector('[data-ch-inherited-after]'), inherited = current.querySelector('[data-ch-inherited-after]');
+      if (after) after.replaceChildren.apply(after, Array.from((inherited || before).cloneNode(true).childNodes));
+      form.dataset.removed = removed ? 'true' : '';
+      form.elements.review_token.value = token;
+      if (form.elements.confirm_people) form.elements.confirm_people.checked = false;
+      var input = form.querySelector('[data-ch-people-input]'); if (input) list(form.querySelector('[data-ch-people-after]'), people(input.value));
+      var wasUncertain = form.dataset.uncertain === 'true'; pending(form, false); form.querySelector('[type=submit]').disabled = removed;
+      say(form, removed ? 'There are currently no settings saved here for this app. This current observation does not prove your earlier removal. Installer or server settings apply; no removal was repeated.' : wasUncertain ? 'Current saved access is shown. This does not confirm your earlier change. Your entered work is kept; review it before explicitly saving a new change.' : 'Current comparison refreshed. Your entered work is kept. Review the current and replacement lists before saving.', false);
+      return true;
+    }
+    forms.forEach(function (form) {
+      var input = form.querySelector('[data-ch-people-input]'), refreshButton = form.querySelector('[data-ch-save-refresh]'), button = form.querySelector('[type=submit]');
+      if (input) input.addEventListener('input', function () {
+        list(form.querySelector('[data-ch-people-after]'), people(input.value));
+        if (form.elements.confirm_people) form.elements.confirm_people.checked = false;
+      });
+      try { if (sessionStorage.getItem('lightwork-channel-save-' + form.dataset.channel) === form.dataset.chContext) {
+        pending(form, true); button.disabled = true; refreshButton.hidden = false;
+        say(form, 'An earlier change has no confirmed reply. Review current settings before making another change; no change will be repeated automatically.', true);
+      } } catch (_) {}
+      refreshButton.addEventListener('click', async function () {
+        if (forms.some(function (candidate) { return candidate.dataset.channel === form.dataset.channel && candidate.dataset.busy; })) return; form.dataset.busy = 'true'; refreshButton.disabled = true;
+        try { await refresh(form); } catch (error) { if (form.isConnected) say(form, error.message, true); }
+        finally { form.dataset.busy = ''; refreshButton.disabled = false; }
+      });
+      form.addEventListener('submit', async function (event) {
+        event.preventDefault(); if (forms.some(function (candidate) { return candidate.dataset.channel === form.dataset.channel && candidate.dataset.busy; }) || form.dataset.uncertain === 'true' || form.dataset.removed === 'true') return;
+        var started = generation, body = new URLSearchParams(new FormData(form));
+        form.dataset.busy = 'true'; button.disabled = true; button.setAttribute('aria-busy', 'true'); pending(form, true);
+        say(form, form.dataset.chAction === 'clear' ? 'Removing the reviewed settings saved here…' : 'Saving the reviewed chat app settings…', false);
+        try {
+          var reply = await read(form.action, {method: 'POST', body: body, headers: {Accept: 'application/json'}}, 65536);
+          if (started !== generation) return;
+          var value = JSON.parse(reply.text), detail = value.detail;
+          if (detail && detail.context_changed || value.context && value.context !== form.dataset.chContext) { clearPrivate(); return; }
+          if (!reply.response.ok) {
+            if (!value.uncertain) pending(form, false);
+            throw new Error(typeof detail === 'string' ? detail : detail && detail.message || 'This change was not confirmed. Review current settings before trying again.');
+          }
+          if (value.saved !== true || !Array.isArray(value.people) || !value.review_token) throw new Error('This save reply could not be verified. Review current settings before making another change.');
+          form.dataset.removed = value.removed === true ? 'true' : ''; pending(form, false); form.elements.review_token.value = value.review_token;
+          list(form.querySelector('[data-ch-people-current]'), value.people);
+          var source = form.querySelector('[data-ch-people-source]'); if (source) source.textContent = value.people_source;
+          if (form.elements.confirm_people) form.elements.confirm_people.checked = false;
+          form.querySelectorAll('input[type=password]').forEach(function (secret) { if (secret.value === body.get(secret.name)) secret.value = ''; });
+          say(form, value.message, false);
+          var currentStatus = root.querySelector('[data-ch-status="' + form.dataset.channel + '"]');
+          if (currentStatus && typeof value.readiness_html === 'string') {
+            currentStatus.innerHTML = value.readiness_html;
+            currentStatus.dataset.chOn = value.enabled ? '1' : '0';
+            var connectionCheck = root.querySelector('form[data-ch-check="' + form.dataset.channel + '"]');
+            if (connectionCheck) connectionCheck.hidden = !value.enabled;
+            document.dispatchEvent(new Event('lightwork:channel-status-updated'));
+          }
+        } catch (error) {
+          if (started === generation && form.isConnected) {
+            refreshButton.hidden = false;
+            say(form, (error.message || 'The save reply is unavailable.') + (form.dataset.uncertain === 'true' ? ' Do not repeat the save. Review current settings first; your entered work is kept.' : ''), true);
+          }
+        } finally {
+          form.dataset.busy = ''; button.disabled = form.dataset.uncertain === 'true' || form.dataset.removed === 'true'; button.removeAttribute('aria-busy');
+        }
+      });
+    });
+    window.LightworkChannelPeople = {open: async function (expected, channel, isCurrent) {
+      var form = forms.find(function (candidate) { return candidate.dataset.channel === channel && candidate.dataset.chAction === 'save'; });
+      if (!form || !form.isConnected || form.dataset.busy || expected !== form.dataset.chContext || isCurrent && !isCurrent()) return false;
+      if (!await refresh(form, isCurrent) || isCurrent && !isCurrent() || !form.isConnected) return false;
+      var input = form.querySelector('[data-ch-people-input]'); if (!input) return false;
+      input.scrollIntoView({block: 'center'}); input.focus(); return document.activeElement === input;
+    }};
+    document.addEventListener('lightwork:copilot-context-changed', function (event) { if (!event.detail || event.detail.reason !== 'selection') clearPrivate(); });
+    window.addEventListener('lightwork:draft-context-changed', clearPrivate);
+    window.addEventListener('pagehide', function () { generation++; controllers.forEach(function (controller) { controller.abort(); }); });
+  }());
+  </script>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var capacity = document.querySelector('[data-ch-intake-capacity]');
+    if (capacity) {
+      fetch('/api/v1/channels/intake-capacity', {credentials: 'same-origin'})
+        .then(function (response) {
+          if (!response.ok) throw new Error('Message history could not be checked. Refresh this page.');
+          return response.json();
+        })
+        .then(function (state) {
+          if (!Number.isSafeInteger(state.used) || !Number.isSafeInteger(state.limit) ||
+              typeof state.count_exact !== 'boolean') throw new Error('Message history could not be checked. Refresh this page.');
+          var count = (state.count_exact ? '' : 'at least ') + String(state.used);
+          capacity.textContent = count + ' of ' + state.limit + ' saved-message places in use.' +
+            (state.full ? ' New messages may be held. ' + state.remedy :
+              (state.warning ? ' Space is getting low. ' + state.remedy : ''));
+        })
+        .catch(function (error) { capacity.textContent = error.message; });
+    }
+    document.querySelectorAll('form[data-channels-confirm]').forEach(function (form) {
+      form.addEventListener('submit', function (event) {
+        if (form.dataset.confirmed === 'true') { form.dataset.confirmed = 'done'; return; }
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        window.mvConfirm(form.dataset.channelsConfirm, {okText: form.dataset.channelsOk}).then(function (ok) {
+          if (!ok) return;
+          form.dataset.confirmed = 'true';
+          if (form.requestSubmit) form.requestSubmit(); else form.submit();
+        });
+      });
+    });
+    // Test connection / Send a test message: the result appears next to the
+    // button (spinner while the service answers), the status block re-renders
+    // from the same record, and the page summary counts the new state.
+    function summarize() {
+      var working = 0, failed = 0, on = 0;
+      document.querySelectorAll('[data-ch-status]').forEach(function (block) {
+        if (block.getAttribute('data-ch-on') !== '1') return;
+        on += 1;
+        var badge = block.querySelector('.badge');
+        var text = badge ? badge.textContent.trim() : '';
+        if (text === 'Working') working += 1;
+        if (text === 'Test failed') failed += 1;
+      });
+      var summary = document.querySelector('[data-ch-summary]');
+      if (summary) summary.textContent = on + ' turned on · ' + working + ' working · ' + failed + ' failed';
+      var heroBadge = summary && summary.closest('.hero-statebox__row') ? summary.closest('.hero-statebox__row').querySelector('.badge') : null;
+      if (heroBadge) {
+        heroBadge.textContent = working ? 'Working' : (failed ? 'Test failed' : 'Not tested yet');
+        heroBadge.className = 'badge ' + (working ? 'ok' : (failed ? 'blocked' : 'idle'));
+      }
+    }
+    document.addEventListener('lightwork:channel-status-updated', summarize);
+    document.querySelectorAll('form[data-ch-check]').forEach(function (form) {
+      form.addEventListener('submit', function (event) {
+        // The confirm handler above re-submits with dataset.confirmed set; run then.
+        if (form.dataset.channelsConfirm && form.dataset.confirmed !== 'done') return;
+        event.preventDefault();
+        delete form.dataset.confirmed;
+        var result = form.querySelector('[data-ch-result]');
+        var button = form.querySelector('button[type="submit"]');
+        var isSend = form.action.indexOf('/channels/send-test') !== -1;
+        result.className = 'ch-result';
+        result.textContent = '';
+        var spinner = document.createElement('span'); spinner.className = 'ch-spinner'; spinner.setAttribute('aria-hidden', 'true');
+        result.appendChild(spinner);
+        result.appendChild(document.createTextNode(isSend ? 'Sending the test message…' : 'Testing the connection… this can take up to ten seconds.'));
+        button.disabled = true; button.setAttribute('aria-busy', 'true');
+        fetch(form.action, {method: 'POST', body: new URLSearchParams(new FormData(form)),
+                            headers: {'Accept': 'application/json'}, credentials: 'same-origin'})
+          .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, status: r.status, body: j, headers: r.headers}; }); })
+          .then(function (res) {
+            var body = res.body || {};
+            if (!res.ok) {
+              var plain = window.mvPlainDetail ? window.mvPlainDetail(body.detail) : '';
+              throw new Error(plain || window.mvErrorText({status: res.status, headers: res.headers}, isSend ? 'send the test message' : 'test the connection'));
+            }
+            result.className = 'ch-result ' + (body.ok ? 'ch-result--ok' : 'ch-result--failed');
+            result.textContent = body.message || (body.ok ? 'Passed.' : 'Failed.');
+            var status = document.querySelector('[data-ch-status="' + form.getAttribute('data-ch-check') + '"]');
+            if (status && body.readiness_html) status.innerHTML = body.readiness_html;
+            summarize();
+            if (window.mvToast) window.mvToast(body.message || (body.ok ? 'Test passed.' : 'Test failed. Check the channel settings, then test again.'), {error: !body.ok});
+          })
+          .catch(function (e) {
+            result.className = 'ch-result ch-result--failed';
+            result.textContent = e && e.message ? e.message : window.mvErrorText(e, 'test the connection');
+          })
+          .finally(function () { button.disabled = false; button.removeAttribute('aria-busy'); });
+      });
+    });
+    var presets = {
+      gmail: {imap_host: 'imap.gmail.com', smtp_host: 'smtp.gmail.com', smtp_port: '465'},
+      outlook: {imap_host: 'outlook.office365.com', smtp_host: 'smtp.office365.com', smtp_port: '587'}
+    };
+    document.querySelectorAll('[data-email-preset]').forEach(function (select) {
+      select.addEventListener('change', function () {
+        var values = presets[select.value];
+        if (!values) return;
+        var form = select.closest('form');
+        Object.keys(values).forEach(function (key) {
+          var input = form.querySelector('[name="' + key + '"]');
+          if (input) input.value = values[key];
+        });
+        var auth = form.querySelector('[data-email-auth]');
+        if (auth) { auth.value = select.value === 'outlook' ? 'microsoft' : 'password'; auth.dispatchEvent(new Event('change')); }
+      });
+    });
+    document.querySelectorAll('[data-email-auth]').forEach(function (select) {
+      var form = select.closest('form'), account = form.querySelector('[data-email-account]');
+      function applyMode() {
+        var microsoft = select.value === 'microsoft';
+        account.disabled = !microsoft; account.required = microsoft;
+        ['imap_password', 'smtp_password'].forEach(function (name) {
+          var input = form.querySelector('[name="' + name + '"]');
+          if (input) { input.disabled = microsoft; input.closest('label').hidden = microsoft; }
+        });
+        if (microsoft) Object.keys(presets.outlook).forEach(function (key) {
+          form.querySelector('[name="' + key + '"]').value = presets.outlook[key];
+        });
+      }
+      select.addEventListener('change', applyMode);
+      account.addEventListener('change', function () {
+        var mailbox = account.selectedOptions[0] && account.selectedOptions[0].dataset.mailbox;
+        if (mailbox) ['imap_user', 'smtp_user'].forEach(function (key) { form.querySelector('[name="' + key + '"]').value = mailbox; });
+      });
+      applyMode();
+    });
+  })();
+  </script>
+  <script src="/static/lightwork-channel-message-tests.js" defer></script>
+{% endblock %}

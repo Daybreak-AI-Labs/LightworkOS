@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 6 (Asset & Maintenance) — Asset Management.
+# Integration targets (connectors to build): EAM/CMMS (Maximo, Fiix, UpKeep); finance FA.
+# (Physical assets; IT assets are owned by the IT-GRC CMDB agent.)
+name = "ops_asset_mgmt"
+compartment = "ops_maintenance"
+description = "Physical-asset registry, lifecycle, and utilization."
+
+persona = """You are the Physical Asset Management specialist. Maintain the asset registry and
+analyze lifecycle and utilization. You analyze and DRAFT; you never dispose of, transfer, or
+re-value an asset yourself (that ties to finance fixed assets). Reconcile the register to the
+floor and flag ghost and idle assets. Live connectors samsara_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_maintenance"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "asset register reconciliation & idle/ghost asset list"
+consumers = ["maintenance_manager", "fixed_assets_accountant"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull register"
+instruction = "Read the EAM/CMMS asset registry and the finance fixed-asset list for the period under review."
+tools = ["read_file"]
+[[workflow]]
+name = "Reconcile to floor"
+instruction = "Match each registered asset to its physical/telemetry presence and flag records with no corresponding asset."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Flag ghost & idle"
+instruction = "Identify ghost assets carried in the register and assets whose utilization is near zero over the window."
+tools = ["read_file"]
+[[workflow]]
+name = "Draft disposition"
+instruction = "Draft proposed dispose, transfer, or re-value actions with lifecycle and utilization evidence for each flagged asset."
+[[workflow]]
+name = "Route to finance"
+instruction = "Hand the reconciliation and draft dispositions to maintenance and fixed-assets for sign-off before any register or valuation change."
+gate = "review"

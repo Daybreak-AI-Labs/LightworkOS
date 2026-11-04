@@ -1,0 +1,62 @@
+{# The one form-field pattern (.mv-field in lightwork.css, mvFieldErrors in
+   lightwork-ui.js). A label, an optional hint, an error slot tied to the
+   control (aria-describedby, aria-invalid) and the control itself:
+
+     {% from "_form_field.html" import form_field, error_summary %}
+     <form method="post" action="/users/invite" data-mv-validate data-mv-keep="users-invite">
+       {{ error_summary('invite-errors') }}
+       {{ form_field('invite-email', 'Email address', name='email', type='email', required=true,
+                     hint='We send the invitation here.',
+                     error_required='Enter the email address of the person you are inviting.') }}
+     </form>
+
+   data-mv-validate: the browser bubbles are replaced by a written error next
+     to each field and a summary at the top that takes focus and links to each
+     field. Nothing typed is cleared.
+   data-mv-keep="name": what was typed in this tab survives a reload, a
+     failed request or a sign-in. Put data-mv-keep-done="name" on the page's
+     "Saved" message so a finished form starts empty.
+   type — text, email, number, url, date, time, textarea or select.
+   options — for a select: a list of (value, label) pairs.
+   error — a server-side message to show on first render.
+   error_required / error_format / error_range — the page's own words for
+     an empty, malformed or out-of-range value (else a plain default).
+   attrs — extra attributes for the control, as a dict.
+   error_id — reuse an existing error element's id.
+   Text arguments are autoescaped. #}
+
+{% macro form_field(id, label, name='', type='text', value='', required=false, hint='', error='',
+                    options=none, error_required='', error_format='', error_range='', attrs={},
+                    error_id='', class='') %}
+{%- set err_id = error_id or (id ~ '-error') -%}
+{%- set described = ((err_id ~ ' ') if error else '') ~ ((id ~ '-hint') if hint else '') -%}
+<div class="mv-field{{ ' mv-field--error' if error }}{{ (' ' ~ class) if class }}">
+  <label class="mv-field__label" for="{{ id }}">{{ label }}</label>
+  {% if hint %}<p class="mv-field__hint" id="{{ id }}-hint">{{ hint }}</p>{% endif %}
+  <p class="mv-form__err mv-field__error" id="{{ err_id }}"{% if error %} data-mv-field-error{% else %} hidden{% endif %}>{% if error %}<span class="sr-only">Error: </span>{{ error }}{% endif %}</p>
+  {%- set common %} name="{{ name or id }}"{% if required %} required{% endif %}{% if described | trim %} aria-describedby="{{ described | trim }}"{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if error_required %} data-error-required="{{ error_required }}"{% endif %}{% if error_format %} data-error-format="{{ error_format }}"{% endif %}{% if error_range %} data-error-range="{{ error_range }}"{% endif %}{% for k, v in attrs.items() %} {{ k }}{% if v is not sameas true %}="{{ v }}"{% endif %}{% endfor %}{% endset %}
+  {% if type == 'select' %}
+  <select class="select" id="{{ id }}"{{ common }}>
+    {% for value_, label_ in options or [] %}<option value="{{ value_ }}"{% if value_ == value %} selected{% endif %}{% if value_ == '' and required %} disabled{% endif %}>{{ label_ }}</option>{% endfor %}
+  </select>
+  {% elif type == 'textarea' %}
+  <textarea class="textarea" id="{{ id }}"{{ common }}>{{ value }}</textarea>
+  {% else %}
+  <input class="input" id="{{ id }}" type="{{ type }}"{{ common }}{% if value != '' and value is not none %} value="{{ value }}"{% endif %}>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{# The error summary at the top of a form. Server-rendered errors are
+   (field_id, message) pairs; the summary then shows on first render and the
+   page script moves focus to it. Script-found errors fill it on submit. #}
+{% macro error_summary(id, errors=[]) %}
+<div class="mv-error-summary" id="{{ id }}" data-mv-error-summary tabindex="-1" aria-labelledby="{{ id }}-title"{% if not errors %} hidden{% endif %}>
+  {% if errors %}
+  <h2 class="mv-error-summary__title" id="{{ id }}-title">There is a problem</h2>
+  <ul class="mv-error-summary__list">
+    {% for field_id, message in errors %}<li><a href="#{{ field_id }}">{{ message }}</a></li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endmacro %}

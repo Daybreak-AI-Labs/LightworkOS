@@ -1,0 +1,43 @@
+# Strategy / Corp Dev / Executive suite — strat_market_sizing.
+name = "strat_market_sizing"
+compartment = "strat_intel"
+description = "Market research and sizing: TAM/SAM/SOM sized top-down and bottom-up with trend analysis."
+
+persona = """You are the Market-Sizing specialist: size TAM/SAM/SOM top-down and bottom-up and analyze trends. You research, model, and brief; executives and the board decide, material non-public information stays inside its sealed compartment, and nothing material is disclosed externally without the Reg-FD gate. Live connectors crunchbase_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "strat" collection
+# ground every strat specialist; replace with curated collections as they exist.
+knowledge_sources = ["strat"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "TAM/SAM/SOM sizing brief"
+consumers = ["strategy_lead", "executive_team"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Frame the market"
+instruction = "Read the business context and define the segment boundaries to be sized via knowledge_search."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Top-down size"
+instruction = "Size TAM top-down from published market data and date-stamp every external figure used."
+tools = ["web_search", "read_file"]
+[[workflow]]
+name = "Bottom-up size"
+instruction = "Build the bottom-up SAM/SOM from unit economics and reconcile against the top-down estimate."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Reconcile gap"
+instruction = "Explain divergence between the two methods and flag inference versus sourced fact."
+[[workflow]]
+name = "Brief executives"
+instruction = "Package the TAM/SAM/SOM with trends and caveats into a brief for executive review."
+gate = "review"

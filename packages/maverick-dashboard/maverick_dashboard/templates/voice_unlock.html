@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Voice unlock · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero %}
+  {{ hero('Voice unlock', 'Voice unlock',
+          subtitle='Your voice as a second check on spoken requests',
+          lede='Record a few short samples of your voice. When voice unlock is on, requests you speak
+                into the microphone are used only when they sound like you. Signing in is still
+                required; your voice is a second check, not a password.') }}
+
+  <section class="panel" aria-labelledby="vu-status-title">
+    <h2 id="vu-status-title">Status</h2>
+    {% if not unlock.ready %}
+      <p id="vu-reason" role="status">{{ unlock.reason }}</p>
+    {% else %}
+      <p role="status">
+        Voice unlock is {{ 'on' if unlock.switched_on else 'off' }}.
+        {% if unlock.enrolled %}Your voice is recorded.{% else %}You haven't recorded your voice yet.{% endif %}
+      </p>
+      {% if not unlock.switched_on %}
+        <p class="muted">An administrator can turn it on under
+          <a href="/settings/all">Settings &gt; All settings</a>.</p>
+      {% endif %}
+    {% endif %}
+    <p class="muted">Only a voice print made from your samples is kept, encrypted and tied to you.
+      The recordings themselves are never stored. You can delete your voice print at any time.</p>
+  </section>
+
+  {% if unlock.ready %}
+  <section class="panel" id="vu-enrol" aria-labelledby="vu-enrol-title"
+           data-min="{{ unlock.min_samples }}" data-max="{{ unlock.max_samples }}">
+    <h2 id="vu-enrol-title">Record your voice</h2>
+    <p>Say a different sentence of about five seconds for each sample, in your normal voice,
+      somewhere quiet. {{ unlock.min_samples }} samples are needed.</p>
+    <p>
+      <button type="button" class="btn" id="vu-record" aria-pressed="false">Record a sample</button>
+      <span id="vu-count" aria-live="polite">0 of {{ unlock.min_samples }} samples</span>
+    </p>
+    <p>
+      <label for="vu-files">Or choose recordings (WAV files)</label>
+      <input id="vu-files" type="file" accept="audio/wav,.wav" multiple>
+    </p>
+    <p><button type="button" class="btn btn--primary" id="vu-save" disabled>Save my voice</button></p>
+    <p id="vu-save-msg" role="status" aria-live="polite" class="muted"></p>
+  </section>
+
+  {% if unlock.enrolled %}
+  <section class="panel" aria-labelledby="vu-check-title">
+    <h2 id="vu-check-title">Check it works</h2>
+    <p><button type="button" class="btn" id="vu-check" aria-pressed="false">Record and check</button></p>
+    <p id="vu-check-msg" role="status" aria-live="polite" class="muted"></p>
+  </section>
+
+  <section class="panel" aria-labelledby="vu-delete-title">
+    <h2 id="vu-delete-title">Delete your voice print</h2>
+    <p><button type="button" class="btn btn--danger" id="vu-delete">Delete my voice print</button></p>
+    <p id="vu-delete-msg" role="status" aria-live="polite" class="muted"></p>
+  </section>
+  {% endif %}
+
+  <script nonce="{{ csp_script_nonce }}">
+    {% include "_voice_mic.js" %}
+
+    (function () {
+      var API = '/api/v1/voice/unlock';
+      var box = document.getElementById('vu-enrol');
+      if (!box) return;
+      var need = parseInt(box.getAttribute('data-min'), 10) || 3;
+      var most = parseInt(box.getAttribute('data-max'), 10) || 5;
+      var samples = [];
+      var count = document.getElementById('vu-count');
+      var save = document.getElementById('vu-save');
+      var saveMsg = document.getElementById('vu-save-msg');
+      function refresh() {
+        count.textContent = samples.length + ' of ' + need + ' samples';
+        save.disabled = samples.length < need;
+      }
+      // A failed request reads as a plain sentence, never raw server text.
+      function problem(r, d, action) {
+        return window.mvPlainDetail(d && d.detail) || window.mvErrorText({status: r.status, detail: d && d.detail}, action);
+      }
+      function detail(r) {
+        return r.json().then(function (d) { return problem(r, d, 'save your voice'); },
+                             function () { return problem(r, null, 'save your voice'); });
+      }
+      function record(button, done) {
+        var canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+        if (!canRecord) { done(null, 'This browser can’t record. Choose WAV files instead.'); return; }
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+          var chunks = [];
+          var rec = new MediaRecorder(stream);
+          rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+          rec.onstop = function () {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            button.setAttribute('aria-pressed', 'false');
+            lwVoiceToWav16k(new Blob(chunks, { type: rec.mimeType || 'audio/webm' }))
+              .then(function (wav) { done(wav, ''); });
+          };
+          rec.start();
+          button.setAttribute('aria-pressed', 'true');
+          setTimeout(function () { if (rec.state === 'recording') rec.stop(); }, 5000);
+        }).catch(function () { done(null, 'Lightwork wasn’t allowed to use the microphone.'); });
+      }
+      document.getElementById('vu-record').addEventListener('click', function () {
+        if (samples.length >= most) return;
+        saveMsg.textContent = 'Recording for five seconds…';
+        record(this, function (wav, problem) {
+          saveMsg.textContent = problem;
+          if (wav) { samples.push(wav); refresh(); }
+        });
+      });
+      document.getElementById('vu-files').addEventListener('change', function () {
+        samples = Array.prototype.slice.call(this.files, 0, most);
+        refresh();
+      });
+      save.addEventListener('click', function () {
+        var fd = new FormData();
+        samples.forEach(function (s, i) { fd.append('files', s, 'sample-' + (i + 1) + '.wav'); });
+        save.disabled = true;
+        saveMsg.textContent = 'Saving…';
+        fetch(API + '/enrol', { method: 'POST', body: fd }).then(function (r) {
+          return detail(r).then(function (text) {
+            saveMsg.textContent = r.ok ? 'Your voice is saved. The recordings were not kept.' : text;
+            if (r.ok) setTimeout(function () { window.location.reload(); }, 1200);
+          });
+        }).catch(function (e) { saveMsg.textContent = window.mvErrorText(e, 'save your voice'); })
+          .finally(function () { refresh(); });
+      });
+      var check = document.getElementById('vu-check');
+      if (check) check.addEventListener('click', function () {
+        var msg = document.getElementById('vu-check-msg');
+        msg.textContent = 'Recording for five seconds…';
+        record(this, function (wav, problem) {
+          if (!wav) { msg.textContent = problem; return; }
+          var fd = new FormData();
+          fd.append('file', wav, 'check.wav');
+          fetch(API + '/check', { method: 'POST', body: fd }).then(function (r) {
+            return r.json().then(function (d) {
+              msg.textContent = r.ok ? d.message : problem(r, d, 'check your voice');
+            });
+          }).catch(function (e) { msg.textContent = window.mvErrorText(e, 'check your voice'); });
+        });
+      });
+      var del = document.getElementById('vu-delete');
+      if (del) del.addEventListener('click', async function () {
+        // A privacy erasure is never held back for an undo window; it is
+        // confirmed by name and consequence, then sent at once.
+        if (!(await window.mvConfirm('Delete your voice print? Voice unlock stops working until you set it up again. This cannot be undone.', { okText: 'Delete voice print', danger: true }))) return;
+        fetch(API + '/profile', { method: 'DELETE' }).then(function (r) {
+          document.getElementById('vu-delete-msg').textContent =
+            r.ok ? 'Your voice print was deleted.' : 'It could not be deleted. Try again.';
+          if (r.ok) setTimeout(function () { window.location.reload(); }, 1200);
+        }).catch(function (e) { document.getElementById('vu-delete-msg').textContent = window.mvErrorText(e, 'delete your voice print'); });
+      });
+      refresh();
+    })();
+  </script>
+  {% endif %}
+{% endblock %}

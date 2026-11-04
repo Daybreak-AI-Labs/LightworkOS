@@ -1,0 +1,71 @@
+{
+  "title": "Lightwork",
+  "uid": "maverick-overview",
+  "schemaVersion": 39,
+  "editable": true,
+  "tags": ["maverick"],
+  "time": {"from": "now-6h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "In-flight goals vs cap",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "maverick_concurrent_goals", "legendFormat": "in-flight"},
+        {"expr": "maverick_max_concurrent_goals", "legendFormat": "cap"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "LLM spend rate ($/hr)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "rate(maverick_cost_dollars_total[15m]) * 3600", "legendFormat": "$/hr"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Goals by status (rate)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "sum by (status) (rate(maverick_goals_total[10m]))", "legendFormat": "{{status}}"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tokens by direction (rate)",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {"expr": "sum by (direction) (rate(maverick_tokens_total[10m]))", "legendFormat": "{{direction}}"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Cumulative spend ($)",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
+      "targets": [
+        {"expr": "maverick_cost_dollars_total"}
+      ]
+    }
+  ]
+}

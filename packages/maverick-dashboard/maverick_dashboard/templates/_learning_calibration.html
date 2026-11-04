@@ -1,0 +1,34 @@
+<section class="stack" id="learning-calibration" aria-labelledby="lc-title">
+  <h3 id="lc-title" tabindex="-1">Check how answers are judged</h3>
+  <p class="muted">Choose saved questions, enter responses and independently label whether each is correct. The current checker sees only the question and response. This uses real AI judgments and can spend money. Your labels are reported evidence; reliability checks may stay insufficient or held.</p>
+  <p id="lc-current" class="muted" role="status" aria-live="polite">Reading current checker setup…</p>
+  <div class="actions">
+    <button class="btn btn--ghost" id="lc-refresh" type="button">Refresh current setup</button>
+    <a class="btn btn--ghost" href="#learning-test-questions">Manage saved questions</a>
+  </div>
+  <form class="stack" id="lc-form">
+    <label for="lc-model">Questions for this model</label>
+    <select class="select" id="lc-model"><option value="">Choose current questions</option></select>
+    <div class="actions">
+      <button class="btn btn--ghost" id="lc-load" type="button" disabled>Choose saved questions</button>
+      <button class="btn btn--ghost" id="lc-previous" type="button" hidden>Previous questions</button>
+      <button class="btn btn--ghost" id="lc-next" type="button" hidden>Next questions</button>
+    </div>
+    <p id="lc-page-status" class="muted" role="status"></p>
+    <div class="stack" id="lc-questions"></div>
+    <div class="stack" id="lc-cases"></div>
+    <button class="btn btn--primary" id="lc-review" type="submit" disabled>Review this answer check</button>
+  </form>
+  <div class="stack" id="lc-review-panel"></div>
+  <h4>Your original answer checks</h4>
+  <label for="lc-choice">Original check</label>
+  <select class="select" id="lc-choice"><option value="">Choose an original check</option></select>
+  <div class="actions">
+    <button class="btn btn--ghost" id="lc-original" type="button" hidden>Read original checker result</button>
+    <button class="btn btn--ghost" id="lc-assess" type="button" disabled>Review this original's assessment</button>
+  </div>
+  <p id="lc-status" class="muted" role="status" aria-live="polite"></p>
+  <div class="stack" id="lc-result" aria-live="polite"></div>
+  <p class="muted">An assessment uses only the selected original's completed checks for the exact current checker while its source rights remain current. It calls no AI and does not create new evidence. A checker assessment does not change lessons or replace the separate fresh checks needed before adopting a lesson.</p>
+</section>
+<script src="/static/lightwork-learning-calibration.js" defer></script>

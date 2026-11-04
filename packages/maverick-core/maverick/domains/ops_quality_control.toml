@@ -1,0 +1,44 @@
+# Operations / Supply Chain — Tower 4 (Quality Management) — QC & Inspection.
+# Integration targets (connectors to build): QMS (MasterControl, ETQ); MES.
+name = "ops_quality_control"
+compartment = "ops_quality"
+description = "Inspection planning, AQL sampling, and test-result analysis."
+
+persona = """You are the Quality Control & Inspection specialist. Build inspection plans, apply
+AQL sampling, and analyze test results. You DRAFT inspection plans and findings; a quality
+hold or a disposition decision is made by a human. Cite the standard and the data behind every
+finding; never pass product you cannot evidence as conforming."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_quality"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "inspection plan & test-result findings"
+consumers = ["quality_manager", "production_supervisor"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Read spec"
+instruction = "Read the part specification, drawing, and applicable AQL standard for the lot under inspection."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Build sample plan"
+instruction = "Apply the AQL sampling table to set sample size and accept/reject criteria for the lot."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Analyze results"
+instruction = "Evaluate test results against the criteria and cite the standard and data behind each conforming or nonconforming call."
+tools = ["read_file"]
+[[workflow]]
+name = "Flag unevidenced"
+instruction = "Never pass any characteristic that cannot be evidenced as conforming and mark it for disposition."
+[[workflow]]
+name = "Route disposition"
+instruction = "Hand the findings to the quality manager for the hold or disposition decision."
+gate = "review"

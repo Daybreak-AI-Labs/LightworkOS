@@ -1,0 +1,26 @@
+# Lightwork native core.
+#
+# The performance-critical engine is written in Rust; the ecosystem stays in
+# Python + TypeScript. One pure-logic core crate (`mvk-scan`) is exposed to
+# BOTH runtimes via thin bindings:
+#   - `mvk-scan-py`   -> PyO3 module `maverick_native` (Python)
+#   - `mvk-scan-wasm` -> wasm-bindgen package (TypeScript / edge / Workers)
+#
+# Its modules include the unicode safety scanner (pure, security-critical, runs
+# on every input/output), a faithful port of maverick.safety.unicode_filter,
+# with the Python kept as a fallback shim so a build without the native module
+# behaves identically.
+#
+# Second crate (`maverick-verify-audit`): a standalone, dependency-light binary
+# that independently verifies the Ed25519 hash-chained audit log — the SAME
+# chain `maverick audit verify` checks — so an external auditor can prove a log
+# is intact with one binary and NO Python. It is a byte-exact port of
+# maverick.audit.signing.verify_chain (canonical JSON + SHA-256 + Ed25519).
+[workspace]
+resolver = "2"
+members = ["mvk-scan", "mvk-scan-py", "mvk-scan-wasm", "maverick-verify-audit"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"

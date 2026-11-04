@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>Lightwork archive viewer</title>
+<style>body{max-width:70rem;margin:2rem auto;padding:0 1rem;font:18px/1.5 system-ui}pre{white-space:pre-wrap;overflow-wrap:anywhere}article{border-top:1px solid #999;padding:1rem 0}input,button{font:inherit}</style>
+<body><main><h1>Read a Lightwork task archive</h1>
+<p>This offline viewer reads a technical archive on this device. It does not upload files, import live tasks, replay actions or grant access to connected systems. Save this viewer alongside your archive to read it on another installation or device.</p>
+<label for="archive">Choose a task archive (JSON, up to 20 MB)</label> <input id="archive" type="file" accept=".json,application/json">
+<p id="status" role="status" aria-live="polite"></p><div id="record"></div></main>
+<script>
+(() => {
+  const input = document.getElementById('archive'), status = document.getElementById('status'), record = document.getElementById('record');
+  function block(title, text) { const section = document.createElement('article'), heading = document.createElement('h2'), body = document.createElement('pre'); heading.textContent = title; body.textContent = String(text || ''); section.append(heading, body); record.append(section); }
+  input.addEventListener('change', async () => {
+    record.replaceChildren(); const file = input.files[0]; if (!file) return;
+    if (file.size > 20 * 1024 * 1024) { status.textContent = 'This file exceeds the supported viewer size. No task data was loaded.'; return; }
+    try {
+      const raw = await file.text(), data = JSON.parse(raw);
+      if (!data || data.v !== 1 || !data.goal || !Array.isArray(data.events) || !Array.isArray(data.episodes)) throw new Error('This file is not a supported version 1 Lightwork archive. Keep the original and use a compatible viewer.');
+      if (data.events.length > 10001 || data.episodes.length > 201) throw new Error('This archive exceeds the supported record count. Keep the original and use a compatible viewer.');
+      let integrity = 'Integrity could not be checked for this legacy file. Export a new copy to get a checked file.';
+      if (data.manifest) {
+        if (data.manifest.event_count !== data.events.length || data.manifest.episode_count !== data.episodes.length) throw new Error('The archive record counts do not match its manifest. Keep the original and obtain a new export.');
+        if (data.manifest.hash_encoding === 'json-prefix-v1') {
+          const boundary = raw.lastIndexOf(',"manifest":');
+          if (boundary < 0 || !/^[a-f0-9]{64}$/.test(data.manifest.sha256 || '')) throw new Error('The archive integrity manifest is malformed.');
+          if (window.crypto && crypto.subtle) {
+            const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw.slice(0, boundary) + '}'));
+            const actual = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+            if (actual !== data.manifest.sha256) throw new Error('The archive contents do not match its integrity manifest. Do not rely on this copy.');
+            integrity = 'Record counts and content checksum match the manifest.';
+          } else integrity = 'Record counts match; this browser cannot check the content checksum offline.';
+        }
+      }
+      status.textContent = 'Read-only archive loaded. ' + integrity + ' This does not establish who created the file or independently verify external outcomes.';
+      block('Task', data.goal.title); block('Objective', data.goal.description); block('Saved outcome', data.goal.result);
+      block('Provenance and scope', 'Source task ' + data.goal.id + '; recorded version ' + data.goal.updated_at + '. ' + (data.manifest ? data.manifest.scope : 'Legacy archive: completeness is unknown; older exporters may have shortened history.'));
+      block('Archive manifest', data.manifest ? JSON.stringify(data.manifest, null, 2) : 'No completeness or integrity manifest.');
+      data.events.forEach(event => block('Recorded step — ' + (event.kind || 'event'), event.content));
+      block('Work summaries', JSON.stringify(data.episodes, null, 2));
+    } catch (error) { record.replaceChildren(); status.textContent = error instanceof SyntaxError ? 'This file is not readable JSON. The original has not been changed.' : error.message; }
+  });
+})();
+</script></body></html>

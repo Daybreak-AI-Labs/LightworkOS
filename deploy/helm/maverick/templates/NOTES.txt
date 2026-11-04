@@ -1,0 +1,22 @@
+Lightwork is deploying as {{ include "maverick.fullname" . }}.
+
+Image:    {{ include "maverick.image" . }}
+Backend:  {{ .Values.worldModel.backend }} (world model; control plane remains single replica)
+Replicas: {{ .Values.replicaCount }}
+
+1. Watch rollout:
+   kubectl rollout status deploy/{{ include "maverick.fullname" . }}
+
+2. The dashboard has its own auth but MUST be fronted with TLS. It is a
+   {{ .Values.service.type }} Service on port {{ .Values.service.port }}; add an Ingress/Gateway with certs.
+
+{{- if .Values.secret.create }}
+{{- if not .Values.secret.data }}
+
+   WARNING: secret.data is empty — no provider key / dashboard token was set.
+   /healthz will report degraded until a provider key is configured.
+{{- end }}
+{{- end }}
+
+3. Port-forward for a quick local check (do NOT use as ingress):
+   kubectl port-forward svc/{{ include "maverick.fullname" . }} 8765:{{ .Values.service.port }}

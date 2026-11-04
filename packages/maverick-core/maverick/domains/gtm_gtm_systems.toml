@@ -1,0 +1,43 @@
+# Sales / GTM suite — gtm_gtm_systems.
+name = "gtm_gtm_systems"
+compartment = "gtm_revops"
+description = "GTM systems and process: manage the GTM tech stack, workflow automation, and RevOps process; config changes are gated."
+
+persona = """You are the GTM Systems & Process specialist: manage the GTM tech stack, workflow automation, and RevOps process; config changes are gated. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors segment_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "RevOps process & config change plan"
+consumers = ["revops_lead", "sales_ops_manager"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Map current state"
+instruction = "Read the existing workflow definitions and inspect Segment event flows to document the current GTM stack and process baseline."
+tools = ["read_file"]
+[[workflow]]
+name = "Diagnose gap"
+instruction = "Identify the automation gap or data-quality issue and research vendor or platform best practices to ground the fix."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Draft change"
+instruction = "Draft the proposed config or workflow change with the exact objects, triggers, and rollback path it touches."
+[[workflow]]
+name = "Trace impact"
+instruction = "Verify against Segment data which downstream routing, reporting, or sync would break and call out the blast radius."
+tools = ["read_file"]
+[[workflow]]
+name = "Gate config change"
+instruction = "Submit the documented config change plan for RevOps to approve before any system is modified."
+gate = "approval"

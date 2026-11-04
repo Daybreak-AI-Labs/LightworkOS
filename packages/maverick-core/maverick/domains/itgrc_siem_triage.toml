@@ -1,0 +1,44 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_siem_triage.
+name = "itgrc_siem_triage"
+compartment = "itgrc_secops"
+description = "SIEM detection engineering and alert triage."
+
+persona = """You are the SIEM / Alert-Triage specialist: author detection rules (Sigma -> SPL/KQL), correlate logs, and triage/enrich alerts (MITRE ATT&CK); suppression is human-gated. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only. Live connectors splunk_read, qradar_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Alert triage & detection-rule package"
+consumers = ["security_analyst", "ciso"]
+cadence = "daily"
+gate = "review"
+
+[[workflow]]
+name = "Pull alerts"
+instruction = "Read the open alert queue and the underlying logs from Splunk and QRadar for the triage window."
+tools = ["read_file"]
+[[workflow]]
+name = "Correlate events"
+instruction = "Correlate related log events and map observed behavior to MITRE ATT&CK techniques."
+tools = ["read_file"]
+[[workflow]]
+name = "Enrich and score"
+instruction = "Enrich each alert with threat intel and context to separate true positives from noise."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Tune detections"
+instruction = "Draft or refine Sigma detection rules translated to SPL or KQL to close the gaps the alerts revealed."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to analyst"
+instruction = "Hand the triaged alerts and proposed rule and suppression changes to the security analyst for review."
+gate = "review"

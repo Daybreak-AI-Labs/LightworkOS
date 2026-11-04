@@ -1,0 +1,27 @@
+<section class="auto__section panel" id="auto-import-section" aria-labelledby="auto-import-h">
+  <div class="section-head"><h2 id="auto-import-h" tabindex="-1">Import from another platform</h2><button type="button" class="btn btn--ghost" id="air-refresh">Refresh</button></div>
+  <p class="auto__hint">Bring over supported instructions and visual drafts. Review all changes before saving, then publish and activate separately.</p>
+  <p id="air-disabled" hidden>Automation import is off. An administrator can enable <a href="/settings/all?id=automation_import.enable">Automation import in All settings</a>. Your original import history remains available.</p>
+  <details id="air-author"><summary>Start an import</summary>
+    <form id="air-form" class="stack">
+      <div class="field"><label for="air-source">Platform</label><select class="input" id="air-source" required></select></div>
+      <div class="field"><label for="air-mode">Bring automations from</label><select class="input" id="air-mode"><option value="file">An exported file</option><option value="live">A connected account</option></select><p class="auto__hint" id="air-source-help"></p></div>
+      <div class="field" id="air-file-field"><label for="air-file">The platform's exported automation file</label><input class="input" type="file" accept=".json,application/json" id="air-file"><p class="auto__hint">Use Export or Download in the source platform. Choose a file containing up to 25 automations, no larger than 512 KB. Do not edit the file.</p></div>
+      <div id="air-account-fields" hidden class="stack"><div class="field"><label for="air-connection">Connected account</label><select class="input" id="air-connection"></select><p class="auto__hint"><a href="/connections">Connect or repair an account in Connections</a>. Only accounts your current access allows are offered.</p></div>
+        <div id="air-uipath-fields" hidden class="stack"><div class="field"><label for="air-organization">UiPath organization</label><input class="input" id="air-organization" maxlength="80"></div><div class="field"><label for="air-tenant">UiPath area (the name after your organization in its web address)</label><input class="input" id="air-tenant" maxlength="80"></div></div>
+        <div id="air-make-fields" hidden class="stack"><div class="field"><label for="air-make-scope">Make collection</label><select class="input" id="air-make-scope"><option value="">Choose a collection</option><option value="team">One team</option><option value="organization">One organization</option></select></div><div class="field"><label for="air-make-id">Team or organization account number</label><input class="input" id="air-make-id" type="number" min="1" max="9007199254740991" step="1"><p class="auto__hint">Use the number shown in Make for the selected team or organization. Only this collection is read.</p></div></div>
+        <p class="auto__hint">Check import reads supported automation definitions from this exact current account. It changes no remote automation and calls no AI service. Large collections may need a selected export instead.</p>
+      </div>
+      <div class="field"><label for="air-dollars">Maximum spending for each future run ($)</label><input class="input" id="air-dollars" type="number" min="0" max="1000" step="0.01" value="5" required></div>
+      <div class="field"><label for="air-wall">Maximum time for each future run (seconds)</label><input class="input" id="air-wall" type="number" min="1" max="3600" step="1" value="300" required></div>
+      <label><input type="checkbox" id="air-flows"> Also create visual drafts for review in Designer</label>
+      <div id="air-replace" class="stack"></div>
+      <button type="submit" class="btn btn--primary" id="air-review">Check and review import</button>
+    </form>
+  </details>
+  <div id="air-review-box" class="stack" role="region" aria-label="Complete import review"></div>
+  <p id="air-status" role="status" aria-live="polite"></p><p id="air-error" role="alert"></p>
+  <details id="air-originals"><summary>Original import history</summary><div class="field"><label for="air-history">Original request</label><select class="input" id="air-history"></select></div><button type="button" class="btn btn--ghost" id="air-read">Read original outcome</button><div id="air-result" class="stack"></div></details>
+  <details><summary>What an import preserves</summary><p class="auto__hint">Instructions can require AI interpretation and connected tools. The complete visual translation review identifies approximations and steps needing repair. Imported drafts do not inherit the source platform's approvals or credentials. Existing drafts stay unchanged unless you explicitly select their replacement. Schedules and starts from other services stay off.</p></details>
+</section>
+<script defer src="/static/lightwork-automation-imports.js"></script>

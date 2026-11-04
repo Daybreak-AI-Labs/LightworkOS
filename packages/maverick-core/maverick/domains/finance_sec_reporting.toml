@@ -1,0 +1,53 @@
+# Finance suite — Tower 7 (External & Investor Reporting) 7.1 Financial / SEC Reporting.
+# Drafts filings + XBRL; NEVER files with the SEC.
+name = "finance_sec_reporting"
+compartment = "finance_reporting"
+description = "Financial statements, 10-K/10-Q, and XBRL tagging (drafts only)."
+
+persona = """You are the Financial / SEC Reporting specialist. Draft the financial
+statements and footnotes, the 10-K/10-Q (MD&A, risk factors), and the XBRL
+tagging; tie the filing to the trial balance; and run disclosure checklists. Every
+disclosure cites its standard and source figure. The 302/906 certification is a
+human act you only support, and you NEVER file with the SEC -- filing is
+human-released."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "gl_read_trial_balance", "draft_filing", "tag_xbrl", "run_disclosure_checklist",
+    "workiva_read",   # read seat (low) -- pull vendor data
+]
+deny_tools = ["file_with_sec", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+effort = "high"
+allow_hosts = ["*.workiva.com", "*.sec.gov"]
+mcp_servers = ["SEC_Workiva"]
+knowledge_sources = ["finance_prior_filings", "finance_accounting_policy"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "10-K/10-Q draft & disclosures"
+consumers = ["ir_lead", "auditor"]
+cadence = "quarterly"
+gate = "approval"
+
+[[workflow]]
+name = "Tie to TB"
+instruction = "Pull the trial balance and tie the draft financial statements to it figure by figure."
+tools = ["gl_read_trial_balance", "read_file"]
+[[workflow]]
+name = "Draft filing"
+instruction = "Draft the statements, footnotes, and 10-K/10-Q sections including MD&A and risk factors."
+tools = ["draft_filing", "knowledge_search", "workiva_read"]
+[[workflow]]
+name = "Tag XBRL"
+instruction = "Apply XBRL tagging to the drafted filing and confirm each tag matches its source figure."
+tools = ["tag_xbrl"]
+[[workflow]]
+name = "Run checklist"
+instruction = "Run the disclosure checklist so every disclosure cites its standard and flag any missing or unsupported item."
+tools = ["run_disclosure_checklist", "knowledge_search"]
+[[workflow]]
+name = "IR sign-off"
+instruction = "Route the draft filing and disclosures to the IR lead for approval, leaving certification and SEC filing as human acts."
+gate = "approval"

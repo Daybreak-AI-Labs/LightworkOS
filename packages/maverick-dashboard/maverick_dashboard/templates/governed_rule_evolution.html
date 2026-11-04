@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Rewrite and check local rules · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% call hero('Learning', 'Rewrite and check local rules', lede='Compare another way to run one saved rule, check every situation you entered, and independently accept or restore its published rules.') %}{% endcall %}
+<div id="gre-root" data-context="{{ context }}" data-enabled="{{ '1' if enabled else '0' }}" class="gre-stack">
+<p>The saved original rule supplies expected answers. Agreement does not establish business truth or faster performance. This local check makes no AI calls or connected actions. Publishing changes the rules used by that workflow; it does not undo earlier work.</p>
+<p id="gre-message" role="status" aria-live="polite" tabindex="-1"></p>
+{% if enabled %}
+<section id="gre-current" class="panel gre-stack">
+<label>Owned published workflow <select id="gre-flow" class="input"><option value="">Choose a workflow</option></select></label>
+<label>Retained rule review <select id="gre-selected" class="input"><option value="">Enter a new source below</option></select></label>
+<button id="gre-refresh" class="btn" type="button">Refresh current source</button>
+<details id="gre-author"><summary>Enter the complete rule source and use permission</summary>
+<form id="gre-create" class="gre-stack">
+<p>Choose one taught rule with one to three Yes/No or whole-number inputs. All possible situations within its saved input limits must fit thirty-two cases. Its saved draft and publication must match when entering the first review.</p>
+<label>Declared wrong-answer examples used to compare checking order <input name="fault_limit" class="input" type="number" min="1" max="8" step="1" required value="2"></label>
+<p>Choose one to eight, no more than the complete possible situations. Each example deliberately changes one answer. Every example is run through every situation; these checks do not represent all possible future mistakes.</p>
+<label><input name="allowed" type="checkbox" required> I have current permission to use the complete saved rule for this stated purpose</label>
+<label><input name="allow_independent_artifact" type="checkbox"> This source may create a separately owned rule or checking plan after another complete review and explicit acceptance</label>
+<label>Exact source-use purpose <textarea name="purpose" class="input" minlength="10" maxlength="2000" required></textarea></label>
+<label>Review this permission again by <input name="expires_at" class="input" type="datetime-local" required></label>
+<label>Shared total checking time allowance <select name="time_limit_seconds" class="input"><option value="15">Fifteen seconds</option><option value="60">One minute</option><option value="120" selected>Two minutes</option></select></label>
+<p>This one allowance includes construction, complete comparisons, actual rule runs, current permission checks and saving their result. Running out leaves an unknown original, never an earlier passing result. The named answer must differ from the saved input names.</p>
+<button class="btn btn--primary" type="submit">Review complete source</button>
+</form></details>
+<section id="gre-results" class="gre-stack"></section>
+<section id="gre-controls" hidden class="gre-stack">
+<div class="gre-row"><button id="gre-build" class="btn" type="button">Review building and checking every alternative</button><button id="gre-check" class="btn" type="button">Review checking current published rules</button><button id="gre-restore" class="btn" type="button">Review restoring the previous publication</button></div>
+<form id="gre-activate" class="gre-stack"><h2>Independently accept published rules</h2>
+<p>This is your separate acceptance of the complete check; it is not approval by another person.</p>
+<label>Complete checked alternative <select name="alternative" class="input" required><option value="">Build the alternatives first</option></select></label>
+<label><input name="independent_acceptance" type="checkbox" required> I accept a separately owned rule and the complete publication consequences, subject to the fresh review below</label>
+<button class="btn" type="submit">Review publishing this checked rule</button></form>
+<form id="gre-evaluator" class="gre-stack"><h2>Independently accept checking order</h2>
+<label>Complete checking order <select name="checking_order" class="input"><option value="ordinary">Every situation in entered order</option><option value="evolved">Find the declared wrong answers first, then check every remaining situation</option></select></label>
+<label><input name="independent_acceptance" type="checkbox" required> I accept this complete checking plan and its stated limits, subject to the fresh review below</label>
+<p>A passing rule still needs every situation. The comparison concerns only the declared wrong-answer examples. It does not promise fewer checks for an unfamiliar mistake or a faster calculation.</p>
+<button class="btn" type="submit">Review this complete checking order</button></form>
+<details><summary>Review source permission or an unknown original</summary>
+<form id="gre-scope" class="gre-stack">
+<label><input name="allowed" type="checkbox"> Permit future use of this complete rule source</label>
+<label><input name="allow_independent_artifact" type="checkbox"> Permit a separately accepted owned rule or checking plan</label>
+<label>Exact current use purpose <textarea name="purpose" class="input" minlength="10" maxlength="2000" required></textarea></label>
+<label>Review permission again by <input name="expires_at" class="input" type="datetime-local" required></label>
+<label>Shared total checking time allowance <select name="time_limit_seconds" class="input"><option value="15">Fifteen seconds</option><option value="60">One minute</option><option value="120" selected>Two minutes</option></select></label>
+<button class="btn" type="submit">Review current source permission</button>
+<label><input name="acknowledge_unknown" type="checkbox"> The earlier effect may already exist; its original remains unknown and its allowance stays spent</label>
+<button id="gre-reconcile" class="btn" type="button">Review a separate complete current state</button>
+</form></details>
+</section></section>
+{% else %}
+<section class="panel"><p>Rule rewriting is off. Your own retained originals and stopping controls remain available below. Turn it on in <a href="/settings#feature-governed_rule_evolution">Settings</a> before a new rule experiment.</p></section>
+{% endif %}
+<section class="panel gre-stack" id="gre-history"><h2>Earlier originals and stopping controls</h2>
+<p id="gre-history-message" role="status"></p>
+<button id="gre-history-refresh" class="btn" type="button">Refresh my own history</button>
+<label>Exact earlier request <select id="gre-history-select" class="input"><option value="">Choose an earlier original</option></select></label>
+<button id="gre-history-read" class="btn" type="button">Read the exact original</button><section id="gre-history-result" class="gre-stack"></section>
+<label>Retained rule review to stop or remove <select id="gre-stop-select" class="input"><option value="">Choose your earlier review</option></select></label>
+<p>Stopping a review does not change an independently accepted published rule. Use the workflow's normal controls for that rule. An unknown original stays unknown; its spent allowance is never refunded.</p>
+<label><input id="gre-stop-acknowledged" type="checkbox"> The earlier effect may already exist and its original remains unknown</label>
+<div class="gre-row"><button id="gre-stop-withdraw" class="btn" type="button">Review stopping future use</button><button id="gre-stop-acknowledge" class="btn" type="button">Review stopping this unknown wait</button><button id="gre-stop-remove" class="btn" type="button">Review removing current review</button></div>
+</section>
+<section id="gre-review" class="panel gre-stack" hidden aria-labelledby="gre-review-title"><h2 id="gre-review-title" tabindex="-1">Review the complete current change</h2><div id="gre-review-changes" class="gre-stack"></div>
+<label><input id="gre-reviewed" type="checkbox"> I have reviewed every displayed source, answer, permission, allowance and consequence</label>
+<div class="gre-row"><button id="gre-confirm" class="btn btn--primary" type="button" disabled>Confirm this exact reviewed change</button><button id="gre-cancel" class="btn" type="button">Keep my draft without confirming</button></div></section>
+</div>
+<style>.gre-stack{display:grid;gap:1rem;min-width:0}.gre-stack label{display:grid;gap:.45rem;min-width:0}.gre-stack label:has(input[type=checkbox]){display:block}.gre-row{display:flex;gap:.65rem;flex-wrap:wrap}.gre-card{border:1px solid var(--border);border-radius:14px;padding:1rem;min-width:0}.gre-card h3{margin-top:0}.gre-evidence{white-space:pre-wrap;overflow-wrap:anywhere;font-family:inherit;margin:.4rem 0 0;max-width:100%}.gre-stack select,.gre-stack input,.gre-stack textarea{max-width:100%;min-width:0}.gre-stack details summary{cursor:pointer;padding:.5rem 0}.gre-stack details form{padding-top:1rem}@media(max-width:480px){.gre-row{display:grid}.gre-row button{width:100%}.gre-card{padding:.75rem}}</style>
+<script src="/static/lightwork-governed-rule-evolution.js" defer></script>
+{% endblock %}

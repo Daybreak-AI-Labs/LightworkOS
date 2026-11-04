@@ -1,0 +1,14 @@
+Lightwork
+Copyright 2026 Christopher Day
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The Lightwork name and logo are trademarks and are not licensed under the
+Apache License; see TRADEMARK.md.
+
+This product includes third-party software. Their licences are listed in
+THIRD-PARTY-NOTICES.md. The following attribution notice is carried forward
+from a bundled component:
+
+swagger-ui (packages/maverick-dashboard/maverick_dashboard/static/)
+Copyright 2020-2021 SmartBear Software Inc.

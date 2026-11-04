@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}Teams · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_typical_cost.html" import typical_cost_text %}
+  {% call hero('Human in command', 'Teams',
+               subtitle='Each person\'s own team of agents',
+               lede='Give someone a small team of agents, each with a job
+                     role that limits what it may do. Your company rules can
+                     stop an action or hold it for a person to approve
+                     (the EU AI Act human-oversight requirement); holds wait
+                     in <a href="/approvals">Approvals</a> and every decision
+                     is listed below.' | safe) %}
+    {{ state('Current state', (fleets | length) ~ (' team' if fleets | length == 1 else ' teams'),
+             badge=((pending_count ~ ' awaiting approval') if pending_count
+                    else 'nothing waiting'),
+             badge_class='warn' if pending_count else 'ok',
+             copy='Create a team, give its agents tasks, and review every
+                   decision your company rules made — all from this page.') }}
+  {% endcall %}
+
+  <details class="panel"{% if not fleets %} open{% endif %}>
+    <summary style="cursor: pointer; font-weight: 600;">Create a team</summary>
+    <form id="fleet-create-form" class="fl-form">
+      <label for="fleet-name">Team name</label>
+      <input class="input" id="fleet-name" name="name" required maxlength="64"
+             placeholder="For example: Acme operations" />
+      <p class="muted fl-help">Up to 64 letters, numbers, spaces or dashes.</p>
+      <fieldset class="fl-agents">
+        <legend>Agents on this team</legend>
+        <div id="agent-rows">
+          <div class="agent-row">
+            <label>Agent name <input class="a-name input" maxlength="64" placeholder="For example: Invoice helper" /></label>
+            <label>Job role
+              {% if role_options %}
+                <select class="a-role input">
+                  {% for r in role_options %}<option value="{{ r }}"{% if r == 'viewer' %} selected{% endif %}>{{ r|role_label }}</option>{% endfor %}
+                </select>
+              {% else %}
+                <input class="a-role input" placeholder="Job role" />
+              {% endif %}
+            </label>
+            <label class="fl-grow">What it does (optional) <input class="a-desc input" maxlength="200" /></label>
+            <button type="button" class="btn btn--ghost btn--sm a-remove">Remove</button>
+          </div>
+        </div>
+        <p class="muted fl-help">The job role decides what each agent may do — it can never do more than that role allows.</p>
+      </fieldset>
+      <div class="fl-actions">
+        <button type="button" id="add-agent-row" class="btn">Add another agent</button>
+        <button type="submit" class="btn btn--primary">Create team</button>
+        <span id="fleet-create-msg" class="muted" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+  </details>
+
+  {% if fleets %}
+    {% for fleet in fleets %}
+      <div class="panel" id="team-{{ fleet.name }}" tabindex="-1">
+        <div class="fl-head">
+          <h2 class="fl-title">{{ fleet.name|humanize }}</h2>
+          <span class="muted">Owner: {{ fleet.owner|identity if fleet.owner else 'No one' }}</span>
+          <span class="muted">{{ fleet.agents | length }} agent{{ '' if fleet.agents|length == 1 else 's' }}</span>
+          <button type="button" class="btn btn--ghost btn--sm fleet-remove-btn" data-fleet="{{ fleet.name }}"
+                  data-label="{{ fleet.name|humanize }}" style="margin-left: auto;">Remove team</button>
+        </div>
+        {% if fleet.agents %}
+          <table style="margin-top: 0.75rem;">
+            <thead><tr>
+              <th scope="col">Agent or specialist</th><th scope="col">Job role</th>
+              <th scope="col">What it does</th><th scope="col">Can it start?</th>
+            </tr></thead>
+            <tbody>
+            {% for agent in fleet.agents %}
+              <tr>
+                <td>{{ agent.name|humanize }}</td>
+                <td><span class="badge active">{{ agent.role|role_label if agent.role else 'No role' }}</span></td>
+                <td class="muted">{{ agent.description or '' }}</td>
+                {% set check = specialist_readiness.get(agent.domain) if agent.domain else none %}
+                <td>{% if check %}
+                  {{ check.label }}{% if check.state != 'action_ready' %} · <a href="{{ check.fix_url }}">Review setup</a>{% endif %}
+                {% else %}Checked when the task starts{% endif %}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          <form class="fleet-run-form fl-run" data-fleet="{{ fleet.name }}">
+            <label>Give it to
+              <select class="input" name="agent" required>
+                <option value="">Choose an agent or specialist</option>
+                {% for agent in fleet.agents %}
+                  {% set check = specialist_readiness.get(agent.domain) if agent.domain else none %}
+                  <option value="{{ agent.name }}"{% if check and check.state != 'action_ready' %} disabled{% endif %} data-typical="{{ typical_cost_text(typical_costs.get(fleet.name ~ '/' ~ agent.name)) | striptags }}">{{ agent.name|humanize }} ({{ agent.role|role_label if agent.role else 'no role' }}){% if check %} · {{ check.label }}{% endif %}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="fl-grow">Task
+              <input class="input" name="prompt" type="text" maxlength="4000"
+                     placeholder="What should it do?" />
+            </label>
+            <button type="submit" class="btn btn--primary"{% if not fleet_can_start[fleet.name] %} disabled{% endif %}>Start task</button>
+            <span class="fleet-run-msg muted" role="status" aria-live="polite"></span>
+          </form>
+          <p class="muted fl-typical" aria-live="polite">Choose an agent or specialist to see what its past tasks usually cost.</p>
+          {% if workspace_limit %}<p class="muted fl-remaining">The whole workspace has {{ workspace_limit.remaining | money }} left of {{ workspace_limit.limit.amount | money }} {{ 'today' if workspace_limit.limit.period == 'day' else 'this month' }}.</p>{% endif %}
+          <p class="muted fl-help">“Can it start?” checks required actions. Connections, permissions and the AI service are checked when work starts.</p>
+          {% if not fleet_can_start[fleet.name] %}<p class="muted">No one on this team passed the action check. Review setup above, then return to this team.</p>{% endif %}
+        {% else %}
+          <p class="muted" style="margin-bottom: 0;">No agents on this team yet. Add agents when you create or edit the team.</p>
+        {% endif %}
+        {% set runs = runs_by_fleet.get(fleet.name) %}
+        <h3 class="fl-sub">Recent tasks</h3>
+        {% if runs %}
+          <table style="margin-top: 0.4rem;">
+            <thead><tr>
+              <th scope="col">Agent</th><th scope="col">Task</th>
+              <th scope="col">Status</th><th scope="col">When</th>
+            </tr></thead>
+            <tbody>
+            {% for run in runs %}
+              <tr>
+                <td>{{ run.agent|humanize }}</td>
+                <td><a href="/chat/goal/{{ run.goal_id }}">{{ run.title }}</a></td>
+                <td><span class="badge {{ run.status }}">{{ run.status|humanize }}</span></td>
+                <td class="muted" style="white-space: nowrap;">{{ run.ts | datetime }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted" style="margin: 0.4rem 0 0;">
+            No tasks yet — give one to an agent with the form above.
+          </p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No teams yet</p>
+      <p class="mv-empty__body">Use <strong>Create a team</strong> above to give someone their own agents.</p>
+    </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Recent decisions by your company rules</h2></div>
+  <div class="panel">
+    <p class="muted">
+      The last {{ holds | length }} time{{ '' if holds|length == 1 else 's' }} a rule stopped an agent or held it for approval.
+      See everything on the <a href="/audit?kind=governance_denied">activity log</a>.
+    </p>
+    {% if holds %}
+      <table>
+        <thead><tr>
+          <th scope="col">When</th><th scope="col">Agent</th>
+          <th scope="col">Action</th><th scope="col">Rule</th>
+          <th scope="col">Why</th>
+        </tr></thead>
+        <tbody>
+        {% for ev in holds %}
+          <tr>
+            <td class="muted" style="white-space: nowrap;">{{ ev.ts | datetime }}</td>
+            <td class="muted">{{ ev.agent|identity if ev.agent else '—' }}</td>
+            <td>{{ ev.tool|humanize if ev.tool else '—' }}</td>
+            <td><span class="badge blocked">{{ ev.rule|humanize if ev.rule else '—' }}</span></td>
+            <td class="muted">{{ ev.reason or '' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted" style="margin-bottom: 0;">
+        Nothing today. Stops and holds appear here once one of your company
+        rules affects an agent action.
+      </p>
+    {% endif %}
+  </div>
+
+  <style>
+    .fl-form { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; max-width: 52rem; }
+    .fl-help { margin: 0; font-size: 0.85rem; }
+    .fl-agents { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.75rem; }
+    #agent-rows { display: flex; flex-direction: column; gap: 0.5rem; }
+    .agent-row, .fl-run { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end; }
+    .agent-row label, .fl-run label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+    .fl-grow { flex: 1; min-width: 12rem; }
+    .fl-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .fl-head { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+    .panel[id^="team-"] { scroll-margin-top: 6rem; }
+    .fl-title { margin: 0; font-size: 1.1rem; }
+    .fl-sub { margin: 0.9rem 0 0; font-size: 0.9rem; }
+    .fl-run { margin-top: 0.75rem; }
+  </style>
+
+  <script nonce="{{ csp_script_nonce }}">
+    // Give a task to a team agent (POST /api/v1/fleets/<team>/run). The agent
+    // runs under its role capability + its own audit principal, so the
+    // oversight control plane governs it. Values set via textContent.
+    (function() {
+      function problem(r, j, action) {
+        if (window.mvErrorText) return window.mvErrorText({ status: r && r.status, body: j }, action);
+        return 'Could not ' + action + '. Try again.';
+      }
+      function offline(action) {
+        return 'Could not ' + action + ' — check your connection and try again.';
+      }
+      // Names are stored as short IDs; people type ordinary names.
+      function slug(text) {
+        return String(text || '').trim().replace(/[^A-Za-z0-9_-]+/g, '-')
+          .replace(/^[^A-Za-z0-9]+/, '').replace(/-+$/, '').slice(0, 64);
+      }
+      function say(el, text, bad) {
+        el.style.color = bad ? 'var(--danger)' : 'var(--muted)';
+        if (window.mvStatus) window.mvStatus(el, text, {error: !!bad}); else el.textContent = text;
+      }
+      document.querySelectorAll('form.fleet-run-form').forEach(function(form) {
+        // Past runs of the chosen agent, from the recorded costs on its option.
+        const typical = form.parentNode.querySelector('.fl-typical');
+        const pick = form.querySelector('[name=agent]');
+        if (typical && pick) pick.addEventListener('change', function() {
+          const option = pick.options[pick.selectedIndex];
+          typical.textContent = option && option.dataset.typical ? option.dataset.typical
+            : 'Choose an agent or specialist to see what its past tasks usually cost.';
+        });
+        form.addEventListener('submit', async function(e) {
+          e.preventDefault();
+          const fleet = form.dataset.fleet;
+          const agent = form.querySelector('[name=agent]').value;
+          const prompt = form.querySelector('[name=prompt]').value.trim();
+          const msg = form.querySelector('.fleet-run-msg');
+          const btn = form.querySelector('button[type=submit]');
+          if (!agent) { say(msg, 'Choose an available agent first.', true); return; }
+          if (!prompt) { say(msg, 'Describe the task first.', true); return; }
+          btn.disabled = true; say(msg, 'Starting…');
+          try {
+            const r = await fetch('/api/v1/fleets/' + encodeURIComponent(fleet) + '/run', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ agent: agent, prompt: prompt }),
+            });
+            const j = await r.json().catch(function() { return {}; });
+            if (r.ok || r.status === 201) {
+              msg.style.color = 'var(--accent)';
+              msg.textContent = 'Started. ';
+              if (j.goal_id != null) {
+                const a = document.createElement('a');
+                a.href = '/chat/goal/' + encodeURIComponent(j.goal_id);
+                a.textContent = 'Follow the task';
+                msg.appendChild(a);
+              }
+              form.querySelector('[name=prompt]').value = '';
+            } else {
+              say(msg, problem(r, j, 'start the task'), true);
+            }
+          } catch (err) { say(msg, offline('start the task'), true); }
+          btn.disabled = false;
+        });
+      });
+
+      const rows = document.getElementById('agent-rows');
+      function wireRemove(row) {
+        const rm = row.querySelector('.a-remove');
+        if (rm) rm.addEventListener('click', function() {
+          if (rows.querySelectorAll('.agent-row').length > 1) row.remove();
+          else row.querySelectorAll('input').forEach(function(i) { i.value = ''; });
+        });
+      }
+      if (rows) rows.querySelectorAll('.agent-row').forEach(wireRemove);
+      const addBtn = document.getElementById('add-agent-row');
+      if (addBtn) addBtn.addEventListener('click', function() {
+        const clone = rows.querySelector('.agent-row').cloneNode(true);
+        clone.querySelectorAll('input').forEach(function(i) { i.value = ''; });
+        rows.appendChild(clone);
+        wireRemove(clone);
+        const first = clone.querySelector('.a-name');
+        if (first) first.focus();
+      });
+
+      // Create a team (POST /api/v1/fleets), then reload to show it.
+      const createForm = document.getElementById('fleet-create-form');
+      if (createForm) createForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const name = slug(document.getElementById('fleet-name').value);
+        const msg = document.getElementById('fleet-create-msg');
+        const btn = createForm.querySelector('button[type=submit]');
+        if (!name) { say(msg, 'Give the team a name first.', true); return; }
+        const agents = [];
+        let bad = false;
+        document.querySelectorAll('#agent-rows .agent-row').forEach(function(row) {
+          const typed = row.querySelector('.a-name').value.trim();
+          if (!typed) return;
+          const an = slug(typed);
+          if (!an) { bad = true; return; }
+          agents.push({ name: an, role: row.querySelector('.a-role').value.trim(),
+                        description: row.querySelector('.a-desc').value.trim() });
+        });
+        if (bad) { say(msg, 'Each agent name needs at least one letter or number.', true); return; }
+        // Guard against a double-submit double-POSTing before the reload lands.
+        if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+        say(msg, 'Creating…');
+        try {
+          const r = await fetch('/api/v1/fleets', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, agents: agents }),
+          });
+          if (r.ok || r.status === 201) { window.location.reload(); return; }
+          const j = await r.json().catch(function() { return {}; });
+          say(msg, problem(r, j, 'create the team'), true);
+        } catch (err) { say(msg, offline('create the team'), true); }
+        if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+      });
+
+      // Remove a team (DELETE /api/v1/fleets/<name>), then reload.
+      document.querySelectorAll('button.fleet-remove-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          const label = btn.dataset.label || btn.dataset.fleet;
+          // One action with a way back: the team leaves the list at
+          // once and is deleted when the Undo time is up.
+          const row = btn.closest('.panel');
+          if (row) row.hidden = true;
+          mvUndo('Team “{name}” removed. Past tasks stay in your task list.', { values: {name: label},
+            action: 'remove the team',
+            run: function (keepalive) { return fetch('/api/v1/fleets/' + encodeURIComponent(btn.dataset.fleet), { method: 'DELETE', keepalive: keepalive }); },
+            undo: function () { if (row) row.hidden = false; btn.focus(); },
+            done: function () { window.location.reload(); }
+          });
+        });
+      });
+    })();
+  </script>
+{% endblock %}

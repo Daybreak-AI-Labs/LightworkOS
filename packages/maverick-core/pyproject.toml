@@ -1,0 +1,245 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# PyPI distribution name. Nothing is published to PyPI under it yet. The bare
+# 'maverick' name is taken on PyPI, hence the suffix. The Python *import* name
+# stays `maverick` (see [tool.setuptools.packages.find]) and the CLI is
+# installed under both names -- `maverick` and its Lightwork-brand
+# alias `lightwork` (see [project.scripts]).
+name = "maverick-agent"
+version = "0.1.7"
+description = "Recursive multi-agent swarm for long-horizon work"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Lightwork Authors" }]
+readme = "README.md"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "anthropic>=0.40.0,<2",
+    "click>=8.3.3",
+    "httpx>=0.27",
+    # Normal in-product estimates must work offline after installation.
+    "tiktoken>=0.14,<1",
+    "h11>=0.16,<1",  # Explicit bounded HTTP/1.1 model-proxy listener contract.
+    # idna is pulled transitively (httpx/anthropic); floor it past PYSEC-2026-215
+    # / GHSA-65pc-fj4g-8rjx so a fresh install can't resolve a vulnerable <3.15.
+    # Required for secure-by-default at-rest encryption; without AES-GCM support
+    # normal persistence writes would fail when encryption is default-enabled.
+    "cryptography>=48.0.1",
+    "idna>=3.15",
+    "tomli>=2.0; python_version<'3.11'",
+    # zoneinfo has no bundled database on Windows and minimal Linux images may
+    # omit the system database. Finance off-hours rules require IANA zones.
+    "tzdata>=2026.3",
+    # Explicit, content-free desktop recording works after normal installation.
+    "pyobjc-framework-Cocoa>=11,<13; sys_platform=='darwin'",
+    "python-xlib==0.33; sys_platform=='linux'",
+]
+
+[project.optional-dependencies]
+plugin-workbench = ["jsonschema>=4.18,<5"]
+openai     = ["openai>=1.30,<4"]
+release-runtime = [
+    "openai>=1.30,<4",
+    "openpyxl>=3.1", "lxml>=5.0", "pypdf>=6.21.4", "pdfplumber>=0.10",
+    # A frozen executable cannot add Python packages after it is built. Include
+    # the supported SQL driver, local MathML conversion and metrics collector.
+    "sqlalchemy>=2.0,<3", "psycopg[binary,pool]>=3.3.5,<4",
+    "latex2mathml>=3.77", "prometheus-client>=0.20",
+    "jsonschema>=4.18,<5",
+    # Reviewed independent checkpoint retention must work without pip access.
+    "boto3>=1.40,<2",
+    # Guided company sign-in must work in frozen installations without a shell.
+    "pyjwt[crypto]>=2.13.0", "pysaml2>=7.5.5", "pyXMLSecurity>=1.0.0",
+]
+azure      = ["openai>=1.30,<4", "azure-identity>=1.25.3,<2"]
+openrouter = ["openai>=1.30,<4"]
+ollama     = ["openai>=1.30,<4"]
+moonshot   = ["openai>=1.30,<4"]
+deepseek   = ["openai>=1.30,<4"]
+xai        = ["openai>=1.30,<4"]
+gemini     = ["openai>=1.30,<4"]
+tgi        = ["openai>=1.30,<4"]
+vllm       = ["openai>=1.30,<4"]
+chroma     = ["chromadb>=0.4"]
+qdrant     = ["qdrant-client>=1.6", "fastembed>=0.3"]
+weaviate   = ["weaviate-client>=4.5"]
+postgres   = ["psycopg[binary,pool]>=3.3.5,<4"]
+saml       = ["pysaml2>=7.5.5", "pyXMLSecurity>=1.0.0"]
+grpc       = ["grpcio>=1.60", "grpcio-tools>=1.60"]
+queue      = ["arq>=0.25"]
+zstd       = ["zstandard>=0.20"]
+perf-fastjson = ["orjson>=3.9"]
+modal      = ["modal>=0.60"]
+ros        = ["roslibpy>=1.5"]
+serial     = ["pyserial>=3.5"]
+i2c        = ["smbus2>=0.4"]
+sensors    = ["psutil>=5.9"]
+duckdb     = ["duckdb>=0.9"]
+langchain  = ["langchain-core>=1.3.3", "langsmith>=0.8.18"]
+math       = ["sympy>=1.12"]
+pandas     = ["pandas>=2.1", "pyarrow>=15.0"]
+calendar   = ["caldav>=1.3"]
+session         = ["httpx>=0.27"]
+chatgpt-session = ["httpx>=0.27"]
+claude-session  = ["httpx>=0.27"]
+kimi-session    = ["httpx>=0.27"]
+grok-session    = ["httpx>=0.27"]
+gemini-session  = ["httpx>=0.27"]
+capture         = ["playwright>=1.40"]
+browser         = ["playwright>=1.40", "lxml>=5.0"]
+computer-use    = ["pillow>=13.0.0", "mss>=9.0", "pyautogui>=0.9.54"]
+pdf             = ["pdfplumber>=0.10", "pypdf>=6.21.4"]
+# Bounded local parsers used by the AI Evidence Analysis workbench. Production
+# OCR invokes an operator-installed, absolute-path/SHA-pinned Tesseract binary;
+# it never discovers a binary from PATH. Legacy XLS dependencies are narrowly
+# pinned and runtime configuration must repeat their exact installed versions.
+evidence-analysis = [
+    "pypdf>=6.21.4",
+    "openpyxl>=3.1",
+    "pillow>=13.0.0",
+    "xlrd==2.0.2",
+    "olefile==0.47",
+]
+clipboard       = ["pyperclip>=1.8"]
+voice           = ["faster-whisper>=1.0"]
+# Voice unlock (voice_unlock.py): SpeechBrain's ECAPA-TDNN speaker model, run on
+# the CPU from the folder at [voice] speaker_model_path. Never required.
+voice-unlock    = ["speechbrain>=1.0", "torch>=2.2", "torchaudio>=2.2"]
+# CLAP zero-shot audio understanding (tools/audio_understanding.py).
+# torch floor mirrors [training].
+clap            = ["transformers>=4.40", "torch>=2.2"]
+notifications   = ["httpx>=0.27"]
+audit-signing   = ["cryptography>=48.0.1"]
+# Azure Key Vault / Managed HSM BYOK ([kms] provider = "azure"); imported lazily by
+# maverick.kms_backends. Floors are the 4.10.0 and 1.25.3 releases, checked on the
+# package index: they export CryptographyClient.wrap_key/unwrap_key with key_id on
+# the results, CryptographyClient.sign/verify (SignResult.signature,
+# VerifyResult.is_valid), and DefaultAzureCredential.
+azure-kms       = ["azure-keyvault-keys>=4.10.0,<5", "azure-identity>=1.25.3,<2"]
+sigstore        = ["sigstore>=3.0"]
+oidc            = ["pyjwt[crypto]>=2.13.0"]
+training        = ["torch>=2.2", "transformers>=4.40", "peft>=0.10",
+                   "bitsandbytes>=0.43", "accelerate>=0.30"]
+issue-trackers  = ["httpx>=0.27"]
+spreadsheet     = ["openpyxl>=3.1", "lxml>=5.0"]
+youtube         = ["youtube-transcript-api>=0.6"]
+latex           = ["latex2mathml>=3.77"]
+websocket       = ["websockets>=12.0,<17"]
+mongodb         = ["pymongo>=4.6"]
+redis           = ["redis>=5.0"]
+s3              = ["boto3>=1.34"]
+# Native Bedrock with AWS IAM (SigV4) auth: the Anthropic SDK signs requests
+# through boto3/botocore. The bearer-token path needs no extra.
+bedrock         = ["anthropic[bedrock]>=0.40.0,<2"]
+# Claude on Google Cloud Vertex AI: the Anthropic SDK's Vertex client, plus
+# google-auth (with requests) for Google Application Default Credentials.
+# Checked at client construction; the extra is never required by the kernel.
+vertex          = ["anthropic[vertex]>=0.40.0,<2", "google-auth[requests]>=2,<3"]
+# Optional only because every non-AWS inventory adapter uses the core HTTP
+# transport. Bedrock imports boto3 lazily and remains injectable in tests.
+ai-inventory    = ["boto3>=1.34"]
+observability   = [
+    "opentelemetry-api>=1.25",
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-http>=1.25",
+    "prometheus-client>=0.20",
+]
+sentry          = ["sentry-sdk>=2.0"]
+# Platform billing collection (maverick.billing_stripe): the OFFICIAL Stripe SDK,
+# used only when [billing.stripe] enable is on. Lazily imported inside the
+# functions that touch Stripe, so the module imports and reports "disabled"
+# cleanly without it; webhook signature verification is stdlib HMAC and needs
+# no SDK. Kept OPTIONAL so a fresh install pulls nothing extra.
+stripe          = ["stripe>=9.0"]
+shield          = ["maverick-shield>=0.1.7"]
+installer  = ["maverick-installer>=0.1.7"]
+channels   = ["maverick-channels>=0.1.7"]
+evolve     = ["maverick-evolve>=0.1.7"]
+dashboard  = ["maverick-dashboard>=0.1.7"]
+mcp        = ["maverick-mcp-server>=0.1.7"]
+knowledge  = ["maverick-knowledge>=0.1.7"]
+embeddings = ["fastembed>=0.3"]
+# Full dev/test bootstrap. Beyond the test runner + linter, this bundles the
+# cross-package runtime deps the suite imports -- the sibling packages are
+# installed `--no-deps`, so their deps (fastapi/httpx/twilio/...) won't come in
+# otherwise. Versions mirror the CVE-patched floors the CI `test`/`audit` jobs
+# enforce (see .github/workflows/ci.yml). Keeps `pip install -e .[dev]`
+# runnable end-to-end so `pytest` passes from a clean checkout.
+dev        = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "jsonschema>=4.18,<5",  # Restricted plugin-contract fixture validation.
+    "pyyaml>=6.0.3",  # Installer/workflow regression tests parse real YAML.
+    "ruff>=0.5",
+    "pre-commit",
+    "questionary>=2.0",
+    "rich>=13.7",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "jinja2>=3.1",
+    "httpx>=0.27",
+    "python-multipart>=0.0.31",
+    "starlette>=1.3.1",
+    "requests>=2.33.0",
+    "urllib3>=2.7.0",
+    "pillow>=13.0.0",
+    "twilio>=9.0",
+]
+all        = [
+    "openai>=1.30,<4",
+    "fastembed>=0.3",
+    "maverick-shield>=0.1.7",
+    "maverick-installer>=0.1.7",
+    "maverick-channels>=0.1.7",
+    "maverick-evolve>=0.1.7",
+    "maverick-dashboard>=0.1.7",
+    "maverick-mcp-server>=0.1.7",
+    "maverick-knowledge>=0.1.7",
+]
+
+[project.scripts]
+maverick = "maverick.cli:main"
+lightwork = "maverick.cli:main"
+
+[project.urls]
+Homepage      = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Repository    = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Issues        = "https://github.com/Daybreak-AI-Labs/LightworkOS/issues"
+Changelog     = "https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/Daybreak-AI-Labs/LightworkOS/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maverick*"]
+
+[tool.setuptools.package-data]
+# Ship the gRPC contract so the server can generate stubs from the installed
+# wheel (the [grpc] extra compiles it on demand).
+"maverick.grpc_api" = ["*.proto"]
+# Ship the domain packs and the first-party skills library as package data so
+# they are present in a built wheel, not only an editable/source checkout.
+"maverick" = [
+    "data/*.json",
+    "data/tokenizer/*",
+    "domains/*.toml",
+    "evaluator_anchors.lock.json",
+    "evaluator_anchors/*.ndjson",
+    "skills_builtin/*.md",
+    "sample_outcomes/*/*.csv",
+    "sample_outcomes/*/*.md",
+    "starter_team_data/*.json",
+]
+"maverick.env_hunt" = ["rules/*.yml"]
+"maverick.training" = ["environment_packs/*.ndjson", "environment_packs/*.json", "specialist_models.v1.json"]

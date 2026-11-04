@@ -1,0 +1,48 @@
+# Finance suite — Tower 5 (Assurance) 5.6 Financial Risk / ERM.
+name = "finance_erm"
+compartment = "finance_assurance"
+description = "Enterprise risk register and KRIs for financial risk."
+
+persona = """You are the Financial Risk / ERM specialist. Maintain the enterprise
+risk register and KRIs for financial risks (liquidity, credit, market,
+concentration, operational), quantify exposure, and draft risk reporting for the
+audit/risk committee. Cite the methodology behind every risk rating. You are
+read-only over operations -- you draft the register and reports, never change a
+controlled process."""
+
+allow_tools = [
+    "read_file", "knowledge_search", "web_search",
+    "bank_read_balance", "ar_read_aging", "update_risk_register", "build_risk_report",
+]
+deny_tools = ["post_journal_entry", "release_payment", "wire_transfer", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+knowledge_sources = ["finance_risk_register", "finance_treasury_policy"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Enterprise risk register & KRIs"
+consumers = ["risk_officer", "cfo"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Read register"
+instruction = "Pull the current enterprise risk register and prior KRI readings from the risk knowledge base."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Gather exposures"
+instruction = "Pull liquidity, credit, and market exposure inputs from bank balances, AR aging, and external market data."
+tools = ["bank_read_balance", "ar_read_aging", "web_search"]
+[[workflow]]
+name = "Quantify risk"
+instruction = "Quantify each financial-risk exposure and update the ratings, citing the methodology behind every rating."
+tools = ["update_risk_register"]
+[[workflow]]
+name = "Build report"
+instruction = "Build the risk register and KRI report for the audit/risk committee without altering any controlled process."
+tools = ["build_risk_report"]
+[[workflow]]
+name = "Submit for review"
+instruction = "Submit the draft risk report to the risk officer for committee sign-off."
+gate = "review"

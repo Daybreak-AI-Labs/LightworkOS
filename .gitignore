@@ -1,0 +1,134 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtualenvs
+.venv/
+.venv*/
+venv/
+env/
+ENV/
+
+# uv / hatch / poetry / npm
+.uv-cache/
+.hatch/
+uv.lock
+poetry.lock
+package-lock.json
+!packages/maverick-dashboard/tests/js/package-lock.json
+!packages/maverick-dashboard/tests/browser/package-lock.json
+
+# Testing / coverage
+.coverage
+.coverage.*
+.pytest_cache/
+.tox/
+.hypothesis/
+htmlcov/
+coverage.xml
+*.cover
+/packages/maverick-dashboard/tests/browser/.app*/
+/.browser-runtime*/
+/.browser-results*/
+# Single-journey browser configs write .browser-<journey>-results here.
+/.browser-*-results/
+**/.browser-runtime*/
+**/.browser-results*/
+/liblightwork_*_probe.rmeta
+
+# Type checkers
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# Node / TypeScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+out/
+*.tsbuildinfo
+
+# Rust
+target/
+Cargo.lock
+!apps/desktop-oauth-return/Cargo.lock
+!apps/desktop/src-tauri/Cargo.lock
+!apps/installer-desktop/src-tauri/Cargo.lock
+!rust/Cargo.lock
+**/*.rs.bk
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Secrets / local config
+.env
+.env.local
+.env.*.local
+.maverick/
+*.key
+*.pem
+
+# Build outputs
+*.log
+.maverick-workspace/
+/site/
+/.public-docs/
+
+# generated security-benchmark run artifact (RESULTS.md is the checked-in record)
+benchmarks/security/results.jsonl
+
+# generated gRPC stubs (compiled on demand from maverick.proto by the [grpc] extra)
+packages/maverick-core/maverick/grpc_api/*_pb2.py
+packages/maverick-core/maverick/grpc_api/*_pb2_grpc.py
+
+# repo-root scratch dir for ad-hoc stress/repro scripts (never committed)
+/scratchpad/
+
+# Self-learning training artifacts — DATA + WEIGHTS, never commit. These hold
+# RAW run transcripts (proposer_texts) and large model files; keep them on
+# Hugging Face Hub (private) / object storage, not in git. See
+# docs/self-learning-runbook.md.
+trajectories.jsonl
+proposer_texts.jsonl
+prm_linear.json
+scores.json
+proposer_dpo/
+maverick-train-out/
+
+/.browser-runtime/
+# Operator-specific Terraform inputs that identify people (deploy/aws/terraform/
+# local.auto.tfvars.example is the tracked template).
+deploy/aws/terraform/local.auto.tfvars
+deploy/aws/terraform/oidc.auto.tfvars

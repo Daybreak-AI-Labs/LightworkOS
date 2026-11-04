@@ -1,0 +1,18 @@
+<section id="lo-mi-answer-root" aria-labelledby="lo-mi-answer-h">
+  <h4 id="lo-mi-answer-h" tabindex="-1">Enter and check answers</h4>
+  <p class="muted">Choose questions above, then enter what the answer said using ordinary choices. Supporting passages must come from the question's information. Your answers are kept separately from learning instructions.</p>
+  <form id="lo-mi-answer-form" class="lo-form">
+    <div class="lrn__actions">
+      <button type="button" class="btn btn--ghost" id="lo-mi-answer-load">Load current questions</button>
+      <button type="button" class="btn btn--ghost" id="lo-mi-answer-original" hidden>Check original scoring result</button>
+    </div>
+    <label for="lo-mi-answer-model">Reported answer model (optional; not verified)</label>
+    <select id="lo-mi-answer-model" class="select"><option value="">Not specified</option></select>
+    <div id="lo-mi-answer-questions" class="stack"></div>
+    <button type="submit" class="btn btn--primary" id="lo-mi-answer-review" disabled>Review supplied answers</button>
+    <p id="lo-mi-answer-status" class="muted" role="status" aria-live="polite">Load the selected questions to enter answers.</p>
+    <div id="lo-mi-answer-preview" class="stack"></div>
+    <div id="lo-mi-answer-result" class="stack" aria-live="polite"></div>
+  </form>
+</section>
+<script src="/static/lightwork-model-answer-scoring.js" defer></script>

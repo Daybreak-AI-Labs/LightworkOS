@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Physical recovery copies are created from the exact MSI File rows. This keeps
+  them byte-identical to the installed, package-patched binaries without adding
+  a second frozen runtime or native shell to the cabinet.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="LightworkRecoveryCopies" Guid="B7C12026-66EA-4954-86AA-CCBA8413B13A" Win64="yes">
+        <RegistryValue Root="HKLM" Key="Software\Daybreak AI Labs\Lightwork" Name="RecoveryCopies" Type="integer" Value="1" KeyPath="yes" />
+        <CopyFile Id="LightworkRecoveryRuntime" FileId="Bin_maverick.exe" DestinationDirectory="INSTALLDIR" DestinationName="maverick-recovery.exe" />
+        <CopyFile Id="LightworkRecoveryDesktop" FileId="Path" DestinationDirectory="INSTALLDIR" DestinationName="maverick-recovery-desktop.exe" />
+        <RemoveFile Id="RemoveLightworkRecoveryInstaller" Name="Lightwork-recovery.msi" On="uninstall" />
+      </Component>
+    </DirectoryRef>
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="LightworkRepairShortcut" Guid="33CB594E-5A4F-44CA-AE65-454F4E9D33D1" Win64="yes">
+        <Shortcut Id="LightworkRepairShortcutEntry" Name="Repair Lightwork" Description="Repair Lightwork from its retained recovery application" Target="[INSTALLDIR]maverick-recovery-desktop.exe" Arguments="--maintenance-result" WorkingDirectory="INSTALLDIR" Icon="ProductIcon" />
+        <!-- The Start Menu folder lives in the user profile, so ICE38/ICE57 require
+             an HKCU key path here, exactly like the package's own shortcut component. -->
+        <RegistryValue Root="HKCU" Key="Software\Daybreak AI Labs\Lightwork" Name="RepairShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+    <!-- OriginalDatabase is the invoked full MSI path. The app invokes repairs with
+         REINSTALLMODE=v so the retained copy remains the exact, signed, registered
+         source rather than Windows Installer's private cache. A MoveFile row cannot
+         retain it: the installer reads a MoveFile source property as a directory,
+         and pointing it at OriginalDatabase rewrote the product's own source path
+         (error 1316 on ...\Lightwork.msi\Lightwork.msi during ProcessComponents).
+         The copy is an explicit deferred action on first install and on the
+         same-version reinstall the in-app repair runs (REINSTALL=ALL from the
+         verified package, so the retained copy follows it), undone by its
+         rollback twin on first install, and removed on uninstall by the
+         component above. -->
+    <CustomAction Id="LightworkRetainInstaller" Directory="INSTALLDIR" ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c copy /b /y &quot;[OriginalDatabase]&quot; &quot;[INSTALLDIR]Lightwork-recovery.msi&quot;" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="LightworkRetainInstallerRollback" Directory="INSTALLDIR" ExeCommand="&quot;[SystemFolder]cmd.exe&quot; /d /c del /f /q &quot;[INSTALLDIR]Lightwork-recovery.msi&quot;" Execute="rollback" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="LightworkRetainInstallerRollback" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="LightworkRetainInstaller" After="LightworkRetainInstallerRollback">NOT Installed OR REINSTALL</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

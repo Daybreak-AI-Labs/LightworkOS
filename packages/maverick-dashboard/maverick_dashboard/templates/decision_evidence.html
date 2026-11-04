@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Shared decision reviews · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% call hero('Governance', 'Shared decision reviews', subtitle='Useful information before a choice', lede='Enter your choices, possible situations and losses. Check which choices your reports support. Find the least entered-cost set of observations that can support every case.') %}{% endcall %}
+<p class="panel">{{ notice }} <a href="/commitment-reviews">Check shared resource quantities in Promise reviews</a>.</p>
+<style>
+  #sde-root { min-width:0; } #sde-root p,#sde-root dd,#sde-root label { overflow-wrap:anywhere; }
+  #sde-root .btn { max-inline-size:100%; white-space:normal; overflow-wrap:anywhere; }
+  #sde-sources label.sde-field { flex-direction:row; align-items:center; }
+  #sde-sources input[type=checkbox] { width:auto; flex-shrink:0; }
+  .sde-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr)); gap:var(--space-3); }
+  .sde-field { display:flex; flex-direction:column; gap:var(--space-1); margin-block:var(--space-2); }
+  .sde-box { border:1px solid var(--border); border-radius:var(--radius-md); padding:var(--space-3); margin-block:var(--space-3); min-width:0; }
+  .sde-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-block:var(--space-3); }
+  .sde-table { overflow:auto; } .sde-table table { border-collapse:collapse; width:100%; } .sde-table td,.sde-table th { text-align:left; padding:var(--space-2); border-bottom:1px solid var(--border); }
+  #sde-review dd { white-space:pre-wrap; margin-inline-start:0; } #sde-status:empty { display:none; }
+</style>
+<section id="sde-root" data-context="{{ decision_context }}" data-enabled="{{ 'true' if decision_enabled else 'false' }}">
+  <p id="sde-status" class="panel" role="status" aria-live="polite">{% if decision_enabled %}Loading your saved reviews…{% else %}Shared decision reviews are off. An administrator can enable them in Settings. Your own retained original results remain readable below.{% endif %}</p>
+  <section class="panel"><h2>Your saved reviews</h2><div id="sde-saved"></div><div class="sde-actions"><button type="button" class="btn btn--primary" id="sde-new" {% if not decision_enabled %}disabled{% endif %}>Create a decision review</button><button type="button" class="btn btn--ghost" id="sde-refresh" {% if not decision_enabled %}disabled{% endif %}>Read current sources and budget</button><button type="button" class="btn btn--ghost" id="sde-original">Read the last original request</button></div></section>
+  <section class="panel" id="sde-editor" hidden><h2>Enter choices and possible situations</h2><p>Start with this fictional two-order example, then enter your choices and possible situations. Uncheck a situation only when your entered assumptions rule it out. These assumptions are not independently verified. Cases are checked separately unless you enter combined requirements.</p><div id="sde-author"></div><div id="sde-loss-author"></div><div class="sde-actions"><button type="button" class="btn btn--ghost" id="sde-add-fact">Add a fact</button><button type="button" class="btn btn--ghost" id="sde-add-case">Add a case</button><button type="button" class="btn btn--ghost" id="sde-states">List all possible situations</button><button type="button" class="btn btn--ghost" id="sde-individual-states">Enter situations individually</button><button type="button" class="btn btn--primary" id="sde-review-model">Review all entered choices</button><button type="button" class="btn btn--ghost" id="sde-close-editor">Close authoring</button></div><div class="sde-table" id="sde-state-table"></div></section>
+  <section class="panel" id="sde-current" hidden><h2>Current choices</h2><div id="sde-results"></div><div class="sde-actions"><button type="button" class="btn btn--ghost" id="sde-edit">Edit cases, facts and possible situations</button><button type="button" class="btn btn--primary" id="sde-acquire">Review one shared observation</button><button type="button" class="btn" id="sde-qualify" hidden>Review the complete loss check</button><button type="button" class="btn" id="sde-batch" hidden>Review the complete observation batch</button><button type="button" class="btn btn--ghost" id="sde-acknowledge" hidden>Review acknowledgment of the unconfirmed check</button><button type="button" class="btn btn--danger" id="sde-remove">Review removal of this decision review</button></div><div id="sde-sources"></div><div id="sde-observations"></div></section>
+  <section class="panel" id="sde-history"></section>
+  <section class="panel" id="sde-review" hidden aria-label="Complete reviewed change"></section>
+</section>
+<script src="/static/lightwork-decision-evidence.js" defer></script>
+{% endblock %}

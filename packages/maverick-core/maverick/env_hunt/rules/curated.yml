@@ -1,0 +1,16 @@
+id: LW-SIGMA-001
+title: Cloud console login without MFA
+description: Potential initial access through an account without MFA.
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    action: ConsoleLogin
+    mfa: No
+  condition: selection
+tags:
+  - attack.t1078
+level: high
+# The runtime copy lives in sigma.py so wheels work without relying on external
+# package-data configuration. This file is the source-readable Sigma exchange pack.

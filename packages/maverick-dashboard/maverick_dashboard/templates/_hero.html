@@ -1,0 +1,57 @@
+{# The shared page header — the Ekko treatment generalized: an uppercase
+   kicker, a display title, an accent subtitle, a lede, the page's main
+   action, and (optionally) a right-hand state box supplied through a
+   {% call %} block:
+
+     {% from "_hero.html" import hero, state %}
+     {% set hero_actions %}
+       <a class="btn btn--primary" href="/chat">New task</a>
+       <a class="btn" href="/goal-builder">Step-by-step form</a>
+     {% endset %}
+     {% call hero('Your AI workforce', 'Tasks',
+                  subtitle='Every task on record', lede='…',
+                  actions=hero_actions) %}
+       {{ state('Current state', '12 recent tasks',
+                badge='3 running', badge_class='ok', copy='…') }}
+     {% endcall %}
+
+   actions — the page's main action, shown under the lede. One view has at
+     most one btn--primary, and it belongs here; secondary actions next to it
+     use a plain or quiet button. Build the markup with {% set %}…{% endset %}
+     in the calling template: the captured block is template-owned markup and
+     is not escaped again, while every {{ value }} inside it is still escaped.
+     A plain string passed as actions is escaped like any other text.
+   compact — a shorter header for working pages (task tools, forms, detail
+     views): smaller title and padding, actions beside the text.
+   kicker — the uppercase line above the title; pass '' where no section
+     name fits (error pages), and the line is left out.
+
+   Styles live in lightwork.css (.hero*). Call without a {% call %} block for
+   a full-width hero with no state box. Text arguments are autoescaped; use
+   explicit trusted markup only for HTML owned by the calling template. #}
+
+{% macro state(label, name, badge='', badge_class='idle', copy='') %}
+  <div class="hero-statebox" aria-live="polite">
+    <div class="hero-statebox__label">{{ label }}</div>
+    <div class="hero-statebox__row">
+      <strong>{{ name }}</strong>
+      {% if badge %}<span class="badge {{ badge_class }}">{{ badge }}</span>{% endif %}
+    </div>
+    {% if copy %}<p class="hero-statebox__copy">{{ copy }}</p>{% endif %}
+  </div>
+{% endmacro %}
+
+{% macro hero(kicker, title, subtitle='', lede='', title_id='page-hero-title', actions='', compact=false) %}
+<section class="hero{{ '' if caller is defined else ' hero--solo' }}{{ ' hero--compact' if compact else '' }}"
+         aria-labelledby="{{ title_id }}">
+  <div>
+    {% if kicker %}<div class="hero-kicker">{{ kicker }}</div>{% endif %}
+    <h1 class="page-title hero-title" id="{{ title_id }}">{{ title }}</h1>
+    {% if subtitle %}<div class="hero-subtitle">{{ subtitle }}</div>{% endif %}
+    {% if lede %}<p class="hero-lede">{{ lede }}</p>{% endif %}
+    {% if actions and not compact %}<div class="hero-actions">{{ actions }}</div>{% endif %}
+  </div>
+  {% if actions and compact %}<div class="hero-actions">{{ actions }}</div>{% endif %}
+  {% if caller is defined %}{{ caller() }}{% endif %}
+</section>
+{% endmacro %}

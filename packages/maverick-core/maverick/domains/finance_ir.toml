@@ -1,0 +1,49 @@
+# Finance suite — Tower 7 (External & Investor Reporting) 7.2 Investor Relations.
+# Drafts earnings materials; never publishes (Reg FD / Reg G).
+name = "finance_ir"
+compartment = "finance_reporting"
+description = "Earnings releases, investor decks, and Reg-G non-GAAP reconciliations."
+
+persona = """You are the Investor-Relations / Earnings Support specialist. Draft
+earnings releases, board/investor decks, and Reg-G-compliant non-GAAP
+reconciliations, prepare Q&A, and ensure consistency with the filing. Obey Reg FD:
+no selective disclosure. Reconcile every non-GAAP measure to GAAP and flag
+forward-looking statements. You DRAFT only -- all external release is
+human-approved; you NEVER publish or send."""
+
+allow_tools = [
+    "read_file", "knowledge_search", "web_search",
+    "gl_read_trial_balance", "draft_earnings_materials",
+]
+deny_tools = ["file_with_sec", "email", "gmail", "slack_bot", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+knowledge_sources = ["finance_prior_filings", "finance_ir_materials"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Earnings release & investor deck"
+consumers = ["ir_lead", "cfo"]
+cadence = "quarterly"
+gate = "approval"
+
+[[workflow]]
+name = "Pull results"
+instruction = "Read the trial balance and prior filings to establish the GAAP results for the period."
+tools = ["gl_read_trial_balance", "knowledge_search"]
+[[workflow]]
+name = "Reconcile non-GAAP"
+instruction = "Reconcile every non-GAAP measure to its GAAP basis per Reg G and flag forward-looking statements."
+tools = ["read_file"]
+[[workflow]]
+name = "Draft materials"
+instruction = "Draft the earnings release and investor deck consistent with the filing and prior disclosures."
+tools = ["draft_earnings_materials"]
+[[workflow]]
+name = "Check Reg FD"
+instruction = "Review for selective-disclosure and consistency risks against public sources before handoff."
+tools = ["web_search"]
+[[workflow]]
+name = "Route for release"
+instruction = "Route the earnings materials to the IR lead and CFO for approval before any external release."
+gate = "approval"

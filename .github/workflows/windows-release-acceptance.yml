@@ -1,0 +1,102 @@
+name: Windows real release pair acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: 'Reviewed lightwork.release-pair-plan.v1 JSON with immutable previous release and successful signed-candidate artifact IDs and exact digests'
+        type: string
+        required: true
+      confirm_disposable_vm:
+        description: 'Authorize installation, repair, upgrade and rollback only on the prepared disposable clean Windows runner'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: windows-real-release-acceptance
+  cancel-in-progress: false
+
+jobs:
+  pin-original-inputs:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_disposable_vm
+    runs-on: windows-2022
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.bundle.outputs.artifact-id }}
+      verifier_sha256: ${{ steps.verifier.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12.10'
+          architecture: 'x64'
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: '1.97.1'
+      - name: Pin immutable original bundles without executing either installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIGHTWORK_RELEASE_ACCEPTANCE_PLAN: ${{ inputs.plan }}
+        run: |
+          & (Join-Path $env:pythonLocation 'python.exe') -I apps/installer-msi/release_acceptance.py --output release-pair-inputs
+          if ($LASTEXITCODE -ne 0) { throw 'Original release identity gate failed; no VM installation is authorized.' }
+      - name: Build the reviewed offline updater-signature verifier
+        id: verifier
+        shell: pwsh
+        run: |
+          cargo build --locked --release --manifest-path apps/installer-msi/verify-update/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed updater signature verifier build failed.' }
+          Copy-Item -LiteralPath apps/installer-msi/verify-update/target/release/lightwork-verify-update.exe -Destination release-pair-inputs/lightwork-verify-update.exe
+          Copy-Item -LiteralPath apps/installer-msi/test-release-pair.ps1 -Destination release-pair-inputs/test-release-pair.ps1
+          $digest = (Get-FileHash -LiteralPath release-pair-inputs/lightwork-verify-update.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "sha256=$digest" >> $env:GITHUB_OUTPUT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: bundle
+        with:
+          name: original-release-pair-inputs
+          path: release-pair-inputs/
+          if-no-files-found: error
+          retention-days: 90
+
+  install-repair-upgrade-rollback:
+    needs: pin-original-inputs
+    if: github.ref == 'refs/heads/main' && inputs.confirm_disposable_vm
+    # Provision a fresh ephemeral VM from an owner-reviewed supported Windows
+    # image, then destroy it after this job. Never attach a persistent machine.
+    runs-on: [self-hosted, Windows, X64, lightwork-clean-release-acceptance]
+    environment: windows-release-acceptance
+    timeout-minutes: 100
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.pin-original-inputs.outputs.artifact_id }}
+          path: release-pair-inputs
+          merge-multiple: true
+      - name: Verify original signatures and exercise the actual release pair
+        shell: pwsh
+        env:
+          LIGHTWORK_RELEASE_VM_CONFIRM: DISPOSABLE_VM_INSTALL_REPAIR_UPGRADE_ROLLBACK
+          LIGHTWORK_VERIFIER_SHA256: ${{ needs.pin-original-inputs.outputs.verifier_sha256 }}
+          LIGHTWORK_APPROVED_UPDATE_PUBLIC_KEY: ${{ vars.LIGHTWORK_WINDOWS_UPDATE_PUBLIC_KEY }}
+          LIGHTWORK_APPROVED_PUBLISHER_THUMBPRINT: ${{ vars.LIGHTWORK_WINDOWS_CERTIFICATE_THUMBPRINT }}
+          # LIGHTWORK_CLEAN_VM_ATTESTATION comes from the VM provisioner,
+          # binding this VM UUID and image hash; it is never a workflow input.
+        run: |
+          & ./release-pair-inputs/test-release-pair.ps1 -InputsDirectory ./release-pair-inputs -Report ./real-release-acceptance.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: real-release-pair-acceptance-evidence
+          path: |
+            real-release-acceptance.json
+            ${{ runner.temp }}/lightwork-release-msi-*.log
+          if-no-files-found: warn
+          retention-days: 90

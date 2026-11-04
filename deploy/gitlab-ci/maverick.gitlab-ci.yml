@@ -1,0 +1,141 @@
+# Lightwork GitLab CI template (reusable)
+#
+# The GitLab counterpart to the `deploy/github-action` wrapper: install
+# Lightwork from a verified local checkout or an explicitly configured private
+# index and run a goal under a hard spend cap and non-interactive defaults.
+#
+# A downstream project pulls this in with `include:` and sets a few CI/CD
+# variables (see deploy/gitlab-ci/README.md):
+#
+#     include:
+#       - remote: 'https://gitlab.example/Lightwork/-/raw/<full-commit-sha>/deploy/gitlab-ci/maverick.gitlab-ci.yml'
+#
+#     maverick:
+#       extends: .maverick
+#       variables:
+#         MAVERICK_GOAL: "Review the changes on this branch and flag risks."
+#
+# Required project CI/CD variables:
+#   ANTHROPIC_API_KEY   provider key (mark as Masked/Protected)
+#   MAVERICK_GOAL       the goal text passed to `maverick start`
+#   and exactly one install source:
+#     MAVERICK_SOURCE_DIR + MAVERICK_SOURCE_REF (checked-out source + SHA), or
+#     MAVERICK_PACKAGE_INDEX_URL + MAVERICK_VERSION (trusted private index)
+# Optional:
+#   MAVERICK_MAX_DOLLARS  hard USD spend cap (default below)
+#   MAVERICK_MODEL        model override, e.g. anthropic:claude-sonnet-4-6
+#   MAVERICK_VERSION      exact version when using the trusted-index mode
+
+.maverick:
+  image: "python:${MAVERICK_PYTHON_VERSION}"
+  variables:
+    # --- Safety defaults, baked in --------------------------------------
+    # Non-interactive: a pipeline has no human at a prompt, so any tool
+    # call that would ask for consent is denied rather than hanging.
+    MAVERICK_CONSENT_MODE: "auto-deny"
+    # Hard USD spend cap. A runaway goal stops rather than running up a
+    # bill. Wired into [budget] max_dollars in the generated config below.
+    MAVERICK_MAX_DOLLARS: "1.0"
+    # Shell backend. `local` starts in $CI_PROJECT_DIR but does not isolate the
+    # host filesystem or network. Keep it only on a trusted disposable/isolated
+    # runner; use docker/podman plus runner controls where available.
+    MAVERICK_SANDBOX: "local"
+    # Defaults for the knobs a downstream job may override.
+    MAVERICK_PYTHON_VERSION: "3.12"
+    MAVERICK_MODEL: ""
+    MAVERICK_SOURCE_DIR: ""
+    MAVERICK_SOURCE_REF: ""
+    MAVERICK_PACKAGE_INDEX_URL: ""
+    MAVERICK_VERSION: ""
+  script:
+    - set -e
+    - |
+      if [ -z "$MAVERICK_GOAL" ]; then
+        echo "MAVERICK_GOAL is required (set it as a CI/CD variable)." >&2
+        exit 1
+      fi
+    - |
+      if [ -n "$MAVERICK_SOURCE_DIR" ]; then
+        if [[ ! "$MAVERICK_SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "MAVERICK_SOURCE_REF must be the lowercase 40-character SHA of MAVERICK_SOURCE_DIR." >&2
+          exit 1
+        fi
+        source_root="$(cd "$MAVERICK_SOURCE_DIR" && pwd -P)"
+        if [ ! -f "$source_root/packages/maverick-core/pyproject.toml" ]; then
+          echo "MAVERICK_SOURCE_DIR is not a complete Lightwork checkout." >&2
+          exit 1
+        fi
+        actual_ref="$(git -c core.fsmonitor=false -C "$source_root" rev-parse HEAD)"
+        if [ "$actual_ref" != "$MAVERICK_SOURCE_REF" ]; then
+          echo "Lightwork source is at $actual_ref, not the required $MAVERICK_SOURCE_REF." >&2
+          exit 1
+        fi
+        if [ -n "$(git -c core.fsmonitor=false -C "$source_root" status --porcelain --untracked-files=all)" ]; then
+          echo "Lightwork source contains local or untracked changes; refusing to install unreviewed content." >&2
+          exit 1
+        fi
+        python "$source_root/scripts/install_release_cohort.py" \
+          --source-root "$source_root" \
+          --target-python python \
+          --core-extra release-runtime
+      elif [ -n "$MAVERICK_PACKAGE_INDEX_URL" ]; then
+        if [[ ! "$MAVERICK_VERSION" =~ ^[0-9]+([.][0-9]+){2}([.a-zA-Z0-9+-]*)?$ ]]; then
+          echo "MAVERICK_VERSION must be an exact version in trusted-index mode." >&2
+          exit 1
+        fi
+        python - <<'PY'
+      import os
+      from urllib.parse import urlsplit
+
+      url = os.environ["MAVERICK_PACKAGE_INDEX_URL"]
+      parsed = urlsplit(url)
+      host = (parsed.hostname or "").rstrip(".").lower()
+      if parsed.scheme != "https" or not host:
+          raise SystemExit("MAVERICK_PACKAGE_INDEX_URL must be an absolute HTTPS URL")
+      if host in {"pypi.org", "pypi.python.org", "files.pythonhosted.org"}:
+          raise SystemExit(
+              "Public PyPI is blocked until all Lightwork project names are "
+              "reserved and protected."
+          )
+      PY
+        # --isolated ignores ambient pip config, including an attacker-controlled
+        # extra-index-url that could silently re-enable public fallback.
+        python -m pip --isolated install --no-cache-dir \
+          --index-url "$MAVERICK_PACKAGE_INDEX_URL" \
+          "maverick-agent[release-runtime]==${MAVERICK_VERSION}" \
+          "maverick-shield==${MAVERICK_VERSION}" \
+          "maverick-channels==${MAVERICK_VERSION}" \
+          "maverick-evolve==${MAVERICK_VERSION}" \
+          "maverick-dashboard==${MAVERICK_VERSION}" \
+          "maverick-mcp-server==${MAVERICK_VERSION}" \
+          "maverick-knowledge==${MAVERICK_VERSION}" \
+          "maverick-installer==${MAVERICK_VERSION}"
+        python -m pip check
+        python -c "import maverick, maverick_shield, maverick_channels, maverick_evolve, maverick_dashboard, maverick_mcp, maverick_knowledge, maverick_installer"
+      else
+        echo "No trusted Lightwork install source configured. Set MAVERICK_SOURCE_DIR + MAVERICK_SOURCE_REF or MAVERICK_PACKAGE_INDEX_URL + MAVERICK_VERSION." >&2
+        exit 1
+      fi
+    - maverick version || maverick --help
+    # Generate ~/.maverick/config.toml. The budget cap and sandbox scope
+    # live here so they hold no matter how the goal is invoked.
+    - mkdir -p ~/.maverick
+    - |
+      cat > ~/.maverick/config.toml <<EOF
+      [providers.anthropic]
+      api_key = "${ANTHROPIC_API_KEY}"
+
+      [budget]
+      max_dollars = ${MAVERICK_MAX_DOLLARS}
+
+      [sandbox]
+      backend = "${MAVERICK_SANDBOX}"
+      workdir = "${CI_PROJECT_DIR}"
+      EOF
+    # Global options (e.g. --model) go before the subcommand. The goal is
+    # passed as a single positional argument, quoted, so metacharacters in
+    # it can't inject shell.
+    - |
+      pre=()
+      [ -n "$MAVERICK_MODEL" ] && pre+=( --model "$MAVERICK_MODEL" )
+      maverick "${pre[@]}" start "$MAVERICK_GOAL" --max-dollars "$MAVERICK_MAX_DOLLARS" --sandbox "$MAVERICK_SANDBOX"

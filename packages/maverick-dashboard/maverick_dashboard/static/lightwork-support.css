@@ -1,0 +1,15 @@
+#support-center{max-width:64rem;margin-inline:auto;padding:1rem 1rem 5rem}
+#support-center h1{font-size:clamp(2rem,5vw,3rem);font-weight:300;line-height:1.15}
+#support-center p{max-width:72ch;overflow-wrap:anywhere}
+#support-center .support-scope{max-width:72ch;padding:1rem;border:1px solid var(--border);border-radius:.5rem;background:var(--surface-sunken)}
+#support-center .support-scope h2{margin-top:0;font-size:1.15rem}
+#support-center .support-scope li{margin-block:.4rem;overflow-wrap:anywhere}
+#support-center .support-followups{display:flex;align-items:center;flex-wrap:wrap;gap:.45rem}
+#support-preview{max-height:28rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:1rem;border:1px solid var(--border);border-radius:.5rem}
+#support-center button{min-height:2.75rem;max-width:100%;white-space:normal}
+@media(max-width:480px){#support-center .support-followups{max-width:calc(100% - 3.75rem);align-items:flex-start;flex-direction:column}#support-center .support-followups span{display:none}}
+#support-center .support-readable dl{display:grid;grid-template-columns:minmax(8rem,max-content) 1fr;gap:.3rem 1rem;margin:.4rem 0 1rem}
+#support-center .support-readable dt{color:var(--muted);overflow-wrap:anywhere}
+#support-center .support-readable dd{margin:0;overflow-wrap:anywhere}
+#support-center .support-readable h4{margin:1rem 0 .2rem}
+@media(max-width:480px){#support-center .support-readable dl{grid-template-columns:1fr}}

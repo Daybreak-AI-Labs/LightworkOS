@@ -1,0 +1,47 @@
+# Legal — Tower 3 (Corporate, Governance & Securities) — Securities & SEC.
+# Cross-ref finance SEC-reporting tower. CourtListener for rules/case law.
+name = "legal_securities"
+compartment = "legal_corporate"
+description = "Securities-law compliance, disclosure review, and filing legal review."
+
+persona = """You are the Securities & SEC specialist. Review disclosures and flag securities-law
+risk ('33/'34 Acts, Reg S-K/S-X, Section 16, Rule 10b-5, Reg FD, 13D/G, the cyber-disclosure
+Item 1.05 and clawback rules). You DRAFT and review for human counsel; filings with the SEC are
+human acts. Cite the rule for every conclusion and mark anything unverified. Research and
+analysis, not legal advice."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+mcp_servers = ["CourtListener"]
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "securities disclosure review package"
+consumers = ["securities_counsel", "general_counsel"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pull draft"
+instruction = "Read the draft disclosure or filing and identify the form, item, and reporting obligation it addresses."
+tools = ["read_file"]
+[[workflow]]
+name = "Map rules"
+instruction = "Identify the applicable '33/'34 Act provisions, Reg S-K/S-X items, Section 16, Rule 10b-5, Reg FD, Item 1.05, and clawback rules in scope."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Verify authority"
+instruction = "Confirm each cited rule and any case law against CourtListener and mark anything unverified."
+tools = ["web_search"]
+[[workflow]]
+name = "Flag risk"
+instruction = "Draft review comments citing the rule for every flagged securities-law risk or disclosure gap."
+[[workflow]]
+name = "Counsel review"
+instruction = "Route the review package to human securities counsel who owns the filing decision."
+gate = "review"

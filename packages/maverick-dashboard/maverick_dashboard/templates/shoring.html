@@ -1,0 +1,432 @@
+{% extends "base.html" %}
+{% block title %}Autonomous shoring · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .sh-pos { color: var(--success); }
+  .sh-neg { color: var(--danger); }
+  .sh-fn { margin-bottom: var(--space-4); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+  .sh-fn:last-child { border-bottom: 0; }
+  .sh-fn h3 { margin: 0 0 var(--space-1); font-size: var(--text-md); }
+  .sh-meta { color: var(--muted); font-size: var(--text-xs); margin: 0 0 var(--space-3); }
+  .sh-slas { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+  .sh-slas li { font-size: var(--text-xs); }
+  .sh-actual { color: var(--muted); margin-left: var(--space-1); }
+  .sh-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
+  .sh-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: var(--space-3); align-items: end; }
+  .sh-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+  .sh-sla-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, .8fr) minmax(0, 1.2fr) auto; gap: var(--space-2); margin-bottom: var(--space-2); align-items: end; }
+  @media (max-width: 620px) { .sh-sla-row { grid-template-columns: minmax(0, 1fr); } }
+  .sh-note { font-size: var(--text-xs); color: var(--muted); }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% if disabled %}
+{{ hero('Insights', 'Autonomous shoring', subtitle="Hand a team's work to Lightwork",
+        lede='Choose a business area, set the service levels you expect, and track what it costs and saves compared with doing it by hand.') }}
+<section class="panel" role="status" aria-labelledby="sh-off-title">
+  <h2 id="sh-off-title">This page is turned off</h2>
+  {% if can_turn_on %}
+  <p>Turn it on to plan, run and measure work that Lightwork takes over from a team.</p>
+  <p><button type="button" class="btn btn--primary" id="sh-turn-on">Turn on</button></p>
+  <p class="sh-note" id="sh-turn-on-msg" role="status" aria-live="polite"></p>
+  {% else %}
+  <p>Ask an administrator to turn this page on.</p>
+  {% endif %}
+</section>
+{% if can_turn_on %}
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var btn = document.getElementById('sh-turn-on');
+  var msg = document.getElementById('sh-turn-on-msg');
+  btn.addEventListener('click', function () {
+    btn.disabled = true; msg.textContent = 'Turning on…';
+    fetch({{ api_base | tojson }} + '/turn-on', { method: 'POST', headers: { Accept: 'application/json' } })
+      .then(function (r) { if (!r.ok) throw r; window.location.reload(); })
+      .catch(function (failure) {
+        btn.disabled = false;
+        msg.textContent = failure && failure.status === 409
+          ? 'Your installation controls this setting, so it cannot be turned on here. Ask your IT team.'
+          : window.mvErrorText(failure, 'turn this page on');
+      });
+  });
+})();
+</script>
+{% endif %}
+{% else %}
+{% set saved = report.saved %}
+{% set sla_cls = {'met': 'ok', 'at_risk': 'warn', 'breached': 'breach', 'no_data': 'idle'} %}
+{% set sla_word = {'met': 'On target', 'at_risk': 'At risk', 'breached': 'Missed', 'no_data': 'No data yet'} %}
+{% set lc_cls = {'scoping': 'idle', 'demonstrating': 'info', 'running': 'ok', 'proving': 'info'} %}
+
+{% call hero('Insights', 'Autonomous shoring', subtitle="Hand a team's work to Lightwork",
+             lede='Choose a business area, set the service levels you expect, and track what it costs and saves compared with doing it by hand. See the full breakdown on <a href="/savings">Savings</a>.' | safe) %}
+  {% if report.available %}{{ state('Estimated cost difference',
+           saved | money ~ ' saved',
+           badge='Saving money' if saved >= 0 else 'Costing more',
+           badge_class='ok' if saved >= 0 else 'warn',
+           copy='Assumption-based comparison in USD over finished attempts in the last ' ~ report.window_days ~ ' days. These figures do not establish realized savings or accepted outcomes.') }}
+  {% else %}<p role="alert">{{ report.unavailable_reason }} <a href="/savings">Review savings assumptions and history</a>.</p>{% endif %}
+{% endcall %}
+
+{% if report.available %}<div class="section-head"><h2>Savings estimate</h2></div>
+<div class="grid" aria-label="Savings summary">
+  <div class="stat">
+    <div class="num {{ 'sh-pos' if saved >= 0 else 'sh-neg' }}">{{ saved | money }}</div>
+    <div class="label">Saved (last {{ report.window_days }} days)</div>
+  </div>
+  <div class="stat">
+    <div class="num">{{ report.human_cost | money }}</div>
+    <div class="label">Cost if done by hand</div>
+  </div>
+  <div class="stat">
+    <div class="num">{{ report.agent_cost | money }}</div>
+    <div class="label">Lightwork spend</div>
+  </div>
+  <div class="stat">
+    <div class="num">{{ report.deliverables }}</div>
+    <div class="label">Items delivered{% if report.roi_multiple %} · returned {{ report.roi_multiple }}× its cost{% endif %}</div>
+  </div>
+</div>
+
+{% endif %}
+<div class="section-head"><h2>Book of Work</h2>
+  {% if can_manage %}<button type="button" class="btn btn--primary" data-sh-new>Add a business area</button>{% endif %}
+</div>
+<div class="panel">
+  {% if functions %}
+    {% for f in functions %}
+    {% set lc = lifecycle_labels.get(f.lifecycle, (f.lifecycle | humanize, '')) %}
+    <div class="sh-fn" data-fn="{{ f.key }}">
+      <h3>
+        {{ f.name }}
+        <span class="badge {{ lc_cls.get(f.lifecycle, 'idle') }}" title="{{ lc[1] }}">{{ lc[0] }}</span>
+        <span class="badge {{ sla_cls.get(f.overall, 'idle') }}">Service levels: {{ sla_word.get(f.overall, f.overall | humanize) }}</span>
+      </h3>
+      <p class="sh-meta">
+        Work area: {{ (f.department | humanize) or 'Not chosen' }}
+        · Owner: {{ (f.owner | identity) if f.owner else 'No owner' }}
+        · {% if not f.measurement_complete %}sample only: {% endif %}{{ f.delivered }} delivered, {{ f.blocked }} blocked
+        · {{ f.exception_count }} waiting for a person
+        {% if not f.measurement_complete %}<br>This area has a lot of work, so only a sample is counted and service levels can't be checked yet.{% endif %}
+        {% if f.legacy_completion_count %}<br>{{ f.legacy_completion_count }} older items have no recorded finish time, so the time to finish can't be measured for this period.{% endif %}
+        {% if f.scope %}<br>What's included: {{ f.scope }}{% endif %}
+      </p>
+      {% if f.slas %}
+      <ul class="sh-slas">
+        {% for s in f.slas %}
+        {% set ml = metric_labels.get(s.metric, (s.metric | humanize, '', s.unit)) %}
+        <li>
+          <span class="badge {{ sla_cls.get(s.status, 'idle') }}">{{ s.name }}: {{ sla_word.get(s.status, s.status | humanize) }}</span>
+          <span class="sh-actual">target {{ ml[1] }} {{ s.target }} {{ ml[2] }}{% if s.actual is not none %} · actual {{ s.actual }} {{ ml[2] }}{% endif %}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="sh-note">No service-level targets set yet.{% if can_manage %} Use Edit to add one.{% endif %}</p>
+      {% endif %}
+      <div class="sh-actions">
+        {% if can_manage %}
+        <button type="button" class="btn btn--ghost" data-edit="{{ f.key }}">Edit</button>
+        <button type="button" class="btn btn--danger" data-remove="{{ f.key }}" data-name="{{ f.name }}">Remove team</button>
+        {% endif %}
+        {% if f.exception_count %}<a class="btn btn--ghost" href="#sh-desk-{{ loop.index }}">See {{ f.exception_count }} waiting</a>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No functions in the book of work yet. Add the first business area you want Lightwork to take over.</p>
+    {% if can_manage %}<button type="button" class="btn btn--primary" data-sh-new>Add a business area</button>{% endif %}
+  {% endif %}
+</div>
+
+{% if can_manage %}
+<div class="section-head"><h2 id="sh-form-title">Add a business area</h2></div>
+<div class="panel">
+  <form id="sh-form" aria-labelledby="sh-form-title">
+    <input type="hidden" id="sh-key" name="key" value="">
+    <div class="sh-form">
+      <div class="sh-field">
+        <label for="sh-name">Name</label>
+        <input class="input" id="sh-name" name="name" type="text" required maxlength="400" placeholder="For example: Accounts payable">
+      </div>
+      <div class="sh-field">
+        <label for="sh-department">Work area to measure</label>
+        <select class="select" id="sh-department" name="department" aria-describedby="sh-department-help" data-typeahead data-typeahead-placeholder="Type a work area, for example: finance">
+          <option value="">Not chosen yet</option>
+          {% if departments.recent %}
+          <optgroup label="Used by recent work">
+            {% for value, label in departments.recent %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </optgroup>
+          {% endif %}
+        </select>
+        <script nonce="{{ csp_script_nonce }}" type="application/json" id="sh-department-groups">{{ departments.groups | tojson }}</script>
+        <span class="sh-note" id="sh-department-help">Lightwork counts finished work in this area.</span>
+      </div>
+      <div class="sh-field">
+        <label for="sh-owner">Owner</label>
+        <select class="select" id="sh-owner" name="owner">
+          <option value="">No owner</option>
+          {% for p in people %}<option value="{{ p.value }}">{{ p.label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="sh-field">
+        <label for="sh-status">Stage</label>
+        <select class="select" id="sh-status" name="status" aria-describedby="sh-status-help">
+          {% for st in lifecycle %}
+          <option value="{{ st }}">{{ lifecycle_labels.get(st, (st | humanize, ''))[0] }}</option>
+          {% endfor %}
+        </select>
+        <span class="sh-note" id="sh-status-help">{{ lifecycle_labels.scoping[1] }}</span>
+      </div>
+      <div class="sh-field">
+        <label for="sh-scope">What's included (optional)</label>
+        <input class="input" id="sh-scope" name="scope" type="text" maxlength="400" placeholder="For example: from receiving an invoice to paying it">
+      </div>
+    </div>
+
+    <h3 style="margin-top: var(--space-4); font-size: var(--text-md);">Service-Level Targets (optional)</h3>
+    <div id="sh-sla-rows"></div>
+    <p><button type="button" class="btn btn--ghost" id="sh-add-sla">Add a target</button></p>
+
+    <div class="sh-actions">
+      <button type="submit" class="btn btn--primary" id="sh-save">Save team</button>
+      <button type="button" class="btn btn--ghost" id="sh-cancel" hidden>Cancel editing</button>
+    </div>
+    <p class="sh-note" id="sh-status-msg" role="status" aria-live="polite"></p>
+  </form>
+</div>
+{% endif %}
+
+<div class="section-head"><h2>Waiting for a person</h2></div>
+<div class="panel">
+  <p class="sh-note" style="margin-top: 0">
+    Items in each business area that need a person's approval. Approve or reject them on the
+    <a href="{{ approvals_path }}">Approvals</a> page.
+  </p>
+  {% if functions and functions[0].unassigned_exception_count %}
+    <p class="sh-note">{{ functions[0].unassigned_exception_count }} waiting items have no work area and are only on the <a href="{{ approvals_path }}">Approvals</a> page.</p>
+  {% endif %}
+  {% set ns = namespace(any=false) %}
+  {% for f in functions %}
+    {% if f.exceptions %}
+      {% set ns.any = true %}
+      <div class="sh-fn" id="sh-desk-{{ loop.index }}" data-desk="{{ f.key }}">
+        <h3>{{ f.name }} <span class="badge blocked">{{ f.exception_count }} waiting</span></h3>
+        <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th scope="col">Action</th><th scope="col">Risk</th>
+            <th scope="col">Details</th><th scope="col">Target</th><th scope="col">Open</th>
+          </tr></thead>
+          <tbody>
+          {% for e in f.exceptions %}
+            <tr>
+              {#- The name the Approvals page shows: written text as written (approval_labels.py). -#}
+              <td>{{ approval_action_label(e.action) }}</td>
+              <td><span class="badge {{ 'breach' if e.risk in ('high', 'critical') else 'pending' }}">{{ e.risk | humanize }}</span></td>
+              <td>{{ e.scope or '—' }}</td>
+              <td>
+                {% set exc_sla = (f.slas | selectattr('metric', 'equalto', 'max_exception_rate_pct') | list) %}
+                {% if exc_sla %}<span class="badge {{ sla_cls.get(exc_sla[0].status, 'idle') }}">{{ exc_sla[0].name }}: {{ sla_word.get(exc_sla[0].status, exc_sla[0].status | humanize) }}</span>{% else %}<span class="muted">No target</span>{% endif %}
+              </td>
+              <td>
+                <a class="btn btn--ghost" href="{{ approvals_path }}">Decide</a>
+                {% if e.goal_id %}<a class="btn btn--ghost" href="/goals/{{ e.goal_id }}/trajectory">See the task</a>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    {% endif %}
+  {% endfor %}
+  {% if not ns.any %}
+    <p class="muted">Nothing is waiting for a person in any business area. Work that needs a person appears here.</p>
+  {% endif %}
+</div>
+
+{% if can_manage %}
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var form = document.getElementById('sh-form');
+  function F(name) { return form.elements.namedItem(name); }
+  var msg = document.getElementById('sh-status-msg');
+  var rowsHost = document.getElementById('sh-sla-rows');
+  var api = {{ api_base | tojson }};
+  var functions = {{ functions | tojson }};
+  var metrics = {{ metric_labels | tojson }};
+  var stageHelp = {{ lifecycle_labels | tojson }};
+  var rowCount = 0;
+
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+  function addSlaRow(sla) {
+    rowCount += 1;
+    var n = rowCount;
+    var row = el('div', 'sh-sla-row');
+    var mWrap = el('div', 'sh-field');
+    var mLab = el('label', '', 'Measure'); mLab.htmlFor = 'sh-sla-metric-' + n;
+    var sel = el('select', 'select sh-sla-metric'); sel.id = 'sh-sla-metric-' + n;
+    Object.keys(metrics).forEach(function (k) {
+      var o = el('option', '', metrics[k][0]); o.value = k; sel.appendChild(o);
+    });
+    mWrap.appendChild(mLab); mWrap.appendChild(sel);
+    var tWrap = el('div', 'sh-field');
+    var tLab = el('label', '', 'Target'); tLab.htmlFor = 'sh-sla-target-' + n;
+    var target = el('input', 'input sh-sla-target'); target.type = 'number'; target.min = '0'; target.step = '0.1'; target.id = 'sh-sla-target-' + n; target.required = true;
+    tWrap.appendChild(tLab); tWrap.appendChild(target);
+    var nWrap = el('div', 'sh-field');
+    var nLab = el('label', '', 'Name shown (optional)'); nLab.htmlFor = 'sh-sla-name-' + n;
+    var name = el('input', 'input sh-sla-name'); name.maxLength = 64; name.id = 'sh-sla-name-' + n;
+    nWrap.appendChild(nLab); nWrap.appendChild(name);
+    var remove = el('button', 'btn btn--ghost', 'Remove target'); remove.type = 'button';
+    remove.addEventListener('click', function () { row.remove(); });
+    function syncPlaceholder() { name.placeholder = metrics[sel.value][0]; }
+    sel.addEventListener('change', syncPlaceholder);
+    if (sla) { sel.value = sla.metric; target.value = sla.target; if (sla.name !== metrics[sla.metric][0]) name.value = sla.name; }
+    syncPlaceholder();
+    row.appendChild(mWrap); row.appendChild(tWrap); row.appendChild(nWrap); row.appendChild(remove);
+    rowsHost.appendChild(row);
+    return row;
+  }
+
+  function collectSlas() {
+    var out = [];
+    rowsHost.querySelectorAll('.sh-sla-row').forEach(function (row) {
+      var metric = row.querySelector('.sh-sla-metric').value;
+      var target = parseFloat(row.querySelector('.sh-sla-target').value);
+      if (!isFinite(target)) return;
+      var name = (row.querySelector('.sh-sla-name').value || '').trim() || metrics[metric][0];
+      out.push({ name: name.slice(0, 64), metric: metric, target: target });
+    });
+    return out;
+  }
+
+  function slug(text) {
+    var s = String(text || '').toLowerCase();
+    if (s.normalize) s = s.normalize('NFKD');
+    s = s.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 56);
+    return s || 'area';
+  }
+
+  function newKey(name) {
+    var base = slug(name), key = base, i = 2;
+    var taken = {};
+    functions.forEach(function (f) { taken[f.key] = true; });
+    while (taken[key]) { key = base + '-' + i; i += 1; }
+    return key;
+  }
+
+  function setOption(select, value) {
+    if (!value) { select.value = ''; return; }
+    var found = Array.prototype.some.call(select.options, function (o) { return o.value === value; });
+    if (!found) {
+      var o = el('option', '', select.id === 'sh-owner' ? value.replace(/^user:/, '') : value.replace(/[_-]+/g, ' '));
+      o.value = value; select.appendChild(o);
+    }
+    select.value = value;
+  }
+
+  // Every specialist area, grouped by department, is added after load so
+  // the page stays light; recent areas are listed first.
+  try {
+    var groups = JSON.parse(document.getElementById('sh-department-groups').textContent || '[]');
+    groups.forEach(function (g) {
+      if (!g.options || !g.options.length) return;
+      var og = document.createElement('optgroup'); og.label = g.label;
+      g.options.forEach(function (pair) { var o = el('option', '', pair[1]); o.value = pair[0]; og.appendChild(o); });
+      F('department').appendChild(og);
+    });
+  } catch (e) { /* recent areas remain available */ }
+
+  var statusSel = document.getElementById('sh-status');
+  var statusHelp = document.getElementById('sh-status-help');
+  statusSel.addEventListener('change', function () { statusHelp.textContent = (stageHelp[statusSel.value] || ['', ''])[1]; });
+
+  function resetForm() {
+    form.reset();
+    F('key').value = '';
+    rowsHost.textContent = '';
+    document.getElementById('sh-form-title').textContent = 'Add a Business Area';
+    document.getElementById('sh-cancel').hidden = true;
+    statusHelp.textContent = stageHelp.scoping[1];
+  }
+
+  function edit(key) {
+    var f = functions.filter(function (x) { return x.key === key; })[0];
+    if (!f) return;
+    resetForm();
+    F('key').value = f.key;
+    F('name').value = f.name;
+    setOption(F('department'), f.department || '');
+    setOption(F('owner'), f.owner || '');
+    F('status').value = f.lifecycle;
+    statusHelp.textContent = (stageHelp[f.lifecycle] || ['', ''])[1];
+    F('scope').value = f.scope || '';
+    (f.slas || []).forEach(function (s) { addSlaRow(s); });
+    document.getElementById('sh-form-title').textContent = 'Edit ' + f.name;
+    document.getElementById('sh-cancel').hidden = false;
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    F('name').focus();
+  }
+
+  document.getElementById('sh-add-sla').addEventListener('click', function () {
+    var row = addSlaRow(null); row.querySelector('select').focus();
+  });
+  document.getElementById('sh-cancel').addEventListener('click', resetForm);
+  document.querySelectorAll('[data-sh-new]').forEach(function (b) {
+    b.addEventListener('click', function () { resetForm(); form.scrollIntoView({ behavior: 'smooth' }); F('name').focus(); });
+  });
+  document.querySelectorAll('[data-edit]').forEach(function (b) {
+    b.addEventListener('click', function () { edit(b.getAttribute('data-edit')); });
+  });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var name = F('name').value.trim();
+    if (!name) { msg.textContent = 'Enter a name for this business area.'; F('name').focus(); return; }
+    var body = {
+      key: F('key').value || newKey(name),
+      name: name,
+      department: F('department').value,
+      scope: F('scope').value.trim(),
+      status: F('status').value,
+      owner: F('owner').value,
+      slas: collectSlas()
+    };
+    msg.textContent = 'Saving…';
+    fetch(api + '/function', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) throw r;
+      msg.textContent = 'Saved. Updating the page…';
+      window.location.reload();
+    }).catch(function (failure) {
+      msg.textContent = window.mvErrorText(failure, 'save this business area');
+    });
+  });
+
+  document.querySelectorAll('[data-remove]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var key = btn.getAttribute('data-remove');
+      // One action with a way back: removed when the Undo time is up.
+      var row = btn.closest('.sh-fn');
+      if (row) row.hidden = true;
+      window.mvUndo('“{name}” removed from the book of work. Finished work and approvals are not affected.', { values: {name: btn.getAttribute('data-name')},
+        action: 'remove this business area',
+        run: function (keepalive) { return fetch(api + '/function/' + encodeURIComponent(key), { method: 'DELETE', keepalive: keepalive, headers: { Accept: 'application/json' } }); },
+        undo: function () { if (row) row.hidden = false; btn.focus(); },
+        done: function () { window.location.reload(); }
+      });
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endif %}
+<script src="/static/lightwork-typeahead.js" defer></script>
+{% endblock %}

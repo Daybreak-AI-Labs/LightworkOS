@@ -1,0 +1,128 @@
+# Workspace root. Each package under packages/ and apps/ is independently
+# pip-installable; this file declares the workspace for uv and groups dev
+# tooling.
+
+[tool.uv.workspace]
+members = [
+    "packages/maverick-core",
+    "packages/maverick-shield",
+    "packages/maverick-channels",
+    "packages/maverick-evolve",
+    "packages/maverick-dashboard",
+    "packages/maverick-mcp",
+    "packages/maverick-knowledge",
+    "apps/installer-cli",
+]
+
+[tool.uv.sources]
+maverick-agent = { workspace = true }
+maverick-shield = { workspace = true }
+maverick-channels = { workspace = true }
+maverick-evolve = { workspace = true }
+maverick-dashboard = { workspace = true }
+maverick-mcp-server = { workspace = true }
+maverick-knowledge = { workspace = true }
+maverick-installer = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# E/F/W: pycodestyle errors, pyflakes (real bugs), pycodestyle warnings.
+# I  (isort):     imports sorted (applied repo-wide with --fix).
+# UP (pyupgrade): modern 3.10+ idioms -- PEP 604 unions (`X | None`), PEP 585
+#                 builtins (`list`/`dict`), f-strings, etc. target-version
+#                 py310 keeps every rewrite 3.10-safe.
+# B (bugbear): real-bug lints -- B904 (chain exceptions with raise-from), B905
+#              (explicit zip strict=), B023 (loop-var capture in closures), etc.
+#              Enabled repo-wide. FastAPI's Depends/File/Query/Form/etc. called in
+#              argument defaults are the framework idiom, not B008 bugs, so they're
+#              whitelisted via extend-immutable-calls below.
+# C90 (mccabe): cyclomatic-complexity ceiling -- the "keep functions small"
+#               ratchet (see [tool.ruff.lint.mccabe]). New code must stay under
+#               the cap; the 165 functions already over it carry an explicit
+#               `# noqa: C901` marking them as refactor debt to pay down;
+#               test_claims_docs pins that count so the backlog only shrinks.
+# G   (flake8-logging-format): logging calls use %-style args, never f-strings
+#     or + concatenation -- keeps the 295 `log = getLogger(__name__)` call sites
+#     uniform and defers interpolation until a record is actually emitted.
+# RSE (flake8-raise): no redundant parentheses on `raise Exc()` with no args.
+# Curated idiom rules (each fully safe-autofixable, applied repo-wide):
+#   PIE807 lambda:[]/{} -> list/dict default_factory; PIE808 redundant range(0,..);
+#   C420 dict-comprehension -> dict.fromkeys; RUF010 f"{str(x)}" -> f"{x!s}";
+#   SIM300 yoda conditions; FURB110 a-if-a-else-b -> a or b; FURB167 re.M ->
+#   re.MULTILINE alias spelling; FURB188 manual slice -> str.removeprefix/suffix.
+select = [
+    "E", "F", "W", "I", "UP", "C90", "B", "G", "RSE",
+    "PIE807", "PIE808", "C420", "RUF010", "SIM300", "FURB110", "FURB167", "FURB188",
+]
+ignore = [
+    "E501",   # line length
+    "UP036",  # "outdated" version blocks -- ours are intentional runtime
+              # "Python 3.11+ required" guards (installer/preflight), not dead code.
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency-injection markers are evaluated once at import and used as
+# sentinels; calling them in argument defaults is the documented pattern, so
+# they are not B008 "function call in default argument" violations.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Security",
+]
+
+[tool.ruff.lint.mccabe]
+# Cap cyclomatic complexity. 20 is the current high-water mark we're willing
+# to grandfather: every function above it is annotated `# noqa: C901` so the
+# gate stays green today while blocking NEW over-complex functions. Ratchet
+# this down as the noqa'd backlog gets simplified.
+max-complexity = 20
+
+[tool.mypy]
+# Start with isolated boundaries whose types are maintained. Imports are not
+# checked transitively until their owning modules join the checked set.
+files = [
+    "packages/maverick-core/maverick/config_contracts.py",
+    "packages/maverick-core/maverick/fastjson.py",
+    "packages/maverick-core/maverick/tool_results.py",
+    "packages/maverick-core/maverick/world_model_contracts.py",
+]
+python_version = "3.11"
+strict = true
+follow_imports = "skip"
+
+[tool.vulture]
+# Dead-code gate. min_confidence 80 keeps it to high-signal findings
+# (unused imports/vars/params) and avoids the framework false positives
+# (FastAPI routes, pydantic validators) that lower confidences surface.
+# ruff already covers F401/F841; vulture catches the unused *parameters*
+# and module-level symbols those miss. Tests are excluded -- fixtures and
+# parametrize helpers read as "unused" to static analysis.
+min_confidence = 80
+paths = ["packages", "apps", "benchmarks"]
+# Protocol method parameters are interface, not dead code: the stub body is
+# ``...`` so the name is never read in the file that declares it.
+ignore_names = ["stage_receipt"]
+# Ignore generated package copies so local scans match a clean CI checkout.
+exclude = ["*/tests/*", "*/test_*.py", "*/build/*", "*/dist/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "apps", "benchmarks"]
+python_files = "test_*.py"
+addopts = "--import-mode=importlib"
+markers = [
+    "heavy_concurrency: throughput/contention tests (queue soak, discovery estate runner) that must not share the box with a second xdist worker -- CI runs them in a serial phase after the parallel pass",
+]
+# Put the repo root (rootdir) on sys.path so cross-package test imports like
+# `from test_support import ...` resolve regardless of the invocation cwd, so
+# the maverick-core suite also collects when run from inside
+# packages/maverick-core.
+pythonpath = ["."]

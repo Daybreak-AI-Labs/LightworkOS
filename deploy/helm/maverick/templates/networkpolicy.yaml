@@ -1,0 +1,42 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "maverick.fullname" . }}
+  labels:
+    {{- include "maverick.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "maverick.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicy.restrictEgress }}
+    - Egress
+    {{- end }}
+  ingress:
+    # Allow ingress to the dashboard port only (front with an Ingress/Gateway).
+    - ports:
+        - port: {{ .Values.service.targetPort }}
+          protocol: TCP
+  {{- if .Values.networkPolicy.restrictEgress }}
+  egress:
+    # DNS resolution.
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Public egress (LLM providers, webhooks) — everything EXCEPT private and
+    # link-local ranges. This blunts SSRF to the cloud metadata service
+    # (169.254.169.254) and internal hosts while leaving provider egress intact.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+  {{- end }}
+{{- end }}

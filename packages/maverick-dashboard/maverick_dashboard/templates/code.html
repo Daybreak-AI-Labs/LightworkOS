@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Code · Lightwork{% endblock %}
+{% block head_extra %}{% include "_console_style.html" %}{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+<div class="ic-shell" id="ic-root" data-console="code" data-api-url="{{ api_url }}" data-copilot-page="{{ page_path }}"
+     data-can-admin="{{ 'true' if can_admin else 'false' }}" data-enabled="{{ 'true' if module_on else 'false' }}">
+  {{ hero('Software development', 'Code',
+          lede='Code projects Lightwork works on, and the changes its agents have proposed. Nothing is merged
+                or sent anywhere until a person approves the change.') }}
+  {% if not module_on %}
+  {{ module_gate('codebase', 'Code projects',
+                 detail='Keep copies of your company’s code inside Lightwork so its agents can propose changes for a person to approve.') }}
+  {% endif %}
+  <p class="muted" id="ic-status" role="status" aria-live="polite">Loading.</p>
+  <p class="danger-text" id="ic-error" role="alert" aria-live="assertive"></p>
+
+  <section class="ic-metrics" aria-label="Code summary">
+    <article class="panel ic-metric"><span>Code projects</span><strong id="ic-repos">—</strong></article>
+    <article class="panel ic-metric"><span>Waiting for approval</span><strong id="ic-pending">—</strong></article>
+    <article class="panel ic-metric"><span>Approved, not merged</span><strong id="ic-approved">—</strong></article>
+    <article class="panel ic-metric"><span>Merged</span><strong id="ic-merged">—</strong></article>
+  </section>
+
+  <section class="panel" aria-labelledby="ic-repo-title">
+    <div class="ic-head">
+      <h2 id="ic-repo-title">Code projects</h2>
+      {% if can_admin and module_on %}<button type="button" class="btn btn--primary" id="code-add">Add a code project</button>{% endif %}
+    </div>
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-repo-caption"><table class="ic-table"><caption id="ic-repo-caption">Code projects and how they are protected</caption>
+      <thead><tr><th scope="col">Name</th><th scope="col">Main branch</th><th scope="col">Protection</th><th scope="col">Tests</th><th scope="col">Last updated</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="ic-repo-rows"><tr><td colspan="6">Loading.</td></tr></tbody></table></div>
+  </section>
+
+  {% if can_admin and module_on %}
+  <section class="panel" aria-labelledby="code-feature-title" id="code-feature">
+    <h2 id="code-feature-title">Start a change</h2>
+    <p class="muted">Describe what you want. Lightwork’s agents work on a private copy, run the tests, have the change reviewed, and then ask a person to approve it.</p>
+    <form id="code-feature-form" class="ic-form">
+      <label for="code-feature-repo">Code project</label>
+      <select id="code-feature-repo" class="select" name="repo" required><option value="">Choose a code project</option></select>
+      <label for="code-feature-title-input">What should change?</label>
+      <input id="code-feature-title-input" class="input" name="title" maxlength="200" required placeholder="For example: add a download button to the invoice page">
+      <label for="code-feature-desc">More detail (optional)</label>
+      <textarea id="code-feature-desc" class="textarea" name="description" rows="4" maxlength="8000"></textarea>
+      <label for="code-feature-budget">Spending limit for this change</label>
+      <select id="code-feature-budget" class="select" name="max_dollars">
+        <option value="">Use the workspace’s usual limit</option>
+        <option value="5">Up to $5</option>
+        <option value="20">Up to $20</option>
+        <option value="50">Up to $50</option>
+      </select>
+      <div><button type="submit" class="btn btn--primary">Start the change</button></div>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if can_admin and module_on %}
+  <section class="panel" aria-labelledby="code-watch-title" id="code-watch">
+    <h2 id="code-watch-title">Watch for notes to Lightwork</h2>
+    <p class="muted">Developers can leave a note for Lightwork in the code, such as a comment starting with “AI:”.
+      While Lightwork watches a code project, it lists every note it finds, and you can start work from one.
+      That work runs on a private copy under the project's own protection, and any change waits for your approval.</p>
+    <div class="ic-form">
+      <label for="code-watch-repo">Code project</label>
+      <select id="code-watch-repo" class="select"><option value="">Choose a code project</option></select>
+      <div class="ic-actions">
+        <button type="button" class="btn btn--primary" id="code-watch-start">Start watching</button>
+        <button type="button" class="btn btn--ghost" id="code-watch-refresh">Check for new notes</button>
+      </div>
+    </div>
+    <div id="code-watch-list" aria-live="polite"></div>
+  </section>
+  {% endif %}
+
+  <section class="panel" aria-labelledby="ic-prop-title">
+    <div class="ic-head">
+      <h2 id="ic-prop-title">Proposed changes</h2>
+      {% if can_admin and module_on %}<button type="button" class="btn btn--ghost" id="code-merge-approved">Merge all approved changes</button>{% endif %}
+    </div>
+    <div class="ic-table-wrap" role="region" tabindex="0" aria-labelledby="ic-prop-caption"><table class="ic-table"><caption id="ic-prop-caption">Changes the agents built and where each one stands</caption>
+      <thead><tr><th scope="col">Change</th><th scope="col">Code project</th><th scope="col">Files changed</th><th scope="col">Tests</th><th scope="col">Independent review</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="ic-prop-rows"><tr><td colspan="7">Loading.</td></tr></tbody></table></div>
+  </section>
+
+  <section class="panel" aria-labelledby="code-review-title" id="code-review" hidden>
+    <div class="ic-head">
+      <h2 id="code-review-title">Review a change</h2>
+      <button type="button" class="btn btn--ghost" id="code-review-close">Close</button>
+    </div>
+    <div id="code-review-body"></div>
+  </section>
+  <noscript><p class="panel">This page needs JavaScript turned on.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-code.js"></script>{% endblock %}

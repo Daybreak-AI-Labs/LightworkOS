@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero, state %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Mobile app consent · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+<div class="governance-workbench" id="nca-root" data-admin-api-base="{{ admin_api_base }}" data-public-keys-base="{{ public_keys_base }}" data-copilot-page="{{ page_path }}" data-can-audit="{{ 'true' if native_can_audit else 'false' }}" data-can-admin="{{ 'true' if native_can_admin else 'false' }}">
+  {% call hero('Consent integration', 'Mobile app consent',
+               lede='Show your consent banner inside your mobile and TV apps, see which devices are connected, and remove a device’s access when you need to.') %}
+    {{ state('Readiness', 'Checking…', badge='Checking', badge_class='idle') }}
+  {% endcall %}
+  {% include "_consent_nav.html" %}
+  {% if not native_module_enabled %}
+  {{ module_gate('consent_preferences.native_sdk', 'Mobile app consent',
+                 detail='Lets your mobile and TV apps show your published consent banner and save people’s choices.',
+                 can_activate=native_can_admin) }}
+  {% endif %}
+  <p id="nca-status" class="muted" role="status" aria-live="polite"></p>
+
+  <section class="panel" aria-labelledby="nca-ready-heading">
+    <div class="section-head">
+      <h2 id="nca-ready-heading">What still needs setting up</h2>
+      <button class="btn btn--ghost" id="nca-refresh" type="button">Check again</button>
+    </div>
+    <ul id="nca-reasons"><li class="muted">Checking…</li></ul>
+  </section>
+
+  <section class="panel" aria-labelledby="nca-apps-heading">
+    <div class="section-head">
+      <h2 id="nca-apps-heading">Your apps</h2>
+      <button class="btn btn--primary" type="button" id="nca-new"{% if not native_can_admin %} disabled{% endif %}>Add an app</button>
+    </div>
+    {% if not native_can_admin %}<p class="muted">Only an administrator can add apps or change their settings.</p>{% endif %}
+    <div id="nca-apps"><p class="muted">Loading apps…</p></div>
+
+    <form id="nca-register-form" class="cw-editor" hidden novalidate autocomplete="off">
+      <fieldset class="cw-form"{% if not native_can_admin %} disabled{% endif %}>
+        <legend class="sr-only">Add an app</legend>
+        <h3 class="cw-wide">Add an app</h3>
+        <label class="cw-wide">App key<select class="select" name="public_client_ref" required></select>
+          <span class="muted">Choose the key you created for this app on the Website and App Keys page. The app’s banner, languages and consent policy come from that key.</span>
+        </label>
+        <details class="cw-wide">
+          <summary>More options</summary>
+          <label>Oldest app release allowed
+            <select class="select" name="minimum_sdk_version">
+              <option value="1" selected>Any release</option>
+              <option value="2">Release 2 or later</option>
+              <option value="3">Release 3 or later</option>
+              <option value="4">Release 4 or later</option>
+              <option value="5">Release 5 or later</option>
+            </select>
+          </label>
+        </details>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Add app</button>
+          <button class="btn btn--ghost" type="button" data-nca-close="nca-register-form">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="nca-devices-heading" id="nca-devices-panel" hidden>
+    <div class="section-head">
+      <h2 id="nca-devices-heading">Devices</h2>
+      <button class="btn btn--ghost" type="button" data-nca-close="nca-devices-panel">Close</button>
+    </div>
+    <p class="muted">Each phone or TV that installed your app and passed the genuine-device check appears here. Devices renew their own security keys automatically.</p>
+    <div id="nca-devices"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="nca-keys-heading" id="nca-keys-panel" hidden>
+    <div class="section-head">
+      <h2 id="nca-keys-heading">Receipt checking keys</h2>
+      <button class="btn btn--ghost" type="button" data-nca-close="nca-keys-panel">Close</button>
+    </div>
+    <p class="muted">Anyone can use these public keys to confirm that a consent receipt from your app really came from Lightwork. Older keys stay listed so older receipts can still be checked.</p>
+    <div id="nca-keys"></div>
+    <p><a class="btn btn--ghost" id="nca-public-key-link" href="{{ public_keys_base }}" rel="noopener noreferrer" target="_blank">Open the public key list</a></p>
+  </section>
+
+  <section class="panel" aria-labelledby="nca-check-heading">
+    <div class="section-head">
+      <h2 id="nca-check-heading">Check records</h2>
+      <button class="btn" id="nca-integrity" type="button"{% if not native_can_audit %} disabled data-role-disabled="true"{% endif %}>Check that records are intact</button>
+    </div>
+    <p class="muted">Confirms that the device list and its history have not been changed outside Lightwork.{% if not native_can_audit %} You need audit access to run this check.{% endif %}</p>
+    <div id="nca-integrity-result" class="cw-result" role="status" aria-live="polite"></div>
+  </section>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">A device can only connect after an independent service confirms it is a genuine copy of your app. Removing a device’s access cannot be undone; the device has to be set up again. Every change is recorded with who made it.</p>
+  </details>
+  <noscript><p class="panel">Turn on JavaScript to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-consent-workbench.js" defer></script><script src="/static/lightwork-consent-native-admin.js" defer></script>{% endblock %}

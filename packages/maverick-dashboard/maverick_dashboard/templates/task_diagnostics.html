@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Task diagnostics - Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% set diagnostics_lede %}This report includes the task's state, a correlation reference, limited event metadata and scoped dependency receipts. It excludes task content, attachments, raw errors, configuration and credentials.{% endset %}
+{{ hero('Your work', 'Review a safe task diagnostic report', lede=diagnostics_lede, compact=true) }}
+<section class="panel" id="task-diagnostics" data-goal="{{ goal_id }}" data-context="{{ diagnostic_context }}">
+  <p><a href="/chat/goal/{{ goal_id }}">Return to this task</a> · <a href="/budget?goal_id={{ goal_id }}">Review budget</a></p>
+  <button id="diagnostic-prepare" class="btn btn--primary" type="button">Prepare exact preview</button>
+  <p id="diagnostic-status" role="status" aria-live="polite"></p>
+  <pre id="diagnostic-preview" tabindex="0" aria-label="Exact diagnostic file contents" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+  <label><input id="diagnostic-reviewed" type="checkbox" disabled> I reviewed these exact contents for sharing with my approved support contact.</label>
+  <p><a id="diagnostic-download" class="btn btn--ghost" hidden>Download reviewed file</a></p>
+  <p>The link lasts 15 minutes and requires your current account and task access. Each download is audited. Downloading stays on this device; no automatic external transfer occurs.</p>
+</section>
+<script src="/static/lightwork-task-diagnostics.js" defer></script>
+{% endblock %}

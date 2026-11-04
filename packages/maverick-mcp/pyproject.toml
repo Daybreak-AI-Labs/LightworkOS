@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maverick-mcp-server"
+version = "0.1.7"
+description = "Model Context Protocol server for Lightwork (exposes the swarm to MCP clients)"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Lightwork Authors" }]
+readme = "README.md"
+dependencies = [
+    "maverick-agent>=0.1.7",
+]
+
+[project.optional-dependencies]
+# The streamable HTTP transport (`maverick mcp --http`) needs FastAPI +
+# uvicorn. http_transport.py's ImportError tells users to install
+# `maverick-mcp-server[http]`, so the extra must actually exist.
+http = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    # FastAPI's HTTP/multipart parser on the untrusted MCP-over-HTTP
+    # surface; keep this at the highest patched advisory floor.
+    "starlette>=1.3.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Issues = "https://github.com/Daybreak-AI-Labs/LightworkOS/issues"
+
+[project.scripts]
+maverick-mcp = "maverick_mcp.server:main"
+maverick-mcp-sidecar = "maverick_mcp.sidecar:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maverick_mcp*"]

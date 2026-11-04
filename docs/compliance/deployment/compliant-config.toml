@@ -1,0 +1,101 @@
+# Lightwork — compliant deployment configuration (REFERENCE TEMPLATE)
+#
+# A hardened ~/.maverick/config.toml that turns ON every opt-in control a SOC 2 /
+# ISO 27001 / ISO 42001 deployment must show enabled. Copy, fill the <…>
+# placeholders, and verify with: `maverick soc2` and `maverick enterprise verify`
+# (see ../deployment/hardening-checklist.md). This is a TEMPLATE, not a live
+# config — review every value for your environment before use.
+#
+# The keys below mirror what the installer wizard emits and what the SOC 2
+# evidence collector (maverick.soc2.collect_soc2_evidence) probes. After applying,
+# `maverick soc2` should report capability_enforcement / tenant_isolation /
+# usage_quotas / oidc_auth / encryption_at_rest = enabled, audit_log = ok, and an
+# audit_signing_key present.
+
+# --- Logical access: least-privilege capabilities (CC6.1/6.3; A.5.15/A.8.2) ---
+[capabilities]
+enforce = true            # signed, attenuating per-agent grants enforced at the tool chokepoint
+
+# --- Authentication: OIDC (CC6.1; A.5.16/A.5.17/A.8.5) ---
+[auth.oidc]
+enabled = true
+issuer = "<https://your-idp.example.com>"
+audience = "<maverick-dashboard-client-id>"
+# jwks_uri is usually discovered from the issuer; set explicitly if required:
+# jwks_uri = "<https://your-idp.example.com/.well-known/jwks.json>"
+
+# --- Multi-tenant isolation (C1.1; A.8.3) ---
+[tenancy]
+by_user = true            # per-user data isolation (world DB / audit / memory)
+
+# Single-client lock (refuse to start unbound so data can't land in the shared root):
+# [client]
+# id = "<client-id>"
+# enforce = true
+
+# Postgres backend only — database-enforced row-level tenant isolation.
+# Run `maverick tenant rls-preflight` + `maverick tenant backfill` BEFORE first start.
+# [world_model]
+# rls = true
+
+# --- Encryption at rest (CC6.7/C1.1; A.8.24) ---
+[encryption]
+at_rest = true            # AES-256-GCM on world DB + memory stores
+per_tenant = true         # per-tenant envelope encryption (DEK+KEK; wire a cloud KMS)
+# Externally-managed key (recommended): set MAVERICK_ENCRYPTION_KEY in the service unit
+# instead of relying on the auto-generated ~/.maverick/keys/at_rest.key.
+
+# --- Tamper-evident audit log (CC2.1/PI1.5; A.8.15/A.8.24) ---
+[audit]
+sign = true               # Ed25519 Merkle hash-chain + cross-file anchors
+# IMPORTANT: with [enterprise] mode = true the signing key MUST be off-host —
+# Lightwork refuses to generate-and-leave it on local disk. Provide a KMS /
+# secrets-manager-sourced 32-byte Ed25519 key in the service unit:
+#   MAVERICK_AUDIT_SIGNING_KEY=<hex/base64 raw key>   (or)
+#   MAVERICK_AUDIT_SIGNING_KEY_WRAPPED=<KMS-wrapped key>
+# Without it the chain writes UNSIGNED and `maverick soc2` reports audit_log != ok.
+# WORM export of closed day-files (regulator-grade immutability via S3 Object-Lock):
+# worm = true
+# worm_provider = "s3"
+
+# --- Resource governance / availability (CC9.1/A1.1; A.8.6) ---
+[quotas]
+enforce = true            # per-principal daily spend/token caps
+# Hard per-run caps (tune to your workloads):
+# [budget]
+# max_dollars = 5.0
+# max_wall_seconds = 1800
+# max_tool_calls = 200
+
+# --- Isolation: containerized execution only (CC5.2; A.8.31) ---
+[sandbox]
+require_container = true   # deny the unsandboxed local backend; force docker/podman/k8s/etc
+
+# --- Human oversight & policy (PI1.3; ISO 42001 A.9.2; EU AI Act Art.14) ---
+[governance]
+require_human_min_risk = "high"     # high/critical actions park for human approval
+deny_min_risk = "critical"          # deny the most dangerous classes outright
+# Optional per-action dollar gates:
+# [governance.require_human_above]
+# "*" = 50.0
+
+# --- Agent Shield (CC6.6; A.8.16/A.8.23) ---
+[safety]
+profile = "balanced"      # consider "strict" for higher-assurance deployments
+block_threshold = "high"
+scan_input = true
+scan_tool_calls = true
+scan_output = true
+
+# --- Continuous fairness monitoring (ISO 42001 A.6.2.6) ---
+[fairness_monitor]
+enable = true             # rolling-window four-fifths + drift monitoring -> signed FAIRNESS_ALERT
+
+# --- Data minimization in logs (P3; A.8.11) ---
+[privacy]
+anonymous = true          # strip identifying fields from logs/audit where feasible
+
+# --- Enterprise data-boundary profile (egress lock + the above as a group) ---
+[enterprise]
+mode = true               # one switch for the regulated-deployment guarantees;
+                          # verify with `maverick enterprise verify --require`

@@ -1,0 +1,110 @@
+# Prometheus alerting rules for Lightwork.
+#
+# Scrape the dashboard's /metrics endpoint (bearer-gated when
+# MAVERICK_DASHBOARD_TOKEN is set). Exposed series:
+#   maverick_goals_total{status="done|failed|blocked|active"}
+#   maverick_cost_dollars_total
+#   maverick_tokens_total{direction="input|output"}
+#   maverick_concurrent_goals
+#   maverick_max_concurrent_goals
+#   maverick_auth_failures_total{reason="bad_token|scim_bad_token|..."}
+#   maverick_queue_jobs{status="pending|running|failed|done"}
+#   maverick_data_disk_free_bytes
+#   maverick_world_db_bytes            # SQLite backend only
+#   maverick_user_spend_dollars_today{principal="..."}
+#
+# Apply as a PrometheusRule (Prometheus Operator) or inline under
+# rule_files: in a plain Prometheus config.
+groups:
+  - name: maverick.availability
+    rules:
+      - alert: MaverickDown
+        expr: up{job="maverick"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Lightwork target {{ $labels.instance }} is down"
+          description: "Prometheus cannot scrape Lightwork for 2m. Check the pod/health."
+
+      - alert: MaverickConcurrencySaturated
+        # In-flight goals pinned at the global cap -> new work is queued/blocked.
+        expr: maverick_concurrent_goals >= maverick_max_concurrent_goals
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Lightwork at max concurrency for 10m"
+          description: "concurrent_goals has been at the cap; consider raising MAVERICK_MAX_CONCURRENT_GOALS or scaling out (requires Postgres)."
+
+  - name: maverick.cost
+    rules:
+      - alert: MaverickSpendSpike
+        # Sustained spend acceleration: >$20/hr over 15m. Tune to your budget.
+        expr: rate(maverick_cost_dollars_total[15m]) * 3600 > 20
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Lightwork LLM spend > $20/hr"
+          description: "Sustained spend rate is high. Check budget caps and per-tenant quotas."
+
+  - name: maverick.reliability
+    rules:
+      - alert: MaverickGoalFailureRate
+        # >25% of completed goals failing/blocked over 30m.
+        expr: |
+          (
+            sum(increase(maverick_goals_total{status=~"failed|blocked"}[30m]))
+            /
+            clamp_min(sum(increase(maverick_goals_total{status=~"done|failed|blocked"}[30m])), 1)
+          ) > 0.25
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "Lightwork goal failure rate > 25%"
+          description: "A quarter of recently-completed goals failed or were blocked. Check logs, provider health, and the shield."
+
+  - name: maverick.capacity
+    rules:
+      - alert: MaverickJobQueueBacklog
+        # Pending jobs piling up: the dispatcher/worker isn't draining (a stuck
+        # or under-scaled worker). Queued jobs never reach the goals table until
+        # claimed, so the goal metrics can't show this.
+        expr: sum(maverick_queue_jobs{status="pending"}) > 100
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Lightwork job-queue backlog > 100 pending for 15m"
+          description: "Pending jobs are not draining. Check the worker/QueueDispatcher and scale workers if needed. Tune the threshold to your throughput."
+
+      - alert: MaverickJobQueueDeadLetter
+        # Jobs exhausted their retries and landed in the failed (dead-letter)
+        # state — silent data loss unless someone looks.
+        expr: sum(increase(maverick_queue_jobs{status="failed"}[15m])) > 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Lightwork job-queue dead-letter growing"
+          description: "One or more jobs exhausted retries in the last 15m. Inspect `maverick failed` / the job store."
+
+  - name: maverick.storage
+    rules:
+      - alert: MaverickDiskLow
+        # Leading indicator before SQLite slows or writes fail on a full volume.
+        # 2 GiB floor; raise it for a large deployment.
+        expr: maverick_data_disk_free_bytes < 2 * 1024 * 1024 * 1024
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Lightwork data volume low on space (< 2 GiB free)"
+          description: "Free space on the data volume is low. Archive old runs, prune backups, or grow the volume before writes fail."
+
+  - name: maverick.security
+    rules:
+      - alert: MaverickAuthFailureSpike
+        # A burst of rejected dashboard/SCIM auth attempts — credential stuffing
+        # or a misconfigured client hammering a bad token. > 30/min over 5m.
+        expr: sum(rate(maverick_auth_failures_total{reason!="none"}[5m])) * 60 > 30
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Lightwork auth-failure rate > 30/min"
+          description: "Sustained rejected auth attempts. Check for credential stuffing or a broken client; rotate the token if abuse is confirmed."

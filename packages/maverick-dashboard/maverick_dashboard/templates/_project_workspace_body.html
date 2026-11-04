@@ -1,0 +1,99 @@
+{#- A project workspace's controls (filled by lightwork-project-workspaces.js
+    from /api/v1/project-workspaces): the list of project plans, or one
+    project's outcome, milestones, context, sharing and reviewed changes.
+    Shared by /project-workspaces and, in the job-named navigation, Projects
+    (/projects) and a project's Plan tab (/projects/{id}?tab=plan). The
+    including page wraps it in <div id="pw-root" ...> with an element
+    id="pw-title". -#}
+  <p id="pw-status" role="status" aria-live="polite">Loading current project access.</p>
+  <button id="pw-refresh" type="button" class="btn">Refresh current status</button>
+  <button id="pw-cancel" type="button" class="btn" hidden>Stop waiting</button>
+  <p id="pw-remedy" hidden><a href="/settings">Project workspace settings</a> · <a href="/account">Your account and workspace</a></p>
+  <div id="pw-list"></div>
+  <div id="pw-workspace" hidden>
+    <section class="panel" aria-labelledby="pw-outcome-heading">
+      <h2 id="pw-outcome-heading">Outcome and acceptance criteria</h2>
+      <p id="pw-outcome"></p><ul id="pw-criteria"></ul><p id="pw-labels"></p>
+      <p id="pw-sharing"></p>
+      <div id="pw-accepted"></div>
+    </section>
+    <section class="panel" aria-labelledby="pw-milestone-heading">
+      <h2 id="pw-milestone-heading">Milestones and planning prerequisites</h2>
+      <p>Progress reflects current linked tasks and review decisions. “Work complete” is different from an accepted review. Planning prerequisites and Move up or Move down never change execution dependencies.</p>
+      <label for="pw-view">View</label><select id="pw-view" class="input"><option value="list">List</option><option value="board">Board</option><option value="timeline">Timeline</option></select>
+      <div id="pw-milestones"></div>
+    </section>
+    <section class="panel" aria-labelledby="pw-context-heading">
+      <h2 id="pw-context-heading">Reviewed context bundle</h2>
+      <p>Each source keeps its own access rules. Opening it checks your current access and the reviewed version. Changed results need another owner review before reuse.</p>
+      <ul id="pw-context"></ul>
+    </section>
+    <div id="pw-owner" hidden>
+      <details class="panel" open><summary>Edit project outcome</summary>
+        <form id="pw-details-form">
+          <label for="pw-outcome-input">Outcome</label><textarea id="pw-outcome-input" class="input" rows="3" maxlength="6000"></textarea>
+          <label for="pw-criteria-input">Acceptance criteria, one per line</label><textarea id="pw-criteria-input" class="input" rows="4" maxlength="30000"></textarea>
+          <label for="pw-labels-input">Labels, one per line</label><textarea id="pw-labels-input" class="input" rows="2" maxlength="1600"></textarea>
+          <label for="pw-default-view">Default view for this project</label><select id="pw-default-view" class="input"><option value="list">List</option><option value="board">Board</option><option value="timeline">Timeline</option></select>
+          <button type="submit" class="btn" data-pw-action>Review outcome changes</button>
+        </form>
+      </details>
+      <details class="panel"><summary>Add or edit a milestone</summary>
+        <form id="pw-milestone-form">
+          <label for="pw-milestone-select">Milestone</label><select id="pw-milestone-select" class="input"></select>
+          <label for="pw-milestone-title">Milestone name</label><input id="pw-milestone-title" class="input" maxlength="200" required>
+          <label for="pw-milestone-due">Target date, optional</label><input id="pw-milestone-due" class="input" type="date">
+          <label for="pw-goals">Linked tasks</label><select id="pw-goals" class="input" multiple size="5"></select>
+          <label for="pw-reviews">Linked fixed reviews</label><select id="pw-reviews" class="input" multiple size="4"></select>
+          <p class="muted">Choose any combination of tasks and review packets. Hold Control or Command to select more than one. The choices show your latest 500 accessible project tasks.</p>
+          <button type="submit" class="btn" data-pw-action>Review milestone changes</button>
+        </form>
+      </details>
+      <details class="panel"><summary>Change planning prerequisites</summary>
+        <form id="pw-dependency-form" data-draft-recovery="off">
+          <label for="pw-dependent">Milestone that depends on another</label><select id="pw-dependent" class="input"></select>
+          <label for="pw-prerequisite">Planning prerequisite</label><select id="pw-prerequisite" class="input"></select>
+          <label for="pw-required">Planning relationship</label><select id="pw-required" class="input"><option value="true">Add prerequisite</option><option value="false">Remove prerequisite</option></select>
+          <button type="submit" class="btn" data-pw-action>Review planning relationship</button>
+        </form>
+      </details>
+      <details class="panel"><summary>Add or refresh a context source</summary>
+        <label for="pw-source">Your saved project results and review packets</label><select id="pw-source" class="input"></select>
+        <button id="pw-source-preview" type="button" class="btn" data-pw-action>Read current source</button>
+        <p><a href="/project-reviews">Request or respond to a fixed result review</a></p>
+      </details>
+      <details class="panel"><summary>Share project planning</summary>
+        <p>Named members can read the outcome, criteria, labels, and milestone names you enter here. This does not give access to private chats, task execution, or review packets. Share only planning details intended for these members.</p>
+        <label for="pw-member">Workspace colleague</label><select id="pw-member" class="input"></select>
+        <button id="pw-share" type="button" class="btn" data-pw-action>Review sharing access</button>
+        <ul id="pw-members"></ul><p><a href="/users">Manage workspace people</a></p>
+      </details>
+      <details class="panel"><summary>My reusable project defaults</summary>
+        <p>Save the outcome wording, criteria, labels, preferred view and milestone names for your future projects. Members, linked sources, dates, and dependency edges are excluded. Applying defaults replaces outcome wording and works only when the target has no milestones.</p>
+        <p id="pw-defaults-status"></p>
+        <button id="pw-save-defaults" type="button" class="btn" data-pw-action>Review saving my structure</button>
+        <button id="pw-apply-defaults" type="button" class="btn" data-pw-action>Review applying my structure</button>
+      </details>
+    </div>
+    <section id="pw-source-panel" class="panel" hidden aria-labelledby="pw-source-title">
+      <h2 id="pw-source-title" tabindex="-1"></h2><p id="pw-source-state"></p><pre id="pw-source-content"></pre>
+      <button id="pw-add-source" type="button" class="btn" data-pw-action>Review using this source version</button>
+    </section>
+    <section id="pw-review-panel" class="panel" hidden aria-labelledby="pw-review-title">
+      <h2 id="pw-review-title" tabindex="-1">Review project change</h2><p id="pw-review-summary"></p><div id="pw-change-list"></div>
+      <label><input id="pw-confirm-choice" type="checkbox"> I reviewed this change and its sharing scope.</label>
+      <button id="pw-confirm" type="button" class="btn btn--primary">Apply reviewed change</button>
+      <button id="pw-check" type="button" class="btn" hidden>Check whether this change was saved</button>
+      <button id="pw-retry-exact" type="button" class="btn" hidden>Retry this exact reviewed save</button>
+      <button id="pw-back" type="button" class="btn">Keep editing</button>
+    </section>
+  </div>
+<style>
+  #pw-root{max-width:76rem}#pw-root .panel{margin-block:var(--space-4)}#pw-root label{display:block;margin-block:var(--space-3) var(--space-1)}
+  #pw-root .input{width:100%;max-width:48rem;min-width:0}#pw-root p,#pw-root li,#pw-root dd{overflow-wrap:anywhere}
+  #pw-root button{white-space:normal;margin:var(--space-2) var(--space-2) var(--space-2) 0}#pw-root pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:28rem;overflow:auto;padding:var(--space-3)}
+  #pw-root [hidden]{display:none!important}#pw-milestones[data-view=board]{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr));gap:var(--space-3)}
+  #pw-milestones article{border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3);margin-block:var(--space-2)}
+  #pw-milestones[data-view=timeline] article{border-inline-start:4px solid var(--accent);margin-inline-start:var(--space-3)}
+  #pw-root summary{cursor:pointer;font-weight: var(--font-semibold)}#pw-root dl{display:grid;grid-template-columns:minmax(6rem,1fr) minmax(0,3fr);gap:var(--space-2)}
+</style>

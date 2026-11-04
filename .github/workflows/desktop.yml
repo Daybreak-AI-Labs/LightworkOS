@@ -1,0 +1,489 @@
+name: Desktop bundle
+
+# Builds the source-bootstrap shell (Tauri) for macOS, Windows,
+# and Linux as an unsigned engineering workflow artifact. It is not a
+# self-contained product installer and is not attached to product releases.
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "vendor/**"
+      - "scripts/check_vendor_patches.py"
+      - "apps/installer-desktop/**"
+      - "apps/desktop/**"
+      - "apps/desktop-runtime/**"
+      - "apps/desktop-oauth-return/**"
+      - "deploy/desktop/install.ps1"
+      - "deploy/desktop/install.sh"
+      - "rust-toolchain.toml"
+      - ".github/workflows/desktop.yml"
+  push:
+    tags:
+      # Engineering-only version markers. Product `v*` releases deliberately
+      # do not publish these source-bootstrap bundles as end-user installers.
+      - "desktop-v*"
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  validate:
+    name: Desktop frontend and Tauri validation
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/installer-desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Linux validation dependencies
+        run: |
+          # The runner image ships a Google Chrome apt source whose index
+          # intermittently fails verification (Hash Sum mismatch); unused here.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: "22.23.1"
+      - name: Verify canonical source bytes before package execution
+        env:
+          MAVERICK_INSTALL_REF: ${{ github.sha }}
+        run: >-
+          node scripts/verify-source.mjs
+          --repo ../..
+          --ref "$MAVERICK_INSTALL_REF"
+          --require-head
+          --canonicalize-checkout
+      - name: Enable the exact package manager
+        run: corepack enable && corepack prepare pnpm@10.11.1 --activate
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: apps/installer-desktop/src-tauri
+      - name: Validate locked frontend and Rust sources
+        run: |
+          pnpm install --frozen-lockfile
+          node --test ../../vendor/tests/deepmerge.test.cjs
+          pnpm check
+          pnpm test
+          pnpm build
+          cargo test --locked --release --manifest-path ../../vendor/tests/Cargo.toml
+          cargo check --locked --manifest-path src-tauri/Cargo.toml
+          cargo test --locked --lib --manifest-path ../desktop/src-tauri/Cargo.toml
+          cargo test --locked --manifest-path ../desktop-oauth-return/Cargo.toml
+          cargo test --locked --manifest-path ../desktop-runtime/Cargo.toml
+
+  bundle:
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.repository == 'Daybreak-AI-Labs/LightworkOS'
+    permissions:
+      contents: read
+    env:
+      BUNDLE_TARGET: ${{ matrix.target }}
+      # Embed bootstrap blobs from the triggering commit and refuse any other
+      # tracked, ignored, or untracked source bytes in distributable bundles.
+      MAVERICK_INSTALL_REF: ${{ github.sha }}
+      MAVERICK_REQUIRE_CLEAN_INSTALLER_SOURCE: "1"
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/installer-desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux bundle deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          # The runner image ships a Google Chrome apt source whose index
+          # intermittently fails verification (Hash Sum mismatch); unused here.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: "22.23.1"
+
+      - name: Verify canonical source bytes before package execution
+        run: >-
+          node scripts/verify-source.mjs
+          --repo ../..
+          --ref "$MAVERICK_INSTALL_REF"
+          --require-head
+          --canonicalize-checkout
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@10.11.1 --activate
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.97.1"
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/installer-desktop/src-tauri/target
+          key: >-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-${{
+            hashFiles('rust-toolchain.toml',
+            'apps/installer-desktop/src-tauri/Cargo.toml',
+            'apps/desktop-runtime/Cargo.toml',
+            'apps/installer-desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Run frontend behavior tests
+        run: pnpm test
+
+      - name: Resolve a strict immutable bundle version
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+          const committed = JSON.parse(
+            fs.readFileSync('src-tauri/tauri.conf.json', 'utf8')
+          );
+          let version = committed.version;
+          if (process.env.GITHUB_REF_TYPE === 'tag') {
+            const prefix = 'desktop-v';
+            if (!process.env.GITHUB_REF_NAME.startsWith(prefix)) {
+              throw new Error('desktop bundle tags must start with desktop-v');
+            }
+            version = process.env.GITHUB_REF_NAME.slice(prefix.length);
+          }
+          if (typeof version !== 'string' || !semver.test(version)) {
+            throw new Error(`invalid strict SemVer bundle version: ${version}`);
+          }
+          const configPath = path.join(
+            process.env.RUNNER_TEMP,
+            `lightwork-tauri-${process.env.BUNDLE_TARGET}.json`
+          ).replaceAll('\\', '/');
+          fs.writeFileSync(
+            configPath,
+            `${JSON.stringify({ version }, null, 2)}\n`,
+            { flag: 'wx' }
+          );
+          fs.appendFileSync(
+            process.env.GITHUB_ENV,
+            `TAURI_BUILD_CONFIG=${configPath}\nBUNDLE_VERSION=${version}\n`
+          );
+          process.stdout.write(`bundle version -> ${version}\n`);
+          NODE
+
+      - name: Remove restored or stale bundle outputs
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          const bundleRoot = path.resolve(
+            'src-tauri',
+            'target',
+            process.env.BUNDLE_TARGET,
+            'release',
+            'bundle'
+          );
+          fs.rmSync(bundleRoot, { force: true, recursive: true });
+          fs.rmSync(path.resolve('provenance'), {
+            force: true,
+            recursive: true,
+          });
+          NODE
+
+      - name: Build bundle (unsigned)
+        shell: bash
+        run: >-
+          pnpm tauri build
+          --target "$BUNDLE_TARGET"
+          --config "$TAURI_BUILD_CONFIG"
+          --ci
+          -- --locked
+
+      - name: Package bundle with executable modes
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_root="src-tauri/target/$BUNDLE_TARGET/release/bundle"
+          if [ ! -d "$bundle_root" ]; then
+            echo "::error::Tauri did not create the expected target bundle directory."
+            exit 1
+          fi
+          if ! find "$bundle_root" -mindepth 1 -print -quit | grep -q .; then
+            echo "::error::Tauri bundle directory is empty."
+            exit 1
+          fi
+          mkdir -m 700 provenance
+          tar -czf "provenance/$BUNDLE_TARGET.tar.gz" \
+            -C "$bundle_root" .
+
+      - name: Record bundle provenance and checksums
+        shell: bash
+        env:
+          MAVERICK_SOURCE_REPOSITORY: ${{ github.repository }}
+          MAVERICK_SOURCE_REF: ${{ github.ref }}
+          MAVERICK_WORKFLOW_NAME: ${{ github.workflow }}
+          MAVERICK_WORKFLOW_REF: ${{ github.workflow_ref }}
+          MAVERICK_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          node <<'NODE'
+          const crypto = require('crypto');
+          const fs = require('fs');
+          const path = require('path');
+          const { execFileSync } = require('child_process');
+
+          const canonicalRepository = 'Daybreak-AI-Labs/LightworkOS';
+          const fullSha = /^[0-9a-f]{40}$/;
+          const digits = /^[1-9][0-9]*$/;
+          const required = (name) => {
+            const value = process.env[name];
+            if (!value) throw new Error(`missing required CI metadata: ${name}`);
+            return value;
+          };
+          const sha256 = (bytes) =>
+            crypto.createHash('sha256').update(bytes).digest('hex');
+          const gitEnvironment = Object.fromEntries(
+            Object.entries(process.env).filter(
+              ([key]) => !key.toUpperCase().startsWith('GIT_')
+            )
+          );
+          gitEnvironment.GIT_NO_REPLACE_OBJECTS = '1';
+          gitEnvironment.GIT_TERMINAL_PROMPT = '0';
+          const git = (args) => execFileSync(
+            'git',
+            ['--no-replace-objects', ...args],
+            { cwd: path.resolve('../..'), encoding: null, env: gitEnvironment }
+          );
+          const sourceRepository = required('MAVERICK_SOURCE_REPOSITORY');
+          const sourceRevision = required('MAVERICK_INSTALL_REF');
+          const workflowRef = required('MAVERICK_WORKFLOW_REF');
+          const workflowSha = required('MAVERICK_WORKFLOW_SHA');
+          if (sourceRepository !== canonicalRepository) {
+            throw new Error(`unexpected source repository: ${sourceRepository}`);
+          }
+          if (!fullSha.test(sourceRevision) || !fullSha.test(workflowSha)) {
+            throw new Error('source and workflow revisions must be full SHAs');
+          }
+          if (!workflowRef.startsWith(
+            `${canonicalRepository}/.github/workflows/desktop.yml@`
+          )) {
+            throw new Error(`unexpected workflow identity: ${workflowRef}`);
+          }
+          const head = git(['rev-parse', 'HEAD']).toString('utf8').trim();
+          if (head !== sourceRevision) {
+            throw new Error('manifest source revision does not equal HEAD');
+          }
+          for (const name of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT']) {
+            if (!digits.test(required(name))) {
+              throw new Error(`${name} must be a positive integer`);
+            }
+          }
+
+          const target = required('BUNDLE_TARGET');
+          const allowedTargets = new Set([
+            'aarch64-apple-darwin',
+            'x86_64-pc-windows-msvc',
+            'x86_64-unknown-linux-gnu',
+          ]);
+          if (!allowedTargets.has(target)) {
+            throw new Error(`unexpected desktop bundle target: ${target}`);
+          }
+          const bundleRoot = path.resolve(
+            'src-tauri',
+            'target',
+            target,
+            'release',
+            'bundle'
+          );
+          const archiveName = `${target}.tar.gz`;
+          const manifestName = `${target}.json`;
+          const archiveRelative = `provenance/${archiveName}`;
+          const manifestRelative = `provenance/${manifestName}`;
+          const archivePath = path.resolve(archiveRelative);
+          const describeTree = (root) => {
+            const records = [];
+            const visit = (directory) => {
+              for (const entry of fs.readdirSync(directory, {
+                withFileTypes: true,
+              })) {
+                const candidate = path.join(directory, entry.name);
+                const stat = fs.lstatSync(candidate);
+                const relativePath = path
+                  .relative(root, candidate)
+                  .replaceAll('\\', '/');
+                if (stat.isSymbolicLink()) {
+                  records.push({
+                    path: relativePath,
+                    type: 'symlink',
+                    mode: stat.mode & 0o777,
+                    target: fs.readlinkSync(candidate),
+                  });
+                } else if (stat.isDirectory()) {
+                  records.push({
+                    path: `${relativePath}/`,
+                    type: 'directory',
+                    mode: stat.mode & 0o777,
+                  });
+                  visit(candidate);
+                } else if (stat.isFile()) {
+                  const bytes = fs.readFileSync(candidate);
+                  records.push({
+                    path: relativePath,
+                    type: 'file',
+                    mode: stat.mode & 0o777,
+                    bytes: bytes.length,
+                    sha256: sha256(bytes),
+                  });
+                } else {
+                  throw new Error(`unsupported bundle entry: ${relativePath}`);
+                }
+              }
+            };
+            visit(root);
+            return records.sort((left, right) =>
+              left.path.localeCompare(right.path)
+            );
+          };
+          const bundleEntries = describeTree(bundleRoot);
+          if (bundleEntries.length === 0) {
+            throw new Error('bundle contains no entries');
+          }
+          const gitBlob = (repositoryPath) => git([
+            'cat-file',
+            'blob',
+            `${sourceRevision}:${repositoryPath}`,
+          ]);
+          const digestFile = (relativePath) => {
+            const bytes = fs.readFileSync(path.resolve(relativePath));
+            return {
+              path: relativePath,
+              bytes: bytes.length,
+              sha256: sha256(bytes),
+            };
+          };
+          const committedInput = (repositoryPath) => {
+            const bytes = gitBlob(repositoryPath);
+            return {
+              path: repositoryPath,
+              bytes: bytes.length,
+              sha256: sha256(bytes),
+            };
+          };
+          const archive = {
+            ...digestFile(archiveRelative),
+            path: archiveName,
+          };
+          const effectiveConfigBytes = fs.readFileSync(
+            required('TAURI_BUILD_CONFIG')
+          );
+          const effectiveConfig = JSON.parse(
+            effectiveConfigBytes.toString('utf8')
+          );
+          const manifest = {
+            schema_version: 2,
+            source: {
+              repository: sourceRepository,
+              revision: sourceRevision,
+              ref: required('MAVERICK_SOURCE_REF'),
+            },
+            workflow: {
+              name: required('MAVERICK_WORKFLOW_NAME'),
+              ref: workflowRef,
+              revision: workflowSha,
+              run_id: required('GITHUB_RUN_ID'),
+              run_attempt: required('GITHUB_RUN_ATTEMPT'),
+            },
+            runner: {
+              os: required('RUNNER_OS'),
+              architecture: required('RUNNER_ARCH'),
+              image_os: process.env.ImageOS || null,
+              image_version: process.env.ImageVersion || null,
+            },
+            build: {
+              target,
+              version: required('BUNDLE_VERSION'),
+              unsigned_engineering_artifact: true,
+              effective_tauri_config: {
+                value: effectiveConfig,
+                bytes: effectiveConfigBytes.length,
+                sha256: sha256(effectiveConfigBytes),
+              },
+            },
+            bootstrap_blobs: [
+              'deploy/desktop/install.sh',
+              'deploy/desktop/install.ps1',
+            ].map(committedInput),
+            locked_inputs: [
+              'apps/installer-desktop/pnpm-lock.yaml',
+              'apps/installer-desktop/src-tauri/Cargo.lock',
+              'apps/installer-desktop/src-tauri/tauri.conf.json',
+              'apps/desktop-runtime/Cargo.toml',
+              'apps/desktop-runtime/Cargo.lock',
+              'apps/desktop-runtime/src/lib.rs',
+              'apps/installer-desktop/src-tauri/icons/32x32.png',
+              'apps/installer-desktop/src-tauri/icons/128x128.png',
+              'apps/installer-desktop/src-tauri/icons/128x128@2x.png',
+              'apps/installer-desktop/src-tauri/icons/icon.icns',
+              'apps/installer-desktop/src-tauri/icons/icon.ico',
+              'apps/installer-desktop/src-tauri/icons/icon.png',
+            ].map(committedInput),
+            bundle_entries: bundleEntries,
+            uploaded_payloads: [archive],
+            upload_contract: {
+              artifact_name: `lightwork-desktop-${target}`,
+              // upload-artifact uses the two files' common provenance
+              // directory as its root, so these are their exact artifact paths.
+              files: [archiveName, manifestName],
+              manifest: manifestName,
+            },
+          };
+          fs.writeFileSync(
+            path.resolve(manifestRelative),
+            `${JSON.stringify(manifest, null, 2)}\n`,
+            { flag: 'wx' }
+          );
+          NODE
+
+      - name: Upload packaged bundle and provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: lightwork-desktop-${{ matrix.target }}
+          path: |
+            apps/installer-desktop/provenance/${{ matrix.target }}.tar.gz
+            apps/installer-desktop/provenance/${{ matrix.target }}.json
+          compression-level: 0
+          if-no-files-found: error

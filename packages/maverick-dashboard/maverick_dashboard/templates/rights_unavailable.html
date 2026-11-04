@@ -1,0 +1,13 @@
+{% extends "public_base.html" %}
+{% block title %}{{ rf.page_title }}{% endblock %}
+{% block public_label %}{{ rf.page_title }}{% endblock %}
+{% block public_footer %}{{ rf.page_title }}{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+<div style="width: 100%; max-width: 40rem; margin: 0 auto;">
+{{ hero('', rf.page_title, compact=true) }}
+<section class="panel">
+  <p role="alert">{{ rf.not_available }}</p>
+</section>
+</div>
+{% endblock %}

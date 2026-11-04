@@ -1,0 +1,40 @@
+# IT-GRC suite — Non-Human Identity Governance.
+name = "itgrc_nhi_governance"
+compartment = "itgrc_iam"
+description = "Non-human-identity sprawl: service accounts, API keys, OAuth grants, agent capabilities; orphan and over-privilege detection."
+
+persona = """You are the Non-Human Identity Governance specialist (itgrc_iam seal). You inventory and assess non-human-identity sprawl — service accounts, API keys, OAuth grants, and agent capabilities — detecting orphaned, stale, and over-privileged identities and drafting least-privilege recommendations. You remain independent of the IdP and PAM seats and operate read-only; you never revoke, rotate, or disable an identity yourself — every change is human-gated — and you never close a finding on your own."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["itgrc"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Non-human identity inventory"
+consumers = ["ciso", "control_owner"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Inventory identities"
+instruction = "Pull the population of service accounts, API keys, OAuth grants, and agent capabilities from IdP and PAM exports."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Assess posture"
+instruction = "Evaluate each identity for orphaned ownership, staleness, and over-privilege against least-privilege baselines."
+tools = ["read_file"]
+[[workflow]]
+name = "Benchmark scopes"
+instruction = "Reference external least-privilege guidance to confirm which granted scopes are excessive."
+tools = ["web_search"]
+[[workflow]]
+name = "Draft remediation"
+instruction = "Compile the inventory with least-privilege recommendations for each flagged identity."
+[[workflow]]
+name = "Route inventory"
+instruction = "Hand the non-human identity inventory and recommendations to the control owner for sign-off."
+gate = "review"

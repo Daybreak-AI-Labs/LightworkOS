@@ -1,0 +1,18 @@
+{#- A board page's KPI row (filled by static/board.js). One placeholder tile
+    per KPI the page script draws, built like the real tiles (label, number
+    line, foot) so the row has its final size from the first paint and the
+    charts below do not move when the numbers arrive; render() empties the
+    row and draws the real tiles in their place. Placeholders are hidden from
+    assistive technology: they carry no numbers yet. Pass the labels in the
+    order render() draws them. -#}
+{% macro kpi_row(labels) -%}
+<div class="bd-kpis" id="bd-kpis">
+  {%- for label in labels %}
+  <div class="bd-kpi panel" aria-hidden="true">
+    <div class="bd-kpi__top"><div class="bd-kpi__label">{{ label }}</div></div>
+    <div class="bd-kpi__num">–</div>
+    <div class="bd-kpi__foot"></div>
+  </div>
+  {%- endfor %}
+</div>
+{%- endmacro %}

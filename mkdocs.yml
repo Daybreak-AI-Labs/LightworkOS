@@ -1,0 +1,177 @@
+site_name: Lightwork
+site_description: A self-hosted runtime for multi-agent AI work.
+site_url: https://daybreak-ai-labs.github.io/LightworkOS/
+repo_url: https://github.com/Daybreak-AI-Labs/LightworkOS
+repo_name: Daybreak-AI-Labs/LightworkOS
+edit_uri: edit/main/docs/
+copyright: Lightwork is licensed under the <a href="https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/LICENSE">Apache License 2.0</a>.
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  logo: assets/brand/daybreak-mark.png
+  favicon: assets/brand/daybreak-mark.png
+  font: false
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+extra_css:
+  - assets/brand/lightwork-docs.css
+
+# Theme assets are copied by MkDocs for both the full and the public builds.
+# They are not documents and must not become duplicate docs_dir outputs.
+exclude_docs: |
+  /overrides/
+
+plugins:
+  - search:
+      lang: en
+
+# Many engineering and assurance pages intentionally cite versioned source,
+# workflow, and benchmark artifacts outside MkDocs' docs_dir. MkDocs cannot
+# validate those repository-relative targets, so retain the diagnostics as
+# build information while keeping strict mode for every other warning class.
+validation:
+  links:
+    not_found: info
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      # Resolve includes only inside the active docs_dir. The public overlay
+      # changes docs_dir to .public-docs, so an allowlisted page cannot inline
+      # a document outside the published set with an --8<-- directive.
+      base_path:
+        - !relative $docs_dir
+      restrict_base_path: true
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+nav:
+  - Home:
+      - Welcome: index.md
+      - Getting started: getting-started.md
+      - Install from source: source-install.md
+      - Use Lightwork: using-lightwork.md
+      - Operator first run: operator-first-run.md
+  - Guides:
+      - Configuration: configuration.md
+      - Task limits and spend accounting: task-limits.md
+      - Provider spending recovery: provider-spending.md
+      - Pricing governance: pricing-governance.md
+      - Environment variables: env-vars.md
+      - Deployment: deployment.md
+      - Reference architectures: reference-architectures.md
+      - Operations: operations.md
+      - Safety: safety.md
+      - Governed execution: governed-execution.md
+      - Plugins: plugins.md
+      - Connectors: connectors.md
+      - Starter goals: starter-goals.md
+  - Reference:
+      - API: api.md
+      - gRPC API: grpc.md
+      - A2A (Agent2Agent): a2a.md
+      - External agents (BYOA): external-agents.md
+      - External agent quickstart: clients/external-agent-quickstart.md
+      - Client languages: clients/README.md
+      - Public website chat: public-chat.md
+  - Performance:
+      - Provider streaming support: performance/streaming-parity.md
+  - Security:
+      - Security & GRC suite: SECURITY_GRC.md
+      - Model Risk & AI Assurance: MODEL_RISK_ASSURANCE.md
+      - AI Evidence-Ready Gateway: AI_EVIDENCE_GATEWAY.md
+      - Governance Frontier benchmark: https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md
+      - Governed model improvement: MODEL_IMPROVEMENT_PLATFORM.md
+      - Threat model: security/threat-model.md
+      - DGM evaluator evidence: security/dgm-evaluator-evidence.md
+      - Capability attenuation (verified): security/capability-attenuation.md
+      - Shield benchmark: security/shield-benchmark.md
+      - Encryption at rest: encryption.md
+      - Regulated deployment: regulated-deployment.md
+      - Compliance assessments: compliance-assessments.md
+      - Security framework catalogs: security-framework-catalog.md
+      - Agent threat hunting: threat-hunting.md
+      - Adaptive immunity: immune.md
+      - Information-flow control: ifc.md
+      - Code vault: codebase.md
+  - Architecture:
+      - Governed agent control plane: enterprise/architecture.md
+      - Security & compliance overview: enterprise/security-overview.md
+      - Security evidence map: enterprise/security-evidence-map.md
+      - Interface contracts: contracts/README.md
+  - Integrations:
+      - Observability integrations: integrations/observability-partners.md
+  - Project:
+      - RFC process: rfcs/README.md
+  - Community:
+      - Contributing: CONTRIBUTING.md
+      - Governance: https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/GOVERNANCE.md
+      - Contributor License Agreement: CLA.md
+      - Code of Conduct: CODE_OF_CONDUCT.md
+      - Security policy: SECURITY.md
+      - Trademark policy: TRADEMARK.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Daybreak-AI-Labs/LightworkOS
+  generator: false
+
+# Preview the full documentation set locally:
+#   python -m pip install --requirement requirements/docs.txt
+#   mkdocs serve
+# The published site is built from mkdocs.public.yml and the
+# docs/public-docs.txt allowlist by .github/workflows/docs.yml.

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<!-- Lightwork popup: a small chat box over the LOCAL dashboard's REST API.
+     No inline scripts (MV3 CSP forbids them); all logic is in popup.js. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lightwork</title>
+  <style>
+    body { font: 13px/1.45 system-ui, sans-serif; width: 360px; margin: 0;
+           background: #14161a; color: #e6e6e6; }
+    main { padding: 10px; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    textarea { width: 100%; box-sizing: border-box; min-height: 64px;
+               background: #1d2026; color: #e6e6e6; border: 1px solid #3a3f47;
+               border-radius: 4px; padding: 6px; }
+    input[type="checkbox"] { width: auto; }
+    input { width: 100%; box-sizing: border-box; background: #1d2026;
+            color: #e6e6e6; border: 1px solid #3a3f47; border-radius: 4px;
+            padding: 4px 6px; }
+    button { background: #2b6cb0; color: #fff; border: 0; border-radius: 4px;
+             padding: 6px 10px; margin-top: 6px; cursor: pointer; }
+    button.secondary { background: #3a3f47; }
+    #log { margin-top: 10px; max-height: 220px; overflow-y: auto;
+           border-top: 1px solid #3a3f47; padding-top: 6px;
+           white-space: pre-wrap; word-break: break-word; }
+    .evt { margin: 0 0 6px; }
+    .who { color: #8ab4f8; }
+    .err { color: #f28b82; }
+    details { margin-top: 10px; }
+    label { display: block; margin-top: 6px; }
+    .hint { color: #9aa0a6; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Lightwork</h1>
+    <label for="prompt">Goal</label>
+    <textarea id="prompt" placeholder="What should Lightwork do?"></textarea>
+    <div>
+      <button id="send" type="button">Send</button>
+      <button id="send-page" type="button" class="secondary"
+              title="Review the page information before sharing it">
+        Send this page
+      </button>
+    </div>
+    <section id="page-review" hidden aria-labelledby="page-review-title">
+      <h2 id="page-review-title">Review what will be shared</h2>
+      <label><input id="share-url" type="checkbox" checked> Page title and URL</label>
+      <label><input id="share-selection" type="checkbox" checked> Selected text</label>
+      <label><input id="share-structure" type="checkbox"> Page structure</label>
+      <label><input id="share-values" type="checkbox"> Visible form values (may contain private information)</label>
+      <p id="page-policy" class="hint"></p>
+      <pre id="page-preview" style="max-height:180px;overflow:auto;white-space:pre-wrap"></pre>
+      <button id="page-confirm" type="button">Send reviewed context</button>
+      <button id="page-cancel" type="button" class="secondary">Cancel</button>
+    </section>
+    <div id="status" class="hint" role="status" aria-live="polite"></div>
+    <a id="dashboard" href="#" target="_blank" rel="noopener">Open dashboard to review</a>
+    <button id="clear-pending" type="button" class="secondary" hidden>Check start status</button>
+    <div id="log" aria-label="Goal events" aria-live="polite"></div>
+    <details>
+      <summary>Settings</summary>
+      <label for="base">Dashboard URL (local only)</label>
+      <input id="base" placeholder="http://127.0.0.1:8765">
+      <label for="token">Dashboard token (required)</label>
+      <input id="token" type="password" autocomplete="off"
+             placeholder="Enter the access token provided by your administrator">
+      <button id="save" type="button" class="secondary">Save</button>
+      <p class="hint"><a id="extension-settings" href="http://127.0.0.1:8765/settings#settings-access" target="_blank" rel="noopener">Open Lightwork Settings</a> and search for “Allow the browser extension”. An administrator must enable it and provide the required access token. A deployment policy may lock the setting; the effective value is shown in Settings. Return here after setup.</p>
+    </details>
+  </main>
+  <script src="client-protocol.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

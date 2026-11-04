@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 3 (Manufacturing & Production) — Production Scheduling.
+# Integration targets (connectors to build): MES / SAP PP.
+name = "ops_production_scheduling"
+compartment = "ops_manufacturing"
+description = "Production planning, sequencing, and finite scheduling."
+
+persona = """You are the Production Planning & Scheduling specialist. Build finite production
+schedules, sequence and balance lines, and test capacity feasibility. You DRAFT schedules for
+a human supervisor to release to the floor -- you never release a production order, start a
+run, or change a system of record yourself. Worker safety overrides throughput in every
+recommendation."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_production"]
+authoring = "manual"
+
+[output]
+shape = "forecast"
+deliverable = "finite production schedule"
+consumers = ["production_supervisor", "plant_manager"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull demand"
+instruction = "Read the firm order book, work orders, and routings for the planning horizon."
+tools = ["read_file"]
+[[workflow]]
+name = "Check capacity"
+instruction = "Compare required hours against line and labor capacity and identify bottleneck work centers."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Sequence runs"
+instruction = "Build a finite schedule that sequences and balances lines while honoring changeover and material constraints."
+[[workflow]]
+name = "Safety check"
+instruction = "Verify no sequence forces unsafe staffing or overtime that violates worker-safety limits before throughput gains."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Hand to supervisor"
+instruction = "Present the draft schedule to the production supervisor to release the orders to the floor."
+gate = "review"

@@ -1,0 +1,54 @@
+/packages/maverick-core/maverick/training/environment_packs/*.ndjson text eol=lf
+/packages/maverick-core/maverick/training/environment_packs/environment_packs.lock.json text eol=lf
+/packages/maverick-core/maverick/training/specialist_models.v1.json text eol=lf
+
+# Machine-readable proof artifacts are byte-hashed in handoff records. Keep
+# repository bytes stable across Windows and POSIX checkouts.
+/proof/*.json text eol=lf
+/deploy/docker/entrypoint.sh text eol=lf
+/scripts/acceptance/fixtures/*.json text eol=lf
+/scripts/acceptance/fixtures/vendor-documents/*.pdf binary
+
+# Signed governance-frontier evidence, published as one unit. The manifest is
+# Ed25519-signed by the key in trusted-publisher.pub and pins SHA-256 digests
+# of the source tree it was measured from, so a hunk-level merge produces a
+# manifest whose signature and digests match nothing -- and it does so
+# silently, because the pieces all look plausible. Any change under
+# packages/maverick-core/maverick or packages/maverick-shield/maverick_shield
+# invalidates the digests, so two branches touching the kernel will both
+# republish these and collide. `-merge` makes git stop at a whole-file
+# conflict rather than interleaving them.
+#
+# Resolve by taking one side entire (never a mixture), then run
+# `python benchmarks/eval_governance_frontier.py --verify-tracked-artifacts`.
+# If that fails, re-measure with a plain `python
+# benchmarks/eval_governance_frontier.py` from a clean tree; do not hand-edit.
+/benchmarks/results/governance-frontier-v1/measured-manifest.json text eol=lf -merge
+/benchmarks/results/governance-frontier-v1/trusted-publisher.pub text eol=lf -merge
+/benchmarks/results/governance-frontier-v1/verify_manifest.py text eol=lf
+/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md text eol=lf -merge
+
+# Third-party Governance Frontier inputs and generated public artifacts are
+# byte-compared by the offline no-drift verifier. Keep them LF-only across
+# Windows and POSIX checkouts; take whole files on a concurrent update.
+/benchmarks/results/governance-frontier-v1/suite-contract.json text eol=lf -merge
+/benchmarks/results/governance-frontier-v1/trusted-submitters.json text eol=lf -merge
+/benchmarks/results/governance-frontier-v1/third-party-submissions/*.json text eol=lf -merge
+/benchmarks/results/governance-frontier-v1/leaderboard.json text eol=lf -merge
+/benchmarks/results/governance-frontier-v1/leaderboard.md text eol=lf -merge
+
+# Preserve upstream bytes for the locally served, integrity-pinned task-map library.
+/packages/maverick-dashboard/maverick_dashboard/static/cytoscape-3.30.2.min.js -text
+
+# Preserve the pinned Swagger distribution and its complete upstream notices.
+/packages/maverick-dashboard/maverick_dashboard/static/swagger-ui-5.33.1-bundle.js -text
+/packages/maverick-dashboard/maverick_dashboard/static/swagger-ui-5.33.1.css -text
+/packages/maverick-dashboard/maverick_dashboard/static/swagger-ui-5.33.1-LICENSE.txt -text
+/packages/maverick-dashboard/maverick_dashboard/static/swagger-ui-5.33.1-NOTICE.txt -text
+/packages/maverick-dashboard/maverick_dashboard/static/swagger-ui-bundle.js.LICENSE.txt -text whitespace=-blank-at-eol
+
+# Reviewed dependency source hashes must survive Windows checkout conversion.
+/vendor/** text eol=lf
+# Preserve upstream source/license whitespace instead of expanding local patches.
+/vendor/rust/** whitespace=-blank-at-eol,-blank-at-eof
+/vendor/patches/*.patch whitespace=-blank-at-eol,-space-before-tab,-blank-at-eof

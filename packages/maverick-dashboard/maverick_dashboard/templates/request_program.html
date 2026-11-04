@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Prepare an answer for this request · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Prepare an answer for this request', lede='Combine your checked rule steps around explicit business examples, then establish whether they agree on the current request.') }}
+<style>#request-program,#request-program form,#request-program label{display:grid;gap:var(--space-2);min-width:0;overflow-wrap:anywhere}#request-program select,#request-program button,#request-program input,#request-program textarea{min-width:0;max-width:100%;box-sizing:border-box;white-space:normal}#request-program dd,#request-program pre{margin-left:0;white-space:pre-wrap;overflow-wrap:anywhere}#request-program label.rp-check{display:flex;align-items:flex-start}#request-program input[type=checkbox]{flex:none}#request-program fieldset{min-width:0;border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3)}#request-program details{min-width:0}</style>
+<section id="request-program" class="panel">
+  <p id="rp-disabled" class="muted" hidden>This capability is off. An administrator can <a href="/settings#feature-request_program">enable request-specific answers in Settings</a>. Your earlier original results remain readable.</p>
+  <form id="rp-form">
+    <label>Current published workflow<select id="rp-flow" class="input"><option value="">Choose a workflow</option></select></label>
+    <p id="rp-version" class="muted"></p>
+    <label>Describe the business request<textarea id="rp-description" class="input" maxlength="500" rows="3" required></textarea></label>
+    <p class="muted">Your description names the work. The selected steps, typed examples and expected answers below define what is actually checked.</p>
+    <fieldset><legend>Steps that may be combined</legend><p class="muted">Choose one to three. Every order and repeated-step combination within your limit is checked.</p><div id="rp-steps"></div></fieldset>
+    <label>Maximum steps in each combination<select id="rp-length" class="input"><option value="1">One step</option><option value="2">Two steps</option><option value="3" selected>Three steps</option></select></label>
+    <label>Required final answer<select id="rp-output" class="input"><option value="">Choose a produced result</option></select></label>
+    <fieldset><legend>Original examples and your required answers</legend><p class="muted">Choose two to eight different original cases with current evidence-use permission. Every combination is checked against every selected example.</p><div id="rp-cases"></div><a id="rp-retain" href="/learning/recheck-rules">Review and retain original case evidence</a></fieldset>
+    <fieldset><legend>Values for the current request</legend><div id="rp-inputs"></div></fieldset>
+    <button id="rp-prepare" type="button" class="btn btn--primary">Review complete request</button>
+    <button id="rp-refresh" type="button" class="btn btn--ghost">Refresh current choices</button>
+  </form>
+  <section id="rp-preview" hidden></section>
+  <p id="rp-status" role="status" aria-live="polite"></p><p id="rp-error" class="danger-text" role="alert"></p>
+  <section id="rp-result" hidden></section>
+  <label>Original requests<select id="rp-history" class="input"><option value="">Choose an original request</option></select></label>
+  <button id="rp-read" type="button" class="btn btn--ghost">Check original outcome</button>
+  <details><summary>Scope, work allowance and separate publication</summary><p id="rp-notice"></p><p id="rp-limits"></p><p>These retained combinations answer only this reviewed request. They do not replace or publish the selected workflow. A different expected answer or new request needs its own review.</p><a href="/research">Open independent workflow release controls</a></details>
+</section>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-request-program.js"></script>{% endblock %}

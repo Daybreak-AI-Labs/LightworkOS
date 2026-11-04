@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Banner and preference center · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">
+<style>
+#cpp-withdrawal-original { min-width: 0; overflow-wrap: anywhere; }
+#cpp-withdrawal-original .cw-toolbar label { min-width: 0; flex: 1 1 12rem; }
+#cpp-withdrawal-original select, #cpp-withdrawal-original button { min-width: 0; max-width: 100%; white-space: normal; }
+#cpp-withdrawal-original .cw-facts { grid-template-columns: minmax(0, 1fr); }
+#cpp-withdrawal-original dt { font-weight: 600; margin-top: var(--space-3); }
+#cpp-withdrawal-original dd { margin: var(--space-1) 0 0; }
+</style>{% endblock %}
+{% block content %}
+{% set pub_on = consent_publishing_enabled %}
+{% set pub_admin = consent_can_admin if consent_can_admin is defined else true %}
+<div class="governance-workbench">
+  {{ hero('Consent experiences', 'Banner and preference center',
+          lede='Build the consent banner and preference center people see on your websites and apps, preview it, and publish it. Every published version is kept, so you can restore an earlier one at any time.') }}
+  {% include "_consent_nav.html" %}
+  {% if not pub_on %}
+  {{ module_gate('consent_preferences.publishing', 'Consent publishing',
+                 detail='Publishes your consent banner and preference center to your websites and apps. Ask your privacy owner to approve it first.') }}
+  {% endif %}
+  {% if not pub_admin %}<p class="muted">You can look around and preview. Only an administrator can save or publish changes.</p>{% endif %}
+  <p id="cpp-status" class="muted" role="status" aria-live="polite"></p>
+  <fieldset class="feature-gated-workbench" id="cpp-root" data-can-admin="{{ 'true' if pub_admin else 'false' }}" data-feature-enabled="{{ 'true' if pub_on else 'false' }}"{% if not pub_on %} disabled aria-disabled="true"{% endif %}>
+    <legend class="sr-only">Banner and preference center</legend>
+
+    <section class="panel" aria-labelledby="cpp-steps-heading">
+      <h2 id="cpp-steps-heading">How it works</h2>
+      <ol>
+        <li>Add each website or app that shows the banner.</li>
+        <li>Write your content: the uses of data people can choose, your privacy notice and the banner design.</li>
+        <li>Set display rules: which content shows in which regions and languages.</li>
+        <li>Preview, then publish to a website or app.</li>
+      </ol>
+    </section>
+
+    <section class="panel" aria-labelledby="cpp-properties-heading">
+      <div class="section-head">
+        <h2 id="cpp-properties-heading">Websites and apps</h2>
+        <button class="btn btn--primary" type="button" id="cpp-property-new"{% if not pub_admin %} disabled{% endif %}>Add a website or app</button>
+      </div>
+      <div id="cpp-property-table"><p class="muted">Loading websites and apps…</p></div>
+
+      <form id="cpp-property" class="cw-editor" hidden novalidate>
+        <fieldset class="cw-form">
+          <legend class="sr-only">Website or app details</legend>
+          <h3 class="cw-wide" id="cpp-property-title">Add a website or app</h3>
+          <label>Name<input class="input" name="property_name" required maxlength="100" autocomplete="off" placeholder="For example: Main website"></label>
+          <fieldset>
+            <legend>Type</legend>
+            <div class="cw-checks">
+              <label><input type="radio" name="kind" value="web" checked> Website</label>
+              <label><input type="radio" name="kind" value="mobile"> Mobile app</label>
+            </div>
+          </fieldset>
+          <label class="cw-wide">Consent group
+            <input class="input" name="group_name" required maxlength="100" list="cpp-group-suggestions" autocomplete="off" placeholder="For example: Customers">
+            <span class="muted">Websites and apps in the same group share each person’s choices.</span>
+          </label>
+          <datalist id="cpp-group-suggestions"></datalist>
+          <label class="cw-wide" data-kind="web">Website addresses (one per line)
+            <textarea class="textarea" name="web_domains" rows="3" placeholder="www.example.com"></textarea>
+            <span class="muted">The banner will only load on these addresses, over a secure connection.</span>
+          </label>
+          <label class="cw-wide" data-kind="mobile" hidden>App store IDs (one per line)
+            <textarea class="textarea" name="mobile_bundle_ids" rows="2" placeholder="com.example.app"></textarea>
+          </label>
+          <label data-kind="mobile" hidden>Platform
+            <select class="select" name="platform">
+              <option value="ios">iPhone and iPad</option><option value="android">Android</option>
+              <option value="tvos">Apple TV</option><option value="fireos">Amazon Fire</option>
+              <option value="roku">Roku</option><option value="tizen">Samsung TV</option><option value="webos">LG TV</option>
+            </select>
+          </label>
+          <input type="hidden" name="property_id">
+          <input type="hidden" name="expected_revision" value="0">
+          <input type="hidden" data-auto-reference name="idempotency_key">
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Save property</button>
+            <button class="btn btn--ghost" type="button" data-cpp-close="cpp-property">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+
+      <form id="cpp-promotion" class="cw-editor" hidden novalidate>
+        <fieldset class="cw-form">
+          <legend class="sr-only">Preview and publish</legend>
+          <h3 class="cw-wide" id="cpp-promotion-title">Preview and publish</h3>
+          <label class="cw-wide">Display rules to publish<select class="select" name="rule_group" required></select></label>
+          <input type="hidden" name="property_id">
+          <input type="hidden" name="expected_property_revision">
+          <input type="hidden" name="expected_publication_revision">
+          <input type="hidden" data-auto-reference name="idempotency_key">
+          <div class="cw-actions">
+            <button class="btn" type="button" id="cpp-preview">Preview</button>
+            <button class="btn btn--primary" type="button" id="cpp-publish"{% if not pub_admin %} disabled{% endif %}>Publish version</button>
+            <button class="btn btn--ghost" type="button" data-cpp-close="cpp-promotion">Close</button>
+          </div>
+          <div id="cpp-preview-result" class="cw-wide cw-result" role="status" aria-live="polite"></div>
+        </fieldset>
+      </form>
+
+      <div id="cpp-history-panel" class="cw-editor" hidden>
+        <h3 id="cpp-history-title">Publishing history</h3>
+        <p class="muted">Every publish, restore and withdrawal is kept. Restoring an earlier version publishes it again as the newest version.</p>
+        <div id="cpp-history"></div>
+        <div class="cw-actions"><button class="btn btn--ghost" type="button" data-cpp-close="cpp-history-panel">Close</button></div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="cpp-content-heading">
+      <div class="section-head">
+        <h2 id="cpp-content-heading">Content</h2>
+        <button class="btn btn--primary" type="button" id="cpp-resource-new"{% if not pub_admin %} disabled{% endif %}>Add content</button>
+      </div>
+      <div class="cw-toolbar">
+        <label>Show<select class="select" id="cpp-kind">
+          <option value="purposes">Uses of data</option>
+          <option value="topics">Topics</option>
+          <option value="custom-preferences">Extra questions</option>
+          <option value="notices">Privacy notices</option>
+          <option value="templates">Banner designs</option>
+          <option value="themes">Brand themes</option>
+          <option value="translations">Languages</option>
+          <option value="rule-groups">Display rules</option>
+        </select></label>
+        <label>Language for text<select class="select" id="cpp-locale"></select></label>
+      </div>
+      <p class="muted" id="cpp-kind-help"></p>
+      <div id="cpp-resource-table"><p class="muted">Loading content…</p></div>
+      <form id="cpp-resource" class="cw-editor" hidden novalidate>
+        <fieldset class="cw-form">
+          <legend class="sr-only">Content details</legend>
+          <h3 class="cw-wide" id="cpp-resource-title">New</h3>
+          <label class="cw-wide">Name<input class="input" name="resource_name" required maxlength="100" autocomplete="off"></label>
+          <div class="cw-wide cw-form" id="cpp-resource-fields"></div>
+          <input type="hidden" name="resource_id">
+          <input type="hidden" name="version">
+          <input type="hidden" name="expected_current_version">
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit"{% if not pub_admin %} disabled{% endif %}>Save content</button>
+            <button class="btn btn--ghost" type="button" data-cpp-close="cpp-resource">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+  </fieldset>
+
+  {% if pub_admin %}
+  <section class="panel" id="cpp-withdrawal-original" aria-labelledby="cpp-withdrawal-heading" data-draft-recovery="off">
+    <h2 id="cpp-withdrawal-heading">Original banner withdrawal</h2>
+    <p class="muted">An interrupted reply never repeats the withdrawal. Read your original request here; the current banner and your original decision are shown separately. Publishing history and people's recorded choices are kept.</p>
+    <div class="cw-toolbar">
+      <label>Original request<select class="select" id="cpp-withdrawal-requests"><option value="">Choose a request</option></select></label>
+      <button class="btn" type="button" id="cpp-withdrawal-refresh">Refresh requests</button>
+      <button class="btn" type="button" id="cpp-withdrawal-read" disabled>Read original result</button>
+    </div>
+    <p id="cpp-withdrawal-status" class="muted" role="status" aria-live="polite"></p>
+    <div id="cpp-withdrawal-result" class="cw-result" role="status" aria-live="polite"></div>
+    <section id="cpp-withdrawal-review" class="cw-editor" hidden aria-labelledby="cpp-withdrawal-review-title">
+      <h3 id="cpp-withdrawal-review-title" tabindex="-1">Review the banner to withdraw</h3>
+      <div id="cpp-withdrawal-changes" class="cw-result"></div>
+      <div class="cw-actions">
+        <button class="btn btn--danger" type="button" id="cpp-withdrawal-confirm">Withdraw reviewed banner</button>
+        <button class="btn btn--ghost" type="button" id="cpp-withdrawal-cancel">Keep the banner</button>
+      </div>
+    </section>
+  </section>
+  {% endif %}
+
+  <section class="panel" id="cpp-signing" aria-labelledby="cpp-signing-heading" data-can-admin="{{ 'true' if pub_admin else 'false' }}" data-report-context="{{ report_download_context }}">
+    <h2 id="cpp-signing-heading">Signing key</h2>
+    <p class="muted">Websites can check that the consent settings they receive came from Lightwork unchanged. Turn on “Sign published consent settings” in <a href="/settings/all">All settings</a> under Privacy, create the key here and give the public key to your websites. The private key stays sealed on the server and is never shown.</p>
+    <p id="cpp-signing-status" class="muted" role="status" aria-live="polite"></p>
+    <div id="cpp-signing-state"><p class="muted">Loading the signing key…</p></div>
+    <div class="cw-actions">
+      <button class="btn btn--primary" type="button" id="cpp-signing-rotate" disabled>Create signing key</button>
+      <button type="button" class="btn" id="cpp-signing-download" data-report-download="public_key" data-report-status="cpp-signing-download-status" hidden>Download the public key</button>
+    </div>
+    <p id="cpp-signing-download-status" class="muted" role="status" aria-live="polite"></p>
+  </section>
+</div>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script src="/static/lightwork-consent-publishing.js"></script>
+<script src="/static/lightwork-report-downloads.js" defer></script>
+{% endblock %}

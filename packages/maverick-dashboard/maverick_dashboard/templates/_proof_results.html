@@ -1,0 +1,78 @@
+{#- Savings page: proof that the work is paying off -- cheaper over time,
+    what earned automatic approval, outside agents sharing memory, and the
+    signed records to hand to someone else. Filled by lightwork-value-proof.js. -#}
+<div id="vp-proof" class="vp">
+  <div class="section-head"><h2>Proof of results</h2></div>
+
+  <div class="panel">
+    <h3 id="vp-comp-title">Is the work getting cheaper and better?</h3>
+    <p class="muted">Compares the first tasks of each kind with the most recent ones.</p>
+    <p class="vp-check"><label for="vp-window">Compare the first and latest</label>
+      <select id="vp-window" class="select"><option value="3">3 tasks</option><option value="5" selected>5 tasks</option><option value="10">10 tasks</option></select></p>
+    <div id="vp-comp" aria-labelledby="vp-comp-title">Loading…</div>
+    <h3 id="vp-dept-title">By department</h3>
+    <div id="vp-dept" aria-labelledby="vp-dept-title">Loading…</div>
+  </div>
+
+  <div class="panel">
+    <h3 id="vp-ea-title">Actions approved automatically</h3>
+    <p id="vp-ea-state" class="muted">Loading…</p>
+    <div id="vp-ea" aria-labelledby="vp-ea-title"></div>
+  </div>
+
+  <div class="panel">
+    <h3 id="vp-fleet-title">Outside agents sharing what they learn</h3>
+    <div id="vp-fleet" aria-labelledby="vp-fleet-title">Loading…</div>
+    <details class="vp-admin" hidden>
+      <summary>Add an outside agent to the list</summary>
+      <form id="vp-fleet-add" class="vp-check">
+        <label for="vp-fleet-vendor">Made by</label>
+        <select id="vp-fleet-vendor" class="select">
+          <option value="salesforce">Salesforce Agentforce</option>
+          <option value="microsoft">Microsoft Copilot</option>
+          <option value="google">Google Gemini</option>
+          <option value="servicenow">ServiceNow</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="open-source">Open-source agent</option>
+          <option value="custom" selected>Built in-house</option>
+        </select>
+        <label for="vp-fleet-name">Agent name</label>
+        <input id="vp-fleet-name" class="input" maxlength="64" required pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}"
+               aria-describedby="vp-fleet-name-help">
+        <span id="vp-fleet-name-help" class="muted">Letters, numbers, dots and dashes, as the agent is named in its own system.</span>
+        <label for="vp-fleet-about">What it does</label>
+        <input id="vp-fleet-about" class="input" maxlength="200">
+        <button type="submit" class="btn btn--primary">Add agent</button>
+      </form>
+      <p id="vp-fleet-msg" role="status" aria-live="polite" class="muted"></p>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h3 id="vp-rec-title">Record of decisions</h3>
+    <p id="vp-rec">Loading…</p>
+    <p class="vp-admin" hidden>
+      <a class="btn" id="vp-rec-download" href="/api/v1/value-proof/record-export" download>Download the signed record</a>
+      <a class="btn" id="vp-mem-download" href="/api/v1/value-proof/memory-export" download>Download the signed learning statement</a>
+    </p>
+    <form id="vp-check" class="vp-check">
+      <label for="vp-check-kind">Check a file someone gave you</label>
+      <select id="vp-check-kind" class="select">
+        <option value="record">A signed record of decisions</option>
+        <option value="memory">A signed learning statement</option>
+      </select>
+      <label for="vp-check-file">File</label>
+      <input id="vp-check-file" type="file" accept=".json,application/json">
+      <label for="vp-check-key">Key file from the installation that signed it (only for a learning statement from another installation)</label>
+      <input id="vp-check-key" type="file" accept=".txt,text/plain">
+      <button type="submit" class="btn btn--primary">Check the file</button>
+    </form>
+    <div id="vp-check-result" role="status" aria-live="polite"></div>
+  </div>
+  <p id="vp-proof-msg" role="status" aria-live="polite" class="muted"></p>
+</div>
+<style>
+  .vp-check { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-top: .6rem; }
+</style>
+<script src="/static/lightwork-value-proof.js" defer></script>

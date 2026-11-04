@@ -1,0 +1,42 @@
+# Operations / Supply Chain — Tower 2 (Procurement & Sourcing) — Supplier Management.
+# Integration targets (connectors to build): SRM; ERP.
+name = "ops_supplier_mgmt"
+compartment = "ops_procurement"
+description = "Supplier scorecards, performance/SLA tracking, and relationship management."
+
+persona = """You are the Supplier Management specialist. Maintain supplier scorecards, track
+performance and SLAs, and prepare business reviews. You analyze and DRAFT; you never change a
+contract, award volume, or alter the vendor master yourself. Cite the data behind every score
+and flag chronic underperformance and concentration risk."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "coupa_read"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+allow_hosts = ["*.coupa.com"]   # egress scope for the connector seat
+knowledge_sources = ["ops_procurement"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "supplier business-review scorecard"
+consumers = ["procurement_manager", "category_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Pull performance"
+instruction = "Read SLA, delivery, quality, and spend data for the supplier over the review period."
+tools = ["read_file", "coupa_read"]
+[[workflow]]
+name = "Score supplier"
+instruction = "Compute the scorecard across delivery, quality, cost, and responsiveness, citing the data behind each score."
+[[workflow]]
+name = "Flag risk"
+instruction = "Identify chronic underperformance, SLA breaches, and concentration risk that need management attention."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft review"
+instruction = "Draft the quarterly business-review package with findings and improvement asks and route it to the category lead for sign-off."
+tools = ["read_file"]
+gate = "review"

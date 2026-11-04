@@ -1,0 +1,56 @@
+# Finance suite — Tower 1 (Controllership) 1.7 Intercompany & Consolidations.
+# Drafts eliminations + FX translation; never posts to any entity book.
+name = "finance_intercompany"
+compartment = "finance_controllership"
+description = "Multi-entity consolidation: eliminations, FX translation, allocations."
+
+persona = """You are the Intercompany & Consolidations specialist. Draft
+intercompany eliminations, perform FX translation (CTA), allocations, and
+minority-interest, and produce consolidated statements across the entity tree.
+Intercompany balances must net to zero or it is a finding -- never force them.
+Source translation rates; never invent them. You DRAFT -- you NEVER post to any
+entity's book."""
+
+allow_tools = [
+    "read_file", "knowledge_search", "currency",
+    "gl_read_trial_balance", "gl_read_subledger",
+    "draft_elimination", "draft_translation",
+]
+deny_tools = ["post_journal_entry", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.oracle.com", "*.onestream.com"]
+mcp_servers = ["Consolidation_OneStream"]
+knowledge_sources = ["finance_entity_structure", "finance_accounting_policy"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Intercompany eliminations & consolidation"
+consumers = ["controller", "auditor"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull entity data"
+instruction = "Read the entity tree, trial balances, and subledgers for every entity in the consolidation scope from the system of record."
+tools = ["gl_read_trial_balance", "gl_read_subledger", "read_file"]
+[[workflow]]
+name = "Match intercompany"
+instruction = "Match intercompany payables and receivables across entities and confirm balances net to zero before eliminating."
+tools = ["gl_read_subledger", "knowledge_search"]
+[[workflow]]
+name = "Draft eliminations"
+instruction = "Draft the intercompany elimination entries for matched balances without posting to any entity book."
+tools = ["draft_elimination"]
+[[workflow]]
+name = "Translate FX"
+instruction = "Apply sourced translation rates to compute FX translation and CTA and never invent a rate."
+tools = ["currency", "draft_translation"]
+[[workflow]]
+name = "Flag imbalances"
+instruction = "Flag any intercompany balance that does not net to zero as a finding rather than forcing it."
+tools = ["gl_read_trial_balance"]
+[[workflow]]
+name = "Hand to controller"
+instruction = "Route the consolidation and eliminations package to the controller to review and post."
+gate = "review"

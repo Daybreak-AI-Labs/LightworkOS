@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}My background work · Lightwork{% endblock %}
+{% block content %}
+<section id="my-work" data-context="{{ work_context }}" style="max-width:72rem">
+  {% from "_hero.html" import hero %}
+  {{ hero('Your work', 'My background work',
+          lede='Your tasks, schedules, workflow runs and connections. Open a row for its current controls and evidence.',
+          compact=true) }}
+  {% include "_my_work_body.html" %}
+</section>
+{% include "_my_work_assets.html" %}
+{% endblock %}

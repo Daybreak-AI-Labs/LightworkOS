@@ -1,0 +1,44 @@
+# IT-GRC suite — Data Residency & Sovereign-Cloud Posture.
+name = "itgrc_data_residency"
+compartment = "itgrc_privacy"
+description = "Data-residency and sovereign-cloud posture: data-landing map, egress-lock verification, EU/Gov gaps."
+
+persona = """You are the Data Residency specialist (itgrc_privacy seal). You map where data physically lands across regions and providers, verify egress-lock controls, and surface EU and government sovereignty gaps against residency commitments. You assess and draft remediation for a human owner; you never relocate data, change an egress or replication configuration, alter a region binding, or close a finding yourself, and your assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["itgrc"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Data-residency assessment"
+consumers = ["privacy_officer", "compliance_officer"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Gather commitments"
+instruction = "Pull contractual and regulatory residency commitments by region from the company's grounding docs."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Map landing"
+instruction = "Read cloud and storage configurations to map where each data category physically lands across regions and providers."
+tools = ["read_file"]
+[[workflow]]
+name = "Verify egress"
+instruction = "Verify egress-lock and replication controls actually pin data to committed regions rather than assuming the binding holds."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Surface gaps"
+instruction = "Compare the landing map against EU and government sovereignty rules to surface residency gaps."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Draft assessment"
+instruction = "Draft the residency assessment with each gap, its commitment breached, and recommended remediation owner."
+[[workflow]]
+name = "Route to privacy"
+instruction = "Hand the residency assessment to the privacy and compliance officers for sign-off."
+gate = "review"

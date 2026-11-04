@@ -1,0 +1,319 @@
+{#- One setting on Settings > All settings: its label, where its value comes
+    from and its control. Used by the page and by the rows it loads later. -#}
+{% macro setting_row(s, g) %}
+{% set cid = 'sa-' ~ s.id | replace('.', '-') | replace('*', 'all') %}
+<div class="settings-all-row" data-setting-id="{{ s.id }}" data-control="{{ s.control }}"
+     data-revision="{{ s.revision }}" data-source="{{ s.source }}" data-warning="{{ s.warning }}"
+     data-in-group="{{ g.slug }}" data-order="{{ s.order }}"
+     {% if s.subgroup %}data-subgroup="{{ s.subgroup_slug }}"{% endif %}
+     data-search="{{ (s.id ~ ' ' ~ s.id|replace('.', ' ') ~ ' ' ~ s.label ~ ' ' ~ s.help ~ ' ' ~ s.aliases ~ ' ' ~ s.group ~ ' ' ~ s.subgroup) | lower }}">
+  <div class="settings-all-about-row">
+    {% if s.control in ['multiselect', 'toggle', 'rate', 'keys', 'table', 'list', 'rules', 'picks', 'fingerprint', 'document'] %}
+    <span class="settings-all-label" id="{{ cid }}-label">{{ s.label }}</span>
+    {% else %}
+    <label class="settings-all-label" id="{{ cid }}-label" for="{{ cid }}">{{ s.label }}</label>
+    {% endif %}
+    <p class="muted settings-all-help" id="{{ cid }}-help">{{ s.help }}</p>
+    <p class="settings-all-meta">
+      <span>Now: <strong data-value-text>{{ s.value_text }}</strong></span>
+      <span class="badge {{ 'ok' if s.source == 'here' else ('warn' if s.source == 'deployment' else 'idle') }}"
+            data-source-text>{{ s.source_text }}</span>
+      <span class="muted">Default: {{ s.default_text }}</span>
+      {% if s.restart %}<span class="badge warn">Takes effect after a restart</span>{% endif %}
+      {% if s.warning %}<span class="badge blocked">Affects safety</span>{% endif %}
+    </p>
+    {% if s.warning %}<p class="muted settings-all-warning">{{ s.warning_lead }} {{ s.warning }}</p>{% endif %}
+  </div>
+  <div class="settings-all-control">
+    {% if s.id in ['persona.name','persona.style','persona.addendum','dashboard.theme','dashboard.density','dashboard.glass','budget.max_wall_seconds','budget.max_tool_calls','budget.max_output_tokens','models.vision','speculative.draft_model','verification.cross_family_model'] %}<label><input type="checkbox" data-profile-select> Export preference</label>{% endif %}
+    {% if s.locked %}
+      <p class="muted">Set by your server's deployment settings, so it can't be changed here.</p>
+    {% elif s.control == 'toggle' %}
+      <label class="settings-all-switch" for="{{ cid }}">
+        <input type="checkbox" role="switch" id="{{ cid }}" data-input
+               aria-labelledby="{{ cid }}-label" aria-describedby="{{ cid }}-help"
+               {% if s.value is sameas true %}checked{% endif %}>
+        <span>On</span>
+      </label>
+    {% elif s.control == 'select' %}
+      <select class="select" id="{{ cid }}" data-input aria-describedby="{{ cid }}-help"
+              {% if s.choices_url %}data-select-choices-url="{{ s.choices_url }}"{% endif %}
+              {% if s.preview_url %}data-preview-url="{{ s.preview_url }}"{% if s.preview_any %} data-preview-any{% endif %}{% endif %}>
+        {% for c in s.choices %}
+        <option value="{{ c.value }}" {% if c.value == s.value %}selected{% endif %}>{{ c.label }}</option>
+        {% endfor %}
+      </select>
+      {% if s.choices_url %}
+      <button type="button" class="btn ghost" data-select-choices-load>Load installed environments</button>
+      <p class="muted" data-select-choices-notice role="status">Installed choices are read only when you load or refresh this list. Your current choice is kept until you review and save a change.</p>
+      {% endif %}
+      {% if s.empty_hint %}<p class="muted">{{ s.empty_hint }} <a href="/users">Open People</a></p>{% endif %}
+      {% if s.preview_url %}<div class="settings-all-preview" data-preview aria-live="polite"></div>{% endif %}
+    {% elif s.control == 'multiselect' %}
+      <fieldset class="settings-all-choices" aria-labelledby="{{ cid }}-label" aria-describedby="{{ cid }}-help">
+        {% for c in s.choices %}
+        <label for="{{ cid }}-{{ loop.index }}">
+          <input type="checkbox" id="{{ cid }}-{{ loop.index }}" data-choice value="{{ c.value }}"
+                 {% if c.value in (s.value or []) %}checked{% endif %}> {{ c.label }}
+        </label>
+        {% else %}
+        <p class="muted">There is nothing to choose from yet.</p>
+        {% endfor %}
+      </fieldset>
+    {% elif s.control == 'number' %}
+      <div class="settings-all-number">
+        <input class="input" type="number" id="{{ cid }}" data-input inputmode="decimal"
+               aria-describedby="{{ cid }}-help {{ cid }}-unit"
+               {% if s.minimum is not none %}min="{{ s.minimum }}"{% endif %}
+               {% if s.maximum is not none %}max="{{ s.maximum }}"{% endif %}
+               step="{{ s.step }}"
+               value="{{ '' if s.value is none else s.value }}"
+               {% if s.optional %}placeholder="No limit"{% endif %}
+               {% if s.preview_url %}data-preview-url="{{ s.preview_url }}"{% endif %}>
+        <span class="muted" id="{{ cid }}-unit">{{ s.unit }}</span>
+      </div>
+      {% if s.preview_url %}<div class="settings-all-preview" data-preview aria-live="polite"></div>{% endif %}
+    {% elif s.control == 'rate' %}
+      <div class="settings-all-number">
+        <label for="{{ cid }}-count" class="sr-only">{{ s.label }}: how many</label>
+        <input class="input" type="number" id="{{ cid }}-count" data-rate-count min="1" max="100000" step="1"
+               value="{{ s.rate_count }}" placeholder="No limit" aria-describedby="{{ cid }}-help">
+        <label for="{{ cid }}-period" class="sr-only">{{ s.label }}: how often</label>
+        <select class="select" id="{{ cid }}-period" data-rate-period>
+          {% for p in s.periods %}
+          <option value="{{ p.value }}" {% if p.value == s.rate_seconds %}selected{% endif %}>{{ p.label }}</option>
+          {% endfor %}
+          {% if s.rate_seconds not in [60, 3600, 86400] %}
+          <option value="{{ s.rate_seconds }}" selected>Every {{ s.rate_seconds }} seconds</option>
+          {% endif %}
+        </select>
+      </div>
+    {% elif s.control == 'text' %}
+      <input class="input" type="text" id="{{ cid }}" data-input maxlength="{{ s.max_length }}"
+             value="{{ s.value or '' }}" aria-describedby="{{ cid }}-help">
+      {% if s.segment_at is defined %}
+      <label class="settings-all-field" for="{{ cid }}-part">Where each workspace's own part goes
+        <select class="select" id="{{ cid }}-part" data-segment-at data-at="{{ s.segment_at }}"></select>
+      </label>
+      {% endif %}
+    {% elif s.control == 'picks' %}
+      <div class="settings-all-picks" data-picks data-label="{{ s.label }}"
+           data-choices-url="{{ s.choices_url }}" data-choices='{{ s.choices | tojson }}'>
+        <ul class="settings-all-list-items" aria-labelledby="{{ cid }}-label" data-pick-list>
+          {% for p in s.picks %}
+          <li data-pick-item data-value="{{ p.value }}"><span>{{ p.label }}</span>
+            <button class="btn btn--ghost" type="button" data-pick-remove aria-label="Remove {{ p.label }}">Remove</button></li>
+          {% endfor %}
+        </ul>
+        <p class="muted" data-picks-empty {% if s.picks %}hidden{% endif %}>{{ s.empty_text or 'Nothing chosen yet. Choose from the list below.' }}</p>
+        <label class="settings-all-field" for="{{ cid }}-find">Find
+          <input class="input" type="search" id="{{ cid }}-find" data-pick-search maxlength="80"
+                 placeholder="Search by name" autocomplete="off">
+        </label>
+        <label class="settings-all-field" for="{{ cid }}">Choose one to add
+          <select class="select" id="{{ cid }}" data-pick-select aria-describedby="{{ cid }}-help">
+            <option value="">Search above, then choose</option>
+          </select>
+        </label>
+        <button class="btn btn--ghost" type="button" data-pick-add>Add</button>
+      </div>
+    {% elif s.control == 'fingerprint' %}
+      <div class="settings-all-fingerprint" data-fingerprint>
+        <input type="hidden" data-input value="{{ s.value or '' }}">
+        <p>Fingerprint: <strong data-fingerprint-shown>{{ s.value_text }}</strong></p>
+        <label class="settings-all-field" for="{{ cid }}">Upload the file to work out its fingerprint
+          <input class="input" type="file" id="{{ cid }}" data-fingerprint-file aria-describedby="{{ cid }}-help">
+        </label>
+        {% if s.fingerprint_from_server %}
+        <button class="btn btn--ghost" type="button" data-fingerprint-server>Work it out from this server</button>
+        {% endif %}
+      </div>
+    {% elif s.control == 'document' %}
+      <div class="settings-all-document" data-document>
+        <p data-document-text>{{ s.document.text if s.document else 'Nothing imported yet. Import a document below.' }}</p>
+        <ul class="settings-all-list-items" aria-labelledby="{{ cid }}-label" data-document-items>
+          {% for k in (s.document['items'] if s.document else []) %}
+          <li>{{ k.label }}, fingerprint <strong>{{ k.fingerprint }}</strong></li>
+          {% endfor %}
+        </ul>
+        <label class="settings-all-field" for="{{ cid }}">Import the file you were sent
+          <input class="input" type="file" id="{{ cid }}" data-document-file accept=".json,application/json"
+                 aria-describedby="{{ cid }}-help">
+        </label>
+      </div>
+    {% elif s.control == 'path' %}
+      {% if s.id == 'auth.saml.idp_metadata_file' and (s.value or '').startswith('managed-saml:') %}
+      <input type="hidden" id="{{ cid }}" data-input value="{{ s.value }}">
+      <p>Provider files are stored privately. <a href="/settings/all#company-saml-setup">Open guided single sign-on setup</a> to review a replacement.</p>
+      {% else %}
+      <input class="input" type="text" id="{{ cid }}" data-input maxlength="{{ s.max_length }}"
+             value="{{ s.value or '' }}" spellcheck="false" autocomplete="off"
+             placeholder="{{ 'Full location of the folder on the server' if s.path_kind == 'folder' else 'Full location of the file on the server' }}"
+             aria-describedby="{{ cid }}-help">
+      {% endif %}
+    {% elif s.control == 'list' %}
+      <div class="settings-all-list" data-list data-item-label="{{ s.item_label }}" data-item-hint="{{ s.item_hint }}" data-max-length="{{ s.max_length }}">
+        <ul class="settings-all-list-items" aria-labelledby="{{ cid }}-label">
+          {% for item in s.value %}
+          <li><label class="sr-only" for="{{ cid }}-item-{{ loop.index }}">{{ s.item_label }} {{ loop.index }}</label>
+            <input class="input" type="text" id="{{ cid }}-item-{{ loop.index }}" data-list-item value="{{ item }}" maxlength="{{ s.max_length }}">
+            <button class="btn btn--ghost" type="button" data-list-remove>Remove</button></li>
+          {% endfor %}
+        </ul>
+        <button class="btn btn--ghost" type="button" data-list-add id="{{ cid }}"
+                aria-describedby="{{ cid }}-help">Add {{ 'an' if s.item_label[0] in 'AEIOU' else 'a' }} {{ s.item_label | lower }}</button>
+      </div>
+    {% elif s.control == 'keys' %}
+      <div class="settings-all-keys" data-keys>
+        <ul class="settings-all-list-items" aria-labelledby="{{ cid }}-label" data-key-list>
+          {% for k in s.key_items %}
+          <li data-key-item data-key="{{ k.value }}"><span>Publisher key, fingerprint <strong>{{ k.fingerprint }}</strong></span>
+            <button class="btn btn--ghost" type="button" data-key-remove>Remove</button></li>
+          {% endfor %}
+        </ul>
+        <p class="muted" data-keys-empty {% if s.key_items %}hidden{% endif %}>No publishers are trusted yet. Upload a publisher's key file to add one.</p>
+        <label class="settings-all-field" for="{{ cid }}">Upload a publisher's key file
+          <input class="input" type="file" id="{{ cid }}" data-key-file accept=".pub,.pem,.txt,.key,text/plain" aria-describedby="{{ cid }}-help">
+        </label>
+        <details class="settings-all-paste">
+          <summary>Paste a key instead</summary>
+          <label class="settings-all-field" for="{{ cid }}-paste">Publisher key
+            <textarea class="textarea" id="{{ cid }}-paste" rows="3" data-key-paste maxlength="4096"></textarea>
+          </label>
+          <button class="btn btn--ghost" type="button" data-key-add>Add this key</button>
+        </details>
+      </div>
+    {% elif s.grid %}
+      {% set grid_rows = s.grid.kind in ['grid', 'named'] %}
+      <div class="settings-all-grid" data-grid data-grid-state='{{ s.grid | tojson }}'>
+        <table class="settings-all-rows" aria-labelledby="{{ cid }}-label">
+          <thead><tr>
+            {% if grid_rows %}<th scope="col">{{ s.grid.row_label }}</th>{% endif %}
+            {% for c in s.grid.columns %}<th scope="col">{{ c.label }}</th>{% endfor %}
+            <th scope="col"><span class="sr-only">Remove</span></th>
+          </tr></thead>
+          <tbody data-grid-body></tbody>
+        </table>
+        <p class="muted" data-grid-empty>{{ s.empty_text }}</p>
+        {% if s.grid.key_choices or s.grid.key_choices_url or not grid_rows or s.grid.kind == 'named' %}
+        <div class="settings-all-table-add">
+          {% if s.grid.key_choices_url %}
+          <label class="settings-all-field" for="{{ cid }}-find">Find
+            <input class="input" type="search" id="{{ cid }}-find" data-grid-keysearch maxlength="80"
+                   placeholder="Search by name" autocomplete="off">
+          </label>
+          {% endif %}
+          {% if s.grid.kind == 'named' %}
+          <label class="settings-all-field" for="{{ cid }}">New {{ s.grid.row_label | lower }}
+            <input class="input" type="text" id="{{ cid }}" data-grid-newname maxlength="64"
+                   autocomplete="off" aria-describedby="{{ cid }}-help">
+          </label>
+          <button class="btn btn--ghost" type="button" data-grid-add>{{ s.add_label }}</button>
+          {% elif grid_rows %}
+          <label class="settings-all-field" for="{{ cid }}">{{ s.grid.row_label }}
+            <select class="select" id="{{ cid }}" data-grid-newkey aria-describedby="{{ cid }}-help">
+              <option value="">Choose one</option>
+              {% for k in s.grid.key_choices %}<option value="{{ k.value }}">{{ k.label }}</option>{% endfor %}
+            </select>
+          </label>
+          <button class="btn btn--ghost" type="button" data-grid-add>{{ s.add_label }}</button>
+          {% else %}
+          <button class="btn btn--ghost" type="button" data-grid-add id="{{ cid }}"
+                  aria-describedby="{{ cid }}-help">{{ s.add_label }}</button>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if s.empty_hint and ((grid_rows and not s.grid.key_choices and not s.grid.key_choices_url) or (not grid_rows and s.grid.columns[0].choices | length == 0)) %}
+        <p class="muted" data-grid-hint>{{ s.empty_hint }}</p>
+        {% endif %}
+      </div>
+    {% elif s.control == 'table' %}
+      <div class="settings-all-table" data-table data-row-kind="{{ s.row_kind }}"
+           {% if s.row_kind == 'rate' %}data-choices-url="/api/v1/settings/catalog/choices/{{ s.id }}"{% endif %}>
+        <table class="settings-all-rows" aria-labelledby="{{ cid }}-label">
+          <thead><tr>
+            <th scope="col">Tool</th>
+            {% if s.row_kind == 'rate' %}<th scope="col">How many times</th><th scope="col">How often</th>
+            {% else %}<th scope="col">Risk level</th>{% endif %}
+            <th scope="col"><span class="sr-only">Remove</span></th>
+          </tr></thead>
+          <tbody data-table-body>
+          {% for r in s.rows %}
+          <tr data-table-row data-name="{{ r.name }}">
+            <td data-row-label>{{ r.label }}</td>
+            {% if s.row_kind == 'rate' %}
+            <td><input class="input" type="number" min="1" max="100000" step="1" data-count value="{{ r.count }}" aria-label="How many times for {{ r.label }}"></td>
+            <td><select class="select" data-period aria-label="How often for {{ r.label }}">
+              {% for p in s.periods %}<option value="{{ p.value }}" {% if p.value == r.seconds %}selected{% endif %}>{{ p.label }}</option>{% endfor %}
+              {% if r.seconds not in [60, 3600, 86400] %}<option value="{{ r.seconds }}" selected>Every {{ r.seconds }} seconds</option>{% endif %}
+            </select></td>
+            {% else %}
+            <td><select class="select" data-risk aria-label="Risk level for {{ r.label }}">
+              {% for k in s.risks %}<option value="{{ k.value }}" {% if k.value == r.risk %}selected{% endif %}>{{ k.label }}</option>{% endfor %}
+            </select></td>
+            {% endif %}
+            <td><button class="btn btn--ghost" type="button" data-table-remove>Remove</button></td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted" data-table-empty {% if s.rows %}hidden{% endif %}>{{ 'No other limits yet. Add one below.' if s.row_kind == 'rate' else 'No tools are offered yet. Add one below.' }}</p>
+        <div class="settings-all-table-add">
+          {% if s.row_kind == 'rate' %}
+          <label class="settings-all-field" for="{{ cid }}-find">Find a tool
+            <input class="input" type="search" id="{{ cid }}-find" data-table-search maxlength="80" placeholder="Search by name">
+          </label>
+          <label class="settings-all-field" for="{{ cid }}">Tool
+            <select class="select" id="{{ cid }}" data-table-pick aria-describedby="{{ cid }}-help">
+              <option value="">Search above, then choose a tool</option>
+            </select>
+          </label>
+          <button class="btn btn--ghost" type="button" data-table-add>Add a limit</button>
+          {% else %}
+          <label class="settings-all-field" for="{{ cid }}">Tool name, as the tool server lists it
+            <input class="input" type="text" id="{{ cid }}" data-table-newname maxlength="128" aria-describedby="{{ cid }}-help">
+          </label>
+          <label class="settings-all-field" for="{{ cid }}-risk">Risk level
+            <select class="select" id="{{ cid }}-risk" data-table-newrisk>
+              {% for k in s.risks %}<option value="{{ k.value }}" {% if k.value == 'high' %}selected{% endif %}>{{ k.label }}</option>{% endfor %}
+            </select>
+          </label>
+          <button class="btn btn--ghost" type="button" data-table-add>Add a tool</button>
+          {% endif %}
+        </div>
+      </div>
+    {% elif s.control == 'secret' %}
+      <div class="settings-all-secret">
+        <span class="badge {{ 'ok' if s.is_set else 'idle' }}" data-secret-state>{{ 'Set' if s.is_set else 'Not set' }}</span>
+        <button class="btn btn--ghost" type="button" data-secret-replace aria-controls="{{ cid }}">{{ 'Replace' if s.is_set else 'Add' }}</button>
+        <input class="input" type="password" id="{{ cid }}" data-input autocomplete="new-password"
+               maxlength="{{ s.max_length }}" hidden aria-labelledby="{{ cid }}-label" aria-describedby="{{ cid }}-help">
+        {% if s.id == 'auth.oidc.session_secret' %}
+        <button class="btn btn--ghost" type="button" data-signin-key-create>{{ 'Create a replacement sign-in key' if s.is_set else 'Create a secure sign-in key' }}</button>
+        <p class="muted">Creates an unsaved protected value. Review Save setting before it changes sign-in.</p>
+        {% endif %}
+      </div>
+    {% endif %}
+    {% if not s.locked %}
+    <div class="settings-all-actions">
+      <button class="btn btn--primary" type="button" data-save>Save setting</button>
+      {% if s.test_label %}<button class="btn btn--ghost" type="button" data-test>{{ s.test_label }}</button>{% endif %}
+      <button class="btn btn--ghost" type="button" data-reset>Reset to product default</button>
+      <button class="btn btn--ghost" type="button" data-inherit>Use inherited value</button>
+    </div>
+    {% endif %}
+    <p class="muted settings-all-row-status" role="status" aria-live="polite" data-row-status></p>
+  </div>
+</div>
+{% endmacro %}
+
+{#- One part (subgroup) of a group: its heading, its rows and its Save button. -#}
+{% macro part_block(g, sub, index, rows) %}
+<div data-part="{{ sub.slug }}" data-part-order="{{ index }}">
+  <h3 class="settings-all-subhead" id="sub-{{ sub.slug }}" data-subgroup-head="{{ sub.slug }}">{{ sub.name }}</h3>
+  <div data-rows="{{ sub.slug }}">{% for s in rows %}{{ setting_row(s, g) }}{% endfor %}</div>
+  <p class="settings-all-sub-actions" data-subgroup-actions="{{ sub.slug }}">
+    <button class="btn btn--primary" type="button" data-save-subgroup="{{ sub.slug }}">Save {{ sub.name }}</button>
+  </p>
+</div>
+{% endmacro %}

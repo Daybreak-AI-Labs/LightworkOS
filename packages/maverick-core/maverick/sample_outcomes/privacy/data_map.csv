@@ -1,0 +1,6 @@
+processing_activity,system,data_categories,data_subjects,purpose,lawful_basis,retention,recipients,transfer_outside_eea
+Customer accounts,Orderly CRM,name;email;shipping address,customers,order fulfilment,contract,6 years after last order,fulfilment partner,no
+Marketing newsletter,Mailwave,name;email,subscribers,marketing,consent,until unsubscribe,none,yes
+Payroll,PayStream,name;bank account;salary;national ID,employees,pay staff,legal obligation,7 years,payroll provider,no
+Website analytics,Sitepulse,IP address;device ID;pages viewed,visitors,improve website,legitimate interest,26 months,analytics vendor,yes
+Support tickets,Helpdesk Pro,name;email;ticket text,customers,customer support,contract,3 years,none,no

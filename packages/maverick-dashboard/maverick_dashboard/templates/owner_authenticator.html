@@ -1,0 +1,54 @@
+{% extends "public_base.html" %}
+{% from "_passphrase_fields.html" import styles with context %}
+{% from "_back_link.html" import back_link with context %}
+{% block title %}Authenticator app · Lightwork{% endblock %}
+{% block public_label %}Your sign-in{% endblock %}
+{% block public_footer %}Owner of this installation{% endblock %}
+{% block head_extra %}{{ styles() }}{% endblock %}
+{% block content %}
+<div class="panel own">
+  <h1 class="page-title">Authenticator app</h1>
+  <p class="own__lede">An authenticator app adds a six-digit code to your passphrase when you sign in. If you lose your phone, a recovery code signs you in instead.</p>
+  {% if message %}<p class="own__alert" role="status">{{ message }}</p>{% endif %}
+
+  {% if state.enrolled %}
+    <p>The authenticator app is <strong>on</strong>. You have {{ state.unused_recovery }} unused recovery code{{ '' if state.unused_recovery == 1 else 's' }}.</p>
+    {% if state.mode == 'off' %}
+      <p class="own__hint">This installation has hidden the option to change it. The app stays on, and its code is still asked for when you sign in.</p>
+    {% else %}
+      {% if state.mode == 'required' %}
+      <p class="own__hint">This installation requires an authenticator app, so it cannot be turned off.</p>
+      {% else %}
+      <h2>Turn off the authenticator app</h2>
+      <p class="own__hint">Enter your passphrase and a code from the app, or a recovery code. Sign-in will then use your passphrase only.</p>
+      <form method="post" action="{{ page }}/disable" novalidate>
+        <label class="own__field"><span>Passphrase</span>
+          <input class="input" type="password" name="password" required autocomplete="current-password"></label>
+        <label class="own__field"><span>Code</span>
+          <input class="input" type="text" name="code" maxlength="16" required autocomplete="one-time-code"></label>
+        <div class="own__actions"><button type="submit" class="btn">Turn off</button></div>
+      </form>
+      {% endif %}
+      <h2>New recovery codes</h2>
+      <p class="own__hint">Making new codes stops the old ones from working. Enter a code from the app, or one of your recovery codes.</p>
+      <form method="post" action="{{ page }}/recovery" novalidate>
+        <label class="own__field"><span>Code</span>
+          <input class="input" type="text" name="code" maxlength="16" required autocomplete="one-time-code"></label>
+        <div class="own__actions"><button type="submit" class="btn">Make new recovery codes</button></div>
+      </form>
+    {% endif %}
+  {% elif state.mode == 'off' %}
+    <p>This installation does not offer an authenticator app.</p>
+  {% else %}
+    <p>{% if state.mode == 'required' %}This installation requires an authenticator app. Set one up now.{% else %}You have not set up an authenticator app.{% endif %}</p>
+    <form method="post" action="{{ page }}/setup" novalidate>
+      <label class="own__field"><span>Passphrase</span>
+        <input class="input" type="password" name="password" required autocomplete="current-password">
+        <span class="own__hint">Enter your passphrase again to start the set-up.</span>
+      </label>
+      <div class="own__actions"><button type="submit" class="btn btn--primary">Set up an authenticator app</button></div>
+    </form>
+  {% endif %}
+  <div class="own__actions">{{ back_link('/start', 'Get started') }}</div>
+</div>
+{% endblock %}

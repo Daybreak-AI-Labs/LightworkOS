@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Capabilities &middot; Platform Hunter{% endblock %}
+{% block content %}
+<style>
+  table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #29415f;padding:.65rem}caption{text-align:left;margin-bottom:.7rem;color:#b7c8dc}code{overflow-wrap:anywhere}
+</style>
+<section class="hero">
+  <h1>{{ caps.mode }}</h1>
+  <p><strong>Analysis backend:</strong> <code>{{ caps.analysis_backend }}</code>. {% if caps.forced_standalone %}<code>PLATFORM_HUNTER_STANDALONE=1</code> forced the vendored detector and prevented all <code>maverick</code> imports.{% elif caps.core_analysis %}Auto mode found and reuses only the Lightwork core detector library.{% else %}Auto mode did not find that library, so the vendored detector is active.{% endif %}</p>
+  <p><strong>Governance authority:</strong> unsigned local only. This standalone web app does not claim submitted input was signed, its store is tamper-evident, or a response is governed. Finding a core detector does not enable integrated governance. Use <code>/security/threats</code> for the signed-input and governed-response trust boundary.</p>
+</section>
+<section class="card" aria-labelledby="capability-matrix-heading">
+  <h2 id="capability-matrix-heading">Capability and authority matrix</h2>
+  <table>
+    <caption>Every advertised capability and its backend binding in this runtime</caption>
+    <thead><tr><th scope="col">Capability</th><th scope="col">Status</th><th scope="col">Backend binding</th><th scope="col">Authority boundary</th></tr></thead>
+    <tbody>{% for row in caps.capabilities %}<tr><th scope="row">{{ row.label }}</th><td>{% if row.active %}Included here{% else %}Integrated Lightwork only{% endif %}</td><td><code>{{ row.implementation }}</code></td><td>{{ row.authority }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endblock %}

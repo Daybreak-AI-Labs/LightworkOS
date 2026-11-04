@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Capabilities &middot; GRC Concierge{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>{{ caps.mode }}</h1>
+  <p>This standalone app always keeps posture records, vendor carry-forward memory, mock packets, and review decisions in an unsigned local store. Its guided workflow is deterministic and has no chat-model or voice dependency. Mock GRC handoffs never leave the app.</p>
+  <p><strong>Analysis backend:</strong> <code>{{ caps.analysis_backend }}</code>. {% if caps.forced_standalone %}<code>GRC_STANDALONE=1</code> forced the vendored analysis engine and prevented all <code>maverick</code> imports.{% elif caps.core_analysis %}Auto mode found Lightwork and reuses only its questionnaire declarations and scoring algorithm.{% else %}Auto mode did not find the Lightwork assessment library, so the vendored analysis engine is active.{% endif %}</p>
+  <p><strong>Governance authority:</strong> unsigned local only. Finding a Lightwork core analysis library does not enable Lightwork persistence, its tamper-evident audit chain, connectors, or governed approvals.</p>
+  <p>GRC platform A, B and C are generic mock tenant labels, not integrations. Local approve/reject decisions have no authority in any GRC product. Use <code>/security</code> for the governed Lightwork program of record.</p>
+</section>
+<section class="card" aria-labelledby="capability-matrix-heading">
+  <h2 id="capability-matrix-heading">Capability and authority matrix</h2>
+  <table>
+    <caption>Every advertised capability and its backend binding in this runtime</caption>
+    <thead><tr><th scope="col">Capability</th><th scope="col">Status</th><th scope="col">Backend binding</th><th scope="col">Authority boundary</th></tr></thead>
+    <tbody>
+      {% for row in caps.capabilities %}
+      <tr><th scope="row">{{ row.label }}</th><td>{% if row.active %}Included here{% else %}Integrated Lightwork only{% endif %}</td><td><code>{{ row.implementation }}</code></td><td>{{ row.authority }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

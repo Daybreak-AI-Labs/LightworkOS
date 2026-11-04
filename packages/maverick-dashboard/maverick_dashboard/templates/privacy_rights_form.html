@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Rights request form · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .prf-grid { display: grid; gap: var(--space-4); grid-template-columns: minmax(20rem, 1fr) minmax(24rem, 1.4fr); }
+  .prf-fields { display: grid; gap: .75rem; }
+  .prf-fields label { display: flex; flex-direction: column; gap: .25rem; }
+  .prf-choices { display: flex; flex-wrap: wrap; gap: .4rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-md); padding: .5rem .75rem; }
+  .prf-choices label { display: flex; gap: .4rem; align-items: center; }
+  .prf-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); align-items: center; }
+  .prf-snippet { font-family: var(--font-mono); font-size: var(--text-xs); white-space: pre-wrap; word-break: break-all; }
+  .prf-placeholders { columns: 2; font-size: var(--text-sm); }
+  .prf-templates textarea { min-height: 14rem; font-family: var(--font-mono); }
+  @media (max-width: 880px) { .prf-grid { grid-template-columns: 1fr; } }
+</style>
+<div id="prf-page" data-copilot-page="/privacy/rights-form" data-can-admin="{{ 'yes' if can_admin else 'no' }}">
+  <p class="muted" style="margin-bottom: var(--space-2);">{{ back_link('/privacy', 'Privacy') }}</p>
+  <h1 class="page-title">Rights request form</h1>
+  <p class="page-subtitle">Let people submit privacy requests from your website. Each request lands in the
+    Data requests list with the deadline the chosen law sets, once the person confirms their email address.</p>
+
+  {% if not enabled %}
+    {% from "_module_gate.html" import module_gate %}
+    {{ module_gate('privacy_automation.public_rights_form', 'Rights request form',
+                   detail='Publish a public form per website or app, confirm requesters by email, and answer with templated notices.',
+                   can_activate=can_admin, status='shipped') }}
+  {% endif %}
+
+  <div class="prf-grid">
+    <section class="panel">
+      <h2>Your websites and apps</h2>
+      <p class="muted">One form per property. Turn a property off to take its page down without deleting its settings.</p>
+      <div id="prf-properties" aria-live="polite"><p class="muted">Loading…</p></div>
+    </section>
+
+    <section class="panel">
+      <h2 id="prf-editor-title">Add a property</h2>
+      {% from "_form_field.html" import error_summary %}
+      <form id="prf-property-form" class="prf-fields" data-mv-validate>
+        {# The shared form-field pattern -- each problem next to its field and in a summary that takes focus. #}
+        {{ error_summary('prf-property-errors') }}
+        <label>Link name (letters, digits and hyphens)
+          <input class="input" id="prf-slug" name="slug" maxlength="48" pattern="[a-z0-9][a-z0-9\-]{1,47}" required placeholder="shop"
+                 data-error-required="Enter a link name, for example shop."
+                 data-error-format="Use 2 to 48 lowercase letters, digits and hyphens, starting with a letter or digit, for example acme-shop."></label>
+        <label>Website or app name
+          <input class="input" id="prf-name" name="name" maxlength="200" required placeholder="Acme Shop"
+                 data-error-required="Enter the website or app name, for example Acme Shop."></label>
+        <label>Organisation name (as people know it)
+          <input class="input" id="prf-organisation" name="organisation" maxlength="200" required placeholder="Acme Ltd"
+                 data-error-required="Enter the organisation's name as people know it, for example Acme Ltd."></label>
+        <label>Privacy contact email
+          <input class="input" id="prf-contact-email" name="contact_email" type="email" maxlength="200" required
+                 data-error-required="Enter the email address people can write to about privacy."
+                 data-error-format="Enter an email address like privacy@example.com."></label>
+        <label>Privacy policy link (optional)
+          <input class="input" id="prf-policy" name="privacy_policy_url" maxlength="500" placeholder="https://"></label>
+        <fieldset>
+          <legend>Laws the form offers</legend>
+          <div class="prf-choices" id="prf-jurisdictions"></div>
+          <p class="muted" id="prf-unverified" style="font-size: var(--text-xs);"></p>
+        </fieldset>
+        <label>Default law (pre-selected for the requester)
+          <select class="select" name="default_jurisdiction" id="prf-default"></select></label>
+        <fieldset>
+          <legend>Requests people can make</legend>
+          <div class="prf-choices" id="prf-types"></div>
+        </fieldset>
+        <label>Other websites allowed to embed the form (one https:// origin per line, optional)
+          <textarea class="textarea" name="allowed_origins" rows="2" placeholder="https://www.acme.example"></textarea></label>
+        <label style="flex-direction: row; gap: .5rem; align-items: center;">
+          <input type="checkbox" name="enabled" checked> Form is live</label>
+        <div class="prf-actions">
+          <button class="btn btn--primary" type="submit" id="prf-save">Save property</button>
+          <button class="btn btn--ghost" type="button" id="prf-new">Start a new one</button>
+          <span id="prf-property-msg" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <section class="panel prf-templates" style="margin-top: var(--space-4);">
+    <h2>Email templates</h2>
+    <p class="muted">The notices the tracker sends. One set per family of laws; every save is kept as a numbered
+      version. Placeholders in braces are filled in when the notice is sent.</p>
+    <div class="prf-fields" style="grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));">
+      <label>Family of laws
+        <select class="select" id="prf-family"></select></label>
+      <label>Notice
+        <select class="select" id="prf-kind"></select></label>
+    </div>
+    <form id="prf-template-form" class="prf-fields" style="margin-top: var(--space-3);" data-mv-validate>
+      {{ error_summary('prf-template-errors') }}
+      <label>Subject
+        <input class="input" id="prf-subject" name="subject" maxlength="200" required
+               data-error-required="Enter the email subject people will see."></label>
+      <label>Message
+        <textarea class="textarea" id="prf-body" name="body" maxlength="8000" required
+                  data-error-required="Enter the message. Placeholders in braces are filled in when it is sent."></textarea></label>
+      <div class="prf-actions">
+        <button class="btn btn--primary" type="submit" id="prf-template-save">Save as a new version</button>
+        <button class="btn btn--ghost" type="button" id="prf-template-reset">Go back to the shipped wording</button>
+        <span class="muted" id="prf-template-version"></span>
+        <span id="prf-template-msg" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+    <details style="margin-top: var(--space-3);">
+      <summary>Placeholders you can use</summary>
+      <ul class="prf-placeholders" id="prf-placeholders"></ul>
+    </details>
+  </section>
+</div>
+<script src="/static/lightwork-privacy-rights-form.js" defer></script>
+{% endblock %}

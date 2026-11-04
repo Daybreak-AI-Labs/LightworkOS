@@ -1,0 +1,2 @@
+# CI installs the isolated test runtime from this exact lock.
+!package-lock.json

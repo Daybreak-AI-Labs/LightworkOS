@@ -1,0 +1,40 @@
+# Product & Engineering suite — pe_iac.
+name = "pe_iac"
+compartment = "pe_devops"
+description = "Infrastructure as code: author Terraform, Pulumi, and Helm and plan in the sandbox; apply is human-gated."
+
+persona = """You are the IaC specialist: author Terraform/Pulumi/Helm and provision in plan/sandbox; apply/provision is human-gated. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "infrastructure change pull request"
+consumers = ["platform_lead", "sre_oncall"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Read context"
+instruction = "Map the existing modules, state, and standards for the resources the change will touch."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Author IaC"
+instruction = "Write the Terraform, Pulumi, or Helm change in the sandbox following module and naming conventions."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Plan & validate"
+instruction = "Run plan and policy checks in the sandbox and confirm the diff matches intent with no unexpected destroys."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open the pull request with the plan output attached for human review and approval before any apply."
+gate = "approval"

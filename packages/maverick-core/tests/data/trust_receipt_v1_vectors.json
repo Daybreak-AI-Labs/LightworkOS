@@ -1,0 +1,26 @@
+{
+  "format": "lightwork-trust-receipt-v1-test-vectors",
+  "version": 1,
+  "trusted_public_key": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "vectors": [
+    {
+      "name": "valid-canonical-ed25519-receipt",
+      "valid": true,
+      "envelope_json": "{\"kind\":\"lightwork.trust-receipt\",\"payload\":{\"claims\":[{\"evidence_sha256\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],\"id\":\"eu-ai-act-art-12\",\"status\":\"satisfied\"}],\"issued_at\":\"2026-09-02T00:00:00Z\",\"issuer\":{\"id\":\"example-auditor\"},\"receipt_id\":\"tr1_0123456789abcdef\",\"subject\":{\"id\":\"agent:demo-1\",\"type\":\"ai_system\"}},\"payload_sha256\":\"6237e350b4674adeccf9b9aae71e957d71f6901e0bea521d3f137578a097b7c9\",\"signature\":{\"algorithm\":\"ed25519\",\"key_id\":\"21fe31dfa154a261\",\"public_key\":\"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a\",\"signature\":\"17965fa4488880a9b1379207d202d07ba20358e0021c58bb5d1291573252762e9f7e65edb303634f1dcd966291bdebc97668bcd0a9d44104e562f0e3e161f60a\"},\"version\":1}"
+    },
+    {
+      "name": "payload-tamper-keeps-stale-digest-and-signature",
+      "valid": false,
+      "envelope_json": "{\"kind\":\"lightwork.trust-receipt\",\"payload\":{\"claims\":[{\"evidence_sha256\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],\"id\":\"eu-ai-act-art-12\",\"status\":\"not_satisfied\"}],\"issued_at\":\"2026-09-02T00:00:00Z\",\"issuer\":{\"id\":\"example-auditor\"},\"receipt_id\":\"tr1_0123456789abcdef\",\"subject\":{\"id\":\"agent:demo-1\",\"type\":\"ai_system\"}},\"payload_sha256\":\"6237e350b4674adeccf9b9aae71e957d71f6901e0bea521d3f137578a097b7c9\",\"signature\":{\"algorithm\":\"ed25519\",\"key_id\":\"21fe31dfa154a261\",\"public_key\":\"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a\",\"signature\":\"17965fa4488880a9b1379207d202d07ba20358e0021c58bb5d1291573252762e9f7e65edb303634f1dcd966291bdebc97668bcd0a9d44104e562f0e3e161f60a\"},\"version\":1}"
+    },
+    {
+      "name": "signature-tamper",
+      "valid": false,
+      "envelope_json": "{\"kind\":\"lightwork.trust-receipt\",\"payload\":{\"claims\":[{\"evidence_sha256\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"],\"id\":\"eu-ai-act-art-12\",\"status\":\"satisfied\"}],\"issued_at\":\"2026-09-02T00:00:00Z\",\"issuer\":{\"id\":\"example-auditor\"},\"receipt_id\":\"tr1_0123456789abcdef\",\"subject\":{\"id\":\"agent:demo-1\",\"type\":\"ai_system\"}},\"payload_sha256\":\"6237e350b4674adeccf9b9aae71e957d71f6901e0bea521d3f137578a097b7c9\",\"signature\":{\"algorithm\":\"ed25519\",\"key_id\":\"21fe31dfa154a261\",\"public_key\":\"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a\",\"signature\":\"17965fa4488880a9b1379207d202d07ba20358e0021c58bb5d1291573252762e9f7e65edb303634f1dcd966291bdebc97668bcd0a9d44104e562f0e3e161f60b\"},\"version\":1}"
+    }
+  ],
+  "rfc8032_empty_message": {
+    "public_key": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    "signature": "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+  }
+}

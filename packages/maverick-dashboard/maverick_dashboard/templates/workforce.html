@@ -1,0 +1,417 @@
+{% extends "base.html" %}
+{% block title %}Workforce · Lightwork{% endblock %}
+{% block content %}
+  {% if can_open_page('/starter-teams') %}<p><a class="btn" href="/starter-teams">Explore starter teams and samples</a></p>{% endif %}
+  {% from "_hero.html" import hero, state %}
+  {% set workforce_actions %}<a class="btn btn--primary" href="#departments">View departments</a>{% endset %}
+  {% call hero('Build your workforce', 'Workforce',
+               subtitle='Departments & specialists',
+               lede='Your AI departments — each team\'s specialists, what
+                     they\'ve delivered, and their performance reviews.',
+               actions=workforce_actions if (can_create_goal and departments) else '') %}
+    {{ state('Deployment state',
+             deployed_specialists ~ ' specialists deployed',
+             badge=departments | length ~ ' departments', badge_class='ok',
+             copy=pack_total ~ ' specialists are listed in the catalog. ' ~
+                  configured_connectors ~ ' of ' ~ connector_total ~
+                  ' connected apps are set up; whether each one is working is shown on Connections.') }}
+  {% endcall %}
+
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+    {% from "_tabs.html" import panel_tabs %}
+    {{ panel_tabs('Time range', [('30', '30d'), ('90', '90d'), ('180', '180d'), ('365', '1y')], '90', id='bd-range', data='days', controls=false, activation='manual', hash='range-') }}
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Delivery by department</h2>
+      <p class="viz-sub">Tasks finished (solid) against tasks taken on (pale), from the Operating Record.</p>
+      <div id="bd-depts"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Completion</h2>
+      <p class="viz-sub">Of everything the workforce has taken on.</p>
+      <div id="bd-completion"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide">
+      <h2>Spend by department</h2>
+      <p class="viz-sub">Actual agent spend behind that delivery.</p>
+      <div id="bd-dept-spend"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Top performers</h2>
+      <p class="viz-sub">Best delivery on record.</p>
+      <div id="bd-leaders"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide" id="bd-platforms-card" hidden>
+      <h2>External agents</h2>
+      <p class="viz-sub">Bring-your-own agents delivering under governance, by home platform.</p>
+      <div id="bd-platforms"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><h2>Delivery</h2></div>
+    <p class="muted" style="margin-top: 0;">Firm-wide rollup from the Operating Record — delivery, not usage.</p>
+    <table>
+      <thead><tr><th scope="col">Metric</th><th scope="col">Value</th></tr></thead>
+      <tbody>
+        <tr><td>Tasks finished</td><td>{{ firm.goals_completed }} / {{ firm.goals_total }}</td></tr>
+        <tr><td>Human approvals</td><td>{{ firm.human_decisions }} / {{ firm.approvals }}</td></tr>
+        <tr><td>Spend</td><td>{{ firm.spend_dollars | money }}</td></tr>
+      </tbody>
+    </table>
+
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><h2>Integrations</h2></div>
+    <p class="muted" style="margin-top: 0;">
+      {{ connector_total }} apps can be connected;
+      {{ configured_connectors }} are set up. Being set up does not
+      guarantee the other app is reachable right now.
+    </p>
+    <input id="conn-search" class="input" type="search" style="max-width: 26rem;"
+           placeholder="Search apps — for example Zendesk or Salesforce" aria-label="Search apps you can connect" />
+    <ul id="conn-results" class="muted"></ul>
+  </div>
+
+  <div class="panel" id="departments" tabindex="-1">
+    <div class="section-head"><h2>Departments</h2></div>
+    <div class="card-grid" id="dept-grid">
+      {% for d in departments %}
+      <article class="card" data-key="{{ d.key }}">
+        <h3>{{ d.title }}</h3>
+        <p class="muted">{{ d.charter or
+          'No description yet. View the team to see its specialists before you deploy it.' }}</p>
+        <p>
+          <span class="badge">{{ d.headcount }} catalog specialists</span>
+          {# Plain text, not role=status: it fills in once on load for every
+             department, and dozens of announcements on load are noise. #}
+          <span class="badge dept-readiness">Checking actions…</span>
+          {% if not entitlements.get(d.key) %}<span class="badge">Add-on required</span>{% endif %}
+        </p>
+        <p>
+          <button type="button" class="btn btn--ghost" data-key="{{ d.key }}" data-act="team" aria-label="View {{ d.title }} team">View team</button>
+          <button type="button" class="btn btn--ghost" data-key="{{ d.key }}" data-act="review" aria-label="Review {{ d.title }} performance">Performance review</button>
+          {% if entitlements.get(d.key) %}
+          <button type="button" class="btn" data-key="{{ d.key }}" data-act="deploy" aria-label="Set up {{ d.title }} team">Set up team</button>
+          {% else %}
+          <button type="button" class="btn" data-key="{{ d.key }}" data-act="deploy" aria-label="Set up {{ d.title }} team" aria-describedby="addon-note-{{ d.key }}">Set up team</button>
+          <span id="addon-note-{{ d.key }}" class="muted">add-on required</span>
+          {% endif %}
+        </p>
+        <div class="dept-detail" role="status" aria-live="polite" hidden></div>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+
+  <dialog id="dept-modal" aria-labelledby="dept-modal-title"
+          style="border: 1px solid var(--border-strong); border-radius: var(--radius-lg); padding: 0; width: min(640px, calc(100vw - 2rem)); max-height: min(85vh, 760px); background: var(--bg); color: var(--text); box-shadow: var(--shadow-lg); margin: auto; overflow: hidden;">
+    <div style="display: flex; flex-direction: column; max-height: min(85vh, 760px);">
+      <div style="display: flex; align-items: center; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border);">
+        <div style="flex: 1; min-width: 0;">
+          <h3 id="dept-modal-title" style="margin: 0; font-size: var(--text-lg); text-transform: none; letter-spacing: 0; color: var(--text);">Department details</h3>
+          <div class="muted" id="dept-modal-sub" style="font-size: var(--text-sm);"></div>
+        </div>
+        <button type="button" class="btn btn--ghost" id="dept-modal-close" aria-label="Close department details">Close</button>
+      </div>
+      <div id="dept-modal-body" style="padding: var(--space-4) var(--space-5); overflow-y: auto; flex: 1; min-height: 0;">
+        <p class="muted">Loading…</p>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/static/board.js"></script>
+  <script src="/static/lightwork-department-team-updates.js"></script>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var B = window.LWBoard;
+    // Only people who may deploy a team are told to deploy one.
+    var DEPLOY = {{ 'true' if (can_create_goal and departments) else 'false' }}
+      ? { label: 'Deploy a team', href: '#departments' } : null;
+
+    function render(D) {
+      var k = document.getElementById('bd-kpis');
+      k.textContent = '';
+      k.appendChild(B.kpi({ label: 'Departments', value: D.kpis.departments,
+        sub: 'with recorded work' }));
+      k.appendChild(B.kpi({ label: 'Specialists', value: D.kpis.specialists,
+        sub: 'available across the catalog' }));
+      k.appendChild(B.kpi({ label: 'Delivered', value: D.kpis.delivered_window,
+        chip: { cur: D.kpis.delivered_window, prev: D.kpis.delivered_prev },
+        sub: 'tasks in the last ' + D.days + ' days' }));
+      k.appendChild(B.kpi({ label: 'Record spend', value: D.kpis.spend_dollars,
+        format: B.money, sub: 'across ' + B.fmt(D.kpis.goals_total) +
+        ' tasks on record' }));
+
+      var dmax = 1;
+      (D.depts || []).forEach(function (r) { dmax = Math.max(dmax, r.total); });
+      if ((D.depts || []).length) {
+        B.hbars(document.getElementById('bd-depts'),
+          D.depts.map(function (r) {
+            return { label: r.label,
+                     value_text: r.completed + ' of ' + r.total,
+                     pct: r.completed / dmax * 100, pct_bg: r.total / dmax * 100,
+                     title: r.label + ' — ' + r.completed + ' delivered of ' + r.total };
+          }), 'Tasks finished against tasks taken on, by department.');
+        var smax = 1;
+        D.depts.forEach(function (r) { smax = Math.max(smax, r.spend); });
+        B.hbars(document.getElementById('bd-dept-spend'),
+          D.depts.map(function (r) {
+            return { label: r.label, value_text: B.money(r.spend),
+                     pct: r.spend / smax * 100 };
+          }), 'Agent spend by department.');
+      } else {
+        B.empty(document.getElementById('bd-depts'), 'No departmental work yet',
+          'Tasks each department finishes and takes on appear here once a deployed team starts work.', DEPLOY);
+        B.empty(document.getElementById('bd-dept-spend'), 'No spend yet',
+          'Agent spend by department appears here as deployed teams finish tasks.' + (DEPLOY ? ' Deploy a team below to start.' : ''));
+      }
+
+      B.donut(document.getElementById('bd-completion'), {
+        segments: [
+          { label: 'Delivered', value: D.kpis.goals_completed, cls: 'ok' },
+          { label: 'Everything else',
+            value: Math.max(D.kpis.goals_total - D.kpis.goals_completed, 0),
+            cls: 'idle' }],
+        center: D.kpis.goals_total
+          ? Math.round(100 * D.kpis.goals_completed / D.kpis.goals_total) + '%'
+          : '—',
+        centerSub: 'completed',
+        aria: 'Completion: ' + D.kpis.goals_completed + ' of ' +
+              D.kpis.goals_total + ' tasks finished.' });
+
+      if ((D.platforms || []).length) {
+        document.getElementById('bd-platforms-card').hidden = false;
+        var pmax = 1;
+        D.platforms.forEach(function (r) { pmax = Math.max(pmax, r.total); });
+        B.hbars(document.getElementById('bd-platforms'),
+          D.platforms.map(function (r) {
+            return { label: r.label,
+                     value_text: r.completed + ' of ' + r.total +
+                                 ' · ' + B.money(r.spend),
+                     pct: r.completed / pmax * 100, pct_bg: r.total / pmax * 100,
+                     title: r.label + ' — ' + r.completed + ' delivered of ' +
+                            r.total + ', ' + B.money(r.spend) + ' reported' };
+          }), 'Delivery and reported spend by external-agent platform.');
+      }
+
+      var lbox = document.getElementById('bd-leaders');
+      if ((D.leaders || []).length) {
+        lbox.textContent = '';
+        var ul = B.el('ul', 'viz-legend');
+        D.leaders.forEach(function (c) {
+          var li = B.el('li', 'viz-legend__item');
+          li.appendChild(B.el('span', 'viz-legend__label',
+            String(c.worker || '').replace(/_/g, ' ')));
+          li.appendChild(B.el('span', 'viz-legend__val',
+            (c.suite_title ? c.suite_title + ' · ' : '') + c.headline));
+          ul.appendChild(li);
+        });
+        lbox.appendChild(ul);
+      } else {
+        B.empty(lbox, 'No work recorded yet',
+          'The specialists with the best delivery appear here once a deployed team finishes tasks.' + (DEPLOY ? ' Deploy a team below to start.' : ''));
+      }
+    }
+
+    B.attach({ board: 'workforce', render: render });
+  })();
+  </script>
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      function esc(s) {
+        return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+        });
+      }
+
+      function human(v) {
+        var t = String(v == null ? "" : v).replace(/[_-]+/g, " ").trim();
+        return t ? t.charAt(0).toUpperCase() + t.slice(1) : "";
+      }
+
+      function renderTeam(d) {
+        var rows = (d.roster || []).map(function (p) {
+          var readiness = p.readiness || {};
+          var missing = (readiness.missing_tools || []).map(human).join(', ');
+          var action = readiness.state === 'needs_setup'
+            ? esc(readiness.label || 'Needs setup') + (missing ? '<br><small>' + esc(missing) + '</small>' : '') +
+              ' <a href="' + esc(readiness.fix_url || '/connections') + '">Review setup</a>'
+            : readiness.state === 'action_ready'
+              ? esc(readiness.label || 'Can start') : 'Setup check unavailable';
+          return "<tr><td>" + esc(human(p.name)) + "</td><td>" + esc(p.description) +
+            "</td><td>" + action + "</td><td>" + esc(human(p.max_risk)) + "</td></tr>";
+        }).join("");
+        return "<table><caption>" + esc(d.title) + " — roster</caption>" +
+          "<thead><tr><th scope=\"col\">Specialist</th><th scope=\"col\">Does</th>" +
+          "<th scope=\"col\">Action check</th><th scope=\"col\">Max risk</th></tr></thead><tbody>" + rows + "</tbody></table>" +
+          '<p class="muted">This checks required workflow actions. Live connections, permissions and the AI service are checked when work starts.</p>';
+      }
+
+      function renderReview(r) {
+        var dl = r.delivery || {}, au = r.authority || {}, le = r.learning || {};
+        return "<table><caption>" + esc(r.department.title) + " — performance review</caption>" +
+          "<tbody>" +
+          "<tr><td>Tasks finished</td><td>" + esc(dl.goals_completed) + " / " + esc(dl.goals_total) +
+          " (" + Math.round((dl.completion_rate || 0) * 100) + "%)</td></tr>" +
+          "<tr><td>Active specialists</td><td>" + esc(dl.active_workers) + "</td></tr>" +
+          "<tr><td>Authority</td><td>" + esc(au.summary) + "</td></tr>" +
+          "<tr><td>Tasks that recorded lessons</td><td>" +
+          (le.status === "ok" ? (Math.round((le.coverage_rate || 0) * 100) + "% of " +
+            esc(le.goals_evaluated) + " tasks") : "Not enough work yet to tell") + "</td></tr>" +
+          "</tbody></table>" +
+          "<p class=\"muted\">" + esc(r.governance_note) + "</p>";
+      }
+
+      // Pop-out details: "View team" and "Performance review" open in a modal
+      // dialog element (the shared pattern from the Agent Factory), so cards
+      // never stretch the grid. Deploy feedback stays inline on the card.
+      var modal = document.getElementById("dept-modal");
+      var modalTitle = document.getElementById("dept-modal-title");
+      var modalSub = document.getElementById("dept-modal-sub");
+      var modalBody = document.getElementById("dept-modal-body");
+      fetch('/api/v1/departments').then(function (r) {
+        if (!r.ok) throw new Error('load');
+        return r.json();
+      }).then(function (departments) {
+        (departments || []).forEach(function (d) {
+          var card = Array.prototype.find.call(document.querySelectorAll('#dept-grid .card'), function (item) {
+            return item.dataset.key === d.key;
+          });
+          if (!card) return;
+          var badge = card.querySelector('.dept-readiness');
+          var deploy = card.querySelector('button[data-act="deploy"]');
+          if (deploy && d.deployed) {
+            deploy.dataset.deployed = 'true';
+            deploy.textContent = 'Update team';
+            deploy.setAttribute('aria-label', 'Update ' + d.title + ' team');
+          }
+          var ready = Number(d.ready_specialists || 0);
+          var unknown = Number(d.unknown_specialists || 0);
+          badge.textContent = unknown
+            ? ready + ' of ' + d.headcount + ' can start; ' + unknown + ' need a setup check'
+            : ready + ' of ' + d.headcount + ' can start';
+          if (ready === 0 && !d.deployed) {
+            if (deploy) {
+              deploy.disabled = true;
+              deploy.title = unknown
+                ? 'Setup checks are unavailable. Try again after your administrator checks this installation.'
+                : 'No specialist in this team can start until its required actions are set up.';
+            }
+          }
+        });
+      }).catch(function () {
+        document.querySelectorAll('.dept-readiness').forEach(function (badge) {
+          badge.textContent = 'Setup check unavailable';
+        });
+      });
+      function openModal(title, sub) {
+        modalTitle.textContent = title;
+        modalSub.textContent = sub || "";
+        modalBody.innerHTML = "<p class=\"muted\">Loading…</p>";
+        if (typeof modal.showModal === "function") modal.showModal();
+        else modal.setAttribute("open", "");
+      }
+      document.getElementById("dept-modal-close").addEventListener("click", function () {
+        modal.close();
+      });
+      modal.addEventListener("click", function (ev) {
+        if (ev.target === modal) modal.close();   // click the backdrop to dismiss
+      });
+
+      document.getElementById("dept-grid").addEventListener("click", async function (ev) {
+        var btn = ev.target.closest("button[data-act]");
+        if (!btn) return;
+        var key = btn.getAttribute("data-key");
+        var act = btn.getAttribute("data-act");
+        var card = btn.closest(".card");
+        var deptTitle = (card.querySelector("h3") || {}).textContent || key;
+
+        if (act === "deploy") {
+          if (!window.LWDepartmentTeamUpdates) {
+            card.querySelector('.dept-detail').hidden = false;
+            card.querySelector('.dept-detail').textContent = 'The team review could not load. Reload this page before saving the team.';
+            return;
+          }
+          await window.LWDepartmentTeamUpdates.open(key, btn);
+          return;
+        }
+
+        openModal(deptTitle, act === "review" ? "Performance review" : "Team roster");
+        var url = act === "review"
+          ? "/api/v1/departments/" + encodeURIComponent(key) + "/review"
+          : "/api/v1/departments/" + encodeURIComponent(key);
+        fetch(url).then(function (r) {
+          if (!r.ok) throw new Error("load");
+          return r.json();
+        }).then(function (d) {
+          modalBody.innerHTML = act === "review" ? renderReview(d) : renderTeam(d);
+        }).catch(function () {
+          modalBody.innerHTML = "<p class=\"muted\">Could not load these details. Close this and try again.</p>";
+        });
+      });
+
+      var search = document.getElementById("conn-search");
+      var results = document.getElementById("conn-results");
+      var timer = null;
+      // Monotonic request id: only the latest response may render, so a slow
+      // earlier query (e.g. "slack") cannot overwrite a newer one ("jira").
+      var connSearchSeq = 0;
+      search.addEventListener("input", function () {
+        var q = search.value.trim();
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(function () {
+          var seq = ++connSearchSeq;
+          if (!q) { results.innerHTML = ""; results.removeAttribute("aria-busy"); return; }
+          results.setAttribute("aria-busy", "true");
+          fetch("/api/v1/marketplace/connectors?q=" + encodeURIComponent(q))
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (seq !== connSearchSeq) return;
+              results.innerHTML = (d.connectors || []).slice(0, 20).map(function (c) {
+                return "<li>" + esc(c.label || human(c.name)) + "</li>";
+              }).join("") || "<li>No match.</li>";
+              results.removeAttribute("aria-busy");
+            })
+            .catch(function () {
+              if (seq !== connSearchSeq) return;
+              results.innerHTML = "<li>Could not search apps right now. Try again in a moment.</li>";
+              results.removeAttribute("aria-busy");
+            });
+        }, 200);
+      });
+    })();
+  </script>
+
+  <div class="section-head"><h2 id="trial-title">Trial versions</h2></div>
+  <section class="panel" aria-labelledby="trial-title">
+    <p class="muted" id="trial-status" role="status">Loading…</p>
+    <div id="trial-list"></div>
+  </section>
+  <script src="/static/lightwork-specialist-trials.js" defer></script>
+  <div class="section-head"><h2 id="fa-autonomy-title">How independently specialists work</h2></div>
+  <section class="panel" aria-labelledby="fa-autonomy-title">
+    <p class="muted" id="fa-autonomy-status">Loading…</p>
+    <div id="fa-autonomy"></div>
+  </section>
+  {% include "_workforce_ops.html" %}
+  <style>
+    .fa-scroll { overflow-x: auto; }
+    .fa-inline { list-style: none; padding: 0; margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .fa-list { margin: var(--space-2) 0; }
+    .fa-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+    .fa-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .fa-grow { flex: 1 1 18rem; }
+    .fa-technical { margin-top: var(--space-2); }
+  </style>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+
+{% endblock %}

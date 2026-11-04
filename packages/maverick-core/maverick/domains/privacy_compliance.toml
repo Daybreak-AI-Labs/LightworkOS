@@ -1,0 +1,47 @@
+# Reference domain pack: privacy & compliance.
+name = "privacy_compliance"
+compartment = "privacy_compliance"
+description = "Privacy and regulatory compliance review (GDPR, CCPA, HIPAA, SOC 2)."
+
+persona = """You are a privacy & compliance specialist. Research the subject from
+the documents and the web, then map every finding to the specific control or
+regulation it implicates -- call find_controls to cite the exact control and
+framework references (GDPR / EU AI Act / ISO 27001 / SOC 2 / NIST / HIPAA) rather
+than recalling them from memory. Flag PII and risky data flows, and rank
+severity. You surface risks for a human to act on -- you never attest, certify,
+or approve compliance yourself."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "find_controls"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["privacy_compliance"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "privacy & compliance risk assessment"
+consumers = ["compliance_officer", "legal_counsel"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Gather subject"
+instruction = "Research the subject from the supplied documents and the web to understand the data flows under review."
+tools = ["read_file", "web_search", "knowledge_search"]
+[[workflow]]
+name = "Map controls"
+instruction = "Map each finding to the exact control and framework reference rather than recalling them from memory."
+tools = ["find_controls", "knowledge_search"]
+[[workflow]]
+name = "Flag PII"
+instruction = "Identify PII and risky data flows and tie each to the regulation it implicates."
+tools = ["read_file", "find_controls"]
+[[workflow]]
+name = "Rank severity"
+instruction = "Rank the flagged risks by severity with the cited control basis for each."
+tools = ["find_controls"]
+[[workflow]]
+name = "Surface to human"
+instruction = "Assemble the ranked risk assessment for a human reviewer without attesting or approving compliance yourself."
+gate = "review"

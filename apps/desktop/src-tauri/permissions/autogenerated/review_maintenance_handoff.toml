@@ -1,0 +1,10 @@
+# Command declaration mirrored from build.rs for source-only review.
+[[permission]]
+identifier = "allow-review-maintenance-handoff"
+description = "Review a private installation handoff only from the bundled maintenance page."
+commands.allow = ["review_maintenance_handoff"]
+
+[[permission]]
+identifier = "deny-review-maintenance-handoff"
+description = "Denies the review_maintenance_handoff command."
+commands.deny = ["review_maintenance_handoff"]

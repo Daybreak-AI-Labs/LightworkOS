@@ -1,0 +1,15 @@
+# Review and restore task files
+
+Open your task and choose **Review task files**. A named task owner with current workspace and department access can use this page. A global administrator can choose **Enable file capture** before the task runs; this turns on the existing `workspace.journal` and `workspace.journal_strict` controls. Deployment-managed settings remain authoritative. No task starts as a side effect of setup, review or restore.
+
+The next supported local run records encrypted original file content and existence before file-tool writes. The record binds the actual local runtime folder and its filesystem identity, the task database, workspace and named owner. It never accepts a server folder supplied by the browser. Supported writes do not also write a plaintext copy into the legacy journal. Legacy unbound journal entries are not promoted into app recovery authority.
+
+After the task stops, cancel any queued runs and stop other tasks using the same folder. Choose **Review restore changes**. Each file shows its current and original size, text differences and exact fingerprints. Previews can be shortened; restoration verifies complete bytes. Check the confirmation and choose **Restore reviewed files**. A task or file change after review refuses the old request. Review again before making a new request.
+
+An interrupted restore retains its reviewed request. Refresh and review the retained operation, then explicitly retry it. Each file must still match either the reviewed current content or the already-restored original. A new task run is blocked while restoration is incomplete. A lost successful response returns the same receipt on exact retry, without repeating filesystem changes.
+
+The latest captured run holds at most 100 files, 8 MiB each and 32 MiB of originals. A new captured run replaces the prior run's original-content recovery point; up to 20 earlier completion receipts remain. Capture refuses writes whose originals cannot be saved safely. Corrupt or missing originals, hardlinks, symlinks, replaced parent folders, replaced task folders and unreadable task authority refuse restoration. Parent directory handles on Windows and directory descriptors on POSIX prevent following a substituted parent during replacement. Ordinary outside editors do not participate in Lightwork's locks: the app checks for drift before each restoration step and stops when detected; it does not claim filesystem transactions against a malicious same-user process.
+
+This is file-content recovery, not a complete task rollback. Shell commands, permissions, remote sandboxes, remote workers, database changes, provider spending, tickets and other external mutations are outside its coverage. Restoring files neither removes task results nor invalidates or recreates financial receipts, approvals or provider actions. Local tasks serialize supported file writes and recovery admission; remote-worker deployments cannot use this local restore path.
+
+Customer and provider acceptance are not qualified.

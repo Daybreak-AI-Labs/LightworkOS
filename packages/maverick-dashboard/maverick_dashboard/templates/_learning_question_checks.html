@@ -1,0 +1,25 @@
+<section id="learning-question-checks" class="panel stack" aria-labelledby="lqc-heading">
+  <h3 id="lqc-heading">Check saved learning questions</h3>
+  <p>Find out how the selected model answers your saved questions without a proposed lesson. Every requested answer and judgment must complete before a question is described as consistently passed in this check. AI judgments can be wrong.</p>
+  <p>This check never removes questions or changes lessons. To remove one later, use its separate current review in <a href="#learning-test-questions">Learning questions</a>.</p>
+  <p id="lqc-current" class="muted" role="status">Loading current choices…</p>
+  <form id="lqc-form" class="stack">
+    <label for="lqc-model">Questions saved for this model</label>
+    <select id="lqc-model" class="select"><option value="">Choose a current model</option></select>
+    <label for="lqc-samples">Answers to check for each question</label>
+    <select id="lqc-samples" class="select"><option value="2">2 answers</option><option value="4">4 answers</option></select>
+    <div class="llp-row"><button id="lqc-load" type="button" class="btn btn--ghost" disabled>Read saved questions</button><button id="lqc-refresh" type="button" class="btn btn--ghost">Refresh current choices</button></div>
+    <div id="lqc-questions" class="stack"></div>
+    <p id="lqc-page-status" class="muted" role="status"></p>
+    <div class="llp-row"><button id="lqc-previous" type="button" class="btn btn--ghost" hidden>Previous questions</button><button id="lqc-next" type="button" class="btn btn--ghost" hidden>More questions</button></div>
+    <h4>Questions selected for this check</h4><div id="lqc-selected" class="stack"></div>
+    <button id="lqc-review" type="submit" class="btn btn--primary" disabled>Review selected question checks</button>
+  </form>
+  <div id="lqc-review-panel" tabindex="-1" class="stack"></div>
+  <label for="lqc-choice">Your recent original question checks</label><select id="lqc-choice" class="select"><option value="">Choose an original check</option></select>
+  <button id="lqc-original" type="button" class="btn btn--ghost" disabled>Read original outcome</button>
+  <p id="lqc-status" class="muted" role="status" aria-live="polite"></p><div id="lqc-result" class="stack"></div>
+  <p class="muted">The selector shows your latest 20 retained checks. An interrupted reply never starts another check automatically. Current source access is required to read private questions and responses; original aggregate outcomes remain separate.</p>
+</section>
+<style>#learning-question-checks {overflow-wrap:anywhere} #learning-question-checks p {white-space:pre-wrap} #learning-question-checks select,#learning-question-checks button {max-width:100%} #learning-question-checks button {white-space:normal}</style>
+<script src="/static/lightwork-learning-question-checks.js" defer></script>

@@ -1,0 +1,42 @@
+name = "ehs_workorder"
+compartment = "ehs_workorder"
+description = "Facilities Work-Order Agent: Triage facilities requests, dispatch to vendors, and verify completion."
+
+persona = """You are the Facilities Work-Order Agent for this business -- a facilities ehs specialist. Triage facilities requests, dispatch to vendors, and verify completion. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Safety and regulatory filings are reviewed by the accountable human before submission; incidents are recorded verbatim, never softened. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query", "browser"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["ehs"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "facilities work-order tracker"
+consumers = ["facilities_manager", "ehs_coordinator"]
+cadence = "daily"
+gate = "review"
+
+[[workflow]]
+name = "Intake request"
+instruction = "Read the incoming facilities request and capture location, issue, requester, and any safety hazard verbatim."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Triage priority"
+instruction = "Classify urgency and trade against company SLA and safety policy, escalating any hazard that affects life safety or compliance."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Match vendor"
+instruction = "Identify the qualified vendor or internal trade for the work from the approved-vendor list and check coverage scope."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Log work order"
+instruction = "Record the triaged work order with priority, assigned vendor, and target completion date in the tracker."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Verify completion"
+instruction = "Confirm completion evidence against the original request and present the closeout for human sign-off before marking it done."
+tools = ["read_file", "spreadsheet_read"]
+gate = "review"

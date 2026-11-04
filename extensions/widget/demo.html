@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!--
+  Demo page for the embeddable Lightwork status widget.
+
+  The widget polls GET /api/v1/goals on the SAME ORIGIN it is served from
+  (data-endpoint="" below). The dashboard sends no CORS headers, so opening
+  this file directly from disk, or from a different port than the dashboard,
+  will show "offline" — that is the documented behaviour, not a bug.
+  Serve it same-origin instead, e.g. with the nginx snippet in README.md
+  that serves /widget/* statics and proxies everything else to the
+  dashboard on 127.0.0.1:8765.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lightwork widget demo</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 3rem; color: #222; }
+      code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Customer page</h1>
+    <p>
+      Pretend this is your internal tool. The floating pill in the bottom-right
+      corner is the Lightwork widget; click it to expand the status panel.
+    </p>
+    <p>
+      Embedded with:
+      <code>&lt;script src="./maverick-widget.js" data-endpoint=""&gt;&lt;/script&gt;</code>
+    </p>
+
+    <!--
+      data-endpoint=""  -> same origin (recommended; see README for why).
+      data-token        -> only for token-mode deployments; understand the
+                           exposure tradeoff documented in README.md first.
+    -->
+    <script src="./maverick-widget.js" data-endpoint="" data-interval="10000"></script>
+  </body>
+</html>

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Governance inventory - Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .sgi-row,.sgi-actions{align-items:center;display:flex;flex-wrap:wrap;gap:.6rem}
+  .sgi-fields{display:grid;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr))}
+  .sgi-fields label{display:grid;gap:.35rem}
+  .sgi-table-wrap{overflow:auto;max-height:30rem}
+  .sgi-sources{display:grid;gap:.5rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));list-style:none;margin:.6rem 0 0;padding:0}
+  .sgi-sources li{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.6rem}
+  .sgi-output{white-space:pre-wrap;overflow-wrap:anywhere;font-size: var(--text-xs);max-height:24rem;overflow:auto}
+  .sgi-disabled{opacity:.62}
+  .sgi-flush-top{margin-top:0}.sgi-flush{margin:0}.sgi-row--split{justify-content:space-between}
+</style>
+{% endblock %}
+{% block content %}
+<div id="sgi-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}" data-can-operate="{{ 'true' if inventory_can_operate else 'false' }}" data-can-audit="{{ 'true' if inventory_can_audit else 'false' }}" data-can-admin="{{ 'true' if inventory_can_admin else 'false' }}">
+  {% call hero('Governance', 'Governance inventory',
+               lede='One list of the records and links across AI governance, consent, data use, privacy, technology risk and third parties. Each entry points back to its source; the source content itself is not copied here.',
+               title_id='sgi-title') %}
+    <div class="hero-statebox" aria-live="polite">
+      <div class="hero-statebox__label">Status</div>
+      <div class="hero-statebox__row"><strong id="sgi-health-title">Loading your inventory</strong><span class="badge idle" id="sgi-state">Checking</span></div>
+      <p class="hero-statebox__copy" id="sgi-health-detail">Some sources may not be ready yet. The inventory appears when they are.</p>
+      <p><button class="btn btn--ghost" id="sgi-refresh" type="button">Refresh</button></p>
+    </div>
+  {% endcall %}
+
+  <div class="grid" aria-label="Inventory summary">
+    <div class="stat"><div class="num" id="sgi-revision">—</div><div class="label">Current version</div></div>
+    <div class="stat"><div class="num" id="sgi-entities">—</div><div class="label">Records</div></div>
+    <div class="stat"><div class="num" id="sgi-relationships">—</div><div class="label">Links between records</div></div>
+  </div>
+
+  <section class="panel" aria-labelledby="sgi-sources-title">
+    <h2 id="sgi-sources-title" class="sgi-flush-top">Sources</h2>
+    <p class="muted">Sources that are missing or incomplete stay marked, so you can see what still needs checking.</p>
+    <ul class="sgi-sources" id="sgi-suites"><li>AI governance</li><li>Consent</li><li>Data use</li><li>Privacy</li><li>Technology risk</li><li>Third parties</li></ul>
+  </section>
+
+  <div id="sgi-operations" aria-disabled="true">
+    <section class="panel" aria-labelledby="sgi-records-title">
+      <h2 id="sgi-records-title" class="sgi-flush-top">Records</h2>
+      <form id="sgi-query-form" autocomplete="off">
+        <div class="sgi-fields">
+          <label for="sgi-version">Version<select class="select" id="sgi-version" name="snapshot_id"><option value="">Latest</option></select></label>
+          <label for="sgi-source">Source<select class="select" id="sgi-source" name="source_id">
+            <option value="">All sources</option>
+            <option value="ai_governance">AI governance</option>
+            <option value="consent_preferences">Consent</option>
+            <option value="data_use_governance">Data use</option>
+            <option value="privacy_automation">Privacy</option>
+            <option value="tech_risk_compliance">Technology risk</option>
+            <option value="third_party_management">Third parties</option>
+          </select></label>
+          <label for="sgi-kind">Record type<select class="select" id="sgi-kind" name="entity_kind"><option value="">All types</option></select></label>
+        </div>
+      </form>
+      <p class="muted" id="sgi-records-note" role="status" aria-live="polite">Records appear when the inventory is ready.</p>
+      <div class="sgi-table-wrap"><table><thead><tr><th scope="col">Type</th><th scope="col">Source</th><th scope="col">Entries</th><th scope="col">First seen</th><th scope="col">Last activity</th><th scope="col">Latest change</th><th scope="col">Links</th></tr></thead><tbody id="sgi-entity-rows"><tr><td colspan="7">No records yet. Records appear here when a governed agent, policy or AI system is registered.</td></tr></tbody></table></div>
+      <p><button class="btn btn--ghost" id="sgi-more-entities" type="button" hidden>Show more records</button></p>
+    </section>
+
+    <section class="panel" aria-labelledby="sgi-links-title">
+      <h2 id="sgi-links-title" class="sgi-flush-top">Links between records</h2>
+      <div class="sgi-fields">
+        <label for="sgi-relation">Link type<select class="select" id="sgi-relation"><option value="">All link types</option></select></label>
+      </div>
+      <p class="muted" id="sgi-links-note" role="status" aria-live="polite"></p>
+      <p><button class="btn btn--ghost" id="sgi-all-links" type="button" hidden>Show all links</button></p>
+      <div class="sgi-table-wrap"><table><thead><tr><th scope="col">From</th><th scope="col">Link</th><th scope="col">To</th><th scope="col">Since</th></tr></thead><tbody id="sgi-link-rows"><tr><td colspan="4">No links yet. Links appear here once two records are connected.</td></tr></tbody></table></div>
+      <p><button class="btn btn--ghost" id="sgi-more-links" type="button" hidden>Show more links</button></p>
+    </section>
+
+    <section class="panel" aria-labelledby="sgi-history-title">
+      <div class="sgi-row sgi-row--split"><h2 id="sgi-history-title" class="sgi-flush">Saved versions</h2><button class="btn btn--ghost" id="sgi-load-snapshots" type="button">Refresh list</button></div>
+      <div class="sgi-table-wrap"><table><thead><tr><th scope="col">Saved On</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Records</th><th scope="col">Check</th></tr></thead><tbody id="sgi-snapshot-rows"><tr><td colspan="5">No saved versions yet. Use Update inventory from sources to create the first one.</td></tr></tbody></table></div>
+    </section>
+
+    <section class="panel" aria-labelledby="sgi-maint-title">
+      <h2 id="sgi-maint-title" class="sgi-flush-top">Maintenance</h2>
+      <div class="sgi-actions">
+        <button class="btn btn--primary" id="sgi-reconcile" type="button"{% if not inventory_can_admin %} disabled data-role-disabled="true"{% endif %}>Update inventory from sources</button>
+        <button class="btn" id="sgi-integrity" type="button"{% if not inventory_can_audit %} disabled data-role-disabled="true"{% endif %}>Check for tampering</button>
+        <button class="btn" id="sgi-export" type="button"{% if not inventory_can_audit %} disabled data-role-disabled="true"{% endif %}>Download inventory</button>
+        <button class="btn" id="sgi-checkpoint" type="button"{% if not inventory_can_admin %} disabled data-role-disabled="true"{% endif %}>Save a restore point</button>
+        <button class="btn btn--danger" id="sgi-restore" type="button"{% if not inventory_can_admin %} disabled data-role-disabled="true"{% endif %}>Restore last restore point</button>
+        <button class="btn btn--danger" id="sgi-purge" type="button"{% if not inventory_can_admin %} disabled data-role-disabled="true"{% endif %}>Delete expired versions</button>
+      </div>
+      {% if not inventory_can_admin %}<p class="muted">Only administrators can update, save or restore the inventory.</p>{% endif %}
+      <p id="sgi-operation-state" role="status" aria-live="polite">Nothing has run yet.</p>
+      <details><summary>Technical details</summary><pre class="sgi-output" id="sgi-output" tabindex="0"></pre></details>
+    </section>
+  </div>
+  <noscript><p class="panel">Turn on JavaScript to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-shared-governance-inventory.js" defer></script>{% endblock %}

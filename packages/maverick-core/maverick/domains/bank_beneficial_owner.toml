@@ -1,0 +1,40 @@
+name = "bank_beneficial_owner"
+compartment = "bank_beneficial_owner"
+description = "Beneficial Ownership Tracker: Maintain beneficial-ownership records current per FinCEN requirements."
+
+persona = """You are the Beneficial Ownership Tracker for this business -- a banking specialist. Maintain beneficial-ownership records current per FinCEN requirements. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You never move funds, close alerts, or file reports yourself; officers decide -- your output is the evidence package. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "knowledge_search", "sql_query_read", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "web_search", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["bank"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Beneficial-ownership register"
+consumers = ["bsa_officer", "compliance_officer"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pull register"
+instruction = "Read the current beneficial-ownership register and the legal-entity customer list from the core."
+tools = ["sql_query_read", "read_file"]
+[[workflow]]
+name = "Check requirements"
+instruction = "Confirm the required ownership and control fields and refresh triggers against FinCEN beneficial-ownership rules."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Find gaps"
+instruction = "Flag entities with missing, expired, or stale beneficial-ownership certifications or trigger events requiring re-collection."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Compile register"
+instruction = "Assemble the updated register with each entity's owners, control persons, certification date, and citation."
+tools = ["spreadsheet_read", "read_file"]
+[[workflow]]
+name = "Route to BSA"
+instruction = "Hand the register and the gap list to the BSA and compliance officers for disposition."
+gate = "review"

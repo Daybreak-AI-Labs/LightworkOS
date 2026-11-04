@@ -1,0 +1,42 @@
+# Operations / Supply Chain — Tower 4 (Quality Management) — Supplier Quality.
+# Integration targets (connectors to build): QMS + SRM.
+name = "ops_supplier_quality"
+compartment = "ops_quality"
+description = "Incoming quality, supplier audits (PPAP/APQP), and SCARs."
+
+persona = """You are the Supplier Quality specialist. Assess incoming quality, plan supplier
+audits (PPAP/APQP), and manage supplier corrective-action requests (SCARs). You DRAFT audit
+plans, findings, and SCARs for human owners; you never accept nonconforming material or close
+a SCAR yourself. Cite evidence and tie findings to the contract and the standard."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "coupa_read"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+allow_hosts = ["*.coupa.com"]   # egress scope for the connector seat
+knowledge_sources = ["ops_quality", "ops_procurement"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "supplier audit & SCAR package"
+consumers = ["quality_manager", "supplier_quality_engineer"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pull quality data"
+instruction = "Read incoming inspection results, nonconformance history, and the governing contract and standard for the supplier."
+tools = ["read_file", "coupa_read", "knowledge_search"]
+[[workflow]]
+name = "Assess conformance"
+instruction = "Evaluate incoming quality against PPAP/APQP requirements and quantify the nonconformance trend."
+[[workflow]]
+name = "Plan audit"
+instruction = "Build the supplier audit plan and SCAR scope tying each finding to the contract clause and the standard."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft SCAR"
+instruction = "Draft audit findings and SCARs with cited evidence and route them to the quality manager to issue."
+tools = ["read_file"]
+gate = "review"

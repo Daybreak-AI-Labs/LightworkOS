@@ -1,0 +1,304 @@
+name: Windows desktop package
+
+on:
+  pull_request:
+    paths:
+      - 'vendor/**'
+      - 'apps/desktop/**'
+      - 'apps/desktop-runtime/**'
+      - 'apps/desktop-oauth-return/**'
+      - 'apps/installer-msi/**'
+      - 'apps/installer-cli/**'
+      - 'apps/installer-desktop/package.json'
+      - 'apps/installer-desktop/pnpm-lock.yaml'
+      - 'packages/**'
+      - 'build/**'
+      - 'scripts/install_release_cohort.py'
+      - 'scripts/verify_constraint_closure.py'
+      - 'rust-toolchain.toml'
+      - 'release-cohort.toml'
+      - 'requirements/ci.txt'
+      - '.github/workflows/windows-customer.yml'
+  workflow_dispatch:
+    inputs:
+      customer_release:
+        description: 'Require configured publisher identity and produce a signed release candidate (no publishing)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-customer-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-accept:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          # Last 3.12 release with an official actions/python-versions Windows binary.
+          python-version: '3.12.10'
+          architecture: 'x64'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: '22.23.1'
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: '1.97.1'
+      - name: Cache Rust dependencies across acceptance runs
+        uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
+          workspaces: |
+            apps/desktop-runtime
+            apps/desktop/src-tauri
+            apps/installer-msi/verify-update
+      - name: Isolate package resolution from runner preinstalled packages
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'customer-build-python'
+          & (Join-Path $env:pythonLocation 'python.exe') -I -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'Build environment creation failed.' }
+          $buildPython = (Resolve-Path -LiteralPath (Join-Path $venv 'Scripts/python.exe')).Path
+          & $buildPython -c "import sys; print('Customer build interpreter:', sys.executable)"
+          if ($LASTEXITCODE -ne 0) { throw 'Build interpreter validation failed.' }
+          "CUSTOMER_BUILD_PYTHON=$buildPython" >> $env:GITHUB_ENV
+          (Join-Path $venv 'Scripts') >> $env:GITHUB_PATH
+      - name: Install reviewed build dependencies without signing credentials
+        shell: pwsh
+        run: |
+          & $env:CUSTOMER_BUILD_PYTHON -I -m pip install --upgrade 'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3' 'pyinstaller==6.22.3' 'pytest==9.1.1' 'pyyaml==6.0.3'
+          if ($LASTEXITCODE -ne 0) { throw 'Build dependency installation failed.' }
+          # Omit --target-python: the helper preserves this exact sys.executable.
+          # A bare child "python" can escape a Windows venv despite its PATH.
+          & $env:CUSTOMER_BUILD_PYTHON scripts/install_release_cohort.py --core-extra release-runtime
+          if ($LASTEXITCODE -ne 0) { throw 'Complete release cohort installation failed.' }
+          & $env:CUSTOMER_BUILD_PYTHON scripts/verify_constraint_closure.py
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency closure failed.' }
+          corepack enable
+          corepack prepare pnpm@10.11.1 --activate
+          pnpm --dir apps/installer-desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Locked native build dependencies failed.' }
+      - name: Test packaging and maintenance source contracts
+        shell: pwsh
+        run: |
+          & $env:CUSTOMER_BUILD_PYTHON scripts/install_release_cohort.py --verify-only
+          if ($LASTEXITCODE -ne 0) { throw 'The test interpreter cannot import the full release cohort.' }
+          & $env:CUSTOMER_BUILD_PYTHON -m pytest -q apps/installer-msi/test_customer.py apps/installer-msi/test_runtime_staging.py apps/installer-msi/test_msi_acceptance_preflight.py apps/installer-msi/test_frozen_relaunch.py apps/installer-msi/test_customer_feed.py apps/installer-msi/test_wxs.py apps/installer-msi/test_acceptance_diagnostics.py apps/installer-msi/test_signed_rollback_fixture.py apps/installer-msi/test_msi_native_payload.py apps/installer-msi/test_recovery_process_lifecycle.py apps/installer-msi/test_signing_transition_fixture.py apps/installer-msi/test_native_webview_fixture.py apps/installer-msi/test_native_webview_journey.py apps/installer-msi/test_release_acceptance.py apps/installer-msi/test_release_pair_driver.py packages/maverick-core/tests/test_release_identity_transition.py packages/maverick-core/tests/test_installation_recovery.py packages/maverick-core/tests/test_installation_recovery_deployment.py packages/maverick-core/tests/test_installation_recovery_retirement.py packages/maverick-core/tests/test_installation_accounting_recovery.py packages/maverick-core/tests/test_backup_accounting_guard.py packages/maverick-core/tests/test_windows_installer_verification.py
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging regression tests failed.' }
+          & $env:CUSTOMER_BUILD_PYTHON -m pytest -q packages/maverick-core/tests/test_release_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged feature regression tests failed.' }
+          $env:MAVERICK_TEST_SECURE_DEFAULT = '1'
+          & $env:CUSTOMER_BUILD_PYTHON -m pytest -q packages/maverick-core/tests/test_release_runtime.py
+          if ($LASTEXITCODE -ne 0) { throw 'Secure packaged feature regression tests failed.' }
+          Remove-Item Env:MAVERICK_TEST_SECURE_DEFAULT
+          node --test apps/desktop/tests/*.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'Maintenance UI tests failed.' }
+          cargo test --locked --manifest-path apps/desktop-runtime/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Owned runtime tests failed.' }
+          cargo test --locked --manifest-path apps/desktop-oauth-return/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Native account-return broker tests failed.' }
+          cargo test --locked --lib --manifest-path apps/desktop/src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Native maintenance tests failed.' }
+      - name: Freeze the full runtime
+        shell: pwsh
+        working-directory: build
+        run: |
+          & $env:CUSTOMER_BUILD_PYTHON ../scripts/install_release_cohort.py --verify-only
+          if ($LASTEXITCODE -ne 0) { throw 'The freeze interpreter cannot import the full release cohort.' }
+          & $env:CUSTOMER_BUILD_PYTHON -m PyInstaller --clean --noconfirm --distpath ../dist maverick.spec
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen runtime build failed.' }
+      - name: Select immutable customer channel or synthetic acceptance identity
+        shell: pwsh
+        env:
+          CUSTOMER_RELEASE: ${{ inputs.customer_release }}
+          CUSTOMER_UPDATE_ENDPOINT: ${{ vars.LIGHTWORK_WINDOWS_UPDATE_ENDPOINT }}
+          CUSTOMER_UPDATE_PUBLIC_KEY: ${{ vars.LIGHTWORK_WINDOWS_UPDATE_PUBLIC_KEY }}
+        run: |
+          $key = Join-Path $env:RUNNER_TEMP 'acceptance-updater.key'
+          node apps/installer-desktop/node_modules/@tauri-apps/cli/tauri.js signer generate --ci -w $key *> (Join-Path $env:RUNNER_TEMP 'acceptance-key-generation.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Acceptance key generation failed.' }
+          $public = "$key.pub"
+          $endpoint = 'https://updates.example.test/latest.json'
+          if ($env:CUSTOMER_RELEASE -eq 'true') {
+            if ('${{ github.ref }}' -ne 'refs/heads/main') { throw 'Customer candidates must build reviewed main.' }
+            if (-not $env:CUSTOMER_UPDATE_PUBLIC_KEY -or -not $env:CUSTOMER_UPDATE_ENDPOINT) { throw 'Configure customer updater public key and accessible HTTPS channel first.' }
+            $public = Join-Path $env:RUNNER_TEMP 'customer-updater.pub'
+            [IO.File]::WriteAllText($public, $env:CUSTOMER_UPDATE_PUBLIC_KEY)
+            $endpoint = $env:CUSTOMER_UPDATE_ENDPOINT
+          }
+          "CUSTOMER_PUBLIC_KEY=$public" >> $env:GITHUB_ENV
+          "CUSTOMER_ENDPOINT=$endpoint" >> $env:GITHUB_ENV
+          "ACCEPTANCE_PRIVATE_KEY=$key" >> $env:GITHUB_ENV
+      - name: Build complete base and fault-injection upgrade fixtures
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'customer-stage'
+          ./apps/installer-msi/build-customer.ps1 -Python $env:CUSTOMER_BUILD_PYTHON -Runtime "$env:GITHUB_WORKSPACE/dist/maverick.exe" -PublicKeyFile $env:CUSTOMER_PUBLIC_KEY -UpdateEndpoint $env:CUSTOMER_ENDPOINT -StageDirectory $stage
+          $inventory = Get-Content -Raw (Join-Path $stage 'runtime-inventory.json') | ConvertFrom-Json
+          $version = $inventory.version
+          $parts = $version.Split('.')
+          $candidateVersion = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+          $bundleDir = 'apps/desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi'
+          $base = @(Get-ChildItem $bundleDir -Filter "*_$($version)_x64_en-US.msi")
+          if ($base.Count -ne 1) { throw 'Expected one base customer MSI.' }
+          New-Item -ItemType Directory -Path customer-artifacts | Out-Null
+          Copy-Item -LiteralPath $base[0].FullName -Destination customer-artifacts/Lightwork.msi
+          Copy-Item -LiteralPath (Join-Path $stage 'runtime-inventory.json') -Destination customer-artifacts/runtime-inventory.json
+          Copy-Item -LiteralPath $env:CUSTOMER_PUBLIC_KEY -Destination customer-artifacts/updater.pub
+          ./apps/installer-msi/build-customer.ps1 -Python $env:CUSTOMER_BUILD_PYTHON -Runtime "$env:GITHUB_WORKSPACE/dist/maverick.exe" -PublicKeyFile $env:CUSTOMER_PUBLIC_KEY -UpdateEndpoint $env:CUSTOMER_ENDPOINT -StageDirectory (Join-Path $env:RUNNER_TEMP 'customer-upgrade-fixture') -AcceptanceFixtureVersion $candidateVersion -InjectAcceptanceFailure
+          $candidate = @(Get-ChildItem $bundleDir -Filter "*_$($candidateVersion)_x64_en-US.msi")
+          if ($candidate.Count -ne 1) { throw 'Expected one labelled upgrade fixture MSI.' }
+          Copy-Item -LiteralPath $candidate[0].FullName -Destination (Join-Path $env:RUNNER_TEMP 'upgrade-fixture.msi')
+      - name: Verify signatures reject changed installer bytes
+        shell: pwsh
+        run: |
+          Set-Item -LiteralPath Env:TAURI_SIGNING_PRIVATE_KEY -Value (Get-Content -Raw -LiteralPath $env:ACCEPTANCE_PRIVATE_KEY)
+          try {
+            node apps/installer-desktop/node_modules/@tauri-apps/cli/tauri.js signer sign --password "" customer-artifacts/Lightwork.msi
+            if ($LASTEXITCODE -ne 0) { throw 'Synthetic updater signing failed.' }
+          } finally { Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue }
+          cargo build --locked --manifest-path apps/installer-msi/verify-update/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Updater verifier build failed.' }
+          $verify = 'apps/installer-msi/verify-update/target/debug/lightwork-verify-update.exe'
+          & $verify "$env:ACCEPTANCE_PRIVATE_KEY.pub" customer-artifacts/Lightwork.msi.sig customer-artifacts/Lightwork.msi
+          if ($LASTEXITCODE -ne 0) { throw 'Authentic synthetic signature did not verify.' }
+          $tampered = Join-Path $env:RUNNER_TEMP 'tampered.msi'
+          Copy-Item -LiteralPath customer-artifacts/Lightwork.msi -Destination $tampered
+          [IO.File]::AppendAllText($tampered, 'synthetic tamper')
+          & $verify "$env:ACCEPTANCE_PRIVATE_KEY.pub" customer-artifacts/Lightwork.msi.sig $tampered
+          if ($LASTEXITCODE -eq 0) { throw 'Tampered installer was accepted.' }
+          Remove-Item -LiteralPath customer-artifacts/Lightwork.msi.sig
+          # Rejection is expected; GitHub's PowerShell wrapper returns LASTEXITCODE.
+          $global:LASTEXITCODE = 0
+      - name: Install repair upgrade and transaction rollback with developer tools absent from PATH
+        shell: pwsh
+        run: |
+          ./apps/installer-msi/test-customer.ps1 -BaseMsi "$env:GITHUB_WORKSPACE/customer-artifacts/Lightwork.msi" -CandidateMsi (Join-Path $env:RUNNER_TEMP 'upgrade-fixture.msi') -Inventory customer-artifacts/runtime-inventory.json -InstallDirectory (Join-Path $env:RUNNER_TEMP 'installed-lightwork') -Report "$env:GITHUB_WORKSPACE/customer-artifacts/acceptance.json"
+      - name: Accept completed-upgrade rollback with a disposable trusted fixture publisher
+        if: github.event_name != 'workflow_dispatch' || !inputs.customer_release
+        timeout-minutes: 70
+        shell: pwsh
+        run: |
+          & $env:CUSTOMER_BUILD_PYTHON apps/installer-msi/accept_signed_rollback_fixture.py --workspace "$env:GITHUB_WORKSPACE" --runner "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) { throw 'Disposable signed rollback acceptance failed; see stage diagnostics.' }
+      - name: Accept a reviewed publisher transition with two disposable identities
+        if: github.event_name != 'workflow_dispatch' || !inputs.customer_release
+        timeout-minutes: 45
+        shell: pwsh
+        run: |
+          & $env:CUSTOMER_BUILD_PYTHON apps/installer-msi/accept_signing_transition_fixture.py --workspace "$env:GITHUB_WORKSPACE" --runner "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) { throw 'Disposable publisher transition acceptance failed; see stage diagnostics.' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-customer-unsigned-candidate
+          path: customer-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Collect bounded failure diagnostics from disposable acceptance fixtures
+        if: always() && env.CUSTOMER_BUILD_PYTHON != ''
+        shell: pwsh
+        run: |
+          & $env:CUSTOMER_BUILD_PYTHON apps/installer-msi/collect_acceptance_diagnostics.py --runner "$env:RUNNER_TEMP" --artifacts customer-artifacts --output acceptance-diagnostics
+          if ($LASTEXITCODE -ne 0) { throw 'Acceptance diagnostic collection failed.' }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: windows-customer-install-logs
+          path: acceptance-diagnostics/*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  sign-customer-candidate:
+    needs: build-and-accept
+    if: github.event_name == 'workflow_dispatch' && inputs.customer_release && github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    environment: windows-customer-release
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: '22.23.1'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          # Keep the protected signer on the same available Windows Python build.
+          python-version: '3.12.10'
+          architecture: 'x64'
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: '1.97.1'
+      - name: Install pinned signing CLI before credentials are available
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.11.1 --activate
+          pnpm --dir apps/installer-desktop install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { throw 'Signing CLI installation failed.' }
+          cargo build --locked --manifest-path apps/installer-msi/verify-update/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Independent updater verifier build failed.' }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-customer-unsigned-candidate
+          path: customer-artifacts
+      - name: Sign installer with separate Windows and updater identities
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.LIGHTWORK_WINDOWS_CERTIFICATE_PFX }}
+          PFX_PASSWORD: ${{ secrets.LIGHTWORK_WINDOWS_CERTIFICATE_PASSWORD }}
+          EXPECTED_THUMBPRINT: ${{ vars.LIGHTWORK_WINDOWS_CERTIFICATE_THUMBPRINT }}
+          TIMESTAMP_SERVER: ${{ vars.LIGHTWORK_WINDOWS_TIMESTAMP_SERVER }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.LIGHTWORK_WINDOWS_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.LIGHTWORK_WINDOWS_UPDATER_KEY_PASSWORD }}
+        run: |
+          if (-not $env:PFX_BASE64 -or -not $env:EXPECTED_THUMBPRINT -or -not $env:TIMESTAMP_SERVER -or -not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Customer signing inputs are incomplete; unsigned publication is refused.' }
+          $pfx = Join-Path $env:RUNNER_TEMP 'customer-signing.pfx'
+          $certificate = $null
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+            $securePfxCredential = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:/CurrentUser/My -Password $securePfxCredential
+            ./apps/installer-msi/sign-customer.ps1 -Msi customer-artifacts/Lightwork.msi -CertificateThumbprint $env:EXPECTED_THUMBPRINT -TimestampServer $env:TIMESTAMP_SERVER -TauriCli apps/installer-desktop/node_modules/@tauri-apps/cli/tauri.js
+          } finally {
+            if ($certificate) { $certificate | ForEach-Object { Remove-Item -LiteralPath ('Cert:/CurrentUser/My/' + $_.Thumbprint) -DeleteKey } }
+            if (Test-Path -LiteralPath $pfx) { Remove-Item -LiteralPath $pfx }
+            Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY,Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD,Env:PFX_BASE64,Env:PFX_PASSWORD -ErrorAction SilentlyContinue
+          }
+      - name: Verify published key matches and record signed bytes
+        shell: pwsh
+        env:
+          INSTALLER_URL_TEMPLATE: ${{ vars.LIGHTWORK_WINDOWS_INSTALLER_URL_TEMPLATE }}
+          EXPECTED_THUMBPRINT: ${{ vars.LIGHTWORK_WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          & ./apps/installer-msi/verify-update/target/debug/lightwork-verify-update.exe customer-artifacts/updater.pub customer-artifacts/Lightwork.msi.sig customer-artifacts/Lightwork.msi
+          if ($LASTEXITCODE -ne 0) { throw 'Updater signature does not match the key compiled into the customer app.' }
+          $signature = Get-AuthenticodeSignature -LiteralPath customer-artifacts/Lightwork.msi
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $env:EXPECTED_THUMBPRINT) { throw 'Final Windows publisher signature is not trusted.' }
+          python apps/installer-msi/customer_feed.py --directory customer-artifacts --installer-url-template $env:INSTALLER_URL_TEMPLATE
+          if ($LASTEXITCODE -ne 0) { throw 'Customer update feed validation failed.' }
+          [ordered]@{
+            schema = 'lightwork.windows-customer-signature.v1'
+            installer_sha256 = (Get-FileHash -LiteralPath customer-artifacts/Lightwork.msi -Algorithm SHA256).Hash.ToLowerInvariant()
+            publisher_thumbprint = $signature.SignerCertificate.Thumbprint
+            publisher_signature_verified = $true
+            updater_signature_verified = $true
+            clean_virtual_machine = $false
+          } | ConvertTo-Json | Set-Content -LiteralPath customer-artifacts/signature-verification.json -Encoding utf8
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-customer-signed-candidate
+          path: customer-artifacts/*
+          if-no-files-found: error
+          retention-days: 14

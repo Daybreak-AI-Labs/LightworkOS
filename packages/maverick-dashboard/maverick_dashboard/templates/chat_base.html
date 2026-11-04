@@ -1,0 +1,530 @@
+{% from "_assets.html" import asset -%}
+<!doctype html>
+{#- Conversation and product work share one role-filtered navigation. -#}
+<html lang="{{ page_lang or 'en' }}" dir="{{ dir or 'ltr' }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="lightwork-preference-context" content="{{ display_preference_context }}">
+  <meta name="lightwork-preference-revision" content="{{ display_preference_revision }}">
+  <meta name="lightwork-preference-account" content="{{ '1' if display_signed_in else '0' }}">
+  <meta name="lightwork-text-size" content="{{ display_text_size or 'standard' }}">
+  <meta name="theme-color" content="{{ theme_color or '#04050A' }}" />
+  {% if draft_recovery_context %}<meta name="lightwork-draft-context" content="{{ draft_recovery_context }}">{% endif %}
+  {% if workspace_tenant_selection %}
+  <meta name="lightwork-workspace-tenant" content="{{ workspace_tenant_selection }}" />
+  {% endif %}
+  {% if record_search_context %}<meta name="lightwork-search-context" content="{{ record_search_context }}">{% endif %}
+  {% set _session = page_session(request) if request is defined and page_session is defined else none %}
+  {% include "_session_meta.html" %}
+  <title>{% block title %}Lightwork{% endblock %}</title>
+  {#- One shell stylesheet; the Copilot scripts load after the page (see base.html). -#}
+  <link rel="stylesheet" href="{{ asset('lightwork.css') }}" />
+  {#- The two parser-blocking scripts at the end of the page are requested
+      next, so a slow phone link carries them before the font
+      (test_shell_first_paint). -#}
+  <link rel="preload" as="script" href="{{ asset('lightwork-ui.js') }}">
+  {% include "_journey_i18n.html" %}
+  <link rel="preload" href="/static/fonts/manrope-var.woff2" as="font" type="font/woff2" crossorigin>
+  {% if custom_theme_css %}
+  <style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+{{ custom_theme_css }}
+  </style>
+  {% endif %}
+  <style>
+    /* ---- shell ---- */
+    body.chat-shell {
+      display: grid; grid-template-columns: 264px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+      height: 100dvh; overflow: hidden;
+    }
+    body.chat-shell main {
+      grid-column: 2; grid-row: 2; display: flex; flex-direction: column;
+      min-height: 0; min-width: 0; max-width: none; width: auto; margin: 0; padding: 0; overflow: hidden;
+    }
+    .cs-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: var(--space-6) var(--space-5) var(--space-3); }
+    .cs-column { max-width: 760px; margin-inline: auto; }
+    .cs-dock { flex: none; padding: 0 var(--space-5) var(--space-4); }
+    .cs-dock__inner { max-width: 760px; margin-inline: auto; }
+    .cs-dock__note { margin: var(--space-2) 0 0; text-align: center; color: var(--muted); font-size: var(--text-xs); }
+
+    /* ---- sidebar ---- */
+    .cs-side {
+      grid-column: 1; grid-row: 1 / span 2; display: flex; flex-direction: column; min-height: 0;
+      padding: var(--space-3); gap: var(--space-1);
+      border-inline-end: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel) 55%, var(--bg));
+      overflow-y: auto;
+    }
+    /* Only the navigation and the recent chats give up height on a short
+       screen; the controls around them keep their size (the rail scrolls). */
+    .cs-side > :not(.cs-product):not(.cs-recents) { flex-shrink: 0; }
+    .cs-brand { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-2) var(--space-3); color: var(--text); font-weight: var(--font-semibold); letter-spacing: 0.02em; }
+    .cs-brand:hover { text-decoration: none; }
+    .cs-brand img { height: 22px; width: auto; display: block; }
+    .cs-item {
+      display: flex; align-items: center; gap: var(--space-3); padding: 0.5rem var(--space-3);
+      border-radius: var(--radius-md); color: var(--text); font-size: var(--text-base);
+      transition: background 0.13s ease;
+    }
+    .cs-item:hover { background: var(--row-hover); text-decoration: none; }
+    .cs-item svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+    .cs-item--button { width: 100%; border: 0; background: transparent; font: inherit; text-align: start; cursor: pointer; }
+    .cs-item kbd { margin-inline-start: auto; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 0.35rem; }
+    .cs-search { display: flex; align-items: center; gap: var(--space-3); padding: 0.35rem var(--space-3); border-radius: var(--radius-md); }
+    .cs-search:focus-within { background: var(--row-hover); }
+    .cs-search input { flex: 1; min-width: 0; min-height: 24px; border: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--text-base); }
+    .cs-search input::placeholder { color: var(--muted); }
+    .cs-label { margin: var(--space-4) var(--space-3) var(--space-1); color: var(--muted); font-size: var(--text-xs); font-weight: var(--font-medium); }
+    .cs-recents { flex: 1 1 auto; min-height: 7rem; overflow-y: auto; display: flex; flex-direction: column; }
+    .cs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+    .cs-list li { display: flex; align-items: center; gap: var(--space-1); }
+    .cs-list a {
+      display: block; flex: 1; min-width: 0; padding: 0.42rem var(--space-3); border-radius: var(--radius-md);
+      color: var(--text); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cs-list__status { flex: none; padding-inline-end: var(--space-2); color: var(--muted); font-size: var(--text-xs); white-space: nowrap; }
+    .cs-list__status--blocked, .cs-list__status--failed { color: var(--danger); }
+    .cs-list__status--running, .cs-list__status--active { color: var(--accent); }
+    .cs-list a:hover { background: var(--row-hover); text-decoration: none; }
+    .cs-list a.active { background: var(--surface-2); font-weight: var(--font-medium); }
+    .cs-list li[hidden] { display: none; }
+    .cs-empty { padding: var(--space-2) var(--space-3); color: var(--muted); font-size: var(--text-sm); }
+    /* The shared sidebar navigation (_sidebar_nav.html), sized for this rail. */
+    .cs-product { flex: 0 1 48%; min-height: 9rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; padding-block: var(--space-2); border-block: 1px solid var(--hairline); }
+    .cs-product .navquick-list { margin: 0 0 var(--space-2); padding: 0 0 var(--space-2); border-bottom-color: var(--hairline); }
+    .cs-product .navgrp + .navgrp { margin-top: var(--space-1); }
+    .cs-product .navgrp__toggle { padding: 0.35rem var(--space-3); border-radius: var(--radius-md); }
+    .cs-product .navgrp__toggle:hover { background: var(--row-hover); }
+    .cs-product a { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: .37rem var(--space-3); border-radius: var(--radius-md); color: var(--text); font-size: var(--text-sm); }
+    .cs-product a:hover { background: var(--row-hover); text-decoration: none; }
+    .cs-product a.active { background: var(--brand-subtle); color: var(--brand-hi); font-weight: var(--font-medium); }
+    .cs-product .nav-ic { width: 15px; height: 15px; }
+    .cs-product a:focus-visible, .cs-product .navgrp__toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .cs-account { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3) var(--space-2) var(--space-1); border-top: 1px solid var(--hairline); margin-top: var(--space-2); }
+    .cs-workspace { margin: var(--space-2) var(--space-2) 0; font-size: var(--text-sm); overflow-wrap: anywhere; }
+    .cs-account a { color: var(--muted); font-size: var(--text-sm); }
+    .cs-account a:hover { color: var(--text); }
+    .cs-halt { padding: var(--space-2) var(--space-2) 0; }
+    .chat-shell > #mv-copilot-fab { display: none; }
+    .chat-shell > .mv-copilot {
+      top: 1rem; bottom: 1rem; right: 1rem; left: auto;
+      max-height: none; width: min(25rem, calc(100vw - 2rem));
+    }
+    [dir="rtl"] .chat-shell > .mv-copilot { right: auto; left: 1rem; }
+    .cs-topbar__copilot { display: inline-flex; align-items: center; gap: var(--space-1); }
+    .cs-topbar__copilot svg { width: 1rem; height: 1rem; fill: none; stroke: currentColor; stroke-width: 1.5; }
+
+    /* ---- composer (shared by the landing and the thread) ---- */
+    .composer, .ask {
+      border: 1px solid var(--border); border-radius: 24px; box-shadow: var(--shadow-md);
+      padding: var(--space-3) var(--space-4); transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .composer:focus-within, .ask:focus-within { border-color: var(--brand-border); box-shadow: 0 0 0 4px var(--brand-subtle), var(--shadow-md); }
+    /* The docked composer sits outside the scroll region, so it is a solid
+       panel rather than a glass surface (nothing meaningful sits behind it). */
+    .cs-dock .composer, .cs-dock .ask {
+      background-image: none; background-color: var(--panel);
+      backdrop-filter: none; -webkit-backdrop-filter: none;
+    }
+    /* The field inside it is plain text on the panel: the shared glass rule
+       for text fields (blur + inset edge) belongs to form controls, not to a
+       chat composer, and a blurred field inside a solid panel repaints late. */
+    .cs-dock .composer__field, .cs-dock .ask__field, .cs-dock .composer__details {
+      background-color: transparent; background-image: none;
+      backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none;
+    }
+    .cs-dock .composer__field, .cs-dock .ask__field { border-color: transparent; }
+    .composer__field {
+      width: 100%; box-sizing: border-box; border: 0; background: transparent; color: var(--text);
+      font: inherit; font-size: var(--text-md); line-height: 1.5; padding: var(--space-2) var(--space-1);
+      max-height: 14rem; overflow-y: auto; resize: none; outline: none;
+    }
+    .composer__field::placeholder { color: var(--muted); }
+    .composer details { margin: 0 var(--space-1); }
+    .composer summary { cursor: pointer; color: var(--muted); font-size: var(--text-xs); width: max-content; list-style: none; padding: 0 0 var(--space-1); }
+    .composer summary::-webkit-details-marker { display: none; }
+    .composer summary::before { content: "+ "; }
+    .composer details[open] summary::before { content: "– "; }
+    .composer__details {
+      width: 100%; box-sizing: border-box; margin: var(--space-1) 0 var(--space-2);
+      background: var(--surface-sunken); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-3); font: inherit; resize: vertical;
+    }
+    .composer__director { display: flex; flex-direction: column; gap: var(--space-1); color: var(--muted); font-size: var(--text-xs); }
+    .composer__director select { max-width: 100%; }
+    #director-profile-help { display: block; font-size: var(--text-xs); margin: var(--space-1) 0 var(--space-2); }
+    .composer__bar { display: flex; align-items: center; gap: var(--space-2); }
+    .composer__hint { flex: 1; min-width: 0; color: var(--muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .composer__cost { margin: var(--space-1) 0 0; font-size: var(--text-xs); }
+    .composer__icon, .ask__icon {
+      flex: none; display: inline-flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px; border: 1px solid var(--border); border-radius: var(--radius-round);
+      background: transparent; color: var(--muted); cursor: pointer; transition: color 0.14s ease, border-color 0.14s ease;
+    }
+    .composer__icon:hover, .ask__icon:hover { color: var(--text); border-color: var(--border-strong); }
+    .composer__mode {
+      flex: none; appearance: none; -webkit-appearance: none; border: 1px solid var(--border); border-radius: var(--radius-pill);
+      background: transparent; color: var(--muted); font: inherit; font-size: var(--text-sm); padding: 0.35rem 1.6rem 0.35rem 0.8rem; cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%2397a1b5' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 0.6rem center; background-size: 10px;
+    }
+    .composer__mode:hover { color: var(--text); border-color: var(--border-strong); }
+    .composer__send, .ask__send {
+      flex: none; display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; border: 0; border-radius: var(--radius-round); cursor: pointer;
+      background: var(--brand); color: var(--brand-fg); transition: background 0.14s ease, transform 0.14s ease;
+    }
+    .composer__send:hover, .ask__send:hover { background: var(--brand-hi); transform: translateY(-1px); }
+    .composer__send:disabled, .ask__send:disabled { opacity: 0.45; cursor: default; transform: none; }
+    .composer__controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+    /* Draft recovery around a composer (_composer_recovery.html) is painted
+       with the page. The panel's status line keeps room for its usual
+       messages (two lines, three on a phone) so its updates do not move the
+       composer, and the note keeps the height of its longer text whichever
+       one is showing. */
+    .draft-host .draft-recovery > p:first-child { min-height: calc(2em * var(--leading)); }
+    @media (max-width: 480px) { .draft-host .draft-recovery > p:first-child { min-height: calc(3em * var(--leading)); } }
+    .draft-note { display: grid; }
+    .draft-note > span { grid-area: 1 / 1; }
+    .draft-note > [aria-hidden="true"] { visibility: hidden; }
+
+    /* ---- the top bar: on wide screens only the help and account cluster, at
+       the same height and right edge as the product shell's top bar (HLP-1);
+       on small screens also the Menu, Copilot and New chat buttons ---- */
+    .cs-topbar {
+      grid-column: 2; grid-row: 1; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2);
+      min-height: var(--topbar-h); padding: var(--space-2) var(--space-5); border-bottom: 1px solid var(--border);
+    }
+    .cs-topbar .topbar-utilities { display: flex; align-items: center; gap: var(--space-2); margin-inline-start: auto; }
+    @media (min-width: 861px) {
+      .cs-topbar > #cs-menu, .cs-topbar__title, .cs-topbar__copilot, .cs-topbar > .personal-notification-link, .cs-topbar__new { display: none; }
+    }
+    /* ---- small screens: the sidebar becomes a drawer behind a Menu button ---- */
+    .cs-backdrop { display: none; }
+    .cs-side__close { display: none; margin-inline-start: auto; }
+    @media (max-width: 860px) {
+      body.chat-shell { grid-template-columns: 1fr; }
+      body.chat-shell main, .cs-topbar { grid-column: 1; }
+      .cs-topbar {
+        flex-wrap: wrap; justify-content: flex-start; min-height: 0;
+        padding: var(--space-2) var(--space-3); border-bottom-color: var(--hairline);
+      }
+      .cs-topbar > .btn, .cs-topbar > .iconbtn { flex: none; min-width: 44px; min-height: 44px; }
+      .cs-topbar__title { flex: 1; min-width: 0; font-weight: var(--font-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .cs-side {
+        position: fixed; inset-block: 0; inset-inline-start: 0; z-index: 60;
+        width: min(300px, 86vw); visibility: hidden; transform: translateX(-102%);
+        transition: transform 0.18s ease, visibility 0s linear 0.18s; box-shadow: var(--shadow-lg);
+        background: var(--panel);
+      }
+      [dir="rtl"] .cs-side { transform: translateX(102%); }
+      body.cs-drawer-open .cs-side { visibility: visible; transform: none; transition: transform 0.18s ease; }
+      body.cs-drawer-open .cs-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: var(--scrim, rgba(0,0,0,.45)); }
+      .cs-side__close { display: flex; min-width: 44px; min-height: 44px; }
+      .chat-shell > .mv-copilot {
+        top: 3.6rem; bottom: .65rem; right: .65rem; left: .65rem; width: auto;
+      }
+      [dir="rtl"] .chat-shell > .mv-copilot { right: .65rem; left: .65rem; }
+    }
+    @media (max-width: 480px) {
+      .cs-topbar__title, .cs-topbar__copilot span { display: none; }
+      .cs-topbar__copilot { margin-inline-start: auto; }
+    }
+    @media (prefers-reduced-motion: reduce) { .cs-side { transition: none !important; } }
+    /* The entrance moves, never fades: the greeting is Chat's main content
+       and must be visible in the first frame it is painted. */
+    @media (prefers-reduced-motion: no-preference) {
+      .cs-anim { animation: csUp 0.4s ease both; }
+    }
+    @keyframes csUp { from { transform: translateY(8px); } }
+  </style>
+  {% block head_extra %}{% endblock %}
+  <link rel="icon" href="{{ asset('daybreak-logo.jpg') }}" />
+</head>
+<body class="chat-shell {% if practice_mode %}is-practice {% endif %}theme-{{ theme or 'dark' }} font-{{ font or 'default' }} density-{{ density or 'comfortable' }} glass-{{ glass or 'off' }}" data-global-admin="{{ '1' if viewer_global_admin else '0' }}">
+{% if lang and lang != 'en' %}<aside class="locale-coverage" aria-label="{{ ut("Translation coverage") }}" lang="{{ ul("Translation coverage") }}">{{ ui('Some controls are translated. Other sections remain in English. These draft translations need language and consequence-copy review.') }} {{ ui('User-written content is kept in its original language.') }}</aside>{% endif %}
+  <a class="skip-link" href="#content">{{ ui("Skip to content") }}</a>
+  {% include "_icon_sprite.html" %}
+  <aside class="cs-side" id="cs-side" aria-label="{{ ut("Chats") }}" lang="{{ ul("Chats") }}">
+    <div style="display:flex; align-items:center;">
+      <a class="cs-brand" href="/" aria-label="{{ ut('Lightwork by Daybreak Labs - home') }}" lang="{{ ul('Lightwork by Daybreak Labs - home') }}">
+        <img src="{{ asset('daybreak-mark.png') }}" alt="" width="32" height="22" />
+        <span>Lightwork</span>
+      </a>
+      <button type="button" class="btn btn--ghost cs-side__close" id="cs-menu-close">{{ ui("Close menu") }}</button>
+    </div>
+    {% if can_create_goal %}<a class="cs-item" href="/chat">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.5 2.5l2 2L6 12H4v-2z"/><path d="M2.5 13.5h11"/></svg>
+      {{ ui("New chat") }}
+    </a>{% endif %}
+    {% if show_personal_notifications %}<a class="cs-item cs-item--notifications personal-notification-link" id="personal-notification-link"
+       href="/notifications" data-enabled="{{ 'true' if personal_notifications_enabled else 'false' }}"
+       aria-label="Your notifications" title="Your notifications">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 10.7H3.5c.8-.9 1.1-1.8 1.1-3V6.5a3.4 3.4 0 0 1 6.8 0v1.2c0 1.2.3 2.1 1.1 3Z"/><path d="M6.7 12.5a1.3 1.3 0 0 0 2.6 0"/></svg>
+      Your notifications <span class="notification-count" aria-hidden="true" hidden></span>
+    </a>{% endif %}
+    <button type="button" class="cs-item cs-item--button" id="navfinder-open"
+            aria-haspopup="dialog" aria-controls="navfinder-dialog" aria-expanded="false">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h6"/></svg>
+      {{ ui("Search") }}
+      <kbd aria-hidden="true" id="cs-find-kbd">Ctrl K</kbd>
+    </button>
+    {% with shortcuts_open_class="cs-item cs-item--button" %}{% include "_shortcuts_open.html" %}{% endwith %}
+    {# The same role-filtered navigation as the product shell's sidebar. #}
+    <nav class="cs-product" aria-label="{{ ut('Primary') }}" lang="{{ ul('Primary') }}">
+      {% include "_sidebar_nav.html" %}
+    </nav>
+    <label class="cs-search">
+      <svg viewBox="0 0 16 16" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3 3"/></svg>
+      <input type="search" id="cs-filter" placeholder="{{ ut('Filter recent chats') }}" aria-label="{{ ut('Filter recent chat titles') }}" lang="{{ ul('Filter recent chat titles') }}" aria-describedby="cs-filter-scope" autocomplete="off" />
+    </label>
+    <p id="cs-filter-scope" class="muted">{{ ui('Filters the 25 recent chat titles below.') }} <a href="/goals">{{ ui('Find older chats and task contents') }}</a>.</p>
+    <p id="cs-filter-status" role="status" aria-live="polite" class="muted"></p>
+    <div class="cs-recents">
+      <div class="cs-label">{{ ui("Recents") }}</div>
+      {% from "_chat_threads.html" import chat_threads with context %}
+      {{ chat_threads(threads or []) }}
+    </div>
+    <button type="button" class="cs-item cs-item--button" data-copilot-toggle
+            aria-controls="mv-copilot" aria-expanded="false" aria-label="{{ ut('Open Copilot') }}">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H8l-3.5 2v-2H3z"/></svg>
+      {{ ui('Copilot') }}
+    </button>
+    <div class="cs-halt">
+      {# Same markup as base.html: the label turns live after the first read. #}
+      {% if can_halt %}
+      <a href="#" id="halt-pill" class="halt-pill" role="button" data-can-halt="true"
+         aria-label="{{ ut('Emergency stop: stop or resume work') }}" lang="{{ ul('Emergency stop: stop or resume work') }}">
+        <span class="dot" aria-hidden="true"></span><span id="halt-label">{{ ui('checking') }}</span>
+      </a>
+      {% else %}
+      <span id="halt-pill" class="halt-pill" data-can-halt="false" aria-disabled="true"
+            title="{{ ut('You do not have permission to stop or resume this work.') }}">
+        <span class="dot" aria-hidden="true"></span><span class="sr-only" lang="{{ ul('Emergency stop status. Halt permission is required to change it.') }}">{{ ut('Emergency stop status. Halt permission is required to change it.') }}</span><span id="halt-label">{{ ui('checking') }}</span>
+      </span>
+      {% endif %}
+    </div>
+    <p class="muted cs-workspace">{{ ui('Workspace:') }} <a href="/workspace/tenant">{% if workspace_tenant_name %}<bdi lang="und" dir="auto" data-user-content>{{ workspace_tenant_name }}</bdi>{% else %}{{ ui('Main workspace') }}{% endif %}</a></p>
+    {# Help, Docs, Display, Account and Sign out sit in the top bar, as in the
+       product shell (_topbar_utilities.html), so Help never moves. #}
+    {% if show_settings_link %}<div class="cs-account"><a href="/settings">{{ ui("Settings") }}</a></div>{% endif %}
+  </aside>
+  <div class="cs-backdrop" id="cs-backdrop" aria-hidden="true"></div>
+  {% include "_navfinder.html" %}
+  {% include "_shortcuts.html" %}
+  <header class="cs-topbar">
+    <button type="button" class="btn btn--ghost" id="cs-menu" aria-controls="cs-side" aria-expanded="false">{{ ui("Menu") }}</button>
+    <span class="cs-topbar__title">Lightwork</span>
+    <button type="button" class="btn btn--ghost cs-topbar__copilot" data-copilot-toggle
+            aria-controls="mv-copilot" aria-expanded="false" aria-label="{{ ut('Open Copilot') }}" title="{{ ut('Copilot') }}">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v7H8l-3.5 2v-2H3z"/></svg>
+      <span>{{ ui('Copilot') }}</span>
+    </button>
+    {% if show_personal_notifications %}<a class="iconbtn iconbtn--notifications personal-notification-link" href="/notifications"
+       data-enabled="{{ 'true' if personal_notifications_enabled else 'false' }}"
+       aria-label="Your notifications" title="Your notifications">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 10.7H3.5c.8-.9 1.1-1.8 1.1-3V6.5a3.4 3.4 0 0 1 6.8 0v1.2c0 1.2.3 2.1 1.1 3Z"/><path d="M6.7 12.5a1.3 1.3 0 0 0 2.6 0"/></svg>
+      <span class="notification-count" aria-hidden="true" hidden></span>
+    </a>{% endif %}
+    {% if can_create_goal %}<a class="btn btn--ghost cs-topbar__new" href="/chat">{{ ui("New chat") }}</a>{% endif %}
+    {% include "_topbar_utilities.html" %}
+  </header>
+  <main id="content" tabindex="-1">
+    {% include "_halt_banner.html" %}
+    {% include "_practice_banner.html" %}
+    {% include "_service_status_banner.html" %}{% if nav_mode == 'areas' %}{% include "_area_nav.html" %}{% else %}{% include "_where_crumbs.html" %}{% endif %}
+    {# In the job-named navigation, chat pages can be pinned like any other
+       page (the base shell's "Pin to sidebar"; lightwork-pins.js binds it). #}
+    {% set _page_personal = nav_personal() if nav_mode == 'areas' and nav_personal is defined and nav_personal else none %}
+    {% if _page_personal and _page_personal.current %}
+    <div class="page-tools">
+    <button type="button" class="btn btn--ghost page-pin" id="page-pin-toggle" data-nav-pin-toggle="{{ _page_personal.current }}"
+            aria-pressed="{{ 'true' if _page_personal.current_pinned else 'false' }}"><svg class="page-pin__icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M9.6 2.4 13.6 6.4 11.4 7.2 8.8 9.8l.4 3.2-6.2-6.2 3.2.4 2.6-2.6z"/><path d="M5.6 10.4 2.6 13.4" stroke-linecap="round"/></svg>{{ ui('Pin to sidebar') }}</button>
+    </div>
+    {% endif %}
+    <div class="cs-scroll" id="cs-scroll">
+      <div class="cs-column">
+        {% block chat %}{% endblock %}
+      </div>
+    </div>
+    <div class="cs-dock">
+      <div class="cs-dock__inner">
+        {% block dock %}{% endblock %}
+      </div>
+    </div>
+  </main>
+  {% include "_copilot.html" %}
+
+  <div class="mv-toasts">
+    <div id="mv-toasts-alert" class="mv-toasts__list" role="alert" aria-live="assertive" aria-atomic="false"></div>
+    <div id="mv-toasts" class="mv-toasts__list" aria-live="polite" aria-atomic="false"></div>
+  </div>
+  <dialog id="mv-confirm" class="mv-confirm" aria-labelledby="mv-confirm-msg">
+    <div class="mv-confirm__body">
+      <p class="mv-confirm__msg" id="mv-confirm-msg"></p>
+      <div class="mv-confirm__row">
+        <button type="button" class="btn btn--ghost" id="mv-confirm-cancel">{{ ui("Cancel") }}</button>
+        <button type="button" class="btn btn--primary" id="mv-confirm-ok">{{ ui("Confirm") }}</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="mv-form" class="mv-confirm mv-form" aria-labelledby="mv-form-title">
+    <form id="mv-form-form" class="mv-confirm__body">
+      <h2 class="mv-form__title" id="mv-form-title"></h2>
+      <div id="mv-form-fields"></div>
+      <p class="mv-form__err" id="mv-form-err" aria-live="polite"></p>
+      <div class="mv-confirm__row">
+        <button type="button" class="btn btn--ghost" id="mv-form-cancel">{{ ui("Cancel") }}</button>
+        <button type="submit" class="btn btn--primary" id="mv-form-ok">{{ ui("OK") }}</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="{{ asset('lightwork-ui.js') }}"></script>
+  <script src="{{ asset('lightwork-markdown.js') }}"></script>
+  <script src="{{ asset('lightwork-voice.js') }}" defer></script>
+  <script src="{{ asset('lightwork-practice.js') }}" defer></script>
+  {% if usage_measures_on %}<script src="{{ asset('lightwork-usage-measures.js') }}"></script>{% endif %}
+  {% if _session %}<script src="{{ asset('lightwork-session.js') }}" defer></script>{% endif %}
+  <script src="{{ asset('lightwork-navfinder.js') }}" defer></script>
+  <script src="{{ asset('lightwork-shortcuts.js') }}" defer></script>
+  <script src="{{ asset('lightwork-pins.js') }}" defer></script>
+  <script src="{{ asset('lightwork-settings-search.js') }}" defer></script>
+  {% if record_search_context %}<link rel="stylesheet" href="{{ asset('lightwork-record-search.css') }}"><script src="{{ asset('lightwork-record-search.js') }}" defer></script>{% endif %}
+  {% if web_vitals_on %}<script src="{{ asset('lightwork-web-vitals.js') }}" data-sample-rate="{{ web_vitals_sample_rate }}" defer></script>{% endif %}
+  <script nonce="{{ csp_script_nonce }}">
+    // Small screens: the Menu button opens the sidebar as a drawer. Esc, the
+    // Close button or a tap outside closes it and returns focus to Menu.
+    (function () {
+      var body = document.body, side = document.getElementById('cs-side');
+      var openBtn = document.getElementById('cs-menu'), closeBtn = document.getElementById('cs-menu-close');
+      var backdrop = document.getElementById('cs-backdrop');
+      if (!side || !openBtn) return;
+      var mq = window.matchMedia ? window.matchMedia('(max-width: 860px)') : {matches: true};
+      var covered = Array.prototype.map.call(document.querySelectorAll('body > main'), function (element) {
+        return {element: element, wasInert: element.hasAttribute('inert')};
+      });
+      var lastDrawerFocus = null;
+      side.addEventListener('focusin', function (event) { lastDrawerFocus = event.target; });
+      function isOpen() { return body.classList.contains('cs-drawer-open'); }
+      function syncAccess() {
+        var modal = mq.matches && isOpen();
+        covered.forEach(function (item) {
+          var inert = item.wasInert || modal;
+          item.element.inert = inert;
+          item.element.toggleAttribute('inert', inert);
+        });
+        var hidden = mq.matches && !isOpen();
+        side.inert = hidden;
+        side.toggleAttribute('inert', hidden);
+        if (hidden) {
+          side.setAttribute('aria-hidden', 'true');
+          if (side.contains(document.activeElement)) openBtn.focus();
+        } else side.removeAttribute('aria-hidden');
+      }
+      function focusable() {
+        return Array.prototype.filter.call(side.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]'), function (element) {
+          if (element.disabled || element.tabIndex < 0 || element.closest('[hidden], [inert]')) return false;
+          for (var parent = element; parent && parent !== side; parent = parent.parentElement) {
+            var style = window.getComputedStyle(parent);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            if (parent.parentElement && parent.parentElement.tagName === 'DETAILS' && !parent.parentElement.open && parent.tagName !== 'SUMMARY') return false;
+          }
+          return true;
+        });
+      }
+      function open() {
+        if (window.matchMedia && !window.matchMedia('(max-width: 860px)').matches) return;
+        lastDrawerFocus = null;
+        body.classList.add('cs-drawer-open'); openBtn.setAttribute('aria-expanded', 'true');
+        syncAccess();
+        var first = focusable()[0]; if (first) first.focus();
+      }
+      function close(refocus) {
+        if (!isOpen()) return;
+        body.classList.remove('cs-drawer-open'); openBtn.setAttribute('aria-expanded', 'false');
+        syncAccess();
+        if (refocus !== false) openBtn.focus();
+      }
+      openBtn.addEventListener('click', function () { if (isOpen()) close(); else open(); });
+      if (closeBtn) closeBtn.addEventListener('click', function () { close(); });
+      if (backdrop) backdrop.addEventListener('click', function () { close(); });
+      document.addEventListener('keydown', function (e) {
+        if (!isOpen() || !mq.matches) return;
+        if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+        if (e.key !== 'Tab') return;
+        var items = focusable(), first = items[0], last = items[items.length - 1];
+        if (!first) { e.preventDefault(); return; }
+        if (!side.contains(document.activeElement) || (e.shiftKey && document.activeElement === first)) {
+          e.preventDefault(); (e.shiftKey ? last : first).focus();
+        } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      });
+      // Opening "Search" from the drawer hands focus to its dialog.
+      var finder = document.getElementById('navfinder-open');
+      if (finder) finder.addEventListener('click', function () { close(false); });
+      // Leaving the small-screen layout never leaves the page locked behind the drawer.
+      if (window.matchMedia) {
+        var onChange = function () {
+          if (mq.matches) { syncAccess(); return; }
+          var wasOpen = isOpen(), active = document.activeElement;
+          close(false);
+          syncAccess();
+          // The mobile Close/Menu controls disappear on desktop. Preserve a
+          // visible navigation/dialog target, but never strand focus on Close.
+          // Chromium can blur a now-display:none Close control to body before
+          // the media-query callback runs. Keep its last actual focus target.
+          var focusWasLost = (active === body || active === document.documentElement) && lastDrawerFocus === closeBtn;
+          if (wasOpen && (active === closeBtn || focusWasLost)) {
+            var target = Array.prototype.find.call(side.querySelectorAll('a[href], button, input, [tabindex="0"]'), function (node) {
+              return node !== closeBtn && !node.disabled && !node.hidden && node.getClientRects().length;
+            });
+            if (!target) { side.setAttribute('tabindex', '-1'); target = side; }
+            target.focus();
+          }
+        };
+        if (mq.addEventListener) mq.addEventListener('change', onChange); else if (mq.addListener) mq.addListener(onChange);
+      }
+      syncAccess();
+      var kbd = document.getElementById('cs-find-kbd');
+      if (kbd && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')) kbd.textContent = '⌘K';
+    })();
+    // Filter the recents list as you type. Titles only, on the client.
+    (function () {
+      var input = document.getElementById('cs-filter');
+      var list = document.getElementById('cs-list');
+      if (!input || !list) return;
+      input.addEventListener('input', function () {
+        var q = input.value.trim().toLowerCase();
+        var count = 0;
+        Array.prototype.forEach.call(list.children, function (li) {
+          var link = li.querySelector('[data-conversation-root]');
+          if (!link) { li.hidden = !!q; return; }
+          var title = link.querySelector('[data-user-content]');
+          var original = title ? title.textContent : link.getAttribute('title') || '';
+          li.hidden = !!q && original.toLowerCase().indexOf(q) === -1;
+          if (!li.hidden) count += 1;
+        });
+        var status = document.getElementById('cs-filter-status');
+        if (status) {
+          var i18n = window.LightworkI18n;
+          if (!q) status.replaceChildren();
+          else if (i18n) {
+            var source = count ? i18n.plural('{count} matching recent title.', '{count} matching recent titles.', count) : 'No recent titles match. Open task search for older chats or a match in task contents.';
+            i18n.set(status, source);
+          } else status.textContent = count ? count + ' matching recent titles.' : 'No recent titles match. Open task search for older chats or a match in task contents.';
+        }
+      });
+    })();
+  </script>
+  {% include "_journey_i18n_scripts.html" %}
+  {% if can_create_goal %}{# Someone who cannot write a message has no draft to keep. #}
+  <script src="{{ asset('lightwork-draft-recovery.js') }}" defer></script>
+  <script src="{{ asset('lightwork-chat-drafts.js') }}" defer></script>
+  <script src="{{ asset('lightwork-help-menu.js') }}" defer></script>
+  {% endif %}
+  <link rel="stylesheet" href="{{ asset('lightwork-product-tour.css') }}">
+  <script src="{{ asset('lightwork-product-tour.js') }}" defer></script>
+  {% if show_personal_notifications %}<script src="{{ asset('lightwork-notification-badge.js') }}" defer></script>{% endif %}
+  {% block scripts_extra %}{% endblock %}
+</body>
+</html>

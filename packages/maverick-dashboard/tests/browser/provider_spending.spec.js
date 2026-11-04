@@ -1,0 +1,30 @@
+const {test,expect}=require('@playwright/test');
+
+test('an administrator reviews an unknown cost without refunding another running reservation',async({page,request,context,baseURL},info)=>{
+  await context.route('**/*',route=>new URL(route.request().url()).origin===new URL(baseURL).origin?route.continue():route.abort('blockedbyclient'));
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const seeded=await request.post('/__browser_fixture/spending');expect(seeded.ok(),await seeded.text()).toBeTruthy();
+  await page.setViewportSize({width:375,height:900});await page.goto('/provider-spending');
+  await expect(page.locator('#spend-status')).toContainText('Spending is up to date.');
+  await expect(page.locator('#spend-balances')).toContainText('$5.00 set aside.');
+  const selected=page.locator('#spend-hold option').filter({hasText:'final cost unknown'});
+  await page.locator('#spend-hold').selectOption(await selected.getAttribute('value'));
+  await page.locator('#spend-actual').fill('1.25');await page.locator('#spend-evidence').fill('Synthetic final receipt confirms 1.25 for this exact call.');
+  let applies=0;page.on('request',r=>{if(r.url().endsWith('/provider-spending/apply'))applies++;});
+  await page.getByRole('button',{name:'Review the correction',exact:true}).click();
+  await expect(page.locator('#spend-review')).toBeVisible();expect(applies).toBe(0);
+  await expect(page.locator('#spend-apply')).toBeDisabled();
+  await expect(page.locator('#spend-review-detail')).toContainText('$1.25');
+  await page.locator('#spend-confirm').check();await page.locator('#spend-apply').click();
+  await expect(page.locator('#spend-status')).toContainText('Correction completed. Other amounts set aside were kept, and no request was repeated.');
+  await expect(page.locator('#spend-balances')).toContainText('$1.25 spent, $2.00 set aside.');
+  expect(applies).toBe(1);await expect(page.locator('#spend-hold option')).toHaveCount(1);
+  await expect(page.locator('#spend-hold option')).toContainText('may still be running');
+  await expect(page.locator('#spend-import')).toBeDisabled();
+  const edges=await page.locator('#provider-spending').evaluate(node=>({right:node.getBoundingClientRect().right,width:document.documentElement.clientWidth,scroll:node.scrollWidth,inner:node.clientWidth}));
+  expect(edges.right).toBeLessThanOrEqual(edges.width+1);expect(edges.scroll).toBeLessThanOrEqual(edges.inner+1);
+  await page.screenshot({path:info.outputPath('provider-spending-375.png'),fullPage:true});
+  await page.route('**/api/v1/recovery/provider-spending?**',route=>route.fulfill({status:403,contentType:'text/html',body:'Synthetic account revocation'}));
+  await page.locator('#spend-refresh').click();await expect(page.locator('#spend-balances')).toBeEmpty();await expect(page.locator('#spend-hold')).toBeDisabled();
+  expect(errors).toEqual([]);
+});

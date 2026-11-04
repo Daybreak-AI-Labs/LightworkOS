@@ -1,0 +1,3 @@
+{"task_id": "tb-create", "prompt": "Create the file /app/config.yaml with the contents 'debug: true'.", "initial_files": {}, "expected_files": {"/app/config.yaml": "debug: true"}, "absent_files": [], "required_commands": ["write /app/config\\.yaml"]}
+{"task_id": "tb-cleanup", "prompt": "Delete the stale log file /var/log/old.log.", "initial_files": {"/var/log/old.log": "2026-01-01 stale entry\n"}, "expected_files": {}, "absent_files": ["/var/log/old.log"], "required_commands": ["rm /var/log/old\\.log"]}
+{"task_id": "tb-inspect", "prompt": "Read /etc/hosts to check the current host entries.", "initial_files": {"/etc/hosts": "127.0.0.1 localhost\n"}, "expected_files": {}, "absent_files": [], "required_commands": ["cat /etc/hosts"]}

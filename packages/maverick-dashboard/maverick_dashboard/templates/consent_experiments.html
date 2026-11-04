@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Banner experiments · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set ce_on = consent_experiments_enabled %}
+{% set ce_admin = consent_can_admin if consent_can_admin is defined else true %}
+{% set ce_audit = consent_can_audit if consent_can_audit is defined else true %}
+<div class="governance-workbench">
+  {{ hero('Consent experiments', 'Banner experiments',
+          lede='Test different layouts of your consent banner to see which one helps more people make a choice. A second person must approve every experiment, and you can stop it at any time.') }}
+  {% include "_consent_nav.html" %}
+  {% if not ce_on %}
+  {{ module_gate('consent_preferences.experiments', 'Consent experiments',
+                 detail='Runs experiments on approved banner layouts. Review your privacy and accessibility checks first.') }}
+  {% endif %}
+  <p id="ce-status" class="muted" role="status" aria-live="polite"></p>
+  <fieldset class="feature-gated-workbench" id="ce-root" data-can-admin="{{ 'true' if ce_admin else 'false' }}" data-can-audit="{{ 'true' if ce_audit else 'false' }}" data-feature-enabled="{{ 'true' if ce_on else 'false' }}"{% if not ce_on %} disabled aria-disabled="true"{% endif %}>
+    <legend class="sr-only">Banner experiments</legend>
+
+    <section class="panel" aria-labelledby="ce-list-heading">
+      <div class="section-head">
+        <h2 id="ce-list-heading">Experiments</h2>
+        <button class="btn btn--primary" type="button" id="ce-new"{% if not ce_admin %} disabled{% endif %}>Create experiment</button>
+      </div>
+      <p class="muted">The person who creates an experiment cannot approve it; a second person must.</p>
+      <div id="ce-table"><p class="muted">Loading experiments…</p></div>
+    </section>
+
+    <section class="panel cw-editor" id="ce-results-panel" hidden aria-labelledby="ce-results-title">
+      <h2 id="ce-results-title">Results</h2>
+      <div id="ce-results" role="status" aria-live="polite"></div>
+      <div class="cw-actions"><button class="btn btn--ghost" type="button" data-ce-close="ce-results-panel">Close</button></div>
+    </section>
+
+    <form id="ce-create" class="panel cw-editor" hidden novalidate>
+      <fieldset class="cw-form">
+        <legend class="sr-only">New experiment</legend>
+        <h2 class="cw-wide">New experiment</h2>
+        <label>Name<input class="input" name="experiment_name" required maxlength="100" autocomplete="off" placeholder="For example: Spring banner test"></label>
+        <label>Goal<select class="select" name="metric_id"><option value="preference-completion">More people save their choices</option></select></label>
+        <label>Website or app<select class="select" name="property_id" required></select></label>
+        <label>Published display rules<select class="select" name="rule_group" required></select></label>
+        <label>Language<select class="select" name="locale" required></select></label>
+        <p class="muted cw-wide" id="ce-layout-note" role="status"></p>
+        <label>Original version (everyone else sees this)<select class="select" name="control_layout" required></select></label>
+        <fieldset>
+          <legend>Versions to test</legend>
+          <div class="cw-checks" id="ce-test-layouts"></div>
+        </fieldset>
+        <div class="cw-wide" id="ce-evidence"></div>
+        <label>Starts<input class="input" name="starts_at" type="datetime-local" required></label>
+        <label>Ends<input class="input" name="ends_at" type="datetime-local" required></label>
+        <label>Share of visitors in the experiment<select class="select" name="traffic">
+          <option value="10000" selected>All visitors</option><option value="5000">Half of visitors</option>
+          <option value="2500">A quarter of visitors</option><option value="1000">One in ten visitors</option>
+        </select></label>
+        <label>Countries (leave empty for all)<select class="select" name="country_codes" multiple size="4"></select></label>
+        <fieldset>
+          <legend>Where</legend>
+          <div class="cw-checks">
+            <label><input type="checkbox" name="channels" value="web" checked> Website</label>
+            <label><input type="checkbox" name="channels" value="service"> Mobile apps and servers</label>
+          </div>
+        </fieldset>
+        <details class="governance-details cw-wide">
+          <summary>Advanced statistics</summary>
+          <div class="cw-form">
+            <label>How sure the result must be<select class="select" name="alpha">
+              <option value="0.1">Fairly sure (90%)</option><option value="0.05" selected>Standard (95%)</option><option value="0.01">Very sure (99%)</option>
+            </select></label>
+            <label>Times you can check results<select class="select" name="max_analysis_looks">
+              <option value="1">Once</option><option value="3">3 times</option><option value="5" selected>5 times</option><option value="10">10 times</option><option value="20">20 times</option>
+            </select></label>
+            <label>People needed per version before a result<select class="select" name="min_sample_per_variant">
+              <option value="100" selected>100</option><option value="500">500</option><option value="1000">1,000</option><option value="5000">5,000</option>
+            </select></label>
+            <label>Smallest improvement worth acting on<select class="select" name="minimum_effect">
+              <option value="0" selected>Any improvement</option><option value="0.01">1 percentage point</option><option value="0.02">2 percentage points</option><option value="0.05">5 percentage points</option>
+            </select></label>
+            <label>Stop after this many visitors<select class="select" name="max_exposures">
+              <option value="10000">10,000</option><option value="100000">100,000</option><option value="1000000" selected>1 million</option><option value="10000000">10 million</option>
+            </select></label>
+            <label>Remember which version a visitor saw for<select class="select" name="dedupe_retention_days">
+              <option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option>
+            </select></label>
+          </div>
+        </details>
+        <input type="hidden" data-auto-reference name="idempotency_key">
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Save as draft</button>
+          <button class="btn btn--ghost" type="button" data-ce-close="ce-create">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+
+    <section class="panel" aria-labelledby="ce-try-heading">
+      <h2 id="ce-try-heading">Try it</h2>
+      <p class="muted">See which version a visitor would get. Nothing is recorded.</p>
+      <form id="ce-assignment" novalidate>
+        <fieldset class="cw-form">
+          <legend class="sr-only">Try an experiment</legend>
+          <label>Experiment<select class="select" name="experiment_id"></select></label>
+          <label>Test visitor name<input class="input" name="subject_identity" autocomplete="off" maxlength="200" placeholder="Any name, for example Test visitor 1"></label>
+          <label>Country<select class="select" name="country_code"></select></label>
+          <label>Where<select class="select" name="channel"><option value="web">Website</option><option value="service">Mobile app or server</option></select></label>
+          <label><input type="checkbox" name="gpc"> Their browser asks not to be tracked</label>
+          <div class="cw-actions"><button class="btn" type="submit">Show their version</button></div>
+          <div id="ce-assignment-result" class="cw-wide cw-result" role="status" aria-live="polite"></div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="ce-cleanup-heading">
+      <h2 id="ce-cleanup-heading">Visitor records</h2>
+      <p class="muted">Lightwork keeps a scrambled note of which version each visitor saw, only for as long as the experiment says. Totals and the approval history are always kept.</p>
+      <button class="btn" type="button" id="ce-purge"{% if not ce_admin %} disabled{% endif %}>Delete expired visitor records</button>
+      <details class="governance-details">
+        <summary>About this page’s safeguards</summary>
+        <ul>
+          <li>Visitors whose browser asks not to be tracked always get the original version. So do uses that must always be on, and layouts that fail accessibility or equal-button checks.</li>
+          <li>An experiment compares 2 to 10 versions and can be checked at most 20 times; visitor records are kept at most 90 days.</li>
+          <li>A statistical winner is not a legal or accessibility approval. Review the result before changing your published banner.</li>
+        </ul>
+      </details>
+    </section>
+  </fieldset>
+</div>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/consent/experiments";
+  // The shared consent JSON client (mvFetchJSON): a non-2xx or malformed response is never success.
+  async function call(path, options) {
+    return window.LightworkConsentWorkbench.client(API)(path, options);
+  }
+  var CW = window.LightworkConsentWorkbench;
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (CW && document.getElementById("ce-root")) { if (window.mvFetchJSON) start(); else document.addEventListener("DOMContentLoaded", start); }
+
+  function start() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $("ce-root"), status = $("ce-status");
+    var can = {admin: root.dataset.canAdmin === "true", audit: root.dataset.canAudit === "true"};
+    var state = {items: [], layouts: []};
+    var LAYOUTS = {stacked: "Buttons stacked", inline: "Buttons side by side", compact: "Compact"};
+    var STATES = {draft: ["Waiting for approval", "warn"], approved: ["Approved, not started", "info"], active: ["Running", "ok"], paused: ["Paused", "warn"],
+      killed: ["Stopped", "idle"], rolled_back: ["Back to original", "idle"]};
+    var REASONS = {assigned: "", holdout: "They are in the group that sees no banner changes.", legal_signal_precedence: "Their browser asks not to be tracked, so they always see the original.",
+      required_purpose_precedence: "A use that must always be on applies, so they see the original.", accessibility_guardrail: "The layout failed an accessibility check, so they see the original.",
+      choice_parity_guardrail: "The buttons would not be equally easy to use, so they see the original.", outside_audience: "They are outside the countries or places chosen for this experiment.",
+      outside_traffic: "They are not in the share of visitors taking part.", not_active: "The experiment is not running.", not_started: "The experiment has not started yet.",
+      ended: "The experiment has ended.", paused: "The experiment is paused.", killed: "The experiment was stopped.", rolled_back: "The experiment went back to the original.",
+      max_exposures: "The experiment reached its visitor limit."};
+    document.querySelectorAll("[data-ce-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.ceClose).hidden = true; }); });
+    function layoutOf(variant) { var ref = String(variant.content_ref || ""); return LAYOUTS[ref.replace(/^public-layout:/, "")] || CW.human(variant.variant_id); }
+    function nameOf(item) { return CW.human(item.definition.experiment_id); }
+
+    async function load() {
+      try { var data = await call("?limit=500"); state.items = data.items || []; }
+      catch (error) { $("ce-table").replaceChildren(); CW.fail(status, error, "load experiments"); return; }
+      CW.table($("ce-table"), state.items, {
+        label: "Experiments", name: nameOf,
+        columns: [
+          {label: "Experiment", value: nameOf},
+          {label: "Status", value: function (x) { var s = STATES[x.state] || [CW.human(x.state), "idle"]; return CW.badge(s[0], s[1]); }},
+          {label: "Versions", value: function (x) { return x.definition.variants.map(layoutOf).join(" vs "); }},
+          {label: "Dates", value: function (x) { return CW.when(x.definition.starts_at) + " to " + CW.when(x.definition.ends_at); }},
+        ],
+        actions: [
+          {label: "Approve", when: function (x) { return can.admin && x.state === "draft"; }, run: function (x, b) { lifecycle(x, "approve", b); }},
+          {label: "Start", when: function (x) { return can.admin && x.state === "approved"; }, run: function (x, b) { lifecycle(x, "activate", b); }},
+          {label: "Pause", when: function (x) { return can.admin && x.state === "active"; }, run: function (x, b) { lifecycle(x, "pause", b); }},
+          {label: "Resume", when: function (x) { return can.admin && x.state === "paused"; }, run: function (x, b) { lifecycle(x, "resume", b); }},
+          {label: "Check results", when: function (x) { return can.audit && ["active", "paused", "killed", "rolled_back"].indexOf(x.state) >= 0; }, run: function (x, b) { results(x, b); }},
+          {label: "Download record", when: function () { return can.audit; }, run: function (x, b) { download(x, b); }},
+          {label: "Stop", kind: "danger", when: function (x) { return can.admin && ["draft", "approved", "active", "paused"].indexOf(x.state) >= 0; }, run: function (x, b) { lifecycle(x, "kill", b); }},
+          {label: "Back to original", kind: "danger", when: function (x) { return can.admin && ["approved", "active", "paused", "killed"].indexOf(x.state) >= 0; }, run: function (x, b) { lifecycle(x, "rollback", b); }},
+        ],
+        empty: {title: "No experiments yet.", body: "Publish your banner first, then create an experiment to compare layouts.", action: can.admin ? {label: "New experiment", run: function () { openCreate(); }} : null},
+      });
+      CW.fill($("ce-assignment").elements.experiment_id, state.items.map(function (x) { return {value: x.definition.experiment_id, label: nameOf(x)}; }), state.items.length ? "" : "No experiments yet");
+    }
+
+    var IMPACT = {
+      approve: ["Approve “%s”? It can then be started. You cannot approve an experiment you created.", "Approve"],
+      activate: ["Start “%s”? Visitors taking part will begin to see the test versions.", "Start"],
+      pause: ["Pause “%s”? New visitors will see the original until you resume it.", "Pause"],
+      resume: ["Resume “%s”? Visitors taking part will see the test versions again.", "Resume"],
+      kill: ["Stop “%s”? Everyone will see the original from now on. This cannot be undone.", "Stop"],
+      rollback: ["Send “%s” back to the original? Everyone will see the original version and the experiment closes for good.", "Back to original"],
+    };
+    function lifecycle(x, action, button) {
+      CW.busy(button, async function () {
+        var impact = IMPACT[action];
+        if (!(await CW.confirm(impact[0].replace("%s", nameOf(x)), impact[1]))) return;
+        try {
+          await call("/" + encodeURIComponent(x.definition.experiment_id) + "/" + action, {method: "POST", json: {expected_revision: x.revision, idempotency_key: CW.reference()}});
+          await load(); CW.say(status, "Saved. “" + nameOf(x) + "” is now " + ((STATES[{approve: "approved", activate: "active", pause: "paused", resume: "active", kill: "killed", rollback: "rolled_back"}[action]] || [""])[0]).toLowerCase() + ".");
+        } catch (error) {
+          if (error && error.status === 403 && action === "approve") CW.say(status, "A different person must approve this experiment.", true);
+          else CW.fail(status, error, "update the experiment");
+        }
+      });
+    }
+    function pct(v) { return v === null || v === undefined ? "—" : (Math.round(v * 1000) / 10) + "%"; }
+    function results(x, button) {
+      CW.busy(button, async function () {
+        var out = $("ce-results"); out.replaceChildren(CW.el("p", "muted", "Checking results…"));
+        $("ce-results-title").textContent = "Results for " + nameOf(x); CW.open($("ce-results-panel"));
+        try {
+          var r = await call("/" + encodeURIComponent(x.definition.experiment_id) + "/analysis", {method: "POST", json: {idempotency_key: CW.reference()}});
+          var variants = {}; x.definition.variants.forEach(function (v) { variants[v.variant_id] = v; });
+          out.replaceChildren();
+          var winner = r.winner_variant_id ? variants[r.winner_variant_id] : null;
+          out.appendChild(CW.el("p", "", winner ? "The “" + layoutOf(winner) + "” version helped more people save their choices." : "No clear winner yet. Keep the experiment running to collect more choices."));
+          var host = CW.el("div"); out.appendChild(host);
+          CW.table(host, r.cells || [], {label: "Results by version", columns: [
+            {label: "Version", value: function (c) { var v = variants[c.variant_id] || {}; return layoutOf(v) + (v.is_control ? " (original)" : ""); }},
+            {label: "Visitors", value: function (c) { return c.exposures; }},
+            {label: "Saved their choices", value: function (c) { return c.successes + " of " + c.outcomes; }},
+            {label: "Rate", value: function (c) { return pct(c.conversion_rate); }},
+            {label: "Likely range", value: function (c) { return pct(c.confidence_interval[0]) + " to " + pct(c.confidence_interval[1]); }},
+            {label: "Enough people", value: function (c) { return c.minimum_sample_met ? "Yes" : "Not yet"; }},
+          ]});
+          out.appendChild(CW.el("p", "muted", "Check " + r.look_number + " of " + r.max_analysis_looks + ". A result is only declared when each version has enough people and the difference is clear."));
+          await load();
+        } catch (error) { out.replaceChildren(); CW.fail(status, error, "check the results"); }
+      });
+    }
+    function download(x, button) {
+      CW.busy(button, async function () {
+        try {
+          var record = await call("/" + encodeURIComponent(x.definition.experiment_id) + "/audit-export");
+          var link = document.createElement("a");
+          link.href = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], {type: "application/json"}));
+          link.download = "experiment-" + x.definition.experiment_id + "-record.json";
+          document.body.appendChild(link); link.click(); link.remove();
+          CW.say(status, "The experiment record was downloaded.");
+        } catch (error) { CW.fail(status, error, "download the record"); }
+      });
+    }
+
+    // New experiment
+    var form = $("ce-create");
+    async function openCreate() {
+      form.reset();
+      var f = form.elements;
+      f.starts_at.value = CW.toInput(Date.now() / 1000 + 3600); f.ends_at.value = CW.toInput(Date.now() / 1000 + 30 * 86400);
+      CW.fill(f.country_codes, CW.COUNTRIES);
+      CW.open(form, "[name=experiment_name]");
+      try {
+        var publishing = CW.client("/api/v1/consent/publishing");
+        var props = await publishing("/catalog/properties?limit=50");
+        var groups = await publishing("/catalog/rule-groups?limit=50");
+        CW.fill(f.property_id, (props.items || []).filter(function (p) { return p.publication_revision > 0; }).map(function (p) { return {value: p.property_id, label: CW.human(p.property_id)}; }), "Choose a published website or app");
+        CW.fill(f.rule_group, (groups.items || []).map(function (g) { return {value: g.resource_id + "|" + g.version, label: CW.human(g.resource_id) + " · version " + g.version}; }), "Choose display rules");
+        CW.say($("ce-layout-note"), (props.items || []).some(function (p) { return p.publication_revision > 0; }) ? "Choose the website or app and its published display rules to see the layouts you can compare." : "Publish your banner on the Banner and preference center page first.");
+      } catch (error) { CW.fail($("ce-layout-note"), error, "load your published banners"); }
+    }
+    $("ce-new").addEventListener("click", openCreate);
+    async function loadLayouts() {
+      var f = form.elements, group = f.rule_group.value.split("|");
+      state.layouts = []; f.locale.replaceChildren(); f.control_layout.replaceChildren(); $("ce-test-layouts").replaceChildren(); $("ce-evidence").replaceChildren();
+      if (!f.property_id.value || !group[0]) return;
+      try {
+        var data = await call("/variant-content?property_id=" + encodeURIComponent(f.property_id.value) + "&rule_group_id=" + encodeURIComponent(group[0]) + "&rule_group_version=" + encodeURIComponent(group[1]));
+        state.layouts = data.items || [];
+        var locales = {}; state.layouts.forEach(function (l) { locales[l.locale] = true; });
+        CW.fill(f.locale, Object.keys(locales).map(function (l) { return {value: l, label: CW.labelFor(CW.LOCALES, l)}; }));
+        CW.say($("ce-layout-note"), state.layouts.length ? "The banner reads: “" + state.layouts[0].title + "”." : "This banner needs Accept all, Reject all and Save preferences buttons before its layout can be tested.", !state.layouts.length);
+        paintLayouts();
+      } catch (error) { CW.fail($("ce-layout-note"), error, "load the banner layouts"); }
+    }
+    function layoutsFor() { var locale = form.elements.locale.value; return state.layouts.filter(function (l) { return l.locale === locale; }); }
+    function paintLayouts() {
+      var options = layoutsFor().map(function (l) { return {value: l.layout, label: LAYOUTS[l.layout] || CW.human(l.layout)}; });
+      CW.fill(form.elements.control_layout, options);
+      paintTests();
+    }
+    function paintTests() {
+      var box = $("ce-test-layouts"), control = form.elements.control_layout.value; box.replaceChildren();
+      layoutsFor().filter(function (l) { return l.layout !== control; }).forEach(function (l, index) {
+        var label = CW.el("label"), input = document.createElement("input");
+        input.type = "checkbox"; input.name = "test_layouts"; input.value = l.layout; input.checked = index === 0;
+        input.addEventListener("change", paintEvidence);
+        label.append(input, " " + (LAYOUTS[l.layout] || CW.human(l.layout))); box.appendChild(label);
+      });
+      paintEvidence();
+    }
+    function chosenLayouts() {
+      return [form.elements.control_layout.value].concat(Array.prototype.filter.call(form.querySelectorAll("[name=test_layouts]"), function (c) { return c.checked; }).map(function (c) { return c.value; }));
+    }
+    function paintEvidence() {
+      var box = $("ce-evidence"); box.replaceChildren();
+      box.appendChild(CW.el("p", "muted", "For each version, attach the accessibility review and the review showing Accept and Reject are equally easy to use."));
+      chosenLayouts().forEach(function (layout) {
+        if (!layout) return;
+        var set = CW.el("fieldset", "cw-form"); set.appendChild(CW.el("legend", "", LAYOUTS[layout] || CW.human(layout)));
+        [["a11y", "Accessibility review"], ["parity", "Equal choice review"]].forEach(function (pair) {
+          var label = CW.el("label", "", pair[1]), input = document.createElement("input");
+          input.type = "file"; input.className = "input"; input.dataset.layout = layout; input.dataset.evidence = pair[0];
+          label.appendChild(input); set.appendChild(label);
+        });
+        box.appendChild(set);
+      });
+    }
+    form.elements.property_id.addEventListener("change", loadLayouts);
+    form.elements.rule_group.addEventListener("change", loadLayouts);
+    form.elements.locale.addEventListener("change", paintLayouts);
+    form.elements.control_layout.addEventListener("change", paintTests);
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var f = form.elements, name = f.experiment_name.value.trim(), layouts = chosenLayouts().filter(Boolean);
+      if (!name) { CW.say(status, "Give the experiment a name.", true); f.experiment_name.focus(); return; }
+      if (layouts.length < 2) { CW.say(status, "Choose an original version and at least one version to test.", true); return; }
+      var starts = CW.toSeconds(f.starts_at.value), ends = CW.toSeconds(f.ends_at.value);
+      if (!(ends > starts)) { CW.say(status, "The end must be after the start.", true); f.ends_at.focus(); return; }
+      var variants = [], share = Math.floor(10000 / layouts.length);
+      try {
+        for (var i = 0; i < layouts.length; i++) {
+          var layout = layouts[i], content = layoutsFor().filter(function (l) { return l.layout === layout; })[0];
+          var files = {};
+          form.querySelectorAll('[data-layout="' + layout + '"]').forEach(function (input) { files[input.dataset.evidence] = input.files && input.files[0]; });
+          if (!files.a11y || !files.parity) { CW.say(status, "Attach both reviews for the “" + (LAYOUTS[layout] || layout) + "” version.", true); return; }
+          variants.push({variant_id: i === 0 ? "original" : "test-" + layout, allocation_bps: i === 0 ? 10000 - share * (layouts.length - 1) : share,
+            content_ref: content.content_ref, content_sha256: content.content_sha256,
+            accessibility_evidence_sha256: await CW.sha256File(files.a11y), equal_choice_evidence_sha256: await CW.sha256File(files.parity),
+            is_control: i === 0, is_holdout: false});
+        }
+      } catch (error) { CW.fail(status, error, "read the review documents"); return; }
+      var countries = Array.prototype.filter.call(f.country_codes.options, function (o) { return o.selected; }).map(function (o) { return o.value; });
+      var channels = Array.prototype.filter.call(form.querySelectorAll("[name=channels]"), function (c) { return c.checked; }).map(function (c) { return c.value; });
+      var body = {experiment_id: CW.slug(name, "experiment"), metric_id: f.metric_id.value, variants: variants, starts_at: starts, ends_at: ends,
+        traffic_bps: Number(f.traffic.value), max_exposures: Number(f.max_exposures.value), min_sample_per_variant: Number(f.min_sample_per_variant.value),
+        alpha: Number(f.alpha.value), max_analysis_looks: Number(f.max_analysis_looks.value), minimum_effect: Number(f.minimum_effect.value),
+        dedupe_retention_days: Number(f.dedupe_retention_days.value), idempotency_key: f.idempotency_key.value || CW.reference(),
+        audience: {country_codes: countries, channels: channels}};
+      try {
+        await call("", {method: "POST", json: body});
+        form.hidden = true; await load(); CW.say(status, "Saved “" + name + "” as a draft. Ask a second person to approve it.");
+      } catch (error) { CW.fail(status, error, "save the experiment"); }
+    });
+
+    // Try it
+    CW.fill($("ce-assignment").elements.country_code, CW.COUNTRIES);
+    $("ce-assignment").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var f = event.currentTarget.elements, out = $("ce-assignment-result"), item = state.items.filter(function (x) { return x.definition.experiment_id === f.experiment_id.value; })[0];
+      if (!item) { CW.say(out, "Choose an experiment.", true); return; }
+      try {
+        var r = await call("/" + encodeURIComponent(item.definition.experiment_id) + "/assign", {method: "POST", json: {subject_identity: f.subject_identity.value.trim() || "test-visitor",
+          context: {country_code: f.country_code.value, channel: f.channel.value, privacy_signals: f.gpc.checked ? ["gpc"] : [], required_purpose: false, accessibility_supported: true, equal_choice_prominence: true}}});
+        var variant = item.definition.variants.filter(function (v) { return v.variant_id === r.variant_id; })[0] || {};
+        CW.say(out, "This visitor would see: " + layoutOf(variant) + (variant.is_control ? " (original)" : "") + ". " + (REASONS[r.reason] || ""));
+      } catch (error) { CW.fail(out, error, "show their version"); }
+    });
+
+    $("ce-purge").addEventListener("click", function () {
+      var button = this; CW.busy(button, async function () {
+        if (!(await CW.confirm("Delete visitor records that are past their keep-until date? Totals and the approval history are kept.", "Delete"))) return;
+        try { var r = await call("/retention/purge", {method: "POST", json: {idempotency_key: CW.reference()}}); CW.say(status, "Deleted " + (r.records_purged || 0) + " expired visitor record" + (r.records_purged === 1 ? "" : "s") + "."); }
+        catch (error) { CW.fail(status, error, "delete visitor records"); }
+      });
+    });
+
+    if (root.dataset.featureEnabled === "false") { $("ce-table").replaceChildren(CW.el("p", "muted", "Turn this feature on to use it.")); return; }
+    load();
+  }
+})();
+</script>
+{% endblock %}

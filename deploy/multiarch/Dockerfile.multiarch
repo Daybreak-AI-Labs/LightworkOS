@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1
+# Lightwork reduced multi-architecture image: linux/amd64 and linux/arm64.
+# Build with deploy/multiarch/build.sh (docker buildx) from the repo root.
+#
+# The official python:3.12-slim base publishes both supported architectures.
+# riscv64 is intentionally unsupported here: mandatory cryptography/cffi and
+# dashboard native dependencies need a tested Rust/C/OpenSSL build toolchain.
+#
+# Scope: an explicitly reduced core + shield runtime. It does not install the
+# channels, evolve, MCP, knowledge, or installer distributions, so no setup
+# wizard or those capabilities are claimed. Dashboard is opt-in
+# (INSTALL_DASHBOARD=1) because fastapi -> pydantic-core is a compiled Rust
+# wheel on both supported architectures. pywhispercpp 1.5.0 also publishes a
+# CPython 3.10-3.14 Linux aarch64 wheel.
+
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONNOUSERSITE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# System deps for sqlite + git (skills, world model) — same as deploy/docker.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# A venv keeps the install path identical on both base flavours (Debian's
+# apt python is PEP 668 externally-managed; python:slim's is not).
+RUN python3 -m venv /opt/maverick
+ENV PATH="/opt/maverick/bin:${PATH}"
+RUN python -m pip install --upgrade 'pip==26.2.2'
+
+WORKDIR /app
+COPY release-cohort.toml ./release-cohort.toml
+COPY requirements/ci.txt ./requirements/ci.txt
+COPY scripts/install_release_cohort.py ./scripts/install_release_cohort.py
+COPY packages/maverick-core ./packages/maverick-core
+COPY packages/maverick-shield ./packages/maverick-shield
+COPY packages/maverick-dashboard ./packages/maverick-dashboard
+
+# Opt-in: pulls fastapi/pydantic-core and pywhispercpp; both supported
+# architectures have compatible wheels for the pinned dependency set.
+ARG INSTALL_DASHBOARD=0
+RUN if [ "${INSTALL_DASHBOARD}" = "1" ]; then \
+        python scripts/install_release_cohort.py \
+          --target-python python \
+          --only maverick-agent maverick-shield maverick-dashboard; \
+    else \
+        python scripts/install_release_cohort.py \
+          --target-python python \
+          --only maverick-agent maverick-shield; \
+    fi
+
+RUN groupadd --gid 1000 maverick \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin maverick \
+    && mkdir -p /workspace /home/maverick/.maverick \
+    && chown -R maverick:maverick /workspace /home/maverick
+ENV HOME=/home/maverick
+USER maverick
+WORKDIR /workspace
+ENTRYPOINT ["maverick"]
+CMD ["--help"]

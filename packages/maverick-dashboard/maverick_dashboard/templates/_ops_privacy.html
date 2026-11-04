@@ -1,0 +1,32 @@
+{#- Privacy tools (maverick dpia, maverick breach plan, maverick vendor
+    questionnaire-index). Filled by lightwork-ops-panels.js. -#}
+{% include "_ops_styles.html" %}
+<section class="panel" id="ops-privacy" aria-labelledby="ops-privacy-title">
+  <h2 id="ops-privacy-title">More privacy tools</h2>
+
+  <h3 id="ops-dpia-title">Data protection impact assessment</h3>
+  <p class="muted">A first draft for your data protection officer: what Lightwork does with personal data, the
+    risks, and which protections are on right now. Your officer completes and signs it.</p>
+  <p class="ops-actions">
+    <a class="btn" id="ops-dpia-text" href="/api/v1/privacy-ops/dpia?format=text" download>Download the draft</a>
+    <a class="btn btn--ghost" id="ops-dpia-json" href="/api/v1/privacy-ops/dpia?format=json" download>Download for other tools</a>
+  </p>
+
+  <h3 class="ops-sub" id="ops-breach-title">Plan breach notifications</h3>
+  <p class="muted">Answer a few questions about a data breach to see who you must tell and by when. For a breach
+    already logged as an incident, use the button on the incident instead.</p>
+  <button type="button" class="btn btn--ghost" id="ops-breach-plan">Plan notifications</button>
+  <div id="ops-breach-out" role="status" aria-live="polite"></div>
+
+  <h3 class="ops-sub" id="ops-qlinks-title">Vendor questionnaire links</h3>
+  <p class="muted">Before vendors can open questionnaire links you share, Lightwork prepares the existing links.
+    Run this after importing many vendors.</p>
+  <div class="ops-row" data-ops-needs="admin">
+    <label for="ops-qlinks-restart" class="ops-actions"><input type="checkbox" id="ops-qlinks-restart">
+      Start over from the vendor records</label>
+    <button type="button" class="btn btn--ghost" id="ops-qlinks">Prepare questionnaire links</button>
+  </div>
+  <p id="ops-qlinks-msg" role="status" aria-live="polite" class="muted"></p>
+  <p id="ops-dm-scan-msg" role="status" aria-live="polite" class="muted"></p>
+</section>
+<script src="/static/lightwork-ops-panels.js" defer></script>

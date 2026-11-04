@@ -1,0 +1,646 @@
+{% extends "base.html" %}
+{% block title %}Task map · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .ge-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 1rem; }
+  @media (max-width: 880px) { .ge-wrap { grid-template-columns: 1fr; } }
+  /* Obsidian-style canvas: a flat dark field with a faint centre glow so the
+     force-directed constellation reads with depth. */
+  #ge-svg {
+    width: 100%; height: 600px; display: block;
+    background:
+      radial-gradient(ellipse at 50% 42%,
+        color-mix(in srgb, var(--panel) 70%, var(--bg)) 0%,
+        var(--bg) 70%);
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #ge-svg.panning { cursor: grabbing; }
+  .ge-form label { display: block; font-size: 0.8rem; color: var(--muted); margin: 0.75rem 0 0.25rem; }
+  .ge-form input, .ge-form select { width: 100%; padding: 0.45rem 0.6rem; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .ge-form button { margin-top: 0.5rem; padding: 0.45rem 1rem; background: var(--brand); color: var(--brand-fg); border: 0; border-radius: var(--radius-md); cursor: pointer; }
+  .ge-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .legend { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
+  .legend .live { margin-inline-start: auto; }
+  .tree { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tree ul { list-style: none; padding-inline-start: 1.5rem; border-inline-start: 1px solid var(--border); margin: 0; }
+  .tree > ul { padding-inline-start: 0; border-inline-start: 0; }
+</style>
+<p class="muted">{{ back_link('/goals', 'Tasks') }}{% if not map_views %} · <a href="/plan-tree-3d">3D view</a>{% endif %}</p>
+<h1 class="page-title">Task map</h1>
+<p class="page-subtitle">See how your tasks fit together. Select a task to rename it, move it, or add a smaller task beneath it.</p>
+{% if map_views %}{% from "_tabs.html" import tab_bar, panel_attrs %}{{ tab_bar('Task map views', map_views, '') }}{% endif %}
+<div class="panel"{% if map_views %} {{ panel_attrs('') }}{% endif %}>
+  <div class="legend">
+    <span><span class="badge active">Running</span></span>
+    <span><span class="badge done">Done</span></span>
+    <span><span class="badge blocked">Blocked</span></span>
+    <span><span class="badge pending">Waiting</span></span>
+    <span><span class="badge cancelled">Cancelled</span></span>
+    <span class="live" id="ge-status" role="status" aria-live="polite">Loading…</span>
+  </div>
+  <div class="ge-wrap">
+    <svg id="ge-svg" role="group" aria-label="Map of {{ node_count }} tasks. Use the editor beside the map to select and edit tasks with the keyboard."></svg>
+    <div class="ge-form panel" style="margin-bottom: 0;">
+      <button type="button" id="ge-refresh">Refresh current map</button>
+      <h2 style="margin: 0; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;">Edit a task</h2>
+
+      <label for="ge-select">Selected task</label>
+      <select id="ge-select"><option value="">Choose a task here or on the map</option></select>
+
+      <label for="ge-title">Title</label>
+      <input id="ge-title" type="text" maxlength="200" autocomplete="off">
+      <button type="button" id="ge-retitle">Save title</button>
+
+      <label for="ge-parent">Move this task under</label>
+      <select id="ge-parent"><option value="">Keep as a main task</option></select>
+      <button type="button" id="ge-reparent">Move task</button>
+
+      <label for="ge-child-title">New smaller task</label>
+      <input id="ge-child-title" type="text" maxlength="200" autocomplete="off"
+             placeholder="A smaller task to add under the selected one">
+      <button type="button" id="ge-add-child">Add smaller task</button>
+
+      <p class="muted" style="font-size: 0.78rem; margin-bottom: 0;">
+        Smaller tasks added here wait and do not start on their own —
+        start them from <a href="/chat">chat</a> when ready.
+        Drag a task to move it on the map, hover to see its connections,
+        drag the background to move the view, or scroll to zoom.
+      </p>
+      <p id="ge-error" role="alert" aria-live="assertive"
+         style="display: none; color: var(--danger); font-size: 0.85rem;"></p>
+    </div>
+  </div>
+  <noscript>
+    <div class="tree">{{ fallback_html | safe }}</div>
+    <p class="muted">Editing needs scripts turned on; this is a read-only list.</p>
+  </noscript>
+</div>
+
+<script nonce="{{ csp_script_nonce }}">
+// Obsidian-style goal graph. The server returns the forest
+// (GET /api/v1/goal-tree -> {nodes, edges}); this script runs a small
+// dependency-free force simulation (charge + link springs + centre gravity),
+// draws circular nodes sized by connection count, and POSTs edits back.
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("ge-svg");
+  const statusEl = document.getElementById("ge-status");
+  const errEl = document.getElementById("ge-error");
+  const selectEl = document.getElementById("ge-select");
+  const parentEl = document.getElementById("ge-parent");
+  const titleEl = document.getElementById("ge-title");
+  if (!svg) return;
+  const el = (tag) => document.createElementNS(NS, tag);
+  const words = (v) => String(v || "").replace(/_/g, " ");
+  const count = (n) => n + (n === 1 ? " task" : " tasks");
+  const reducedMotion = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const css = getComputedStyle(document.body);
+  const cssVar = (n, fb) => (css.getPropertyValue(n) || "").trim() || fb;
+  function colour(status) {
+    if (status === "active" || status === "done") return cssVar("--accent", "#3ecf8e");
+    if (status === "failed") return cssVar("--danger", "#e5564b");
+    if (status === "blocked") return cssVar("--warn", "#e0a23a");
+    return cssVar("--muted", "#97a1b5");
+  }
+
+  let state = { nodes: [], edges: [] };
+  let byId = {};
+  let edgeRefs = [];        // {p, c, line}
+  let labelEls = [];
+  let selected = null;
+  let hovered = null;
+  // Pan/zoom of the world via a single <g> transform: translate(x, y) scale(k).
+  let view = { x: 0, y: 0, k: 1 };
+  let viewG = null, linksG = null, nodesG = null;
+  let lastLabelOpacity = -1;
+
+  // ----- viewport geometry (no <viewBox>: 1 user unit == 1 CSS px) -----
+  let W = 820, H = 600, CX = 410, CY = 300;
+  function measure() {
+    W = svg.clientWidth || 820;
+    H = svg.clientHeight || 600;
+    CX = W / 2; CY = H / 2;
+  }
+
+  // ----- force simulation -----
+  let alpha = 0, running = false, firstSettle = true;
+  const ALPHA_MIN = 0.0018, ALPHA_DECAY = 0.0235, VEL_DECAY = 0.62;
+  const REPULSION = 2600;       // many-body charge
+  const LINK_DIST = 72, LINK_STR = 0.08;
+  const GRAVITY = 0.045;        // pull toward canvas centre
+
+  function tick() {
+    alpha += (0 - alpha) * ALPHA_DECAY;
+    const ns = state.nodes, n = ns.length;
+    // Charge: every pair repels (O(n^2), fine for the 300-node API cap).
+    for (let i = 0; i < n; i++) {
+      const a = ns[i];
+      for (let j = i + 1; j < n; j++) {
+        const b = ns[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 16) {                       // de-singularise overlaps deterministically
+          dx = dx || ((a.id - b.id) || 1) * 0.5;
+          dy = dy || 0.5;
+          d2 = Math.max(dx * dx + dy * dy, 16);
+        }
+        const d = Math.sqrt(d2);
+        const f = (REPULSION * alpha) / d2;
+        const fx = (dx / d) * f, fy = (dy / d) * f;
+        a.vx += fx; a.vy += fy;
+        b.vx -= fx; b.vy -= fy;
+      }
+    }
+    // Link springs toward an ideal length.
+    for (let e = 0; e < edgeRefs.length; e++) {
+      const a = byId[edgeRefs[e].p], b = byId[edgeRefs[e].c];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const f = (d - LINK_DIST) * LINK_STR * alpha;
+      const fx = (dx / d) * f, fy = (dy / d) * f;
+      a.vx += fx; a.vy += fy;
+      b.vx -= fx; b.vy -= fy;
+    }
+    // Centre gravity + integrate.
+    for (let i = 0; i < n; i++) {
+      const p = ns[i];
+      if (p.fx != null) { p.x = p.fx; p.y = p.fy; p.vx = 0; p.vy = 0; continue; }
+      p.vx += (CX - p.x) * GRAVITY * alpha;
+      p.vy += (CY - p.y) * GRAVITY * alpha;
+      p.vx *= VEL_DECAY; p.vy *= VEL_DECAY;
+      p.x += p.vx; p.y += p.vy;
+    }
+  }
+
+  function settleSync(steps) {
+    for (let i = 0; i < steps && alpha > ALPHA_MIN; i++) tick();
+  }
+  function loop() {
+    running = true;
+    tick(); tick();               // two sub-steps/frame: settles faster, still smooth
+    render();
+    if (alpha > ALPHA_MIN) { requestAnimationFrame(loop); return; }
+    running = false;
+    if (firstSettle) { firstSettle = false; fitView(); }
+  }
+  function reheat() {
+    alpha = Math.max(alpha, 0.3);
+    if (!reducedMotion && !running) requestAnimationFrame(loop);
+  }
+
+  // ----- coordinate helpers -----
+  function toWorld(clientX, clientY) {
+    const r = svg.getBoundingClientRect();
+    return {
+      x: (clientX - r.left - view.x) / view.k,
+      y: (clientY - r.top - view.y) / view.k,
+    };
+  }
+  function applyView() {
+    if (viewG) {
+      viewG.setAttribute("transform",
+        "translate(" + view.x + "," + view.y + ") scale(" + view.k + ")");
+    }
+    // Labels fade in as you zoom in (Obsidian behaviour) and stay out of the
+    // way when surveying the whole graph.
+    const la = view.k < 0.55 ? 0 : Math.min(1, (view.k - 0.55) / 0.45);
+    if (la !== lastLabelOpacity) {
+      lastLabelOpacity = la;
+      for (let i = 0; i < labelEls.length; i++) labelEls[i].style.opacity = la;
+    }
+  }
+  function fitView() {
+    if (!state.nodes.length) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    state.nodes.forEach((p) => {
+      minX = Math.min(minX, p.x - p.r); maxX = Math.max(maxX, p.x + p.r);
+      minY = Math.min(minY, p.y - p.r); maxY = Math.max(maxY, p.y + p.r);
+    });
+    const pad = 48;
+    const gw = Math.max(1, maxX - minX), gh = Math.max(1, maxY - minY);
+    view.k = Math.max(0.2, Math.min((W - 2 * pad) / gw, (H - 2 * pad) / gh, 1.5));
+    view.x = (W - (minX + maxX) * view.k) / 2;
+    view.y = (H - (minY + maxY) * view.k) / 2;
+    applyView();
+  }
+
+  // ----- highlight (hover spotlights a node + its neighbours) -----
+  function neighbourhood(id) {
+    const set = new Set([id]);
+    edgeRefs.forEach((e) => {
+      if (e.p === id) set.add(e.c);
+      if (e.c === id) set.add(e.p);
+    });
+    return set;
+  }
+  function paint() {
+    const hi = hovered != null ? neighbourhood(hovered) : null;
+    const brand = cssVar("--brand", "#4f7bd0");
+    // Links need to read clearly against the dark canvas, so use the
+    // higher-contrast border tone (--border itself is nearly invisible here).
+    const link = cssVar("--border-strong", "#5b6678");
+    const ringSel = cssVar("--text", "#e8ebf2");
+    const cut = cssVar("--bg", "#0e1320");
+    state.nodes.forEach((p) => {
+      const bright = !hi || hi.has(p.id);
+      p._g.style.opacity = bright ? "1" : "0.16";
+      p._c.setAttribute("fill", colour(p.status));
+      const sel = p.id === selected;
+      p._c.setAttribute("stroke", sel ? ringSel : cut);
+      p._c.setAttribute("stroke-width", sel ? "2" : "1.5");
+    });
+    edgeRefs.forEach((e) => {
+      const lit = hi && hi.has(e.p) && hi.has(e.c);
+      const dim = hi && !lit;
+      e.line.setAttribute("stroke", lit ? brand : link);
+      e.line.setAttribute("stroke-opacity", dim ? "0.08" : (lit ? "0.95" : "0.7"));
+      e.line.setAttribute("stroke-width", lit ? "1.8" : "1.3");
+    });
+  }
+
+  // ----- build SVG once per data load; render() only moves things -----
+  function build() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    viewG = el("g"); viewG.setAttribute("id", "ge-view");
+    linksG = el("g"); nodesG = el("g");
+    viewG.appendChild(linksG); viewG.appendChild(nodesG);
+    svg.appendChild(viewG);
+    lastLabelOpacity = -1;
+
+    byId = {};
+    state.nodes.forEach((p) => { byId[p.id] = p; });
+    edgeRefs = [];
+    state.edges.forEach((pair) => {
+      const p = pair[0], c = pair[1];
+      if (!byId[p] || !byId[c]) return;
+      const line = el("line");
+      line.setAttribute("stroke", cssVar("--border-strong", "#5b6678"));
+      line.setAttribute("stroke-opacity", "0.7");
+      line.setAttribute("stroke-width", "1.3");
+      line.style.pointerEvents = "none";
+      linksG.appendChild(line);
+      edgeRefs.push({ p, c, line });
+    });
+
+    labelEls = [];
+    state.nodes.forEach((p) => {
+      const g = el("g");
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "button");
+      g.setAttribute("aria-label", "Task (" + words(p.status) + "): " + (p.title || "(untitled)"));
+      g.style.cursor = "pointer";
+      const c = el("circle");
+      c.setAttribute("r", p.r);
+      g.appendChild(c);
+      const t = el("text");
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("font-size", "10");
+      t.setAttribute("fill", cssVar("--muted", "#97a1b5"));
+      t.style.pointerEvents = "none";
+      const s = "#" + p.id + " " + (p.title || "(untitled)");
+      t.textContent = s.length > 26 ? s.slice(0, 25) + "…" : s;
+      g.appendChild(t);
+      const tip = el("title");
+      tip.textContent = (p.title || "(untitled)") + " — " + words(p.status);
+      g.appendChild(tip);
+      p._g = g; p._c = c; p._t = t;
+      labelEls.push(t);
+
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(p.id); }
+      });
+      g.addEventListener("pointerenter", () => { hovered = p.id; paint(); });
+      g.addEventListener("pointerleave", () => {
+        if (hovered === p.id) { hovered = null; paint(); }
+      });
+      attachDrag(p);
+      nodesG.appendChild(g);
+    });
+    paint();
+  }
+
+  function render() {
+    for (let i = 0; i < edgeRefs.length; i++) {
+      const e = edgeRefs[i], a = byId[e.p], b = byId[e.c];
+      e.line.setAttribute("x1", a.x); e.line.setAttribute("y1", a.y);
+      e.line.setAttribute("x2", b.x); e.line.setAttribute("y2", b.y);
+    }
+    for (let i = 0; i < state.nodes.length; i++) {
+      const p = state.nodes[i];
+      p._c.setAttribute("cx", p.x); p._c.setAttribute("cy", p.y);
+      p._t.setAttribute("x", p.x); p._t.setAttribute("y", p.y + p.r + 11);
+    }
+  }
+
+  // Drag a node: pin it under the pointer while held, release on let-go. A
+  // press that doesn't move is a select (keeps the click-to-edit affordance).
+  function attachDrag(p) {
+    let dragging = false, moved = false, sx = 0, sy = 0, pid = 0;
+    p._g.addEventListener("pointerdown", (ev) => {
+      ev.stopPropagation();                 // don't also start a canvas pan
+      dragging = true; moved = false; pid = ev.pointerId;
+      sx = ev.clientX; sy = ev.clientY;
+      try { p._g.setPointerCapture(pid); } catch (e) {}
+    });
+    p._g.addEventListener("pointermove", (ev) => {
+      if (!dragging) return;
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+      moved = true;
+      const w = toWorld(ev.clientX, ev.clientY);
+      p.fx = w.x; p.fy = w.y; p.x = w.x; p.y = w.y;
+      if (reducedMotion) render(); else reheat();
+    });
+    p._g.addEventListener("pointerup", () => {
+      if (!dragging) return;
+      dragging = false;
+      try { p._g.releasePointerCapture(pid); } catch (e) {}
+      p.fx = null; p.fy = null;
+      if (!moved) select(p.id);
+      else if (reducedMotion) { settleSync(140); render(); }
+      else reheat();
+    });
+  }
+
+  function setStatus(msg) { if (window.mvStatus) window.mvStatus(statusEl, msg); else statusEl.textContent = msg; }
+  function showError(msg) {
+    errEl.textContent = msg; errEl.style.display = msg ? "block" : "none";
+  }
+
+  function childrenMap() {
+    const m = {};
+    state.edges.forEach((pair) => { (m[pair[0]] = m[pair[0]] || []).push(pair[1]); });
+    return m;
+  }
+  function descendants(id) {
+    const m = childrenMap(), out = new Set(), stack = [id];
+    while (stack.length) {
+      (m[stack.pop()] || []).forEach((c) => {
+        if (!out.has(c)) { out.add(c); stack.push(c); }
+      });
+    }
+    return out;
+  }
+
+  function rebuildSelects() {
+    const opt = (value, text) => {
+      const o = document.createElement("option");
+      o.value = value; o.textContent = text; return o;
+    };
+    selectEl.replaceChildren(opt("", "Choose a task here or on the map"));
+    state.nodes.forEach((n) => {
+      selectEl.appendChild(opt(String(n.id), (n.title || "(untitled)") + " · " + words(n.status)));
+    });
+    selectEl.value = selected === null ? "" : String(selected);
+    parentEl.replaceChildren(opt("", "Keep as a main task"));
+    if (selected !== null) {
+      const banned = descendants(selected);
+      banned.add(selected);
+      const cur = (state.nodes.find((n) => n.id === selected) || {}).parent_id;
+      state.nodes.forEach((n) => {
+        if (banned.has(n.id)) return;
+        const o = opt(String(n.id), (n.title || "(untitled)") + " · " + words(n.status));
+        if (n.id === cur) o.selected = true;
+        parentEl.appendChild(o);
+      });
+    }
+  }
+
+  function announceSelection() {
+    document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {
+      detail: {selection: selected === null ? {} : {kind: 'goal', id: selected, goal_id: selected}}
+    }));
+  }
+
+  function select(id) {
+    if (mutationBusy || contextChanged) return;
+    selected = id;
+    const n = id == null ? null : byId[id];
+    titleEl.value = n ? n.title : "";
+    rebuildSelects();
+    paint();
+    announceSelection();
+    setStatus(n ? ("Selected: " + (n.title || "Untitled task")) : count(state.nodes.length));
+  }
+
+  function seedLayout() {
+    measure();
+    const deg = {};
+    state.edges.forEach((pair) => {
+      deg[pair[0]] = (deg[pair[0]] || 0) + 1;
+      deg[pair[1]] = (deg[pair[1]] || 0) + 1;
+    });
+    // Phyllotaxis spiral seed: even, deterministic spread (no Math.random),
+    // so the simulation never starts from a degenerate clump.
+    state.nodes.forEach((p, i) => {
+      p.deg = deg[p.id] || 0;
+      p.r = 4 + Math.min(11, Math.sqrt(p.deg) * 2.4);   // size by connection count
+      const rad = 16 * Math.sqrt(0.5 + i), ang = i * 2.399963229728653;
+      p.x = CX + rad * Math.cos(ang);
+      p.y = CY + rad * Math.sin(ang);
+      p.vx = 0; p.vy = 0; p.fx = null; p.fy = null;
+    });
+  }
+
+  const pendingRequests = new Set();
+  let contextChanged = false;
+  async function boundedRequest(url, options) {
+    // The answer's status and body, as the callers read them; the request
+    // goes through the shell's mvFetchJSON with a 15-second deadline.
+    const controller = new AbortController();
+    pendingRequests.add(controller);
+    try {
+      const body = await window.mvFetchJSON(url, Object.assign({}, options || {}, {signal: controller.signal, timeout: 15000}));
+      return {response: {ok: true, status: body === null ? 204 : 200, headers: null}, body};
+    } catch (error) {
+      if (!error.status) throw error;
+      return {response: {ok: false, status: error.status, headers: error.headers}, body: null};
+    } finally { pendingRequests.delete(controller); }
+  }
+  function abandonRequests() { pendingRequests.forEach(controller => controller.abort()); }
+  window.addEventListener('pagehide', abandonRequests);
+  window.addEventListener('lightwork:context-changed', () => {
+    contextChanged = true; abandonRequests();
+    document.querySelectorAll('.ge-form input,.ge-form select,.ge-form button').forEach(control => { control.disabled = true; });
+    selected = null; announceSelection();
+  });
+
+  let loadGeneration = 0;
+  async function load() {
+    const generation = ++loadGeneration;
+    showError("");
+    try {
+      const reply = await boundedRequest("/api/v1/goal-tree", { headers: { Accept: "application/json" } });
+      if (contextChanged || generation !== loadGeneration) return false;
+      const r = reply.response;
+      if (!r.ok) { setStatus("Could not load your tasks. Refresh the page to try again."); return; }
+      const data = reply.body;
+      state = { nodes: data.nodes || [], edges: data.edges || [] };
+      if (selected !== null && !state.nodes.some((n) => n.id === selected)) selected = null;
+      if (!state.nodes.length) {
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        edgeRefs = []; labelEls = []; byId = {};
+        setStatus("No tasks yet — start one in chat or the task builder");
+        rebuildSelects(); announceSelection();
+        return true;
+      }
+      setStatus(count(state.nodes.length));
+      seedLayout();
+      build();
+      view = { x: 0, y: 0, k: 1 };
+      applyView();
+      alpha = 1; firstSettle = true; running = false;
+      if (reducedMotion) {
+        settleSync(520); render(); firstSettle = false; fitView();
+      } else {
+        requestAnimationFrame(loop);
+      }
+      rebuildSelects(); announceSelection();
+      return true;
+    } catch (e) { setStatus("Can't reach Lightwork. Check your connection and refresh."); }
+  }
+
+  let mutationBusy = false;
+  async function refreshDraft() {
+    const draftTitle = titleEl.value, draftParent = parentEl.value;
+    const controls = Array.from(document.querySelectorAll('.ge-form input,.ge-form select,.ge-form button'))
+      .map(control => { const before = control.disabled; control.disabled = true; return [control, before]; });
+    let updated;
+    try { updated = await load(); }
+    finally { controls.forEach(([control, before]) => { control.disabled = contextChanged || before; }); }
+    if (!updated || selected === null) return false;
+    titleEl.value = draftTitle;
+    if (draftParent && !Array.from(parentEl.options).some(option => option.value === draftParent)) {
+      const unavailable = document.createElement('option'); unavailable.value = draftParent;
+      unavailable.textContent = 'Previously selected parent is unavailable; choose again';
+      unavailable.disabled = true; parentEl.appendChild(unavailable);
+    }
+    parentEl.value = draftParent;
+    return true;
+  }
+  async function post(url, body, action) {
+    if (mutationBusy || contextChanged) return false;
+    mutationBusy = true;
+    const controls = Array.from(document.querySelectorAll('.ge-form input,.ge-form select,.ge-form button'))
+      .map(control => { const before = control.disabled; control.disabled = true; return [control, before]; });
+    action = action || "save that";
+    showError("");
+    try {
+      const reply = await boundedRequest(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (contextChanged) return false;
+      const r = reply.response;
+      if (r.status === 409) {
+        const refreshed = await refreshDraft();
+        showError(refreshed
+          ? "This task changed. Your draft is kept. The map now shows current state; review it before saving again."
+          : "This task changed. Your draft is kept, but current state could not be verified. Refresh the map before saving again.");
+        return false;
+      }
+      if (!r.ok) {
+        showError(window.mvErrorText ? window.mvErrorText({ status: r.status, headers: r.headers }, action)
+                                     : "Could not " + action + ". Try again.");
+        return false;
+      }
+      return r.status === 204 ? true : reply.body;
+    } catch (e) {
+      showError("The result is not confirmed. Your draft is kept. Refresh current map to check it before deciding whether to retry. No retry was sent.");
+      return false;
+    } finally {
+      mutationBusy = false;
+      controls.forEach(([control, before]) => { control.disabled = contextChanged || before; });
+    }
+  }
+  document.getElementById('ge-refresh').addEventListener('click', async () => {
+    if (mutationBusy || contextChanged) return;
+    if (await refreshDraft()) showError('Current map refreshed. Your typed draft is kept; compare it before saving.');
+  });
+
+  selectEl.addEventListener("change", () => {
+    select(selectEl.value ? parseInt(selectEl.value, 10) : null);
+  });
+  document.getElementById("ge-retitle").addEventListener("click", async () => {
+    if (mutationBusy || contextChanged) return;
+    if (selected === null) { showError("Select a task first."); return; }
+    if (!titleEl.value.trim()) { showError("Type a title first."); return; }
+    if (await post("/api/v1/goals/" + selected + "/retitle", { title: titleEl.value, expected_updated_at: byId[selected].updated_at, operation_id: crypto.randomUUID() }, "save the title")) {
+      setStatus("Title saved"); await refreshDraft();
+    }
+  });
+  document.getElementById("ge-reparent").addEventListener("click", async () => {
+    if (mutationBusy || contextChanged) return;
+    if (selected === null) { showError("Select a task first."); return; }
+    const pid = parentEl.value ? parseInt(parentEl.value, 10) : null;
+    if (await post("/api/v1/goals/" + selected + "/reparent", { parent_id: pid, expected_updated_at: byId[selected].updated_at, operation_id: crypto.randomUUID() }, "move the task")) {
+      setStatus("Moved"); await refreshDraft();
+    }
+  });
+  const childButton = document.getElementById("ge-add-child");
+  childButton.addEventListener("click", async () => {
+    if (mutationBusy || contextChanged || childButton.disabled) return;
+    if (selected === null) { showError("Select the task to add it under first."); return; }
+    const parentId = selected;
+    const input = document.getElementById("ge-child-title"), t = input.value;
+    if (!t.trim()) { showError("Type a title for the smaller task first."); return; }
+    childButton.disabled = true; input.readOnly = true;
+    childButton.setAttribute('aria-busy', 'true'); setStatus('Adding the smaller task.');
+    try {
+      const context = document.querySelector('meta[name="lightwork-draft-context"]');
+      const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+      const fingerprint = Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');
+      const key = 'lightwork-child:' + (context ? context.content : '') + ':' + parentId + ':' + fingerprint;
+      let operation = sessionStorage.getItem(key);
+      if (!operation) { operation = crypto.randomUUID(); sessionStorage.setItem(key, operation); }
+      const created = await post('/api/v1/goals/' + parentId + '/children', {title: t, operation_id: operation}, 'add the smaller task');
+      if (created) {
+        sessionStorage.removeItem(key); input.value = '';
+        await refreshDraft(); select(created.id);
+        setStatus('Added ' + (created.title || t) + '. It has not started.');
+      }
+    } catch (error) { showError('Could not prepare a recoverable request. Your title is kept; allow session storage and retry.'); }
+    finally { childButton.disabled = contextChanged; input.readOnly = false; childButton.removeAttribute('aria-busy'); }
+  });
+
+  // Pan (pointer drag on the empty canvas) + zoom (wheel, anchored at cursor).
+  let panning = null;
+  svg.addEventListener("pointerdown", (ev) => {
+    if (ev.target !== svg && ev.target !== viewG &&
+        ev.target !== linksG && ev.target !== nodesG) return; // node press handles itself
+    panning = { px: ev.clientX, py: ev.clientY, x: view.x, y: view.y };
+    svg.classList.add("panning");
+    try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+  });
+  svg.addEventListener("pointermove", (ev) => {
+    if (!panning) return;
+    view.x = panning.x + (ev.clientX - panning.px);
+    view.y = panning.y + (ev.clientY - panning.py);
+    applyView();
+  });
+  function endPan() { panning = null; svg.classList.remove("panning"); }
+  svg.addEventListener("pointerup", endPan);
+  svg.addEventListener("pointercancel", endPan);
+  svg.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    const r = svg.getBoundingClientRect();
+    const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const k2 = Math.min(6, Math.max(0.15, view.k * factor));
+    view.x = mx - ((mx - view.x) / view.k) * k2;
+    view.y = my - ((my - view.y) / view.k) * k2;
+    view.k = k2;
+    applyView();
+  }, { passive: false });
+
+  window.addEventListener("resize", () => { measure(); });
+
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (window.mvFetchJSON) load(); else document.addEventListener('DOMContentLoaded', load);
+})();
+</script>
+{% endblock %}

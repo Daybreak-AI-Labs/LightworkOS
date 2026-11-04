@@ -1,0 +1,26 @@
+<section class="stack" id="learning-suggested-questions" aria-labelledby="learning-pending-title">
+  <h3 id="learning-pending-title">Suggested self-coaching questions</h3>
+  <p class="muted">Review questions found by Lightwork before using them in future checks. Use a suggestion or reject it so Lightwork remembers your decision.</p>
+  <label for="learning-pending-model">Model</label>
+  <select class="select" id="learning-pending-model" disabled><option value="">Reading available models…</option></select>
+  <div class="actions"><button class="btn btn--ghost" id="learning-pending-refresh" type="button">Refresh suggestions</button></div>
+  <p class="muted" id="learning-pending-status" role="status" aria-live="polite"></p>
+  <div class="stack" id="learning-pending-list"></div>
+  <div class="actions">
+    <button class="btn btn--ghost" id="learning-pending-previous" type="button" hidden>Previous suggestions</button>
+    <button class="btn btn--ghost" id="learning-pending-next" type="button" hidden>More suggestions</button>
+  </div>
+  <div class="stack" id="learning-pending-selected" hidden>
+    <h4>Selected suggestion</h4>
+    <dl><dt>Question</dt><dd id="learning-pending-question" style="white-space:pre-wrap;overflow-wrap:anywhere"></dd><dt>Expected answer</dt><dd id="learning-pending-expected" style="white-space:pre-wrap;overflow-wrap:anywhere"></dd></dl>
+    <div class="actions">
+      <button class="btn btn--primary" id="learning-pending-accept" type="button">Review use in future checks</button>
+      <button class="btn btn--ghost" id="learning-pending-reject" type="button">Review rejection</button>
+    </div>
+  </div>
+  <div id="learning-pending-preview"></div>
+  <button class="btn btn--ghost" id="learning-pending-original" type="button" hidden>Check original decision outcome</button>
+  <div id="learning-pending-result" aria-live="polite"></div>
+  <p class="muted">Suggestions keep their original learning permissions. Shared questions are available to administrators who manage this learning storage and future checks may send them to your configured AI providers. Reviewing and saving a decision uses no AI and spends nothing.</p>
+</section>
+<script src="/static/lightwork-learning-pending-cases.js" defer></script>

@@ -1,0 +1,122 @@
+{#- Learned page: the learning loop's decision points (suggested instruction
+    changes) and self-coaching read-outs. Filled by lightwork-learning-loop.js;
+    only global administrators see the controls that change anything. -#}
+<div id="llp-root" data-admin="{{ '1' if can_manage else '0' }}">
+  <div class="section-head"><h2 id="llp-ref-title">Suggested instruction changes</h2></div>
+  <div class="panel" id="llp-refine">
+    <p class="muted">When an agent keeps making the same mistake, someone can suggest a change to its
+      instructions. A change is used only after a person approves and applies it, and every applied
+      change can be undone.</p>
+    <p id="llp-ref-state" class="muted"></p>
+    {% if can_manage %}
+    <div id="llp-original" class="glass-card" hidden aria-labelledby="llp-original-title">
+      <h3 id="llp-original-title">Check your original decision</h3>
+      <p id="llp-original-message" role="status" aria-live="polite"></p>
+      <label for="llp-original-choice">Recent original decisions</label>
+      <select id="llp-original-choice" class="select"><option value="">Loading decisions…</option></select>
+      <button type="button" id="llp-original-check" class="btn btn--primary">Check original result</button>
+      <button type="button" id="llp-original-resolve" class="btn btn--ghost" hidden>Review current instructions to close the hold</button>
+      <div id="llp-original-review"></div>
+      <p class="muted">Reads the saved result without applying or restoring again. Earlier receipts remain historical when current instructions change. A current administrator can separately review shared instructions to close a hold; this never confirms another person's original action. Up to 512 original decisions are retained; a full history refuses new tracked changes.</p>
+    </div>
+    {% endif %}
+    <table id="llp-ref-table" aria-labelledby="llp-ref-title">
+      <thead><tr><th scope="col">Suggested change</th><th scope="col">What went wrong</th>
+        <th scope="col">Status</th>{% if can_manage %}<th scope="col">Actions</th>{% endif %}</tr></thead>
+      <tbody id="llp-ref-rows"><tr><td colspan="{{ 4 if can_manage else 3 }}">Loading suggested changes…</td></tr></tbody>
+    </table>
+    <h3 id="llp-in-force-title">Changes in use now</h3>
+    <ul id="llp-in-force" aria-labelledby="llp-in-force-title"><li class="muted">Loading…</li></ul>
+    {% if can_manage %}
+    <details id="llp-propose-box">
+      <summary>Suggest a change</summary>
+      <form id="llp-propose" class="llp-form">
+        <label for="llp-target">What should change</label>
+        <select id="llp-target" name="target" class="select">
+          <option value="prompt">Standing instructions</option>
+          <option value="skill">A named procedure</option>
+          <option value="memory">Something it remembers</option>
+        </select>
+        <label for="llp-title">Short title</label>
+        <input id="llp-title" name="title" class="input" maxlength="90" required
+               aria-describedby="llp-title-help">
+        <span id="llp-title-help" class="muted">For example: Check totals before sending invoices.</span>
+        <label for="llp-failure">What went wrong</label>
+        <textarea id="llp-failure" name="failure" class="textarea" rows="2" maxlength="2000" required></textarea>
+        <label for="llp-change">What the instructions should say instead</label>
+        <textarea id="llp-change" name="change" class="textarea" rows="3" maxlength="2000" required></textarea>
+        <label for="llp-rationale">Why this should help</label>
+        <textarea id="llp-rationale" name="rationale" class="textarea" rows="2" maxlength="2000" required></textarea>
+        <div><button type="submit" class="btn btn--primary">Suggest this change</button></div>
+      </form>
+    </details>
+    {% endif %}
+    <p id="llp-ref-msg" role="status" aria-live="polite" class="muted"></p>
+  </div>
+
+  <div class="section-head"><h2 id="llp-harness-title">How self-coaching is doing</h2></div>
+  <div class="panel" id="llp-harness">
+    <p class="muted">Results for the lessons above, what Lightwork would work on next, and a record of
+      what it learned and removed.</p>
+    <div class="llp-row">
+      <label for="llp-model">Model</label>
+      <select id="llp-model" class="select"><option value="">Loading…</option></select>
+    </div>
+
+    <h3 id="llp-eff-title">Lesson results</h3>
+    <table aria-labelledby="llp-eff-title">
+      <thead><tr><th scope="col">Lesson</th><th scope="col">Went well</th><th scope="col">Did not</th>
+        <th scope="col">Success</th>{% if can_manage %}<th scope="col">Action</th>{% endif %}</tr></thead>
+      <tbody id="llp-eff-rows"><tr><td colspan="{{ 5 if can_manage else 4 }}">Choose a model to see its lesson results.</td></tr></tbody>
+    </table>
+
+    <h3 id="llp-conf-title">Lessons that may clash</h3>
+    <ul id="llp-conf" aria-labelledby="llp-conf-title"><li class="muted">Choose a model to check.</li></ul>
+
+    <h3>What it would work on next</h3>
+    <div class="llp-row">
+      <label for="llp-support">Only mistakes seen at least</label>
+      <select id="llp-support" class="select">
+        <option value="2">2 times</option><option value="3" selected>3 times</option><option value="5">5 times</option>
+      </select>
+      <button type="button" class="btn btn--ghost" id="llp-preview-btn">Show what it would work on next</button>
+    </div>
+    <div id="llp-preview"></div>
+
+    <h3 id="llp-log-title">Recent learning activity</h3>
+    <ol id="llp-log" class="llp-log" aria-labelledby="llp-log-title"><li class="muted">Loading…</li></ol>
+
+    <h3>Hold-out check</h3>
+    <p class="muted">Checks whether the stored history of questions kept aside for fair testing is consistent.
+      A separately retained copy is needed to detect replacement of the whole history.</p>
+    <p><button type="button" class="btn btn--ghost" id="llp-holdout-btn">Check the hold-out record</button></p>
+    <div id="llp-holdout"></div>
+
+    {% if can_manage %}
+    {% include '_learning_passes.html' %}
+    {% include '_learning_question_checks.html' %}
+    <p class="muted" id="llp-cost">Both use the evaluation spending limit and stop if learning is paused.</p>
+    <p class="muted" id="llp-run-status" role="status" aria-live="polite"></p>
+    <div id="llp-run-result"></div>
+    {% endif %}
+    <p id="llp-harness-msg" role="status" aria-live="polite" class="muted"></p>
+  </div>
+</div>
+<style>
+  .llp-form { display: grid; gap: .4rem; max-width: 42rem; margin-top: .6rem; }
+  .llp-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0 1rem; }
+  .llp-log li { margin-bottom: .4rem; }
+  #llp-original { margin-block: var(--space-4); overflow-wrap: anywhere; }
+  #llp-original .select { width: 100%; max-width: 100%; margin-block: var(--space-2); }
+  #llp-original button { max-width: 100%; white-space: normal; margin-block: var(--space-1); }
+  @media (max-width: 600px) {
+    #llp-ref-table, #llp-ref-table tbody { display: block; }
+    #llp-ref-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    #llp-ref-table tr { display: grid; margin-block: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+    #llp-ref-table td { display: block; min-width: 0; overflow-wrap: anywhere; }
+    #llp-ref-table td::before { content: attr(data-label); display: block; color: var(--muted); font-size: var(--text-sm); margin-bottom: var(--space-1); }
+    #llp-ref-table td:last-child { border-bottom: 0; }
+  }
+</style>
+<script src="/static/lightwork-ops-jobs.js" defer></script>
+<script src="/static/lightwork-learning-loop.js" defer></script>

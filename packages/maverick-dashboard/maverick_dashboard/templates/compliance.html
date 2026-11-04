@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block title %}Compliance · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .cmp-stats { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .cmp-stat { flex: 1 1 10rem; min-width: 9rem; padding: var(--space-3) var(--space-4);
+              border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2); }
+  .cmp-stat__n { display: block; font-size: var(--text-xl); font-weight: var(--font-bold); }
+  .cmp-stat__label { color: var(--muted); font-size: var(--text-sm); }
+  .cmp-stat--warn { border-color: var(--warn); background: var(--warn-subtle); }
+  .cmp-stat--warn .cmp-stat__n { color: var(--warn); }
+  .cmp-table { overflow-x: auto; }
+  .cmp-row { display: flex; gap: .75rem; align-items: end; flex-wrap: wrap; }
+  .cmp-row label { display: flex; flex-direction: column; gap: .25rem; }
+  .cmp-links { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }
+  .cmp-grid { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+  .cmp-list { margin: .5rem 0 0; padding-left: 1.2rem; }
+  .cmp-list li { margin: .2rem 0; }
+</style>
+
+  {% set attention = [] %}
+  {% for fw, group in groups.items() %}
+    {% for c in group.rows if c.status == 'action_needed' %}
+      {% set _ = attention.append((group.label, c)) %}
+    {% endfor %}
+  {% endfor %}
+
+  {% macro action_button(c, g) -%}
+    {%- set a = g.action -%}
+    {%- if not a -%}
+      <span class="muted">Nothing to do</span>
+    {%- elif a.kind == 'switch' -%}
+      {%- if can_global_admin -%}
+      <button type="button" class="btn btn--primary" data-cmp-switch="{{ a.key }}"
+              data-cmp-confirm="{{ a.confirm }}">{{ a.label }}</button>
+      {%- else -%}
+      <span class="muted">An administrator can turn this on.</span>
+      {%- endif -%}
+    {%- elif a.kind == 'halt' -%}
+      <button type="button" class="btn btn--danger" data-cmp-halt>{{ a.label }}</button>
+    {%- elif a.kind == 'people' -%}
+      <a class="btn btn--ghost" href="#cmp-people">{{ a.label }}</a>
+    {%- elif a.kind == 'retention' -%}
+      <a class="btn btn--ghost" href="#cmp-retention">{{ a.label }}</a>
+    {%- elif a.kind == 'link' -%}
+      <a class="btn btn--ghost" href="{{ a.href }}">{{ a.label }}</a>
+    {%- endif -%}
+  {%- endmacro %}
+
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Governance', 'Compliance',
+               subtitle='What is covered and what still needs doing',
+               lede='How your workspace measures up against privacy and AI rules: the EU
+                     General Data Protection Regulation (GDPR), the EU AI Act, the US NIST AI
+                     Risk Management Framework, the Colorado AI Act, New York City’s
+                     hiring-tools law and the California privacy laws. This shows which
+                     protections are switched on. It is not legal advice.') %}
+    {% if summary %}
+    {{ state('Current state',
+             summary.get('total', 0) ~ ' protections checked',
+             badge=(summary.get('action_needed', 0) ~ ' need action') if summary.get('action_needed', 0) else 'All covered',
+             badge_class='warn' if summary.get('action_needed', 0) else 'ok',
+             copy='On: ' ~ summary.get('active', 0) ~ ' · Needs action: '
+                  ~ summary.get('action_needed', 0) ~ '. Checked live from your workspace, not from a questionnaire.') }}
+    {% else %}
+    {{ state('Current state', 'Nothing to show yet',
+             badge='No data', badge_class='idle',
+             copy='The compliance check did not return any results.') }}
+    {% endif %}
+    <div class="cmp-links">
+      <a class="btn btn--ghost" href="/compliance/scoping">Find which controls apply</a>
+      <a class="btn btn--ghost" href="/compliance/scope-actions">Turn scope into tasks</a>
+      <a class="btn btn--ghost" href="/compliance/continuous-evidence">Continuous evidence</a>
+      <a class="btn btn--ghost" href="/compliance/policy-links">Policy links</a>
+      <a class="btn btn--ghost" href="/compliance/obligations">Regulations and rules</a>
+    </div>
+  {% endcall %}
+  {% if compliance_tabs %}{% from "_tabs.html" import tab_bar, panel_attrs %}{{ tab_bar('Compliance views', compliance_tabs, '') }}<div {{ panel_attrs('') }}>{% endif %}
+
+  <div id="cmp-status" class="muted" role="status" aria-live="polite"></div>
+
+  {% if summary %}
+  <div class="cmp-stats">
+    <div class="cmp-stat{% if summary.get('action_needed', 0) %} cmp-stat--warn{% endif %}">
+      <span class="cmp-stat__n">{{ summary.get('action_needed', 0) }}</span>
+      <span class="cmp-stat__label">Need action</span>
+    </div>
+    <div class="cmp-stat">
+      <span class="cmp-stat__n">{{ summary.get('active', 0) }}</span>
+      <span class="cmp-stat__label">Switched on</span>
+    </div>
+    <div class="cmp-stat">
+      <span class="cmp-stat__n">{{ summary.get('total', 0) }}</span>
+      <span class="cmp-stat__label">Protections checked</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if groups %}
+  <div class="section-head"><h2 id="cmp-attention" tabindex="-1">Needs attention</h2></div>
+  <div class="panel">
+    <p class="muted mv-freshness" data-mv-freshness style="margin-top: 0;">Checked {{ checked_at | datetime }}, live from your workspace each time this page opens.</p>
+    {% if owner_saved %}<p role="status" data-mv-toast="Owner and due date saved."><strong>Saved.</strong> Owner and due date saved, and written to the activity record.</p>{% endif %}
+    {% if owner_error %}<p role="alert"><strong>That didn't work.</strong> {{ owner_error }}</p>{% endif %}
+    {% if attention %}
+    <p class="muted" style="margin-top: 0;">Each row is a protection that is not switched on yet. Give it an owner and a due date, then follow the steps.</p>
+    <div class="cmp-table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Protection</th>
+            <th scope="col">What it means</th>
+            <th scope="col">Owner and due date</th>
+            <th scope="col">Steps to fix it</th>
+            <th scope="col">What to do</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for label, c in attention %}
+          {% set g = guide_for(c) %}
+          {% set o = owners.get(c.control) %}
+          <tr>
+            <td>{{ c.control }} <span class="muted">· {{ label }} · {{ c.regulation }}</span></td>
+            <td>{{ g.about }}</td>
+            <td>
+              {% if o and o.owner %}{{ (o.owner | identity).name }}{% else %}<span class="muted">No owner yet</span>{% endif %}
+              {% if o and o.due %}<br>Due {{ o.due | datetime('date') }}{% if owner_overdue(o) %} <span class="badge blocked">Overdue</span>{% endif %}{% else %}<br><span class="muted">No due date</span>{% endif %}
+              {% if o and o.set_by %}<br><span class="muted">Set by {{ (o.set_by | identity).name }}, {{ o.set_at | datetime }}</span>{% endif %}
+              {% if can_admin %}
+              <form method="post" action="/compliance/owners" class="cmp-row" style="margin-top: var(--space-2);">
+                <input type="hidden" name="control" value="{{ c.control }}" />
+                <label for="cmp-owner-{{ loop.index }}">Owner
+                  <select id="cmp-owner-{{ loop.index }}" name="owner" class="select">
+                    <option value="">No owner</option>
+                    {% for principal, name in owner_people %}<option value="{{ principal }}"{% if o and o.owner == principal %} selected{% endif %}>{{ name }}</option>{% endfor %}
+                  </select>
+                </label>
+                <label for="cmp-due-{{ loop.index }}">Due date
+                  <input id="cmp-due-{{ loop.index }}" type="date" name="due" class="input" value="{{ o.due if o else '' }}" />
+                </label>
+                <button type="submit" class="btn btn--ghost" aria-label="Save owner and due date for {{ c.control }}">Save</button>
+              </form>
+              {% endif %}
+            </td>
+            <td><ol class="cmp-list">{% for step in owner_steps(g, can_global_admin=can_global_admin) %}<li>{{ step }}</li>{% endfor %}</ol></td>
+            <td>{{ action_button(c, g) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted" style="margin: 0;">Nothing needs action. Every protection shown here is switched on or ready when you need it.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Filter and download</h2></div>
+  <div class="panel">
+    <form method="get" action="/compliance" class="cmp-row" id="cmp-filter">
+      <label for="cmp-framework">Regulation
+        <select id="cmp-framework" name="framework" class="select">
+          <option value="all" {% if framework == 'all' %}selected{% endif %}>All regulations</option>
+          <option value="eu" {% if framework == 'eu' %}selected{% endif %}>European Union (AI Act and GDPR)</option>
+          <option value="us" {% if framework == 'us' %}selected{% endif %}>United States (federal and state)</option>
+        </select>
+      </label>
+      <button type="submit" class="btn btn--ghost">Show</button>
+      <a class="btn btn--ghost" href="/api/v1/compliance/report.md?framework={{ framework }}" download>Download report</a>
+      <a class="btn btn--ghost" href="/api/v1/compliance/report.csv?framework={{ framework }}" download>Download spreadsheet</a>
+    </form>
+  </div>
+
+  {% if groups %}
+    {% set hist = control_history or {} %}
+    {% if hist.checked_at %}<p class="muted" id="cmp-checked">Checked {{ hist.checked_at | datetime }}. Lightwork checks every protection again each hour, and each time this page opens.</p>{% endif %}
+    {% for fw, group in groups.items() %}
+    <div class="section-head"><h2>{{ group.label }}</h2></div>
+    <div class="panel cmp-table">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Status</th>
+            <th scope="col">Since</th>
+            <th scope="col">Protection</th>
+            <th scope="col">Rule</th>
+            <th scope="col">What it means</th>
+            <th scope="col">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for c in group.rows %}
+          {% set g = guide_for(c) %}
+          <tr>
+            <td>
+              {% if c.status == 'active' %}<span class="badge active">{{ g.status_text }}</span>
+              {% elif c.status == 'action_needed' %}<span class="badge blocked">{{ g.status_text }}</span>
+              {% else %}<span class="badge pending">{{ g.status_text }}</span>{% endif %}
+            </td>
+            <td>{% set since = ((hist.controls or {}).get(c.control) or {}).get('since') %}{% if since %}{{ since | datetime }}{% else %}<span class="muted">Not recorded</span>{% endif %}</td>
+            <td>{{ c.control }}</td>
+            <td>{{ c.regulation }}</td>
+            <td class="muted">{{ g.about }}</td>
+            <td>{{ action_button(c, g) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+    {% if hist.changes %}
+    <details class="panel" id="cmp-history">
+      <summary>Status changes ({{ hist.changes | length }})</summary>
+      <ol class="cmp-history">
+        {% for change in hist.changes | reverse %}{% if loop.index <= 50 %}
+        <li>{{ change.at | datetime }}: {{ change.control }} went from {{ status_word(change['from']) }} to {{ status_word(change.to) }}</li>
+        {% endif %}{% endfor %}
+      </ol>
+    </details>
+    {% endif %}
+  {% else %}
+    <div class="panel">
+      <p class="muted">Nothing to report for this filter. Choose &ldquo;All regulations&rdquo; above, or come back once Lightwork has done some work.</p>
+      <a class="btn btn--ghost" href="/compliance">Show all regulations</a>
+    </div>
+  {% endif %}
+
+  <div class="section-head"><h2 id="cmp-people">A person&rsquo;s data</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">Give someone a copy of everything Lightwork holds about them, or delete it all when they ask.</p>
+    {% if can_admin %}
+    <div class="cmp-row">
+      <label for="cmp-person">Person
+        <select id="cmp-person" class="select"><option value="">Loading people…</option></select>
+      </label>
+      <button type="button" class="btn btn--ghost" id="cmp-export">Download their data</button>
+      <button type="button" class="btn btn--danger" id="cmp-erase">Erase their data</button>
+    </div>
+    <p id="cmp-people-result" class="muted" role="status" aria-live="polite"></p>
+    {% include "_ops_person_documents.html" %}
+    {% else %}
+    <p class="muted">Only an administrator can export or erase a person&rsquo;s data.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="cmp-retention">How long data is kept</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">Choose installation default periods. Keep until I choose turns off automatic pruning for that record type. Workspace policies may override these defaults; review the effective periods and workspace scope before deleting.</p>
+    <form id="cmp-retention-form" class="cmp-grid">
+      {% for key, label in retention_fields %}
+      <label for="cmp-ret-{{ key }}">{{ label }}
+        <select id="cmp-ret-{{ key }}" name="{{ key }}" class="select" {% if not can_global_admin %}disabled{% endif %}>
+          <option value="">Keep until I choose</option>
+        </select>
+      </label>
+      {% endfor %}
+    </form>
+    <div class="cmp-links">
+      {% if can_global_admin %}
+      <button type="button" class="btn btn--primary" id="cmp-retention-save">Save periods</button>
+      <button type="button" class="btn btn--ghost" id="cmp-retention-apply">Preview old records</button>
+      {% else %}
+      <span class="muted">Only an administrator can change these periods.</span>
+      {% endif %}
+    </div>
+    <p id="cmp-retention-result" class="muted" role="status" aria-live="polite"></p>
+    {% include "_retention_maintenance.html" %}
+  </div>
+
+  {% if ediscovery_can_audit %}{% include "ediscovery_legal_holds.html" %}{% endif %}
+
+  <div class="section-head"><h2 id="cmp-reports">Reports for auditors</h2></div>
+  <div class="panel" data-report-context="{{ report_download_context }}">
+    <div class="cmp-links" style="margin-top: 0;">
+      {% if can_admin %}
+      <button type="button" class="btn btn--ghost" data-report-download="soc2" data-report-status="cmp-report-result">Download SOC 2 snapshot</button>
+      <button type="button" class="btn btn--ghost" data-report-download="ai_inventory" data-report-status="cmp-report-result">Download AI inventory list</button>
+      {% endif %}
+    </div>
+    <p id="cmp-report-result" class="muted" role="status" aria-live="polite"></p>
+    {% if can_operate %}
+    <div class="cmp-row" style="margin-top: .75rem;">
+      <label for="cmp-assessment">Assessment
+        <select id="cmp-assessment" class="select"><option value="">Loading assessments…</option></select>
+      </label>
+      <button type="button" class="btn btn--ghost" id="cmp-oscal" data-report-download="oscal" data-report-status="cmp-assessment-result">Download results (OSCAL)</button>
+      <button type="button" class="btn btn--ghost" id="cmp-soa" data-report-download="soa" data-report-status="cmp-assessment-result">Download Statement of Applicability</button>
+    </div>
+    <p id="cmp-assessment-result" class="muted" role="status" aria-live="polite"></p>
+    {% endif %}
+    {% if not can_admin and not can_operate %}<p class="muted">Ask an administrator for these reports.</p>{% endif %}
+  </div>
+
+  <div class="section-head"><h2>EU AI Act self-check</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">See which EU AI Act risk level usually applies to you and what each level requires.</p>
+    <button type="button" class="btn btn--ghost" id="cmp-ai-act">Run the self-check</button>
+    <div id="cmp-ai-act-result" role="status" aria-live="polite"></div>
+  </div>
+
+  <div class="section-head"><h2>Find the right control</h2></div>
+  <div class="panel">
+    <form id="cmp-finder" class="cmp-row">
+      <label for="cmp-finder-q">Describe the risk
+        <input id="cmp-finder-q" name="q" class="input" maxlength="300"
+               placeholder="For example: vendor has no data agreement">
+      </label>
+      <button type="submit" class="btn btn--ghost">Search</button>
+    </form>
+    <div id="cmp-finder-result" role="status" aria-live="polite"></div>
+  </div>
+
+  {% if disclaimer %}
+  <div class="panel">
+    <p class="muted" style="margin: 0;">This report shows which protections are switched on. It is not legal advice or a certificate of compliance. Full compliance also needs your own contracts, records and legal review.</p>
+  </div>
+  {% endif %}
+  {% if compliance_tabs %}</div>{% endif %}
+  <script src="/static/lightwork-compliance.js" defer></script>
+  <script src="/static/lightwork-report-downloads.js" defer></script>
+  <script src="/static/lightwork-retention-maintenance.js" defer></script>
+{% endblock %}

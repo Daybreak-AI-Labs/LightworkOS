@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Share preparation safely · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Share preparation safely', lede='Share eligible preparation while keeping each original case separate and checking every complete result.') }}
+<div id="work-restructuring" class="stack">
+  <section class="glass-card stack" aria-labelledby="wr-source-h">
+    <h2 id="wr-source-h">Choose original cases</h2>
+    <p class="muted">Use a published local rule workflow and two to eight original cases with current reuse permission. No AI service or connected action runs.</p>
+    <p id="wr-disabled" class="muted" hidden>Grouping local work is off. An administrator can enable <strong>Share preparation safely</strong> in <a href="/settings#feature-work_restructuring">Settings</a>. Your original requests remain available below.</p>
+    <form id="wr-form" class="stack">
+      <label for="wr-flow">Published workflow</label><select id="wr-flow" class="select" required><option value="">Choose a workflow</option></select>
+      <p id="wr-version" class="muted"></p>
+      <fieldset><legend>Original cases</legend><div id="wr-cases" class="stack"></div></fieldset>
+      <p class="muted">Keep each case separate by leaving its group empty. Cases with exactly the same group name may share successful preparation during this check. Give each case a deadline for this local check; these are not customer delivery commitments.</p>
+      <label class="wr-check"><input id="wr-sharing" type="checkbox"><span>I allow the displayed cases with the same group name to share eligible local preparation.</span></label>
+      <details><summary>Work allowance</summary><div class="stack">
+        <label for="wr-steps">Total local calculation steps, including separate comparisons</label><input id="wr-steps" class="input" type="number" min="4" max="1024" step="1" value="512" required>
+        <label for="wr-seconds">Total local check time in seconds</label><input id="wr-seconds" class="input" type="number" min="1" max="30" step="1" value="15" required>
+        <p class="muted">The allowance covers grouped calculations, every independent complete comparison, current-source checks and intermediate case receipts. Final confirmation and browser time are additional. It makes no promise of faster work or savings.</p>
+      </div></details>
+      <div class="lrn__actions"><button id="wr-review" type="button" class="btn btn--primary">Review local grouping</button><button id="wr-refresh" type="button" class="btn btn--ghost">Refresh current cases</button></div>
+    </form>
+    <p id="wr-status" class="muted" role="status" aria-live="polite">Checking current choices…</p><p id="wr-error" role="alert" class="danger-text"></p>
+    <div id="wr-preview" class="stack" hidden></div>
+    <a id="wr-retain" href="/learning/recheck-rules" class="btn btn--ghost">Review and retain original case evidence</a>
+  </section>
+  <section class="glass-card stack" aria-labelledby="wr-original-h">
+    <h2 id="wr-original-h">Original requests and results</h2>
+    <label for="wr-history">Your original local check</label><select id="wr-history" class="select"><option value="">Choose an original request</option></select>
+    <button id="wr-read" type="button" class="btn btn--ghost">Check original outcome</button>
+    <div id="wr-result" class="stack" aria-live="polite"></div>
+    <p class="muted">A lost reply never repeats the work. Original request custody remains available when learning is stopped or source reuse is withdrawn. Private source values are shown only while current permission still allows them.</p>
+  </section>
+  <details><summary>Supported work and meaning</summary><p class="muted">This finite single-computer check groups exact common preparation, keeps separate results and permissions, and orders cases by their local deadlines. It supports existing bounded local rules, direct value copies and included owned rule workflows. It excludes AI fallback, connected actions, live approvals, retries, waiting and cycles. Every case also receives a complete unchanged run with its original inputs. The ordinary batching comparison uses the same exact inputs, workflow versions and confidentiality groups. Agreement on these known cases does not prove future correctness, a new algorithm, an advantage over ordinary batching, or preservation of excluded outside effects.</p></details>
+</div>
+<style>#work-restructuring{min-width:0;overflow-wrap:anywhere}#work-restructuring .glass-card{padding:var(--space-4)}#work-restructuring fieldset{min-width:0;padding:var(--space-3)}#work-restructuring .input,#work-restructuring .select,#work-restructuring .btn{width:100%;max-width:100%;min-width:0;box-sizing:border-box;white-space:normal}#work-restructuring .wr-check{display:flex;gap:var(--space-2);align-items:flex-start}#work-restructuring .wr-check input{flex:none}#work-restructuring dd{margin-inline-start:var(--space-3);white-space:pre-wrap}#work-restructuring .wr-case{padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md)}#work-restructuring details{padding:var(--space-2)}</style>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-work-restructuring.js" defer></script>{% endblock %}

@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block title %}Research lab · Lightwork{% endblock %}
+{% block content %}
+
+<style>
+  .research-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:var(--space-3); }
+  .research-stack { display:grid;gap:var(--space-3);align-content:start;min-width:0; }
+  .research-form { display:grid;gap:var(--space-3); }
+  .research-form label { display:flex;flex-direction:column;gap:var(--space-1);min-width:0; }
+  .research-form .check { flex-direction:row;align-items:flex-start; }
+  .research-form .check input { width:auto;flex:none;margin-block-start:.3em; }
+  .research-form .input { box-sizing:border-box;width:100%;max-width:100%; }
+  .research-actions { display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center; }
+  .research-list { display:grid;gap:var(--space-2);padding:0;list-style:none; }
+  .research-item { border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-3);overflow-wrap:anywhere; }
+  .research-item p { margin:.35rem 0; }
+  .research-evaluator { display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:var(--space-2);align-items:end;margin-block:var(--space-2); }
+  .research-execution-review { max-width:min(90vw,58rem); max-height:85vh; overflow:auto; background:var(--surface-1); color:var(--text); border:1px solid var(--border); border-radius:var(--radius-lg); padding:var(--space-4); }
+  .research-source { white-space:pre-wrap;overflow:auto;max-height:24rem;padding:var(--space-2);background:var(--surface-2);border-radius:var(--radius-md); }
+  .research-workspace { margin-block:var(--space-4); }
+  .research-workspace .panel { min-width:0; }
+  .research-workspace select[multiple] { min-height:8rem; }
+  .research-workspace code { overflow-wrap:anywhere; }
+  .research-badge { display:inline-block;padding:.15rem .5rem;border:1px solid var(--border);border-radius: var(--radius-pill);font-size:.85rem; }
+  .research-badge[data-state="approved"] { border-color:var(--success, #27864a); }
+  .research-badge[data-state="revoked"], .research-badge[data-state="failed"] { border-color:var(--danger, #b42318); }
+  .research-lineage { padding-inline-start:1.25rem; }
+  .research-costs { margin-block:var(--space-2); }
+  .research-advanced { border-block-start:1px solid var(--border);padding-block-start:var(--space-2); }
+  .research-checks { display:flex;flex-wrap:wrap;gap:.25rem 1rem;border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-2); }
+  .research-checks label { flex-direction:row;align-items:center;gap:.35rem; }
+  .research-file-state { font-size:.85rem; }
+  @media (max-width:720px) { .research-evaluator { grid-template-columns:1fr; } }
+</style>
+{% set purposes = [('product_research', 'Product research'), ('model_evaluation', 'Testing an AI model'), ('quality_improvement', 'Improving quality'), ('safety_testing', 'Safety testing'), ('analytics', 'Business analysis')] %}
+{% set constraints = [('local_only', 'Keep on this installation only'), ('no_export', 'Never export'), ('internal_only', 'Internal staff only'), ('no_personal_data', 'No personal information'), ('delete_after_use', 'Delete after use')] %}
+{% set licenses = [('proprietary-internal', 'Company-owned (internal)'), ('customer-contract', 'Covered by a customer contract'), ('CC-BY-4.0', 'Creative Commons Attribution 4.0'), ('CC0-1.0', 'Public domain (CC0)'), ('MIT', 'MIT'), ('Apache-2.0', 'Apache 2.0')] %}
+
+{% macro fingerprint(name, label, required=false, help='') -%}
+<label>{{ label }}<input class="input" type="file" data-fingerprint-for="{{ name }}"{% if required %} required{% endif %}>
+  <span class="muted research-file-state" data-fingerprint-state="{{ name }}">{{ help }}</span></label>
+<input type="hidden" name="{{ name }}">
+{%- endmacro %}
+
+{% macro checks(into, label, options, required=false) -%}
+<fieldset class="research-checks" data-join-into="{{ into }}"{% if required %} data-required="true"{% endif %}><legend>{{ label }}</legend>
+  {% for value, text in options %}<label><input type="checkbox" value="{{ value }}"> {{ text }}</label>{% endfor %}
+</fieldset>
+{%- endmacro %}
+
+{% macro license_field() -%}
+<label>License
+  <select class="input" data-into="license_id" required>
+    <option value="">Choose a license</option>
+    {% for value, text in licenses %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
+    <option value="__other__">Another license…</option>
+  </select>
+  <input class="input" data-other-for="license_id" hidden maxlength="128" aria-label="License name"></label>
+<input type="hidden" name="license_id">
+{%- endmacro %}
+
+<div id="research-lab" data-context="{{ research_context }}">
+  {% from "_hero.html" import hero %}
+  {{ hero('Research', 'Research lab',
+          lede='Try out data and AI models safely before they are used for real work. Every dataset, model and
+                experiment is recorded, and each step needs approval.') }}
+  <p id="research-status" role="status" aria-live="polite">Loading…</p>
+
+  <section class="panel" aria-labelledby="research-readiness-title">
+    <h2 id="research-readiness-title">Ready to run experiments?</h2>
+    <p id="research-readiness">Checking…</p>
+    <p class="muted">A good result here shows the experiment worked on this installation. It does not prove it will work with live customers.</p>
+    <button type="button" class="btn btn--ghost" id="research-refresh">Refresh</button>
+  </section>
+
+  <section class="research-workspace" aria-labelledby="governed-research-title">
+    <h2 id="governed-research-title">Datasets, models and runs</h2>
+    <p>Add a dataset or model, have it reviewed, then run an experiment on the approved versions. The data and model files themselves stay where they are; Lightwork keeps a fingerprint to prove nothing changed.</p>
+    <p id="research-governed-status" role="status" aria-live="polite">Loading…</p>
+    <div class="research-actions">
+      <button type="button" class="btn btn--ghost" id="research-governed-refresh">Refresh</button>
+      <span id="research-materialization-state" class="muted"></span>
+    </div>
+    <p id="research-registry-authority-state" class="muted"></p>
+
+    <div class="research-grid">
+      <div class="research-stack">
+        <details class="panel" open>
+        <summary><strong>Add a dataset</strong></summary>
+        <form id="research-dataset-form" class="research-form">
+          <label>Dataset name<input class="input" data-slug-for="dataset_id" data-version-for="version" data-kind="dataset" maxlength="120" required placeholder="For example: Customer support tickets 2025"></label>
+          <input type="hidden" name="dataset_id"><input type="hidden" name="version">
+          <label>Permission to use it<select class="input" name="data_use_decision_choice" required><option value="">Choose an approved use</option></select></label>
+          <p class="muted">Approved uses come from Data-use governance. <a href="/data-use">Ask for or review a data use</a>.</p>
+          <input type="hidden" name="data_use_decision_id"><input type="hidden" name="data_use_decision_sha256">
+          <label>Where the data lives<input class="input" name="source_ref" maxlength="2048" required placeholder="The file, folder or library the data comes from"></label>
+          {{ fingerprint('content_sha256', 'Data file (optional)', help='Choose the file so Lightwork can prove it later. Leave empty for records already stored in Lightwork.') }}
+          {{ license_field() }}
+          {{ fingerprint('license_evidence_sha256', 'License or contract document', required=true) }}
+          {{ checks('allowed_purposes', 'What it may be used for', purposes, required=true) }}
+          <input type="hidden" name="allowed_purposes">
+          {{ checks('usage_constraints', 'Rules for using it', constraints, required=true) }}
+          <input type="hidden" name="usage_constraints">
+          <div class="research-grid">
+            <label>Allowed action<select class="input" name="data_use_action" required><option value="analyze">Analyze</option><option value="train">Train a model</option><option value="read">Read</option><option value="export">Export</option></select></label>
+            <label>Kind of data<select class="input" name="provenance_kind" required><option value="source">Original data</option><option value="derived">Made from other datasets</option><option value="synthetic">Generated test data</option></select></label>
+          </div>
+          <details class="research-advanced">
+            <summary>Consent and where it came from</summary>
+            <label>Made from these datasets<select class="input" name="parent_datasets" multiple></select></label>
+            <p class="muted">Hold Ctrl (or Cmd on a Mac) to choose more than one.</p>
+            <label>Consent reference<input class="input" name="consent_record_id" maxlength="128" placeholder="From your consent records"></label>
+            {{ fingerprint('consent_evidence_sha256', 'Consent record file') }}
+          </details>
+          <div id="research-synthetic-fields" class="research-advanced" hidden>
+            <p><strong>Generated test data</strong>: this label stays with every run and export.</p>
+            <div class="research-grid">
+              <label>Generator name<input class="input" name="synthetic_generator_id" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}" maxlength="128" title="Letters, numbers, dots, dashes"></label>
+              <label>Generator version<input class="input" name="synthetic_generator_version" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}" maxlength="128" value="1"></label>
+            </div>
+            {{ fingerprint('synthetic_generator_sha256', 'Generator program file') }}
+            {{ fingerprint('synthetic_config_sha256', 'Generator settings file') }}
+            <input type="hidden" name="synthetic_seed" data-random-seed>
+          </div>
+          <label class="check"><input type="checkbox" name="confirm" required>I checked where the data comes from, its license and how it may be used.</label>
+          <button type="submit" class="btn btn--primary">Add dataset</button>
+        </form>
+        </details>
+
+        <details class="panel">
+        <summary><strong>Add an AI model</strong></summary>
+        <form id="research-model-form" class="research-form">
+          <label>Model name<input class="input" data-slug-for="model_id" data-version-for="version" data-kind="model" maxlength="120" required></label>
+          <input type="hidden" name="model_id"><input type="hidden" name="version">
+          <label>AI model<select class="input" data-into="provider_model_identity" required>
+            <option value="">Choose a model</option>
+            {% for m in model_choices %}<option value="{{ m.value }}">{{ m.label }}</option>{% endfor %}
+            <option value="__other__">Another model…</option></select>
+            <input class="input" data-other-for="provider_model_identity" hidden maxlength="256" aria-label="Model name"></label>
+          <input type="hidden" name="provider_model_identity">
+          <label>Where the model files live<input class="input" name="source_ref" maxlength="2048" required placeholder="A web address or internal library location"></label>
+          {{ fingerprint('artifact_sha256', 'Model file', required=true) }}
+          {{ license_field() }}
+          {{ fingerprint('license_evidence_sha256', 'License or contract document', required=true) }}
+          {{ checks('allowed_purposes', 'What it may be used for', purposes, required=true) }}
+          <input type="hidden" name="allowed_purposes">
+          {{ checks('usage_constraints', 'Rules for using it', constraints, required=true) }}
+          <input type="hidden" name="usage_constraints">
+          <div class="research-grid">
+            <label>Exact version from the provider (optional)<input class="input" name="immutable_provider_revision" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}" maxlength="128" placeholder="Leave empty if the provider does not publish one"></label>
+            <label>Where it came from<select class="input" name="provenance_kind"><option value="external">From a provider</option><option value="trained">Trained in Lightwork</option></select></label>
+          </div>
+          <details class="research-advanced">
+            <summary>When the provider has no exact version</summary>
+            <div class="research-grid">
+              <label>Used from<input class="input" type="datetime-local" data-epoch-into="observed_from"></label>
+              <label>Used until<input class="input" type="datetime-local" data-epoch-into="observed_until"></label>
+            </div>
+            <input type="hidden" name="observed_from"><input type="hidden" name="observed_until">
+            <label>Why results may not repeat exactly<textarea class="input" name="reproducibility_limitation" rows="2" maxlength="512"></textarea></label>
+          </details>
+          <details class="research-advanced">
+            <summary>Datasets and models it was built from</summary>
+            <label>Datasets<select class="input" name="dataset_lineage" multiple></select></label>
+            <label>Why those datasets were used<select class="input" name="dataset_lineage_purpose"><option value="">Choose</option>{% for value, text in purposes %}<option value="{{ value }}">{{ text }}</option>{% endfor %}</select></label>
+            <label>Base models<select class="input" name="model_lineage" multiple></select></label>
+            <p class="muted">Hold Ctrl (or Cmd on a Mac) to choose more than one.</p>
+          </details>
+          <div id="research-training-receipt-fields" class="research-advanced" hidden>
+            <p>A model trained in Lightwork is only accepted with its signed training receipt.</p>
+            <label>Training receipt reference<input class="input" name="training_receipt_id" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}" maxlength="128"></label>
+            {{ fingerprint('training_receipt_sha256', 'Training receipt file') }}
+            {{ fingerprint('training_dataset_sha256', 'Training data list file') }}
+          </div>
+          <label class="check"><input type="checkbox" name="confirm" required>I checked the model, its version, license and where it came from.</label>
+          <button type="submit" class="btn btn--primary">Add model</button>
+        </form>
+        </details>
+      </div>
+
+      <div class="research-stack">
+        <details class="panel" open>
+          <summary><strong>Run an experiment</strong></summary>
+          <form id="research-run-form" class="research-form">
+          <input type="hidden" name="run_id"><input type="hidden" name="run_version" value="v1">
+          <label>Saved program<select class="input" name="program_id" id="research-program-choice" required><option value="">Loading saved programs…</option></select></label>
+          <p id="research-program-notice" class="muted"></p>
+          <p class="muted">Use <a href="#research-submit">Send for review</a> below to save the actual program files first. This executor analyzes approved local text snapshots without an AI model. Training, remote files and other environments need a separately supported executor.</p>
+          <input type="hidden" name="experiment_id"><input type="hidden" name="experiment_version">
+          <input type="hidden" name="code_revision"><input type="hidden" name="code_sha256">
+          <input type="hidden" name="environment_id"><input type="hidden" name="environment_version"><input type="hidden" name="environment_sha256">
+          <input type="hidden" name="metric_protocol_sha256"><input type="hidden" name="seed" data-random-seed>
+          <label>Purpose<select class="input" name="purpose" required><option value="">Choose a purpose</option></select></label>
+          <label>What to do<select class="input" name="action"><option value="analyze">Analyze local text snapshots</option></select></label>
+          <label>Approved datasets<select class="input" name="dataset_refs" multiple required></select></label>
+          <p class="muted">Only approved datasets allowed for this purpose are listed. Hold Ctrl (or Cmd) to choose more than one. The complete review identifies the exact text snapshots supplied to the program.</p>
+          <input type="hidden" name="model_ref" value="">
+          <details class="research-advanced" open>
+            <summary>Limits</summary>
+            <div class="research-grid">
+              <label>Time limit<select class="input" data-scale-into="max_wall_seconds" data-scale="60"><option value="5" selected>5 minutes</option><option value="15">15 minutes</option></select></label>
+              <label>Storage limit<select class="input" data-scale-into="max_storage_bytes" data-scale="1048576"><option value="100" selected>100 MB</option><option value="1024">1 GB</option></select></label>
+            </div>
+            <p>No network or paid AI calls. Local compute has no independently metered financial price.</p>
+            <input type="hidden" name="max_wall_seconds" value="300"><input type="hidden" name="max_provider_calls" value="0"><input type="hidden" name="max_storage_bytes" value="104857600"><input type="hidden" name="max_cost" value="0"><input type="hidden" name="currency" value="USD">
+          </details>
+          <label class="check"><input type="checkbox" name="confirm" required>I checked the datasets, purpose, code and limits. Queue this run for a different administrator’s complete review.</label>
+          <button type="submit" class="btn btn--primary">Queue the run</button>
+          </form>
+        </details>
+      </div>
+    </div>
+
+    <div class="research-grid">
+      <section class="panel" aria-labelledby="research-assets-title">
+        <h3 id="research-assets-title">Datasets and models</h3>
+        <ul id="research-registry-items" class="research-list"><li>Loading…</li></ul>
+        <div id="research-impact" aria-live="polite"></div>
+      </section>
+      <section class="panel" aria-labelledby="research-runs-title">
+        <h3 id="research-runs-title">Runs and their cost</h3>
+        <p id="research-original-status" role="status" aria-live="polite"></p><button type="button" class="btn btn--ghost" id="research-read-original" hidden>Read original run</button>
+        <ul id="research-governed-runs" class="research-list"><li>Loading…</li></ul>
+      </section>
+    </div>
+  </section>
+
+  <section class="panel" id="research-promotions" aria-labelledby="research-promotions-title">
+    <h2 id="research-promotions-title">Put a result into use (or undo it)</h2>
+    <p>A good result does not put itself into use. A person must approve it, and Lightwork checks the results, data rights and permissions again before every step.</p>
+    {% include "_local_flow_release.html" %}
+    <p id="research-promotions-status" role="status" aria-live="polite">Loading candidate promotions…</p>
+    <div class="research-actions">
+      <button type="button" class="btn btn--ghost" id="research-promotions-refresh">Refresh</button>
+      <span id="research-promotions-readiness" class="muted"></span>
+    </div>
+    <details class="research-advanced" id="research-promotion-proposal" hidden>
+      <summary><strong>Propose a finished result</strong></summary>
+      <p>Choose a finished run and where it should be used. Lightwork gathers the results and evidence itself.</p>
+      <form id="research-promotion-form" class="research-form">
+        <div class="research-grid">
+          <label>Name for this proposal<input class="input" name="candidate_id" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}" maxlength="128" required title="Letters, numbers, dots and dashes"></label>
+          <label>Completed run<select class="input" name="run_id" required><option value="">Choose a completed run</option></select></label>
+          <label>Where to use it<select class="input" name="target_preset" required><option value="">Choose a deployment target</option></select></label>
+        </div>
+        <p class="muted">Results that were negative or unclear stay visible but cannot be put into use.</p>
+        <button type="submit" class="btn btn--primary">Ask for approval</button>
+      </form>
+    </details>
+    <ul id="research-promotions-list" class="research-list"><li>Loading…</li></ul>
+  </section>
+
+  <details class="panel" id="research-settings" hidden>
+    <summary>Administrator setup</summary>
+    <p>Experiments run in a locked-down container that is already installed on this computer. Each experiment is checked against a known correct output.</p>
+    <p id="research-settings-readiness" class="muted"></p>
+    <form id="research-settings-form" class="research-form">
+      <label class="check"><input type="checkbox" name="enable">Allow experiments to run</label>
+      <label>Container image (from your IT team)<input class="input" name="image_id" maxlength="71" pattern="sha256:[a-f0-9]{64}" autocomplete="off" required title="The exact image reference your IT team gave you"></label>
+      <label>How long a submission waits for review<select class="input" data-scale-into="queue_seconds" data-scale="60"><option value="15">15 minutes</option><option value="60" selected>1 hour</option><option value="480">8 hours</option><option value="1440">1 day</option></select></label>
+      <input type="hidden" name="queue_seconds" value="3600">
+      <div>
+        <div class="research-actions"><strong>Correct-output checks</strong><button type="button" class="btn btn--ghost" id="research-add-evaluator">Add a check</button></div>
+        <div id="research-evaluators"></div>
+      </div>
+      <details>
+        <summary>Container limits</summary>
+        <div class="research-grid">
+          <label>Time limit<select class="input" data-scale-into="timeout_seconds" data-scale="1"><option value="5">5 seconds</option><option value="10" selected>10 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option></select></label>
+          <label>Largest output<select class="input" data-scale-into="output_bytes" data-scale="1024"><option value="16">16 KB</option><option value="64" selected>64 KB</option><option value="256">256 KB</option><option value="1024">1 MB</option></select></label>
+          <label>Memory<select class="input" data-scale-into="memory_bytes" data-scale="1048576"><option value="64">64 MB</option><option value="128" selected>128 MB</option><option value="512">512 MB</option><option value="1024">1 GB</option></select></label>
+          <label>Scratch space<select class="input" data-scale-into="scratch_bytes" data-scale="1048576"><option value="1">1 MB</option><option value="16" selected>16 MB</option><option value="64">64 MB</option><option value="256">256 MB</option></select></label>
+          <label>Programs at once<select class="input" data-scale-into="pids" data-scale="1"><option value="8">8</option><option value="32" selected>32</option><option value="128">128</option></select></label>
+          <label>Processor share<select class="input" data-scale-into="cpus" data-scale="1"><option value="0.25">A quarter of a processor</option><option value="0.5" selected>Half a processor</option><option value="1">One processor</option><option value="2">Two processors</option></select></label>
+        </div>
+        <input type="hidden" name="timeout_seconds" value="10"><input type="hidden" name="output_bytes" value="65536"><input type="hidden" name="memory_bytes" value="134217728">
+        <input type="hidden" name="scratch_bytes" value="16777216"><input type="hidden" name="pids" value="32"><input type="hidden" name="cpus" value="0.5">
+      </details>
+      <label class="check"><input type="checkbox" name="confirm">I understand this changes how experiments run for everyone, and waiting submissions must be reviewed again.</label>
+      <button type="submit" class="btn btn--primary" id="research-settings-save">Save setup</button>
+    </form>
+  </details>
+
+  <div class="research-grid">
+    <section class="panel" aria-labelledby="research-submit-title">
+      <h2 id="research-submit-title">Send code for review (for developers)</h2>
+      <form id="research-submit" class="research-form">
+        <label>Program files<input class="input" name="files" type="file" multiple required></label>
+        <p id="research-files" class="muted">Choose up to 64 text files, 256 KB in total.</p>
+        <label>File to start with<select class="input" name="entrypoint" required><option value="">Choose files first</option></select></label>
+        <label>Correct-output check<select class="input" name="evaluator_id" required><option value="">No check is available</option></select></label>
+        <label class="check"><input type="checkbox" name="confirm">Send these exact files to an administrator for review.</label>
+        <button type="submit" class="btn btn--primary" id="research-submit-button">Send for review</button>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="research-jobs-title">
+      <h2 id="research-jobs-title">Your experiments</h2>
+      <ul id="research-jobs" class="research-list"><li>Loading…</li></ul>
+    </section>
+  </div>
+
+  <section class="panel" id="research-review-panel" aria-labelledby="research-review-title" hidden>
+    <h2 id="research-review-title">Waiting for your review</h2>
+    <p>Open a submission to read every file. Running it uses exactly these files and the current setup.</p>
+    <div class="research-actions">
+      <label for="research-review-choice">Submission</label>
+      <select class="input" id="research-review-choice"><option value="">Choose a submission</option></select>
+      <button type="button" class="btn btn--ghost" id="research-open-review">Open the files</button>
+    </div>
+    <div id="research-review-detail"></div>
+    <label class="check"><input type="checkbox" id="research-dispatch-confirm">I read every file and checked the current setup.</label>
+    <div class="research-actions">
+      <button type="button" class="btn btn--primary" id="research-dispatch" disabled>Run it</button>
+      <button type="button" class="btn btn--danger" id="research-admin-cancel" disabled>Cancel submission</button>
+    </div>
+  </section>
+</div>
+<script src="/static/lightwork-research-plain.js" defer></script>
+<script src="/static/lightwork-research.js" defer></script>
+<script src="/static/lightwork-research-workspace.js" defer></script>
+<script src="/static/lightwork-candidate-promotions.js" defer></script>
+{% endblock %}

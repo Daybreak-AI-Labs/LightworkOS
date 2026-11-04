@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Workflow readiness · Lightwork{% endblock %}
+{% block content %}
+{{ hero('Before you rely on it', 'Workflow readiness',
+        lede='What each feature can do today, and what you still need to check before relying on it for real work.') }}
+{% if disabled %}
+<section class="panel" role="status" aria-labelledby="wr-off-title">
+  <h2 id="wr-off-title">This page is turned off</h2>
+  {% if unavailable %}
+  <p>Lightwork could not read this workspace's settings, so this page can't be shown right now. Try again in a minute, or ask your administrator to check the settings.</p>
+  {% elif can_turn_on %}
+  <p>Turn on "Workflow readiness" in Settings to see this page.</p>
+  <p><a class="btn btn--primary" href="/settings#settings-sections">Open Settings</a></p>
+  {% else %}
+  <p>Ask an administrator to turn on "Workflow readiness" in Settings.</p>
+  {% endif %}
+</section>
+{% else %}
+<p class="muted">Turning a feature on does not prove it works for your business. Try each one with real work before relying on it.</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:var(--space-3);">
+{% for capability in capabilities %}
+<section class="panel" style="min-width:0;overflow-wrap:anywhere;" aria-labelledby="wr-cap-{{ loop.index }}">
+  <h2 id="wr-cap-{{ loop.index }}">{{ capability.name }}</h2>
+  <p><span class="badge {{ 'ok' if capability.stage in ('available', 'bounded') else 'warn' if capability.stage in ('live_validation', 'preview', 'release_candidate') else 'idle' }}">{{ capability.stage_label }}</span>
+     <span class="muted">· {{ capability.configuration }}</span></p>
+  <p><strong>What it does:</strong> {{ capability.scope }}</p>
+  <p class="muted"><strong>Check before relying on it:</strong> {{ capability.limit }}</p>
+  {% if capability.can_open %}<a class="btn btn--primary" href="{{ capability.href }}">Open {{ capability.name | lower }}</a>
+  {% elif capability.can_turn_on %}<a class="btn" href="/settings#settings-sections">Turn on in Settings</a>
+  {% elif capability.how %}<p class="muted">{{ capability.how }}</p>
+  {% elif capability.href %}<p class="muted">Ask an administrator for access to this page.</p>{% endif %}
+</section>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,19 @@
+/* Suggested assessment answers: layout only; colours come from lightwork.css. */
+.aep-shell { display: grid; gap: var(--space-5); }
+.aep-shell .panel h2 { margin: 0; }
+.aep-form { display: grid; gap: var(--space-2); max-width: 48rem; }
+.aep-form fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; display: grid; gap: var(--space-2); }
+.aep-selection { border: 1px solid var(--hairline) !important; border-radius: var(--radius-md, 8px); padding: var(--space-3) !important; }
+.aep-selection label { display: flex; gap: .5rem; align-items: flex-start; }
+.aep-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.aep-table { overflow: auto; }
+.aep-candidates { display: grid; gap: var(--space-3); margin: var(--space-3) 0; }
+.aep-card { border: 1px solid var(--hairline); border-radius: var(--radius-md, 8px); padding: var(--space-3); }
+.aep-card h3 { margin: 0 0 .35rem; font-size: var(--text-md, 1rem); }
+.aep-card dl { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .8rem; margin: 0; }
+.aep-card dt { color: var(--muted); }
+.aep-card dd { margin: 0; }
+.aep-output { white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto; }
+.aep-shell :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .aep-shell * { transition: none !important; } }
+@media (forced-colors: active) { .aep-card, .aep-selection { border-color: CanvasText; } }

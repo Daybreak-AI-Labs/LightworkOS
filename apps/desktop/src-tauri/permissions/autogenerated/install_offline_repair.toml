@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-install-offline-repair"
+description = "Bundled local maintenance control."
+commands.allow = ["install_offline_repair"]
+
+[[permission]]
+identifier = "deny-install-offline-repair"
+description = "Denies the local maintenance control."
+commands.deny = ["install_offline_repair"]

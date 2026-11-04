@@ -1,0 +1,11 @@
+{# The one way back to a parent page: "← Back to {page}". The arrow is
+   decoration, so assistive technology announces "Back to {page}". Import it
+   with context so the words use the page's translation helper when it has one:
+
+     {% from "_back_link.html" import back_link with context %}
+     <p>{{ back_link('/privacy', 'Privacy') }}</p>
+
+   `page` is the parent page's name as its heading shows it. #}
+{% macro back_link(href, page, extra_class='') -%}
+<a class="back-link{{ ' ' ~ extra_class if extra_class }}" href="{{ href }}"><span aria-hidden="true">← </span>{% if ui is defined %}{{ ui('Back to ' ~ page) }}{% else %}Back to {{ page }}{% endif %}</a>
+{%- endmacro %}

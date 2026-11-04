@@ -1,0 +1,39 @@
+name = "legal_whistleblower_eu"
+compartment = "legal_whistleblower_eu"
+description = "EU Whistleblower Directive Support: Track reporting-channel and follow-up obligations by entity."
+
+persona = """You are the EU Whistleblower Directive Support for this business -- a legal specialist. Track reporting-channel and follow-up obligations by entity. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You support counsel, not replace it: cite the exact article or section, preserve privilege, and flag jurisdiction assumptions explicitly."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "whistleblower reporting-channel obligations matrix by entity"
+consumers = ["compliance_counsel", "data_protection_officer"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "List entities"
+instruction = "Read the company's records to enumerate EU entities, headcounts, and their reporting-channel and follow-up obligations."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Verify directive"
+instruction = "Research the EU Whistleblower Directive and the relevant national transposition to confirm each entity's thresholds and deadlines."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Build matrix"
+instruction = "Build the obligations matrix mapping each entity to its required channel, acknowledgment, and follow-up timelines with citations."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Flag gaps"
+instruction = "Flag entities lacking a compliant channel or breaching the acknowledgment/feedback windows, marking jurisdiction assumptions."
+[[workflow]]
+name = "Route to counsel"
+instruction = "Hand the entity obligations matrix to compliance counsel for review."
+gate = "review"

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Model Risk &amp; AI Assurance Officer{% endblock %}</title>
+  <style>
+    :root{color-scheme:dark;--bg:#07111f;--panel:#101e30;--line:#29415f;--text:#e6edf7;--muted:#b7c8dc;--accent:#72b7ff;--good:#8bd5ca;--warn:#f5c76b;--bad:#ff8d8d}
+    *{box-sizing:border-box}body{font:16px/1.5 system-ui;margin:0;background:var(--bg);color:var(--text)}header,main{max-width:1180px;margin:auto;padding:1rem}header{display:flex;justify-content:space-between;gap:1rem;align-items:center}a{color:var(--accent)}.hero,.card,.notice{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.25rem;margin-bottom:1rem}.notice{border-color:var(--warn)}.tag{color:var(--good);font-weight:700;letter-spacing:.04em}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1rem}.grid .card{margin:0}label{display:block;margin:.75rem 0}input,select,textarea,button{width:100%;font:inherit;padding:.65rem;border:1px solid #496989;border-radius:7px;background:#091829;color:var(--text)}textarea{min-height:12rem;font-family:ui-monospace,monospace}button{background:#165c9c;border-color:#2f87d3;cursor:pointer;font-weight:700}.muted{color:var(--muted)}.result{margin-top:.75rem}.success{color:var(--good)}.error{color:var(--bad)}table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:.65rem}code{overflow-wrap:anywhere}:focus-visible{outline:3px solid var(--warn);outline-offset:2px}.critical{color:var(--bad)}.high{color:var(--warn)}
+  </style>
+</head>
+<body>
+  <header><strong>Model Risk &amp; AI Assurance Officer</strong><nav aria-label="Primary"><a href="/">Workspace</a> &middot; <a href="/about">Capabilities</a></nav></header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}Spend · Lightwork{% endblock %}
+{% block content %}
+<p><a href="/budget">Review usable budget, reservations and upcoming work</a></p>
+<style>
+  /* Spend page — scoped styles for the episode table's cost cells. */
+  .cost-cell { display: flex; flex-direction: column; gap: 3px; min-width: 84px; }
+  .cost-cell__bar { height: 3px; border-radius: var(--radius-pill); background: var(--brand); opacity: 0.5; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .toolbar h2 { margin: 0; }
+  .spend-download { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+</style>
+
+  {% from "_hero.html" import hero, state %}
+  {% from "_empty_state.html" import empty_state %}
+  {% call hero('Value & spend', 'Spend',
+               subtitle='What your AI work has cost',
+               lede='Costs for every finished task, taken from Lightwork\'s own
+                     runtime pricing records. These can be measured, estimated or bounded prices;
+                     they are not verified provider invoices. Need the monthly statement?
+                     Open <a href="/billing">Billing</a>.' | safe) %}
+    {{ state('Current state',
+             total.dollars | money ~ ' recorded across all time',
+             badge=total.runs ~ ' finished task' ~ ('' if total.runs == 1 else 's'),
+             badge_class='ok' if total.runs else 'idle',
+             copy='The same records power <a href="/savings">Savings</a> and
+                   the monthly statement.' | safe) }}
+  {% endcall %}
+  {% from "_spend_freshness.html" import spend_freshness %}
+  {{ spend_freshness(spend_recorded_at) }}
+  {% include "_practice_cost.html" %}
+  {# Whose tasks these numbers count (value_views). #}
+  <p class="muted" id="sp-scope">{% if value_view.scope == 'workspace' %}The heading and charts cover the whole
+    workspace, totals only. Per-task rows are not shown in this view.{% else %}These numbers
+    cover the tasks you ran.{% endif %}</p>
+  <p class="muted">Report scopes: the heading is all time; the charts use the selected period; the task table shows the latest 50 attempts. The download uses its own month selector. Recorded runtime prices exclude subscription fees, taxes, external tools and unreconciled provider adjustments. A missing price is unknown, not free.</p>
+
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+    {% from "_tabs.html" import panel_tabs %}
+    {{ panel_tabs('Time range', [('30', '30 days'), ('90', '90 days'), ('180', '6 months'), ('365', '1 year')], '90', id='bd-range', data='days', controls=false, activation='manual', hash='range-') }}
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Spending over time</h2>
+      <p class="viz-sub">Dollars spent over time (by week for longer ranges). Hover for cost and tasks.</p>
+      <div id="bd-burn"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>How tasks ended</h2>
+      <p class="viz-sub">All authorized episode attempts started in this period. Running attempts are separate from the finished-attempt cost totals; retries can create several attempts for one task.</p>
+      <div id="bd-outcomes"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide">
+      <h2>Cost of each task</h2>
+      <p class="viz-sub">The most recent tasks, oldest to newest. Tall bars are the expensive ones.</p>
+      <div id="bd-per-run"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Most expensive tasks</h2>
+      <p class="viz-sub">Where the money actually went.</p>
+      <div id="bd-top-goals"></div>
+    </div>
+    <div class="panel viz-card" id="bd-by-platform-card" hidden>
+      <h2>Outside agents</h2>
+      <p class="viz-sub">Spending reported by agents from other platforms you connected.</p>
+      <div id="bd-by-platform"></div>
+    </div>
+  </div>
+
+  {% include "_spend_insights.html" %}
+
+  <p>Runtime totals exclude platform subscriptions, external-tool fees, taxes, credits and invoice adjustments unless separately evidenced. Provider receipts can be recorded, estimated, ceilings or reconciled; a verified rate card alone is not a verified invoice. <a href="/cost-reconciliation">Compare cost records</a>.</p>
+  <div class="toolbar">
+    <h2>Latest 50 episode attempts — independent of chart range</h2>
+    <form class="spend-download" id="spend-download">
+      <label for="spend-month">Download</label>
+      <select class="select" id="spend-month">
+        <option value="">All months</option>
+        {% for m in csv_months %}<option value="{{ m.value }}">{{ m.label }}</option>{% endfor %}
+      </select>
+      <a class="btn" id="spend-download-link" href="/api/v1/cost.csv" download>Download spreadsheet (CSV)</a>
+    </form>
+  </div>
+  <div class="panel">
+    {% set _known = episodes | rejectattr('cost_dollars', 'none') | list %}
+    {% set _max = (_known | map(attribute='cost_dollars') | max) if _known else 0 %}
+    {% if episodes %}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Task</th><th scope="col">Result</th><th scope="col">Cost</th>
+          <th scope="col" title="How much text the AI read">Text read</th><th scope="col" title="How much text the AI wrote">Text written</th><th scope="col">Steps</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in episodes %}
+          <tr>
+            <td>{% if e.goal_id %}<a href="/chat/goal/{{ e.goal_id }}">{{ goal_titles.get(e.goal_id) or 'Task' }}</a>{% else %}Task{% endif %}</td>
+            <td>
+              {% if e.outcome %}
+                <span class="badge {{ 'done' if e.outcome == 'success' else 'blocked' }}">{{ 'Succeeded' if e.outcome == 'success' else (e.outcome | humanize) }}</span>
+              {% else %}
+                <span class="badge active">Running</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="cost-cell">
+                {% if e.cost_dollars is not none %}
+                <span title="${{ '%.6f'|format(e.cost_dollars) }}">{{ e.cost_dollars | money }}</span>
+                <span class="cost-cell__bar" style="width: {{ ((e.cost_dollars / _max * 100) if _max else 0) | round(1) }}%;"></span>
+                {% else %}<span>Unknown cost</span>{% endif %}
+                <small>{{ episode_provenance[e.id].runtime_basis }}</small>
+                <small>Linked task receipts: {{ episode_provenance[e.id].basis }}</small>
+                {% if e.goal_id %}<a href="/cost-reconciliation?goal_id={{ e.goal_id }}">Review cost evidence</a>{% endif %}
+              </div>
+            </td>
+            <td>{{ '{:,}'.format(e.input_tokens) }}</td>
+            <td>{{ '{:,}'.format(e.output_tokens) }}</td>
+            <td>{{ e.tool_calls }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% elif not value_view.can_operate %}
+      <p class="muted">Per-task rows are not shown in the whole-workspace view. The totals above cover
+        everyone&rsquo;s tasks.</p>
+    {% elif can_create_goal %}
+      {{ empty_state('No finished tasks yet',
+                     'Each finished task appears here with its cost, tokens and tool calls. Start a task to see what it costs.',
+                     action_label='Start a task', action_href='/chat') }}
+    {% else %}
+      {{ empty_state('No finished tasks yet',
+                     'Each finished task you can view appears here with its cost, tokens and tool calls.') }}
+    {% endif %}
+  </div>
+
+  <script src="/static/board.js"></script>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var B = window.LWBoard;
+    // Only people who can start tasks are told to start one.
+    var START = {{ 'true' if can_create_goal else 'false' }} ? ' Start a task to see what it costs.' : '';
+
+    function compact(n) {
+      if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(0) + 'k';
+      return B.fmt(Math.round(n));
+    }
+
+    function render(D) {
+      var k = document.getElementById('bd-kpis');
+      k.textContent = '';
+      k.appendChild(B.kpi({ label: 'Spent', value: D.totals.dollars,
+        format: B.money,
+        chip: { cur: D.totals.dollars, prev: D.prev.dollars, upIsBad: true,
+                format: B.money },
+        sub: 'last ' + D.days + ' days',
+        spark: D.daily.map(function (r) { return r.cost; }) }));
+      k.appendChild(B.kpi({ label: 'Finished tasks', value: D.totals.runs,
+        chip: { cur: D.totals.runs, prev: D.prev.runs },
+        sub: 'last ' + D.days + ' days', sparkCls: 'ok',
+        spark: D.daily.map(function (r) { return r.runs; }) }));
+      k.appendChild(B.kpi({ label: 'Average cost per task',
+        value: D.totals.runs ? D.totals.dollars / D.totals.runs : 0,
+        format: B.money,
+        sub: D.totals.tool_calls ? B.fmt(D.totals.tool_calls) + ' steps' : '' }));
+      k.appendChild(B.kpi({ label: 'AI text processed',
+        value: D.totals.input_tokens + D.totals.output_tokens,
+        format: compact,
+        sub: compact(D.totals.input_tokens) + ' read · ' +
+             compact(D.totals.output_tokens) + ' written (tokens)' }));
+
+      if (D.totals.runs || D.prev.runs) {
+        var weekly = D.days > 60;
+        B.area(document.getElementById('bd-burn'), {
+          data: weekly ? B.bucketWeekly(D.daily, ['cost', 'runs']) : D.daily,
+          x: 'd',
+          series: [{ key: 'cost', label: 'Cost', cls: 'brand' }],
+          yFmt: function (v) { return '$' + (v >= 10 ? Math.round(v) : v.toFixed(2)); },
+          aria: 'Spend per ' + (weekly ? 'week' : 'day') +
+                ' over the last ' + D.days + ' days.',
+          tipHead: function (r) { return (weekly ? 'Week of ' : '') + r.d; },
+          xTick: function (r, i, n) {
+            return i % Math.ceil(n / 8) === 0 ? r.d.slice(5) : '';
+          } });
+      } else {
+        B.empty(document.getElementById('bd-burn'), 'No spend in this period',
+          'Spend per day appears here once a task finishes. Choose a longer period above to look further back.' + START);
+      }
+
+      B.donut(document.getElementById('bd-outcomes'), {
+        segments: [
+          { label: 'Succeeded', value: D.outcomes.success, cls: 'ok' },
+          { label: 'Failed', value: D.outcomes.failed, cls: 'danger' },
+          { label: 'Running', value: D.outcomes.running, cls: 'brand' }],
+        centerSub: 'tasks',
+        aria: 'How tasks ended: ' + D.outcomes.success + ' succeeded, ' +
+              D.outcomes.failed + ' failed, ' + D.outcomes.running + ' running.' });
+
+      if ((D.per_run || []).length) {
+        B.strip(document.getElementById('bd-per-run'),
+          D.per_run.slice().reverse().map(function (r) {
+            return { v: r.cost,
+                     title: B.money(r.cost) };
+          }), 'Cost of the ' + D.per_run.length + ' most recent tasks, oldest on the left.');
+      } else {
+        if (D.scope === 'workspace') {
+          B.empty(document.getElementById('bd-per-run'), 'Per-task costs are not shown here',
+            'The whole-workspace view shows totals only. They cover everyone\u2019s tasks.');
+        } else {
+          B.empty(document.getElementById('bd-per-run'), 'No finished tasks yet',
+            'The cost of each recent task appears here, oldest on the left.' + START);
+        }
+      }
+
+      var tmax = 1;
+      (D.top_goals || []).forEach(function (r) { tmax = Math.max(tmax, r.cost); });
+      if ((D.top_goals || []).length) {
+        B.hbars(document.getElementById('bd-top-goals'),
+          D.top_goals.map(function (r) {
+            return { label: r.title, value_text: B.money(r.cost),
+                     pct: r.cost / tmax * 100,
+                     title: r.title + ' — ' + B.money(r.cost) + ' across ' +
+                            r.runs + ' run(s)' };
+          }), 'The most expensive tasks in this period.');
+      } else {
+        if (D.scope === 'workspace') {
+          B.empty(document.getElementById('bd-top-goals'), 'Per-task costs are not shown here',
+            'The whole-workspace view shows totals only. They cover everyone\u2019s tasks.');
+        } else {
+          B.empty(document.getElementById('bd-top-goals'), 'No task costs in this period',
+            'The most expensive tasks appear here. Choose a longer period above to look further back.');
+        }
+      }
+
+      if ((D.by_platform || []).length) {
+        document.getElementById('bd-by-platform-card').hidden = false;
+        var xmax = 1;
+        D.by_platform.forEach(function (r) { xmax = Math.max(xmax, r.cost); });
+        B.hbars(document.getElementById('bd-by-platform'),
+          D.by_platform.map(function (r) {
+            return { label: r.label, value_text: B.money(r.cost),
+                     pct: r.cost / xmax * 100,
+                     title: r.label + ' — ' + B.money(r.cost) + ' across ' +
+                            r.runs + ' run(s)' };
+          }), 'Spend reported by external agents, grouped by platform.');
+      }
+    }
+
+    B.attach({ board: 'spend', render: render });
+    var month = document.getElementById('spend-month');
+    var link = document.getElementById('spend-download-link');
+    if (month && link) month.addEventListener('change', function () {
+      link.href = '/api/v1/cost.csv' + (month.value ? '?month=' + encodeURIComponent(month.value) : '');
+    });
+  })();
+  </script>
+
+  <div class="section-head"><h2 id="fa-tags-title">Spending by team or project</h2></div>
+  <section class="panel" aria-labelledby="fa-tags-title">
+    <p class="muted">Splits what tasks cost by the label each task carries, for charging costs back to teams or projects.</p>
+    <div class="fa-row">
+      <label class="fa-field"><span>Group by</span>
+        <select class="select" id="fa-tags-field">
+          <option value="tag">Tag</option>
+          <option value="team">Team</option>
+          <option value="project">Project</option>
+          <option value="cost_center">Cost centre</option>
+        </select></label>
+      <button type="button" class="btn btn--primary" id="fa-tags-run">Show spending by group</button>
+    </div>
+    <p class="muted" id="fa-tags-status" role="status" aria-live="polite"></p>
+    <div id="fa-tags-out"></div>
+  </section>
+  <style>
+    .fa-scroll { overflow-x: auto; }
+    .fa-inline { list-style: none; padding: 0; margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .fa-list { margin: var(--space-2) 0; }
+    .fa-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+    .fa-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .fa-grow { flex: 1 1 18rem; }
+    .fa-technical { margin-top: var(--space-2); }
+  </style>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+
+  <div class="section-head"><h2 id="io-ask-title">Questions about your tasks</h2></div>
+  <section class="panel" aria-labelledby="io-ask-title">
+    <p class="muted">Pick what to measure, how to group it and the dates, and Lightwork answers from the tasks
+      you can see.</p>
+    <p class="muted" id="io-ask-status" role="status" aria-live="polite">Loading…</p>
+    <form id="io-ask-form" hidden>
+      <div class="fa-row">
+        <label class="fa-field"><span>What to measure</span><select class="select" name="metric"></select></label>
+        <label class="fa-field"><span>Grouped by</span><select class="select" name="group"></select></label>
+        <label class="fa-field"><span>From</span><input class="input" type="date" name="since"></label>
+        <label class="fa-field"><span>To</span><input class="input" type="date" name="until"></label>
+        <button type="submit" class="btn btn--primary">Answer question</button>
+      </div>
+    </form>
+    <div id="io-ask-out"></div>
+    <details id="io-query" class="fa-technical" hidden>
+      <summary>Technical details</summary>
+      <p class="muted">For installation administrators: ask in the analytics language. Only questions that read
+        are allowed, answers are limited in size, and a question is stopped after 15 seconds.</p>
+      <label class="fa-field fa-grow"><span>Question</span>
+        <textarea class="textarea" id="io-query-text" rows="4" maxlength="4000" spellcheck="false"></textarea></label>
+      <p><button type="button" class="btn" id="io-query-run">Run</button></p>
+      <p class="muted" id="io-query-status" role="status" aria-live="polite"></p>
+      <div id="io-query-out"></div>
+    </details>
+  </section>
+  <style>.io-scroll { overflow-x: auto; }</style>
+  <script src="/static/lightwork-insight-ops.js" defer></script>
+
+{% endblock %}

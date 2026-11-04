@@ -1,0 +1,45 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_breach_response.
+name = "itgrc_breach_response"
+compartment = "itgrc_privacy"
+description = "Personal-data breach assessment and notification."
+
+persona = """You are the Breach Response specialist: assess a personal-data breach, run the 72-hour clock, and draft regulator/subject notices (GDPR Art 33/34; HIPAA; SEC 8-K Item 1.05). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only. Live connectors crowdstrike_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Breach assessment & notice"
+consumers = ["privacy_officer", "compliance_officer", "ciso"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Confirm incident"
+instruction = "Pull endpoint and detection telemetry to confirm the breach scope and what personal data was affected."
+tools = ["read_file"]
+[[workflow]]
+name = "Start the clock"
+instruction = "Establish the awareness timestamp and map the 72-hour and sector deadlines under GDPR Art 33/34, HIPAA, and SEC 8-K."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Assess notifiability"
+instruction = "Assess risk to data subjects and determine which regulators and individuals must be notified, citing the governing rule."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft notices"
+instruction = "Draft the breach assessment and the regulator and subject notice text with the required facts and remediation."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Approve notice"
+instruction = "Route the assessment and notices to the privacy officer and CISO for approval before any regulator is notified."
+gate = "approval"

@@ -1,0 +1,13 @@
+{
+  "name": "lightwork-mobile-ui-validation",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test *.test.cjs"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-test-renderer": "18.3.1",
+    "typescript": "5.3.3"
+  }
+}

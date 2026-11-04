@@ -1,0 +1,160 @@
+name: Test one interpreter slice
+description: >-
+  Install every workspace package on one interpreter and run one file-level
+  slice of the deterministic suite. This is the body shared by the `test` and
+  `test-window` jobs in ci.yml: `test` runs it on the floor interpreter for
+  every event, `test-window` on the rest of the supported window only where
+  the commit actually lands (the merge queue and pushes to main). Callers
+  check the repository out first. On a pull request `test` narrows the slice
+  to the test files scripts/select_pr_tests.py chose from the changed files
+  (`mode`/`paths`); everywhere else the slice is the whole suite.
+inputs:
+  python-version:
+    description: Interpreter to install and test on (an actions/setup-python spec).
+    required: true
+  shard:
+    description: Which of the four file-level slices (1-4) to run.
+    required: true
+  mode:
+    description: >-
+      What the slice runs. `full` (the default, and what an empty value
+      means) is the whole deterministic suite; `paths` is only the pytest
+      targets in `paths`; `none` installs nothing, runs nothing and reports
+      success.
+    required: false
+    default: full
+  paths:
+    description: >-
+      JSON array of repository-relative pytest targets, read in `paths` mode
+      only.
+    required: false
+    default: "[]"
+runs:
+  using: composite
+  steps:
+    - name: Nothing to run
+      if: inputs.mode == 'none'
+      shell: bash
+      run: >-
+        echo "No test file names a file this pull request changes
+        (scripts/select_pr_tests.py); the merge queue runs the whole suite."
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      if: inputs.mode != 'none'
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install packages
+      if: inputs.mode != 'none'
+      shell: bash
+      run: |
+        set -x
+        python -m pip install --upgrade \
+          'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+          'packaging==26.3'
+        # All local distributions are direct requirements in one resolver
+        # transaction, so no sibling can fall back to a public lookalike and
+        # every declared base dependency is present.
+        # The OIDC verifier ships as the optional [oidc] extra (PyJWT);
+        # install it here so the adversarial security matrix in test_oidc.py
+        # actually RUNS in CI instead of self-skipping when PyJWT is absent.
+        # The OpenAI extra is installed in this existing required matrix so
+        # provider compatibility/retry tests run once on every supported
+        # interpreter without adding parallel status contexts.
+        python -m pip install \
+          -e './packages/maverick-core[openai,evidence-analysis,spreadsheet,pdf,postgres,plugin-workbench]' \
+          -e ./packages/maverick-shield \
+          -e './packages/maverick-channels[sms]' \
+          -e ./packages/maverick-evolve \
+          -e ./packages/maverick-dashboard \
+          -e ./packages/maverick-mcp \
+          -e ./packages/maverick-knowledge \
+          -e ./apps/installer-cli \
+          pytest pytest-asyncio pytest-timeout pytest-xdist 'pyjwt[crypto]' pyyaml sqlalchemy
+        python -m pip check
+        python scripts/verify_constraint_closure.py
+    - name: Show installed packages
+      if: inputs.mode != 'none'
+      shell: bash
+      run: python -m pip list
+    - name: Test (bounded, with diagnostics)
+      if: inputs.mode != 'none'
+      shell: bash
+      env:
+        PYTHONFAULTHANDLER: "1"
+        # The selection reaches bash through the environment, not through
+        # template interpolation into the script: the paths are file names
+        # the pull request chose.
+        SELECT_MODE: ${{ inputs.mode }}
+        SELECT_PATHS: ${{ inputs.paths }}
+      run: |
+        set -o pipefail
+        # On a pull request the `test` job narrows each slice to the test
+        # files scripts/select_pr_tests.py chose from the changed files
+        # (mode=paths); everywhere else, and whenever a shared file changed
+        # or the selection job failed (an empty mode), the slice is the whole
+        # suite. A slice whose share of the selected files is empty exits 5
+        # ("no tests ran") from both phases below; that is a pass in paths
+        # mode only -- a full slice that collects nothing is a broken
+        # checkout.
+        targets=()
+        case "${SELECT_MODE:-full}" in
+          full) ;;
+          paths)
+            readarray -t targets < <(python -c 'import json, os; [print(p) for p in json.loads(os.environ["SELECT_PATHS"])]')
+            if [ "${#targets[@]}" -eq 0 ]; then
+              echo "::error::test-shard mode=paths without any paths"
+              exit 1
+            fi
+            echo "Running the ${#targets[@]} test files selected for this pull request:"
+            printf '  %s\n' "${targets[@]}"
+            ;;
+          *)
+            echo "::error::unknown test-shard mode '$SELECT_MODE'"
+            exit 1
+            ;;
+        esac
+        # Bound every slice well under GitHub's six-hour job ceiling.
+        # pytest-timeout catches a stuck test; GNU timeout also
+        # bounds interpreter shutdown/non-daemon-thread leaks after the last
+        # test and SIGABRT gives faulthandler a chance to print stacks.
+        #
+        # Two phases per slice: everything under xdist, then the
+        # heavy_concurrency files (queue soak, discovery estate runner)
+        # serially so their own worker threads do not share the two cores
+        # with a second xdist worker -- that co-scheduling starved SQLite
+        # lock waits into "database is locked" findings. A slice with no
+        # heavy files exits 5 (nothing collected) from the second phase,
+        # which is a pass here.
+        #
+        # The parallel phase gets 45 minutes: the suite is now ~45,000 tests
+        # and a two-core hosted slice did not finish inside the former 20.
+        # A stuck test is still caught by --timeout=180; this bound is the
+        # backstop for a hang that pytest-timeout cannot see.
+        status=0
+        timeout --verbose --signal=ABRT --kill-after=30s 45m \
+          python -m pytest -q -n auto --dist loadfile --shard "${{ inputs.shard }}/4" \
+            -m "not heavy_concurrency" --tb=short --durations=50 \
+            --timeout=180 --timeout-method=signal \
+            --junitxml="test-results-${{ inputs.python-version }}-${{ inputs.shard }}.xml" \
+            "${targets[@]}" \
+          2>&1 | tee "pytest-${{ inputs.python-version }}-${{ inputs.shard }}.log" || status=$?
+        if [ "$SELECT_MODE" = paths ] && [ "$status" -eq 5 ]; then status=0; fi
+        timeout --verbose --signal=ABRT --kill-after=30s 10m \
+          python -m pytest -q --shard "${{ inputs.shard }}/4" \
+            -m heavy_concurrency --tb=short \
+            --timeout=600 --timeout-method=signal \
+            --junitxml="test-results-${{ inputs.python-version }}-${{ inputs.shard }}-serial.xml" \
+            "${targets[@]}" \
+          2>&1 | tee -a "pytest-${{ inputs.python-version }}-${{ inputs.shard }}.log" || serial=$?
+        if [ "${serial:-0}" -ne 0 ] && [ "${serial:-0}" -ne 5 ]; then status=$serial; fi
+        exit "$status"
+    - name: Upload test diagnostics
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      if: always()
+      with:
+        name: pytest-${{ inputs.python-version }}-${{ inputs.shard }}
+        path: |
+          test-results-${{ inputs.python-version }}-${{ inputs.shard }}.xml
+          test-results-${{ inputs.python-version }}-${{ inputs.shard }}-serial.xml
+          pytest-${{ inputs.python-version }}-${{ inputs.shard }}.log
+        if-no-files-found: warn
+        retention-days: 14

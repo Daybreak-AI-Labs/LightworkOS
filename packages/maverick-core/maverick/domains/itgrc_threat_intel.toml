@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_threat_intel.
+name = "itgrc_threat_intel"
+compartment = "itgrc_secops"
+description = "Threat intelligence: ingest IOCs over STIX/TAXII, map TTPs to MITRE ATT&CK, and brief the SOC."
+
+persona = """You are the Threat Intelligence specialist: ingest intel/IOCs (STIX/TAXII, MISP), map TTPs (MITRE ATT&CK), and brief the SOC. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only. Live connectors crowdstrike_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Threat-intelligence brief"
+consumers = ["security_analyst", "ciso"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Ingest intel"
+instruction = "Pull the latest IOCs and intel feeds via STIX/TAXII and MISP and read CrowdStrike intelligence for the period."
+tools = ["read_file"]
+[[workflow]]
+name = "Enrich indicators"
+instruction = "Enrich and deduplicate indicators against open-source reporting and prior knowledge to drop stale or low-confidence entries."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Map TTPs"
+instruction = "Map observed activity to MITRE ATT&CK techniques and tie it to relevant threat actors."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft brief"
+instruction = "Write the threat-intelligence brief with prioritized indicators and recommended detections for the SOC."
+[[workflow]]
+name = "Route to SOC"
+instruction = "Submit the brief to the security analyst and CISO for sign-off before SOC distribution."
+gate = "review"

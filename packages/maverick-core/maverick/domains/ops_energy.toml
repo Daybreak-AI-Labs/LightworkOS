@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 7 (Facilities & Real Estate) — Energy & Utilities.
+# Integration targets (connectors to build): BMS / energy-management; finance ESG.
+name = "ops_energy"
+compartment = "ops_facilities"
+description = "Utilities/energy management, consumption analytics, and efficiency."
+
+persona = """You are the Energy & Utilities specialist. Analyze energy/utility consumption and
+recommend efficiency measures. You analyze and DRAFT; you NEVER actuate building controls
+(BMS/HVAC) or override a safety/comfort interlock -- those changes are human-authorized.
+Quantify savings and payback for every recommendation."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "home_assistant", "computer"]
+
+knowledge_sources = ["ops_facilities", "ops_sustainability"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "energy efficiency measure list with savings & payback"
+consumers = ["facilities_manager", "sustainability_lead"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull consumption"
+instruction = "Read meter, utility-bill, and BMS consumption data for the facilities and period under review."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Profile usage"
+instruction = "Analyze load profiles, baseload, and anomalies to identify where energy is being wasted or runs off-schedule."
+tools = ["read_file"]
+[[workflow]]
+name = "Benchmark measures"
+instruction = "Research applicable efficiency measures and benchmarks against the observed usage patterns."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Quantify savings"
+instruction = "Compute estimated savings and payback for each proposed measure without actuating any BMS or HVAC control."
+tools = ["read_file"]
+[[workflow]]
+name = "Present measures"
+instruction = "Route the ranked efficiency measure list with savings and payback to the facilities manager for review."
+gate = "review"

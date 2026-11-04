@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Companion policies · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ asset('lightwork-employee-companion.css') }}">{% endblock %}
+{% block content %}
+<div class="ec-shell" id="ec-root" data-mode="admin" data-draft-recovery="off" data-companion-context="{{ companion_context | default('') }}">
+  {% call hero('Administration', 'Companion policies', lede='Choose who can use a companion for task checks, AI conversation and drafts.') %}
+    <div class="hero-statebox"><div class="hero-statebox__label">Conversation and draft preview</div><div class="hero-statebox__row"><strong id="ec-policy-label">Checking availability</strong><span class="badge idle" id="ec-badge">Loading</span></div><p class="hero-statebox__copy" id="ec-policy-summary">Loading workspace policies.</p><button class="btn btn--ghost" id="ec-refresh" type="button">Reload saved policies</button></div>
+  {% endcall %}
+  <p class="ec-status" id="ec-status" role="status" aria-live="polite" aria-atomic="true">Loading companion policies.</p>
+  <section class="panel" aria-labelledby="ec-policy-title">
+    <div class="section-head"><h2 id="ec-policy-title">Employee policy</h2></div>
+    <p>Employees are not enrolled until you enable their companion. Access stays limited to tasks they own in this workspace.</p>
+    <form class="ec-form" id="ec-policy-form" autocomplete="off">
+      <fieldset id="ec-policy-controls" disabled>
+        <div class="ec-fields">
+          <label for="ec-owner">Employee<select class="select" id="ec-owner" name="owner" required><option value="">Loading employees</option></select></label>
+          <label for="ec-retention-days">Keep conversation history<select class="select" id="ec-retention-days" name="retention_days" aria-describedby="ec-retention-help"><option value="0">Do not save</option><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option></select></label>
+        </div>
+        <input type="hidden" id="ec-revision" name="expected_revision" value="0">
+        <div class="ec-options">
+          <label><input type="checkbox" id="ec-enabled" name="enabled" aria-describedby="ec-retention-help"> Enable this employee's companion</label>
+          <label><input type="checkbox" id="ec-source" name="own_tasks"> Allow the employee's own tasks as a source</label>
+          <label><input type="checkbox" id="ec-tool" name="task_status"> Allow task-status questions</label>
+          <label><input type="checkbox" id="ec-draft-tool" name="draft_reply" aria-describedby="ec-model-help"> Allow AI conversation and drafts</label>
+        </div>
+        <p class="muted ec-help" id="ec-model-help">AI conversation sends the employee's prompts, eligible saved history and any permitted task titles and status to your configured AI provider. It uses your configured writing model and may incur provider charges. No tools or external actions are enabled. These history controls do not change the provider's retention policy.</p>
+        <p class="muted ec-help" id="ec-retention-help">Saving a disabled companion or “Do not save” deletes its saved conversation history from the active store. “Do not save” keeps new messages only in the employee's open page. Shortening retention can remove older history. Activity metadata and separately managed backups are not removed by this setting.</p>
+        <div class="ec-actions"><button class="btn btn--primary" id="ec-save" type="submit" disabled>Save employee policy</button><button class="btn btn--ghost" id="ec-copilot" type="button" disabled>Ask Copilot about this employee</button><span class="muted" id="ec-selection-summary">Choose an employee to review their policy.</span></div>
+      </fieldset>
+    </form>
+  </section>
+  <section class="panel" aria-labelledby="ec-privacy-title"><div class="section-head"><h2 id="ec-privacy-title">Administration without conversation access</h2></div><p>This page shows policies and activity records. It does not provide access to employee companion messages. Content access would require a separate, explicit and logged process; that process is not available in this preview.</p><p>No connected documents, external actions, learned memory or live voice are enabled here. AI replies are drafts for the employee to review and copy. Write actions are blocked, so there are no write approvals to configure.</p></section>
+  <section class="panel" aria-labelledby="ec-policies-title"><div class="section-head"><h2 id="ec-policies-title">Saved employee policies</h2></div><div class="ec-table-wrap"><table role="table"><caption class="sr-only">Saved companion policies in this workspace</caption><thead><tr><th scope="col">Employee</th><th scope="col">Companion</th><th scope="col">Allowed help</th><th scope="col">History</th></tr></thead><tbody id="ec-policies"><tr><td colspan="4">Loading policies.</td></tr></tbody></table></div></section>
+  <section class="panel" aria-labelledby="ec-events-title"><div class="section-head"><h2 id="ec-events-title">Recent activity</h2></div><p class="muted ec-help">Policy changes and companion activity, without prompts, answers or task titles.</p><div class="ec-table-wrap"><table role="table"><caption class="sr-only">Companion activity metadata in this workspace</caption><thead><tr><th scope="col">When</th><th scope="col">Employee</th><th scope="col">Activity</th><th scope="col">By</th></tr></thead><tbody id="ec-events"><tr><td colspan="4">Loading activity.</td></tr></tbody></table></div></section>
+  <noscript><p class="panel">Turn on JavaScript to manage companion policies.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-employee-companion.js') }}" defer></script>{% endblock %}

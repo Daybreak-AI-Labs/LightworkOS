@@ -1,0 +1,133 @@
+name: Frozen runtime
+
+# Nonpublishing qualification of the release spec on the two non-Windows
+# platforms. windows-customer.yml exercises the installed Windows executable.
+on:
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'apps/installer-cli/**'
+      - 'apps/installer-msi/stage_customer.py'
+      - 'build/**'
+      - 'scripts/install_release_cohort.py'
+      - 'scripts/verify_constraint_closure.py'
+      - 'requirements/ci.txt'
+      - 'release-cohort.toml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/frozen-runtime.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frozen-runtime-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  freeze-and-check:
+    name: Frozen runtime (${{ matrix.os }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: '3.12.13'
+            architecture: x64
+            machine: x86_64
+          - os: macos-15
+            python: '3.12.10'
+            architecture: arm64
+            machine: arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+      EXPECTED_MACHINE: ${{ matrix.machine }}
+      REVIEWED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.architecture }}
+      - name: Isolate and install the complete release profile
+        run: |
+          python -I -m venv "$RUNNER_TEMP/frozen-runtime-python"
+          build_python="$RUNNER_TEMP/frozen-runtime-python/bin/python"
+          echo "BUILD_PYTHON=$build_python" >> "$GITHUB_ENV"
+          "$build_python" -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
+          "$build_python" scripts/install_release_cohort.py --core-extra release-runtime
+          "$build_python" -m pip install --constraint requirements/ci.txt 'pyinstaller==6.22.3'
+          "$build_python" -m pip check
+          "$build_python" scripts/verify_constraint_closure.py
+          "$build_python" -c "import os, platform; assert platform.machine() == os.environ['EXPECTED_MACHINE'], platform.machine()"
+      - name: Freeze the release spec
+        working-directory: build
+        run: |
+          "$BUILD_PYTHON" -m PyInstaller --clean --noconfirm --distpath ../dist maverick.spec
+      - name: Exercise the frozen executable without developer paths or configuration
+        run: |
+          "$BUILD_PYTHON" - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import runpy
+          import subprocess
+          import tempfile
+
+          root = Path.cwd()
+          binary = root / 'dist/maverick'
+          output = root / 'frozen-runtime-evidence'
+          output.mkdir()
+          staging = runpy.run_path(str(root / 'apps/installer-msi/stage_customer.py'))
+          cohort = staging['tomllib'].loads((root / 'release-cohort.toml').read_text())
+          digest = hashlib.sha256()
+          with binary.open('rb') as stream:
+              for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                  digest.update(chunk)
+          receipt = {
+              'reviewed_head': os.environ['REVIEWED_HEAD'],
+              'checkout_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'platform': platform.platform(), 'machine': platform.machine(),
+              'build_python': platform.python_version(),
+              'sha256': digest.hexdigest(), 'bytes': binary.stat().st_size, 'checks': [],
+          }
+          with tempfile.TemporaryDirectory(prefix='lightwork-frozen-check-') as temporary:
+              environment = staging['runtime_check_environment'](Path(temporary))
+              for arguments in (['--help'], ['version'], ['dashboard', '--help'],
+                                ['mcp', '--help'], ['release-runtime-check'], ['voice', 'status']):
+                  result = subprocess.run([str(binary), *arguments], env=environment,
+                                          cwd=temporary, capture_output=True, text=True,
+                                          encoding='utf-8', timeout=120)
+                  label = '-'.join(arguments).replace('--', '')
+                  (output / f'{label}.txt').write_text(result.stdout + result.stderr, encoding='utf-8')
+                  receipt['checks'].append({'arguments': arguments, 'returncode': result.returncode})
+                  (output / 'receipt.json').write_text(json.dumps(receipt, indent=2), encoding='utf-8')
+                  if result.returncode:
+                      raise SystemExit(f'{arguments}: {result.stdout}\n{result.stderr}')
+                  if arguments == ['version']:
+                      for package in cohort['packages']:
+                          assert f"{package['distribution']} {cohort['version']}" in ' '.join(result.stdout.split())
+                  if arguments == ['voice', 'status']:
+                      assert 'pywhispercpp engine (installed)' in result.stdout, result.stdout
+                  print(result.stdout)
+          PY
+      - name: Retain exact runtime receipts and freeze diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: frozen-runtime-${{ matrix.os }}
+          path: |
+            frozen-runtime-evidence/
+            build/build/maverick/warn-maverick.txt
+          if-no-files-found: warn
+          retention-days: 14

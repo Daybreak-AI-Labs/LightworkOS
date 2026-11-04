@@ -1,0 +1,48 @@
+# NOTE: @...@ tokens are rendered by render_service.py from the installed
+# user's saved workspace. Run install.sh; do not copy this template directly.
+[Unit]
+Description=Lightwork agent (long-horizon multi-agent swarm)
+Documentation=https://github.com/Daybreak-AI-Labs/LightworkOS
+After=network-online.target
+Wants=network-online.target
+
+# Crash-loop protection: if Lightwork crashes 5x in 5 minutes, give up
+# instead of respawning forever and burning API credits on a bad config.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@WORKDIR@
+EnvironmentFile=-@ENV_FILE@
+Environment=@CONFIG_ENV@
+# Idle by default — channels (telegram etc.) wake it.
+ExecStart=@EXECUTABLE@ serve
+Restart=on-failure
+RestartSec=5s
+# Give in-flight goals 30s to wind down on stop/restart.
+TimeoutStopSec=30
+KillMode=mixed
+
+# Memory cap: OOM-kill + respawn this service before a runaway (e.g. an
+# HTTP/2 header-amplification flood against a channel webhook) can push the
+# whole box into swap. Percentages are of physical RAM, so this scales to
+# any VPS size — raise them if a legitimate workload needs more headroom.
+# A killed worker respawns clean (Restart=on-failure, with the crash-loop
+# guard above); a swapping box drags every other request down with it.
+MemoryHigh=60%
+MemoryMax=75%
+
+# Security hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@STATE@ @WORKDIR@
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}Savings · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* Savings page — scoped. Derived from design-system tokens; the summary is
+     the shared executive board (board.js), the tables stay server-rendered. */
+  .sv-pos { color: var(--success); }
+  .sv-neg { color: var(--danger, #e2574c); }
+  .sv-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: var(--space-3); align-items: end; }
+  .sv-form .field { display: flex; flex-direction: column; gap: var(--space-1); }
+  .sv-form label { font-size: var(--text-xs); color: var(--muted); }
+  .sv-dept-input { width: 6.5rem; padding: 0.3rem 0.45rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-sunken); color: var(--text); }
+  .sv-note { font-size: var(--text-xs); color: var(--muted); margin-top: var(--space-2); }
+  .sv-range { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-bottom: var(--space-3); }
+</style>
+
+  {% set saved = report.saved %}
+  {% set cur = 'USD' %}
+  {% macro amount(v) %}{% if v is none %}Unavailable{% else %}{{ v | money }}{% endif %}{% endmacro %}
+  {% set field_words = {'hourly_rate': 'hourly rate', 'hours_per_task': 'hours per task', 'currency': 'currency', 'departments': 'department numbers'} %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Value & spend', 'Savings',
+               subtitle='Estimates based on your assumptions',
+               lede='An estimate of the cost you avoided: finished tasks times
+                     <strong>your</strong> numbers for what the same work costs
+                     people, minus what Lightwork spent (from <a href="/spend">Spend</a>).
+                     Lightwork\'s costs are its own records, not verified provider invoices.' | safe) %}
+    {{ state('Current state',
+             amount(saved) ~ ' estimated difference',
+             badge='Unavailable' if not report.available
+                   else ('Saving money' if saved >= 0 else 'Costing more') if assumptions_confirmed
+                   else 'Starting numbers',
+             badge_class='ok' if report.available and assumptions_confirmed and saved >= 0 else 'warn',
+             copy='A directional estimate: it changes with the numbers below. For measured
+                   results, run a workflow pilot.') }}
+  {% endcall %}
+  <p class="panel"><a class="btn" href="/work-value">Open work value &amp; opportunities</a>
+    Follow business intent through execution evidence, costs and useful next actions.
+    This page is the legacy attempt-based scenario. Work value uses deduplicated business work and audit completion;
+    compare the methods rather than adding their estimates.</p>
+  {% from "_spend_freshness.html" import spend_freshness %}
+  {{ spend_freshness(spend_recorded_at) }}
+  {% include "_practice_cost.html" %}
+  {# Whose tasks these numbers count, and on what assumptions (value_views). #}
+  <p class="muted" id="sv-scope">{% if value_view.scope == 'workspace' %}These numbers cover the whole
+    workspace, totals only. Task details are not shown here.{% else %}These numbers
+    cover the tasks you ran.{% endif %}</p>
+  {% if not report.available %}<p role="alert">{{ report.unavailable_reason }}</p>{% endif %}
+  {% if report.incomplete %}<p role="status">History coverage is incomplete. Do not treat these figures as a complete period total.</p>{% endif %}
+  <p class="muted">Comparison basis: USD only, finished episode attempts in the selected period. Provider invoices, subscriptions, taxes and human rework are not included. Existing non-USD assumptions require your review; Lightwork does not relabel or convert them.</p>
+  <p class="sv-range"><a class="btn" href="/outcome-pilots">Measure a workflow pilot</a>
+    <span class="muted">Needs outcome measurement turned on.</span>
+    <a class="btn btn--ghost" href="/settings#feature-outcome_measurement">Turn it on in Settings</a></p>
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+    {% from "_tabs.html" import panel_tabs %}
+    {{ panel_tabs('Time range', [('30', '30 days'), ('90', '90 days'), ('180', '6 months'), ('365', '1 year')], '90', id='bd-range', data='days', controls=false, activation='manual', hash='range-') }}
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+  <p class="sv-note" id="sv-basis">Estimated savings are directional, not measured: finished tasks ×
+    {{ cfg.hours_per_task }} hours per task × {{ cfg.hourly_rate | money(currency=cfg.currency) }} an hour, minus what
+    Lightwork spent.
+    {% if not assumptions_confirmed %}These are Lightwork&rsquo;s starting numbers, not yours yet.{% endif %}
+    <a href="#sv-assumptions">{{ 'Change these numbers' if can_manage_assumptions else 'See these numbers' }}</a>{% if not can_manage_assumptions %}
+    (only an administrator can change them){% endif %}.</p>
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Completed tasks</h2>
+      <p class="viz-sub">Finished tasks over time (by week for longer ranges). These counts drive the estimate.</p>
+      <div id="bd-delivered"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Estimated savings by department</h2>
+      <p class="viz-sub">Solid bar: estimated difference. Pale bar: assumed human cost.</p>
+      <div id="bd-dept-savings"></div>
+    </div>
+  </div>
+
+  <div class="section-head"><h2>Your numbers</h2></div>
+  <div class="panel">
+    {% if value_resolution.effective_source == 'tenant_override' %}
+      <p class="sv-note" id="sv-precedence" role="status">
+        <strong>This workspace uses its own numbers:</strong>
+        {{ cfg.hourly_rate | money(currency=cfg.currency) }} an hour and
+        {{ cfg.hours_per_task }} hours per task. The company-wide numbers are
+        {{ value_resolution.global_assumptions.hourly_rate | money(currency=value_resolution.global_assumptions.currency) }} an hour and
+        {{ value_resolution.global_assumptions.hours_per_task }} hours per task.
+        This workspace keeps its own
+        {% for f in value_resolution.tenant_override_fields %}{{ field_words.get(f, f | humanize | lower) }}{{ ', ' if not loop.last }}{% endfor %}
+        even when the company-wide numbers change.
+      </p>
+    {% else %}
+      <p class="sv-note" id="sv-precedence">
+        Using the company-wide numbers: {{ cfg.hourly_rate | money(currency=cfg.currency) }} an hour and
+        {{ cfg.hours_per_task }} hours per task.
+      </p>
+    {% endif %}
+    {% if not can_manage_assumptions %}
+      <p class="sv-note" id="sv-permission-note">
+        View only: only an administrator can change these numbers.
+      </p>
+    {% endif %}
+    <form id="sv-assumptions">
+      <div class="sv-form">
+        <div class="field">
+          <label for="sv-rate">Cost of an hour of a person's work, including overheads</label>
+          <input class="input" id="sv-rate" name="hourly_rate" type="number" min="0" step="0.01"
+                 value="{{ cfg.hourly_rate }}" required{% if not can_manage_assumptions %} disabled{% endif %}>
+        </div>
+        <div class="field">
+          <label for="sv-hours">Hours a person takes for one of these tasks</label>
+          <input class="input" id="sv-hours" name="hours_per_task" type="number" min="0" step="0.1"
+                 value="{{ cfg.hours_per_task }}" required{% if not can_manage_assumptions %} disabled{% endif %}>
+        </div>
+        <div class="field">
+          <label for="sv-currency">Currency</label>
+          <select class="select" id="sv-currency" name="currency"{% if not can_manage_assumptions %} disabled{% endif %}>
+            {% set currencies = [('USD','US dollar'),('EUR','Euro'),('GBP','British pound'),('CAD','Canadian dollar'),('AUD','Australian dollar'),('NZD','New Zealand dollar'),('JPY','Japanese yen'),('CHF','Swiss franc'),('SEK','Swedish krona'),('NOK','Norwegian krone'),('DKK','Danish krone'),('INR','Indian rupee'),('SGD','Singapore dollar'),('HKD','Hong Kong dollar'),('BRL','Brazilian real'),('MXN','Mexican peso'),('ZAR','South African rand')] %}
+            <option value="USD"{% if cfg.currency | upper == 'USD' %} selected{% endif %}>US dollar (USD)</option>
+            {% if cfg.currency and cfg.currency | upper != 'USD' %}<option value="{{ cfg.currency }}" selected disabled>{{ cfg.currency }} — review and convert your assumptions to USD</option>{% endif %}
+          </select>
+        </div>
+        <div class="field">
+          <button type="submit" class="btn btn--primary"{% if not can_manage_assumptions %} disabled{% endif %}>Save and recalculate</button>
+        </div>
+      </div>
+      <p class="sv-note">These are <em>your</em> numbers: what an hour of similar work by a person
+        costs you (pay, benefits and overheads) and how long one of these tasks takes them.
+        Savings = finished tasks × hours per task × hourly cost, minus what Lightwork spent.
+        You can set different numbers for each department below.</p>
+      <p class="sv-note" id="sv-status" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+
+  <div class="section-head"><h2>By department</h2></div>
+  <div class="panel">
+    <form method="get" action="/savings" class="sv-range">
+      <label for="sv-days">Period</label>
+      <select class="select" id="sv-days" name="days">
+        {% for n, label in [(30, 'Last 30 days'), (90, 'Last 90 days'), (180, 'Last 6 months'), (365, 'Last year')] %}
+        <option value="{{ n }}"{% if days == n %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="btn">Show</button>
+    </form>
+    {% if report.by_department %}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Department</th><th scope="col">Finished</th>
+          <th scope="col">Hourly cost</th><th scope="col">Hours per task</th>
+          <th scope="col">Cost for people</th><th scope="col">Lightwork cost</th>
+          <th scope="col">Saved</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in report.by_department %}
+        <tr data-dept="{{ d.department }}">
+          <td>{{ d.department | humanize }}</td>
+          <td>{{ d.deliverables }}</td>
+          <td>
+            <input class="sv-dept-input" type="number" min="0" step="0.01"
+                   name="rate::{{ d.department }}" value="{{ d.hourly_rate }}"
+                   form="sv-assumptions"
+                   aria-label="Hourly cost for {{ d.department | humanize }}"{% if not can_manage_assumptions %} disabled{% endif %}>
+          </td>
+          <td>
+            <input class="sv-dept-input" type="number" min="0" step="0.1"
+                   name="hours::{{ d.department }}" value="{{ d.hours_per_task }}"
+                   form="sv-assumptions"
+                   aria-label="Hours per task for {{ d.department | humanize }}"{% if not can_manage_assumptions %} disabled{% endif %}>
+          </td>
+          <td>{{ amount(d.human_cost) }}</td>
+          <td>{{ amount(d.agent_cost) }}</td>
+          <td class="{{ 'sv-pos' if d.saved >= 0 else 'sv-neg' }}">{{ amount(d.saved) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="sv-note">A department uses the numbers above until you change its row here.
+      Changed rows are saved as that department's own numbers.</p>
+    {% else %}
+      <p class="muted">No finished work in this period yet. Savings appear as soon as tasks
+        finish; Lightwork never invents a number.</p>
+      {% if value_view.can_operate %}<p><a class="btn btn--primary" href="/chat">Start a task</a></p>{% endif %}
+    {% endif %}
+  </div>
+
+  {% include "_proof_results.html" %}
+  {% include "_value_report.html" %}
+
+  <div class="section-head"><h2>How to read this</h2></div>
+  <div class="panel">
+    <p class="sv-note">
+      Finished tasks and Lightwork's costs come from Lightwork's own records (the same as the
+      <a href="/spend">Spend</a> page). The cost for people is your estimate, entered above, so the
+      result is only as good as those numbers. Nothing here changes budgets or safety settings.
+    </p>
+  </div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var form = document.getElementById('sv-assumptions');
+  if (!form) return;
+  var status = document.getElementById('sv-status');
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var fd = new FormData(form);
+    var body = {
+      hourly_rate: parseFloat(fd.get('hourly_rate')),
+      hours_per_task: parseFloat(fd.get('hours_per_task')),
+      currency: (fd.get('currency') || '').trim() || null,
+      departments: {}
+    };
+    var globalRate = body.hourly_rate, globalHours = body.hours_per_task;
+    // Only a row the user actually EDITED becomes (or updates) an override:
+    // compare each input to its rendered default. An untouched row keeps
+    // following the global assumption — changing the global rate must not
+    // silently pin every department at the old numbers. (document-wide query:
+    // the table inputs associate via form= and are not form descendants.)
+    document.querySelectorAll('.sv-dept-input').forEach(function (input) {
+      if (input.value === input.defaultValue) return;
+      var m = input.name.match(/^(rate|hours)::(.+)$/);
+      if (!m) return;
+      var num = parseFloat(input.value);
+      if (isNaN(num)) return;
+      var row = body.departments[m[2]] = body.departments[m[2]] || {};
+      if (m[1] === 'rate') row.hourly_rate = num; else row.hours_per_task = num;
+    });
+    // An edit that lands BOTH axes exactly back on the global numbers is not
+    // an override — clear it so the row follows the global again. (A partial
+    // edit is kept as-is: nulling would also wipe the other axis's stored
+    // override.)
+    Object.keys(body.departments).forEach(function (dept) {
+      var row = body.departments[dept];
+      if (row.hourly_rate === globalRate && row.hours_per_task === globalHours) {
+        body.departments[dept] = null;
+      }
+    });
+    status.textContent = 'Saving…';
+    fetch('/api/v1/savings/assumptions', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) {
+        status.textContent = r.status === 422 ? 'Could not save. Check that the numbers are 0 or more.' : window.mvErrorText(r, 'save your numbers');
+        return;
+      }
+      status.textContent = 'Saved. Recalculating…';
+      window.location.reload();
+    }).catch(function (err) {
+      status.textContent = window.mvErrorText(err, 'save your numbers');
+    });
+  });
+})();
+</script>
+<script src="/static/board.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var B = window.LWBoard;
+
+  function render(D) {
+    var rep = D.report;
+    if (!rep.available) throw new Error(rep.unavailable_reason || 'Savings history is unavailable. Refresh the page and try again.');
+    var k = document.getElementById('bd-kpis');
+    k.textContent = '';
+    // Show the assumptions next to the estimate; never a bare cost multiple.
+    var A = rep.assumptions || {};
+    var uniform = (rep.by_department || []).every(function (d) {
+      return d.hourly_rate === A.hourly_rate && d.hours_per_task === A.hours_per_task;
+    });
+    var tasks = rep.deliverables + ' finished task' + (rep.deliverables === 1 ? '' : 's');
+    k.appendChild(B.kpi({ label: 'Estimated savings (directional)', value: rep.saved,
+      format: B.money, sparkCls: 'ok',
+      spark: D.daily_done.map(function (r) { return r.n; }),
+      sub: uniform
+        ? tasks + ' × ' + A.hours_per_task + ' h × ' + B.money(A.hourly_rate) + ' an hour, minus ' +
+          B.money(rep.agent_cost) + ' Lightwork cost, last ' + D.days + ' days'
+        : tasks + ' at each department\'s numbers (see By department), last ' + D.days + ' days' }));
+    k.appendChild(B.kpi({ label: 'Cost for people (estimate)', value: rep.human_cost,
+      format: B.money }));
+    k.appendChild(B.kpi({ label: 'Lightwork cost', value: rep.agent_cost,
+      format: B.money }));
+    k.appendChild(B.kpi({ label: 'Hours of people\'s time (estimate)', value: rep.human_hours,
+      sub: !rep.deliverables ? 'no tasks yet'
+        : uniform ? 'at ' + A.hours_per_task + ' hours per task' : 'at each department\'s hours per task' }));
+
+    var doneTotal = 0;
+    D.daily_done.forEach(function (r) { doneTotal += r.n; });
+    if (doneTotal) {
+      var weekly = D.days > 60;
+      B.area(document.getElementById('bd-delivered'), {
+        data: weekly ? B.bucketWeekly(D.daily_done, ['n']) : D.daily_done,
+        x: 'd',
+        series: [{ key: 'n', label: 'Completed', cls: 'ok' }],
+        aria: 'Finished tasks per ' + (weekly ? 'week' : 'day') +
+              ' over the last ' + D.days + ' days.',
+        tipHead: function (r) { return (weekly ? 'Week of ' : '') + r.d; },
+        xTick: function (r, i, n) {
+          return i % Math.ceil(n / 8) === 0 ? r.d.slice(5) : '';
+        } });
+    } else {
+      B.empty(document.getElementById('bd-delivered'),
+        'No finished work in this period yet. Estimates appear as tasks finish.');
+    }
+
+    var depts = (rep.by_department || []).slice(0, 8);
+    if (depts.length) {
+      var maxHuman = 1;
+      depts.forEach(function (r) { maxHuman = Math.max(maxHuman, r.human_cost); });
+      B.hbars(document.getElementById('bd-dept-savings'),
+        depts.map(function (r) {
+          var name = window.mvHuman ? window.mvHuman(r.department) : String(r.department || '').replace(/_/g, ' ');
+          return { label: name, value_text: B.money(r.saved),
+                   pct: Math.max(0, r.saved) / maxHuman * 100,
+                   pct_bg: r.human_cost / maxHuman * 100,
+                   cls: r.saved < 0 ? 'danger' : 'ok',
+                   title: name + ' — estimated difference ' + B.money(r.saved) +
+                          ' of ' + B.money(r.human_cost) + ' assumed human cost' };
+        }), 'Estimated savings by department, scaled to the largest assumed human cost.');
+    } else {
+      B.empty(document.getElementById('bd-dept-savings'),
+        'No finished work in this period yet. Estimates appear as tasks finish.');
+    }
+  }
+
+  B.attach({ board: 'savings', render: render });
+})();
+</script>
+{% endblock %}

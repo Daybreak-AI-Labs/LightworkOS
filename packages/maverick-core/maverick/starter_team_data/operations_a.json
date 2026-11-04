@@ -1,0 +1,1670 @@
+[
+  {
+    "id": "compliance_operations",
+    "title": "Compliance Operations",
+    "summary": "Check a normalized control register for missing framework mappings, failed control tests, and stale evidence; prepare owner actions with provenance.",
+    "owner_role": "Compliance manager",
+    "specialists": [
+      "itgrc_soc2_evidence",
+      "itgrc_control_testing",
+      "itgrc_compliance",
+      "itgrc_reg_change"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Control tests and evidence register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "control",
+          "framework_clause",
+          "test_result",
+          "evidence_valid_until"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved GRC evidence and framework register",
+        "access": "read",
+        "prerequisites": [
+          "Control owner has reviewed the framework mapping and test-result vocabulary.",
+          "An authorized reviewer supplies evidence validity dates and assessed regulatory changes; no legal deadline is inferred.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Identify the failed access-review test and expired evidence, and the control missing its approved framework mapping.",
+    "deliverable": "Cited control-evidence register, findings, and owner action list",
+    "acceptance": [
+      "Every finding identifies the control row, source, failed check, and proposed owner action.",
+      "The sample flags C2 for failed testing and stale evidence and C3 for missing framework mapping; C1 passes.",
+      "A passed structured check is not an attestation, independent audit opinion, or verification of source authenticity."
+    ],
+    "stop_conditions": [
+      "Escalate disputed framework applicability, conflicting test results, and regulatory interpretations to the compliance owner.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Certify or attest compliance",
+      "Close control findings",
+      "Change controls or evidence",
+      "Notify a regulator"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "framework_mapping",
+        "title": "Approved framework mapping present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the control owner to supply and review the applicable framework clause.",
+        "field": "framework_clause"
+      },
+      {
+        "id": "control_test",
+        "title": "Recorded control test passed",
+        "table": "records",
+        "kind": "equals",
+        "action": "Prepare a remediation item for the control owner with the recorded failed test.",
+        "field": "test_result",
+        "value": "passed"
+      },
+      {
+        "id": "evidence_freshness",
+        "title": "Evidence remains within its approved validity date",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Request replacement evidence and preserve the superseded source reference.",
+        "field": "evidence_valid_until",
+        "within_days": 0
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "C1",
+            "source": "sample://compliance_operations/records/C1",
+            "control": "Backup restoration",
+            "framework_clause": "SOC2 CC7.3",
+            "test_result": "passed",
+            "evidence_valid_until": "2027-01-15"
+          },
+          {
+            "id": "C2",
+            "source": "sample://compliance_operations/records/C2",
+            "control": "Quarterly access review",
+            "framework_clause": "SOC2 CC6.2",
+            "test_result": "failed",
+            "evidence_valid_until": "2026-10-31"
+          },
+          {
+            "id": "C3",
+            "source": "sample://compliance_operations/records/C3",
+            "control": "Change approval",
+            "framework_clause": "",
+            "test_result": "passed",
+            "evidence_valid_until": "2027-01-15"
+          }
+        ]
+      },
+      "expected_findings": [
+        "framework_mapping:C3",
+        "control_test:C2",
+        "evidence_freshness:C2"
+      ]
+    }
+  },
+  {
+    "id": "vendor_assurance",
+    "title": "Vendor Assurance",
+    "summary": "Review supplier document completeness, recorded contract review, and insurance expiry from an approved vendor register.",
+    "owner_role": "Vendor risk manager",
+    "specialists": [
+      "proc_supplier_onboard",
+      "itgrc_vendor_risk",
+      "legal_vendor_contract_review"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Supplier assurance register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "supplier",
+          "tax_document_reference",
+          "contract_review",
+          "insurance_expiry"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved supplier onboarding and contract exports",
+        "access": "read",
+        "prerequisites": [
+          "Supplier identities and applicable document requirements are confirmed by procurement.",
+          "Contract-review decisions and insurance dates are supplied by authorized reviewers; no bank details are needed.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Prepare exceptions for V2 missing its tax document and approaching insurance expiry, and V3 awaiting contract review.",
+    "deliverable": "Evidence-backed supplier review and exception follow-up packet",
+    "acceptance": [
+      "Preserve supplier, source, and missing requirement for each exception.",
+      "The sample finds two issues for V2 and the contract-review issue for V3; V1 passes.",
+      "A complete row does not activate a supplier or prove coverage is sufficient."
+    ],
+    "stop_conditions": [
+      "Escalate identity, banking, sanctions, coverage interpretation, or contract-signature questions to an authorized owner.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Activate suppliers",
+      "Change bank details",
+      "Sign contracts",
+      "Send vendor follow-ups",
+      "Approve supplier risk acceptance"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "tax_document",
+        "title": "Required tax document reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask procurement to obtain the missing approved tax-document reference.",
+        "field": "tax_document_reference"
+      },
+      {
+        "id": "contract_review",
+        "title": "Contract review recorded as approved",
+        "table": "records",
+        "kind": "equals",
+        "action": "Route the contract issue to counsel; keep supplier activation pending.",
+        "field": "contract_review",
+        "value": "approved"
+      },
+      {
+        "id": "insurance_expiry",
+        "title": "Insurance expires within 30 days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare an insurance renewal request for the procurement owner to review.",
+        "field": "insurance_expiry",
+        "within_days": 30
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "V1",
+            "source": "sample://vendor_assurance/records/V1",
+            "supplier": "Sample Alder Supply",
+            "tax_document_reference": "sample://vendor/documents/alder-tax",
+            "contract_review": "approved",
+            "insurance_expiry": "2027-06-30"
+          },
+          {
+            "id": "V2",
+            "source": "sample://vendor_assurance/records/V2",
+            "supplier": "Sample Beacon Services",
+            "tax_document_reference": "",
+            "contract_review": "approved",
+            "insurance_expiry": "2026-11-20"
+          },
+          {
+            "id": "V3",
+            "source": "sample://vendor_assurance/records/V3",
+            "supplier": "Sample Cedar Systems",
+            "tax_document_reference": "sample://vendor/documents/cedar-tax",
+            "contract_review": "pending",
+            "insurance_expiry": "2027-03-31"
+          }
+        ]
+      },
+      "expected_findings": [
+        "tax_document:V2",
+        "contract_review:V3",
+        "insurance_expiry:V2"
+      ]
+    }
+  },
+  {
+    "id": "ap_purchasing_exceptions",
+    "title": "AP & Purchasing Exceptions",
+    "summary": "Compare normalized invoice, purchase-order and receipt values, then identify missing acknowledgements and overdue receiving follow-ups.",
+    "owner_role": "Accounts payable manager",
+    "specialists": [
+      "proc_p2p_exceptions",
+      "proc_po_chaser"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Invoice, PO, and receipt reconciliation rows",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "invoice",
+          "invoice_amount",
+          "po_amount",
+          "invoice_quantity",
+          "received_quantity",
+          "acknowledgement_reference",
+          "receipt_due",
+          "receipt_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved purchasing and payable exports",
+        "access": "read",
+        "prerequisites": [
+          "Join invoice, PO, and receipt lines using reviewed business keys before upload.",
+          "Amounts must share currency and tax basis; quantities must share units. Preserve all source identifiers in the source field or cited export.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Find P2 amount and quantity mismatches, missing supplier acknowledgement, and its overdue receipt date.",
+    "deliverable": "Three-way match exception worklist and proposed PO follow-up packet",
+    "acceptance": [
+      "Report numeric comparison failures separately from missing acknowledgement and overdue receiving.",
+      "The sample produces four P2 findings; P1 and P3 pass.",
+      "The worklist never releases, stages, or transmits a payment."
+    ],
+    "stop_conditions": [
+      "Stop on mixed currencies, mixed units, ambiguous line joins, disputed receipts, or unverified payment instructions.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Release or stage payments",
+      "Change purchase orders",
+      "Send supplier messages",
+      "Commit spend",
+      "Change bank instructions"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "amount_match",
+        "title": "Invoice amount equals approved PO amount",
+        "table": "records",
+        "kind": "compare",
+        "action": "Ask the buyer to reconcile pricing, tax basis, and authorized PO changes.",
+        "field": "invoice_amount",
+        "other_field": "po_amount",
+        "operator": "eq"
+      },
+      {
+        "id": "receipt_quantity",
+        "title": "Invoiced quantity does not exceed received quantity",
+        "table": "records",
+        "kind": "compare",
+        "action": "Request receiving evidence or an authorized hold decision from AP.",
+        "field": "invoice_quantity",
+        "other_field": "received_quantity",
+        "operator": "lte"
+      },
+      {
+        "id": "po_acknowledgement",
+        "title": "Supplier acknowledgement reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare an acknowledgement follow-up for the buyer to review.",
+        "field": "acknowledgement_reference"
+      },
+      {
+        "id": "overdue_receipt",
+        "title": "Receipt due date has passed",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Ask the buyer to review delivery status and prepare a supplier follow-up.",
+        "field": "receipt_due",
+        "within_days": 0,
+        "unless_field": "receipt_status",
+        "unless_value": "received"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "P1",
+            "source": "sample://ap_purchasing_exceptions/records/P1",
+            "invoice": "INV-SAMPLE-101",
+            "invoice_amount": 100,
+            "po_amount": 100,
+            "invoice_quantity": 10,
+            "received_quantity": 10,
+            "acknowledgement_reference": "sample://ap/ack/101",
+            "receipt_due": "2026-10-25",
+            "receipt_status": "received"
+          },
+          {
+            "id": "P2",
+            "source": "sample://ap_purchasing_exceptions/records/P2",
+            "invoice": "INV-SAMPLE-102",
+            "invoice_amount": 120,
+            "po_amount": 100,
+            "invoice_quantity": 10,
+            "received_quantity": 8,
+            "acknowledgement_reference": "",
+            "receipt_due": "2026-10-28",
+            "receipt_status": "awaiting"
+          },
+          {
+            "id": "P3",
+            "source": "sample://ap_purchasing_exceptions/records/P3",
+            "invoice": "INV-SAMPLE-103",
+            "invoice_amount": 300,
+            "po_amount": 300,
+            "invoice_quantity": 3,
+            "received_quantity": 3,
+            "acknowledgement_reference": "sample://ap/ack/103",
+            "receipt_due": "2026-11-20",
+            "receipt_status": "received"
+          }
+        ]
+      },
+      "expected_findings": [
+        "amount_match:P2",
+        "receipt_quantity:P2",
+        "po_acknowledgement:P2",
+        "overdue_receipt:P2"
+      ]
+    }
+  },
+  {
+    "id": "support_operations",
+    "title": "Support Operations",
+    "summary": "Check ticket routing, approved answer references, and response deadlines; prepare routing and knowledge-gap work for support review.",
+    "owner_role": "Support operations lead",
+    "specialists": [
+      "cx_triage",
+      "cx_ticket_insights",
+      "cx_kb_curator"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Support ticket routing and knowledge-reference export",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "topic",
+          "assigned_queue",
+          "approved_answer_reference",
+          "response_due",
+          "ticket_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved support queue and knowledge-base exports",
+        "access": "read",
+        "prerequisites": [
+          "Remove unnecessary personal data from ticket excerpts.",
+          "Support owner supplies response deadlines and approved answer references; no entitlement or priority is inferred from protected attributes.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Identify S2 as unassigned, lacking an approved answer, and past its response deadline; preserve its ticket topic for follow-up.",
+    "deliverable": "Ticket routing exceptions, response preparation, and knowledge-gap worklist",
+    "acceptance": [
+      "Each exception retains ticket topic and source so the support lead can inspect related cases.",
+      "The sample produces three findings for S2; closed S3 is not flagged for its old response deadline.",
+      "Knowledge-gap rows propose work; they are not automatically published knowledge articles or customer replies."
+    ],
+    "stop_conditions": [
+      "Escalate security incidents, threats, disputed entitlements, or unapproved advice to the named owner.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Send customer replies",
+      "Close or reroute tickets in a live system",
+      "Publish knowledge articles",
+      "Grant refunds or account access"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "ticket_routing",
+        "title": "Assigned support queue present",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare a routing proposal for the support queue owner.",
+        "field": "assigned_queue"
+      },
+      {
+        "id": "answer_evidence",
+        "title": "Approved answer reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the knowledge owner to prepare or approve an answer for this topic.",
+        "field": "approved_answer_reference"
+      },
+      {
+        "id": "response_deadline",
+        "title": "Unresolved ticket response is due",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Flag the response obligation for the support lead and prepare a reviewed reply.",
+        "field": "response_due",
+        "within_days": 0,
+        "unless_field": "ticket_status",
+        "unless_value": "closed"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "S1",
+            "source": "sample://support_operations/records/S1",
+            "topic": "Invoice explanation",
+            "assigned_queue": "Billing",
+            "approved_answer_reference": "sample://support/kb/invoices",
+            "response_due": "2026-11-04",
+            "ticket_status": "open"
+          },
+          {
+            "id": "S2",
+            "source": "sample://support_operations/records/S2",
+            "topic": "Export permission error",
+            "assigned_queue": "",
+            "approved_answer_reference": "",
+            "response_due": "2026-11-01",
+            "ticket_status": "open"
+          },
+          {
+            "id": "S3",
+            "source": "sample://support_operations/records/S3",
+            "topic": "Password reset",
+            "assigned_queue": "Identity",
+            "approved_answer_reference": "sample://support/kb/reset",
+            "response_due": "2026-10-31",
+            "ticket_status": "closed"
+          }
+        ]
+      },
+      "expected_findings": [
+        "ticket_routing:S2",
+        "answer_evidence:S2",
+        "response_deadline:S2"
+      ]
+    }
+  },
+  {
+    "id": "security_questionnaire_desk",
+    "title": "Security Questionnaire Desk",
+    "summary": "Match structured questionnaire answers to approved answer and evidence references, and flag expired answer reviews before a response package is released.",
+    "owner_role": "Security assurance lead",
+    "specialists": [
+      "itgrc_evidence",
+      "itgrc_compliance",
+      "legal_vendor_contract_review"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Questionnaire response and evidence register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "question",
+          "approved_answer",
+          "evidence_reference",
+          "answer_review_due"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved security answer library and questionnaire export",
+        "access": "read",
+        "prerequisites": [
+          "Security owner supplies question identifiers, approved response text, and evidence references.",
+          "Approved-answer reuse scope and review expiry must cover this customer and questionnaire version.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Prepare the unanswered Q2 escalation and Q3 expired-review exception while preserving Q1 as a supported answer.",
+    "deliverable": "Questionnaire response register with unsupported-answer and review-expiry exceptions",
+    "acceptance": [
+      "Every populated answer remains attributable to its provided evidence reference.",
+      "The sample flags missing answer and evidence for Q2 and expired review for Q3.",
+      "The starter checks provided fields and dates; a person still verifies semantic relevance, confidentiality, and truthful commitments."
+    ],
+    "stop_conditions": [
+      "Stop when a question needs a new commitment, evidence disclosure permission, legal interpretation, or an answer outside the approved library.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Invent security claims",
+      "Submit questionnaires",
+      "Disclose evidence externally",
+      "Agree to customer security terms"
+    ],
+    "cadence": "manual",
+    "rules": [
+      {
+        "id": "approved_answer",
+        "title": "Approved response text present",
+        "table": "records",
+        "kind": "required",
+        "action": "Escalate the unanswered question to the security assurance owner.",
+        "field": "approved_answer"
+      },
+      {
+        "id": "answer_source",
+        "title": "Supporting evidence reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Request an approved evidence reference before releasing the answer.",
+        "field": "evidence_reference"
+      },
+      {
+        "id": "answer_review",
+        "title": "Answer review is expired",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Have the answer owner review current control evidence and renew the answer approval.",
+        "field": "answer_review_due",
+        "within_days": 0
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "Q1",
+            "source": "sample://security_questionnaire_desk/records/Q1",
+            "question": "Are access reviews performed?",
+            "approved_answer": "The supplied policy schedules quarterly access reviews.",
+            "evidence_reference": "sample://questionnaire/policies/access-v2",
+            "answer_review_due": "2027-01-31"
+          },
+          {
+            "id": "Q2",
+            "source": "sample://security_questionnaire_desk/records/Q2",
+            "question": "Is customer-managed encryption available?",
+            "approved_answer": "",
+            "evidence_reference": "",
+            "answer_review_due": "2026-12-31"
+          },
+          {
+            "id": "Q3",
+            "source": "sample://security_questionnaire_desk/records/Q3",
+            "question": "How often are recovery exercises held?",
+            "approved_answer": "The supplied plan schedules an annual recovery exercise.",
+            "evidence_reference": "sample://questionnaire/plans/recovery-v1",
+            "answer_review_due": "2026-10-20"
+          }
+        ]
+      },
+      "expected_findings": [
+        "approved_answer:Q2",
+        "answer_source:Q2",
+        "answer_review:Q3"
+      ]
+    }
+  },
+  {
+    "id": "privacy_operations",
+    "title": "Privacy Operations",
+    "summary": "Organize a minimized privacy-request register, record identity-review prerequisites, and flag missing search evidence and owner-supplied response deadlines.",
+    "owner_role": "Privacy operations manager",
+    "specialists": [
+      "itgrc_dsar",
+      "itgrc_retention",
+      "legal_privacy"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Privacy request readiness register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "request_type",
+          "identity_review",
+          "search_reference",
+          "response_due",
+          "case_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved privacy case and record-search exports",
+        "access": "read",
+        "prerequisites": [
+          "Use pseudonymous request identifiers and minimized metadata rather than identity documents or requested personal records.",
+          "An authorized privacy reviewer determines jurisdiction, identity status, exemptions, holds, and response due dates.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Flag D2 identity review, missing search evidence, and its response due within seven days; do not reopen closed D3.",
+    "deliverable": "Privacy response preparation worklist with evidence and deadline exceptions",
+    "acceptance": [
+      "Separate identity-review, search-evidence, and response-deadline exceptions.",
+      "The sample produces three D2 findings; closed D3 is excluded from deadline escalation.",
+      "Identity, disclosure, deletion, legal holds, and legal deadline calculation are outside this deterministic check."
+    ],
+    "stop_conditions": [
+      "Stop on unverified identity, legal holds, disputed scope, exemptions, or third-party personal data requiring privacy counsel review.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Verify identity autonomously",
+      "Disclose personal records",
+      "Delete or anonymize data",
+      "Respond to a requester",
+      "Lift a legal hold"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "identity_review",
+        "title": "Authorized identity review recorded as verified",
+        "table": "records",
+        "kind": "equals",
+        "action": "Keep fulfillment pending and request the authorized privacy identity-review result.",
+        "field": "identity_review",
+        "value": "verified"
+      },
+      {
+        "id": "search_evidence",
+        "title": "Scoped record-search reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Request the approved record-search inventory reference from the data owner.",
+        "field": "search_reference"
+      },
+      {
+        "id": "privacy_deadline",
+        "title": "Open privacy response is due within seven days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the response review packet and escalate the owner-supplied due date.",
+        "field": "response_due",
+        "within_days": 7,
+        "unless_field": "case_status",
+        "unless_value": "closed"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "D1",
+            "source": "sample://privacy_operations/records/D1",
+            "request_type": "Access",
+            "identity_review": "verified",
+            "search_reference": "sample://privacy/searches/d1",
+            "response_due": "2026-12-01",
+            "case_status": "open"
+          },
+          {
+            "id": "D2",
+            "source": "sample://privacy_operations/records/D2",
+            "request_type": "Erasure",
+            "identity_review": "pending",
+            "search_reference": "",
+            "response_due": "2026-11-04",
+            "case_status": "open"
+          },
+          {
+            "id": "D3",
+            "source": "sample://privacy_operations/records/D3",
+            "request_type": "Portability",
+            "identity_review": "verified",
+            "search_reference": "sample://privacy/searches/d3",
+            "response_due": "2026-11-01",
+            "case_status": "closed"
+          }
+        ]
+      },
+      "expected_findings": [
+        "identity_review:D2",
+        "search_evidence:D2",
+        "privacy_deadline:D2"
+      ]
+    }
+  },
+  {
+    "id": "contract_obligations_renewals",
+    "title": "Contract Obligations & Renewals",
+    "summary": "Review a human-extracted obligation register for ownership, clause provenance, and upcoming notice deadlines; prepare action packets.",
+    "owner_role": "Contracts manager",
+    "specialists": [
+      "legal_obligations",
+      "legal_contract_renewal_tracker"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Reviewed contract obligation and notice register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "obligation",
+          "obligation_owner",
+          "clause_reference",
+          "notice_due",
+          "obligation_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved contract register and extracted clause references",
+        "access": "read",
+        "prerequisites": [
+          "Counsel or the contract owner verifies extracted clauses, triggering events, notice method, and computed deadlines.",
+          "Include only contracts within the workspace scope; review privilege or confidentiality restrictions before upload.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Find O2 missing its owner and approaching notice deadline, and O3 lacking its clause citation.",
+    "deliverable": "Contract obligation and renewal action packets with clause provenance",
+    "acceptance": [
+      "Every exception identifies the obligation and the precise missing input or upcoming notice date.",
+      "The sample flags owner and notice issues for O2 and missing clause provenance for O3; O1 passes.",
+      "Dates are reviewed inputs, not independently calculated legal notice deadlines."
+    ],
+    "stop_conditions": [
+      "Escalate ambiguous clauses, amendments, triggering events, notice requirements, or disputed obligations to counsel.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Send renewal or termination notices",
+      "Sign or amend contracts",
+      "Accept obligations",
+      "Make legal conclusions"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "obligation_owner",
+        "title": "Named obligation owner present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the contracts manager to assign the accountable business owner.",
+        "field": "obligation_owner"
+      },
+      {
+        "id": "clause_source",
+        "title": "Reviewed clause reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Request the verified contract version and clause reference.",
+        "field": "clause_reference"
+      },
+      {
+        "id": "notice_window",
+        "title": "Open obligation notice is due within 30 days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare an action packet for the owner and counsel before the notice deadline.",
+        "field": "notice_due",
+        "within_days": 30,
+        "unless_field": "obligation_status",
+        "unless_value": "closed"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "O1",
+            "source": "sample://contract_obligations_renewals/records/O1",
+            "obligation": "Annual service review",
+            "obligation_owner": "Service owner",
+            "clause_reference": "sample://contracts/a/section-4",
+            "notice_due": "2027-02-01",
+            "obligation_status": "open"
+          },
+          {
+            "id": "O2",
+            "source": "sample://contract_obligations_renewals/records/O2",
+            "obligation": "Renewal decision",
+            "obligation_owner": "",
+            "clause_reference": "sample://contracts/b/section-7",
+            "notice_due": "2026-11-20",
+            "obligation_status": "open"
+          },
+          {
+            "id": "O3",
+            "source": "sample://contract_obligations_renewals/records/O3",
+            "obligation": "Quarterly reporting",
+            "obligation_owner": "Account owner",
+            "clause_reference": "",
+            "notice_due": "2027-01-15",
+            "obligation_status": "open"
+          }
+        ]
+      },
+      "expected_findings": [
+        "obligation_owner:O2",
+        "clause_source:O3",
+        "notice_window:O2"
+      ]
+    }
+  },
+  {
+    "id": "audit_readiness",
+    "title": "Audit Readiness",
+    "summary": "Check prepared-by-client evidence for missing references, recorded owner confirmation, and evidence validity dates before an auditor package is reviewed.",
+    "owner_role": "Audit readiness lead",
+    "specialists": [
+      "itgrc_evidence",
+      "itgrc_external_audit_liaison",
+      "itgrc_internal_audit"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Prepared-by-client evidence index",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "request",
+          "evidence_reference",
+          "owner_confirmation",
+          "evidence_valid_until"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved audit request and evidence exports",
+        "access": "read",
+        "prerequisites": [
+          "Audit scope, reporting period, request identifiers, and evidence validity criteria are confirmed by the audit lead.",
+          "Evidence owners approve access and sharing scope; source records remain in their approved repository.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Find A2 missing evidence and owner confirmation with expired validity, and A3 with expired evidence validity.",
+    "deliverable": "Auditor-package provenance index and missing or stale evidence worklist",
+    "acceptance": [
+      "Each requested item keeps its source, owner-review status, and evidence-validity date.",
+      "The sample produces three A2 findings and one A3 freshness finding; A1 passes.",
+      "Package readiness does not establish audit sufficiency or authorize delivery to an auditor."
+    ],
+    "stop_conditions": [
+      "Stop on mismatched audit periods, restricted evidence, inconsistent versions, or disputed owner confirmation.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Transmit auditor evidence",
+      "Certify control effectiveness",
+      "Alter audit evidence",
+      "Close audit findings"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "audit_evidence",
+        "title": "Requested evidence reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the assigned evidence owner to provide the approved artifact reference.",
+        "field": "evidence_reference"
+      },
+      {
+        "id": "owner_confirmation",
+        "title": "Evidence owner confirmation recorded",
+        "table": "records",
+        "kind": "equals",
+        "action": "Prepare the item for explicit evidence-owner review.",
+        "field": "owner_confirmation",
+        "value": "approved"
+      },
+      {
+        "id": "audit_freshness",
+        "title": "Evidence validity has expired",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Request current evidence matching the audit reporting period.",
+        "field": "evidence_valid_until",
+        "within_days": 0
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "A1",
+            "source": "sample://audit_readiness/records/A1",
+            "request": "PBC-01 Access register",
+            "evidence_reference": "sample://audit/evidence/access-nov",
+            "owner_confirmation": "approved",
+            "evidence_valid_until": "2026-12-31"
+          },
+          {
+            "id": "A2",
+            "source": "sample://audit_readiness/records/A2",
+            "request": "PBC-02 Restore exercise",
+            "evidence_reference": "",
+            "owner_confirmation": "pending",
+            "evidence_valid_until": "2026-10-30"
+          },
+          {
+            "id": "A3",
+            "source": "sample://audit_readiness/records/A3",
+            "request": "PBC-03 Change samples",
+            "evidence_reference": "sample://audit/evidence/change-sep",
+            "owner_confirmation": "approved",
+            "evidence_valid_until": "2026-10-20"
+          }
+        ]
+      },
+      "expected_findings": [
+        "audit_evidence:A2",
+        "owner_confirmation:A2",
+        "audit_freshness:A2",
+        "audit_freshness:A3"
+      ]
+    }
+  },
+  {
+    "id": "employee_onboarding_offboarding",
+    "title": "Employee Onboarding & Offboarding",
+    "summary": "Reconcile cross-functional lifecycle checklist status with completion references and due dates, preparing verified-completion gaps for HR and IT.",
+    "owner_role": "People operations manager",
+    "specialists": [
+      "hr_onboarding",
+      "hr_offboard_coord",
+      "itgrc_access_review"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Minimized employee lifecycle checklist",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "case",
+          "lifecycle",
+          "step",
+          "completion_state",
+          "completion_reference",
+          "step_due"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved HR and IT checklist exports",
+        "access": "read",
+        "prerequisites": [
+          "Use internal pseudonymous case references; omit protected characteristics and unnecessary personal data.",
+          "HR authorizes the lifecycle case; IT and payroll remain responsible for their controlled actions and completion evidence.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Flag L2 pending offboarding access review, absent completion evidence, and an overdue checklist step.",
+    "deliverable": "Onboarding and offboarding completion checklist with owner handoffs",
+    "acceptance": [
+      "Separate recorded completion state from supporting completion evidence.",
+      "The sample finds all three L2 gaps; the completed L1 and L3 steps pass.",
+      "This report neither changes access nor makes employment, payroll, or disciplinary decisions."
+    ],
+    "stop_conditions": [
+      "Stop on disputed HR authorization, mismatched employee identity, access authority, or missing completion evidence.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Grant or revoke access",
+      "Terminate or hire employees",
+      "Change payroll",
+      "Make employment decisions",
+      "Send employee communications"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "lifecycle_completion",
+        "title": "Checklist step is recorded complete",
+        "table": "records",
+        "kind": "equals",
+        "action": "Ask the responsible HR or IT owner to review and complete the authorized checklist step.",
+        "field": "completion_state",
+        "value": "complete"
+      },
+      {
+        "id": "completion_evidence",
+        "title": "Completion reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Request a verification receipt from the system owner before marking completion.",
+        "field": "completion_reference"
+      },
+      {
+        "id": "lifecycle_due",
+        "title": "Incomplete checklist step is overdue",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Escalate the overdue step to the lifecycle case owner.",
+        "field": "step_due",
+        "within_days": 0,
+        "unless_field": "completion_state",
+        "unless_value": "complete"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "L1",
+            "source": "sample://employee_onboarding_offboarding/records/L1",
+            "case": "Employee sample E-01",
+            "lifecycle": "Onboarding",
+            "step": "Equipment acknowledgement",
+            "completion_state": "complete",
+            "completion_reference": "sample://lifecycle/receipts/l1",
+            "step_due": "2026-10-31"
+          },
+          {
+            "id": "L2",
+            "source": "sample://employee_onboarding_offboarding/records/L2",
+            "case": "Employee sample E-02",
+            "lifecycle": "Offboarding",
+            "step": "Access review receipt",
+            "completion_state": "pending",
+            "completion_reference": "",
+            "step_due": "2026-11-01"
+          },
+          {
+            "id": "L3",
+            "source": "sample://employee_onboarding_offboarding/records/L3",
+            "case": "Employee sample E-03",
+            "lifecycle": "Onboarding",
+            "step": "Training assignment",
+            "completion_state": "complete",
+            "completion_reference": "sample://lifecycle/receipts/l3",
+            "step_due": "2026-11-05"
+          }
+        ]
+      },
+      "expected_findings": [
+        "lifecycle_completion:L2",
+        "completion_evidence:L2",
+        "lifecycle_due:L2"
+      ]
+    }
+  },
+  {
+    "id": "revenue_operations",
+    "title": "Revenue Operations",
+    "summary": "Check opportunity exports for duplicate business identifiers, missing next steps, and inactivity beyond owner-approved thresholds.",
+    "owner_role": "Revenue operations manager",
+    "specialists": [
+      "gtm_crm_hygiene",
+      "gtm_deal_inspection",
+      "gtm_account_plan"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Opportunity hygiene and activity register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "account",
+          "opportunity_external_id",
+          "next_step",
+          "idle_days",
+          "max_idle_days"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved CRM opportunity export",
+        "access": "read",
+        "prerequisites": [
+          "Opportunity identifiers, activity-age calculations, and allowable inactivity thresholds are reviewed by revenue operations.",
+          "Provide account summaries without sensitive contact data unless expressly approved for the workspace.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Find R2 missing its next step, R2 and R3 sharing one opportunity identifier, and R4 exceeding its activity threshold.",
+    "deliverable": "CRM correction proposals and stalled-opportunity review packet",
+    "acceptance": [
+      "Flag all members of a duplicate identifier group without choosing a record to delete or merge.",
+      "The sample reports R2 next-step, R2/R3 duplicate, and R4 inactivity findings; R1 passes.",
+      "Suggested follow-up work remains a draft for the account owner."
+    ],
+    "stop_conditions": [
+      "Stop before choosing a merge survivor, changing deal value or stage, or using ambiguous identity matches.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Write CRM corrections",
+      "Merge or delete opportunities",
+      "Send sales messages",
+      "Commit prices or contractual terms"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "next_step",
+        "title": "Opportunity next step present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the account owner to provide a dated next step and supporting context.",
+        "field": "next_step"
+      },
+      {
+        "id": "opportunity_identity",
+        "title": "Opportunity identifier is unique",
+        "table": "records",
+        "kind": "unique",
+        "action": "Prepare a duplicate review for revenue operations; preserve both records.",
+        "fields": [
+          "opportunity_external_id"
+        ]
+      },
+      {
+        "id": "opportunity_activity",
+        "title": "Activity age stays within approved threshold",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare a stalled-opportunity brief for the account owner.",
+        "field": "idle_days",
+        "other_field": "max_idle_days",
+        "operator": "lte"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "R1",
+            "source": "sample://revenue_operations/records/R1",
+            "account": "Sample Alder",
+            "opportunity_external_id": "OP-101",
+            "next_step": "Review approved proposal",
+            "idle_days": 3,
+            "max_idle_days": 14
+          },
+          {
+            "id": "R2",
+            "source": "sample://revenue_operations/records/R2",
+            "account": "Sample Beacon",
+            "opportunity_external_id": "OP-102",
+            "next_step": "",
+            "idle_days": 8,
+            "max_idle_days": 14
+          },
+          {
+            "id": "R3",
+            "source": "sample://revenue_operations/records/R3",
+            "account": "Sample Beacon duplicate",
+            "opportunity_external_id": "OP-102",
+            "next_step": "Confirm record ownership",
+            "idle_days": 8,
+            "max_idle_days": 14
+          },
+          {
+            "id": "R4",
+            "source": "sample://revenue_operations/records/R4",
+            "account": "Sample Cedar",
+            "opportunity_external_id": "OP-103",
+            "next_step": "Schedule technical review",
+            "idle_days": 30,
+            "max_idle_days": 14
+          }
+        ]
+      },
+      "expected_findings": [
+        "next_step:R2",
+        "opportunity_identity:R2",
+        "opportunity_identity:R3",
+        "opportunity_activity:R4"
+      ]
+    }
+  },
+  {
+    "id": "billing_collections_preparation",
+    "title": "Billing & Collections Preparation",
+    "summary": "Compare invoices with reviewed contract charges, flag unreconciled items and past-due balances, and prepare collection or dispute follow-up work.",
+    "owner_role": "Billing operations manager",
+    "specialists": [
+      "finance_ar",
+      "cx_billing_dispute"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Invoice, contract-charge, and payment-status register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "invoice",
+          "invoice_amount",
+          "contract_amount",
+          "reconciliation_status",
+          "payment_due",
+          "payment_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved billing, contract, and receivables exports",
+        "access": "read",
+        "prerequisites": [
+          "Normalize contract and invoice amounts to the same currency, tax basis, service period, and approved adjustments.",
+          "Finance provides current payment status and contractual due dates; disputed items remain with the authorized billing reviewer.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Identify B2 amount mismatch, unreconciled status, and overdue balance for a billing-owner review.",
+    "deliverable": "Invoice reconciliation, aging exceptions, and draft collection follow-up packet",
+    "acceptance": [
+      "Preserve invoice, contract amount, payment status, and source in the review packet.",
+      "The sample produces three B2 findings; B1 and B3 pass.",
+      "A past-due finding proposes review, never collection escalation, fees, credit decisions, or money movement."
+    ],
+    "stop_conditions": [
+      "Stop on disputed debt, unclear adjustments, mixed currency, settlement ambiguity, or uncertain customer identity.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Move money",
+      "Apply payments or credits",
+      "Send collection demands",
+      "Add fees",
+      "Change credit eligibility"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "billing_amount",
+        "title": "Invoice agrees with reviewed contract charge",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare the invoice and contract-charge variance for billing review.",
+        "field": "invoice_amount",
+        "other_field": "contract_amount",
+        "operator": "eq"
+      },
+      {
+        "id": "billing_reconciliation",
+        "title": "Billing reconciliation is complete",
+        "table": "records",
+        "kind": "equals",
+        "action": "Assign unresolved reconciliation to the billing owner before external follow-up.",
+        "field": "reconciliation_status",
+        "value": "reconciled"
+      },
+      {
+        "id": "payment_due",
+        "title": "Unsettled invoice is past due",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare a balance-confirmation and follow-up draft for finance review.",
+        "field": "payment_due",
+        "within_days": 0,
+        "unless_field": "payment_status",
+        "unless_value": "settled"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "B1",
+            "source": "sample://billing_collections_preparation/records/B1",
+            "invoice": "BILL-SAMPLE-01",
+            "invoice_amount": 500,
+            "contract_amount": 500,
+            "reconciliation_status": "reconciled",
+            "payment_due": "2026-10-25",
+            "payment_status": "settled"
+          },
+          {
+            "id": "B2",
+            "source": "sample://billing_collections_preparation/records/B2",
+            "invoice": "BILL-SAMPLE-02",
+            "invoice_amount": 650,
+            "contract_amount": 600,
+            "reconciliation_status": "open",
+            "payment_due": "2026-10-30",
+            "payment_status": "unsettled"
+          },
+          {
+            "id": "B3",
+            "source": "sample://billing_collections_preparation/records/B3",
+            "invoice": "BILL-SAMPLE-03",
+            "invoice_amount": 800,
+            "contract_amount": 800,
+            "reconciliation_status": "reconciled",
+            "payment_due": "2026-11-20",
+            "payment_status": "unsettled"
+          }
+        ]
+      },
+      "expected_findings": [
+        "billing_amount:B2",
+        "billing_reconciliation:B2",
+        "payment_due:B2"
+      ]
+    }
+  },
+  {
+    "id": "software_release_operations",
+    "title": "Software Release Operations",
+    "summary": "Review supplied release evidence for required test results, rollback references, and unresolved blockers; prepare release-owner decisions.",
+    "owner_role": "Release manager",
+    "specialists": [
+      "pe_release_deploy",
+      "pe_test_strategy",
+      "itgrc_change_audit"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Release candidate readiness evidence",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "candidate",
+          "revision",
+          "required_tests",
+          "rollback_reference",
+          "open_blockers",
+          "allowed_open_blockers"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved release, test, and change-management exports",
+        "access": "read",
+        "prerequisites": [
+          "Bind test evidence, issues, and rollback plan to an immutable candidate revision.",
+          "The release owner defines required test outcomes and blocker thresholds; live CI and deployment access are not used by this starter.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Flag REL2 failed tests, missing rollback evidence, and three blockers exceeding the permitted zero.",
+    "deliverable": "Release evidence register, unresolved-issue worklist, and release-note preparation packet",
+    "acceptance": [
+      "Each candidate retains its revision and evidence source in the review packet.",
+      "The sample produces three REL2 findings; REL1 and REL3 pass.",
+      "Passing checks do not approve a release or deploy a build."
+    ],
+    "stop_conditions": [
+      "Stop on missing immutable revision, mismatched test revision, unreviewed rollback plan, or uncertain incident status.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Deploy or roll back software",
+      "Run hosted CI",
+      "Merge code",
+      "Publish release notes",
+      "Change production configuration"
+    ],
+    "cadence": "manual",
+    "rules": [
+      {
+        "id": "release_tests",
+        "title": "Required test outcome is passed",
+        "table": "records",
+        "kind": "equals",
+        "action": "Request a release-owner decision on recorded test failures and retest evidence.",
+        "field": "required_tests",
+        "value": "passed"
+      },
+      {
+        "id": "rollback_evidence",
+        "title": "Reviewed rollback plan reference present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the release owner to provide a candidate-specific reviewed rollback plan.",
+        "field": "rollback_reference"
+      },
+      {
+        "id": "release_blockers",
+        "title": "Open blockers remain within the approved limit",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare the unresolved blocker list for release review.",
+        "field": "open_blockers",
+        "other_field": "allowed_open_blockers",
+        "operator": "lte"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "REL1",
+            "source": "sample://software_release_operations/records/REL1",
+            "candidate": "sample-release-1",
+            "revision": "sample-revision-a",
+            "required_tests": "passed",
+            "rollback_reference": "sample://release/plans/a",
+            "open_blockers": 0,
+            "allowed_open_blockers": 0
+          },
+          {
+            "id": "REL2",
+            "source": "sample://software_release_operations/records/REL2",
+            "candidate": "sample-release-2",
+            "revision": "sample-revision-b",
+            "required_tests": "failed",
+            "rollback_reference": "",
+            "open_blockers": 3,
+            "allowed_open_blockers": 0
+          },
+          {
+            "id": "REL3",
+            "source": "sample://software_release_operations/records/REL3",
+            "candidate": "sample-release-3",
+            "revision": "sample-revision-c",
+            "required_tests": "passed",
+            "rollback_reference": "sample://release/plans/c",
+            "open_blockers": 0,
+            "allowed_open_blockers": 0
+          }
+        ]
+      },
+      "expected_findings": [
+        "release_tests:REL2",
+        "rollback_evidence:REL2",
+        "release_blockers:REL2"
+      ]
+    }
+  },
+  {
+    "id": "management_reporting",
+    "title": "Management Reporting",
+    "summary": "Reconcile reported operating metrics to source values, identify missing owners and overdue reviews, and prepare decisions for management.",
+    "owner_role": "Chief of staff",
+    "specialists": [
+      "exec_brief_daily",
+      "exec_exec_metrics",
+      "exec_delegation_log"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Operating metric and review register",
+        "description": "Approved normalized export with source identifiers and recorded values for each check. Dates and business thresholds are supplied by the responsible owner.",
+        "columns": [
+          "id",
+          "source",
+          "metric",
+          "metric_owner",
+          "reported_value",
+          "source_value",
+          "review_due",
+          "review_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved management reporting and metric-source exports",
+        "access": "read",
+        "prerequisites": [
+          "Metric owners verify definitions, period boundaries, units, and source values before upload.",
+          "Decision requests and review dates come from an approved operating cadence; publication recipients require separate review.",
+          "Named workspace owner, approved record scope, and evidence retention period.",
+          "Supply an approved structured export. This starter does not connect to or fetch from the source system."
+        ]
+      }
+    ],
+    "sample_goal": "Find M2 lacking an accountable metric owner, disagreeing with its source, and awaiting an overdue review.",
+    "deliverable": "Source-linked operating brief and management decisions-needed worklist",
+    "acceptance": [
+      "Report metric value differences with both supplied values and source identifiers.",
+      "The sample produces three M2 findings; M1 and M3 pass.",
+      "The report preserves source provenance and requires management review before distribution."
+    ],
+    "stop_conditions": [
+      "Stop on inconsistent reporting periods, definitions, currencies, restricted board material, or unverified figures.",
+      "Stop if source provenance, workspace ownership, or an applicable numeric/date value cannot be verified."
+    ],
+    "blocked_actions": [
+      "Publish or distribute reports",
+      "Change source metrics",
+      "Approve business decisions",
+      "Send action reminders externally"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "metric_owner",
+        "title": "Metric owner present",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the chief of staff to identify the accountable metric owner.",
+        "field": "metric_owner"
+      },
+      {
+        "id": "metric_reconciliation",
+        "title": "Reported value matches the source value",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare the variance and both cited values for metric-owner reconciliation.",
+        "field": "reported_value",
+        "other_field": "source_value",
+        "operator": "eq"
+      },
+      {
+        "id": "management_review",
+        "title": "Unconfirmed metric review is overdue",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Escalate the review and decision needed to the operating meeting owner.",
+        "field": "review_due",
+        "within_days": 0,
+        "unless_field": "review_status",
+        "unless_value": "confirmed"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "M1",
+            "source": "sample://management_reporting/records/M1",
+            "metric": "Open support backlog",
+            "metric_owner": "Support lead",
+            "reported_value": 42,
+            "source_value": 42,
+            "review_due": "2026-10-31",
+            "review_status": "confirmed"
+          },
+          {
+            "id": "M2",
+            "source": "sample://management_reporting/records/M2",
+            "metric": "Renewals due this quarter",
+            "metric_owner": "",
+            "reported_value": 20,
+            "source_value": 24,
+            "review_due": "2026-11-01",
+            "review_status": "awaiting"
+          },
+          {
+            "id": "M3",
+            "source": "sample://management_reporting/records/M3",
+            "metric": "Training completions",
+            "metric_owner": "People lead",
+            "reported_value": 18,
+            "source_value": 18,
+            "review_due": "2026-11-10",
+            "review_status": "awaiting"
+          }
+        ]
+      },
+      "expected_findings": [
+        "metric_owner:M2",
+        "metric_reconciliation:M2",
+        "management_review:M2"
+      ]
+    }
+  }
+]

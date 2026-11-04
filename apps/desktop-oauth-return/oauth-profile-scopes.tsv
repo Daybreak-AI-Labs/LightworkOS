@@ -1,0 +1,4 @@
+google-drive	google	openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.readonly
+google-cloud-storage	google	openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/devstorage.read_only
+jira-cloud	atlassian	read:me read:jira-work write:jira-work offline_access
+microsoft-mail	microsoft	openid profile email offline_access https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send

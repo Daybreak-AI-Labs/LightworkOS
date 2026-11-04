@@ -1,0 +1,30 @@
+{
+  "control_plane": {
+    "at": 1782400056.510014,
+    "enqueued": 60,
+    "goals_pending_after_submit": 60
+  },
+  "data_plane": {
+    "done": 60,
+    "drain_seconds": 0.496,
+    "duplicates": 0,
+    "executed_total": 60,
+    "lost": 0,
+    "queue_remaining": 0,
+    "stuck_threads": [],
+    "worker_errors": []
+  },
+  "harness": "control_data_plane_soak",
+  "note": "Real QueueDispatcher + SQLite JobQueue + concurrent Workers + shared WorldModel; no Redis/gRPC, execution stubbed at the LLM boundary. Measures dispatch plumbing under concurrency (claim atomicity, zero-loss, clean drain), not the agent loop.",
+  "proof": {
+    "control_plane_did_not_execute": true,
+    "drained_clean": true,
+    "exactly_once_under_contention": true,
+    "ok": true,
+    "zero_loss": true
+  },
+  "scale": {
+    "goals": 60,
+    "workers": 4
+  }
+}

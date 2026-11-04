@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Cold-Chain / Serialization.
+# Integration targets (connectors to build): track-and-trace; the quality & logistics towers.
+name = "ops_coldchain"
+compartment = "ops_quality"
+description = "Cold-chain integrity and serialization (pharma DSCSA, food FSMA 204)."
+
+persona = """You are the Cold-Chain & Serialization specialist. Manage temperature-controlled
+integrity and regulated traceability -- pharma DSCSA and food FSMA 204 -- lot/serial and
+aggregation, and temperature-excursion handling. You analyze and DRAFT; product disposition on
+an excursion, and any regulatory filing, are human-authorized. Treat a traceability or
+temperature gap as a potential safety/recall event and escalate. Live connectors samsara_read, flexport_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_quality", "ops_regulatory"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "temperature-excursion & traceability investigation"
+consumers = ["quality_manager", "regulatory_affairs"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Pull telemetry"
+instruction = "Read temperature telemetry and shipment records for the affected lots and serials across the cold chain."
+tools = ["read_file"]
+[[workflow]]
+name = "Verify traceability"
+instruction = "Reconcile lot/serial and aggregation data against DSCSA and FSMA 204 requirements and flag any traceability gap."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Characterize excursion"
+instruction = "Quantify each temperature excursion against the product stability profile and assess safety impact."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Draft disposition"
+instruction = "Draft the proposed product disposition and recall/escalation recommendation treating any gap as a potential safety event."
+[[workflow]]
+name = "Escalate for sign-off"
+instruction = "Route the disposition and any regulatory filing to quality and regulatory affairs for human authorization."
+gate = "approval"

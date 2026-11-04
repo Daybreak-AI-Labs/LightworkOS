@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 6 (Asset & Maintenance) — Reliability & Downtime.
+# Integration targets (connectors to build): CMMS.
+name = "ops_reliability"
+compartment = "ops_maintenance"
+description = "Reliability engineering (MTBF/MTTR), downtime RCA, and spares optimization."
+
+persona = """You are the Reliability & Downtime specialist. Analyze reliability (MTBF/MTTR,
+Weibull), run downtime root-cause analysis, and optimize spare parts. You analyze and DRAFT
+recommendations (RCM/TPM); maintenance execution and spares purchasing go through humans. Show
+the failure data behind every recommendation. Live connectors samsara_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_maintenance"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "downtime RCA & reliability recommendations"
+consumers = ["maintenance_manager", "reliability_engineer"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull failure data"
+instruction = "Read CMMS work-order history and downtime logs for the asset under study."
+tools = ["read_file"]
+[[workflow]]
+name = "Compute metrics"
+instruction = "Calculate MTBF and MTTR and fit Weibull parameters to characterize the failure pattern."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Root-cause"
+instruction = "Run downtime root-cause analysis and isolate the dominant failure mode behind the losses."
+tools = ["read_file"]
+[[workflow]]
+name = "Optimize spares"
+instruction = "Recommend RCM/TPM actions and spare-parts levels with the failure data shown behind each one."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route to maintenance"
+instruction = "Hand the draft recommendations to the maintenance manager who authorizes execution and spares purchasing."
+gate = "review"

@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Disclosure suggestions · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set np_on = consent_scan_notice_proposals_enabled %}
+{% set np_admin = consent_can_admin if consent_can_admin is defined else true %}
+<div class="governance-workbench" id="csnp-root" data-enabled="{{ 'true' if np_on else 'false' }}" data-can-admin="{{ 'true' if np_admin else 'false' }}">
+  {{ hero('Consent review', 'Disclosure suggestions',
+          lede='Turn a reviewed website scan into an updated list of the trackers your privacy notice should mention. Three different people take part: one suggests the update, a second approves it and a third accepts it.') }}
+  {% include "_consent_nav.html" %}
+  {% if not np_on %}
+  {{ module_gate('consent_preferences.scanner.notice_proposals', 'Disclosure suggestions',
+                 detail='Suggests updates to the list of trackers your privacy notice mentions, based on reviewed website scans.',
+                 can_activate=np_admin) }}
+  {% endif %}
+  <p id="csnp-status" class="muted" role="status" aria-live="polite"></p>
+
+  <section class="panel" aria-labelledby="csnp-list-heading">
+    <div class="section-head">
+      <h2 id="csnp-list-heading">Suggestions</h2>
+      <button class="btn btn--primary" type="button" id="csnp-new"{% if not np_on %} disabled{% endif %}>Suggest an update from the latest scan</button>
+    </div>
+    <p class="muted">The suggestion uses the latest fully reviewed scan of your website. Accepting one only updates Lightwork’s record of what the notice should list; it does not change your website or write any notice text.</p>
+    <div id="csnp-list"><p class="muted">Loading suggestions…</p></div>
+    <div id="csnp-detail" class="cw-editor" hidden tabindex="-1">
+      <h3 id="csnp-detail-title">What this suggestion lists</h3>
+      <div id="csnp-detail-body"></div>
+      <div class="cw-actions"><button class="btn btn--ghost" type="button" data-csnp-close="csnp-detail">Close</button></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="csnp-check-heading">
+    <div class="section-head">
+      <h2 id="csnp-check-heading">Check records</h2>
+      <button class="btn" type="button" id="csnp-integrity"{% if not np_on %} disabled{% endif %}>Check that records are intact</button>
+    </div>
+    <div id="csnp-integrity-result" class="cw-result" role="status" aria-live="polite"></div>
+  </section>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">Your name and your website come from your sign-in and your workspace’s settings, never from this page. The person who suggests an update cannot approve or accept it, and the approver cannot accept it. Nothing here contacts other sites, changes your website or publishes a notice. Local test results do not show that the notice is legally complete.</p>
+  </details>
+</div>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/consent/scan-notice-proposals";
+  // The shared consent JSON client (mvFetchJSON): a non-2xx or malformed response is never success.
+  async function call(path, options) {
+    return window.LightworkConsentWorkbench.client(API)(path, options);
+  }
+  var CW = window.LightworkConsentWorkbench;
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (CW && document.getElementById("csnp-root")) { if (window.mvFetchJSON) start(); else document.addEventListener("DOMContentLoaded", start); }
+
+  function start() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $("csnp-root"), status = $("csnp-status");
+    var enabled = root.dataset.enabled === "true", canAdmin = root.dataset.canAdmin === "true";
+    var state = {head: 0, items: []};
+    var CLASSES = {essential: "Essential", functional: "Functional", analytics: "Analytics", advertising: "Advertising", other: "Other"};
+    var ACTIONS = {desired: "First list", no_change: "No change", reconcile: "Update", rollback: "Go back to an earlier list"};
+    function say(text, isError) { CW.say(status, text, isError); }
+    function fail(error, action) { return CW.fail(status, error, action); }
+    document.querySelectorAll("[data-csnp-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.csnpClose).hidden = true; }); });
+
+    function stage(p) {
+      if (p.state === "locally_accepted") return p.is_effective ? CW.badge("In use", "ok") : CW.badge("Accepted earlier", "idle");
+      if (p.state === "approved") return CW.badge("Approved – waiting to be accepted", "warn");
+      if (p.approval && p.approval.revoked) return CW.badge("Approval withdrawn", "warn");
+      return CW.badge("Waiting for approval", "warn");
+    }
+    function summary(p) {
+      var counts = p.classification_counts || {}, parts = [];
+      Object.keys(CLASSES).forEach(function (k) { if (counts[k]) parts.push(counts[k] + " " + CLASSES[k].toLowerCase()); });
+      return (p.disclosure_count || 0) + " trackers" + (parts.length ? " (" + parts.join(", ") + ")" : "");
+    }
+    async function load() {
+      if (!enabled) { $("csnp-list").replaceChildren(CW.el("p", "muted", "Turn on disclosure suggestions above to start.")); return; }
+      try {
+        var result = await call("/proposals?limit=200");
+        state.head = result.head_revision || 0; state.items = result.items || [];
+        CW.table($("csnp-list"), state.items, {label: "Suggestions", name: function (p) { return "Suggestion " + p.version; },
+          columns: [
+            {label: "Suggestion", value: function (p) { return "#" + p.version + " – " + (ACTIONS[p.action] || CW.human(p.action)); }},
+            {label: "Lists", value: summary},
+            {label: "Made", value: function (p) { return CW.when(p.created_at); }},
+            {label: "Stage", value: stage},
+          ],
+          actions: [
+            {label: "What changes", run: showDetail},
+            {label: "Approve", kind: "primary", when: function (p) { return canAdmin && p.state === "proposed" && !p.created_by_me && !p.approval; }, run: function (p, b) { CW.busy(b, function () { return approve(p); }); }},
+            {label: "Withdraw my approval", when: function (p) { return canAdmin && p.state === "approved" && p.approval && p.approval.approved_by_me && !p.approval.revoked; }, run: function (p, b) { CW.busy(b, function () { return withdraw(p); }); }},
+            {label: "Accept", kind: "primary", when: function (p) { return canAdmin && p.state === "approved" && !p.created_by_me && !(p.approval && p.approval.approved_by_me); }, run: function (p, b) { CW.busy(b, function () { return accept(p); }); }},
+            {label: "Download", when: function (p) { return p.state === "locally_accepted"; }, run: function (p, b) { CW.busy(b, function () { return download(p); }); }},
+            {label: "Go back to this list", when: function (p) { return p.state === "locally_accepted" && !p.is_effective; }, run: function (p, b) { CW.busy(b, function () { return rollback(p); }); }},
+          ],
+          empty: {title: "No suggestions yet.", body: "Once a scan of your website has been fully reviewed, create a suggestion from it.", action: {label: "Suggest an update from the latest scan", run: propose}}});
+      } catch (error) {
+        if (error && error.status === 503) { $("csnp-list").replaceChildren(CW.el("p", "muted", "Suggestions are not available yet. A scan of your website must be fully reviewed first, and an administrator must finish setting up this feature.")); return; }
+        fail(error, "load the suggestions");
+      }
+    }
+    function showDetail(p) {
+      var body = $("csnp-detail-body");
+      $("csnp-detail-title").textContent = "Suggestion #" + p.version;
+      CW.facts(body, [
+        ["Kind", ACTIONS[p.action] || CW.human(p.action)],
+        ["Trackers listed", String(p.disclosure_count || 0)],
+        ["Your own site’s trackers", String(p.first_party_count || 0)],
+        ["Other companies’ trackers", String(p.third_party_count || 0)],
+        ["Scan covered the whole site", p.scan_complete ? "Yes" : "No"],
+        ["Must be approved by", CW.when(p.expires_at)],
+      ]);
+      var list = CW.el("ul");
+      Object.keys(CLASSES).forEach(function (k) { var n = (p.classification_counts || {})[k]; if (n) list.appendChild(CW.el("li", "", CLASSES[k] + ": " + n)); });
+      body.appendChild(list);
+      CW.open($("csnp-detail"), null);
+    }
+    async function propose() {
+      if (!(await CW.confirm("Create a suggestion from the latest fully reviewed scan of your website? Two other people will need to approve and accept it.", "Create suggestion"))) return;
+      try {
+        await call("/proposals", {method: "POST", json: {expected_head_revision: state.head, idempotency_key: CW.reference()}});
+        say("Suggestion created. Ask a colleague to approve it."); await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not create a suggestion. Someone else made one since you opened the page. Refresh and try again.", true); return; }
+        if (error && error.status === 422) { say("There is no fully reviewed scan to suggest from yet. Review the latest scan first.", true); return; }
+        fail(error, "create the suggestion");
+      }
+    }
+    async function approve(p) {
+      if (!(await CW.confirm("Approve suggestion #" + p.version + "? A third person will still need to accept it.", "Approve"))) return;
+      try { await call("/proposals/" + encodeURIComponent(p.proposal_id) + "/approve", {method: "POST", json: {expected_proposal_revision: p.revision, idempotency_key: CW.reference()}}); say("Approved."); await load(); }
+      catch (error) {
+        if (error && error.status === 409) { say("Could not approve. The person who made a suggestion cannot approve it, and each suggestion takes one approval.", true); return; }
+        fail(error, "approve the suggestion");
+      }
+    }
+    async function withdraw(p) {
+      if (!(await CW.confirm("Withdraw your approval of suggestion #" + p.version + "? It cannot be accepted until someone approves it again.", "Withdraw approval"))) return;
+      try { await call("/proposals/" + encodeURIComponent(p.proposal_id) + "/approval/revoke", {method: "POST", json: {expected_proposal_revision: p.revision, expected_approval_revision: p.approval.revision, idempotency_key: CW.reference()}}); say("Approval withdrawn."); await load(); }
+      catch (error) { fail(error, "withdraw the approval"); }
+    }
+    async function accept(p) {
+      if (!(await CW.confirm("Accept suggestion #" + p.version + "? It becomes Lightwork’s record of what your notice should list. Your website and notice text are not changed.", "Accept"))) return;
+      try { await call("/proposals/" + encodeURIComponent(p.proposal_id) + "/accept-local", {method: "POST", json: {expected_proposal_revision: p.revision, expected_head_revision: state.head, acknowledge_local_baseline_only: true, idempotency_key: CW.reference()}}); say("Accepted. Update your privacy notice to match."); await load(); }
+      catch (error) {
+        if (error && error.status === 409) { say("Could not accept. The person who made or approved a suggestion cannot accept it, or the approval ended. Refresh and try again.", true); return; }
+        fail(error, "accept the suggestion");
+      }
+    }
+    async function rollback(p) {
+      if (!(await CW.confirm("Suggest going back to the list from suggestion #" + p.version + "? Two other people will need to approve and accept it.", "Suggest going back"))) return;
+      try { await call("/rollback-proposals/" + encodeURIComponent(p.proposal_id), {method: "POST", json: {expected_head_revision: state.head, idempotency_key: CW.reference()}}); say("Suggestion to go back created."); await load(); }
+      catch (error) { fail(error, "create the suggestion"); }
+    }
+    async function download(p) {
+      try {
+        var result = await call("/proposals/" + encodeURIComponent(p.proposal_id) + "/exports", {method: "POST", json: {idempotency_key: CW.reference()}});
+        var blob = new Blob([JSON.stringify(result, null, 2)], {type: "application/json"});
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(blob); link.download = "tracker-list-" + p.version + ".json";
+        document.body.appendChild(link); link.click(); link.remove();
+        say("Signed tracker list downloaded.");
+      } catch (error) { fail(error, "download the tracker list"); }
+    }
+    $("csnp-new").addEventListener("click", function (event) { CW.busy(event.currentTarget, propose); });
+    $("csnp-integrity").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        try { await call("/integrity"); CW.say($("csnp-integrity-result"), "All records are intact."); }
+        catch (error) { CW.fail($("csnp-integrity-result"), error, "check the records"); }
+      });
+    });
+    load();
+  }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+{% block title %}Activity log · Lightwork{% endblock %}
+{% block content %}
+  <p class="panel">This view summarizes recorded activity. Private messages, task details and tool inputs are hidden from this view, search and downloads. Downloads contain summaries, rather than the original signed log. <a href="/content-access">Review access to specific content</a>.</p>
+  <style>
+    .aud-detail { display: flex; flex-direction: column; gap: var(--space-0-5); max-width: 46rem; }
+    .aud-kv { display: grid; grid-template-columns: 9rem 1fr; gap: var(--space-2); align-items: baseline; }
+    .aud-k { color: var(--muted); font-size: var(--text-sm); }
+    .aud-v { font-size: var(--text-sm); word-break: break-word; min-width: 0; }
+    .aud-obligation .aud-k { color: var(--accent); }
+    .aud-sig summary { cursor: pointer; color: var(--muted); font-size: var(--text-sm); min-height: 24px; padding-block: var(--space-0-5); }
+    .aud-sig .aud-protect { margin: var(--space-2) 0 var(--space-1); }
+    .aud-more { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-3) 0 0; }
+    .aud-hash { font-size: var(--text-xs); word-break: break-all; color: var(--muted); font-family: var(--font-mono, monospace); }
+    .aud-filters { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; }
+    .aud-filters label { display: flex; flex-direction: column; gap: .25rem; }
+    .aud-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin-top: var(--space-3); }
+    .aud-metric { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+    .aud-metric strong { display: block; margin-top: var(--space-1); }
+    .aud-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+    .aud-links { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }
+    .aud-nowrap { white-space: nowrap; }
+    .aud-order { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin: 0 0 var(--space-3); font-size: var(--text-sm); }
+    #maintenance-results p, #maintenance-results span { overflow-wrap: anywhere; }
+    #audit-maintenance-review .table-scroll { overflow-x: auto; max-width: 100%; min-width: 0; margin-block: var(--space-3); }
+    #audit-maintenance-review table { width: 100%; min-width: 38rem; border-collapse: collapse; }
+    #audit-maintenance-review th, #audit-maintenance-review td { padding: var(--space-3); text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); }
+    #audit-maintenance-review label { display: flex; gap: var(--space-3); align-items: start; padding-block: var(--space-3); }
+    @media (max-width: 600px) {
+      #audit-maintenance-review table { min-width: 0; }
+      #audit-maintenance-review thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+      #audit-maintenance-review tbody, #audit-maintenance-review tr, #audit-maintenance-review td { display: block; }
+      #audit-maintenance-review tr { margin-block: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+      #audit-maintenance-review td { padding: var(--space-2) 0; border: 0; overflow-wrap: anywhere; }
+      #audit-maintenance-review td::before { content: attr(data-label); display: block; margin-bottom: var(--space-1); color: var(--muted); font-size: var(--text-xs); }
+    }
+  </style>
+
+  {% from "_hero.html" import hero, state %}
+  {% from "_empty_state.html" import empty_state %}
+  {% call hero('Governance', 'Activity log',
+               subtitle='Recorded activity, in order',
+               lede='The activity recorded by Lightwork and its assistants. Filter by date,
+                     kind of event or person, and download it when an auditor asks.') %}
+    {{ state('Current state',
+             'Tamper-evident: on' if audit_signing_enabled else 'Tamper-evident: off',
+             badge='Signing on' if audit_signing_enabled else 'Signing off',
+             badge_class='ok' if audit_signing_enabled else 'warn',
+             copy=('Check the saved signatures below. Keep a checkpoint receipt elsewhere to detect a rolled-back history.' if audit_signing_enabled
+                   else 'Entries are kept without signatures. Turn on tamper-evident records on the Compliance page.')) }}
+    <div class="aud-links">
+      <a class="btn btn--ghost" href="/audit/binder">Open the audit binder</a>
+      {% if can_open_page('/replay') %}<a class="btn btn--ghost" href="/replay">Replay a task</a>{% endif %}
+      {% if not audit_signing_enabled %}<a class="btn btn--ghost" href="/compliance">Turn on tamper-evident records</a>{% endif %}
+    </div>
+  {% endcall %}
+
+  {% if audit_window_note %}
+  <p class="muted" role="status">{{ audit_window_note }}</p>
+  {% endif %}
+  {% if deployment_filter_view %}<p class="panel" role="note">These setting-change entries are from the deployment-wide log and are available only to global administrators. This metadata view does not show the saved values before and after a change.</p>{% endif %}
+  {% if audit_filter_error %}<p role="alert">{{ audit_filter_error }}</p>{% endif %}
+  {% if audit_read_report and audit_read_report.failures %}
+  <p role="alert">Some entries could not be read. This view is incomplete. Run “Check the log has not been changed” below before using it as evidence.</p>
+  {% endif %}
+
+  <section class="panel" aria-labelledby="aud-filter-title">
+    <h2 id="aud-filter-title">Find activity</h2>
+    <form method="get" action="/audit" class="aud-filters" id="aud-filter">
+      <label for="aud-when">Dates
+        <select id="aud-when" class="select">
+          <option value="today"{% if not day and not since and not until %} selected{% endif %}>Today</option>
+          <option value="day"{% if day and not since and not until %} selected{% endif %}>One day</option>
+          <option value="range"{% if since or until %} selected{% endif %}>A range of days</option>
+        </select>
+      </label>
+      <label for="aud-day" data-aud-when="day">Day
+        <input type="date" id="aud-day" name="day" value="{{ day or '' }}" class="input">
+      </label>
+      <label for="aud-since" data-aud-when="range">From
+        <input type="date" id="aud-since" name="since" value="{{ since or '' }}" class="input">
+      </label>
+      <label for="aud-until" data-aud-when="range">To
+        <input type="date" id="aud-until" name="until" value="{{ until or '' }}" class="input">
+      </label>
+      <label for="aud-kind">Kind of event
+        <select id="aud-kind" name="kind" class="select">
+          <option value="">All kinds</option>
+          {% for k in kinds %}<option value="{{ k }}"{% if k == kind %} selected{% endif %}>{{ kind_label(k) }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="aud-person">Person
+        <select id="aud-person" name="person" class="select">
+          <option value="">Everyone</option>
+          {% for p in people %}<option value="{{ p.value }}"{% if p.value == person %} selected{% endif %}>{{ p.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="aud-agent">Agent or specialist
+        <select id="aud-agent" name="agent" class="select">
+          <option value="">Any</option>
+          {% for a in agents %}<option value="{{ a.value }}"{% if a.value == agent %} selected{% endif %}>{{ a.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="aud-q">Contains words
+        <input type="search" id="aud-q" name="q" value="{{ q }}" class="input" placeholder="For example: invoice">
+      </label>
+      <label for="aud-n">Show up to
+        <select id="aud-n" name="n" class="select">
+          {% for opt in [50, 200, 500, 1000] %}<option value="{{ opt }}"{% if opt == n %} selected{% endif %}>{{ opt }} entries</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Show entries</button>
+      <a class="btn btn--ghost" href="/audit">Clear</a>
+    </form>
+  </section>
+
+  <div class="panel">
+    {% if audit_filter_error %}<p>Correct the filters above to search activity.</p>
+    {% elif events %}
+      <p class="aud-order muted">
+        <span id="aud-order-label">Showing {{ 'newest first' if order == 'newest' else 'oldest first' }}.</span>
+        {% set _qs = request.query_params.multi_items() | rejectattr(0, 'equalto', 'order') | list %}
+        <a class="btn btn--ghost" href="/audit?{{ (_qs + [('order', 'oldest' if order == 'newest' else 'newest')]) | urlencode }}"
+           aria-describedby="aud-order-label">Show {{ 'oldest first' if order == 'newest' else 'newest first' }}</a>
+        Times are shown in your time zone.
+      </p>
+      <table id="audit-table">
+        <caption class="sr-only">Activity, {{ 'newest first' if order == 'newest' else 'oldest first' }}</caption>
+        <thead>
+          <tr><th scope="col">Time</th><th scope="col">Event</th><th scope="col">Who</th><th scope="col">Task</th><th scope="col">Details</th></tr>
+        </thead>
+        <tbody>
+        {% for ev in events %}
+          <tr>
+            <td class="muted aud-nowrap">{{ ev.get('ts') | datetime('absolute') }}</td>
+            <td>{{ event_label(ev) }}{% if ev.get('scope') == 'deployment' %} <span class="badge idle" title="Recorded in the deployment-wide log, which covers every workspace">Deployment</span>{% endif %}</td>
+            <td>{{ event_who(ev) }}</td>
+            <td>{% if ev.get('goal_id') is not none and ev.get('goal_id') != '' %}<a href="/chat/goal/{{ ev.goal_id }}">Task {{ ev.goal_id }}</a>{% else %}—{% endif %}</td>
+            <td>
+              {% set rows = event_details(ev) | rejectattr(0, 'equalto', 'scope') | list %}
+              {% set tech = event_technical(ev) %}
+              {% if rows or tech or ev.get('hash') %}
+                <div class="aud-detail">
+                  {% for key, label, text in rows %}
+                  <div class="aud-kv{% if key in ['obligation_id', 'regulation', 'article', 'obligations_checked'] %} aud-obligation{% endif %}">
+                    <span class="aud-k">{{ label }}</span>
+                    <span class="aud-v">{% if key == 'obligation_id' %}<a href="/compliance/obligations">{{ text }}</a>{% elif is_time_key(key) and ev.get(key) is number %}{{ ev.get(key) | datetime('absolute') }}{% else %}{{ text }}{% endif %}</span>
+                  </div>
+                  {% endfor %}
+                  {# One disclosure per row: identifiers and protection fingerprints together. #}
+                  {% if tech or ev.get('hash') or ev.get('sig') %}
+                  <details class="aud-sig">
+                    <summary>Technical details</summary>
+                    {% for key, label, text in tech %}
+                    <div class="aud-kv"><span class="aud-k">{{ label }}</span><span class="aud-v aud-hash">{{ text }}</span></div>
+                    {% endfor %}
+                    {% if ev.get('hash') or ev.get('sig') %}
+                    <p class="muted aud-protect">How this entry is protected: each entry carries a fingerprint that includes the one before it, so a change anywhere breaks the chain.{% if not ev.get('prev_hash') %} This is the first entry.{% endif %}</p>
+                    {% for key, label in [('hash', 'Fingerprint'), ('prev_hash', 'Previous fingerprint'), ('sig', 'Signature'), ('key_id', 'Signing key')] if ev.get(key) %}
+                    <div class="aud-kv"><span class="aud-k">{{ label }}</span><span class="aud-v aud-hash">{{ ev.get(key) }}</span></div>
+                    {% endfor %}
+                    {% endif %}
+                  </details>
+                  {% endif %}
+                </div>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if audit_next_href or request.query_params.get('before_event') %}
+      <p class="aud-more">
+        {% if audit_next_href %}<a class="btn" href="{{ audit_next_href }}">Show older activity</a>{% endif %}
+        {% if request.query_params.get('before_event') %}<a class="btn btn--ghost" href="/audit?{{ request.query_params.multi_items() | rejectattr(0, 'equalto', 'before_event') | list | urlencode }}">Newest activity</a>{% endif %}
+      </p>
+      {% endif %}
+    {% else %}
+      {% if kind %}
+        {% set audit_empty = ('No events of this kind', 'No events match the selected kind in the loaded tail. Other events may exist for this day; clear the kind filter or search the day.') %}
+      {% elif audit_read_report and audit_read_report.failures %}
+        {% set audit_empty = ('Some activity could not be read', 'No readable events are available in this tail. The audit read is incomplete; this does not establish that no activity was recorded. Pick other dates, or check the log below.') %}
+      {% else %}
+        {% set audit_empty = ('Nothing was recorded for these dates and filters', 'Activity appears here as Lightwork and its assistants work. An empty list does not prove that nothing happened; check what is recorded, and how it is kept, in the audit binder before relying on it being complete.') %}
+      {% endif %}
+      {% call empty_state(audit_empty[0], audit_empty[1]) %}
+        <p class="aud-links"><button type="button" class="btn" id="aud-pick">Pick other dates</button>
+          <a class="btn btn--ghost" href="/audit/binder">Open the audit binder</a></p>
+      {% endcall %}
+    {% endif %}
+  </div>
+
+  {% if can_global_admin and deployment_events is defined and not (audit_filter_error or since or until or kind or person or q or request.query_params.get('before_event')) %}
+  <section class="panel" aria-labelledby="aud-deployment-title">
+    <h2 id="aud-deployment-title">Recent deployment activity</h2>
+    <p class="muted">This limited recent view covers the deployment-wide log. It is separate from the workspace search, pagination, check and download controls above.</p>
+    {% if deployment_events %}
+    <table>
+      <caption class="sr-only">Recent deployment-wide activity</caption>
+      <thead><tr><th scope="col">Time</th><th scope="col">Event</th><th scope="col">Who</th></tr></thead>
+      <tbody>
+      {% for ev in deployment_events %}
+        <tr><td class="muted aud-nowrap">{{ ev.get('ts') | datetime('absolute') }}</td><td>{{ event_label(ev) }}</td><td>{{ event_who(ev) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    {{ empty_state('No recent deployment activity shown',
+                   'Deployment-wide events appear here as they are recorded. An empty view does not establish that none were recorded; the audit binder shows what is recorded and how it is kept.',
+                   action_label='Open the audit binder', action_href='/audit/binder', compact=true) }}
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="panel" aria-labelledby="aud-protect-title">
+    <h2 id="aud-protect-title">Protect and share {{ 'the workspace log' if deployment_filter_view else 'the log' }}</h2>
+    <p class="muted">These controls use the dates chosen above (today if none are chosen).{% if deployment_filter_view %} They operate on the current workspace log, not the deployment-wide setting entries shown above.{% endif %}</p>
+    <div class="aud-actions">
+      <button type="button" class="btn btn--primary" id="aud-check">Check the log has not been changed</button>
+      <label for="aud-format" class="sr-only">Download format</label>
+      <select id="aud-format" class="select">
+        <option value="csv">Spreadsheet</option>
+        <option value="json" title="A JSON Lines file (.jsonl): one event per line">Data file, one event per line (for security tools)</option>
+        <option value="cef">For security tools (ArcSight)</option>
+      </select>
+      <button type="button" class="btn btn--ghost" id="aud-download">Download</button>
+      {% if can_admin %}<button type="button" class="btn btn--ghost" id="aud-forward" hidden>Send to your security monitoring system</button>{% endif %}
+    </div>
+    <div id="aud-action-result" role="status" aria-live="polite"></div>
+
+    <div class="aud-grid" aria-label="Protection status">
+      <div class="aud-metric"><span class="muted">Protection</span><strong id="audit-custody-enabled">—</strong></div>
+      <div class="aud-metric"><span class="muted">Daily checkpoints</span><strong id="audit-custody-checkpoint">—</strong></div>
+      <div class="aud-metric"><span class="muted">Write-once copies</span><strong id="audit-custody-worm">—</strong></div>
+      <div class="aud-metric"><span class="muted">Security monitoring</span><strong id="audit-custody-siem">—</strong></div>
+    </div>
+    <p id="audit-custody-status" role="status" aria-live="polite" class="muted">Loading protection status.</p>
+    <button class="btn btn--ghost" id="audit-custody-refresh" type="button">Refresh protection status</button>
+
+    {% if can_admin %}
+    <details>
+      <summary>More protection (administrators)</summary>
+      <div class="aud-actions">
+        <button type="button" class="btn btn--ghost" id="aud-seal">Encrypt older days</button>
+        <button type="button" class="btn btn--ghost" id="aud-worm-push">Copy older days to write-once storage</button>
+        <button type="button" class="btn btn--ghost" id="aud-worm-check">Check write-once copies</button>
+        <button type="button" class="btn btn--ghost" id="aud-proof">Download a signed proof bundle</button>
+        <button type="button" class="btn btn--ghost" id="aud-proof-key">Show the key checkers need</button>
+        {% if can_global_admin %}<button type="button" class="btn btn--danger" id="aud-rotate">Make a new signing key</button>{% endif %}
+      </div>
+      <p class="muted">A signed proof bundle lets an independent checker verify who signed the included records and whether those records changed. It does not prove that a recorded business result is true. Give the checker the public key separately through a trusted channel.</p>
+    </details>
+    {% endif %}
+  </section>
+
+  <section class="panel" id="maintenance-results" aria-labelledby="audit-maintenance-title">
+    <h2 id="audit-maintenance-title">Saved maintenance reviews and results</h2>
+    <p class="muted">Review the exact closed days before encryption or a storage copy. After an interrupted reply, read the original saved result here. Reading it never repeats a copy. Uncertain copies need their original proof; another request for the same record versions is held.</p>
+    <p id="audit-maintenance-message" role="status" aria-live="polite">Loading saved maintenance results…</p>
+    {% if can_global_admin %}<button class="btn btn--ghost" type="button" id="audit-maintenance-separate" hidden>Review a separate copy for uncertain work</button>{% endif %}
+    <div id="audit-maintenance-review" hidden></div>
+    <div id="audit-maintenance-saved"></div>
+  </section>
+  <script src="/static/lightwork-audit-actions.js" defer></script>
+
+  {% include "_ops_audit_checkpoints.html" %}
+
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    function $(id) { return document.getElementById(id); }
+    var result = $('aud-action-result');
+    function show(lines) {
+      result.textContent = '';
+      lines.forEach(function (t) { var p = document.createElement('p'); p.textContent = t; result.appendChild(p); });
+    }
+    function range() {
+      var when = $('aud-when') ? $('aud-when').value : 'today';
+      if (when === 'range') return { since: $('aud-since').value || null, until: $('aud-until').value || null };
+      if (when === 'day' && $('aud-day').value) return { since: $('aud-day').value, until: $('aud-day').value };
+      var today = new Date().toISOString().slice(0, 10);
+      return { since: today, until: today };
+    }
+    async function call(method, url, body, action) {
+      try { return (await window.mvFetchJSON(url, { method: method, body: body || undefined }, action)) || {}; }
+      catch (e) {
+        show([([403, 409, 422, 502, 503].indexOf(e.status) >= 0 && window.mvPlainDetail(e.detail)) || e.message]);
+        return null;
+      }
+    }
+    function wire(id, fn) {
+      var b = $(id);
+      if (!b) return;
+      b.addEventListener('click', async function () { b.disabled = true; try { await fn(); } finally { b.disabled = false; } });
+    }
+    function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+
+    // Date choice: show only the fields for the chosen option.
+    var when = $('aud-when');
+    function syncWhen() {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-aud-when]'), function (lab) {
+        var on = lab.getAttribute('data-aud-when') === when.value;
+        lab.hidden = !on;
+        var input = lab.querySelector('input');
+        if (input) input.disabled = !on;
+      });
+    }
+    if (when) { when.addEventListener('change', syncWhen); syncWhen(); }
+    var pick = $('aud-pick');
+    if (pick) pick.addEventListener('click', function () { when.value = 'day'; syncWhen(); $('aud-day').focus(); });
+
+    wire('aud-check', async function () {
+      show(['Checking…']);
+      var d = await call('POST', '/api/v1/audit/check', range(), 'check the log');
+      if (!d) return;
+      var lines = [];
+      if (!d.days_checked) lines.push('There is nothing recorded for these dates to check.');
+      else if (d.intact) lines.push('The saved signatures and retained links match for all ' + plural(d.days_checked, 'day', 'days') + ' checked. A receipt kept elsewhere is needed to check whether newer history was removed.');
+      else if (d.problems.length) lines = ['Some entries were changed or could not be confirmed:'].concat(d.problems);
+      if (d.unsigned_days) lines.push(plural(d.unsigned_days, 'day was', 'days were') + ' recorded before tamper-evident records were turned on, so they cannot be checked.');
+      if (d.removed_by_policy) lines.push(plural(d.removed_by_policy, 'older day was', 'older days were') + ' deleted by your record-keeping policy; that deletion is itself recorded.');
+      show(lines);
+    });
+    wire('aud-download', async function () {
+      var r = range();
+      var url = new URL('/api/v1/audit/download', window.location.origin);
+      url.searchParams.set('format', $('aud-format').value);
+      if (r.since) url.searchParams.set('since', r.since);
+      if (r.until) url.searchParams.set('until', r.until);
+      var ok = await window.mvConfirm('Download the activity for these dates? The file can contain personal information, so store it safely.', { okText: 'Download' });
+      if (ok) { window.location.href = url.pathname + url.search; show(['Your download has started.']); }
+    });
+    wire('aud-forward', async function () {
+      if (!(await window.mvConfirm('Send the activity for these dates to your security monitoring system?', { okText: 'Send' }))) return;
+      var d = await call('POST', '/api/v1/audit/forward', range(), 'send the activity');
+      if (d) show(['Sent ' + plural(d.sent, 'entry', 'entries') + '.']);
+    });
+    wire('aud-worm-check', async function () {
+      var d = await call('GET', '/api/v1/audit/write-once/check', null, 'check the write-once copies');
+      if (!d) return;
+      var lines = [d.message];
+      if (!d.empty) lines.push(d.copied + ' of ' + d.days + ' closed days have matching current bytes and destination proof.' + (d.not_copied.length ? ' Could not verify: ' + d.not_copied.join(', ') + '.' : ''));
+      if (d.destination) lines.push(d.destination.mode + ': ' + d.destination.protection);
+      if (!d.automatic_copy_enabled) lines.push('Automatic copying is currently off. This check reads retained copies; it does not turn protection on.');
+      if (d.native_unknown && d.native_unknown.length) lines.push(plural(d.native_unknown.length, 'earlier copy attempt has', 'earlier copy attempts have') + ' no recorded completion. Those original effects remain uncertain.');
+      show(lines);
+    });
+    wire('aud-rotate', async function () {
+      if (!(await window.mvConfirm('Make a new signing key? New entries are signed with it; older entries can still be checked with the old key.', { okText: 'Make new key' }))) return;
+      var d = await call('POST', '/api/v1/audit/rotate-key', {}, 'make a new signing key');
+      if (d) show(['A new signing key is ready. It is used after Lightwork restarts.']);
+    });
+    wire('aud-proof', async function () {
+      if (!(await window.mvConfirm('Build and download a signed bundle of retained records for independent checking? Its signature does not prove that a business result is true.', { okText: 'Download' }))) return;
+      try {
+        var r = await fetch('/api/v1/audit/proof-bundle', { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) { var j = await r.json().catch(function () { return {}; }); show([window.mvErrorText({status: r.status, detail: j.detail}, 'build the proof bundle')]); return; }
+        var blob = await r.blob();
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = 'lightwork-proof.json';
+        document.body.appendChild(a); a.click();
+        setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+        show(['Proof bundle downloaded. Give the checker the key separately.']);
+      } catch (e) { show([window.mvErrorText(e, 'build the proof bundle')]); }
+    });
+    wire('aud-proof-key', async function () {
+      var d = await call('GET', '/api/v1/audit/proof-key', null, 'show the key');
+      if (!d) return;
+      show(['Give this key to whoever checks your proof bundle:', d.key]);
+      var copy = document.createElement('button');
+      copy.type = 'button'; copy.className = 'btn btn--ghost'; copy.textContent = 'Copy key';
+      copy.addEventListener('click', function () { window.mvCopy(d.key); });
+      result.appendChild(copy);
+    });
+
+    // Protection status.
+    var refresh = $('audit-custody-refresh');
+    async function loadCustody() {
+      refresh.disabled = true;
+      var status = $('audit-custody-status');
+      status.textContent = 'Checking…';
+      try {
+        var response = await fetch('/api/v1/audit/unified/status', { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' });
+        if (!response.ok) {
+          // Keep the server's own sentence: it says why (for example, that no
+          // workspace is selected), which "refresh the page" never would.
+          var failure = { status: response.status, detail: '' };
+          try { failure.detail = (await response.json()).detail; } catch (ignored) { /* no body */ }
+          throw failure;
+        }
+        var body = await response.json();
+        var c = body && typeof body.custody === 'object' ? body.custody : {};
+        $('audit-custody-enabled').textContent = c.ready === true ? 'Ready' : (c.enabled === true ? 'Being set up' : 'Off');
+        $('audit-custody-checkpoint').textContent = c.checkpoint_enabled === true ? 'On' : 'Off';
+        $('audit-custody-worm').textContent = c.worm_enabled === true ? 'On' : 'Off';
+        $('audit-custody-siem').textContent = c.siem_enabled === true ? 'Connected' : 'Not connected';
+        status.textContent = c.ready === true ? 'Extra protection is set up for this workspace.' :
+          'Extra protection is not set up for this workspace. Your administrator can set it up during installation.';
+      } catch (error) {
+        ['audit-custody-enabled', 'audit-custody-checkpoint', 'audit-custody-worm', 'audit-custody-siem'].forEach(function (id) { $(id).textContent = '—'; });
+        if (error && error.status === 409 && /^select an active tenant/.test(String(error.detail || ''))) {
+          // Protection is set up per workspace, and none is selected yet.
+          var chooser = document.createElement('a');
+          chooser.href = '/workspace/tenant?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+          chooser.textContent = 'Choose a workspace to see its protection status.';
+          status.textContent = '';
+          status.appendChild(chooser);
+        } else {
+          var plain = error && [403, 409, 422, 502, 503].indexOf(error.status) >= 0 ? window.mvPlainDetail(error.detail) : '';
+          status.textContent = plain || window.mvErrorText(error, 'load the protection status');
+        }
+      } finally { refresh.disabled = false; }
+    }
+    refresh.addEventListener('click', loadCustody);
+    function start() {
+      loadCustody();
+      call('GET', '/api/v1/audit/actions', null, 'load the options').then(function (d) {
+        if (!d) { result.textContent = ''; return; }
+        var fwd = $('aud-forward');
+        if (fwd) fwd.hidden = !d.security_system_connected;
+        if (!d.download_allowed) {
+          Array.prototype.forEach.call($('aud-format').options, function (o) { if (o.value !== 'csv') o.disabled = true; });
+        }
+      });
+    }
+    // The shell's helpers (lightwork-ui.js) load after the page content; start
+    // once they are there, or a failed read leaves "Checking…" on the page.
+    if (window.mvFetchJSON) start(); else document.addEventListener('DOMContentLoaded', start);
+  })();
+  </script>
+{% endblock %}

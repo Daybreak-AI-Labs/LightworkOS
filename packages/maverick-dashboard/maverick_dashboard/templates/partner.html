@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Partner fleet · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .pf-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 var(--space-4); }
+  .pf-tile { border: 1px solid var(--hairline); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
+  .pf-tile .v { font-size: var(--text-2xl); font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; }
+  .pf-tile .l { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  /* Positioned, so the visually hidden "Actions" header stays inside the
+     scroll box instead of widening the page to 602 px on a phone. */
+  .pf-scroll { overflow-x: auto; position: relative; }
+  .pf-form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: flex-end; margin-top: var(--space-3); }
+  .pf-form label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); }
+  .pf-url { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: var(--text-xs); }
+</style>
+
+  <h1 class="page-title">Partner fleet</h1>
+  <p class="page-subtitle">Every client setup you run, on one screen. See whether it is working, which agent version it runs, its branding, and the value each one has
+    counted, added up. Lightwork checks each client's own health and value pages.</p>
+
+  <div class="pf-tiles" id="pf-tiles"></div>
+
+  <div class="panel">
+    <div style="display:flex; gap: var(--space-2); align-items:center; flex-wrap:wrap;">
+      <h2 style="margin:0; font-size: var(--text-md);">Client setups</h2>
+      <button class="btn btn--primary" id="pf-checkall" type="button" style="margin-inline-start:auto;">Check all now</button>
+      <span class="muted" id="pf-msg" role="status" aria-live="polite" style="font-size: var(--text-sm);"></span>
+    </div>
+    <div class="pf-scroll" tabindex="0" role="region" aria-label="Partner listings"><table id="pf-table" style="margin-top: var(--space-3);">
+      <thead><tr><th scope="col">Client</th><th scope="col">Web address</th>
+        <th scope="col">Agent</th><th scope="col">Status</th>
+        <th scope="col">Response time</th><th scope="col">Value counted</th>
+        <th scope="col">Branding</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody id="pf-rows"></tbody>
+    </table></div>
+    <p class="muted" id="pf-empty" style="display:none;">No client setups added yet — add the first one below.</p>
+
+    <div class="pf-form">
+      <label>Client name<input class="input" id="pf-name" maxlength="120" placeholder="Acme Hospitality Group"></label>
+      <label>Web address<input class="input" id="pf-url" type="url" maxlength="300" placeholder="https://acme.example.com"></label>
+      <label>Access key (optional)<input class="input" id="pf-token" maxlength="300" type="password" autocomplete="off" placeholder="Kept safely, never shown again"></label>
+      <label>Branding name<input class="input" id="pf-theme" maxlength="60" placeholder="Acme light"></label>
+      <button class="btn btn--primary" id="pf-add" type="button">Add client</button>
+    </div>
+    <p class="muted" style="font-size: var(--text-xs); margin-top: var(--space-2);">
+      Only administrators can add or remove clients, because each one holds an address and possibly an access key. Anyone who can run tasks can check them.</p>
+  </div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, txt) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (txt != null) e.textContent = txt;
+    return e;
+  }
+  function fmt(n) { return (n || 0).toLocaleString(); }
+  function problem(r, action) {
+    return window.mvErrorText ? window.mvErrorText({ status: r && r.status }, action)
+                              : 'Could not ' + action + '. Try again.';
+  }
+  function offline(action) { return 'Could not ' + action + ' — check your connection and try again.'; }
+
+  function tile(label, value) {
+    var t = el('div', 'pf-tile');
+    t.appendChild(el('div', 'v', value));
+    t.appendChild(el('div', 'l', label));
+    return t;
+  }
+
+  function render(data) {
+    var tiles = $('pf-tiles');
+    tiles.textContent = '';
+    var f = data.fleet || {};
+    tiles.appendChild(tile('clients', fmt(f.total)));
+    tiles.appendChild(tile('working', fmt(f.healthy) + ' / ' + fmt(f.total)));
+    tiles.appendChild(tile('cases filed', fmt(f.cases)));
+    tiles.appendChild(tile('hours saved', fmt(f.hours)));
+    tiles.appendChild(tile('value counted', window.mvMoney ? window.mvMoney(f.dollars || 0) : '$' + fmt(f.dollars)));
+    if (f.external_agents) {
+      tiles.appendChild(tile('outside agents', fmt(f.external_agents) +
+        (f.external_attention ? ' · ' + fmt(f.external_attention) + ' need attention' : '')));
+    }
+
+    var rows = $('pf-rows');
+    rows.textContent = '';
+    $('pf-empty').style.display = data.tenants.length ? 'none' : 'block';
+    data.tenants.forEach(function (t) {
+      var c = t.last_check || {};
+      var tr = el('tr');
+      tr.appendChild(el('td', '', t.name));
+      var u = el('td');
+      u.appendChild(el('div', 'pf-url', t.base_url));
+      tr.appendChild(u);
+      tr.appendChild(el('td', '',
+        (c.agent || '—') + (c.version ? ' v' + c.version : '')));
+      var st = el('td');
+      st.appendChild(el('span',
+        'badge ' + (c.checked_at ? (c.ok ? 'done' : 'blocked') : 'info'),
+        c.checked_at ? (c.ok ? 'Working' : "Can't reach it") : 'Not checked yet'));
+      if (c.error) {
+        var more = el('details');
+        more.appendChild(el('summary', 'muted', 'Technical details'));
+        more.appendChild(el('div', 'muted', String(c.error).slice(0, 200)));
+        st.appendChild(more);
+      }
+      tr.appendChild(st);
+      tr.appendChild(el('td', '',
+        c.latency_ms == null ? '—' : c.latency_ms + ' ms'));
+      tr.appendChild(el('td', '', c.value
+        ? c.value.cases + ' cases · ' + (window.mvMoney ? window.mvMoney(c.value.dollars || 0) : '$' + fmt(c.value.dollars)) : '—'));
+      tr.appendChild(el('td', '', t.theme || '—'));
+      var act = el('td');
+      var chk = el('button', 'btn btn--ghost btn--sm', 'Check');
+      chk.type = 'button';
+      chk.setAttribute('aria-label', 'Check ' + t.name);
+      chk.addEventListener('click', function () {
+        chk.disabled = true;
+        fetch('/api/v1/partner/tenants/' + t.id + '/check',
+              {method: 'POST'}).then(load).catch(load);
+      });
+      var rm = el('button', 'btn btn--ghost btn--sm', 'Remove');
+      rm.type = 'button';
+      rm.style.marginInlineStart = '6px';
+      rm.setAttribute('aria-label', 'Remove ' + t.name);
+      rm.addEventListener('click', function () {
+        // One action with a way back: the client leaves the list at
+        // once; its saved address and access key are deleted when Undo ends.
+        tr.hidden = true;
+        window.mvUndo('{name} removed from your client list. The client’s own setup is not touched.', { values: {name: t.name},
+          action: 'remove the client',
+          run: function (keepalive) { return fetch('/api/v1/partner/tenants/' + t.id, {method: 'DELETE', keepalive: keepalive}); },
+          undo: function () { tr.hidden = false; rm.focus(); },
+          done: function () { $('pf-msg').textContent = 'Removed.'; load(); }
+        });
+      });
+      act.appendChild(chk);
+      act.appendChild(rm);
+      tr.appendChild(act);
+      rows.appendChild(tr);
+    });
+  }
+
+  function load(check) {
+    window.mvFetchJSON('/api/v1/partner/fleet' + (check === true ? '?check=1' : ''))
+      .then(render)
+      .catch(function (r) {
+        $('pf-msg').textContent = r && r.status ? problem(r, 'load your clients') : offline('load your clients');
+      });
+  }
+
+  $('pf-checkall').addEventListener('click', function () {
+    $('pf-msg').textContent = 'Checking every client…';
+    fetch('/api/v1/partner/fleet?check=1')
+      .then(function (r) { if (!r.ok) throw r; return r.json(); })
+      .then(function (d) { $('pf-msg').textContent = 'Checked.'; render(d); })
+      .catch(function (r) {
+        $('pf-msg').textContent = r && r.status ? problem(r, 'check your clients') : offline('check your clients');
+      });
+  });
+
+  $('pf-add').addEventListener('click', function () {
+    var body = {name: $('pf-name').value.trim(),
+                base_url: $('pf-url').value.trim(),
+                token: $('pf-token').value,
+                theme: $('pf-theme').value.trim()};
+    if (!body.name || !body.base_url) {
+      $('pf-msg').textContent = 'Add the client name and web address first.';
+      return;
+    }
+    fetch('/api/v1/partner/tenants', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (r.ok) {
+        ['pf-name', 'pf-url', 'pf-token', 'pf-theme'].forEach(function (i) {
+          $(i).value = '';
+        });
+        $('pf-msg').textContent = 'Client added.';
+        load();
+      } else {
+        $('pf-msg').textContent = problem(r, 'add the client');
+      }
+    }).catch(function () { $('pf-msg').textContent = offline('add the client'); });
+  });
+
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (window.mvFetchJSON) load(); else document.addEventListener('DOMContentLoaded', function () { load(); });
+})();
+</script>
+{% endblock %}

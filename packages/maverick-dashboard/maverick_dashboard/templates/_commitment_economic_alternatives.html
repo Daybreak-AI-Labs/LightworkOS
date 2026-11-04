@@ -1,0 +1,40 @@
+{% if economic_alternatives_enabled %}
+<details id="cea-panel" class="panel cmv-card" hidden>
+ <summary><strong>Which possible offers could leave a positive contribution?</strong></summary>
+ <p>Use the additional offers and possible additions you entered above. Their common due date and exact quantities remain fixed. Every combination protects all accepted work under every explanation still supported by current observations.</p>
+ <p>Prices, costs, customer willingness, availability and permission are your team's reports. A positive contribution is conditional on these entered facts and includes only the complete expenses you report. Nothing is purchased, reserved, accepted or sent.</p>
+ <p id="cea-message" role="status" aria-live="polite"></p><div id="cea-results"></div>
+ <details id="cea-author"><summary tabindex="-1">Enter the complete financial assumptions</summary>
+  <form id="cea-model" class="cmv-stack">
+   <p>Enter currency amounts such as 1.25 in the single currency below. Choose whole amounts or up to two decimal places; Lightwork keeps the accounting exact. Put variable expenses in the per-unit cost and offer-specific expenses in its fixed cost. Give each addition's full cost its own row, and put common expenses in shared cost. Do not count the same expense twice. Existing cost points compare capabilities; they are never converted into money.</p>
+   <div class="cmv-grid"><label>Single three-letter currency<input class="input" name="currency" pattern="[A-Z]{3}" minlength="3" maxlength="3" placeholder="USD" required></label>
+   <label>Precision for all currency amounts<select class="input" name="unit_scale" required><option value="100">Up to two decimal places</option><option value="1">Whole amounts only</option></select></label>
+   <label>All shared incremental costs<input class="input" name="shared_cost" type="text" inputmode="decimal" pattern="(0|[1-9][0-9]*)(\.[0-9]{1,2})?" required></label>
+   <label>Maximum total incremental outlay<input class="input" name="maximum_outlay" type="text" inputmode="decimal" pattern="(0|[1-9][0-9]*)(\.[0-9]{1,2})?" required></label>
+   <label>Review overall use permission again by<input class="input" name="expires_at" type="datetime-local" required></label></div>
+   <label>Complete reported facts and overall use-permission basis<textarea class="input" name="basis" rows="3" minlength="10" maxlength="2000" required></textarea></label>
+   <label><input type="checkbox" name="all_costs_included" required>I included every incremental cost in the displayed unit without double counting. These reports are not independently verified.</label>
+   <label><input type="checkbox" name="allowed" required>I have current permission to use these demand, price and cost reports for this comparison.</label>
+   <h3>Every entered additional offer</h3><div id="cea-offers" class="cmv-stack"></div>
+   <h3>Every entered possible addition</h3><div id="cea-additions" class="cmv-stack"></div>
+   <label id="cea-new-intent" hidden><input type="checkbox" name="acknowledge_new_intent">This replacement is a separate financial intent. Earlier originals and spent comparison allowance remain.</label>
+   <div class="cmv-actions"><button class="btn btn--primary" type="submit">Review complete financial assumptions</button><button class="btn" id="cea-fill" type="button">Fill with current saved facts</button></div>
+  </form>
+ </details>
+ <div class="cmv-actions" id="cea-current-controls" hidden><button class="btn" id="cea-check" type="button">Review one complete comparison</button><button class="btn" id="cea-withdraw" type="button">Review withdrawing financial use</button><button class="btn" id="cea-remove" type="button">Review removal</button><button class="btn" id="cea-refresh" type="button">Read current state</button></div>
+ <details id="cea-scope" hidden><summary>Review use permission and when it expires</summary><form class="cmv-stack">
+  <label>Overall use permission<select name="allowed" class="input" required><option value="true">Allowed</option><option value="false">Withdrawn</option></select></label>
+  <label>Review overall permission again by<input class="input" name="expires_at" type="datetime-local" required></label><label>Current use-permission basis<textarea class="input" name="basis" minlength="10" maxlength="2000" required></textarea></label>
+  <p>This does not renew any individual customer, price or cost report. Replace the complete financial assumptions to review those facts again. Earlier answers cannot be reused.</p><button class="btn" type="submit">Review overall permission</button></form></details>
+ <form id="cea-acknowledge" class="cmv-stack" hidden><p>The admitted original has no confirmed completion. It will never repeat automatically.</p><label><input type="checkbox" name="acknowledge_unknown" required>The original remains unknown and its allowance stays spent. Stop this wait and withdraw current use until a separate complete review.</label><button class="btn" type="submit">Review stopping this wait</button></form>
+ <section id="cea-review" class="cmv-card" hidden><h3 id="cea-review-title" tabindex="-1">Review the complete current sources and financial change</h3><div id="cea-review-changes"></div><div class="cmv-actions"><button class="btn btn--primary" id="cea-confirm" type="button">Confirm this exact reviewed action</button><button class="btn" id="cea-cancel" type="button">Keep draft and close review</button></div></section>
+</details>
+{% else %}<section class="panel"><h2>Conditional financial comparisons are off</h2><p>An administrator can enable them in <a href="/settings#feature-commitment_economic_alternatives">Settings</a>. Earlier original requests remain readable below.</p></section>{% endif %}
+<section id="cea-history" class="panel cmv-card"><h2>Earlier financial comparison requests</h2><p>Read your own original attribution and outcome after source use expires, this feature is off or the Promise is archived. This never reopens business facts, repeats a calculation or renews permission.</p><p id="cea-history-message" role="status" aria-live="polite"></p><div class="cmv-actions"><label>Your exact original<select class="input" id="cea-history-select"><option value="">Choose an earlier request</option></select></label><button class="btn" type="button" id="cea-history-refresh">Refresh original history</button><button class="btn" type="button" id="cea-history-read">Read this original</button></div><div id="cea-history-result"></div></section>
+<style>
+ #cea-panel .cmv-actions,#cea-history .cmv-actions{display:flex;flex-wrap:wrap;gap:var(--space-2)} #cea-panel .btn,#cea-history .btn{white-space:normal;max-width:100%}
+ #cea-panel p,#cea-panel dd,#cea-history p{overflow-wrap:anywhere} #cea-panel input,#cea-panel textarea,#cea-panel select,#cea-history select{min-width:0;max-width:100%;box-sizing:border-box}
+ #cea-panel label:has(input[type=checkbox]){display:flex;flex-direction:row;align-items:flex-start;gap:var(--space-2)} #cea-panel input[type=checkbox]{width:auto;flex-shrink:0}
+ #cea-review[hidden],#cea-panel[hidden],#cea-current-controls[hidden]{display:none}
+</style>
+<script src="/static/lightwork-commitment-economic-alternatives.js" defer></script>

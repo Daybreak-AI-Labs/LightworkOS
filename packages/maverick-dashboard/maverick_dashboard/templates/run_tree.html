@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Branches · Task replay' if tab_host else 'Branches' }} · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* Branches — scoped. The nesting is a plain <ul>/<li> so the tree reads in
+     source order for a screen reader and prints straight into an audit pack. */
+  .rt-tree ul { list-style: none; margin: 0; padding-left: 1.25rem; border-left: 1px solid var(--border); }
+  .rt-tree > ul { padding-left: 0; border-left: 0; }
+  .rt-tree li { padding: 0.35rem 0; }
+  .rt-node { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; padding: 0.35rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .rt-node .rt-meta { color: var(--muted); font-size: var(--text-sm); }
+  .rt-chosen { border-color: var(--accent, var(--border)); }
+  .rt-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: var(--space-3); align-items: end; }
+</style>
+
+  {% if tab_host %}
+  {% from "_tabs.html" import host_header, panel_attrs %}{{ host_header(tab_host) }}
+  <div {{ panel_attrs(tab_host.selected) }}>
+  <h2>Branches</h2>
+  <p class="muted">See what the agent chose next to what another way would have done. A branch starts a task again from one of its steps and keeps both versions side by side for review.</p>
+  {% else %}
+  <h1 class="page-title">Branches</h1>
+  <p class="page-subtitle">See what the agent chose next to what another way would have done. A branch starts a task again from one of its steps and keeps both versions side by side for review.</p>
+  {% endif %}
+
+  <div class="panel">
+    <p style="margin: 0;">
+      {% if enabled %}<span class="badge active">Branching is on</span>
+      {% else %}<span class="badge">Branching is off</span>{% endif %}
+      <span class="badge">{{ roots | length }} task{{ '' if roots | length == 1 else 's' }} with branches</span>
+      <span class="badge">Up to {{ max_depth }} levels of branches</span>
+    </p>
+    {% if not enabled %}
+    <p class="muted" style="margin: var(--space-2) 0 0;">
+      {% if can_admin %}Turn on “Session tree” in <a class="btn btn--ghost" href="/settings#settings-features">Settings</a> to branch tasks.
+      {% else %}An administrator can turn branching on in Settings.{% endif %}
+    </p>
+    {% endif %}
+  </div>
+
+  {% if can_operate %}
+  <div class="panel" id="rt-actions">
+    <h2 style="margin-top:0">Try another way, or go back</h2>
+    <div class="rt-form">
+      <div class="field">
+        <label for="rt-task">Task</label>
+        <select id="rt-task" class="select">
+          <option value="">Choose a task…</option>
+          {% for g in recent %}<option value="{{ g.id }}">{{ g.title or 'Untitled task' }} ({{ g.status | humanize | lower }})</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <label for="rt-step">Branch from this step</label>
+        <select id="rt-step" class="select" disabled><option value="">Choose a task first</option></select>
+      </div>
+      <div class="field">
+        <label for="rt-label">What will you try differently? (optional)</label>
+        <input id="rt-label" class="input" maxlength="200" placeholder="For example: use the newer price list">
+      </div>
+      <div><button type="button" class="btn btn--primary" id="rt-fork"{% if not enabled %} disabled{% endif %}>Create branch</button></div>
+    </div>
+    <details style="margin-top: var(--space-4);" id="rt-rewind-box">
+      <summary>Go back to a saved step</summary>
+      <p class="muted" style="font-size: var(--text-sm);">Tasks that saved their progress can start again from an earlier step. Choose the task above first.</p>
+      <div class="rt-form">
+        <div class="field">
+          <label for="rt-checkpoint">Saved step</label>
+          <select id="rt-checkpoint" class="select" disabled><option value="">Choose a task first</option></select>
+        </div>
+        <fieldset class="field" style="border:0; padding:0; margin:0;">
+          <legend class="muted">How</legend>
+          <label><input type="radio" name="rt-mode" value="copy" checked> As a new copy (keeps the original)</label><br>
+          <label><input type="radio" name="rt-mode" value="same"> On this task (later progress is dropped)</label>
+        </fieldset>
+        <div><button type="button" class="btn" id="rt-rewind" disabled>Go back to this step</button></div>
+      </div>
+    </details>
+    <p id="rt-msg" role="status" aria-live="polite" style="margin-bottom: 0;"></p>
+  </div>
+  {% endif %}
+
+  {% if roots %}
+  <div class="panel">
+    <h2 style="margin-top:0">Tasks with branches</h2>
+    <table>
+      <thead>
+        <tr><th scope="col">Task</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Branches</th><th scope="col">Last branched</th></tr>
+      </thead>
+      <tbody>
+        {% for r in roots %}
+        <tr>
+          <td><a href="{{ branches_href | default('/run-tree?') }}goal={{ r.goal_id }}"><strong>{{ r.title or 'Untitled task' }}</strong></a></td>
+          <td>{{ (r.owner | identity).name if r.owner else '—' }}</td>
+          <td><span class="badge">{{ r.status | humanize }}</span></td>
+          <td>{{ r.forks }}</td>
+          <td class="muted">{{ r.last_forked_at | datetime if r.last_forked_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel rt-tree">
+    <h2 style="margin-top:0">
+      {% if tree %}Branches of “{{ tree.title or 'this task' }}”{% else %}Branches{% endif %}
+    </h2>
+    {% if tree %}
+    <ul>
+      {# `recursive` keeps the nesting in Jinja: each node re-enters the loop
+         with its own children, so depth is data rather than markup. #}
+      {% for node in [tree] recursive %}
+      <li>
+        <span class="rt-node{% if loop.depth0 == 0 %} rt-chosen{% endif %}">
+          <a href="/goals/{{ node.goal_id }}/trajectory">{{ node.title or 'Untitled task' }}</a>
+          <span class="badge">{{ node.status | humanize }}</span>
+          {% if node.label %}<span class="badge">{{ node.label }}</span>{% endif %}
+          <span class="rt-meta">
+            {% if node.forked_at_event %}branched from a step (<a href="/goals/{{ node.parent_goal_id or tree.goal_id }}/trajectory">see the steps</a>)
+            {% elif loop.depth0 > 0 %}branched from the whole task
+            {% else %}the task as it happened{% endif %}
+            {% if node.forked_by %} · by {{ (node.forked_by | identity).name }}{% endif %}
+            {% if node.forked_at %} · {{ node.forked_at | datetime }}{% endif %}
+          </span>
+        </span>
+        {% if node.children %}<ul>{{ loop(node.children) }}</ul>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted" style="margin: var(--space-3) 0 0; font-size: var(--text-sm);">
+      A branch is a copy of the record, not a re-run: it starts from the same
+      point the original had reached. Nothing runs and nothing is spent until you
+      continue the branch.
+    </p>
+    {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">Pick a task</p>
+      <p class="mv-empty__body">Choose a task above to see its branches.</p>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="panel">
+    <div class="mv-empty">
+      <p class="mv-empty__title">No tasks have branches yet</p>
+      <p class="mv-empty__body">Choose a task and a step above and select Create branch. Or open a task’s step-by-step history and choose “Branch from here” on the step you want to question.</p>
+      <a class="btn btn--ghost" href="/goals">Open your tasks</a>
+    </div>
+  </div>
+  {% endif %}
+  {% if tab_host %}</div>{% endif %}
+
+{% if can_operate %}
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var task = document.getElementById('rt-task'), step = document.getElementById('rt-step');
+  var ck = document.getElementById('rt-checkpoint'), forkBtn = document.getElementById('rt-fork');
+  var rewindBtn = document.getElementById('rt-rewind'), msg = document.getElementById('rt-msg');
+  var enabled = {{ 'true' if enabled else 'false' }};
+  function plain(f, what) { return window.mvErrorText ? mvErrorText(f, what) : 'Could not ' + what + '.'; }
+  function fill(sel, items, empty) {
+    sel.textContent = '';
+    if (!items.length) { var o = document.createElement('option'); o.value = ''; o.textContent = empty; sel.appendChild(o); sel.disabled = true; return; }
+    items.forEach(function (it) { var o = document.createElement('option'); o.value = it.value; o.textContent = it.label; sel.appendChild(o); });
+    sel.disabled = false;
+  }
+  function trunc(t, n) { t = String(t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+  task.addEventListener('change', async function () {
+    msg.textContent = '';
+    if (!task.value) { fill(step, [], 'Choose a task first'); fill(ck, [], 'Choose a task first'); rewindBtn.disabled = true; return; }
+    fill(step, [], 'Loading steps…'); fill(ck, [], 'Loading…');
+    try {
+      var r = await fetch('/api/v1/goals/' + encodeURIComponent(task.value) + '/events?limit=500');
+      if (!r.ok) throw r;
+      var j = await r.json();
+      var items = (j.events || []).map(function (ev, i) {
+        return { value: ev.id, label: 'Step ' + (i + 1) + ': ' + trunc(ev.content || (window.mvHuman ? mvHuman(ev.kind) : ev.kind), 70) };
+      });
+      items.unshift({ value: '', label: 'After the last step (the whole task)' });
+      fill(step, items, 'This task has no steps yet');
+    } catch (e) { fill(step, [], 'Steps could not be loaded'); msg.textContent = plain(e, 'load the steps'); }
+    try {
+      var c = await fetch('/api/v1/run-tree/' + encodeURIComponent(task.value) + '/checkpoints');
+      if (!c.ok) throw c;
+      var steps = (await c.json()).steps || [];
+      fill(ck, steps.map(function (n) { return { value: n, label: 'Saved step ' + n }; }), 'This task saved no steps to go back to');
+      rewindBtn.disabled = !steps.length;
+    } catch (e) { fill(ck, [], 'Saved steps could not be loaded'); rewindBtn.disabled = true; }
+  });
+  forkBtn.addEventListener('click', async function () {
+    if (!enabled) return;
+    if (!task.value) { msg.textContent = 'Choose a task first.'; task.focus(); return; }
+    forkBtn.disabled = true; msg.textContent = 'Creating the branch…';
+    try {
+      var body = { label: document.getElementById('rt-label').value.trim() };
+      if (step.value) body.at_event = Number(step.value);
+      var r = await fetch('/api/v1/run-tree/' + encodeURIComponent(task.value) + '/fork', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw r;
+      var j = await r.json();
+      msg.textContent = 'Branch created. ';
+      var a = document.createElement('a'); a.href = '/chat/goal/' + encodeURIComponent(j.goal_id); a.textContent = 'Open the branch';
+      var b = document.createElement('a'); b.href = {{ (branches_href | default('/run-tree?')) | tojson }} + 'goal=' + encodeURIComponent(task.value); b.textContent = 'Compare branches';
+      msg.append(a, ' · ', b);
+    } catch (e) { msg.textContent = plain(e, 'create the branch'); }
+    finally { forkBtn.disabled = !enabled; }
+  });
+  rewindBtn.addEventListener('click', async function () {
+    if (!task.value || !ck.value) return;
+    var copy = (document.querySelector('input[name="rt-mode"]:checked') || {}).value !== 'same';
+    var ok = await mvConfirm(copy
+      ? 'Make a new copy of this task that starts again from saved step ' + ck.value + '? The original stays as it is.'
+      : 'Go back to saved step ' + ck.value + ' on this task? Progress after that step is dropped and the task waits for you to continue it.',
+      { okText: copy ? 'Make a copy' : 'Go back' });
+    if (!ok) return;
+    rewindBtn.disabled = true; msg.textContent = 'Going back…';
+    try {
+      var r = await fetch('/api/v1/run-tree/' + encodeURIComponent(task.value) + '/rewind', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to_step: Number(ck.value), as_copy: copy }) });
+      if (r.status === 409) { msg.textContent = 'That didn’t work. If the task is running or waiting to run, stop it first, then try again.'; return; }
+      if (!r.ok) throw r;
+      var j = await r.json();
+      msg.textContent = 'Done. The task waits at step ' + j.to_step + '. ';
+      var a = document.createElement('a'); a.href = '/chat/goal/' + encodeURIComponent(j.goal_id); a.textContent = 'Open it to continue';
+      msg.append(a);
+    } catch (e) { msg.textContent = plain(e, 'go back to that step'); }
+    finally { rewindBtn.disabled = false; }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

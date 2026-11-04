@@ -1,0 +1,100 @@
+{% extends "recovery_shell.html" if recovery_mode else "base.html" %}
+{% block title %}Provider spending · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-provider-spending.css">{% endblock %}
+{% block content %}
+<div id="provider-spending" data-providers='{{ provider_options | tojson }}'>
+  <h1 class="page-title">Provider spending</h1>
+  <p>What each AI service has cost, and money set aside for requests whose final cost isn't known yet.
+    Set-aside money is never refunded or retried automatically.</p>
+  {% if spend_freshness_known %}{% from "_spend_freshness.html" import spend_freshness %}{{ spend_freshness(spend_recorded_at, live=true) }}{% endif %}
+  {# Practice calls are real provider charges already in these totals (maverick.practice_costs). #}
+  <p class="practice-cost" id="spend-practice" data-practice-cost{% if not practice_cost %} hidden{% endif %}>{{ practice_cost }}</p>
+  <p id="spend-status" role="status" aria-live="polite">Loading spending…</p>
+  <p class="spend-row">
+    <button type="button" id="spend-refresh" class="btn">Refresh</button>
+    <a class="btn btn--ghost" href="/spending-limits">Spending limits</a>
+  </p>
+  <section aria-labelledby="spend-health-title"><h2 id="spend-health-title">Spending record health</h2>
+    <p id="spend-health" role="status">Checking records…</p>
+    <p class="muted">Lightwork keeps each provider request and its cost record so a repeated request cannot quietly spend twice.
+      If records need attention, review the amounts below and use the recovery steps on this page.
+      Keep a full <a href="/workspace/recovery">Workspace recovery</a> copy before moving this installation.</p>
+  </section>
+  <section aria-labelledby="spend-balances-title"><h2 id="spend-balances-title">Spending by period</h2>
+    <div class="spend-row">
+      <label for="spend-period-kind">Show
+        <select id="spend-period-kind" class="select">
+          <option value="month" selected>A whole month</option>
+          <option value="day">One day</option>
+        </select>
+      </label>
+      <label for="spend-period" data-period-for="month">Month
+        <input id="spend-period" class="input" type="month">
+      </label>
+      <label for="spend-period-day" data-period-for="day" hidden>Day
+        <input id="spend-period-day" class="input" type="date">
+      </label>
+      <label for="spend-provider">Provider
+        <select id="spend-provider" class="select"><option value="">All providers</option></select>
+      </label>
+      <button type="button" id="spend-load-period" class="btn btn--primary">Show spending</button>
+    </div>
+    <p class="muted">Leave the month empty for the current period. Dates follow Coordinated Universal Time.
+      Today's limit is shown for comparison; it doesn't change past costs.</p>
+    <div id="spend-balances"></div></section>
+  <section aria-labelledby="spend-held-title"><h2 id="spend-held-title">Settle money set aside for a request</h2>
+    <p>When a request stopped before its final cost was known, Lightwork set money aside. Enter the final
+      cost from the provider's receipt or invoice to settle it. Requests that may still be running can
+      only be settled in recovery mode.</p>
+    <p id="spend-page" class="muted"></p>
+    <p class="spend-row"><button type="button" id="spend-prev" class="btn" disabled>Previous</button><button type="button" id="spend-next" class="btn" disabled>Next</button></p>
+    <form id="spend-hold-form">
+      <label for="spend-hold">Request</label><select id="spend-hold" class="select" required disabled></select>
+      <label for="spend-actual">Final cost in US dollars</label><input id="spend-actual" class="input" type="number" min="0" step="any" required disabled>
+      <label for="spend-evidence">Receipt or invoice number, and how you checked it</label><textarea id="spend-evidence" class="textarea" minlength="8" maxlength="2000" required disabled></textarea>
+      <p class="muted">Enter a reference only. Don't paste passwords, card numbers or the invoice itself.</p>
+      <button type="submit" class="btn btn--primary" disabled>Review the correction</button>
+    </form>
+  </section>
+  <section aria-labelledby="spend-retained-title"><h2 id="spend-retained-title">Unfinished corrections</h2>
+    <p class="muted">Corrections you started but haven't confirmed. Opening one doesn't change anything.</p>
+    <div class="spend-row">
+      <label for="spend-review-pick">Correction
+        <select id="spend-review-pick" class="select"><option value="">None waiting</option></select>
+      </label>
+      <button type="button" id="spend-open-review" class="btn">Open</button>
+    </div>
+  </section>
+  <section id="spend-review" hidden aria-labelledby="spend-review-title">
+    <h2 id="spend-review-title">Confirm the correction</h2><div id="spend-review-detail"></div>
+    <label><input type="checkbox" id="spend-confirm"> I checked the final costs from the provider and the changes above.</label>
+    <button type="button" id="spend-apply" class="btn btn--primary" disabled>Apply the correction</button>
+  </section>
+  <section aria-labelledby="spend-backup-title"><h2 id="spend-backup-title">Keep a checked copy of spending records</h2>
+    <p>Make a recovery key in <a href="/workspace/recovery">Workspace recovery</a> first. Keep the copy and the key in
+      different places. The copy includes every set-aside amount and confirmed total. For a large history,
+      use a full Workspace recovery backup.</p>
+    <p class="spend-row"><button id="spend-export" type="button" class="btn" disabled>Download a checked copy</button>
+      <button type="button" id="spend-diagnostics" class="btn btn--ghost" disabled>Download details for support</button></p>
+  </section>
+  <section aria-labelledby="spend-repair-title"><h2 id="spend-repair-title">Repair spending records that can't be read</h2>
+    <p id="spend-repair-note" class="muted">To repair, finish any running work, then open Workspace recovery mode in the Lightwork
+      desktop app and come back to this page. Shared databases are repaired by their administrator.</p>
+    <p>The damaged file is kept. Confirmed costs can't go down, and money set aside stays set aside. Check
+      final receipts for any later costs before you start.</p>
+    <label for="spend-import">Checked copy of spending records</label><input id="spend-import" class="input" type="file" accept="application/json,.json" disabled>
+    <button id="spend-inspect" type="button" class="btn" disabled>Check the copy</button>
+    <form id="spend-repair-form" hidden>
+      <p id="spend-export-date"></p>
+      <div id="spend-totals"></div>
+      <button type="button" id="spend-add-total" class="btn btn--ghost">Add another provider or period</button>
+      <label for="spend-repair-evidence">Receipt references, and what was spent since the copy was made</label><textarea id="spend-repair-evidence" class="textarea" minlength="8" maxlength="2000" required></textarea>
+      <p>Enter all confirmed spending up to now for each provider and period, not counting money set aside.
+        Missing records don't mean nothing was spent.</p>
+      <label><input type="checkbox" id="spend-receipts-complete" required> I checked the provider's final receipts for every request since this copy was made, including other providers and periods. No later cost is unknown.</label>
+      <button type="submit" class="btn btn--primary">Review the repair</button>
+    </form>
+  </section>
+</div>
+<script src="/static/lightwork-provider-spending.js" defer></script>
+{% endblock %}

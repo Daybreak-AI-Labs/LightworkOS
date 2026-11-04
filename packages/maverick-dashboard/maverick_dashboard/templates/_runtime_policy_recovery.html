@@ -1,0 +1,28 @@
+<section class="panel" id="runtime-policy-recovery" data-draft-recovery="off" aria-labelledby="runtime-policy-title">
+  <h2 id="runtime-policy-title">Restore saved safety settings</h2>
+  <p>Recover an exact saved policy when damaged safety settings stop ordinary work. These settings apply to every workspace on this installation.</p>
+  <p class="muted">Choose a retained copy and review its complete settings before replacing anything. Saved connection credentials are restored too; their bytes stay protected. No trusted copy means no restore; Lightwork never guesses a replacement from defaults.</p>
+  <p class="muted">Backup and recovery is off by default. It must be enabled before damage; later native setting changes then keep trusted copies. This cannot reconstruct a policy that was never retained.</p>
+  <button class="btn" type="button" id="rpr-refresh">Load saved copies</button>
+  <p id="rpr-status" role="status" aria-live="polite">No settings have been restored from this page.</p>
+  <p id="rpr-notice" class="muted"></p>
+  <div id="rpr-controls" hidden>
+    <label for="rpr-copy">Saved safety settings</label>
+    <select id="rpr-copy"><option value="">Choose a saved copy</option></select>
+    <button class="btn" type="button" id="rpr-review">Review this copy</button>
+    <div id="rpr-review-panel" hidden>
+      <h3>Current saved settings</h3><div id="rpr-before"></div>
+      <h3>Settings after restoration</h3><div id="rpr-after"></div>
+      <p class="muted">The complete saved policy above replaces this installation's current saved policy. It can change blocked capabilities, task limits, AI access and connected tools. A separate restart or connection check may still be needed.</p>
+      <label><input id="rpr-confirm" type="checkbox"> I reviewed these complete settings and want to restore this saved copy.</label>
+      <div class="support-actions"><button class="btn btn--primary" type="button" id="rpr-apply" disabled>Restore reviewed settings</button><button class="btn" type="button" id="rpr-cancel">Cancel review</button></div>
+    </div>
+  </div>
+  <details id="rpr-originals"><summary>My original restoration requests</summary>
+    <p>Read the original recorded outcome after an interrupted reply. Looking it up never replaces settings again.</p>
+    <label for="rpr-request">Original request</label><select id="rpr-request"><option value="">Choose an original request</option></select>
+    <button class="btn" type="button" id="rpr-more" hidden>Load earlier requests</button>
+    <button class="btn" type="button" id="rpr-read">Read original result</button>
+    <p id="rpr-original-result" role="status" aria-live="polite"></p>
+  </details>
+</section>

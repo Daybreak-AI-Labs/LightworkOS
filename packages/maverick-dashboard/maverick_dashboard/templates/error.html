@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero %}
+  {% set error_actions %}
+    {% if gate == 'off' %}<a class="btn btn--primary" href="/settings#settings-sections">Open Settings</a>{% endif %}
+    {% if gate == 'task_steps' %}<a class="btn btn--primary" href="/settings/all?id=agent.max_steps">Review task settings</a>{% endif %}
+    {% if gate == 'step_up' %}<a class="btn btn--primary" href="{{ reauthenticate or path }}">Sign in again</a>{% endif %}
+    <a class="btn{% if gate not in ('off', 'step_up', 'task_steps') %} btn--primary{% endif %}" href="{{ path }}">Reload this page</a>
+    {% if status == 403 %}<a class="btn" href="/workspace/tenant">Choose a workspace</a>{% endif %}
+    <a class="btn" href="/">Back to home</a>
+  {% endset %}
+  {% if gate == 'retry' and ut is defined %}{% set title = ut(title) %}{% set message = ut(message) %}{% endif %}
+  {{ hero('', title, lede=message, title_id='request-error-title', actions=error_actions) }}
+  {% if gate == 'roster_missing' %}
+  <form class="panel" method="post" action="/users/roster/reset">
+    <p><label><input type="checkbox" name="confirm" value="reset" required> I understand earlier role assignments are gone and people get group roles or the default role until I assign roles again.</label></p>
+    <button type="submit" class="btn btn--danger">Start a new, empty role list</button>
+  </form>
+  {% endif %}
+  {% if gate == 'off' and feature %}
+    {# The feature is off, not forbidden: whoever may turn it on can do so here. #}
+    {% from "_module_gate.html" import module_gate %}
+    {{ module_gate(feature.section, feature.label) }}
+  {% endif %}
+  <details class="panel muted" style="font-size: var(--text-sm);">
+    <summary>Support details</summary>
+    <p>Page: {{ path }} · Reference: {{ status }}</p>
+    <button type="button" class="btn btn--ghost" data-copy-support="Page {{ path }}, reference {{ status }}">Copy support details</button>
+  </details>
+  {% if gate == 'retry' %}
+  <p class="muted" id="error-retry-status" role="status"></p>
+  <script nonce="{{ csp_script_nonce }}">
+    // A retryable conflict settles by itself: reload a few times, then stop
+    // and leave the Reload button (never loops on a page that stays busy).
+    (function () {
+      var key = 'lightwork.retry:' + location.pathname, count = 0;
+      try {
+        var saved = (sessionStorage.getItem(key) || '').split(':');
+        // Only reloads in the last minute count toward the limit.
+        if (Date.now() - (parseInt(saved[1], 10) || 0) < 60000) count = parseInt(saved[0], 10) || 0;
+      } catch (e) {}
+      if (count >= 3) {
+        try { sessionStorage.removeItem(key); } catch (e) {}
+        var late = 'It is taking longer than usual. Reload this page in a minute.';
+        document.getElementById('error-retry-status').textContent = window.LightworkI18n ? window.LightworkI18n.text(late) : late;
+        return;
+      }
+      try { sessionStorage.setItem(key, (count + 1) + ':' + Date.now()); } catch (e) { return; }
+      setTimeout(function () { location.reload(); }, 1500 * (count + 1));
+    })();
+  </script>
+  {% endif %}
+  <script nonce="{{ csp_script_nonce }}">
+    document.querySelectorAll('[data-copy-support]').forEach(function (b) {
+      b.addEventListener('click', function () { if (window.mvCopy) mvCopy(b.getAttribute('data-copy-support')); });
+    });
+  </script>
+{% endblock %}

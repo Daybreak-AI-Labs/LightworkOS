@@ -1,0 +1,37 @@
+<section class="panel" id="starter-team-schedules" aria-labelledby="sts-title">
+  <h2 id="sts-title">Schedule reviewed team work</h2>
+  <p>Choose a saved team and set a limited period, number of runs and spending allowance. Add each evidence package separately and review its exact specialist work before approving it. These schedules do not gather fresh records or approve future work.</p>
+  <p>A saved schedule alone does not confirm that a background worker is running. You can review a due run here. AI work requires a configured provider, and provider charges may occur within the approved limits.</p>
+  <p id="sts-worker" role="status">Checking the background worker.</p>
+  <p id="sts-message" role="status" aria-live="polite">Loading schedules.</p>
+  <form id="sts-create-form" class="st-fields">
+    <div class="st-field"><label for="sts-setup">Saved team for this schedule</label><select class="select" id="sts-setup" required><option value="">Loading teams.</option></select></div>
+    <div class="st-field"><label for="sts-start">Starts (UTC)</label><input class="input" id="sts-start" type="datetime-local" required></div>
+    <div class="st-field"><label for="sts-end">Ends (UTC)</label><input class="input" id="sts-end" type="datetime-local" required></div>
+    <div class="st-field"><label for="sts-interval">Hours between runs</label><input class="input" id="sts-interval" type="number" min="1" max="8760" value="24" required></div>
+    <div class="st-field"><label for="sts-count">Maximum runs</label><input class="input" id="sts-count" type="number" min="1" max="100" value="7" required></div>
+    <div class="st-field"><label for="sts-run-dollars">Maximum dollars per run</label><input class="input" id="sts-run-dollars" type="number" min="0.01" max="100" step="0.01" value="1" required></div>
+    <div class="st-field"><label for="sts-total-dollars">Maximum total dollars</label><input class="input" id="sts-total-dollars" type="number" min="0.01" max="1000" step="0.01" value="7" required></div>
+    <div class="st-field"><label for="sts-wall">Maximum seconds per run</label><input class="input" id="sts-wall" type="number" min="1" max="1800" value="300" required></div>
+    <div><button type="submit" class="btn" id="sts-create-review">Review schedule</button></div>
+  </form>
+  <h3>Your reviewed schedules</h3>
+  <label for="sts-saved">Saved schedule</label><select class="select" id="sts-saved"><option value="">No schedules yet</option></select>
+  <p id="sts-state"></p>
+  <div class="st-actions"><button type="button" class="btn" id="sts-pause" disabled>Review pause</button><button type="button" class="btn" id="sts-tick" disabled>Review a due run</button><button type="button" class="btn" id="sts-refresh">Refresh schedules</button></div>
+  <div id="sts-inbox" hidden>
+    <h3>Add an evidence package</h3>
+    <p>Use approved CSV exports for this schedule's team. Source references are retained but not opened. Review the inputs, specialist plan and spending cap before approving this package. Approval does not immediately start it.</p>
+    <form id="sts-item-form" class="st-fields">
+      <div class="st-field"><label for="sts-as-of">Evidence review date</label><input class="input" id="sts-as-of" type="date" required></div>
+      <div id="sts-tables" class="st-fields"></div>
+      <div><button type="submit" class="btn" id="sts-item-review">Review evidence package</button></div>
+    </form>
+    <h3>Evidence package history</h3><div id="sts-history"></div>
+  </div>
+</section>
+<dialog id="sts-review" class="st-dialog" aria-labelledby="sts-review-title">
+  <h2 id="sts-review-title">Review scheduled team work</h2><div id="sts-review-content"></div>
+  <p id="sts-review-message" role="status" aria-live="polite"></p>
+  <div class="st-actions"><button type="button" class="btn" id="sts-confirm">Confirm reviewed work</button><button type="button" class="btn" id="sts-original" hidden>Check original result</button><button type="button" class="btn" id="sts-cancel">Cancel</button></div>
+</dialog>

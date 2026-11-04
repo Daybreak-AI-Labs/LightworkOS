@@ -1,0 +1,229 @@
+Ask
+	Ask
+		Chat
+		Task builder
+	Conversations
+		My conversations
+		Human conversations
+	Start from a template
+		Templates
+	My companion
+Home
+	Home
+		Today
+		My work
+		Overview
+		Get started
+		Your first useful result
+Work
+	Tasks
+		Tasks
+		Private task calculations
+		Task handoffs
+		Task map
+		3D plan view
+		My background work
+	Business details
+	Approvals
+		Approvals
+		Action Center
+	Results
+		Results
+		Selected deliverable bundles
+	Projects
+		Projects
+		Project team reviews
+		Project workspaces
+	Workflows
+		Workflows
+		Workflow pilots
+		Flow designer
+		Workflow builder
+		Flow results
+	Automations
+	Code changes
+		Code
+	Promise reviews
+	Shared decision reviews
+	Hand over a team's work
+		Autonomous shoring
+Agents
+	Workforce
+		Workforce
+		Teams
+		Roles
+		Starter teams
+	Build an agent
+		Agent Factory
+	Skills
+		Skills
+		Skill store
+	Tools
+		Tools
+		Plugins
+		Tool servers
+	Knowledge
+		Knowledge
+		Cortex memory diagnostics
+		Facts
+	Learning
+		Learning
+		Recheck affected rules
+		Find missing distinctions
+		Check local rules together
+		Prepare an answer for this request
+		Checked answer regions
+		Rewrite and check local rules
+		Plan teaching questions
+		Understand a missing reply
+		Share and qualify local rule structures
+		Share preparation safely
+		Approval challenges
+		Instructions used in real work
+		Learned
+	Discover work to automate
+		Ekko
+	Response styles
+Rules & safety
+	Overview
+		Oversight
+	Agent controls
+	What Lightwork can do
+		Permissions
+		Discovery
+		Compartments
+	Screening
+		Safety
+	Safety monitoring
+	Outside agents
+		Outside agents
+		Agent trust
+	Test a rule
+		Test a safety rule
+	Redaction check
+	Regulations and rules
+Privacy
+	Overview
+		Privacy
+	Requests
+		Privacy requests
+		California DROP requests
+		Send people their data
+	Find personal data
+	Notices
+		Privacy notices
+	Consent
+		Consent and preferences
+		Mobile app consent
+		Find people by preference
+		Bulk consent changes
+		Website banner settings
+		Opt out everywhere
+		App tracking checks
+		Banner and preference center
+		Banner experiments
+		Send choices to other systems
+		Website and app keys
+		Preference questions
+		Tracker scans
+		Disclosure suggestions
+		Trust center access
+	Data use rules
+		Data use rules
+		Snowflake and Databricks
+	Law research
+		Privacy law research
+Risk & compliance
+	Compliance
+		Compliance
+		Autonomous compliance
+		Compliance studio
+		Continuous evidence
+		Policy links
+		Find which controls apply
+		Turn scope into tasks
+		Build a task mapping
+	Assessments
+		Assessments
+		AI evidence analysis
+		Suggested assessment answers
+	Security
+		Security & GRC
+		Lightwork threat check
+		Threat monitoring
+		Security readiness report
+	Financial controls
+		Financial risk
+	AI risk
+		AI governance
+		Governance assistants
+		Governance inventory
+		AI system tasks
+		AI assurance
+	Vendors
+		AI vendor onboarding
+		Contracts and engagements
+		Executive vendor reports
+		Third-party intelligence
+		Third-party lifecycle
+		Third-party collaboration
+Evidence & audit
+	Activity log
+	Task replay
+		Task replay
+		Branches
+		Video walkthroughs
+	Trust receipts
+	Learning history
+	Document vault
+	Content access
+Costs & value
+	Spend
+	Work value & opportunities
+	Savings
+	Billing
+	Budget
+		Your budget
+	Provider spending
+	Compare cost records
+	Spending limits
+Settings
+	General
+		Settings
+	Setup
+		Workflow readiness
+	AI providers
+		AI on this computer
+		Providers
+	Connections
+	Chat apps
+		Channels
+	People & roles
+		Employee companions
+		Users
+	Workspaces
+		Workspaces
+		Choose a workspace
+	Backup & recovery
+		Workspace recovery
+	Partner fleet
+	Advanced
+		Sign-in and work protection
+		Benchmarks
+		Performance diagnostics
+		Cache
+		Embedded analytics
+Account
+	Your account
+	Preferences
+		Your preferences
+	Notifications
+		Your notifications
+	Devices
+		Your paired devices
+	Sessions
+	My data
+	Permission requests
+Help
+	Help & diagnostics
+		Help and diagnostics

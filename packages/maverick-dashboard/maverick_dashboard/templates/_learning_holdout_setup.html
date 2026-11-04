@@ -1,0 +1,15 @@
+<section class="stack" id="learning-holdout-setup" aria-labelledby="lpo-holdout-h">
+  <h3 id="lpo-holdout-h">Hold-out record</h3>
+  <p class="muted">Keep a lasting record of when questions reserved for fair testing are used. Choose Lightwork's managed location, then initialize the record once.</p>
+  <p class="muted" id="learning-holdout-status" role="status" aria-live="polite">Reading the current record…</p>
+  <div class="actions">
+    <button class="btn btn--primary" type="button" id="learning-holdout-location" hidden>Choose managed location</button>
+    <button class="btn btn--primary" type="button" id="learning-holdout-initialize" hidden>Review one-time initialization</button>
+    <button class="btn btn--ghost" type="button" id="learning-holdout-refresh">Check current record</button>
+    <button class="btn btn--ghost" type="button" id="learning-holdout-original" hidden>Check original setup outcome</button>
+  </div>
+  <div class="stack" id="learning-holdout-review"></div>
+  <div class="stack" id="learning-holdout-result" aria-live="polite"></div>
+  <p class="muted">This record stays on this server. Setup does not provide independently controlled storage or prove an improvement. Existing learning policies still apply; no AI runs or spending occurs here.</p>
+</section>
+<script src="/static/lightwork-learning-holdout-setup.js" defer></script>

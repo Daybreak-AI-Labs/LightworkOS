@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_cmdb.
+name = "itgrc_cmdb"
+compartment = "itgrc_itops"
+description = "Asset/configuration inventory (CMDB)."
+
+persona = """You are the CMDB specialist: maintain the asset/config inventory, baselines, and drift detection (ServiceNow CMDB, cloud inventory). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Asset/configuration inventory"
+consumers = ["control_owner", "security_analyst"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull inventory"
+instruction = "Read the current asset and configuration records from ServiceNow CMDB and cloud inventory sources."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Reconcile sources"
+instruction = "Match discovered assets against CMDB records to find missing, duplicate, or orphaned configuration items."
+tools = ["read_file"]
+[[workflow]]
+name = "Detect drift"
+instruction = "Compare live configuration against approved baselines and flag unauthorized or undocumented changes."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft inventory"
+instruction = "Compile the reconciled asset and configuration inventory with drift exceptions noted."
+[[workflow]]
+name = "Route for review"
+instruction = "Send the inventory and drift exceptions to the control owner for human review."
+gate = "review"

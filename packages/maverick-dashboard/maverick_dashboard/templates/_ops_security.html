@@ -1,0 +1,38 @@
+{#- Security checks on Lightwork's own activity (maverick security posture /
+    detections, maverick hunt, maverick remediate). Filled by
+    lightwork-ops-panels.js. -#}
+{% include "_ops_styles.html" %}
+<section class="panel" id="ops-sec" aria-labelledby="ops-sec-title" data-can-install="{{ 'true' if can_global_admin else 'false' }}">
+  <h2 id="ops-sec-title">Defenses that are on</h2>
+  <div id="ops-sec-defenses" role="status" aria-live="polite">Loading…</div>
+
+  <h3 class="ops-sub" id="ops-sec-events-title">Security events</h3>
+  <p class="muted">Events the defenses recorded in the activity log, newest first.</p>
+  <div class="ops-row">
+    <label for="ops-sec-severity">Show
+      <select id="ops-sec-severity" class="select">
+        <option value="low">Every event</option>
+        <option value="medium">Medium and high</option>
+        <option value="high">High only</option>
+      </select></label>
+    <button type="button" class="btn btn--ghost" id="ops-sec-load">Show security events</button>
+  </div>
+  <div id="ops-sec-detections" role="status" aria-live="polite"></div>
+
+  <h3 class="ops-sub" id="ops-sec-sweep-title">Look for signs of attack</h3>
+  <p class="muted">Looks through the activity log for blocked requests, attempts to send data out and assistants
+    trying to go beyond their limits. Leave the dates empty to look through everything.</p>
+  <div class="ops-row">
+    <label for="ops-sec-since">From <input type="date" id="ops-sec-since" class="input"></label>
+    <label for="ops-sec-until">To <input type="date" id="ops-sec-until" class="input"></label>
+    <button type="button" class="btn btn--ghost" id="ops-sec-sweep">Look for signs of attack</button>
+  </div>
+  <div id="ops-sec-sweep-out" role="status" aria-live="polite"></div>
+
+  <h3 class="ops-sub" id="ops-sec-fixes-title">Security gaps and fixes</h3>
+  <p class="muted">Shows each gap and the proposed fix first. Nothing changes until you apply a fix.</p>
+  <button type="button" class="btn btn--ghost" id="ops-sec-fixes-load">Check for security gaps</button>
+  <div id="ops-sec-fixes"></div>
+  <p id="ops-sec-fixes-result" role="status" aria-live="polite" class="muted"></p>
+</section>
+<script src="/static/lightwork-ops-panels.js" defer></script>

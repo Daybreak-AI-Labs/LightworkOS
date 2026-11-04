@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Templates · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero, state %}
+<div class="tplm">
+  {% call hero('Ready-made tasks', 'Templates',
+               subtitle='Start common work in a few clicks',
+               lede='Reusable task outlines: the ones your team added plus a
+                     starter set. Fill in a few details, then check the full
+                     task in Chat before it runs.') %}
+    {{ state('Current state', (entries | length) ~ ' templates',
+             badge='Ready' if entries else 'None yet',
+             badge_class='ok' if entries else 'idle',
+             copy='Nothing runs until you press Start in Chat.') }}
+  {% endcall %}
+  <p>Showing your own templates and published catalog or bundled templates. Older user-installed templates without a verified owner or publication stay separate until their ownership is reviewed.</p>
+  <div class="tplm__toolbar">
+    <a class="btn btn--primary" href="/workflow-builder">Create template</a>
+    <button class="btn btn--ghost" id="templates-suggested" type="button">Suggested for you</button>
+    <button class="btn btn--ghost" id="templates-all" type="button" hidden>Show all templates</button>
+    {% if entries %}
+    <label class="tplm__find" for="tplm-find"><span class="tplm__sr">Find a template</span>
+      <input class="input" id="tplm-find" type="search" placeholder="Find a template…" autocomplete="off" />
+    </label>
+    {% endif %}
+  </div>
+  <p id="templates-status" role="status" aria-live="polite"></p>
+
+  {% if entries %}
+    <div class="card-grid" id="tplm-grid">
+      {% for e in entries %}
+        {% set label = e.name | humanize %}
+        <div class="card" id="template-{{ e.name }}" tabindex="-1" data-template-name="{{ e.name }}" data-tplm-text="{{ (label ~ ' ' ~ (e.title | fill_placeholders)) | lower }}">
+          <div class="tplm__head">
+            <strong class="tplm__name">{{ label }}</strong>
+            <span class="muted tplm__stars" title="Your team's rating">{{ 'Not rated yet' if not e.stars else e.rating_bar }}</span>
+          </div>
+          <p class="tplm__title">{{ e.title | fill_placeholders }}</p>
+          {% if e.params %}
+          <p class="muted tplm__params">You'll be asked for: {% for p in e.params %}{{ p | humanize | lower }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+          {% endif %}
+          {% if e.body %}
+          <details class="tplm__preview"><summary>Technical details</summary>
+            <p class="muted">The exact instructions the agent receives. Words in brackets are filled in from your answers.</p>
+            <p class="muted">{{ e.body | fill_placeholders }}</p>
+          </details>
+          {% endif %}
+          <div class="tplm__actions">
+            {% if can_create_goal %}<button class="btn btn--primary" type="button" data-prepare-template aria-label="Use the {{ label }} template">Use template</button>{% endif %}
+            <a class="btn btn--ghost" href="/workflow-builder?edit={{ e.name | urlencode }}" aria-label="Edit {{ label }}">Edit</a>
+            {% if scheduling_enabled or triggers_enabled %}
+            <a class="btn btn--ghost" href="/workflow-builder?template={{ e.name | urlencode }}" aria-label="Run {{ label }} automatically">Run automatically</a>
+            {% endif %}
+          </div>
+          {% if can_create_goal %}
+          <form class="template-prepare" hidden>
+            <p>Fill in the details, then check the complete task in Chat before running it.</p>
+            {% for p in e.params %}
+            {% set field = e.parameter_schema.get('fields', {}).get(p, {}) %}
+            <label class="tplm__field" data-parameter-row="{{ p }}" data-show-when="{{ field.get('show_when', {}) | tojson | forceescape }}">{{ field.get('label') or p | humanize }}
+              {% if field.get('type') == 'connection' %}
+              <select class="select" data-connected-account data-template-param="{{ p }}" {% if field.get('required', true) %}required{% endif %}></select>
+              {% elif field.get('type') == 'enum' %}
+              <select class="select" data-template-param="{{ p }}" {% if field.get('required', true) %}required{% endif %}>
+                <option value="">Choose an option</option>
+                {% for choice in field.get('choices', []) %}<option value="{{ choice }}" {% if choice == field.get('default') %}selected{% endif %}>{{ choice }}</option>{% endfor %}
+              </select>
+              {% elif field.get('type') in ['date','number','email'] %}
+              <input class="input" type="{{ field.type }}" data-template-param="{{ p }}" value="{{ field.get('default', '') }}" {% if field.get('required', true) %}required{% endif %} {% if field.type == 'number' %}step="any"{% endif %}>
+              {% else %}
+              <textarea class="textarea" data-template-param="{{ p }}" {% if field.get('required', true) %}required{% endif %} maxlength="10000" rows="2">{{ field.get('default', '') }}</textarea>
+              {% endif %}
+              {% if field.get('help') %}<span class="muted">{{ field.help }}</span>{% endif %}
+              <span class="parameter-error" role="status"></span>
+            </label>{% endfor %}
+            <div class="tplm__actions">
+              <button class="btn btn--primary" type="submit">Check in Chat</button>
+              <button class="btn btn--ghost" data-cancel-prepare type="button">Cancel</button>
+            </div>
+            <p class="prepare-status" role="status"></p>
+          </form>
+          <form class="template-rating">
+            <label class="tplm__field">Your team's rating
+              <select name="stars" class="select" required>
+                <option value="">Choose a rating</option>
+                {% for n in range(1, 6) %}<option value="{{ n }}"{% if e.stars == n %} selected{% endif %}>{{ n }} {{ 'star' if n == 1 else 'stars' }}</option>{% endfor %}
+              </select>
+            </label>
+            <button class="btn btn--ghost" type="submit" aria-label="Save rating for {{ label }}">Save rating</button>
+            <p class="rating-status muted" role="status"></p>
+          </form>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    <p id="tplm-none" class="muted" hidden>No templates match. Try other words.</p>
+  {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No templates yet</p>
+      <p class="mv-empty__body">Make one from a task you do often: describe it once, then reuse it.</p>
+      <a class="btn btn--primary" href="/workflow-builder">Create template</a>
+    </div>
+  {% endif %}
+
+  <section class="panel tplm__ratings" id="to-ratings" aria-labelledby="to-ratings-title" hidden>
+    <h2 id="to-ratings-title">Share your ratings</h2>
+    <p class="muted">Download the star ratings your team gave, to share with whoever runs the shared template
+      list. Your comments stay here.</p>
+    <button type="button" class="btn" id="to-ratings-download">Download ratings</button>
+    <p id="to-ratings-status" class="muted" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel tplm__library" id="tplm-library" aria-labelledby="tplm-library-h">
+    <h2 id="tplm-library-h">Community library</h2>
+    <p class="muted">Ready-made templates shared outside your organisation. Each is checked before it's added, and an
+      administrator adds it for everyone here.</p>
+    <button class="btn btn--ghost" id="tplm-library-load" type="button">Show library templates</button>
+    <p id="tplm-library-status" role="status" aria-live="polite"></p>
+    <ul id="tplm-library-list" class="tplm__library-list" aria-label="Community library templates"></ul>
+  </section>
+</div>
+
+<style>
+  .tplm { max-width: 980px; margin-inline: auto; }
+  .tplm [hidden] { display:none !important; }
+  .tplm__toolbar { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-bottom: var(--space-2); }
+  .tplm__find { margin-inline-start: auto; }
+  .tplm__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .tplm__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+  .tplm__stars { font-size: var(--text-xs); white-space: nowrap; }
+  .tplm__title { margin: 0 0 var(--space-3); flex: 1 1 auto; font-weight: var(--font-medium); }
+  .tplm__params { font-size: var(--text-xs); margin: 0 0 var(--space-3); word-break: break-word; }
+  .tplm__preview { margin-bottom: var(--space-3); font-size: var(--text-sm); }
+  .tplm__preview p { white-space: pre-wrap; }
+  .tplm__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: auto; }
+  .tplm__field { display: grid; gap: var(--space-1); margin-bottom: var(--space-2); }
+  .template-prepare, .template-rating { margin-top: var(--space-3); }
+  .tplm__ratings { margin-top: var(--space-5); }
+  .tplm__library { margin-top: var(--space-5); }
+  .tplm__library-list { list-style: none; padding: 0; margin: var(--space-3) 0 0; display: grid; gap: var(--space-2); }
+  .tplm__library-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; }
+  .tplm__library-list p { margin: 0; overflow-wrap: anywhere; }
+</style>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-template-connections.js"></script><script src="/static/lightwork-template-library.js" defer></script>
+<script src="/static/lightwork-tool-ops.js" defer></script>
+<script src="/static/lightwork-template-outcomes.js" defer></script>
+<script src="/static/lightwork-community-templates.js" defer></script>{% endblock %}

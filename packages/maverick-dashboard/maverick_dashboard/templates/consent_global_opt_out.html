@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Opt out everywhere · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set go_admin = global_opt_out_can_admin %}
+{% set go_audit = global_opt_out_can_audit %}
+<div class="governance-workbench" id="global-opt-out-shell"
+     data-api-base="{{ api_base }}" data-copilot-page="/consent/global-opt-out"
+     data-module-enabled="{{ 'false' if module_off else 'true' }}"
+     data-can-admin="{{ 'true' if go_admin else 'false' }}" data-can-audit="{{ 'true' if go_audit else 'false' }}">
+  {{ hero('Consent requests', 'Opt out everywhere',
+          lede='Let people opt out of the sale or sharing of their data in one step, from your mobile app or a link in an email. Each request goes to your privacy requests team as an opt-out request.') }}
+  {% include "_consent_nav.html" %}
+  {% if module_off %}{% from "_module_gate.html" import module_gate %}{{ module_gate("consent_preferences.global_opt_out", "Global opt-out", detail="Honours a person's opt-out across every website and app you connect.") }}{% endif %}
+  <p id="goo-runtime-status" class="muted" role="status" aria-live="polite"{% if module_off %} hidden{% endif %}>{{ '' if module_off else 'Checking that opt-out requests are available…' }}</p>
+  {% if not go_admin %}<p class="muted">Only an administrator can change opt-out settings.</p>{% endif %}
+
+  <fieldset class="feature-gated-workbench" id="goo-operations" disabled>
+    <legend class="sr-only">Opt out everywhere</legend>
+
+    <section class="panel" aria-labelledby="goo-list-title">
+      <div class="section-head">
+        <h2 id="goo-list-title">Opt-out set-ups</h2>
+        <button class="btn btn--primary" type="button" id="goo-new"{% if not go_admin %} disabled{% endif %}>Set up opt-out</button>
+      </div>
+      <p class="muted">Each website or app key can have one opt-out set-up. A new set-up starts as a draft until you switch it on.</p>
+      <div id="goo-table"><p class="muted">{{ 'Opt-out set-ups appear here once this is turned on.' if module_off else 'Loading…' }}</p></div>
+      <div id="goo-history" class="cw-editor" hidden>
+        <h3 id="goo-history-title">History</h3>
+        <div id="goo-history-table"></div>
+      </div>
+    </section>
+
+    <section class="panel cw-editor" id="goo-config-panel" hidden aria-labelledby="goo-config-title">
+      <h2 id="goo-config-title">Set up opt-out</h2>
+      <form id="goo-config-form" autocomplete="off" novalidate>
+        <fieldset class="cw-form"{% if not go_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Opt-out details</legend>
+          <label for="goo-application-ref">Website or app key
+            <select class="select" id="goo-application-ref" name="application_ref" required></select>
+          </label>
+          <label for="goo-locale">Language
+            <select class="select" id="goo-locale" name="locale" required></select>
+          </label>
+          <input type="hidden" id="goo-configuration-id" name="configuration_id">
+          <input type="hidden" id="goo-expected-revision" name="expected_revision" value="0">
+          <input type="hidden" data-auto-reference id="goo-idempotency-key" name="idempotency_key">
+
+          <fieldset>
+            <legend>In your mobile app</legend>
+            <label><input name="mobile_enabled" type="checkbox" checked> Offer opt-out in the app</label>
+            <label for="goo-mobile-title">Heading<input class="input" id="goo-mobile-title" name="mobile_title" value="Your privacy choice" maxlength="2048" required></label>
+            <label for="goo-mobile-body">Message<textarea class="textarea" id="goo-mobile-body" name="mobile_body" maxlength="2048" required>Opt out of the sale or sharing of your personal data.</textarea></label>
+            <label for="goo-mobile-submit">Button text<input class="input" id="goo-mobile-submit" name="mobile_submit_label" value="Opt out" maxlength="2048" required></label>
+            <label for="goo-mobile-success">Message after sending<input class="input" id="goo-mobile-success" name="mobile_success_message" value="Your privacy request was received." maxlength="2048" required></label>
+          </fieldset>
+          <fieldset>
+            <legend>In email</legend>
+            <label><input name="email_enabled" type="checkbox" checked> Offer opt-out from an email link</label>
+            <label for="goo-email-title">Heading<input class="input" id="goo-email-title" name="email_title" value="Opt out of data sharing" maxlength="2048" required></label>
+            <label for="goo-email-body">Message<textarea class="textarea" id="goo-email-body" name="email_body" maxlength="2048" required>Ask us to stop selling or sharing your personal data.</textarea></label>
+            <label for="goo-email-submit">Button text<input class="input" id="goo-email-submit" name="email_submit_label" value="Send request" maxlength="2048" required></label>
+            <label for="goo-email-success">Message after sending<input class="input" id="goo-email-success" name="email_success_message" value="Your privacy request was received." maxlength="2048" required></label>
+          </fieldset>
+
+          <fieldset class="cw-wide">
+            <legend>Devices</legend>
+            <div class="cw-checks">
+              {% for value, label in [('browser','Web browsers'),('ios','iPhone and iPad'),('android','Android'),('fireos','Amazon Fire'),('connected-tv','Smart TVs'),('roku','Roku'),('tizen','Samsung TV'),('tvos','Apple TV'),('webos','LG TV')] %}
+              <label><input name="supported_devices" type="checkbox" value="{{ value }}"{% if value in ['browser','ios','android'] %} checked{% endif %}> {{ label }}</label>
+              {% endfor %}
+            </div>
+          </fieldset>
+          <fieldset class="cw-wide">
+            <legend>Services</legend>
+            <div class="cw-checks">
+              {% for value, label in [('website','Website'),('mobile-app','Mobile app'),('email','Email'),('connected-tv','TV app'),('streaming-service','Streaming service')] %}
+              <label><input name="supported_services" type="checkbox" value="{{ value }}"{% if value in ['website','mobile-app','email'] %} checked{% endif %}> {{ label }}</label>
+              {% endfor %}
+            </div>
+          </fieldset>
+          <label for="goo-expires-at">Stop offering it after (optional)
+            <input class="input" id="goo-expires-at" name="expires_on" type="date">
+          </label>
+          <div class="cw-actions">
+            <button class="btn btn--primary" id="goo-save" type="submit">Save opt-out</button>
+            <button class="btn btn--ghost" id="goo-cancel" type="button">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="goo-care-title">
+      <h2 id="goo-care-title">Record care</h2>
+      <fieldset class="cw-actions" id="goo-care-controls"{% if not go_audit %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Record care</legend>
+        <button class="btn" id="goo-integrity" type="button">Check records are intact</button>
+        <button class="btn" id="goo-retry-audit" type="button"{% if not go_admin %} disabled{% endif %}>Resend waiting audit entries</button>
+        <button class="btn" id="goo-purge" type="button"{% if not go_admin %} disabled{% endif %}>Delete expired records</button>
+      </fieldset>
+      <p id="goo-operation-status" class="muted" role="status" aria-live="polite"></p>
+      <details class="governance-details">
+        <summary>About this page’s safeguards</summary>
+        <ul>
+          <li>Before every change Lightwork checks that the key, your published banner and your consent policy still match.</li>
+          <li>People cannot pick another workspace, website or policy when they send a request.</li>
+          <li>Lightwork keeps only a fingerprint of each request’s reference and result, never the person’s details.</li>
+        </ul>
+      </details>
+    </section>
+  </fieldset>
+  <noscript><p class="muted">Turn on JavaScript to use these controls.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-consent-workbench.js" defer></script>
+<script src="/static/lightwork-consent-global-opt-out.js" defer></script>
+{% endblock %}

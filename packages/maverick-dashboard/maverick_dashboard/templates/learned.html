@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Learned · Lightwork{% endblock %}
+{% block content %}
+  {% set kind_labels = {'tool': 'Tool', 'skill': 'Skill', 'mcp_server': 'Tool connection',
+                        'integration': 'Integration', 'connector': 'Connection'} %}
+  {% set outcome_labels = {'acquired': 'Added', 'failed': 'Failed', 'denied': 'Not allowed',
+                           'blocked': 'Blocked', 'skipped': 'Skipped'} %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Self-improving workforce', 'Learned',
+               subtitle='Skills and lessons',
+               lede='What Lightwork proposed or recorded from completed work. Suggested skills need review
+                     on Skills before they can guide a later task. Lessons and tools have their own controls.') %}
+    {{ state('Current state',
+             learned | length ~ ' learning record' ~ ('' if learned | length == 1 else 's'),
+             badge='Self-coaching on' if harness_enabled else 'Self-coaching off',
+             badge_class='ok' if harness_enabled else 'idle',
+             copy='Self-learning is switched on or off on the <a href="/learning">Learning</a> page.' | safe) }}
+  {% endcall %}
+  <p class="muted">This page shows your own learning records and lessons explicitly available to the workspace. Older records without verified ownership are preserved privately and are not reused automatically. Administrator access does not include other employees' content.</p>
+  <p id="gt-msg" role="status" aria-live="polite" class="muted"></p>
+
+  <div class="section-head"><h2>Learned skills and tools</h2></div>
+  <div class="panel">
+    {% if learned %}
+      <table>
+        <thead><tr>
+          <th scope="col">Kind</th><th scope="col">Name</th>
+          <th scope="col">Why it was needed</th><th scope="col">When</th>
+          <th scope="col">Result</th>
+        </tr></thead>
+        <tbody>
+        {% for e in learned %}
+          <tr>
+            <td><span class="badge">{{ kind_labels.get(e.kind) or (e.kind | humanize) }}</span></td>
+            <td>{{ e.name | humanize }}</td>
+            <td class="muted">{{ e.need }}</td>
+            <td>{{ e.ts | datetime }}</td>
+            <td>
+              {% if e.outcome == 'acquired' %}<span class="badge active">{{ outcome_labels[e.outcome] }}</span>
+              {% else %}<span class="badge blocked">{{ outcome_labels.get(e.outcome) or (e.outcome | humanize) }}</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted" id="no-learned">Nothing learned yet. Review any suggested skills on <a href="/skills#to-learned-skills">Skills</a> before agents can use them.</p>
+      <p><a class="btn btn--ghost" href="/learning">Turn on self-learning</a></p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Lessons Lightwork taught itself</h2></div>
+  <div class="panel" id="harness-guidance">
+    <p class="muted">
+      Reminders Lightwork now gives itself before similar work, learned from its own repeated mistakes.
+      Any displayed lesson can be removed.
+      Older lessons or suggested test cases without verified shared sources are retained
+      separately and withheld from prompts and this page. Private employee work is never
+      made shared by an administrator role.
+    </p>
+    {% if harness and not harness_enabled %}
+      <p><strong>Self-coaching is off.</strong> These lessons are kept but not used until it is switched on on the
+        <a href="/learning">Learning</a> page.</p>
+    {% endif %}
+    {% if can_manage and harness %}
+    <div class="lnd-row">
+      <label for="lnd-retire-days">Remove lessons not confirmed in the last</label>
+      <select id="lnd-retire-days" class="select">
+        <option value="30">30 days</option>
+        <option value="90" selected>90 days</option>
+        <option value="180">6 months</option>
+        <option value="365">1 year</option>
+      </select>
+      <button type="button" class="btn btn--ghost" id="lnd-retire">Remove old lessons</button>
+    </div>
+    {% endif %}
+    {% for key, count in pending_corpus | dictsort %}
+      {% set items = pending_items.get(key, []) %}
+      <p class="badge info lnd-badge">{{ count }} suggested test case{{ '' if count == 1 else 's' }} for {{ key | model_label }} waiting for review</p>
+      {% if items %}
+        <ul class="pending-corpus" data-key="{{ key }}">
+        {% for c in items %}
+          <li>
+            {{ c.goal }}
+            <span class="muted">(the right result: {{ c.expected }})</span>
+            <button type="button" class="btn btn--ghost pc-resolve" data-key="{{ key }}" data-index="{{ loop.index }}" data-verdict="accept">Keep as a test case</button>
+            <button type="button" class="btn btn--ghost pc-resolve" data-key="{{ key }}" data-index="{{ loop.index }}" data-verdict="reject">Discard</button>
+          </li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endfor %}
+    {% if harness %}
+      {% for h in harness %}
+        <div class="lnd-model">
+        <h3>{{ h.model_id | model_label }} <span class="muted">({{ h.lines | length }} lesson{{ '' if h.lines | length == 1 else 's' }})</span></h3>
+        {% if h.conflicts %}
+          <p class="badge blocked lnd-badge">{{ h.conflicts | length }} pair{{ '' if h.conflicts | length == 1 else 's' }} of lessons may contradict each other</p>
+          <details>
+            <summary>Show lessons that may contradict each other</summary>
+            <ul>
+            {% for pair in h.conflicts %}<li>“{{ pair[0] }}” and “{{ pair[1] }}”</li>{% endfor %}
+            </ul>
+            <p class="muted">Remove whichever lesson is wrong from the list below.</p>
+          </details>
+        {% endif %}
+        {% if can_manage and (h.provenance | selectattr('canary') | list) %}
+          <p><button type="button" class="btn btn--ghost lnd-probation" data-model="{{ h.model_id }}">Decide lessons on trial now</button>
+            <span class="muted">Keeps lessons that worked and removes ones that did not.</span></p>
+        {% endif %}
+        <ul class="lnd-lines">
+        {% for rec in h.provenance %}
+          <li>{{ rec.text }}
+            {% if rec.domain %}<span class="badge lnd-badge">{{ rec.domain | humanize }}</span>{% endif %}
+            {% if rec.canary %}<span class="badge info lnd-badge" title="Recently learned: on trial until it proves itself">On trial</span>{% endif %}
+            {% if rec.signature %}
+              <br><span class="muted">Learned from: {{ rec.signature }}{% if rec.held_out_delta is not none and rec.samples %} · in testing it changed results by {{ '%+.0f' | format(rec.held_out_delta * 100) }} points over {{ rec.samples }} tries{% endif %}{% if rec.last_recalled_at %} · in use{% endif %}</span>
+            {% endif %}
+            {% if rec.rate is defined and rec.rate is not none %}
+              <br><span class="muted">Used {{ rec.success + rec.failure }} time{{ '' if (rec.success + rec.failure) == 1 else 's' }}: {{ rec.success }} went well, {{ rec.failure }} did not ({{ '%.0f%%' | format(rec.rate * 100) }} success){% if rec.recent_rate is defined and rec.recent_rate is not none %} · lately {{ rec.recent_success }} went well, {{ rec.recent_failure }} did not ({{ '%.0f%%' | format(rec.recent_rate * 100) }}){% endif %}</span>
+            {% endif %}
+            {% if can_manage %}
+              <br><button type="button" class="btn btn--ghost lnd-remove" data-model="{{ h.model_id }}" data-line="{{ rec.text }}" data-domain="{{ rec.domain or '' }}">Remove this lesson</button>
+            {% endif %}
+          </li>
+        {% else %}
+          {% for ln in h.lines %}<li>{{ ln }}</li>{% endfor %}
+        {% endfor %}
+        </ul>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="muted" id="no-harness">No shared lessons yet. Lessons appear here after agents finish tasks and Lightwork reviews them.</p>
+    {% endif %}
+  </div>
+
+  {% if can_remove_tools %}{% include "_generated_tool_removal.html" %}
+  {% else %}<section class="panel" id="generated-tools"><h2>Tools Lightwork wrote</h2><p>Administrators can review their owned tools for stopping, removal and original-result recovery.</p></section>{% endif %}
+
+  {% include "_learning_loop.html" %}
+  {% include "_learning_jobs.html" %}
+  {% include "_learned_ops.html" %}
+
+  <style>
+    .lnd-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0 1rem; }
+    .lnd-badge { display: inline-block; }
+    .lnd-lines li { margin-bottom: .6rem; }
+    .lnd-model { margin-top: var(--space-4); }
+  </style>
+
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      var msg = document.getElementById('gt-msg');
+      function say(text) { window.mvStatus(msg, text); }
+      async function post(url, body, action) {
+        try { return (await window.mvFetchJSON(url, { method: 'POST', body: body || {} }, action)) || {}; }
+        catch (e) { say(e.status === 404 && window.mvPlainDetail(e.detail) || e.message); return null; }
+      }
+
+      // Suggested test cases: one decision per click, then reload -- positions
+      // renumber after every decision.
+      document.querySelectorAll('button.pc-resolve').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var verdict = btn.dataset.verdict;
+          if (!(await mvConfirm(verdict === 'accept'
+              ? 'Keep this as a test case Lightwork must keep passing?'
+              : 'Discard this suggested test case? It will not be suggested again.',
+              { okText: verdict === 'accept' ? 'Keep it' : 'Discard it' }))) return;
+          var list = btn.closest('ul');
+          list.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+          var body = { key: btn.dataset.key };
+          body[verdict] = [parseInt(btn.dataset.index, 10)];
+          var out = await post('/api/v1/harness-corpus/review', body, 'save your decision');
+          if (out) { location.reload(); return; }
+          list.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+        });
+      });
+
+      document.querySelectorAll('button.lnd-remove').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          if (!(await mvConfirm('Remove this lesson? Lightwork stops using it right away.', { okText: 'Remove lesson' }))) return;
+          btn.disabled = true;
+          var out = await post('/api/v1/learned/guidance/remove', { model_id: btn.dataset.model,
+            line: btn.dataset.line, domain: btn.dataset.domain || null }, 'remove the lesson');
+          if (out) { var li = btn.closest('li'); if (li) li.remove(); say('Lesson removed.'); }
+          else { btn.disabled = false; }
+        });
+      });
+
+      document.querySelectorAll('button.lnd-probation').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          if (!(await mvConfirm('Decide the lessons on trial now? Lessons that worked are kept; lessons that failed are removed.', { okText: 'Decide now' }))) return;
+          btn.disabled = true;
+          var out = await post('/api/v1/learned/guidance/probation-review', { model_id: btn.dataset.model }, 'decide the lessons on trial');
+          if (out) { say('Kept ' + out.kept + ', removed ' + out.removed + '. Refreshing…'); setTimeout(function () { location.reload(); }, 800); }
+          else { btn.disabled = false; }
+        });
+      });
+
+      var retire = document.getElementById('lnd-retire');
+      if (retire) retire.addEventListener('click', async function () {
+        var sel = document.getElementById('lnd-retire-days');
+        var label = sel.options[sel.selectedIndex].textContent;
+        if (!(await mvConfirm('Remove every lesson not confirmed in the last ' + label + '?', { okText: 'Remove old lessons' }))) return;
+        retire.disabled = true;
+        var out = await post('/api/v1/learned/guidance/retire', { older_than_days: Number(sel.value) }, 'remove old lessons');
+        retire.disabled = false;
+        if (out) { say(out.retired ? 'Removed ' + out.retired + (out.retired === 1 ? ' lesson.' : ' lessons.') + ' Refreshing…' : 'No lessons were old enough to remove.');
+          if (out.retired) setTimeout(function () { location.reload(); }, 800); }
+      });
+
+    })();
+  </script>
+{% endblock %}

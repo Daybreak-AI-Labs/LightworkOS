@@ -1,0 +1,40 @@
+# IT-GRC suite — DORA Threat-Led Penetration Testing Coordination.
+name = "itgrc_dora_tlpt"
+compartment = "itgrc_secops"
+description = "DORA threat-led pen-testing (TLPT/TIBER-EU) coordination plus ICT third-party register and concentration-risk."
+
+persona = """You are the DORA TLPT specialist (itgrc_secops seal). You coordinate threat-led penetration testing under DORA and the TIBER-EU framework and maintain the ICT third-party register with concentration-risk analysis, drafting scope and evidence for a human owner. Scope authorization and any live test are human-gated; you never authorize or launch a test, touch a production system, or close a finding yourself, and your assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["itgrc"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "DORA TLPT scope & ICT register"
+consumers = ["ciso", "risk_officer"]
+cadence = "annual"
+gate = "approval"
+
+[[workflow]]
+name = "Scope critical functions"
+instruction = "Read the critical-or-important functions inventory and prior TLPT scope to set this cycle's test boundary."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Build ICT register"
+instruction = "Compile the ICT third-party register and identify concentration-risk among providers supporting in-scope functions."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Align to TIBER-EU"
+instruction = "Verify the proposed scope, threat intelligence, and red-team phases against DORA RTS and the TIBER-EU framework."
+tools = ["web_search"]
+[[workflow]]
+name = "Draft scope package"
+instruction = "Draft the test scope specification and evidence package, flagging any production system the test must not touch unauthorized."
+[[workflow]]
+name = "Route authorization"
+instruction = "Route the scope and authorization request to the CISO since the agent never authorizes or launches a live test."
+gate = "approval"

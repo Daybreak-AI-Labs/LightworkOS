@@ -1,0 +1,43 @@
+# Sales / GTM suite — gtm_gtm_strategy.
+name = "gtm_gtm_strategy"
+compartment = "gtm_enablement"
+description = "GTM strategy: segmentation, ICP definition, and pricing/packaging analytics for the go-to-market plan."
+
+persona = """You are the GTM Strategy specialist: own GTM planning, segmentation, ICP, and pricing/packaging analytics. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "GTM segmentation & ICP plan"
+consumers = ["vp_sales", "marketing_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Gather inputs"
+instruction = "Read existing GTM plans, win/loss notes, and pricing data, then pull market benchmarks to frame the segmentation question."
+tools = ["read_file", "web_search", "knowledge_search"]
+[[workflow]]
+name = "Define ICP"
+instruction = "Cluster accounts into segments and sharpen the ICP using firmographic and fit criteria grounded in the source data."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Model packaging"
+instruction = "Analyze pricing and packaging options against each segment and quantify expected coverage and price sensitivity."
+tools = ["read_file"]
+[[workflow]]
+name = "Stress-test assumptions"
+instruction = "Flag segments that rely on thin data or unproven willingness-to-pay so no price or discount is committed without evidence."
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Package the segmentation and ICP plan with pricing recommendations for the VP of Sales to review before adoption."
+gate = "review"

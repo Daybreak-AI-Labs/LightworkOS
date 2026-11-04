@@ -1,0 +1,9 @@
+{# The help entry, in the same place in both shells: right below Search in the
+   sidebar. It opens Help and shortcuts (_shortcuts.html), which the ? key
+   also opens from anywhere. #}
+<button type="button" class="{{ shortcuts_open_class | default('navfinder__open navhelp__open') }}" id="shortcuts-open"
+        aria-haspopup="dialog" aria-controls="shortcuts-dialog" aria-expanded="false">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.6"/><path d="M6.5 6.4a1.6 1.6 0 1 1 2.2 1.5c-.5.2-.7.6-.7 1.1v.3"/><path d="M8 11.2v.2"/></svg>
+  <span class="nav-label">{{ ui('Help and shortcuts') }}</span>
+  <kbd aria-hidden="true">?</kbd>
+</button>

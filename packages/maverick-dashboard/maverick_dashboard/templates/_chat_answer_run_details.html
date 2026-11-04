@@ -1,0 +1,10 @@
+{# Native recorded figures only; missing price remains explicitly unavailable. #}
+{% if answer_run_details %}
+<aside id="answer-run-details" aria-label="{{ ut('Recorded run price and time') }}" style="margin-top:var(--space-3);overflow-wrap:anywhere;">
+  <p class="runmeta" style="margin-bottom:var(--space-2);">
+    <span id="answer-run-price">{{ answer_run_details.price_text }}</span>
+    <span id="answer-run-elapsed">{{ answer_run_details.elapsed_text }}</span>
+  </p>
+  <p class="muted" style="font-size:var(--text-sm);margin:0;">{{ answer_run_details.scope }}</p>
+</aside>
+{% endif %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Selected deliverable bundles · Lightwork{% endblock %}
+{% block content %}
+<div id="bundle-root" data-context="{{ bundle_context }}" data-goal="{{ bundle_goal }}">
+  {% from "_hero.html" import hero %}
+  {{ hero('Your work', 'Selected deliverable bundles',
+          lede='Share the specific result versions and evidence files a colleague needs. Their acceptance applies to that captured bundle. Sharing does not grant access to your conversation or let them run your task.',
+          compact=true) }}
+  <p id="bundle-status" role="status" aria-live="polite">Loading your bundles.</p>
+  <button class="btn" id="bundle-refresh" type="button">Refresh bundles</button>
+  <section class="panel" aria-labelledby="bundle-inbox-title"><h2 id="bundle-inbox-title">Your shared bundles</h2><div id="bundle-inbox"></div></section>
+  <section id="bundle-source" class="panel" hidden aria-labelledby="bundle-source-title">
+    <h2 id="bundle-source-title">Prepare a bundle</h2><p id="bundle-source-description"></p>
+    <form id="bundle-form">
+      <label for="bundle-name">Bundle name</label><input id="bundle-name" name="name" class="input" maxlength="160" required>
+      <label for="bundle-recipient">Named recipient</label><select id="bundle-recipient" name="recipient" class="input" required></select>
+      <label for="bundle-note">What should this person do with the bundle?</label><textarea id="bundle-note" name="note" class="input" maxlength="4000" rows="3" required></textarea>
+      <fieldset><legend>Exactly which items should they receive?</legend><div id="bundle-items"></div></fieldset>
+      <label for="bundle-unresolved">Unresolved items and checks the recipient still needs to perform</label><textarea id="bundle-unresolved" name="unresolved" class="input" maxlength="4000" rows="3"></textarea>
+      <label for="bundle-lifetime">Access expires after</label><select id="bundle-lifetime" name="lifetime" class="input"><option value="3600">One hour</option><option value="86400" selected>One day</option><option value="604800">Seven days</option></select>
+      <p>Up to 30 selected items and 6 MB. Previously downloaded copies cannot be recalled. No external filing or submission occurs.</p>
+      <button class="btn" type="submit">Preview selected bundle</button>
+    </form>
+    <section id="bundle-preview" hidden aria-labelledby="bundle-preview-title"><h3 id="bundle-preview-title" tabindex="-1">Review exact recipient and selected versions</h3><div id="bundle-preview-content"></div><button id="bundle-share" class="btn btn--primary" type="button">Confirm sharing these selected items</button></section>
+  </section>
+  <section class="panel" id="bundle-detail" hidden aria-labelledby="bundle-detail-title">
+    <h2 id="bundle-detail-title" tabindex="-1"></h2><p id="bundle-detail-state"></p><p id="bundle-detail-note"></p><p id="bundle-detail-unresolved"></p>
+    <ul id="bundle-detail-files"></ul>
+    <p><a id="bundle-render" class="btn" target="_blank" rel="noopener">Open safe rendered preview</a> <a id="bundle-export" class="btn" download>Download files and offline manifest</a></p>
+    <form id="bundle-accept"><label for="bundle-accept-note">Your human acceptance and any limitations</label><textarea id="bundle-accept-note" name="note" class="input" maxlength="4000" rows="3" required></textarea><button class="btn btn--primary" type="submit">Accept this captured bundle</button></form>
+    <button class="btn" id="bundle-revoke" type="button">End the recipient's future access</button>
+    <p>File checks confirm captured bytes only. Acceptance does not approve tool use, transfer responsibility, or file anything externally. Current source changes make acceptance stale.</p>
+  </section>
+</div>
+<style>
+#bundle-root{max-width:70rem}#bundle-root .panel{margin-block:var(--space-4)}#bundle-root label{display:block;margin-block:var(--space-2)}#bundle-root .input{width:100%;max-width:45rem}#bundle-root button{margin-block:var(--space-2);white-space:normal}#bundle-root p,#bundle-root li{overflow-wrap:anywhere}#bundle-root [hidden]{display:none!important}#bundle-root fieldset{margin-block:var(--space-3)}
+</style>
+<script src="{{ asset('lightwork-deliverable-bundles.js') }}" defer></script>
+{% endblock %}

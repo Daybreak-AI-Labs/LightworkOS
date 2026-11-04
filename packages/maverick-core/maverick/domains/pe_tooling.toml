@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_tooling.
+name = "pe_tooling"
+compartment = "pe_devex"
+description = "Internal tooling and scaffolding."
+
+persona = """You are the Internal-Tooling specialist: build codegen scaffolds, internal CLIs, and plugin/skill scaffolding. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "internal tooling scaffold PR"
+consumers = ["platform_engineer", "engineering_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope request"
+instruction = "Read the tooling request and map the affected repos and existing scaffolds to confirm scope."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Generate scaffold"
+instruction = "Apply codegen patches to build the CLI or plugin scaffold in the sandbox."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Run verifier"
+instruction = "Execute the generated tool against tests and the verifier to confirm it builds and passes."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Guard runtime"
+instruction = "Confirm no change touches the agent's own runtime, safety, or controls before opening the PR."
+tools = ["read_file"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open the PR for human review so a maintainer approves the merge to a protected branch."
+gate = "review"

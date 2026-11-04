@@ -1,0 +1,14 @@
+{#- A person's uploaded documents (maverick knowledge residual / erase-subject),
+    inside Compliance > A person's data. Uses the person chosen above. -#}
+{% include "_ops_styles.html" %}
+<div class="ops-sub" id="ops-docs" aria-labelledby="ops-docs-title">
+  <h3 id="ops-docs-title">Their uploaded documents</h3>
+  <p class="muted">Pieces of documents that were uploaded about the person chosen above. Erasing their data removes
+    these too; use these buttons to check nothing is left, or to remove only the documents.</p>
+  <div class="ops-actions">
+    <button type="button" class="btn btn--ghost" id="ops-docs-check">Check for documents left</button>
+    <button type="button" class="btn btn--danger" id="ops-docs-erase">Erase only their documents</button>
+  </div>
+  <p id="ops-docs-result" class="muted" role="status" aria-live="polite"></p>
+</div>
+<script src="/static/lightwork-ops-panels.js" defer></script>

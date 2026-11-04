@@ -1,0 +1,26 @@
+<section id="chat-message-actions" class="panel print-control" data-context="{{ conversation_context }}" data-goal="{{ goal.id }}" hidden aria-labelledby="chat-alternative-title">
+  <h2 id="chat-alternative-title">A separate conversation</h2>
+  <p class="muted">Your original conversation and completed actions stay unchanged. You choose the message, review earlier messages and decide whether this new attempt can take actions.</p>
+  <form id="chat-alternative-form" data-draft-recovery="off">
+    <label for="chat-alternative-message">Message for the separate conversation</label>
+    <textarea id="chat-alternative-message" class="textarea" rows="4" maxlength="16000" required></textarea>
+    <label><input id="chat-alternative-answer-only" type="checkbox" checked> Answer only — generate text without taking actions</label>
+    <p class="muted">Answer only cannot fetch new information or perform actions. Allowing actions starts new work under your current permissions and approvals; it can repeat changes the original conversation already completed.</p>
+    <div class="actions"><button type="submit" id="chat-alternative-review" class="btn btn--primary">Review separate attempt</button>
+      <button type="button" id="chat-alternative-current" class="btn btn--ghost">Check current context</button>
+      <button type="button" id="chat-alternative-close" class="btn btn--ghost">Close and keep draft</button></div>
+  </form>
+  <div id="chat-alternative-full-review" hidden class="panel"></div>
+  <button type="button" id="chat-alternative-original" class="btn btn--ghost" hidden>Read original request</button>
+  <a id="chat-alternative-open" class="btn" hidden>Open separate conversation</a>
+  <p id="chat-alternative-status" role="status" aria-live="polite" tabindex="-1"></p>
+</section>
+<style>
+  #chat-message-actions .actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-block:var(--space-3)}
+  #chat-message-actions textarea{width:100%;box-sizing:border-box}
+  #chat-message-actions pre{white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;font:inherit}
+  #chat-alternative-context{max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-3)}
+  #chat-message-actions [hidden]{display:none!important}
+  #chat-message-actions button,#chat-message-actions a{white-space:normal;max-width:100%}
+</style>
+<script src="/static/lightwork-chat-message-actions.js" defer></script>

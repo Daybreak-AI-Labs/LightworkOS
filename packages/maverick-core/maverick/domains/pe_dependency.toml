@@ -1,0 +1,43 @@
+# Product & Engineering suite — pe_dependency.
+name = "pe_dependency"
+compartment = "pe_devops"
+description = "Dependency and supply chain: propose dependency updates and SBOM/CVE remediation; copyleft and critical CVEs are a hard floor."
+
+persona = """You are the Dependency specialist: propose dependency updates and SBOM/CVE remediation; copyleft/critical-CVE deps are a hard floor. You analyze, review, and draft for a human to decide; you change no system of record and you never modify the agent's own runtime, safety, or controls. Live connectors jfrog_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "dependency remediation brief"
+consumers = ["engineering_lead", "security_lead"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Inventory deps"
+instruction = "Read the manifests, lockfiles, and SBOM to enumerate direct and transitive dependencies and their versions."
+tools = ["read_file"]
+[[workflow]]
+name = "Scan CVEs"
+instruction = "Search advisories and the artifact registry for CVEs, EOL packages, and copyleft licenses affecting the inventory."
+tools = ["web_search", "read_file", "knowledge_search"]
+[[workflow]]
+name = "Apply hard floor"
+instruction = "Flag every critical-CVE and copyleft dependency as a non-negotiable must-fix and separate it from optional upgrades."
+[[workflow]]
+name = "Draft upgrade plan"
+instruction = "Propose target versions with changelog and breaking-change notes ordered by risk and effort."
+tools = ["read_file", "web_search"]
+[[workflow]]
+name = "Route to owner"
+instruction = "Hand the remediation brief to the engineering and security leads to decide which updates to schedule."
+gate = "review"

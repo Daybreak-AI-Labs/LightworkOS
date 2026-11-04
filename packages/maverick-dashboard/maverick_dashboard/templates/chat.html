@@ -1,0 +1,565 @@
+{% extends "chat_base.html" %}
+{% block title %}Chat · Lightwork{% endblock %}
+{% block head_extra %}
+<style>
+  .cs-empty-state { min-height: 52vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--space-4); }
+  .cs-mark { color: var(--muted); }
+  .cs-mark svg { width: 44px; height: 44px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+  .cs-greet { margin: 0; font-family: var(--font-sans); font-weight: var(--font-medium); font-size: var(--text-2xl); letter-spacing: -0.01em; color: var(--text); }
+  .cs-empty-state .panel { max-width: 32rem; text-align: start; }
+  .cs-viewpoints { width: 100%; box-sizing: border-box; }
+  .cs-viewpoints summary { cursor: pointer; font-weight: var(--font-semibold); }
+  .cs-viewpoints__form { display: grid; gap: var(--space-2); margin-top: var(--space-3); }
+  .cs-viewpoints__form .textarea, .cs-viewpoints__form .select { width: 100%; box-sizing: border-box; max-width: 100%; }
+  .cs-viewpoints p, .cs-viewpoints li { overflow-wrap: anywhere; }
+  .cs-viewpoints dd { margin-inline-start: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .cs-viewpoints__sides { display: grid; gap: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+  .cs-viewpoints__side { border-inline-start: 3px solid var(--border); padding-inline-start: var(--space-3); margin-block: var(--space-3); }
+  /* What Lightwork can do: example requests, then one plain limit. */
+  .cs-examples { width: 100%; max-width: 40rem; text-align: start; }
+  .cs-examples__title { margin: 0 0 var(--space-2); font-size: var(--text-sm); font-weight: var(--font-semibold); color: var(--muted); }
+  .cs-examples__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); }
+  .cs-example { width: 100%; height: 100%; text-align: start; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: transparent; color: var(--text); font: inherit; font-size: var(--text-sm); line-height: 1.45; cursor: pointer; }
+  .cs-example:hover, .cs-example:focus-visible { border-color: var(--brand-border); }
+  .cs-examples__sample { margin: var(--space-3) 0 0; font-size: var(--text-sm); color: var(--muted); }
+  .cs-limits { max-width: 40rem; margin: 0; font-size: var(--text-sm); color: var(--muted); }
+</style>
+{% endblock %}
+
+{% block chat %}
+{% if compose_form %}
+{# The task builder's form, as Chat's form mode (/chat?compose=form): the
+   same fields, checks and "create and start" as the Task builder page. #}
+<section class="cs-compose-form" aria-labelledby="compose-form-title" style="width:100%;max-width:64rem;margin-inline:auto;">
+  <h1 class="page-title" id="compose-form-title">{{ ui('Task builder') }}</h1>
+  <p class="page-subtitle">{{ ui('Describe the steps, spending limit, and where you want updates, then start the work.') }}</p>
+  <p><a href="/chat">{{ ui('Write a message instead') }}</a></p>
+  {% include "_goal_builder_form.html" %}
+</section>
+{% else %}
+<div class="cs-empty-state cs-anim">
+  <div class="cs-mark" aria-hidden="true">
+    <svg viewBox="0 0 48 48"><path d="M14 30c-4 0-7-3-7-7s3-7 7-7c1-5 5-8 10-8s9 3 10 8c4 0 7 3 7 7s-3 7-7 7z"/><path d="M19 22l4 4 6-8"/></svg>
+  </div>
+  <h1 class="sr-only">{{ ui('Chat') }}</h1>
+  <p class="cs-greet">{{ ui('What should Lightwork take on?') }}</p>
+  {% if chat_capability %}<p class="cs-limits" id="chat-capability">{{ ui(chat_capability) }}</p>{% endif %}
+  {% if nav_mode == 'areas' and compose_form_available and can_create_goal %}<p><a href="/chat?compose=form">{{ ui('Use a step-by-step form instead') }}</a></p>{% endif %}
+  {% if can_create_goal and model_route_ready and chat_examples and chat_examples.examples %}
+  <section class="cs-examples" id="chat-examples" aria-labelledby="chat-examples-title">
+    <h2 class="cs-examples__title" id="chat-examples-title">{% if chat_examples.department %}{{ ui('Try one of these, picked for {department}', department=chat_examples.department) }}{% else %}{{ ui('Try one of these') }}{% endif %}</h2>
+    <ul class="cs-examples__list">
+      {% for text in chat_examples.examples %}<li><button type="button" class="cs-example">{{ ui(text) }}</button></li>{% endfor %}
+    </ul>
+    {% if chat_examples.sample %}<p class="cs-examples__sample">{{ ui('Or run a sample task on made-up files:') }} <a href="{{ chat_examples.sample.href }}">{{ ui(chat_examples.sample.label) }}</a></p>{% endif %}
+  </section>
+  {% endif %}
+  <p class="cs-limits" id="chat-limits">{{ ui(chat_limits) }}</p>
+  {% if not model_route_ready %}
+  <section class="panel" id="model-route-setup" role="status">
+    <h2 style="margin-top:0">{{ ui('Connect an AI service to start') }}</h2>
+    <p class="muted">{{ ui(workspace.reason) }}</p>
+    {% if workspace.next_action %}<a class="btn btn--primary" href="{{ workspace.next_action.href }}">{{ ui(workspace.next_action.label) }}</a>{% endif %}
+  </section>
+  {% endif %}
+  {% if not can_create_goal %}
+  <section class="panel" role="status"><h2>{{ ui('Chat is read-only for your account') }}</h2>
+    <p class="muted">{{ ui('You can review work you have access to. Ask a workspace administrator for permission to start or continue a chat.') }}</p>
+  </section>
+  {% endif %}
+  <p id="template-draft-notice" class="muted" role="status" hidden></p>
+  {% if can_create_goal %}
+  {# Both helpers come before starting work, so only people who can start it see them. #}
+  <details class="panel" data-budget-launch>
+    <summary>{{ ui('Check budget before starting') }}</summary>
+    <p role="status" aria-live="polite"></p><div data-budget-summary></div>
+    <button class="btn btn--ghost" type="button">{{ ui('Refresh budget') }}</button>
+  </details>
+  <script src="/static/lightwork-budget-guidance.js" defer></script>
+  <details class="panel cs-viewpoints" id="viewpoints">
+    <summary>{{ ui('Weighing up a decision? Get two viewpoints first') }}</summary>
+    <form id="vp-form" class="cs-viewpoints__form" novalidate>
+      <label for="vp-question">{{ ui('Question or decision') }}</label>
+      <textarea lang="und" dir="auto" data-user-content id="vp-question" name="question" class="textarea" rows="3" minlength="3" maxlength="2000" required
+                placeholder="{{ ut('For example: Should we move our weekly team meeting to Mondays?') }}"></textarea>
+      <label for="vp-rounds">{{ ui('How thorough') }}</label>
+      <select id="vp-rounds" name="rounds" class="select">
+        <option value="1" lang="{{ ul('Quick: one argument from each side') }}">{{ ut('Quick: one argument from each side') }}</option>
+        <option value="2" selected lang="{{ ul('Standard: two arguments from each side') }}">{{ ut('Standard: two arguments from each side') }}</option>
+        <option value="3" lang="{{ ul('Thorough: three arguments from each side') }}">{{ ut('Thorough: three arguments from each side') }}</option>
+      </select>
+      <fieldset class="cs-viewpoints__sides">
+        <legend>{{ ui('What each side argues (optional)') }}</legend>
+        <label for="vp-for">{{ ui('The side for argues that…') }}</label>
+        <input id="vp-for" class="input" type="text" maxlength="300" placeholder="{{ ut('Leave blank for: the answer is yes, the idea is sound') }}">
+        <label for="vp-against">{{ ui('The side against argues that…') }}</label>
+        <input id="vp-against" class="input" type="text" maxlength="300" placeholder="{{ ut('Leave blank for: the answer is no, the idea is flawed') }}">
+      </fieldset>
+      <p class="muted">{{ ui('One side argues for, the other argues against, and a neutral judge weighs them up. This uses AI, counts toward your spending limits and costs at most $1.00 each time. Nothing else is started.') }}</p>
+      <button type="submit" class="btn btn--primary" id="vp-run" disabled>{{ ui('Review two viewpoints') }}</button>
+    </form>
+    <div class="stack" id="vp-review"></div>
+    <details class="stack" id="vp-history">
+      <summary>{{ ui('Your original viewpoints') }}</summary>
+      <p class="muted">{{ ui('Read the same saved answers after leaving Chat. Checking an original request never starts AI again.') }}</p>
+      <label for="vp-saved">{{ ui('Original question') }}</label>
+      <select class="select" id="vp-saved"><option value="">{{ ui('Choose an original question') }}</option></select>
+    </details>
+    <div class="button-row">
+      <button type="button" class="btn btn--ghost" id="vp-refresh">{{ ui('Refresh current choices') }}</button>
+      <button type="button" class="btn btn--ghost" id="vp-original" hidden>{{ ui('Check original outcome') }}</button>
+    </div>
+    <p id="vp-status" role="status" aria-live="polite" tabindex="-1"></p>
+    <a class="btn btn--ghost" href="/settings#settings-integrations" id="vp-setup" hidden>{{ ui('Review AI connection') }}</a>
+    <div id="vp-result" hidden></div>
+    <p class="muted">{{ ui('Your retained questions are shown. Saved answers remain available after a restart. An interrupted request may have an unknown outcome; Lightwork will never repeat it automatically.') }}</p>
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block dock %}
+{% from "_composer_recovery.html" import composer_recovery with context %}
+{% call composer_recovery(can_create_goal and draft_recovery_context) %}
+{% from "_form_field.html" import error_summary %}
+<form method="post" action="/chat/send" data-product-validation data-mv-validate class="composer cs-anim" enctype="multipart/form-data">
+  {% if value_opportunity %}<input type="hidden" name="value_opportunity" value="{{ value_opportunity }}"><p class="muted">This task will be linked to your selected work opportunity. Review the request before starting.</p>{% endif %}
+  {# The shared form-field pattern -- the problem next to its field and in a summary that takes focus. #}
+  {{ error_summary('composer-errors') }}
+  <input type="hidden" name="composer_mode" value="message">
+  <input type="hidden" name="connection_references" value="[]">
+  <input type="hidden" name="submission_key" value="{{ submission_key }}" />
+  <fieldset class="composer__controls"{% if not model_route_ready or not can_create_goal %} disabled{% endif %}>
+  <legend class="sr-only">{{ ui('Start governed AI work') }}</legend>
+  <textarea
+    lang="und" dir="auto" data-user-content name="title" id="composer-title"
+    class="composer__field"
+    rows="2"
+    placeholder="{{ ut('Message Lightwork…') }}"
+    aria-label="{{ ut('Describe a task for Lightwork to do') }}"
+    required data-error-required="{{ ut('Describe the task first, for example: Summarise this week’s open invoices.') }}"
+    {% if not compose_form %}autofocus{% endif %}
+  >{{ prefill_title or '' }}</textarea>
+  <details>
+    <summary>{{ ui('Work with a specialist') }}</summary>
+    <label for="chat-specialist-search">{{ ui('Find a specialist') }}
+      <input id="chat-specialist-search" class="input" type="search" maxlength="100" autocomplete="off" aria-controls="chat-specialist" aria-describedby="chat-specialist-found">
+    </label>
+    <p class="muted" id="chat-specialist-found" role="status">{{ ui('Type part of a name, then choose from the list below.') }}</p>
+    <label for="chat-specialist">{{ ui('Published specialist') }}
+      <select id="chat-specialist" name="domain" class="select" aria-describedby="chat-specialist-help"
+              data-notice="{{ specialist_work_notice }}" data-saved="{{ published_specialists.personal_default or '' }}"
+              data-requested="{{ '' if requested_specialist is none else '1' }}">
+        <option value="">{{ ui('Let Lightwork choose the team') }}</option>
+        {% for choice in published_specialists.choices %}
+        <option value="{{ choice.value }}" data-revision="{{ choice.revision }}"{% if choice.value == requested_specialist %} selected{% endif %}>{{ choice.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <input type="hidden" name="specialist_context" value="{{ published_specialists.context }}">
+    <input type="hidden" name="specialist_revision" value="">
+    <p class="muted" id="chat-specialist-help">{{ ui(specialist_work_notice) }}</p>
+  </details>
+  <details data-task-model-controls>
+    <summary>{{ ui('AI for this task') }}</summary>
+    <label>{{ ui('AI model') }}<select class="select" name="task_model" disabled><option value="">{{ ui('Use workspace settings') }}</option></select></label>
+    <label>{{ ui('Thinking depth') }}<select class="select" name="task_effort" disabled><option value="">{{ ui('Use the model’s usual thinking depth') }}</option></select></label>
+    <input type="hidden" name="task_model_context" value="">
+    <p class="muted" role="status">{{ ui('Reading available AI choices…') }}</p>
+    <button type="button" class="btn btn--ghost">{{ ui('Refresh AI choices') }}</button>
+  </details>
+  <details{% if prefill_description %} open{% endif %}>
+    <summary>{{ ui('Add details') }}</summary>
+    <textarea lang="und" dir="auto" data-user-content
+      name="description"
+      class="composer__details"
+      rows="{{ 6 if prefill_description else 3 }}"
+      aria-label="{{ ut('Extra details for the agent (optional)') }}"
+      placeholder="{{ ut('Context, constraints, links, or acceptance criteria.') }}"
+    >{{ prefill_description or '' }}</textarea>
+    {% if director_profiles %}
+    <label class="composer__director" for="director-profile">{{ ui('How much it may do on its own') }}
+      <select id="director-profile" name="director_profile" class="select" aria-describedby="director-profile-help">
+        <option value="" lang="{{ ul('As usual (your settings decide)') }}">{{ ut('As usual (your settings decide)') }}</option>
+        {% for p in director_profiles %}
+        <option value="{{ p.value }}">{{ p.label }}: {{ p.summary }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <span id="director-profile-help" class="muted">{{ ui('Director mode plans first and checks in with you as the level says. It follows the spending limits and approval rules currently in force.') }}</span>
+    {% endif %}
+  </details>
+  <input type="file" name="files" id="attach-input" multiple aria-label="{{ ut('Attach files to this task') }}" tabindex="-1"
+         style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0;" />
+  <div class="composer__bar">
+    <button type="button" id="attach-btn" class="composer__icon" aria-label="{{ ut('Attach files') }}">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+    <button type="button" id="mic-btn" class="composer__icon" aria-label="{{ ut('Dictate a task by voice') }}" aria-pressed="false" hidden>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="6" y="1.5" width="4" height="8" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+    </button>
+    <span class="composer__hint" id="composer-hint"></span>
+    <label for="authoring-kind" class="sr-only">{{ ui('What should Lightwork create?') }}</label>
+    <select id="authoring-kind" name="authoring_kind" class="composer__mode" aria-label="{{ ut('What should Lightwork create?') }}">
+      <option value="goal" lang="{{ ul('Run this task') }}">{{ ut('Run this task') }}</option>
+      {% if flows_enabled and can_create_goal %}
+      <option value="flow" lang="{{ ul('Draft a workflow') }}">{{ ut('Draft a workflow') }}</option>
+      {% endif %}
+      <option value="agent" lang="{{ ul('Draft an agent') }}">{{ ut('Draft an agent') }}</option>
+    </select>
+    <button type="submit" id="send-btn" class="composer__send" aria-label="{{ ut('Start task') }}" lang="{{ ul('Start task') }}"{% if typical_cost %} aria-describedby="composer-typical-cost"{% endif %}>
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M9 14.5V4M9 4l-4.5 4.5M9 4l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+  {% if typical_cost %}{% from "_typical_cost.html" import own_typical_cost_text %}
+  {# What this person's tasks usually cost, beside Start on every launch. #}
+  <p class="composer__cost muted" id="composer-typical-cost">{{ own_typical_cost_text(typical_cost) }}{% if can_open_page('/budget') %} <a href="/budget">See your budget</a>{% endif %}</p>{% endif %}
+  </fieldset>
+</form>
+{% endcall %}
+<p id="chat-stop-note" class="cs-dock__note" role="status" hidden>{{ ui('Work is paused. Your message is still here; you can start it after work resumes.') }}</p>
+<p id="goal-error" role="alert" aria-live="assertive"
+   style="display: none; margin: var(--space-3) 0 0; color: var(--danger); font-size: var(--text-sm); text-align: center;"></p>
+{% if can_create_goal and not flows_enabled %}
+<p class="cs-dock__note" role="status">{{ ui('Workflows are turned off.') }}
+  {% if can_enable_flows %}<a href="/learning#lrn-flows-on">{{ ui('Turn them on in Learning') }}</a> {{ ui('to draft one here.') }}
+  {% else %}{{ ui('Ask the person who manages this installation to turn them on.') }}{% endif %}
+</p>
+{% endif %}
+{# Readiness and task limits only matter to someone who can start a task. #}
+{% if can_create_goal %}
+{% if not model_route_ready %}
+<p class="cs-dock__note" id="composer-readiness" role="status">{{ ui(workspace.reason) }}</p>
+{% elif workspace.verdict == 'needs_test' %}
+<p class="cs-dock__note" id="composer-readiness" role="status">{{ ui(workspace.reason) }}{% if workspace.next_action %} <a href="{{ workspace.next_action.href }}">{{ ui(workspace.next_action.label) }}</a>{% endif %} {{ ui('You can still start a task.') }}</p>
+{% else %}
+<p class="cs-dock__note">{{ ui('Check spending limits and approval settings before starting. Some actions may need your approval.') }}</p>
+{% endif %}
+<p class="cs-dock__note" id="goal-task-limits">
+  {% if goal_max_dollars is none and goal_max_wall_seconds is none %}
+    {{ ui('No spending or time limit is set for each task.') }}
+  {% else %}
+    {{ ui('Task limits:') }}
+    {% if goal_max_dollars is not none %}{{ ui('up to {amount}', amount=goal_max_dollars | money) }}{% else %}{{ ui('no spending limit') }}{% endif %},
+    {% if goal_max_wall_seconds is none %}{{ ui('no time limit') }}{% elif goal_max_wall_seconds > 0 and goal_max_wall_seconds % 60 == 0 %}{{ ui('up to {minutes} minutes', minutes='%g'|format(goal_max_wall_seconds / 60)) }}{% else %}{{ ui('up to {seconds} seconds', seconds='%g'|format(goal_max_wall_seconds)) }}{% endif %}.
+  {% endif %}
+  {% if show_settings_link %}<a href="/settings">{{ ui('Review task limits') }}</a>{% endif %}
+</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts_extra %}
+<script src="/static/lightwork-file-selection.js" defer></script>
+<script src="/static/lightwork-task-model-selection.js" defer></script>
+{% if can_create_goal %}<script src="/static/lightwork-viewpoints.js" defer></script>{% endif %}
+<script nonce="{{ csp_script_nonce }}">
+  function chatCopy(node, source, values) { if (window.LightworkI18n) window.LightworkI18n.set(node, source, values); else node.textContent = source.replace(/\{(\w+)\}/g, function (_, key) { return (values || {})[key] === undefined ? '{' + key + '}' : values[key]; }); }
+  function chatText(source) { return window.LightworkI18n ? window.LightworkI18n.text(source) : source; }
+  (function () {
+    var field = document.querySelector('form.composer [name="title"]');
+    if (!field) return;
+    function fit() { field.style.height = 'auto'; field.style.height = Math.min(field.scrollHeight, 224) + 'px'; }
+    field.addEventListener('input', fit); window.addEventListener('pageshow', fit); fit();
+    field.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault(); field.form.requestSubmit();
+    });
+  })();
+  (function () {
+    var choice = document.getElementById('chat-specialist');
+    if (!choice) return;
+    var form = choice.form, revision = form.querySelector('[name="specialist_revision"]'), unavailable = false;
+    function selected() {
+      revision.value = choice.selectedOptions[0]?.dataset.revision || '';
+      if (choice.value && !revision.value) chatCopy(document.getElementById('chat-specialist-help'), 'Your saved specialist is kept but is unavailable here. Choose a current specialist or let Lightwork choose the team before starting.');
+      else if (!unavailable) chatCopy(document.getElementById('chat-specialist-help'), choice.dataset.notice);
+    }
+    // Server values travel as data attributes, so this script stays plain JavaScript.
+    var saved = choice.dataset.saved || '';
+    if (!choice.dataset.requested && saved && !choice.value && !form.querySelector('[name="title"]').value.trim() && !form.querySelector('[name="description"]').value.trim()) {
+      if (!Array.from(choice.options).some(function (item) { return item.value === saved; })) {
+        var missing = document.createElement('option'); missing.value = saved; missing.textContent = chatText('Saved specialist — unavailable'); choice.append(missing);
+      }
+      choice.value = saved;
+    }
+    choice.addEventListener('change', selected); selected();
+    // Find a specialist: the roster is searched on the server, never shipped whole.
+    var search = document.getElementById('chat-specialist-search'), found = document.getElementById('chat-specialist-found');
+    var searchTimer = null, searchSeq = 0;
+    function showMatches(items) {
+      var keep = choice.value ? choice.selectedOptions[0] : null;
+      choice.replaceChildren(choice.ownerDocument.createElement('option'));
+      choice.options[0].value = ''; choice.options[0].textContent = chatText('Let Lightwork choose the team');
+      if (keep && keep.value) choice.append(keep);
+      items.forEach(function (row) {
+        if (keep && row.value === keep.value) {
+          if (keep.dataset.revision === row.revision) return;
+          keep.textContent = chatText('Earlier selection — choose the current specialist below.');
+        }
+        var option = choice.ownerDocument.createElement('option');
+        option.value = row.value; option.textContent = row.label; option.dataset.revision = row.revision;
+        choice.append(option);
+      });
+      if (keep && keep.value) choice.value = keep.value;
+    }
+    async function findSpecialists() {
+      var seq = ++searchSeq, words = search.value.trim();
+      if (!words) { chatCopy(found, 'Type part of a name, then choose from the list below.'); return; }
+      try {
+        var reply = await window.mvFetchJSON('/api/v1/chat/specialists?limit=20&q=' + encodeURIComponent(words), {
+          timeout: 20000,
+          onAccess: function () { clear({detail: {reason: 'account'}}); },
+          onContextChange: function () { clear({detail: {reason: 'account'}}); }
+        }, 'find specialists');
+        if (seq !== searchSeq || unavailable) return;
+        if (!reply || reply.context !== form.querySelector('[name="specialist_context"]').value || !Array.isArray(reply.items)) {
+          clear({detail: {reason: 'account'}}); return;
+        }
+        showMatches(reply.items);
+        chatCopy(found, reply.items.length ? 'Matching specialists are listed below. Choose one.' : 'No published specialist matches that name.');
+      } catch (failure) {
+        if (seq !== searchSeq) return;
+        chatCopy(found, 'Specialist search is unavailable right now. Try again, or let Lightwork choose the team.');
+      }
+    }
+    if (search) search.addEventListener('input', function () {
+      searchSeq++;
+      clearTimeout(searchTimer); searchTimer = setTimeout(findSpecialists, 250);
+    });
+    form.addEventListener('lightwork:task-model-restored', selected);
+    function clear(event) {
+      if (event.detail?.reason === 'selection') return;
+      unavailable = true;
+      clearTimeout(searchTimer); searchSeq++;
+      choice.replaceChildren(); choice.disabled = true; revision.value = '';
+      delete choice.dataset.saved; delete choice.dataset.notice;
+      if (search) { search.value = ''; search.disabled = true; }
+      chatCopy(found, '');
+      form.querySelector('[name="specialist_context"]').value = '';
+      chatCopy(document.getElementById('chat-specialist-help'), 'Your account or workspace changed. Your message is kept; reopen Chat before starting work.');
+    }
+    document.addEventListener('lightwork:copilot-context-changed', clear);
+    document.addEventListener('lightwork:account-context-changed', clear);
+    form.addEventListener('submit', function (event) {
+      selected();
+      if (!unavailable && (!choice.value || revision.value)) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      choice.closest('details').open = true;
+    }, true);
+  })();
+  // A prepared template becomes an ordinary draft for review, never a run.
+  (async function receiveTemplateDraft() {
+    var raw;
+    try { raw = sessionStorage.getItem('lightwork:template-draft:v1'); sessionStorage.removeItem('lightwork:template-draft:v1'); }
+    catch (e) { return; }
+    if (!raw) return;
+    var draft;
+    try { draft = JSON.parse(raw); } catch (e) { return; }
+    if (!draft || typeof draft.title !== 'string' || !draft.title.trim() ||
+        typeof draft.description !== 'string' || typeof draft.context !== 'string' || !draft.context ||
+        !Number.isFinite(draft.created_at) || Date.now() - draft.created_at < 0 || Date.now() - draft.created_at > 600000) return;
+    var form = document.querySelector('form.composer');
+    if (!form) return;
+    var title = form.querySelector('[name="title"]'), description = form.querySelector('textarea[name="description"]');
+    if (!title || !description || title.value.trim() || description.value.trim()) return;
+    var notice = document.getElementById('template-draft-notice');
+    if (Array.from(draft.title).length > 200 || Array.from(draft.description).length > 16000) {
+      chatCopy(notice, 'This template is too long to start as a task. Return to Templates and shorten the title to 200 characters and details to 16,000 characters.');
+      notice.hidden = false; return;
+    }
+    var touched = false;
+    function markTouched() { touched = true; }
+    title.addEventListener('input', markTouched); description.addEventListener('input', markTouched);
+    try {
+      var response = await fetch('/api/v1/templates/draft-context');
+      var current = await response.json();
+      if (!response.ok || !current || current.context !== draft.context) throw new Error('The prepared template does not match this workspace or session. Return to Templates and prepare it again.');
+      if (touched || title.value.trim() || description.value.trim()) return;
+      title.value = draft.title; description.value = draft.description;
+      form.querySelector('[name="connection_references"]').value=JSON.stringify(draft.connection_references || []);
+      var details = description.closest('details'); if (details) details.open = true;
+      chatCopy(notice, 'Template ready. Review the task and details, then choose Start task when you are ready.'); notice.hidden = false;
+    } catch (e) {
+      chatCopy(notice, 'The prepared template could not be verified in this workspace. Return to Templates and prepare it again.'); notice.hidden = false;
+    } finally { title.removeEventListener('input', markTouched); description.removeEventListener('input', markTouched); }
+  })();
+
+  // An example request fills the empty message box for review; it never sends,
+  // and it never replaces something the person already typed.
+  (function () {
+    var field = document.querySelector('form.composer [name="title"]');
+    var hint = document.getElementById('composer-hint');
+    if (!field) return;
+    var lastExample = '', used = '';
+    var measure = function (item, event) { if (typeof window.mvSuggestion === 'function') window.mvSuggestion('chat-example', item, event); };
+    var examples = Array.prototype.map.call(document.querySelectorAll('.cs-example'), function (b) { return (b.textContent || '').trim(); });
+    var showAll = function () { examples.forEach(function (text) { measure(text, 'shown'); }); };
+    // The measuring script loads after this page script.
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showAll); else showAll();
+    if (field.form) field.form.addEventListener('submit', function () {
+      examples.forEach(function (text) { if (text !== used) measure(text, 'dismissed'); });
+    });
+    document.querySelectorAll('.cs-example').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var text = (button.textContent || '').trim();
+        if (!used) { used = text; measure(text, 'accepted'); }
+        if (field.value.trim() && field.value.trim() !== lastExample) {
+          if (hint) chatCopy(hint, 'Your message is kept. Clear it first to use an example.');
+          field.focus();
+          return;
+        }
+        field.value = text; lastExample = text;
+        field.dispatchEvent(new Event('input', {bubbles: true}));
+        field.focus();
+      });
+    });
+  })();
+
+  // The send button names what it will do for the chosen mode.
+  (function () {
+    var mode = document.getElementById('authoring-kind'), send = document.getElementById('send-btn');
+    if (!mode || !send) return;
+    var LABELS = { goal: 'Start task', flow: 'Draft a workflow', agent: 'Draft an agent' };
+    function sync() { var source = LABELS[mode.value] || 'Send'; send.setAttribute('aria-label', chatText(source)); send.lang = window.LightworkI18n ? window.LightworkI18n.languageFor(source) : 'en'; }
+    mode.addEventListener('change', sync); sync();
+  })();
+
+  // Attach button opens the hidden file input; chosen filenames show in the
+  // hint. Files can also be dragged onto the composer or pasted (screenshots,
+  // copied files) — both merge into the same input via DataTransfer.
+  (function () {
+    var btn = document.getElementById('attach-btn');
+    var input = document.getElementById('attach-input');
+    var hint = document.getElementById('composer-hint');
+    var form = document.querySelector('form.composer');
+    if (!btn || !input || !hint) return;
+    var original = Array.from(hint.childNodes).map(function (node) { return node.cloneNode(true); });
+    function restoreHint() { hint.replaceChildren.apply(hint, original.map(function (node) { return node.cloneNode(true); })); }
+    function showNames() {
+      var names = Array.prototype.map.call(input.files, function (f) { return f.name; });
+      if (names.length) chatCopy(hint, 'Attached: {files}', {files: names.join(', ')}); else restoreHint();
+    }
+    function addFiles(files) {
+      if (!files || !files.length) return;
+      var dt = new DataTransfer();
+      Array.prototype.forEach.call(input.files, function (f) { dt.items.add(f); });
+      Array.prototype.forEach.call(files, function (f) { dt.items.add(f); });
+      input.files = dt.files;
+      showNames();
+    }
+    btn.addEventListener('click', function () { input.click(); });
+    input.addEventListener('change', showNames);
+    if (form) {
+      ['dragover', 'dragenter'].forEach(function (ev) {
+        form.addEventListener(ev, function (e) {
+          if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types, 'Files') !== -1) {
+            e.preventDefault();
+            form.style.borderColor = 'var(--brand-border)';
+          }
+        });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        form.addEventListener(ev, function () { form.style.borderColor = ''; });
+      });
+      form.addEventListener('drop', function (e) {
+        if (e.dataTransfer && e.dataTransfer.files.length) {
+          e.preventDefault();
+          addFiles(e.dataTransfer.files);
+        }
+      });
+      form.addEventListener('paste', function (e) {
+        if (!e.clipboardData) return;
+        var files = Array.prototype.map.call(e.clipboardData.items, function (it) {
+          return it.kind === 'file' ? it.getAsFile() : null;
+        }).filter(Boolean);
+        if (files.length) addFiles(files);
+      });
+    }
+  })();
+
+  {% include "_voice_mic.js" %}
+
+  // Voice commands: the mic button records via MediaRecorder, re-encodes to
+  // 16 kHz WAV in the browser (no server ffmpeg needed), and posts the clip
+  // to /api/v1/voice/transcribe (server-side Whisper — built-in local engine
+  // by default). While the server warms the local model it answers 503 +
+  // Retry-After and we retry; a terminal 503 falls back to the browser's own
+  // speech recognition where available. The transcript fills the goal field
+  // for review — speech never auto-submits.
+  (function () {
+    var btn = document.getElementById('mic-btn');
+    var hint = document.getElementById('composer-hint');
+    if (!btn || !hint) return;
+    var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+    if (!canRecord && !SpeechRec) return; // no voice path: keep the button hidden
+    btn.hidden = false;
+
+    var original = Array.from(hint.childNodes).map(function (node) { return node.cloneNode(true); });
+    function restoreHint() { hint.replaceChildren.apply(hint, original.map(function (node) { return node.cloneNode(true); })); }
+    var recorder = null, chunks = [], stream = null, busy = false;
+
+    function setRecording(on) {
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.style.color = on ? 'var(--danger)' : '';
+      btn.style.borderColor = on ? 'var(--danger)' : '';
+      if (on) chatCopy(hint, 'Listening… click the mic again to stop.'); else restoreHint();
+    }
+    function fillGoal(text) {
+      text = (text || '').trim();
+      if (!text) { chatCopy(hint, 'Heard nothing — try again closer to the mic.'); return; }
+      var form = btn.form || document.getElementById('send-btn').form;
+      var title = form.querySelector('[name="title"]');
+      var details = form.querySelector('textarea[name="description"]');
+      if (title && !title.value.trim()) { title.value = text; title.focus(); }
+      else if (details) {
+        details.value = (details.value ? details.value.trim() + '\n' : '') + text;
+        details.closest('details').open = true; details.focus();
+      }
+      restoreHint();
+    }
+    function browserFallback() {
+      if (!SpeechRec) { chatCopy(hint, 'Voice input isn\'t set up yet. An administrator can turn it on in Settings under Voice.'); return; }
+      var rec = new SpeechRec();
+      rec.lang = window.LightworkI18n ? window.LightworkI18n.locale : document.documentElement.lang || 'en';
+      rec.interimResults = false;
+      setRecording(true);
+      rec.onresult = function (e) { fillGoal(e.results[0][0].transcript); };
+      rec.onerror = function () { chatCopy(hint, 'Speech recognition failed — try again.'); };
+      rec.onend = function () { setRecording(false); };
+      rec.start();
+    }
+    function upload(blob) {
+      busy = true;
+      chatCopy(hint, 'Transcribing…');
+      lwVoiceUpload(blob, {
+        onStatus: function (m) { chatCopy(hint, m); },
+        onFallback: browserFallback,
+        onResult: fillGoal,
+      })
+        .catch(function () { chatCopy(hint, 'We couldn\u2019t turn your recording into text. Try again, or type your message.'); })
+        .finally(function () { busy = false; });
+    }
+    btn.addEventListener('click', function () {
+      if (busy) return;
+      if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+      if (!canRecord) { browserFallback(); return; }
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+        stream = s; chunks = [];
+        recorder = new MediaRecorder(s);
+        recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        recorder.onstop = function () {
+          setRecording(false);
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          if (chunks.length) upload(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+        };
+        recorder.start();
+        setRecording(true);
+      }).catch(function () { browserFallback(); });
+    });
+  })();
+</script>
+{% endblock %}

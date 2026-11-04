@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Workspace overview · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set suspended_count = rows | selectattr('suspended') | list | length %}
+  {% call hero('Administration', 'Workspace overview',
+               subtitle='Summary for each workspace',
+               lede='Tasks by status, today\'s spending, and how close each
+                     workspace is to its daily limit. Create and change
+                     workspaces on <a href="/tenants">Workspaces</a>.' | safe) %}
+    {{ state('Current state',
+             rows | length ~ ' workspace' ~ ('' if rows | length == 1 else 's'),
+             badge=(suspended_count ~ ' paused') if suspended_count
+                   else ('All active' if rows else 'Single workspace'),
+             badge_class='warn' if suspended_count else ('ok' if rows else 'idle'),
+             copy='Spent today across all workspaces: '
+                  ~ (rows | sum(attribute='spend_today') | money) ~ '.
+                  Each workspace has its own budget.') }}
+  {% endcall %}
+
+  {% if not rows %}
+    <div class="panel">
+      <p class="muted tov-empty">No workspaces yet. You're using a single workspace,
+        which is fine for one team. Add one when you take on a second client or team.</p>
+      <p><a class="btn btn--primary" href="/tenants">Create a workspace</a></p>
+    </div>
+  {% else %}
+    <div class="section-head"><h2>Each workspace</h2></div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Workspace</th><th scope="col">Status</th>
+            <th scope="col">Plan</th><th scope="col">Tasks</th>
+            <th scope="col">By status</th>
+            <th scope="col">Spent Today</th><th scope="col">Daily limit</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            {% set name = r.display_name or r.id %}
+            {% set action_name = name ~ (' (' ~ r.id ~ ')' if r.id in duplicate_ids else '') %}
+            <tr>
+              <td>{{ name }}{% if r.id in duplicate_ids %}<br><span class="muted">Reference: {{ r.id }}</span>{% endif %}</td>
+              <td>
+                {% if r.suspended %}<span class="badge blocked">Paused</span>
+                {% else %}<span class="badge active">Active</span>{% endif %}
+              </td>
+              <td>{{ r.plan | capitalize }}</td>
+              <td>{{ r.total_goals }}</td>
+              <td>
+                {% if r.goals %}
+                  {% for status, n in r.goals | dictsort %}
+                    <span class="badge {{ status }}">{{ status | humanize }} {{ n }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span class="muted">No tasks yet</span>
+                {% endif %}
+              </td>
+              <td>{{ r.spend_today | money }}</td>
+              <td class="muted">
+                {% if r.max_daily_dollars %}{{ r.max_daily_dollars | money }}/day{% else %}No limit{% endif %}
+              </td>
+              <td><a class="btn btn--ghost" href="/tenants" aria-label="Change {{ action_name }}">Change</a>
+                <a class="btn btn--ghost" href="/tenants/{{ r.id | urlencode }}/features" aria-label="Features for {{ action_name }}">Features</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+  <style>.tov-empty { margin: 0 0 var(--space-3); }</style>
+{% endblock %}

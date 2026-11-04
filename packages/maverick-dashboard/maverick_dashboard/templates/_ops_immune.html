@@ -1,0 +1,62 @@
+{#- Safety monitoring extras (maverick immune canary / immune network). -#}
+{% include "_ops_styles.html" %}
+<section class="panel" id="ops-immune" aria-labelledby="ops-immune-title">
+  <h2 id="ops-immune-title">Write your own reviewer test</h2>
+  {% if can_admin %}
+  <p class="muted">Describe an approval with one mistake you planted, for example a changed bank account. It goes
+    into the approvals queue like any other request. The mistake is kept private.</p>
+  <form id="ops-canary-form">
+    <div class="ops-row">
+      <label for="ops-canary-action">What the reviewer is asked to approve
+        <input id="ops-canary-action" name="action" class="input" maxlength="200" required></label>
+      <label for="ops-canary-class">Kind of decision
+        <input id="ops-canary-class" name="decision_class" class="input" maxlength="200" list="ops-canary-classes" required></label>
+      <datalist id="ops-canary-classes"></datalist>
+      <label for="ops-canary-risk">Risk
+        <select id="ops-canary-risk" name="risk" class="select">
+          <option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option>
+        </select></label>
+      <label for="ops-canary-from">Shown as requested by
+        <select id="ops-canary-from" name="requested_by" class="select"><option value="">Nobody in particular</option></select></label>
+      <label for="ops-canary-undo">After a decision
+        <select id="ops-canary-undo" name="undoable" class="select">
+          <option value="yes" selected>Can be undone for a moment, like a task's step</option>
+          <option value="no">Takes effect at once, like a merge, settings change or agent access</option>
+        </select></label>
+    </div>
+    <label for="ops-canary-detail">What the reviewer sees
+      <textarea id="ops-canary-detail" name="detail" class="textarea" rows="3" maxlength="4000" required></textarea></label>
+    <label for="ops-canary-flaw">The planted mistake (kept private)
+      <textarea id="ops-canary-flaw" name="flaw" class="textarea" rows="2" maxlength="1000" required></textarea></label>
+    <p><button type="submit" class="btn btn--primary">Place the test approval</button></p>
+  </form>
+  <p id="ops-canary-msg" role="status" aria-live="polite" class="muted"></p>
+  {% else %}
+  <p class="muted">Only an administrator can place reviewer tests.</p>
+  {% endif %}
+
+  <h3 class="ops-sub" id="ops-network-title">Check where private data could go</h3>
+  <p class="muted">Finds chains of assistants where private data could reach the outside. Check the installed assistants as they are or as if a setting were different. You can also check them as if they shared team messaging, or check assistants described in a file. Trying a different setting here changes nothing for the assistants that are
+    running.</p>
+  <div class="ops-row">
+    <label for="ops-network-levels">Assistants acting on their own
+      <select id="ops-network-levels" class="select">
+        <option value="">As set now</option>
+        <option value="on">As if switched on</option>
+        <option value="off">As if switched off</option>
+      </select></label>
+    <label for="ops-network-grounding">Public data sources for assistants
+      <select id="ops-network-grounding" class="select">
+        <option value="">As set now</option>
+        <option value="on">As if switched on</option>
+        <option value="off">As if switched off</option>
+      </select></label>
+    <label for="ops-network-shared" class="ops-actions"><input type="checkbox" id="ops-network-shared">
+      As if every assistant shared team messaging</label>
+    <label for="ops-network-file">Or check a file describing assistants (optional)
+      <input type="file" id="ops-network-file" class="input" accept=".json,application/json"></label>
+    <button type="button" class="btn btn--ghost" id="ops-network-run">Check the assistants</button>
+  </div>
+  <div id="ops-network-out" role="status" aria-live="polite"></div>
+</section>
+<script src="/static/lightwork-ops-panels.js" defer></script>

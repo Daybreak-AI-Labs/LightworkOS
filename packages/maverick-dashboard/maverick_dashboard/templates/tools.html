@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Tools · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Workforce capability', 'Tools',
+               subtitle='What your agents can use',
+               lede='Everything your agents are allowed to use, after your
+                     organization\'s rules about which tools are allowed and
+                     how often they may be used.') %}
+    {% if error %}
+      {{ state('Current state', 'Tool list unavailable',
+               badge='Needs attention', badge_class='warn',
+               copy='Lightwork couldn\'t build the list of tools right now.
+                     Refresh the page to try again.') }}
+    {% else %}
+      {{ state('Current state', tool_page.catalog_total ~ ' tools available',
+               badge='Rules applied', badge_class='ok',
+               copy='This list already follows your organization\'s rules.
+                     Agents can\'t use anything that isn\'t on it.') }}
+    {% endif %}
+  {% endcall %}
+
+  <div class="panel">
+    {% if error %}
+      <p role="alert">The tool list couldn't be built. Refresh the page to try again.</p>
+      <p><a class="btn btn--primary" href="/tools">Reload tool list</a></p>
+      <details><summary>Technical details</summary><p class="muted tl-tech">{{ error }}</p></details>
+    {% else %}
+      {% if enterprise_blocked_total %}
+      <p class="tl-enterprise" role="note">Enterprise mode is on. {{ enterprise_blocked_total }} {{ 'tool' if enterprise_blocked_total == 1 else 'tools' }} on this list can't be used by signed-in people yet. Look for “Not available in Enterprise mode yet” next to them.</p>
+      {% endif %}
+      <form method="get" action="/tools" aria-label="Search tools" class="tl-search">
+        <label for="tool-query" class="tl-field">
+          <span>Search tools</span>
+          <input class="input" id="tool-query" name="q" type="search"
+                 maxlength="128" value="{{ tool_page.query }}"
+                 placeholder="What should the tool do?" />
+        </label>
+        <label for="tool-per-page" class="tl-field">
+          <span>Tools per page</span>
+          <select class="select" id="tool-per-page" name="per_page">
+            {% set sizes = [10, 25, 50, 100] %}
+            {% if tool_page.per_page not in sizes %}{% set sizes = (sizes + [tool_page.per_page]) | sort %}{% endif %}
+            {% for n in sizes %}<option value="{{ n }}" {% if n == tool_page.per_page %}selected{% endif %}>{{ n }}</option>{% endfor %}
+          </select>
+        </label>
+        <button class="btn btn--primary" type="submit">Search tools</button>
+        {% if tool_page.query %}<a class="btn btn--ghost" href="/tools">Show all</a>{% endif %}
+      </form>
+      <p class="muted" role="status">
+        {% if tool_page.returned %}
+          Showing {{ tool_page.first }}–{{ tool_page.last }} of
+          {{ tool_page.filtered_total }} {{ 'matching ' if tool_page.query }}tools
+        {% else %}
+          No {{ 'matching ' if tool_page.query }}tools to show
+        {% endif %}
+        ({{ tool_page.catalog_total }} in total).
+      </p>
+    {% if tools %}
+      <table>
+        <thead><tr><th scope="col">Tool</th><th scope="col">What it does</th></tr></thead>
+        <tbody>
+        {% for t in tools %}
+          <tr class="tool-row">
+            <td>{{ t.name | humanize }}</td>
+            <td class="tl-desc">{{ t.summary }}
+              {% if t.enterprise_blocked %}<p class="tl-enterprise-note"><span class="badge warn">Not available in Enterprise mode yet</span> Signed-in people can't use this tool while Enterprise mode is on.</p>{% endif %}
+              {% if t.description %}<details class="muted tl-tech-row"><summary>Technical details</summary><p class="tl-tech">{{ t.description }}</p></details>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">
+        {% if tool_page.query %}No tools match “{{ tool_page.query }}”. Try other words, or show every tool.
+        {% else %}No tools are available yet. Add some by connecting a tool server or turning on a plugin.{% endif %}
+      </p>
+      <p class="tl-actions">
+        {% if tool_page.query %}<a class="btn btn--primary" href="/tools">Show all tools</a>
+        {% else %}<a class="btn btn--primary" href="/mcp">Add a tool server</a>
+          <a class="btn" href="/plugins">Open Plugins</a>{% endif %}
+      </p>
+    {% endif %}
+    {% if tool_page.page_count > 1 %}
+      <nav aria-label="Tool list pages" class="tl-pages">
+        {% if tool_page.page > 1 %}
+          <a class="btn btn--ghost"
+             href="/tools?q={{ tool_page.query | urlencode }}&amp;per_page={{ tool_page.per_page }}&amp;page={{ tool_page.page - 1 }}">Previous</a>
+        {% endif %}
+        <span class="muted">Page {{ tool_page.page }} of {{ tool_page.page_count }}</span>
+        {% if tool_page.page < tool_page.page_count %}
+          <a class="btn btn--ghost"
+             href="/tools?q={{ tool_page.query | urlencode }}&amp;per_page={{ tool_page.per_page }}&amp;page={{ tool_page.page + 1 }}">Next</a>
+        {% endif %}
+      </nav>
+    {% endif %}
+    {% endif %}
+  </div>
+  <p class="muted">Which tools are allowed, and for whom, is set on the
+    <a href="/permissions">Permissions</a> page.</p>
+  <style>
+    .tl-search { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; margin-bottom: var(--space-3); }
+    .tl-field { display: grid; gap: var(--space-1); }
+    .tl-desc { font-size: var(--text-sm); }
+    .tl-enterprise, .tl-enterprise-note { margin-block: var(--space-2); }
+    .tl-tech { overflow-wrap: anywhere; font-size: var(--text-sm); }
+    .tl-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .tl-pages { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+  </style>
+{% endblock %}

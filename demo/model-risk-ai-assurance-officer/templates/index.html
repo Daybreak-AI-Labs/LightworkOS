@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <p class="tag">LOCAL &middot; ADVISORY &middot; HUMAN-GOVERNED</p>
+  <h1>Build review-ready AI risk evidence without granting execution authority</h1>
+  <p>Inventory models, agents, tools, datasets, and providers; evaluate current evidence, lineage, drift, incidents, and third parties; then produce a local DGM readiness report that never promotes or deploys.</p>
+</section>
+<section class="notice">
+  <strong>Important boundary.</strong> Operational risk scores are deterministic triage aids, not legal classifications. EU AI Act role and applicability default to <code>undetermined</code> unless a human supplies a versioned assertion. Framework mappings are advisory and do not certify NIST AI RMF, ISO/IEC 42001, EU AI Act, or any other compliance status. No external action occurs.
+</section>
+<section class="grid">
+  <form class="card workflow-form" data-endpoint="/api/assessments">
+    <h2>Analyze declared AI inventory</h2>
+    <label>Assessment timestamp<input name="now" value="2026-07-21T12:00:00Z" required></label>
+    <label>Freshness window (days)<input name="freshness_days" type="number" min="1" max="730" value="90" required></label>
+    <label>Bounded inventory and evidence JSON<textarea name="snapshot" required>{"assets":[{"id":"model-1","asset_type":"model","name":"Example model","owner":"AI assurance","criticality":"high","lifecycle":"testing","version":"candidate-1","intended_use":"Bounded decision support","data_classification":"internal","eu_use_case":"general","third_party":false,"lineage_refs":[],"legal_applicability":{"status":"undetermined"}}],"evaluations":[],"changes":[],"drift_signals":[],"incidents":[],"third_party_assessments":[]}</textarea></label>
+    <button type="submit">Create unsigned local assessment</button><div class="result" aria-live="polite" tabindex="-1"></div>
+  </form>
+  <article class="card">
+    <h2>Current local state</h2>
+    <p>CAS revision: <code>{{ revision }}</code></p>
+    <p>Assessments: {{ assessments|length }}</p>
+    <p>DGM readiness reports: {{ readiness_reports|length }}</p>
+    <p class="muted">Submitted values are stored locally and unsigned. Never enter credentials, prompts, messages, tool arguments/results, raw telemetry, or other sensitive content.</p>
+  </article>
+</section>
+{% for item in assessments|reverse %}
+<section class="card">
+  <h2>{{ item.id }}</h2>
+  <p>Human review: <strong>{{ item.review.status }}</strong> &middot; Findings: {{ item.summary.finding_count }} &middot; Assets: {{ item.summary.asset_count }}</p>
+  <table><thead><tr><th>Asset</th><th>Operational triage</th><th>Human legal applicability</th></tr></thead><tbody>
+    {% for classification in item.classifications %}<tr><td><code>{{ classification.asset_ref }}</code></td><td>{{ classification.level }} ({{ classification.score }})</td><td>{{ classification.legal_applicability.status }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% if item.findings %}<h3>Advisory gaps</h3><ul>{% for finding in item.findings %}<li class="{{ finding.severity }}"><strong>{{ finding.severity }}</strong> &middot; <code>{{ finding.finding_type }}</code> &middot; {{ finding.asset_name }} &mdash; {{ finding.summary }} <small><code>{{ finding.id }}</code></small></li>{% endfor %}</ul>{% endif %}
+  <div class="grid">
+    <form class="card workflow-form" data-endpoint="/api/assessments/{{ item.id }}/review">
+      <h3>Record human assurance review</h3><label>Decision<select name="decision"><option value="approved">Approved</option><option value="needs_changes">Needs changes</option><option value="rejected">Rejected</option></select></label><label>Reviewer<input name="reviewer" required maxlength="200"></label><label>Decision timestamp<input name="decided_at" required placeholder="2026-07-21T13:00:00Z"></label><label>Rationale<textarea name="rationale" required></textarea></label><button>Record local human review</button><div class="result" aria-live="polite" tabindex="-1"></div>
+    </form>
+    <form class="card workflow-form" data-endpoint="/api/dgm/readiness-reports">
+      <h3>Generate DGM readiness report</h3><input type="hidden" name="assessment_id" value="{{ item.id }}"><label>Target asset reference<input name="target_asset_ref" required></label><label>Candidate ID<input name="candidate_id" required></label><label>Candidate version<input name="candidate_version" required></label><label>Requested by<input name="requested_by" required></label><label>Check timestamp<input name="now" required placeholder="2026-07-21T14:00:00Z"></label><button>Create report only</button><div class="result" aria-live="polite" tabindex="-1"></div>
+    </form>
+  </div>
+</section>
+{% endfor %}
+<section class="card">
+  <h2>Recent unsigned local records</h2>
+  <table><thead><tr><th>Type</th><th>Identity</th><th>Status</th><th>Revision</th></tr></thead><tbody>
+  {% for item in records|reverse %}<tr><td>{{ item.type }}</td><td><code>{{ item.id }}</code></td><td>{% if item.type == "assurance_assessment" %}{{ item.review.status }}{% elif item.type == "dgm_readiness_report" %}{{ "ready for human decision" if item.ready_for_human_promotion_decision else "blocked" }}{% else %}{{ item.decision or "saved" }}{% endif %}</td><td>{{ item.revision }}</td></tr>{% else %}<tr><td colspan="4">No records yet.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+<div id="workspace" data-revision="{{ revision }}" hidden></div>
+<script>
+(() => {
+  "use strict";
+  let revision = Number(document.getElementById("workspace").dataset.revision || 0);
+  for (const form of document.querySelectorAll(".workflow-form")) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const output = form.querySelector(".result");
+      const data = {expected_revision: revision};
+      for (const [key, value] of new FormData(form).entries()) data[key] = value;
+      if (Object.prototype.hasOwnProperty.call(data, "snapshot")) {
+        try { data.snapshot = JSON.parse(data.snapshot); }
+        catch (_) { output.textContent = "Snapshot must be valid JSON."; output.className = "result error"; return; }
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "freshness_days")) data.freshness_days = Number(data.freshness_days);
+      try {
+        const response = await fetch(form.dataset.endpoint, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+        const value = await response.json();
+        if (!response.ok) throw new Error(value.detail || `Request failed (${response.status})`);
+        revision = value.revision;
+        output.textContent = `Saved ${value.type} ${value.id} at revision ${value.revision}. Refresh for the next gated step.`;
+        output.className = "result success";
+      } catch (error) {
+        output.textContent = error instanceof Error ? error.message : "Request failed";
+        output.className = "result error";
+      }
+      output.focus({preventScroll:true});
+    });
+  }
+})();
+</script>
+{% endblock %}

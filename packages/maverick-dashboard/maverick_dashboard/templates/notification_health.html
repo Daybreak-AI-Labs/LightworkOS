@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Notification delivery - Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% from "_back_link.html" import back_link with context %}
+{{ hero('Administration', 'Notification delivery',
+        lede='Review organization alerts and send a test to the channel currently saved in Settings. A service accepting a message does not mean a person saw it.',
+        compact=true) }}
+<div class="panel">
+  <p><a href="/settings/all?q=alerts">Change notification settings</a> · {{ back_link('/settings', 'Settings') }}</p>
+  <p id="notification-health-summary" role="status" aria-live="polite">Loading delivery history.</p>
+  <button class="btn btn--primary" type="button" id="notification-test" disabled>Send a test message</button>
+  <button class="btn btn--ghost" type="button" id="notification-refresh">Refresh delivery status</button>
+  <p id="notification-health-error" role="alert" hidden></p>
+  <p class="muted">History keeps up to 1,000 receipts for seven days and contains no task text, message bodies, credentials or destination addresses. Older receipts may refer to earlier channel settings.</p>
+  <p class="muted">Only a refused test can be retried, up to three attempts. Accepted messages and uncertain deliveries are never automatically retried. Check the destination when a result is unknown.</p>
+</div>
+<div class="panel">
+  <h2>Recent attempts</h2>
+  <div id="notification-health-list"></div>
+</div>
+<script src="/static/lightwork-notification-health.js" defer></script>
+{% endblock %}

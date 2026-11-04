@@ -1,0 +1,8 @@
+{#- Shell asset links. ``asset('x.css')`` renders the fingerprinted
+    ``/static/x.css?v=<hash>`` when the app registered ``static_url`` on the
+    environment (so the versioned route can be cached for a year), and the
+    plain ``/static/x.css`` in any environment that did not (page routers
+    rendered under a bare Jinja2Templates, as many tests do). -#}
+{% macro asset(name) -%}
+{{ static_url(name) if static_url is defined else '/static/' ~ name }}
+{%- endmacro %}

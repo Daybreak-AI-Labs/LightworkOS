@@ -1,0 +1,12 @@
+{# "Preview today's summary": exactly what the daily summary would send, built
+   by the same code that sends it (GET /api/v1/me/digest/preview). Nothing is sent. #}
+<details class="digest-preview" data-digest-preview>
+  <summary>Preview today's summary</summary>
+  <p class="muted">This is the summary exactly as it would be sent today. Previewing sends nothing.</p>
+  <button type="button" class="btn btn--ghost" data-digest-preview-load>Refresh the preview</button>
+  <p role="status" aria-live="polite" data-digest-preview-status></p>
+  <ul data-digest-preview-notes></ul>
+  <p><strong data-digest-preview-subject></strong></p>
+  <pre class="digest-preview__text" data-digest-preview-text lang="und" dir="auto" data-user-content tabindex="0" aria-label="Summary text"></pre>
+</details>
+<script src="{{ static_url('lightwork-digest-preview.js') }}" defer></script>

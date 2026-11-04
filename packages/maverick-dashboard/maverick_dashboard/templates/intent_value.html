@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Work value & opportunities · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% call hero('Costs & value', 'Work value & opportunities', subtitle='From business intent to useful action',
+             lede='See what work Lightwork performed, how its value is estimated, and where a reusable workflow could help.') %}{% endcall %}
+<link rel="stylesheet" href="{{ static_url('intent-value.css') }}">
+<section id="iv-app" aria-label="Work value intelligence">
+  <p class="muted">Labor value is an estimate, not verified cash savings. Opportunities and automation forecasts stay separate from executed work.</p>
+  <form id="iv-filters" class="panel iv-form" aria-label="Reporting filters">
+    <label>From <input id="iv-start" type="date" required></label>
+    <label>Through <input id="iv-end" type="date" required></label>
+    <label>Scope <select id="iv-scope"><option value="own">My work</option><option value="company">Company totals</option></select></label>
+    <label>Business activity <select id="iv-intent"><option value="">All activities</option></select></label>
+    <label>Contribution <select id="iv-entity"><option value="">All contributors</option></select></label>
+    <button class="btn" type="submit">Update report</button>
+  </form>
+  <p id="iv-status" role="status" aria-live="polite">Loading authorized work and evidence…</p>
+  <p id="iv-error" role="alert" hidden></p>
+  <button id="iv-retry" class="btn" type="button" hidden>Retry loading</button>
+  <div id="iv-report" hidden>
+    <div id="iv-metrics" class="iv-metrics" aria-label="Metrics with explanations"></div>
+    <p id="iv-coverage" class="panel"></p>
+    <section class="panel" aria-labelledby="iv-work-title" id="iv-contributions" tabindex="-1">
+      <h2 id="iv-work-title">Contributing work and calculations</h2>
+      <p id="iv-explanation">Choose any headline metric to see its contributing records.</p>
+      <p id="iv-attribution" class="muted"></p>
+      <div class="iv-table"><table><thead><tr><th scope="col">Business work</th><th scope="col">Evidence</th><th scope="col">Estimated labor value</th><th scope="col">Known costs</th><th scope="col">Estimated net</th></tr></thead><tbody id="iv-work"></tbody></table></div>
+      <p id="iv-empty" hidden>No work matched this period and scope. New work appears when Lightwork records a supported task or conversation.</p>
+    </section>
+    <section class="panel" aria-labelledby="iv-trend-title"><h2 id="iv-trend-title">Changes over time</h2>
+      <p>Work is credited once at its first eligible execution; costs appear in their recorded period, including unsuccessful attempts.</p>
+      <div class="iv-table"><table><thead><tr><th scope="col">Day (UTC)</th><th scope="col">Work performed</th><th scope="col">Estimated labor value</th><th scope="col">Known costs</th></tr></thead><tbody id="iv-trend"></tbody></table></div>
+    </section>
+    <section class="panel" aria-labelledby="iv-opportunities-title"><h2 id="iv-opportunities-title">Your actionable opportunities</h2>
+      <p>Review the evidence, use an existing capability, or create a draft when repeated work supports it. You can retain manual steps, defer, or keep the current process.</p>
+      <label><input id="iv-decided" type="checkbox"> Include deferred and declined suggestions</label>
+      <div id="iv-opportunities" class="iv-opportunities"></div>
+      <h3>Consented external observations</h3>
+      <form id="iv-device-form" class="iv-form"><label>Enrolled Ekko device <input id="iv-device" value="local-device" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_.:\-]{0,63}" required></label><button class="btn" type="submit">Review device observations</button></form>
+      <p>Reviewing a device also deletes its observations that are past their retention period. Other enrolled devices are cleaned up when you review them in Ekko.</p>
+      <div id="iv-external"></div>
+    </section>
+    <section class="panel" aria-labelledby="iv-assumptions-title"><h2 id="iv-assumptions-title">Benchmarks and company assumptions</h2>
+      <p>Useful starting ranges are supplied for each activity. They are provisional planning assumptions, not validated industry averages. Edits affect new estimates; use Recalculate on a work item to apply them deliberately to its history.</p>
+      <form id="iv-settings-form" class="iv-form">
+        <label>Labor rate per hour <input id="iv-rate" type="number" min="0" max="100000" step="0.01" required></label>
+        <label>Labor currency <select id="iv-currency">{% for currency in ['USD','EUR','GBP','CAD','AUD','JPY','CHF','INR'] %}<option>{{ currency }}</option>{% endfor %}</select></label>
+        <label><input id="iv-confirmation" type="checkbox"> Offer optional completion confirmation</label>
+        <button id="iv-settings-save" type="submit" class="btn">Save company assumptions</button>
+      </form>
+      <p id="iv-rate-basis" class="muted"></p>
+      <label>Inspect an activity benchmark <select id="iv-benchmark-select"></select></label>
+      <div id="iv-benchmark-description"></div>
+      <form id="iv-benchmark-form" class="iv-form">
+        <label>Baseline minutes <input id="iv-bm-minutes" type="number" min="0" max="100000" step="0.1" required></label>
+        <label>Low estimate <input id="iv-bm-low" type="number" min="0" max="100000" step="0.1" required></label>
+        <label>High estimate <input id="iv-bm-high" type="number" min="0" max="100000" step="0.1" required></label>
+        <label>Lightwork share (0–1) <input id="iv-bm-share" type="number" min="0" max="1" step="0.05" required></label>
+        <label>Retained review minutes <input id="iv-bm-review" type="number" min="0" max="100000" step="0.1" required></label>
+        <label>Company basis for this change <textarea id="iv-bm-reason" maxlength="1000" required></textarea></label>
+        <button id="iv-benchmark-save" class="btn" type="submit">Save tenant benchmark</button>
+      </form>
+    </section>
+    <p id="iv-reconciliation" class="muted"></p>
+    <p><a href="/savings">Inspect the legacy Savings scenario</a> · <a href="/spend">Inspect spending</a> · <a href="/workflow-readiness">Check workflow readiness</a></p>
+  </div>
+  <dialog id="iv-detail" aria-labelledby="iv-detail-title">
+    <div class="iv-dialog-head"><h2 id="iv-detail-title">Work explanation</h2><button type="button" class="btn btn--ghost" id="iv-detail-close" aria-label="Close explanation">Close</button></div>
+    <div id="iv-detail-body"></div>
+    <p id="iv-detail-status" role="status" aria-live="polite"></p>
+  </dialog>
+</section>
+<script src="{{ static_url('intent-value.js') }}" defer></script>
+{% endblock %}

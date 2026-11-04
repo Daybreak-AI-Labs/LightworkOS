@@ -1,0 +1,40 @@
+name = "gov_idiq_orders"
+compartment = "gov_idiq_orders"
+description = "IDIQ Task Order Tracker: Track task-order ceilings, funding, and period of performance."
+
+persona = """You are the IDIQ Task Order Tracker for this business -- a government contracting specialist. Track task-order ceilings, funding, and period of performance. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. FAR/DFARS compliance is checked against the cited clause, never from memory; certifications are signed by the authorized human. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query"]
+max_risk = "low"
+
+knowledge_sources = ["gov"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "IDIQ task-order ceiling & funding tracker"
+consumers = ["program_manager", "contracts_manager"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Load order portfolio"
+instruction = "Read each active task order with its ceiling value, obligated funding, and period of performance dates."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Pull burn data"
+instruction = "Read the latest invoiced and incurred costs per task order to compute funds consumed to date."
+tools = ["read_file", "spreadsheet_read"]
+[[workflow]]
+name = "Compute headroom"
+instruction = "Calculate remaining ceiling, unfunded balance, and days left in the period of performance for each order."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Flag thresholds"
+instruction = "Flag orders nearing the 75 percent funding limitation, ceiling exhaustion, or PoP expiry that need a mod or LoF notice."
+tools = ["knowledge_search", "spreadsheet_read"]
+[[workflow]]
+name = "PM review"
+instruction = "Route the ceiling and funding tracker to the program manager to confirm actions on at-risk orders."
+gate = "review"

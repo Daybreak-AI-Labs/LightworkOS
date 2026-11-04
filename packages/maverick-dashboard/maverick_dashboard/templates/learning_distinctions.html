@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Find missing distinctions · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Find the difference that changes the work', lede='Discover which available observations distinguish cases needing different actions. Review the exact examples before preparing an unpublished taught procedure.') }}
+<div id="learning-distinctions" class="stack">
+  <section class="glass-card stack" aria-labelledby="ld-title">
+    <h2 id="ld-title">Review accepted examples</h2>
+    <p class="muted">Use your existing teaching permissions. This checks selected recorded work locally; it makes no AI calls and repeats no connected action.</p>
+    <label for="ld-flow">Workflow</label><select id="ld-flow" class="select"><option value="">Choose a workflow</option></select>
+    <p id="ld-version" class="muted"></p>
+    <fieldset><legend>Accepted examples</legend><div id="ld-runs" class="stack"></div><p class="muted">Choose 4–32 examples with the same reviewed inputs and two demonstrated next actions. Each action needs two different observations. Only currently permitted examples appear.</p></fieldset>
+    <a id="ld-teach" href="/flows" class="btn btn--ghost">Review examples on Teach</a>
+    <button id="ld-inspect" type="button" class="btn btn--ghost">Inspect selected examples</button>
+    <fieldset id="ld-observations" hidden><legend>Observations currently used to tell cases apart</legend><div id="ld-fields" class="stack"></div><p class="muted">Choose the information your current procedure uses. Lightwork searches the remaining available fields for every smallest separating set. The check also compares the same examples using all available information.</p></fieldset>
+    <div class="lrn__actions"><button id="ld-refresh" type="button" class="btn btn--ghost">Refresh current evidence</button><button id="ld-review" type="button" class="btn btn--primary" hidden>Review proposed distinctions</button></div>
+    <p id="ld-status" role="status" aria-live="polite" class="muted">Checking current evidence…</p>
+    <div id="ld-preview" class="stack"></div>
+  </section>
+  <section class="glass-card stack" aria-labelledby="ld-original-h">
+    <h2 id="ld-original-h">Your original packages</h2>
+    <label for="ld-original-choice">Saved review</label><select id="ld-original-choice" class="select"><option value="">Choose an original review</option></select>
+    <button id="ld-original" type="button" class="btn btn--ghost" hidden>Check original outcome</button>
+    <div id="ld-result" class="stack" aria-live="polite"></div>
+    <p class="muted">A lost reply is never an instruction to repeat preparation. Download a currently eligible saved package, then choose that file on Teach under Signed examples. Admission, naming, saving, publishing and running remain separate native reviews.</p>
+  </section>
+  <section id="ld-cells" class="glass-card stack" aria-labelledby="ld-cells-h">
+    <h2 id="ld-cells-h">Where proposed rules matched recorded work</h2>
+    <p class="muted">Inspect exact full-input cells from your native paired comparisons. Published and proposed versions stay separate. Conflicting observations remain ambiguous, unfinished evidence stays unknown, and unobserved inputs are always unknown.</p>
+    <div id="ld-comparisons" class="stack"></div>
+    <button id="ld-read-cells" type="button" class="btn btn--ghost">Read selected observed cells</button>
+    <div id="ld-cell-result" class="stack" aria-live="polite"></div>
+    <a href="/learning/flow-checks" class="btn btn--ghost">Compare real cases</a>
+  </section>
+</div>
+<style>#learning-distinctions{overflow-wrap:anywhere;min-width:0}#learning-distinctions .glass-card{padding:var(--space-4)}#learning-distinctions fieldset{min-width:0;padding:var(--space-3)}#learning-distinctions .select,#learning-distinctions .btn{max-width:100%;min-width:0;white-space:normal}#learning-distinctions label{display:flex;gap:var(--space-2);align-items:start}#learning-distinctions label input{flex:none}#learning-distinctions dd{margin-inline-start:var(--space-3);white-space:pre-wrap}#learning-distinctions details{padding:var(--space-2);border:1px solid var(--border);border-radius:var(--radius-md)}</style>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-learning-distinctions.js" defer></script>{% endblock %}

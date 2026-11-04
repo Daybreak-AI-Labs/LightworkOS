@@ -1,0 +1,18 @@
+<section id="task-views" class="card" aria-labelledby="task-views-title" style="margin-block:var(--space-4)">
+  <h2 id="task-views-title">Saved task views</h2>
+  <p>Save the current search and status to your account in this workspace. Opening a view uses your current task access.</p>
+  <p class="muted">Status filters apply to the 200 recent tasks shown, or up to 100 matching search results.</p>
+  <div id="task-views-list"></div>
+  <form id="task-views-form">
+    <label for="task-view-name">Name this view</label>
+    <input id="task-view-name" class="input" maxlength="80" required autocomplete="off">
+    <button class="btn" type="submit" disabled>Review saving current filters</button>
+  </form>
+  <div id="task-view-review" hidden>
+    <p id="task-view-review-copy"></p>
+    <button id="task-view-confirm" class="btn btn--primary" type="button">Save this view</button>
+    <button id="task-view-dismiss" class="btn" type="button">Keep editing</button>
+  </div>
+  <p id="task-views-status" role="status" aria-live="polite"></p>
+  <button id="task-views-refresh" class="btn" type="button">Refresh saved views</button>
+</section>

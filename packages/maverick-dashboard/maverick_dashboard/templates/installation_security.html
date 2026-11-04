@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Sign-in and work protection · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% call hero('Settings', 'Sign-in and work protection', subtitle='Control where work runs and how people sign in',
+             lede='Review the current policy, check its connections, and make one clear, recorded change at a time.') %}{% endcall %}
+<section id="installation-security" class="panel glass-surface">
+  <p id="is-status" role="status" aria-live="polite">Reading your installation policy…</p>
+  <div id="is-summary" class="is-summary"></div>
+  <p id="is-notice" class="muted"></p>
+  <div class="is-actions"><button id="is-refresh" class="btn" type="button">Read current policy</button><a href="/permissions" class="btn btn--ghost">Work area and task permissions</a></div>
+  <h2>Check connections</h2>
+  <p>A connection check can confirm that a service answers. It does not prove a person can sign in or that a task has complete isolation.</p>
+  <div class="is-actions"><button class="btn" data-check="work-area" type="button">Check work area</button><button class="btn" data-check="company-signin" type="button">Check company sign-in provider</button><button class="btn" data-check="single-signon" type="button">Check single sign-on provider</button></div>
+  <p id="is-check-status" role="status" aria-live="polite"></p>
+  <p id="is-try-signin" hidden><a class="btn btn--ghost" target="_blank" rel="noopener" id="is-signin-link">Try a real sign-in</a> Keep this administrator session open while checking the other window.</p>
+  <h2>Review a policy change</h2>
+  <form id="is-form">
+    <label for="is-group">Area<select id="is-group" class="input"><option value="work">Protected work area</option><option value="signin">Company sign-in</option><option value="lockdown">Locked-down work</option></select></label>
+    <label for="is-policy">Policy<select id="is-policy" class="input" required><option value="">Choose a policy</option></select></label>
+    <p id="is-current"></p><p id="is-help" class="muted"></p>
+    <div id="is-value"></div>
+    <label><input id="is-inherit" type="checkbox"> Use the inherited installation choice instead</label>
+    <button id="is-review" class="btn btn--primary" type="submit">Review change</button>
+  </form>
+  <section id="is-review-panel" hidden aria-labelledby="is-review-title"><h2 id="is-review-title">Your exact change</h2><div id="is-changes"></div><ul id="is-warnings"></ul><p>Lightwork rechecks access, current sources, sign-in recovery and any required independent approval before saving. A change that would lock you out is refused.</p><div class="is-actions"><button id="is-apply" class="btn btn--primary" type="button">Apply reviewed change</button><button id="is-discard" class="btn btn--ghost" type="button">Keep current policy</button></div></section>
+  <section id="is-attempt" hidden><h2>Original change result</h2><p id="is-attempt-message"></p><div class="is-actions"><button id="is-read-attempt" class="btn" type="button">Read saved result</button><button id="is-acknowledge" class="btn btn--ghost" type="button" hidden>Record my review of the uncertain result</button><a href="/audit" class="btn btn--ghost">Activity history</a><a href="/approvals" class="btn btn--ghost">Approvals</a></div><p class="muted">Reading a saved result never applies the change again. If the outcome is uncertain, inspect current policy and Activity before acknowledging it and preparing another review.</p></section>
+  <details><summary>Before changing company sign-in</summary><p>Register this Lightwork installation with your company's sign-in provider. Enter its application details here; passwords are sealed and never displayed again. Preserve an administrator's working way back in. Provider reachability alone cannot establish that replacement access works: Lightwork refuses a switch that removes your only sign-in.</p><p>Single sign-on provider details can use the provider's secure web address. Certificates, server file choices, and longer lists have their existing protected controls under <a href="/settings/all?group=people-access">People &amp; access</a>. Proxy sign-in requires your company to make that proxy the sole route to Lightwork. This page cannot establish that network boundary.</p><p>When a server or workspace controls a value, this page shows it as fixed. Changes here cannot replace that higher authority. New policy affects new work; it does not rebuild an already running work area.</p></details>
+  <p><a class="btn btn--ghost" href="/settings">Return to Settings</a><a class="btn btn--ghost" href="/settings/all?group=protected-work-area">All protected work area controls</a></p>
+</section>
+<style>
+#installation-security{max-width:64rem;min-width:0}#installation-security .is-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr));gap:var(--space-3)}#installation-security .is-summary p{padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md)}#installation-security form{display:grid;gap:var(--space-3);margin-block:var(--space-4)}#installation-security input:not([type=checkbox]),#installation-security select,#installation-security textarea{width:100%;min-width:0;max-width:100%}#installation-security .is-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-block:var(--space-3)}#installation-security button,#installation-security a{white-space:normal;max-width:100%}#installation-security p,#installation-security li,#installation-security summary,#installation-security button,#installation-security a{overflow-wrap:anywhere}#installation-security details summary{cursor:pointer;min-height:2.75rem;padding-block:var(--space-2)}#installation-security [hidden]{display:none!important}
+</style>
+<script src="/static/lightwork-installation-security.js" defer></script>
+{% endblock %}

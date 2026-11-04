@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Find personal data · Lightwork{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="/static/lightwork-privacy-data-discovery.css">
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+@media (max-width: 540px) {
+  .pdd-shell table { display: block; }
+  .pdd-shell thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .pdd-shell tbody { display: grid; gap: var(--space-3); }
+  .pdd-shell tbody tr { display: grid; min-width: 0; padding: var(--space-3); border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--glass-soft); }
+  .pdd-shell td { display: grid; grid-template-columns: minmax(4.5rem, .65fr) minmax(0, 1.35fr); gap: var(--space-2); min-width: 0; padding: var(--space-2) 0; border: 0; }
+  .pdd-shell td::before { content: attr(data-label); color: var(--muted); font-weight: var(--font-semibold); }
+  .pdd-shell td[data-label="Actions"] { display: block; }
+  .pdd-shell td[data-label="Actions"]::before { display: block; margin-bottom: var(--space-2); }
+  .pdd-shell td .btn { min-height: 44px; }
+  .pdd-fields { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<div class="pdd-shell" id="pdd-root"
+     data-api-base="{{ privacy_data_discovery_api_base }}"
+     data-copilot-page="{{ privacy_data_discovery_page_path }}"
+     data-feature-enabled="{{ 'true' if privacy_data_discovery_enabled else 'false' }}"
+     data-can-operate="{{ 'true' if privacy_data_discovery_can_operate else 'false' }}"
+     data-can-audit="{{ 'true' if privacy_data_discovery_can_audit else 'false' }}"
+     data-can-admin="{{ 'true' if privacy_data_discovery_can_admin else 'false' }}">
+  {% from "_hero.html" import hero %}
+  {{ hero('Privacy', 'Find personal data',
+          subtitle='Scan your storage and systems for personal data',
+          lede='Connect a storage service or system, scan it, and check what was found. A second
+                person approves each finding before it is added to your data map.') }}
+  <p>{{ back_link('/privacy', 'Privacy') }}</p>
+
+  <details class="panel">
+    <summary>About this page&rsquo;s safeguards</summary>
+    <ul class="pdd-list">
+      <li>Lightwork can scan Amazon S3, Azure Blob Storage, Google Cloud Storage, Snowflake, ServiceNow and Microsoft Entra.</li>
+      <li>A scan only covers the source and limits you set. Finding nothing does not prove there is no personal data.</li>
+      <li>Text, web pages, spreadsheets saved as text and similar files are read. PDFs, Office files, images, archives, audio and video are listed as not read, never treated as checked.</li>
+      <li>Lightwork keeps only fingerprints and counts of what it finds, never the personal data itself.</li>
+      <li>Approved findings update Lightwork&rsquo;s own data map. You can separately review and confirm their use in a saved Data Use dataset. Nothing is changed in the scanned systems.</li>
+    </ul>
+  </details>
+
+  {% from "_module_gate.html" import module_gate %}
+  {% if not privacy_data_discovery_enabled %}
+  {{ module_gate('privacy_automation.data_discovery', 'Finding personal data',
+                 detail='Scan your storage and systems for personal data and add approved findings to your data map.',
+                 status=acm_module_status, can_activate=privacy_data_discovery_can_admin) }}
+  {% else %}
+  <p id="pdd-ready" class="muted" role="status" aria-live="polite">Checking whether scanning is set up…</p>
+  <p id="pdd-status" class="muted" role="status" aria-live="polite"></p>
+
+  <div class="section-head"><h2>Data sources</h2>
+    {% if privacy_data_discovery_can_admin %}<button type="button" class="btn btn--primary" id="pdd-new-source">Add a data source</button>{% endif %}</div>
+  <div class="panel" id="pdd-sources"><p class="muted">Loading…</p></div>
+
+  {% if privacy_data_discovery_can_admin %}
+  <section class="panel" id="pdd-source-panel" hidden aria-labelledby="pdd-source-title">
+    <h2 id="pdd-source-title">Add a data source</h2>
+    <p class="muted pdd-top">Choose where the data lives and the saved connection Lightwork should use. <a href="/connections">Manage connections</a></p>
+    <form id="pdd-source-form" autocomplete="off">
+      <div class="pdd-fields">
+        <label for="pdd-name">Name for this source
+          <input id="pdd-name" class="input" maxlength="80" required placeholder="For example: Customer files">
+        </label>
+        <label for="pdd-provider">Where the data lives
+          <select id="pdd-provider" class="select" required><option value="">Loading…</option></select>
+        </label>
+        <label for="pdd-connection">Saved connection
+          <select id="pdd-connection" class="select" required><option value="">Choose where the data lives first</option></select>
+        </label>
+        <label for="pdd-resource"><span id="pdd-resource-label">Which bucket, table or folder</span>
+          <input id="pdd-resource" class="input" maxlength="128" required>
+        </label>
+      </div>
+      <p id="pdd-resource-help" class="muted"></p>
+      <div class="pdd-actions">
+        <button type="submit" class="btn btn--primary">Save source</button>
+        <button type="button" class="btn btn--ghost" id="pdd-source-cancel">Cancel</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  <div class="section-head"><h2>Scans</h2>
+    {% if privacy_data_discovery_can_operate %}<button type="button" class="btn btn--ghost" id="pdd-enqueue-due">Queue scheduled scans that are due</button>{% endif %}</div>
+  <div class="panel" id="pdd-jobs"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>Scan reports</h2></div>
+  <div class="panel" id="pdd-reports"><p class="muted">Loading…</p></div>
+
+  <section class="panel" id="pdd-findings-panel" hidden aria-labelledby="pdd-findings-title">
+    <h2 id="pdd-findings-title">What was found</h2>
+    <p id="pdd-findings-summary" class="muted"></p>
+    <div id="pdd-findings"></div>
+    <div id="pdd-diff"></div>
+  </section>
+
+  <div class="section-head"><h2>Waiting for approval</h2></div>
+  <p class="muted">A different person must approve each checked finding before it is added to your data map.</p>
+  <div class="panel" id="pdd-reviews"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>What your data map shows</h2></div>
+  <div class="panel" id="pdd-inventory"><p class="muted">Loading…</p></div>
+
+  {% if privacy_data_discovery_can_admin %}
+  <div class="section-head"><h2>Data map updates</h2>
+    <button type="button" class="btn btn--ghost" id="pdd-process">Process waiting updates</button></div>
+  <div class="panel" id="pdd-work"><p class="muted">Loading…</p></div>
+  {% endif %}
+
+  {% include "_privacy_discovery_data_use.html" %}
+
+  <div class="panel pdd-actions">
+    {% if privacy_data_discovery_can_audit %}
+    <button type="button" class="btn btn--ghost" id="pdd-verify">Check the activity history is intact</button>
+    <button type="button" class="btn btn--ghost" id="pdd-audit">Download the activity history</button>
+    {% endif %}
+    {% if privacy_data_discovery_can_admin %}
+    <button type="button" class="btn btn--ghost" id="pdd-maintenance">Tidy up old data map updates</button>
+    <button type="button" class="btn btn--ghost" id="pdd-rotate-key">Replace the protection key</button>
+    <button type="button" class="btn btn--ghost" id="pdd-purge">Delete expired reports</button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-privacy-data-discovery.js" defer></script>
+<script src="/static/lightwork-privacy-discovery-data-use.js" defer></script>
+{% endblock %}

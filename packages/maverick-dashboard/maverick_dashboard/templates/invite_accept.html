@@ -1,0 +1,83 @@
+{% extends "public_base.html" %}
+{% from "_passphrase_fields.html" import styles, passphrase, script with context %}
+{% block title %}{{ "You're invited" if invite else "Invitation" }} · Lightwork{% endblock %}
+{% block public_label %}Invitation{% endblock %}
+{% block public_footer %}Invitation to Lightwork{% endblock %}
+{% block head_extra %}{{ styles() }}{% endblock %}
+{% block content %}
+<div class="panel own">
+  {% if state in ('accepted', 'unconfirmed') %}
+  <h1 class="page-title">{{ 'Invitation accepted' if state == 'accepted' else 'Invitation result not confirmed' }}</h1>
+  {% if state == 'accepted' %}
+  <p class="own__lede">Your original invitation for {{ invite.email }} was accepted{% if invite.workspace %} to {{ invite.workspace }}{% endif %} as <strong>{{ invite.role | role_label }}</strong>.</p>
+  <p class="own__hint">The saved grant was confirmed {{ grant_confirmed_at | datetime }}. Reopening this link reads that result; it does not give access again.</p>
+  <p>Current direct role: <strong>{{ current_role | role_label if current_role else 'No direct membership' }}</strong>. Your administrator may have changed your access since acceptance.</p>
+  {% else %}
+  <p class="own__lede">The one-time link was used by your account, but the original access save was not confirmed.</p>
+  <p>Current membership alone cannot confirm that request. It will not be retried. {% if passphrase_sign_in %}Ask your administrator to check your workspace role on the Users page and give it back if needed. Then sign in with your email and the passphrase you chose.{% else %}Ask your administrator to check your workspace role and issue a replacement invitation if needed.{% endif %}</p>
+  {% endif %}
+  {% if message %}<p class="own__alert" role="alert">{{ message }}</p>{% endif %}
+  <div class="own__actions">
+    {% if can_open %}<form method="post" action="/auth/invite/{{ invite.token }}/workspace" data-draft-recovery="off">
+      <input type="hidden" name="_expected_tenant" value="{{ request.state.workspace_expected_tenant | default('', true) }}">
+      <button type="submit" class="btn btn--primary">Open {{ invite.workspace }}</button>
+    </form>{% else %}<a href="/workspace/tenant?next=/" class="btn">Choose an available workspace</a>{% endif %}
+  </div>
+  {% elif invite %}
+  <h1 class="page-title">{{ 'Use the invited account' if state == 'wrong_account' else "You're invited" }}</h1>
+  <p class="own__lede">{{ invite.email }} is invited {% if invite.workspace %}to the {{ invite.workspace }} workspace{% else %}to Lightwork{% endif %} as <strong>{{ invite.role | role_label }}</strong>{% if invite.role_help %}:
+    you can {{ invite.role_help }}{% endif %}.</p>
+  {% if message %}<p class="own__alert" role="alert">{{ message }}</p>{% endif %}
+  {% if state == 'local' %}
+  <p>Choose a passphrase to finish. Next time, sign in with your email and this passphrase.
+    An invitation cannot replace it later, so keep it safe; if you forget it, ask the installation owner to reset it.</p>
+  <form method="post" data-draft-recovery="off" id="owner-form" novalidate>
+    <label class="own__field"><span>Email address</span>
+      <input class="input" type="email" id="invite-email" autocomplete="username" value="{{ invite.email }}" readonly aria-describedby="invite-email-help">
+      <span class="own__hint" id="invite-email-help">The invitation was sent to this address. You sign in with it.</span>
+    </label>
+    {{ passphrase(new=True) }}
+    <div class="own__actions">
+      <button type="submit" class="btn btn--primary">Accept invitation</button>
+    </div>
+  </form>
+  {% elif state == 'sso_sign_in' %}
+  <p>You sign in with your company account, so there is no Lightwork passphrase to choose.</p>
+  <div class="own__actions">
+    <a class="btn btn--primary" href="{{ invite.sign_in_href }}">Sign in with your company account to accept</a>
+  </div>
+  {% elif state == 'wrong_account' %}
+  <p role="alert">This company sign-in does not match the invited email address. The invitation link has not been used.</p>
+  <p>Sign out, sign in with {{ invite.email }}, then open this invitation again.</p>
+  {% elif state == 'sso_accept' %}
+  <p>You are signed in as {{ principal }}. Accepting gives this account the role above.
+    You sign in with your company account, so there is no Lightwork passphrase to choose.</p>
+  <form method="post" data-draft-recovery="off">
+    <div class="own__actions">
+      <button type="submit" class="btn btn--primary">Accept invitation</button>
+    </div>
+  </form>
+  {% endif %}
+  {% elif state == 'bind_failed' %}
+  <h1 class="page-title">Invitation could not be completed</h1>
+  <p class="own__lede">Your access save could not be confirmed. This one-time link cannot save access again.</p>
+  <p>{% if passphrase_sign_in %}Ask your administrator to check your current role on the Users page and give it back if needed. Then sign in with your email and the passphrase you chose.{% else %}Ask your administrator to check your current workspace role and send a new invitation link if needed.{% endif %}</p>
+  {% elif state == 'gone' %}
+  <h1 class="page-title">Invitation not available</h1>
+  <p class="own__lede">This invitation link is invalid, expired, already used, or revoked.</p>
+  <p>Ask your administrator to send a new one.{% if passphrase_sign_in %} If you already accepted it,
+    <a href="/auth/local-login">sign in with your email and passphrase</a>.{% endif %}</p>
+  {% elif state == 'blocked' %}
+  <h1 class="page-title">Open the invitation link again</h1>
+  <p class="own__lede">For your security, an invitation can only be accepted from its own page.
+    Open the link from your email or message and try again.</p>
+  {% elif state == 'sign_in_required' %}
+  <h1 class="page-title">Sign in required</h1>
+  <p class="own__lede">Sign in with your company account first, then open the invitation link again.</p>
+  {% else %}
+  <h1 class="page-title">Not found</h1>
+  <p class="own__lede">Nothing here.</p>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts_extra %}{% if state == 'local' %}{{ script() }}{% endif %}{% endblock %}

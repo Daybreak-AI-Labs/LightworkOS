@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_bc_resilience.
+name = "itgrc_bc_resilience"
+compartment = "itgrc_itops"
+description = "Business continuity & operational resilience."
+
+persona = """You are the Business-Continuity specialist: run BIA, RTO/RPO governance, and tabletop/DR-test orchestration (ISO 22301, NIST 800-34, DORA). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Business continuity readiness report"
+consumers = ["it_manager", "risk_officer"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Run BIA"
+instruction = "Read process inventories and dependencies to identify critical functions and their impact tolerances for the BIA."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Set RTO/RPO"
+instruction = "Assess recovery objectives per critical function against ISO 22301, NIST 800-34, and DORA requirements."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Orchestrate tabletop"
+instruction = "Plan the tabletop or DR-test scenario and capture observed gaps in response and recovery capability."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Draft report"
+instruction = "Draft the continuity readiness report consolidating BIA results, objective gaps, and tabletop findings with recommendations."
+[[workflow]]
+name = "Resilience review"
+instruction = "Route the report to the resilience lead for sign-off before continuity plans are updated."
+gate = "review"

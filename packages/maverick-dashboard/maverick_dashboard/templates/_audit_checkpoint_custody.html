@@ -1,0 +1,26 @@
+<section class="panel" id="independent-checkpoint-custody" aria-labelledby="independent-checkpoint-title">
+  <h2 id="independent-checkpoint-title">Independent history protection</h2>
+  <p>Keep a signed record of your history outside Lightwork, locked against changes for an agreed period. A second installation administrator reviews each copy before you send it. Check independent history to detect missing or replaced local checkpoints.</p>
+  <p class="muted">Set up <a href="/compliance">Compliance storage and retention</a> and your encrypted <a href="/connections">Amazon S3 account in Connections</a> for the same bucket and region.</p>
+  <details class="ops-sub">
+    <summary>Storage permissions, protection and limits</summary>
+    <p>Amazon must enable Object Lock and versioning and permit listing versions, reading exact versions and retention, and writing objects with retention. Keys stay in Connections; do not put them in Chat.</p>
+    <p>This protects the retained version during its lock period. It does not prove that your storage administrators are independent, that records after a checkpoint are correct, or that Amazon will always remain available. For stronger separation, arrange storage access and custody with a separate administrator.</p>
+    <p>A check reads all retained versions in the configured folder, including versions hidden by a deletion marker. It refuses incomplete coverage beyond 10,000 versions, 64 MB of checkpoint content or 60 seconds. Each copy holds at most 2,000 checkpoints and 4 MB.</p>
+  </details>
+  <p id="acc-status" role="status" aria-live="polite">Loading independent history controls…</p>
+  <div class="ops-row">
+    <label for="acc-account">Your saved Amazon account
+      <select class="select" id="acc-account"><option value="">Choose an account</option></select>
+    </label>
+    <button type="button" class="btn btn--primary" id="acc-review">Review a checkpoint copy</button>
+    <button type="button" class="btn btn--ghost" id="acc-check">Check independent history</button>
+    <button type="button" class="btn btn--ghost" id="acc-refresh">Refresh choices</button>
+  </div>
+  <p class="muted">Review the complete copy, people, destination and locked retention before anyone approves or sends it. Audit entry contents and saved keys are never included.</p>
+  <div id="acc-check-result" role="status" aria-live="polite"></div>
+  <div id="acc-review-result" aria-live="polite"></div>
+  <h3>Saved copy requests</h3>
+  <div id="acc-requests">Loading…</div>
+</section>
+<script src="/static/lightwork-audit-checkpoint-custody.js" defer></script>

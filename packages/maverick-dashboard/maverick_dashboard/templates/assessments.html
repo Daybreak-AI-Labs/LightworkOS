@@ -1,0 +1,672 @@
+{% extends "base.html" %}
+{% block title %}Assessments · Lightwork{% endblock %}
+{% block content %}
+<style>
+  :where(body){
+    --glass: color-mix(in srgb, var(--panel) 68%, transparent);
+    --glass-soft: color-mix(in srgb, var(--panel) 54%, transparent);
+    --glass-border: color-mix(in srgb, var(--text) 13%, transparent);
+    --glass-edge: inset 0 1px 0 0 color-mix(in srgb, #ffffff 8%, transparent);
+  }
+  .as-lede{ margin: 0 0 var(--space-4); }
+  .as-lede p{ margin: var(--space-1) 0 0; color: var(--muted); max-width: 48rem; }
+  .as-bar{ display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .as-bar__spacer{ margin-inline-start: auto; }
+  .as-grid{ display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: var(--space-5); align-items: start; }
+  @media (max-width: 960px){ .as-grid{ grid-template-columns: 1fr; } }
+  .as-grid > div, .as-card, .as-field{ min-width: 0; }
+  .as-card{ border: 1px solid var(--glass-border); border-radius: var(--radius-lg);
+    background: var(--glass-soft); box-shadow: var(--shadow-sm), var(--glass-edge);
+    -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); padding: var(--space-4); }
+  .as-card__title{ font-weight: var(--font-semibold); font-size: var(--text-lg); margin: 0 0 var(--space-3); overflow-wrap: anywhere; }
+  .as-detail-head{ display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+  .as-detail-head .as-card__title{ margin: 0; min-width: 0; flex: 1 1 12rem; }
+  .as-item{ display: flex; align-items: center; gap: var(--space-3); width: 100%; text-align: start;
+    border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--surface-sunken);
+    padding: var(--space-3); margin-bottom: var(--space-2); cursor: pointer; font: inherit; color: var(--text); }
+  .as-item:hover{ border-color: var(--brand-border); }
+  .as-item.sel{ border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-subtle); }
+  .as-item__main{ flex: 1; min-width: 0; }
+  .as-item__name{ font-weight: var(--font-semibold); overflow-wrap: anywhere; }
+  .as-item__sub{ color: var(--muted); font-size: var(--text-sm); }
+  .pill{ font-size: var(--text-xs); padding: 1px 9px; border-radius: var(--radius-pill);
+    border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+  .pill.status-draft{ color: var(--muted); }
+  .pill.status-in_review{ color: var(--warn); border-color: currentColor; }
+  .pill.status-needs_review{ color: var(--danger); border-color: currentColor; }
+  .pill.status-reviewed{ color: var(--accent); border-color: currentColor; }
+  .dot{ width: 9px; height: 9px; border-radius: var(--radius-round); display: inline-block; }
+  .dot.ok{ background: var(--accent); } .dot.attention{ background: var(--danger); }
+  .lenses-mini{ display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .lenses-mini span{ display: inline-flex; gap: var(--space-1); align-items: center; font-size: var(--text-xs); color: var(--muted); }
+
+  .drift{ border: 1px solid var(--danger); color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent);
+    border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); font-size: var(--text-sm); margin-bottom: var(--space-3); }
+  .lens{ border: 1px solid var(--glass-border); border-radius: var(--radius-md); margin-bottom: var(--space-3); overflow: hidden; }
+  .lens__head{ display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--glass); }
+  .lens__title{ font-weight: var(--font-semibold); }
+  .lens__body{ padding: var(--space-2) var(--space-3); }
+  .finding{ padding: var(--space-2) 0; border-top: 1px solid var(--hairline); }
+  .finding:first-child{ border-top: 0; }
+  .finding__head{ display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .sev{ font-size: 10px; text-transform: uppercase; letter-spacing: .04em; padding: 1px 7px; border-radius: var(--radius-pill); border: 1px solid currentColor; }
+  .sev.low{ color: var(--muted); } .sev.medium{ color: var(--warn); } .sev.high{ color: var(--danger); }
+  .finding__note{ color: var(--text); font-size: var(--text-sm); margin: var(--space-1) 0 0; }
+  .finding__mit{ color: var(--muted); font-size: var(--text-sm); margin: var(--space-0-5) 0 0; }
+  .finding__ev{ color: var(--accent); font-size: var(--text-xs); margin: var(--space-1) 0 0; }
+  .lens__actions{ display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-top: var(--space-2); }
+  .as-empty{ color: var(--muted); text-align: center; padding: var(--space-6) var(--space-3);
+    border: 1px dashed var(--glass-border); border-radius: var(--radius-lg); }
+  .as-field{ display: block; margin-bottom: var(--space-3); }
+  .as-field > span{ display: block; font-weight: var(--font-semibold); margin-bottom: var(--space-1); font-size: var(--text-sm); }
+  .as-card input, .as-card select{ width: 100%; min-width: 0; max-width: 100%; background: var(--surface-sunken); border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius-md); padding: 0.5rem 0.65rem; font: inherit; }
+</style>
+
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Governance', 'Assessments',
+               subtitle='Continuous review',
+               lede='Privacy, security and AI-risk reviews of every agent,
+                     specialist and flow. Lightwork drafts each review from what
+                     each one is allowed to do; a person approves each
+                     part, and anything that changes later is flagged for a
+                     fresh review.') %}
+    {{ state('Current state', 'Checked every day',
+             badge='automatic', badge_class='ok',
+             copy='Every agent, specialist and flow is re-checked daily; anything that
+                   changed since it was approved shows up under Needs
+                   attention.') }}
+  {% endcall %}
+
+  <div class="as-bar">
+    <span class="pill" id="as-due-count" title="Subjects needing attention">—</span>
+    <button class="btn btn--ghost" type="button" id="as-sweep" title="Re-check the saved assessments now for changes">Re-check saved assessments</button>
+    <span class="as-bar__spacer"></span>
+    <a class="btn btn--ghost" href="/api/v1/assessments/export?format=csv" id="as-export-csv">Download spreadsheet</a>
+  </div>
+  <p class="muted" id="as-page-msg" role="status" aria-live="polite" aria-atomic="true"
+     style="min-height:1.25rem; margin:calc(-1 * var(--space-2)) 0 var(--space-3);"></p>
+
+  <div class="as-grid">
+    <!-- LEFT: the register + detail -->
+    <div>
+      <div class="as-card" style="margin-bottom: var(--space-4);">
+        <div class="as-card__title">Register</div>
+        <div id="as-list"><p class="muted">Loading…</p></div>
+      </div>
+      <div class="as-card" id="as-detail-card" hidden>
+        <div id="as-detail"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: assess a subject + needs-attention -->
+    <div>
+      <div class="as-card" style="margin-bottom: var(--space-4);">
+        <div class="as-card__title">Assess a subject</div>
+        {% if agents|length > 12 %}
+        <label class="as-field">
+          <span>Find an agent or specialist</span>
+          <input class="input" type="search" id="as-agent-filter" autocomplete="off"
+                 placeholder="Type part of a name or department" aria-describedby="as-agent-filter-count">
+          <span class="muted" id="as-agent-filter-count" role="status" aria-live="polite" style="font-size: var(--text-sm);"></span>
+        </label>
+        {% endif %}
+        <label class="as-field">
+          <span>Agent or specialist</span>
+          <select id="as-agent" aria-label="Agent or specialist to assess" data-typeahead data-typeahead-placeholder="Type a name or department…">
+            <option value="">{{ 'Choose an agent or specialist…' if agents else 'No agents or specialists yet' }}</option>
+            {% for group in agents|groupby('group') %}<optgroup label="{{ group.grouper }}">
+              {% for a in group.list %}<option value="{{ a.name }}">{{ a.label }}</option>{% endfor %}
+            </optgroup>{% endfor %}
+          </select>
+        </label>
+        {% if flows %}
+        <label class="as-field">
+          <span>…or a flow</span>
+          <select id="as-flow" aria-label="Flow to assess">
+            <option value="">Choose a flow…</option>
+            {% for f in flows %}<option value="{{ f.id }}">{{ f.name }}</option>{% endfor %}
+          </select>
+        </label>
+        {% endif %}
+        <label class="as-field">
+          <span>Template</span>
+          <select id="as-template" aria-label="Assessment template"></select>
+        </label>
+        <button class="btn btn--primary" type="button" id="as-draft">Run assessment</button>
+        <span class="muted" id="as-draft-msg" role="status" aria-live="polite" style="display:block; margin-top: var(--space-2); font-size: var(--text-sm);"></span>
+      </div>
+      <div class="as-card">
+        <div class="as-card__title">Needs attention</div>
+        <div id="as-due"><p class="muted">—</p></div>
+      </div>
+    </div>
+  </div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  // Narrow the long agent list as the person types: matches the readable
+  // name or the department. Options stay in the select, only hidden.
+  var filter = document.getElementById('as-agent-filter');
+  var picker = document.getElementById('as-agent');
+  var count = document.getElementById('as-agent-filter-count');
+  if (!filter || !picker) return;
+  var timer = null;
+  function apply() {
+    var words = filter.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    var shown = 0;
+    Array.prototype.forEach.call(picker.querySelectorAll('optgroup'), function (group) {
+      var groupName = (group.label || '').toLowerCase();
+      var any = false;
+      Array.prototype.forEach.call(group.querySelectorAll('option'), function (option) {
+        var text = (option.textContent + ' ' + groupName).toLowerCase();
+        var match = words.every(function (w) { return text.indexOf(w) !== -1; });
+        option.hidden = !match;
+        option.disabled = !match;
+        if (match) { any = true; shown += 1; }
+      });
+      group.hidden = !any;
+    });
+    var selected = picker.options[picker.selectedIndex];
+    if (selected && selected.disabled) picker.value = '';
+    count.textContent = words.length
+      ? (shown ? shown + (shown === 1 ? ' match.' : ' matches.') : 'Nothing matches. Try other words.')
+      : '';
+  }
+  filter.addEventListener('input', function () {
+    clearTimeout(timer);
+    timer = setTimeout(apply, 120);
+  });
+})();
+(function () {
+  'use strict';
+  var LENS_LABEL = { privacy: 'Privacy', security: 'Security', ai_risk: 'AI risk' };
+  var STATUS_LABEL = { draft: 'Draft', in_review: 'In review', needs_review: 'Needs review', reviewed: 'Reviewed' };
+  var KIND_LABEL = { agent: 'Agent or specialist', flow: 'Flow' };
+  var SEVERITY_LABEL = { low: 'Low', medium: 'Medium', high: 'High' };
+  var CADENCE = [[0, 'Never'], [90, 'Every 3 months'], [180, 'Every 6 months'], [365, 'Every year']];
+  function statusLabel(value) {
+    return STATUS_LABEL[value] || (window.mvHuman ? window.mvHuman(value) : String(value || ''));
+  }
+  var listEl = document.getElementById('as-list');
+  var dueEl = document.getElementById('as-due');
+  var dueCount = document.getElementById('as-due-count');
+  var detailCard = document.getElementById('as-detail-card');
+  var detailEl = document.getElementById('as-detail');
+  var tplSel = document.getElementById('as-template');
+  var draftMsg = document.getElementById('as-draft-msg');
+  var pageMsg = document.getElementById('as-page-msg');
+  var current = null;   // {kind, subject}
+  var renderedAssessment = null;
+  var assessmentFormOpen = false, assessmentConfirmOpen = false;
+  var evidenceDrafts = new Map();
+  var viewGeneration = 0;
+  var canReview = {{ assessment_can_review|default(false)|tojson }};
+  var subjectLabels = { agent: new Map(), flow: new Map() };
+  ['agent', 'flow'].forEach(function (kind) {
+    var select = document.getElementById('as-' + kind);
+    if (!select) return;
+    Array.prototype.forEach.call(select.options, function (option) {
+      if (option.value) subjectLabels[kind].set(option.value, option.textContent.trim());
+    });
+  });
+  function subjectName(kind, subject) {
+    var label = subjectLabels[kind] && subjectLabels[kind].get(subject);
+    return label || ((kind === 'agent' ? 'Specialist' : 'Workflow') + ' — name unavailable in this view');
+  }
+  function subjectReference(a) {
+    if (subjectLabels[a.kind] && subjectLabels[a.kind].has(a.subject)) return '';
+    return '<details><summary>Recorded reference</summary><p class="muted" style="overflow-wrap:anywhere;">'
+      + esc(a.subject) + '</p></details>';
+  }
+
+  // Escape for both element-content and quoted-attribute contexts: the old
+  // textContent->innerHTML trick left " and ' unescaped, so values placed in
+  // double-quoted attributes (data-subject etc.) could break out. Escape all
+  // five HTML-significant characters.
+  function esc(s) {
+    return (s == null ? '' : String(s)).replace(/[&<>"']/g, function (c) {
+      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+    });
+  }
+  function jfetch(url, opts) {
+    var started = viewGeneration;
+    opts = opts || {}; opts.headers = opts.headers || {};
+    if (opts.body) opts.headers['Content-Type'] = 'application/json';
+    return fetch(url, opts).then(function (response) {
+      if (started !== viewGeneration) { var changed = new Error('The current account or workspace changed.'); changed.contextChanged = true; throw changed; }
+      return response;
+    });
+  }
+  function responseData(response) {
+    var started = viewGeneration;
+    return response.json().catch(function () { return {}; }).then(function (data) {
+      if (started !== viewGeneration) { var changed = new Error('The current account or workspace changed.'); changed.contextChanged = true; throw changed; }
+      return { ok: response.ok, status: response.status, data: data };
+    });
+  }
+  function responseDetail(result, fallback) {
+    var reason = typeof window.mvErrorText === 'function'
+      ? window.mvErrorText({ status: (result && result.status) || 0 })
+      : 'Something went wrong. Try again.';
+    return (fallback ? fallback + ' ' : '') + reason;
+  }
+  function pageMessage(text, error) {
+    pageMsg.textContent = text || '';
+    pageMsg.style.color = error ? 'var(--danger)' : 'var(--muted)';
+  }
+  function detailMessage(text, error) {
+    var target = document.getElementById('as-detail-msg') || pageMsg;
+    target.textContent = text || '';
+    target.style.color = error ? 'var(--danger)' : 'var(--muted)';
+  }
+  function recoveryMessage(target, message, assessment) {
+    target.replaceChildren(); target.style.color = 'var(--danger)';
+    var explanation = document.createElement('span'); explanation.textContent = message + ' ';
+    target.appendChild(explanation);
+    var read = document.createElement('button'); read.type = 'button'; read.className = 'btn btn--ghost';
+    read.textContent = assessment ? 'Read current assessment' : 'Read current register';
+    read.addEventListener('click', function () {
+      read.disabled = true;
+      if (assessment) open(assessment.kind, assessment.subject, read, true);
+      else reload({preserveMessage: true}).then(function (value) {
+        if (value) pageMessage('The current register was read. This does not confirm the earlier request; check its assessments before starting another check.', false);
+      }).finally(function () { if (read.isConnected) read.disabled = false; });
+    });
+    target.appendChild(read);
+  }
+  function mutationFailure(result, assessment, fallback) {
+    if (result && [401, 403].includes(result.status)) {
+      window.LightworkCapabilityAssessmentView.clear();
+      pageMessage('Your current access does not allow this change. Earlier saved work remains; reopen the register after checking your access.', true);
+      return;
+    }
+    var target = document.getElementById('as-detail-msg') || pageMsg;
+    var uncertain = !result || result.status >= 500;
+    recoveryMessage(target, uncertain
+      ? 'This change could not be confirmed. It may already be saved. Read the current assessment before deciding again.'
+      : result.status === 409
+        ? 'This assessment or your access changed. Your entered work is kept; read the latest assessment before deciding again.'
+        : responseDetail(result, fallback), assessment);
+  }
+  function renderCurrent(a) {
+    var cadence = document.getElementById('as-cadence');
+    var keep = current && current.kind === a.kind && current.subject === a.subject && cadence && renderedAssessment
+      && Number(cadence.value) !== (renderedAssessment.cadence_days || 0);
+    var value = keep ? cadence.value : '', label = keep ? cadence.selectedOptions[0].textContent : '';
+    renderDetail(a);
+    if (keep) {
+      var next = document.getElementById('as-cadence');
+      if (!Array.prototype.some.call(next.options, function (option) { return option.value === value; })) next.add(new Option(label, value));
+      next.value = value;
+    }
+  }
+
+  function statusPill(a) {
+    return '<span class="pill status-' + esc(a.status) + '">' + esc(statusLabel(a.status)) + '</span>';
+  }
+  function lensesMini(a) {
+    var ls = a.lens_status || {};
+    return '<span class="lenses-mini">' + Object.keys(ls).map(function (k) {
+      return '<span title="' + esc(LENS_LABEL[k] || k) + '"><span class="dot ' + esc(ls[k]) + '"></span>' + esc((LENS_LABEL[k] || k)[0]) + '</span>';
+    }).join('') + '</span>';
+  }
+
+  function renderList(items) {
+    if (!items.length) { listEl.innerHTML = '<div class="as-empty">No assessments yet. Choose an agent, specialist or flow under Assess a subject and press Run assessment.</div>'; return; }
+    listEl.innerHTML = '';
+    items.forEach(function (a) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'as-item'; b.dataset.kind = a.kind; b.dataset.subject = a.subject;
+      if (current && current.kind === a.kind && current.subject === a.subject) b.classList.add('sel');
+      b.innerHTML = '<span class="as-item__main"><div class="as-item__name">' + esc(subjectName(a.kind, a.subject))
+        + '</div><div class="as-item__sub">' + esc(KIND_LABEL[a.kind] || a.kind) + (a.open_high ? ' · ' + a.open_high + ' serious ' + (a.open_high === 1 ? 'issue' : 'issues') + ' open' : '') + '</div></span>'
+        + lensesMini(a) + statusPill(a);
+      b.addEventListener('click', function () { open(a.kind, a.subject); });
+      listEl.appendChild(b);
+    });
+  }
+
+  function renderDue(items) {
+    dueCount.textContent = items.length ? (items.length + ' need attention') : 'All reviewed';
+    dueCount.className = 'pill' + (items.length ? ' status-needs_review' : ' status-reviewed');
+    if (!items.length) { dueEl.innerHTML = '<p class="muted">Nothing due. New drafts and changed subjects show up here.</p>'; return; }
+    dueEl.innerHTML = items.map(function (a) {
+      return '<button type="button" class="as-item" data-kind="' + esc(a.kind) + '" data-subject="' + esc(a.subject) + '">'
+        + '<span class="as-item__main"><div class="as-item__name">' + esc(subjectName(a.kind, a.subject)) + '</div>'
+        + '<div class="as-item__sub">' + esc(KIND_LABEL[a.kind] || a.kind) + (a.drift_note ? ' · changed since approval' : '') + '</div></span>' + statusPill(a) + '</button>';
+    }).join('');
+    Array.prototype.forEach.call(dueEl.querySelectorAll('.as-item'), function (el) {
+      el.addEventListener('click', function () { open(el.dataset.kind, el.dataset.subject); });
+    });
+  }
+
+  function findingHTML(kind, subject, lens, f) {
+    var ev = (f.evidence || []).map(function (e) { return '<div class="finding__ev">Evidence: ' + esc(e) + '</div>'; }).join('');
+    return '<div class="finding">'
+      + '<div class="finding__head"><span class="sev ' + esc(f.severity) + '">' + esc(SEVERITY_LABEL[f.severity] || f.severity) + '</span>'
+      + '<strong>' + esc(window.mvHuman ? window.mvHuman(f.control) : f.control) + '</strong>'
+      + (f.status === 'accepted' ? ' <span class="pill status-reviewed">Accepted</span>' : '') + '</div>'
+      + '<p class="finding__note">' + esc(f.note) + '</p>'
+      + '<p class="finding__mit">What to do: ' + esc(f.mitigation) + '</p>' + ev
+      + '<button type="button" class="btn btn--ghost as-ev" data-lens="' + esc(lens) + '" data-control="' + esc(f.control) + '" style="font-size:var(--text-xs); margin-top:4px;">Add evidence</button>'
+      + '</div>';
+  }
+
+  function renderDetail(a) {
+    pageMessage('', false);
+    var changedSelection = !current || current.kind !== a.kind || current.subject !== a.subject;
+    current = { kind: a.kind, subject: a.subject, revision: a.revision || 0 };
+    renderedAssessment = a;
+    detailCard.hidden = false;
+    var drift = a.drift_note ? '<div class="drift">Changed since it was approved: ' + esc(a.drift_note) + '</div>' : '';
+    var head = '<div class="as-detail-head">'
+      + '<div class="as-card__title">' + esc(subjectName(a.kind, a.subject)) + '</div>' + statusPill(a)
+      + '<button type="button" class="btn btn--ghost" id="as-rerun" style="margin-inline-start:auto; font-size:var(--text-sm);">Re-assess</button>'
+      + '<button type="button" class="btn btn--danger" id="as-del" style="font-size:var(--text-sm);">Delete assessment</button></div>'
+      + '<p class="muted" style="margin:0 0 var(--space-2); font-size:var(--text-sm);">' + esc(KIND_LABEL[a.kind] || a.kind) + (a.description ? ' · ' + esc(a.description) : '') + '</p>' + subjectReference(a)
+      + '<p class="muted" id="as-detail-msg" role="status" aria-live="polite" style="margin:0 0 var(--space-3); font-size:var(--text-sm);"></p>';
+    var lenses = Object.keys(a.lenses || {}).map(function (lens) {
+      var lv = a.lenses[lens];
+      var accepted = lv.status === 'accepted';
+      var body = (lv.findings || []).map(function (f) { return findingHTML(a.kind, a.subject, lens, f); }).join('');
+      return '<div class="lens"><div class="lens__head">'
+        + '<span class="dot ' + (lv.findings.some(function (f) { return f.status === 'open' && f.severity === 'high'; }) ? 'attention' : 'ok') + '"></span>'
+        + '<span class="lens__title">' + esc(LENS_LABEL[lens] || lens) + '</span>'
+        + (accepted ? '<span class="pill status-reviewed" style="margin-inline-start:auto;">Approved</span>'
+                    : '<span class="pill" style="margin-inline-start:auto;">' + (lv.findings.length) + (lv.findings.length === 1 ? ' finding' : ' findings') + '</span>') + '</div>'
+        + '<div class="lens__body">' + body
+        + '<div class="lens__actions">'
+        + '<button type="button" class="btn btn--primary as-accept" data-lens="' + esc(lens) + '" style="font-size:var(--text-sm);">Approve ' + esc((LENS_LABEL[lens] || lens).toLowerCase()) + ' review</button>'
+        + '<button type="button" class="btn as-needs" data-lens="' + esc(lens) + '" style="font-size:var(--text-sm);">Needs work</button>'
+        + '</div></div></div>';
+    }).join('');
+    var currentCadence = a.cadence_days || 0;
+    var cadenceOptions = CADENCE.slice();
+    if (!cadenceOptions.some(function (c) { return c[0] === currentCadence; })) {
+      cadenceOptions.push([currentCadence, 'Every ' + currentCadence + ' days']);
+    }
+    var cadence = '<label class="as-field" style="max-width:16rem;"><span>Review again</span>'
+      + '<select id="as-cadence">' + cadenceOptions.map(function (c) {
+        return '<option value="' + esc(c[0]) + '"' + (c[0] === currentCadence ? ' selected' : '') + '>' + esc(c[1]) + '</option>';
+      }).join('') + '</select></label>';
+    detailEl.innerHTML = head + drift + lenses + cadence;
+    wireDetail(a);
+    reviewAccess(canReview);
+    if (changedSelection) document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {
+      detail: {selection: {kind: 'capability_assessment', subject_kind: a.kind, subject: a.subject}}
+    }));
+  }
+
+  function reviewAccess(allowed) {
+    canReview = allowed === true;
+    Array.prototype.forEach.call(document.querySelectorAll(
+      '#as-sweep, #as-draft, #as-rerun, #as-del, #as-cadence, .as-accept, .as-needs, .as-ev'),
+      function (control) { control.disabled = !canReview; });
+    if (!canReview) detailMessage('Read-only access. An administrator can record evidence, decisions or changes.', false);
+  }
+
+  window.LightworkCapabilityAssessmentView = {
+    selection: function () { return current; },
+    show: function (a, review, allowed) {
+      if (document.querySelector('#mv-form[open], #mv-confirm[open]')) {
+        pageMessage('Finish or cancel your open form before opening these assessment controls.', true); return false;
+      }
+      var same = current && current.kind === a.kind && current.subject === a.subject && current.revision === (a.revision || 0);
+      var cadence = document.getElementById('as-cadence');
+      if (!same && cadence && renderedAssessment && Number(cadence.value) !== (renderedAssessment.cadence_days || 0)) {
+        pageMessage('Your review frequency has not been saved. Finish or cancel that change before opening another version.', true);
+        return false;
+      }
+      if (!same) renderDetail(a);
+      reviewAccess(allowed);
+      var target = review ? document.getElementById('as-cadence') : detailEl.querySelector('.as-card__title');
+      if (!target) return false;
+      if (!review) target.tabIndex = -1;
+      detailCard.scrollIntoView({block: 'center'}); target.focus();
+      return true;
+    },
+    clear: function () {
+      viewGeneration += 1;
+      if (assessmentFormOpen) {
+        var cancel = document.getElementById('mv-form-cancel'); if (cancel) cancel.click();
+        var fields = document.getElementById('mv-form-fields'); if (fields) fields.replaceChildren();
+      }
+      if (assessmentConfirmOpen) {
+        var cancelConfirmation = document.getElementById('mv-confirm-cancel'); if (cancelConfirmation) cancelConfirmation.click();
+      }
+      current = null; renderedAssessment = null; lastItems = []; evidenceDrafts.clear();
+      reviewAccess(false);
+      detailEl.replaceChildren(); detailCard.hidden = true;
+      listEl.replaceChildren(); dueEl.replaceChildren(); tplSel.replaceChildren(); dueCount.textContent = 'Access changed';
+      ['agent', 'flow'].forEach(function (kind) {
+        var select = document.getElementById('as-' + kind);
+        if (select) { select.replaceChildren(); select.disabled = true; }
+        var input = document.getElementById('as-' + kind + '-typeahead');
+        if (input) { input.value = ''; input.disabled = true; var list = document.getElementById(input.getAttribute('list')); if (list) list.replaceChildren(); }
+        subjectLabels[kind].clear();
+      });
+      var filter = document.getElementById('as-agent-filter');
+      if (filter) { filter.value = ''; filter.disabled = true; }
+      draftMsg.textContent = '';
+      pageMessage('Your account or access changed. Reopen the current register before continuing.', true);
+      document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {detail: {selection: null}}));
+    }
+  };
+
+  function wireDetail(a) {
+    document.getElementById('as-rerun').addEventListener('click', function () {
+      var button = this; button.disabled = true;
+      jfetch('/api/v1/assessments/' + a.kind + '/' + encodeURIComponent(a.subject) + '/refresh', {
+        method: 'POST', body: JSON.stringify({ expected_revision: a.revision })
+      }).then(responseData).then(function (result) {
+        if (!result.ok) { mutationFailure(result, a, 'Re-assessment was refused.'); return; }
+        renderCurrent(result.data); reload();
+      }).catch(function (error) { if (!error.contextChanged) mutationFailure(null, a, 'Re-assessment could not be confirmed.'); })
+        .finally(function () { if (button.isConnected) button.disabled = false; });
+    });
+    document.getElementById('as-del').addEventListener('click', function () {
+      // One action with a way back: the assessment closes at once and
+      // is deleted, at the revision shown, when the Undo time is up. A refusal
+      // (for example, it changed since you opened it) puts it back with the
+      // page's own explanation.
+      var button = this;
+      detailCard.hidden = true;
+      mvUndo('Assessment for {subject} deleted.', { values: {subject: subjectName(a.kind, a.subject)},
+        action: 'delete the assessment',
+        run: function (keepalive) {
+          return jfetch('/api/v1/assessments/' + a.kind + '/' + encodeURIComponent(a.subject)
+            + '?expected_revision=' + encodeURIComponent(a.revision), { method: 'DELETE', keepalive: keepalive })
+            .then(function (response) {
+              if (response.ok) return response;
+              return responseData(response).then(function (result) {
+                mutationFailure(result, a, 'Deletion was refused.');
+                throw { handled: true };
+              });
+            }, function (error) {
+              if (!error.contextChanged) mutationFailure(null, a, 'Deletion could not be confirmed.');
+              throw { handled: true };
+            });
+        },
+        undo: function () { detailCard.hidden = false; if (button.isConnected) button.focus(); },
+        done: function () {
+          current = null; renderedAssessment = null;
+          document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {detail: {selection: null}}));
+          reload();
+        }
+      });
+    });
+    function decide(lens, decision, button) {
+      var cad = parseInt(document.getElementById('as-cadence').value, 10);
+      button.disabled = true;
+      jfetch('/api/v1/assessments/' + a.kind + '/' + encodeURIComponent(a.subject) + '/review',
+        { method: 'POST', body: JSON.stringify({ expected_revision: a.revision, lens: lens, decision: decision, cadence_days: isNaN(cad) ? 0 : cad }) })
+        .then(responseData).then(function (result) {
+          if (!result.ok) { mutationFailure(result, a, result.status === 503
+            ? 'The review could not be confirmed. It may already be saved; reload the current assessment before deciding again.'
+            : 'Review was not saved.'); return; }
+          renderDetail(result.data); reload();
+        }).catch(function (error) { if (!error.contextChanged) mutationFailure(null, a, 'Review could not be confirmed.'); })
+        .finally(function () { if (button.isConnected) button.disabled = false; });
+    }
+    Array.prototype.forEach.call(detailEl.querySelectorAll('.as-accept'), function (el) {
+      el.addEventListener('click', function () { decide(el.dataset.lens, 'accepted', el); });
+    });
+    Array.prototype.forEach.call(detailEl.querySelectorAll('.as-needs'), function (el) {
+      el.addEventListener('click', function () { decide(el.dataset.lens, 'needs_work', el); });
+    });
+    Array.prototype.forEach.call(detailEl.querySelectorAll('.as-ev'), function (el) {
+      el.addEventListener('click', async function () {
+        var draftKey = JSON.stringify([a.kind, a.subject, el.dataset.lens, el.dataset.control]);
+        assessmentFormOpen = true;
+        var vals;
+        try { vals = await mvForm('Add evidence', [
+          { key: 'note', label: 'Evidence note or link for “' + (window.mvHuman ? window.mvHuman(el.dataset.control) : el.dataset.control) + '”',
+            type: 'text', required: true, default: evidenceDrafts.get(draftKey) || '' },
+        ], { okText: 'Add' }); }
+        finally { assessmentFormOpen = false; }
+        if (vals === null) return;
+        evidenceDrafts.set(draftKey, vals.note);
+        el.disabled = true;
+        jfetch('/api/v1/assessments/' + a.kind + '/' + encodeURIComponent(a.subject) + '/evidence',
+          { method: 'POST', body: JSON.stringify({ expected_revision: a.revision, lens: el.dataset.lens, control: el.dataset.control, evidence: vals.note }) })
+          .then(responseData).then(function (result) {
+            if (!result.ok) { mutationFailure(result, a, 'Evidence was not saved.'); return; }
+            evidenceDrafts.delete(draftKey); renderCurrent(result.data); reload();
+          }).catch(function (error) { if (!error.contextChanged) mutationFailure(null, a, 'Evidence could not be confirmed.'); })
+          .finally(function () { if (el.isConnected) el.disabled = false; });
+      });
+    });
+  }
+
+  function open(kind, subject, retryButton, recovering) {
+    pageMessage('Loading assessment “' + subjectName(kind, subject) + '”…', false);
+    jfetch('/api/v1/assessments/' + kind + '/' + encodeURIComponent(subject))
+      .then(responseData)
+      .then(function (result) {
+        if (!result.ok) {
+          if ([401, 403].includes(result.status)) {
+            window.LightworkCapabilityAssessmentView.clear();
+            pageMessage('Your current access does not allow this assessment. Reopen the register after checking your access.', true);
+          } else if (result.status === 404 && recovering) {
+            recoveryMessage(document.getElementById('as-detail-msg') || pageMsg, 'This assessment is not in the current register. That does not confirm the earlier request or who changed it.', null);
+          } else {
+            pageMessage('', false);
+            detailMessage(responseDetail(result, 'Could not reload the latest assessment. Refresh the page and try again.'), true);
+          }
+          return;
+        }
+        renderCurrent(result.data);
+        if (recovering) detailMessage('The current assessment was read. This does not confirm the earlier request. Your unsaved review frequency and evidence note are kept.', false);
+        reloadListSelection();
+        detailCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }).catch(function (error) {
+        if (error.contextChanged) return;
+        pageMessage('', false);
+        detailMessage('Could not reload the latest assessment — check your connection and try again.', true);
+      }).finally(function () {
+        if (retryButton && retryButton.isConnected) retryButton.disabled = false;
+      });
+  }
+
+  var lastItems = [];
+  function reloadListSelection() { renderList(lastItems); }
+
+  function reload(options) {
+    options = options || {};
+    var started = viewGeneration;
+    return window.mvFetchJSON('/api/v1/assessments').catch(function (error) {
+      if ([401, 403].includes(error.status)) {
+        window.LightworkCapabilityAssessmentView.clear();
+        listEl.innerHTML = '<div class="as-empty">You need auditor access to see assessments. Ask your administrator.</div>'; return null;
+      }
+      if (!error.status) throw error;
+      pageMessage('Could not load the assessment register. Reload to try again.', true);
+      return null;
+    }).then(function (j) {
+      if (!j || started !== viewGeneration) return;
+      if (!options.preserveMessage) pageMessage('', false);
+      lastItems = j.assessments || [];
+      renderList(lastItems);
+      renderDue(j.due || []);
+      if (!tplSel.options.length) {
+        var t = j.templates || {};
+        Object.keys(t).forEach(function (id) {
+          var o = document.createElement('option'); o.value = id; o.textContent = t[id].label || id;
+          tplSel.appendChild(o);
+        });
+      }
+      return j;
+    }).catch(function () {
+      pageMessage('Could not load the assessment register — check your connection and reload to try again.', true);
+      if (!lastItems.length) {
+        listEl.innerHTML = '<div class="as-empty">The assessment register is temporarily unavailable.</div>';
+      }
+      return null;
+    });
+  }
+
+  document.getElementById('as-draft').addEventListener('click', function () {
+    var agent = document.getElementById('as-agent').value.trim();
+    var flowSel = document.getElementById('as-flow');
+    var flow = flowSel ? flowSel.value : '';
+    var kind = agent ? 'agent' : (flow ? 'flow' : '');
+    var name = agent || flow;
+    if (!name) { draftMsg.style.color = 'var(--danger)'; draftMsg.textContent = 'Choose an agent or a flow first.'; return; }
+    if (agent && flow) { draftMsg.style.color = 'var(--danger)'; draftMsg.textContent = 'Choose either an agent or a flow, not both.'; return; }
+    draftMsg.style.color = 'var(--muted)'; draftMsg.textContent = 'Assessing…';
+    jfetch('/api/v1/assessments/' + kind + '/' + encodeURIComponent(name) + '/refresh',
+      { method: 'POST', body: JSON.stringify({ template: tplSel.value || null, expected_revision: 0 }) })
+      .then(responseData)
+      .then(function (res) {
+        if (!res.ok) {
+          if ([401, 403].includes(res.status)) { mutationFailure(res, null, 'Assessment was refused.'); return; }
+          recoveryMessage(draftMsg, res.status >= 500 ? 'The assessment could not be confirmed. It may already be saved; read the register before deciding again.' : responseDetail(res, 'The assessment was refused. Your choices are kept.'), null); return;
+        }
+        var label = subjectName(kind, name);
+        draftMsg.style.color = 'var(--accent)'; draftMsg.textContent = 'Assessed ' + label + '.';
+        renderDetail(res.data); reload();
+      }).catch(function (error) { if (!error.contextChanged) recoveryMessage(draftMsg, 'The assessment could not be confirmed. It may already be saved; read the register before deciding again.', null); });
+  });
+
+  var sweepBtn = document.getElementById('as-sweep');
+  if (sweepBtn) sweepBtn.addEventListener('click', function () {
+    var started = viewGeneration;
+    sweepBtn.disabled = true; var label = sweepBtn.textContent; sweepBtn.textContent = 'Re-checking…';
+    jfetch('/api/v1/assessments/sweep', { method: 'POST', body: '{}' })
+      .then(responseData).then(function (res) {
+        if (res.ok) {
+          var result = res.data || {}, counts = ['requested', 'checked', 'changed', 'unavailable'];
+          var valid = counts.every(function (key) { return Number.isSafeInteger(result[key]) && result[key] >= 0; })
+            && result.checked + result.unavailable === result.requested && result.changed <= result.checked
+            && typeof result.complete === 'boolean' && result.complete === (result.unavailable === 0);
+          if (!valid) throw new Error('The check result could not be confirmed.');
+          var message = result.requested ? 'Confirmed ' + result.checked + ' of ' + result.requested + ' saved assessment checks. '
+            + result.changed + ' assessment records updated.' : 'There are no saved assessments to re-check.';
+          if (!result.complete) message += ' ' + result.unavailable + (result.unavailable === 1 ? ' check result is' : ' check results are') + ' unavailable or unconfirmed. Earlier changes may be saved; read the current register and check their sources before deciding again.';
+          return reload({preserveMessage: true}).then(function (value) {
+            if (value && started === viewGeneration) pageMessage(message, !result.complete);
+          });
+        }
+        if ([401, 403].includes(res.status)) {
+          window.LightworkCapabilityAssessmentView.clear();
+          recoveryMessage(pageMsg, 'Your current access does not allow this check. Earlier completed checks may already be saved. Reopen the register after checking your access.', null);
+        } else recoveryMessage(pageMsg, 'The check could not be confirmed. Earlier completed checks may already be saved; read the current register before deciding again.', null);
+      }).catch(function (error) {
+        if (error.contextChanged) return;
+        recoveryMessage(pageMsg, 'The check could not be confirmed. Earlier completed checks may already be saved; read the current register before deciding again.', null);
+      }).finally(function () {
+        sweepBtn.textContent = label; sweepBtn.disabled = !canReview;
+      });
+  });
+
+  reviewAccess(canReview);
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (window.mvFetchJSON) reload(); else document.addEventListener('DOMContentLoaded', reload);
+})();
+</script>
+<script src="/static/lightwork-typeahead.js" defer></script>
+<script src="/static/lightwork-capability-assessments.js" defer></script>
+{% endblock %}

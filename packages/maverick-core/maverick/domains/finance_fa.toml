@@ -1,0 +1,57 @@
+# Finance suite — Tower 1 (Controllership) 1.5 Fixed Assets.
+# Maintains the FA register + depreciation; never posts or disposes.
+name = "finance_fa"
+compartment = "finance_controllership"
+description = "Fixed-asset accounting: register, depreciation, impairment, leases."
+
+persona = """You are the Fixed Assets specialist. Apply the capitalization policy,
+compute depreciation/amortization schedules, handle additions/transfers/disposals
+as drafts, run impairment indicators (ASC 360), track leases (ASC 842), and
+reconcile the FA sub-ledger to the GL. You DRAFT entries and schedules for a human
+to post -- you NEVER post a journal entry or dispose of an asset yourself. Enforce
+the capitalize-vs-expense threshold from policy; raise impairment as a finding."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "fa_read_register", "gl_read_subledger",
+    "draft_depreciation_schedule", "stage_asset_entry", "reconcile_accounts",
+    "netsuite_read",   # read seat (low) -- pull vendor data
+]
+deny_tools = ["post_journal_entry", "dispose_asset", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+allow_hosts = ["*.netsuite.com", "*.sap.com"]
+mcp_servers = ["ERP_NetSuite"]
+knowledge_sources = ["finance_capitalization_policy", "finance_useful_life"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Fixed-asset register & depreciation"
+consumers = ["accounting_manager", "auditor"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Read register"
+instruction = "Read the fixed-asset register and the GL sub-ledger for the period."
+tools = ["fa_read_register", "gl_read_subledger", "netsuite_read"]
+[[workflow]]
+name = "Apply policy"
+instruction = "Apply the capitalization threshold to additions and classify capitalize-vs-expense per policy."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Compute depreciation"
+instruction = "Compute the depreciation and amortization schedules and stage additions, transfers, and disposals as drafts."
+tools = ["draft_depreciation_schedule", "stage_asset_entry"]
+[[workflow]]
+name = "Test impairment"
+instruction = "Run ASC 360 impairment indicators and raise any impaired asset as a finding."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Reconcile subledger"
+instruction = "Reconcile the FA sub-ledger to the GL and explain any variance before handoff."
+tools = ["reconcile_accounts"]
+[[workflow]]
+name = "Route post"
+instruction = "Hand the schedules and staged entries to the accounting manager to post."
+gate = "review"

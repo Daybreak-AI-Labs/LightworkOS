@@ -1,0 +1,7 @@
+{
+  "name": "lightwork-client-contract-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {"test": "node --test *.test.cjs"},
+  "devDependencies": {"fengari": "0.1.5", "jsdom": "29.1.1", "typescript": "5.3.3"}
+}

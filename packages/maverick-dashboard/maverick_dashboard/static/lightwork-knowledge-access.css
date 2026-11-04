@@ -1,0 +1,299 @@
+.ka-shell {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.ka-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(16rem, .8fr);
+  gap: var(--space-4);
+  align-items: end;
+}
+
+.ka-hero h1 {
+  max-width: 18ch;
+  margin-block: .15rem var(--space-2);
+}
+
+.ka-lede {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--muted);
+}
+
+.ka-boundary {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ka-evidence {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(16rem, .8fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.ka-evidence h2 {
+  margin-block: .2rem var(--space-2);
+}
+
+.ka-qualification {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ka-qualification .btn {
+  justify-self: start;
+}
+
+.ka-boundary span,
+.ka-note,
+.ka-meta,
+.ka-source,
+.ka-selected,
+.ka-request p {
+  overflow-wrap: anywhere;
+}
+
+.ka-selected {
+  grid-column: 1 / -1;
+}
+
+.ka-status {
+  margin: 0;
+  padding: .7rem var(--space-3);
+  border-inline-start: 3px solid var(--brand);
+  background: var(--surface-2);
+}
+
+.ka-status:focus-visible,
+.ka-shell #ka-requests-heading:focus-visible,
+.ka-detail-panel h2:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+.ka-shell #ka-requests-heading { scroll-margin-block-start: 8rem; }
+
+.ka-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(11rem, .4fr) 7rem;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.ka-field {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ka-field--wide,
+.ka-actions,
+.ka-check {
+  grid-column: 1 / -1;
+}
+
+.ka-form :is(.input, .textarea, select) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+}
+
+.ka-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.ka-check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.ka-check input {
+  flex: none;
+  margin-block-start: .25rem;
+}
+
+.ka-results,
+.ka-requests {
+  display: grid;
+  gap: var(--space-3);
+  margin-block-start: var(--space-3);
+}
+
+.ka-result,
+.ka-request {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+details.ka-request { display: block; }
+details.ka-request > summary {
+  cursor: pointer;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+details.ka-request > summary::marker { color: var(--brand); }
+details.ka-request > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: var(--radius-sm);
+}
+details.ka-request[open] > * + * { margin-block-start: var(--space-2); }
+
+.ka-result__head,
+.ka-request__head,
+.ka-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.ka-result__head h3,
+.ka-request__head h3 {
+  min-width: min(100%, 14rem);
+  margin: 0 auto 0 0;
+  overflow-wrap: anywhere;
+}
+
+.ka-result p,
+.ka-request p {
+  margin: 0;
+}
+
+.ka-source {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.ka-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.ka-grid .ka-form {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.ka-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.ka-detail-grid > div {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ka-detail-grid h3 {
+  margin-block-start: 0;
+}
+
+.ka-detail-list,
+.ka-lineage {
+  margin-block: var(--space-2) 0;
+  padding-inline-start: 1.25rem;
+}
+
+.ka-detail-list li,
+.ka-lineage li {
+  margin-block: .35rem;
+  overflow-wrap: anywhere;
+}
+
+.ka-honesty {
+  margin-block: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--warn, #b7791f);
+  border-radius: var(--radius-md);
+  background: var(--warn-subtle, rgba(183, 121, 31, .12));
+}
+
+.ka-review {
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--border);
+}
+
+.ka-review .textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 760px) {
+  .ka-hero,
+  .ka-evidence,
+  .ka-grid,
+  .ka-detail-grid,
+  .ka-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ka-field--wide,
+  .ka-actions,
+  .ka-check {
+    grid-column: auto;
+  }
+
+  .ka-actions .btn {
+    flex: 1 1 12rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .ka-result,
+  .ka-request,
+  .ka-boundary {
+    padding: var(--space-2);
+  }
+
+  .ka-actions .btn {
+    width: 100%;
+  }
+}
+#knowledge-sources { overflow-wrap: anywhere; }
+#knowledge-sources * { overflow-wrap: anywhere; }
+#knowledge-sources .section-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); justify-content: space-between; }
+#knowledge-sources label { display: block; margin-block: var(--space-3); }
+#knowledge-sources input:not([type="checkbox"]),
+#knowledge-sources select { display: block; width: 100%; max-width: 100%; min-width: 0; margin-block-start: var(--space-2); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); background: var(--panel); color: var(--text); font: inherit; }
+#knowledge-sources input[type="checkbox"] { margin-inline-end: var(--space-2); }
+#knowledge-sources button { max-width: 100%; white-space: normal; margin: var(--space-1); }
+#knowledge-sources details > summary { cursor: pointer; padding-block: var(--space-3); }
+#knowledge-sources [data-ks-review],
+#knowledge-sources [data-ks-original-output] { margin-block: var(--space-4); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); }
+#knowledge-sources dl { margin-block: var(--space-3); }
+#knowledge-sources dt { font-weight: 650; margin-block-start: var(--space-2); }
+#knowledge-sources dd { margin-inline-start: var(--space-3); min-width: 0; }
+#knowledge-sources ul { padding-inline-start: var(--space-4); }
+@media (max-width: 480px) {
+  #knowledge-sources button { width: 100%; margin-inline: 0; }
+  #knowledge-sources dd { margin-inline-start: var(--space-2); }
+}

@@ -1,0 +1,24 @@
+.la-shell { max-width: 1120px; margin: 0 auto; }
+.la-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
+.la-grid > *, .la-shell .hero-statebox { min-width: 0; }
+.la-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-4); }
+.la-actions .btn { white-space: normal; text-align: center; }
+.la-details { margin: var(--space-4) 0; }
+.la-details > div { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--glass-border); }
+.la-details dd { margin: 0; overflow-wrap: anywhere; }
+.la-form { display: grid; gap: var(--space-3); }
+.la-form .input { width: 100%; min-width: 0; }
+.la-check { display: flex; align-items: flex-start; gap: var(--space-3); line-height: 1.5; }
+.la-check input { flex: 0 0 auto; margin-top: .25em; }
+.la-help { line-height: 1.65; font-size: var(--text-sm); }
+.la-notice { border: 1px solid var(--glass-border); padding: var(--space-4); border-radius: var(--radius-md); background: var(--glass-soft); line-height: 1.65; }
+.la-status, .la-shell p { overflow-wrap: anywhere; }
+.la-history { margin-top: var(--space-5); }
+.la-requests { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.la-requests .btn { width: 100%; text-align: left; white-space: normal; }
+.la-dialog { width: min(36rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto; box-sizing: border-box; color: var(--text); border: 1px solid var(--glass-border); border-radius: var(--radius-lg); padding: var(--space-6); background: var(--glass-panel-solid, var(--panel)); box-shadow: var(--glass-shadow); }
+.la-dialog::backdrop { background: rgb(0 0 0 / .5); }
+.la-dialog h2 { margin-top: 0; }
+.la-dialog p { line-height: 1.65; }
+@media (max-width: 760px) { .la-grid { grid-template-columns: 1fr; } .la-actions .btn { flex: 1 1 9rem; } .la-dialog { padding: var(--space-4); } }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) { .la-notice, .la-dialog { background: var(--panel); } }

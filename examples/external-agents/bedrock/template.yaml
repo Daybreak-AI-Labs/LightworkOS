@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Lightwork BYOA gateway forwarder for Amazon Bedrock agent action groups.
+  One Python 3.12 Lambda maps each action-group operation (defined by
+  lightwork-external.json) onto the matching Lightwork external-gateway
+  route, authenticating with the per-agent rest bearer read from AWS
+  Secrets Manager. Deploy with `sam deploy --guided`; see README.md.
+
+Parameters:
+  LightworkBaseUrl:
+    Type: String
+    Default: https://lightwork.example.com
+    Description: >-
+      Base URL of the Lightwork dashboard server (scheme + host only, no
+      trailing slash; the forwarder appends /api/v1/external/...).
+    AllowedPattern: ^https?://.+[^/]$
+    ConstraintDescription: must be an http(s) URL without a trailing slash
+  TokenSecretArn:
+    Type: String
+    Description: >-
+      ARN of the AWS Secrets Manager secret holding the agent's Lightwork
+      "rest" bearer (minted once on the /external-agents page). Store either
+      the raw lw-rest-... token string or JSON {"token": "..."}. Rotation =
+      mint a new token in Lightwork, then put-secret-value here; the
+      forwarder re-reads the secret within ~5 minutes (immediately on 401).
+    AllowedPattern: ^arn:aws[a-zA-Z-]*:secretsmanager:.+$
+    ConstraintDescription: must be a Secrets Manager secret ARN
+
+Resources:
+  ForwarderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: >-
+        Maps Bedrock action-group operations onto the Lightwork external
+        gateway (screen / runs / approvals / memory).
+      CodeUri: forwarder/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          LIGHTWORK_BASE_URL: !Ref LightworkBaseUrl
+          LIGHTWORK_TOKEN_SECRET_ARN: !Ref TokenSecretArn
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              # IAM action name, not a secret value.
+              Action: secretsmanager:GetSecretValue  # pragma: allowlist secret
+              Resource: !Ref TokenSecretArn
+
+  # Lets the Bedrock service invoke the forwarder as an action-group
+  # executor for agents in this account.
+  BedrockInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ForwarderFunction
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+Outputs:
+  ForwarderFunctionArn:
+    Description: >-
+      Set this Lambda as the action-group executor on the Bedrock agent.
+    Value: !GetAtt ForwarderFunction.Arn

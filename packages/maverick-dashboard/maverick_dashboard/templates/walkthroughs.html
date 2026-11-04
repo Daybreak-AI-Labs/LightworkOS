@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Video · Task replay' if tab_host else 'Video walkthroughs' }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero, state %}
+{% if tab_host %}
+{% from "_tabs.html" import host_header, panel_attrs %}{{ host_header(tab_host) }}
+<div {{ panel_attrs(tab_host.selected) }}>
+<h2>Video walkthroughs</h2>
+<p class="muted">Turn any finished task into a video with captions. Watch exactly what was done, step by step, and
+  share it with your team. Videos are made and kept on your own Lightwork server. Nothing is uploaded anywhere else.
+  {{ items | length }} video{{ '' if items | length == 1 else 's' }}.</p>
+{% else %}
+{% call hero('Proof of work', 'Video walkthroughs',
+             subtitle='Watch what was done',
+             lede='Turn any finished task into a video with captions. Watch
+                   exactly what was done, step by step, and share it with
+                   your team.') %}
+  {{ state('Current state', (items | length) ~ ' videos',
+           badge='Ready to watch' if items else 'None yet',
+           badge_class='ok' if items else 'idle',
+           copy='Videos are made and kept on your own Lightwork server.
+                 Nothing is uploaded anywhere else.') }}
+{% endcall %}
+{% endif %}
+<div class="panel">
+  <h2 class="wt-flush">Make a video</h2>
+  {% if runs %}
+  <form id="wt-export" class="wt-form">
+    <label class="wt-field" for="wt-goal-id"><span>Finished task</span>
+      <select class="select" id="wt-goal-id" required>
+        <option value="">Choose a task…</option>
+        {% for r in runs %}
+        <option value="{{ r.id }}" data-has-video="{{ 1 if r.has_video else 0 }}">{{ r.title }} ({{ r.status | humanize | lower }}{% if r.has_video %}, has a video{% endif %})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="btn btn--primary">Create video</button>
+  </form>
+  {% else %}
+  <p class="muted">There are no finished tasks yet. Run a task first, then come back to turn it into a video.</p>
+  <p><a class="btn btn--primary" href="/chat">Start a task</a></p>
+  {% endif %}
+  <p id="wt-result" role="status" aria-live="polite" class="muted wt-small"></p>
+</div>
+
+{% if items %}
+  <div class="section-head"><h2>{{ items|length }} Video{{ 's' if items|length != 1 }}</h2></div>
+  {% for it in items %}
+  {% set label = it.title or ('Task ' ~ it.goal_id) %}
+  <div class="panel">
+    <h3 class="wt-title">{{ label }}</h3>
+    {# Native playback, local file, captions track when the export wrote one. #}
+    <video controls preload="metadata" class="wt-video" aria-label="Video of {{ label }}">
+      <source src="/walkthroughs/media/{{ it.name }}" type="video/mp4">
+      {% if it.captions %}
+      <track kind="captions" src="/walkthroughs/media/{{ it.captions }}" srclang="en" label="Step captions" default>
+      {% endif %}
+      Your browser can't play this video here.
+      <a href="/walkthroughs/media/{{ it.name }}" download>Download it instead</a>.
+    </video>
+    <p class="muted wt-small">
+      {{ it.size_mb }} MB · made {{ it.mtime | datetime }}
+      {% if not it.captions %} · no captions{% endif %}
+    </p>
+    <p class="wt-actions">
+      <a class="btn btn--ghost" href="/walkthroughs/media/{{ it.name }}" download aria-label="Download the video of {{ label }}">Download video</a>
+      {% if it.goal_id is not none %}
+      <a class="btn btn--ghost" href="/api/v1/goals/{{ it.goal_id }}/tutorial.md" download aria-label="Download the written guide for {{ label }}">Download written guide</a>
+      <a class="btn btn--ghost" href="/goals/{{ it.goal_id }}/trajectory" aria-label="Open the step-by-step timeline for {{ label }}">Open timeline</a>
+      {% endif %}
+    </p>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="panel">
+    <h3 class="wt-title">No walkthroughs yet</h3>
+    <p class="muted wt-flush">Choose a finished task above and press Create video. It appears here when it's ready.</p>
+  </div>
+{% endif %}
+
+{% if tab_host %}</div>{% endif %}
+<style>
+  .wt-flush { margin-top: 0; }
+  .wt-small { font-size: var(--text-sm); }
+  .wt-form { display: flex; gap: var(--space-2); align-items: end; flex-wrap: wrap; }
+  .wt-field { display: grid; gap: var(--space-1); flex: 0 1 28rem; }
+  .wt-title { margin: 0 0 var(--space-3); }
+  .wt-video { width: 100%; max-width: 720px; background: #000; border-radius: var(--radius-sm); }
+  .wt-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+</style>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  const form = document.getElementById("wt-export");
+  const out = document.getElementById("wt-result");
+  if (!form || !out) return;
+  form.addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    const select = document.getElementById("wt-goal-id");
+    const id = select.value;
+    if (!id) { out.textContent = "Choose a task first."; select.focus(); return; }
+    const chosen = select.options[select.selectedIndex];
+    if (chosen && chosen.dataset.hasVideo === "1") {
+      const ok = await window.mvConfirm("This task already has a video. Make a new one to replace it?", {okText: "Replace video"});
+      if (!ok) return;
+    }
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    out.textContent = "Creating your video… this can take a minute.";
+    try {
+      const r = await fetch("/api/v1/goals/" + encodeURIComponent(id) + "/walkthrough", { method: "POST", credentials: "same-origin" });
+      if (!r.ok) {
+        out.textContent = r.status === 400
+          ? "This task has no recorded steps yet. Run it first, then make the video."
+          : window.mvErrorText(r, "create the video");
+        return;
+      }
+      const j = await r.json().catch(() => ({}));
+      if (j.encoded) {
+        out.textContent = "Done: " + j.frames + " steps captured. Showing it now…";
+        window.location.reload();
+      } else {
+        // Honest partial result: the steps and captions were saved, the video file was not.
+        out.textContent = "The steps and captions were saved, but this server can't make video files yet. " +
+          "Ask whoever runs your Lightwork server to add video support; the written guide is available now.";
+      }
+    } catch (e) {
+      out.textContent = window.mvErrorText(e, "create the video");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

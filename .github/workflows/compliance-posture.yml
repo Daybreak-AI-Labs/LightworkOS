@@ -1,0 +1,129 @@
+name: Compliance Posture
+
+# Standing SOC 2 / ISO 27001 posture gate.
+#
+# Applies the hardened reference deployment config
+# (docs/compliance/deployment/compliant-config.toml) and asserts that
+# `maverick soc2` reports a compliant-ready posture: every required control
+# `enabled`, the audit chain `ok`, and a signing key present. The collector's
+# own gate (`_soc2_posture_ready`) exits non-zero otherwise, failing this job.
+#
+# Purpose — this is a REGRESSION GATE, not a check of a live production system
+# (CI cannot reach prod). It proves that the documented compliant config + the
+# evidence collector still produce a green posture, so a code/config change can't
+# silently break a deployment's ability to pass the gate. Because this workflow runs on
+# pull_request and executes code from the checked-out tree, it must stay on
+# GitHub-hosted runners and must never be retargeted to production or other
+# privileged self-hosted runners. To gate an actual deployment, run
+# docs/compliance/deployment/verify-posture.sh on the deployment host from a
+# trusted, protected ref outside this pull_request-triggered workflow.
+#
+# The audit signing key here is an EPHEMERAL throwaway generated in-job, standing
+# in for the KMS/secrets-manager key a real deployment injects via
+# MAVERICK_AUDIT_SIGNING_KEY. It is used only to initialize the signed chain and
+# is never persisted.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 6 * * 1" # weekly, Monday 06:23 UTC (off the :00 mark)
+  pull_request:
+    paths:
+      - "packages/maverick-core/maverick/soc2.py"
+      - "packages/maverick-core/maverick/cli/_compliance_groups.py"
+      - "packages/maverick-core/maverick/audit/**"
+      - "packages/maverick-core/maverick/capability.py"
+      - "packages/maverick-core/maverick/quotas.py"
+      - "packages/maverick-core/maverick/oidc.py"
+      - "packages/maverick-core/maverick/crypto_at_rest.py"
+      - "packages/maverick-core/maverick/paths.py"
+      - "packages/maverick-core/maverick/deployment.py"
+      - "docs/compliance/deployment/compliant-config.toml"
+      - "requirements/ci.txt"
+      - "scripts/verify_constraint_closure.py"
+      - ".github/workflows/compliance-posture.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/maverick-core/maverick/soc2.py"
+      - "packages/maverick-core/maverick/cli/_compliance_groups.py"
+      - "packages/maverick-core/maverick/audit/**"
+      - "packages/maverick-core/maverick/capability.py"
+      - "packages/maverick-core/maverick/quotas.py"
+      - "packages/maverick-core/maverick/oidc.py"
+      - "packages/maverick-core/maverick/crypto_at_rest.py"
+      - "packages/maverick-core/maverick/paths.py"
+      - "packages/maverick-core/maverick/deployment.py"
+      - "docs/compliance/deployment/compliant-config.toml"
+      - "requirements/ci.txt"
+      - "scripts/verify_constraint_closure.py"
+      - ".github/workflows/compliance-posture.yml"
+
+permissions:
+  contents: read
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+concurrency:
+  group: compliance-posture-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  posture:
+    # Keep this PR-triggered regression gate on GitHub-hosted runners only; do
+    # not retarget it to production or privileged self-hosted runners.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install maverick-core (with audit-signing crypto)
+        # The soc2 collector + CLI live entirely in maverick-core; no sibling
+        # packages are needed to evaluate posture. The [audit-signing] extra
+        # pulls `cryptography` so the signed audit chain is real -- without it the
+        # chain writes UNSIGNED (audit_log: no_crypto) and the gate fails, which
+        # is exactly what a compliant deployment must avoid.
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -I -m pip install -e './packages/maverick-core[audit-signing]'
+          python -I -m pip check
+          python -I scripts/verify_constraint_closure.py
+      - name: Apply the hardened compliant config
+        run: |
+          mkdir -p ~/.maverick
+          cp docs/compliance/deployment/compliant-config.toml ~/.maverick/config.toml
+      - name: Initialize and enforce posture with an ephemeral off-host key
+        # Enterprise mode REQUIRES an off-host signing key (no local-disk key).
+        # Generate a throwaway one, inject it via the env var a real deployment
+        # would source from KMS, write one signed event, and keep the same key in
+        # scope while collecting and enforcing evidence. A stale `.injected`
+        # marker cannot satisfy the current signing-capability probe.
+        run: |
+          export MAVERICK_AUDIT_SIGNING_KEY="$(python -c 'import os;print(os.urandom(32).hex())')"
+          python -c "from maverick.audit import record, EventKind; assert record(EventKind.GOAL_START, agent='ci-posture', title='posture gate init'), 'failed to write signed audit event'"
+          # `maverick soc2` exits non-zero unless all required controls are
+          # enabled, the audit chain is valid, and this process can sign.
+          maverick soc2 --json > soc2-evidence.json || true
+          python -m json.tool soc2-evidence.json || true
+          {
+            echo '### Compliance posture snapshot'
+            echo '```json'
+            cat soc2-evidence.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Enforcing the gate..."
+          maverick soc2 > /dev/null
+      - name: Upload evidence snapshot
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: soc2-evidence
+          path: soc2-evidence.json
+          if-no-files-found: error

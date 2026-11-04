@@ -1,0 +1,384 @@
+name: "Lightwork swarm"
+description: "Run a Lightwork agent swarm on a goal (or a goal template) inside a GitHub workflow, under a hard spend cap."
+author: "Daybreak Labs"
+
+branding:
+  icon: "cpu"
+  color: "purple"
+
+inputs:
+  goal:
+    description: "Freeform goal — the TITLE passed to `maverick start`. Provide this OR `template`."
+    required: false
+    default: ""
+  description:
+    description: "Optional longer description for a freeform goal."
+    required: false
+    default: ""
+  template:
+    description: "Name of a bundled or user-installed goal template (e.g. code-review, write-tests). Use instead of `goal`."
+    required: false
+    default: ""
+  params:
+    description: "Template parameters, one `key=value` per line. Only used with `template`."
+    required: false
+    default: ""
+  max-dollars:
+    description: "Hard spend cap in USD — the swarm refuses to exceed it. A template's own budget is used if this is blank."
+    required: false
+    default: "1.0"
+  max-wall-seconds:
+    description: "Optional wall-clock cap in seconds."
+    required: false
+    default: ""
+  model:
+    description: "Override the default model (e.g. claude-sonnet-4-6). Passed as `maverick --model`."
+    required: false
+    default: ""
+  sandbox:
+    description: >-
+      Sandbox backend for model-generated shell. Supported: docker, podman,
+      gvisor, or local. Container backends are forced to no-network/non-root.
+    required: false
+    default: "docker"
+  allow-unsafe-local:
+    description: >-
+      Dangerous opt-in required with sandbox=local. Local executes
+      model-generated shell directly on the runner host and is suitable only
+      for a trusted disposable hosted/isolated runner.
+    required: false
+    default: "false"
+  anthropic-api-key:
+    description: "Anthropic key, exported as ANTHROPIC_API_KEY. For another provider, leave this blank and set that provider's env var on the job — it is inherited here."
+    required: false
+    default: ""
+  version:
+    description: "Optional expected version of the Lightwork source bundled with this action (e.g. 0.1.7). The action fails if it does not match."
+    required: false
+    default: ""
+  python-version:
+    description: "Python version to set up."
+    required: false
+    default: "3.12"
+  step-summary:
+    description: "Write the swarm's final answer to the GitHub job summary."
+    required: false
+    default: "true"
+  dry-run:
+    description: "Install Lightwork and print the resolved command, but do NOT run the swarm (no LLM calls, no spend). Useful for wiring/smoke tests."
+    required: false
+    default: "false"
+
+outputs:
+  result:
+    description: "Sanitized, mention-neutralized run output (maximum 50,000 characters; also written to result-file)."
+    value: ${{ steps.run.outputs.result }}
+  result-file:
+    description: "Path to a private file containing the sanitized, bounded run output."
+    value: ${{ steps.run.outputs.result-file }}
+  goal-id:
+    description: "Actual saved task ID, or empty when native task admission is unavailable."
+    value: ${{ steps.run.outputs.goal-id }}
+  status:
+    description: "Actual saved task status, or unavailable when no native result was retained."
+    value: ${{ steps.run.outputs.status }}
+  spend-recorded-usd:
+    description: "Recorded model usage in USD; not a complete provider invoice. Empty when unavailable."
+    value: ${{ steps.run.outputs.spend-recorded-usd }}
+  release-status:
+    description: "released, pending_signoff, not_completed, policy_unavailable, or unavailable."
+    value: ${{ steps.run.outputs.release-status }}
+  deliverable-file:
+    description: "Private sanitized answer.md file for a completed, releasable answer; empty otherwise."
+    value: ${{ steps.run.outputs.deliverable-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Lightwork
+      shell: bash
+      env:
+        IN_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        action_root="$(cd "$GITHUB_ACTION_PATH/../.." && pwd -P)"
+        core_project="$action_root/packages/maverick-core/pyproject.toml"
+
+        if [ ! -f "$core_project" ]; then
+          echo "::error::The action checkout does not contain the Lightwork source tree."
+          exit 1
+        fi
+
+        if [ -n "$IN_VERSION" ]; then
+          actual_version="$(LIGHTWORK_CORE_PROJECT="$core_project" python - <<'PY'
+        import os
+        import pathlib
+        import re
+
+        project = pathlib.Path(os.environ["LIGHTWORK_CORE_PROJECT"])
+        match = re.search(
+            r'(?m)^version\s*=\s*"([^"]+)"\s*$',
+            project.read_text(encoding="utf-8"),
+        )
+        if match is None:
+            raise SystemExit("could not read bundled Lightwork version")
+        print(match.group(1))
+        PY
+          )"
+          if [ "$IN_VERSION" != "$actual_version" ]; then
+            echo "::error::Requested Lightwork version does not match the bundled source version."
+            exit 1
+          fi
+        fi
+
+        # The shared helper reads all eight local direct requirements from
+        # release-cohort.toml, resolves them together under requirements/ci.txt,
+        # runs pip check, and imports every declared runtime module. This keeps
+        # an unreserved sibling name from falling back to the public index.
+        python "$action_root/scripts/install_release_cohort.py" \
+          --source-root "$action_root" \
+          --target-python python \
+          --core-extra release-runtime
+        maverick version || maverick --help
+
+    - name: Run the swarm
+      id: run
+      shell: bash
+      # Every input is passed through the environment and referenced as a
+      # quoted shell variable -- never interpolated inline as ${{ ... }} into
+      # the script body -- so a goal/param containing shell metacharacters
+      # can't inject commands (GitHub Actions script-injection class).
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        IN_GOAL: ${{ inputs.goal }}
+        IN_DESC: ${{ inputs.description }}
+        IN_TEMPLATE: ${{ inputs.template }}
+        IN_PARAMS: ${{ inputs.params }}
+        IN_MAX_DOLLARS: ${{ inputs.max-dollars }}
+        IN_MAX_WALL: ${{ inputs.max-wall-seconds }}
+        IN_MODEL: ${{ inputs.model }}
+        IN_SANDBOX: ${{ inputs.sandbox }}
+        IN_ALLOW_UNSAFE_LOCAL: ${{ inputs.allow-unsafe-local }}
+        IN_SUMMARY: ${{ inputs.step-summary }}
+        IN_DRY_RUN: ${{ inputs.dry-run }}
+      run: |
+        set -euo pipefail
+
+        case "$IN_ALLOW_UNSAFE_LOCAL" in
+          true|false) ;;
+          *)
+            echo "::error::'allow-unsafe-local' must be 'true' or 'false'."
+            exit 1
+            ;;
+        esac
+        case "$IN_SUMMARY" in
+          true|false) ;;
+          *)
+            echo "::error::'step-summary' must be 'true' or 'false'."
+            exit 1
+            ;;
+        esac
+        case "$IN_DRY_RUN" in
+          true|false) ;;
+          *)
+            echo "::error::'dry-run' must be 'true' or 'false'."
+            exit 1
+            ;;
+        esac
+        case "$IN_SANDBOX" in
+          docker|podman|gvisor|local) ;;
+          *)
+            echo "::error::'sandbox' must be docker, podman, gvisor, or local."
+            exit 1
+            ;;
+        esac
+
+        if [ "$IN_SANDBOX" = "local" ] && [ "$IN_ALLOW_UNSAFE_LOCAL" != "true" ]; then
+          echo "::error::sandbox=local executes model-generated shell on the runner host. Set allow-unsafe-local=true to acknowledge this risk."
+          exit 1
+        fi
+        if [ "$IN_SANDBOX" != "local" ] && [ "$IN_ALLOW_UNSAFE_LOCAL" = "true" ]; then
+          echo "::error::allow-unsafe-local=true is valid only with sandbox=local."
+          exit 1
+        fi
+
+        # Use a private, action-owned policy file so a caller's config,
+        # dashboard overlay, tenant overlay, or environment cannot silently
+        # enable container networking/root. MAVERICK_HOME remains unchanged so
+        # installed templates and normal run state are still available.
+        umask 077
+        private_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/lightwork-action.XXXXXX")"
+        raw_file="$private_root/raw.log"
+        native_result="$private_root/native-result.json"
+        result_key="$private_root/result-key"
+        answer_file="$private_root/answer.md"
+        out_file="$private_root/result.log"
+        summary_file="$private_root/summary.html"
+        secret_snapshot="$private_root/secret-files.snapshot"
+        secure_config="$private_root/config.toml"
+        cleanup_private_capture() {
+          rm -f -- \
+            "$raw_file" "$native_result" "$result_key" "$summary_file" "$secret_snapshot" "$secure_config"
+          if [ ! -e "$out_file" ]; then
+            rmdir -- "$private_root" 2>/dev/null || true
+          fi
+        }
+        trap cleanup_private_capture EXIT
+
+        if [ "$IN_SANDBOX" = "local" ]; then
+          cat > "$secure_config" <<'TOML'
+        [sandbox]
+        backend = "local"
+        require_container = false
+        allow_network = false
+        allow_root = false
+        TOML
+          export MAVERICK_REQUIRE_CONTAINER_BACKEND=0
+        else
+          cat > "$secure_config" <<'TOML'
+        [sandbox]
+        backend = "docker"
+        require_container = true
+        allow_network = false
+        allow_root = false
+        TOML
+          export MAVERICK_REQUIRE_CONTAINER_BACKEND=1
+        fi
+        export MAVERICK_CONFIG="$secure_config"
+        export MAVERICK_CONFIG_STRICT=1
+        export MAVERICK_SANDBOX_ALLOW_ROOT=0
+        unset MAVERICK_CONFIG_OVERLAY MAVERICK_TENANT
+
+        # Global options go before the subcommand: `maverick --model X start ...`
+        pre=()
+        [ -n "$IN_MODEL" ] && pre+=( --model "$IN_MODEL" )
+
+        args=( start )
+        if [ -n "$IN_TEMPLATE" ]; then
+          args+=( --template "$IN_TEMPLATE" )
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            args+=( --param "$line" )
+          done <<< "$IN_PARAMS"
+        else
+          if [ -z "$IN_GOAL" ]; then
+            echo "::error::Provide either 'goal' or 'template'."
+            exit 1
+          fi
+          args+=( "$IN_GOAL" )
+          [ -n "$IN_DESC" ] && args+=( --description "$IN_DESC" )
+        fi
+        [ -n "$IN_MAX_DOLLARS" ] && args+=( --max-dollars "$IN_MAX_DOLLARS" )
+        [ -n "$IN_MAX_WALL" ]    && args+=( --max-wall-seconds "$IN_MAX_WALL" )
+        args+=( --sandbox "$IN_SANDBOX" )
+
+        printf 'maverick'; printf ' %q' "${pre[@]}" "${args[@]}"; printf '\n'
+
+        if [ "$IN_DRY_RUN" = "true" ]; then
+          echo "dry-run: not invoking the swarm (no LLM calls, no spend)."
+          exit 0
+        fi
+        args+=( --result-file "$native_result" --result-key-file "$result_key" )
+
+        case "$IN_SANDBOX" in
+          docker|gvisor)
+            if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+              echo "::error::A running Docker daemon is required for this sandbox."
+              exit 1
+            fi
+            ;;
+          podman)
+            if ! command -v podman >/dev/null 2>&1 || ! podman info >/dev/null 2>&1; then
+              echo "::error::A running Podman service is required for this sandbox."
+              exit 1
+            fi
+            ;;
+        esac
+
+        # Snapshot bounded credential-file bytes before untrusted work starts.
+        # Sanitization later unions this owner-only pre-run snapshot with a
+        # fresh read, covering rotation or deletion while the swarm runs.
+        python -I -S "$GITHUB_ACTION_PATH/sanitize_output.py" \
+          --write-secret-file-snapshot "$secret_snapshot"
+        python -I -S "$GITHUB_ACTION_PATH/sanitize_output.py" \
+          --write-result-key "$result_key" --workspace-root "$PWD"
+
+        # Never stream model/agent output into the Actions command parser.
+        # Capture it with owner-only permissions, sanitize it, then discard the
+        # raw file and secret snapshot before exposing a bounded copy.
+        set +e
+        maverick "${pre[@]}" "${args[@]}" >"$raw_file" 2>&1
+        status=$?
+        set -e
+        python -I -S "$GITHUB_ACTION_PATH/sanitize_output.py" \
+          --input "$raw_file" \
+          --output "$out_file" \
+          --summary "$summary_file" \
+          --secret-file-snapshot "$secret_snapshot" \
+          --run-result "$native_result" \
+          --result-key "$result_key" \
+          --deliverable "$answer_file" \
+          --github-output "$GITHUB_OUTPUT" \
+          --max-chars 50000
+        rm -f -- "$raw_file" "$native_result" "$result_key" "$secret_snapshot"
+
+        choose_absent_token() {
+          local prefix="$1"
+          local file="$2"
+          local candidate
+          for _ in {1..20}; do
+            if command -v uuidgen >/dev/null 2>&1; then
+              candidate="${prefix}_$(uuidgen)"
+            elif command -v openssl >/dev/null 2>&1; then
+              candidate="${prefix}_$(openssl rand -hex 16)"
+            else
+              candidate="${prefix}_${RANDOM}_${RANDOM}_$$_$(date +%s%N)"
+            fi
+            if ! grep -Fq -- "$candidate" "$file"; then
+              printf '%s' "$candidate"
+              return 0
+            fi
+          done
+          return 1
+        }
+
+        # Disable workflow command parsing while the sanitized model text is
+        # logged. The unpredictable resume token is checked against that text.
+        if ! command_token="$(choose_absent_token MAVERICK_COMMANDS "$out_file")"; then
+          echo "::error::Unable to choose a safe Actions command token."
+          exit 1
+        fi
+        printf '::stop-commands::%s\n' "$command_token"
+        cat -- "$out_file"
+        printf '::%s::\n' "$command_token"
+
+        # Multiline-safe step output. The delimiter is unpredictable and absent
+        # from the sanitized result, so output text cannot inject new outputs.
+        if ! result_delimiter="$(choose_absent_token MAVERICK_EOF "$out_file")"; then
+          echo "::error::Unable to choose a safe GitHub output delimiter."
+          exit 1
+        fi
+        printf 'result-file=%s\n' "$out_file" >> "$GITHUB_OUTPUT"
+        {
+          echo "result<<$result_delimiter"
+          cat -- "$out_file"
+          echo "$result_delimiter"
+        } >> "$GITHUB_OUTPUT"
+
+        if [ "$IN_SUMMARY" = "true" ]; then
+          {
+            echo "## Lightwork run"
+            echo ""
+            cat -- "$summary_file"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+        if [ "$status" -ne 0 ]; then
+          echo "::error::The Lightwork run failed; see the sanitized output above."
+        fi
+        exit "$status"

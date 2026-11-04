@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Find people by preference · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set ci_admin = custom_index_can_admin %}
+{% set ci_audit = custom_index_can_audit %}
+<div class="governance-workbench" id="custom-index-shell"
+     data-api-base="{{ api_base }}" data-copilot-page="/consent/custom-indexes"
+     data-module-enabled="{{ 'false' if module_off else 'true' }}"
+     data-can-admin="{{ 'true' if ci_admin else 'false' }}" data-can-audit="{{ 'true' if ci_audit else 'false' }}">
+  {{ hero('Consent data', 'Find people by preference',
+          lede='Find the people whose saved answer to a preference question matches what you choose, for example everyone who wants monthly emails. What you search for is never saved.') }}
+  {% include "_consent_nav.html" %}
+  {% if module_off %}{% from "_module_gate.html" import module_gate %}{{ module_gate("consent_preferences.profile_data.custom_index", "Find people by preference", detail="Lets administrators find the people whose saved answer to a preference question matches what they choose.") }}{% endif %}
+  <p id="custom-index-runtime-status" class="muted" role="status" aria-live="polite"{% if module_off %} hidden{% endif %}>{{ '' if module_off else 'Checking that searching is available…' }}</p>
+  {% if not ci_admin %}<p class="muted">Only an administrator can search or change which questions are searchable.</p>{% endif %}
+
+  <fieldset class="feature-gated-workbench" id="custom-index-operations" disabled>
+    <legend class="sr-only">Find people by preference</legend>
+
+    <section class="panel" aria-labelledby="custom-index-list-title">
+      <div class="section-head">
+        <h2 id="custom-index-list-title">Searchable questions</h2>
+        <button class="btn btn--primary" type="button" id="custom-index-new"{% if not ci_admin %} disabled{% endif %}>Make a question searchable</button>
+      </div>
+      <p class="muted">A question becomes searchable after it is built. When people change their answers it needs rebuilding before you can search again.</p>
+      <div id="custom-index-table"><p class="muted">{{ 'Searchable questions appear here once this is turned on.' if module_off else 'Loading…' }}</p></div>
+      <button class="btn btn--ghost" type="button" id="custom-index-more" hidden>Show more</button>
+
+      <form class="cw-editor" id="custom-index-create-form" autocomplete="off" novalidate hidden>
+        <fieldset class="cw-form" id="custom-index-create-controls"{% if not ci_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Make a question searchable</legend>
+          <h3 class="cw-wide">Make a question searchable</h3>
+          <label class="cw-wide" for="custom-index-element-name">Question</label>
+          <select class="select cw-wide" id="custom-index-element-name" name="element_name" required></select>
+          <input type="hidden" id="custom-index-create-id" name="index_id">
+          <input type="hidden" id="custom-index-create-operation" name="idempotency_key" data-auto-reference>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Make searchable</button>
+            <button class="btn btn--ghost" type="button" id="custom-index-create-cancel">Cancel</button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel cw-editor" id="custom-index-search-panel" hidden aria-labelledby="custom-index-search-title">
+      <h2 id="custom-index-search-title">Search</h2>
+      <form id="custom-index-search-form" autocomplete="off" novalidate>
+        <fieldset class="cw-form" id="custom-index-search-controls"{% if not ci_admin %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Search answers</legend>
+          <input type="hidden" id="custom-index-selected-id" name="index_id">
+          <input type="hidden" id="custom-index-value-type" name="value_type">
+          <input type="hidden" id="custom-index-search-cursor" name="cursor">
+          <div class="cw-wide" id="custom-index-search-value" data-name="value"></div>
+          <div class="cw-actions">
+            <button class="btn btn--primary" type="submit">Find people</button>
+            <button class="btn btn--ghost" type="button" id="custom-index-search-close">Close</button>
+          </div>
+        </fieldset>
+      </form>
+      <div id="custom-index-results" role="status" aria-live="polite"></div>
+      <button class="btn btn--ghost" type="button" id="custom-index-results-more" hidden>Show more people</button>
+    </section>
+
+    <section class="panel" aria-labelledby="custom-index-audit-title">
+      <h2 id="custom-index-audit-title">History</h2>
+      <fieldset id="custom-index-audit-controls" class="cw-actions"{% if not ci_audit %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">History checks</legend>
+        <button class="btn" id="custom-index-history" type="button">Show history</button>
+        <button class="btn" id="custom-index-integrity" type="button">Check records are intact</button>
+      </fieldset>
+      {% if not ci_audit %}<p class="muted">You need audit access to see the history.</p>{% endif %}
+      <p id="custom-index-operation-status" class="muted" role="status" aria-live="polite"></p>
+      <div id="custom-index-history-table"></div>
+      <details class="governance-details">
+        <summary>About this page’s safeguards</summary>
+        <ul>
+          <li>Searches match answers exactly; nothing is guessed about anyone.</li>
+          <li>Search values are protected while they are processed and are never saved.</li>
+          <li>If answers changed since the last build, searching stops until the question is rebuilt, so results are never out of date.</li>
+          <li>Results list the people who gave an answer; they are not proof of identity or of consent for anything else.</li>
+        </ul>
+      </details>
+    </section>
+  </fieldset>
+  <noscript><p class="muted">Turn on JavaScript to use these controls.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-consent-workbench.js" defer></script>
+<script src="/static/lightwork-consent-custom-index.js" defer></script>
+{% endblock %}

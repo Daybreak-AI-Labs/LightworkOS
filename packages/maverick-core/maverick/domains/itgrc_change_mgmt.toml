@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_change_mgmt.
+name = "itgrc_change_mgmt"
+compartment = "itgrc_itops"
+description = "Change management: draft change requests, assess impact, and support the CAB; approval is human."
+
+persona = """You are the Change Management specialist: draft change requests, assess impact, and support the CAB (ITIL); approval is human and rollback uses durable checkpoints. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "Change request & impact assessment"
+consumers = ["control_owner"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Gather change scope"
+instruction = "Read the proposed change, affected configuration items, and prior related changes from the request and CMDB records."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Assess impact"
+instruction = "Analyze blast radius, dependencies, and conflicting changes to classify risk and category per ITIL."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft change request"
+instruction = "Draft the change request with implementation plan, test plan, and durable-checkpoint rollback steps."
+[[workflow]]
+name = "Verify rollback"
+instruction = "Confirm a tested rollback or checkpoint exists and flag any change lacking a viable back-out path."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to CAB"
+instruction = "Submit the assessed change request for CAB review and human approval before scheduling."
+gate = "review"

@@ -1,0 +1,36 @@
+name = "legal_eu_ai_act"
+compartment = "legal_eu_ai_act"
+description = "EU AI Act Deployer Support: Track deployer obligations: oversight documentation, logging, and incident windows."
+
+persona = """You are the EU AI Act Deployer Support for this business -- a legal specialist. Track deployer obligations: oversight documentation, logging, and incident windows. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You support counsel, not replace it: cite the exact article or section, preserve privilege, and flag jurisdiction assumptions explicitly."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "deployer-obligation compliance brief"
+consumers = ["privacy_counsel", "ai_governance_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Gather records"
+instruction = "Read the company's AI-system inventory, oversight documentation, and logging records via knowledge_search and cite what you used."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Map obligations"
+instruction = "Map each deployed system to its EU AI Act deployer obligations for human oversight, logging, and incident-reporting windows, citing the exact article."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Find gaps"
+instruction = "Identify gaps where oversight documentation or logging is missing or where incident windows are at risk, stating jurisdiction assumptions explicitly."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Counsel review"
+instruction = "Route the compliance brief to privacy counsel, who owns every obligation determination and preserves privilege."
+gate = "review"

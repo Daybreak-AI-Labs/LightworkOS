@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+{% block title %}Plugins · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_integration_readiness.html" import integration_readiness %}
+  {% set group_titles = {'tools': 'Tools', 'channels': 'Chat Apps', 'skills': 'Skills', 'personas': 'Agent Personalities'} %}
+  {% set state_words = {
+       'loaded': 'Running',
+       'not_configured': 'Turned off',
+       'runtime_disabled': 'Can\'t run in this setup',
+       'policy_error': 'Couldn\'t be checked',
+       'policy_denied': 'Blocked by your organization',
+       'import_failed': 'Couldn\'t start',
+       'invalid_contract': 'Doesn\'t work with this version of Lightwork'} %}
+  {% set ns = namespace(total=0, configured=0, loaded=0, failures=0) %}
+  {% for label, items in groups.items() %}
+    {% for p in items %}
+      {% set ns.total = ns.total + 1 %}
+      {% if p.configured %}{% set ns.configured = ns.configured + 1 %}{% endif %}
+      {% if p.loaded %}{% set ns.loaded = ns.loaded + 1 %}{% endif %}
+      {% if p.configured and not p.loaded %}{% set ns.failures = ns.failures + 1 %}{% endif %}
+    {% endfor %}
+  {% endfor %}
+  {% call hero('Workforce capability', 'Plugins',
+               subtitle='Add-ons for Lightwork',
+               lede='Plugins add extra tools, chat apps, skills and agent
+                     personalities. Install one, turn it on, and check that it
+                     started.') %}
+    {% if error %}
+      {{ state('Current state', 'Some plugins couldn\'t be checked',
+               badge='Needs attention', badge_class='warn',
+               copy='Lightwork couldn\'t read the list of installed plugins.
+                     Refresh the page; if it keeps happening, the details are below.') }}
+    {% else %}
+      {{ state('Current state',
+               (ns.loaded ~ ' of ' ~ ns.total ~ ' plugins running') if ns.total
+               else 'No plugins installed yet',
+               badge=(ns.failures ~ ' couldn\'t start') if ns.failures else ('Running' if ns.loaded else 'None running'),
+               badge_class='warn' if ns.failures else ('ok' if ns.loaded else 'idle'),
+               copy='Running means the plugin started inside Lightwork. Any outside
+                     service it connects to still needs its own test.') }}
+    {% endif %}
+  {% endcall %}
+
+  {% if error %}
+    <div class="panel" role="alert">
+      <p>Some plugins couldn't be checked. Refresh the page to try again.</p>
+      <details><summary>Technical details</summary><p class="muted plg-tech">{{ error }}</p></details>
+    </div>
+  {% endif %}
+
+  <div class="panel">
+    <p class="muted plg-flush">
+      Changes apply from the next task. Whether each plugin starts is checked straight away.
+      {% if allowlist_active %}
+        Your organization chose which plugins are on; switching one on or off here
+        overrides that choice until you press Use default.
+      {% else %}
+        Installed plugins are on unless you turn them off here.
+      {% endif %}
+    </p>
+  </div>
+  <p id="plugin-mutation-status" class="muted" role="status" aria-live="polite"></p>
+
+  {% for label, items in groups.items() %}
+    {% set title = group_titles.get(label, label | humanize) %}
+    <div class="section-head"><h2>{{ title }}</h2></div>
+    <div class="panel">
+      {% if items %}
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Plugin</th>
+              <th scope="col">Installed</th>
+              <th scope="col">Switched On</th>
+              <th scope="col">Allowed</th>
+              <th scope="col">Started</th>
+              <th scope="col">Status</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for p in items %}
+            {% set pname = p.name | humanize %}
+            <tr>
+              <td>{{ pname }}
+                <details class="plg-tech"><summary>Technical details</summary>
+                  <p class="muted">{{ p.name }} · {{ p.module }}{% if p.distribution %} · {{ p.distribution }}{% endif %}</p>
+                </details>
+              </td>
+              <td>
+                <span class="badge {{ 'active' if p.discovered else 'blocked' }}">
+                  {{ 'Yes' if p.discovered else 'Missing' }}
+                </span>
+              </td>
+              <td>
+                <span class="badge {{ 'active' if p.configured else 'blocked' }}">
+                  {{ 'On' if p.configured else 'Off' }}
+                </span>
+                {% if p.forced %}<span class="muted plg-small">(changed here)</span>{% endif %}
+              </td>
+              <td>
+                {% if not p.configured %}
+                  <span class="badge">Not checked while off</span>
+                {% else %}
+                  <span class="badge {{ 'active' if p.allowed else 'blocked' }}">
+                    {{ 'Allowed' if p.allowed else 'Blocked' }}
+                  </span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="badge {{ 'active' if p.loaded else 'blocked' }}">
+                  {{ state_words.get(p.state, p.state | humanize) }}
+                </span>
+                {% if p.load_error and p.configured %}
+                  <details class="muted plg-small">
+                    <summary>Why it didn't start</summary>
+                    <p class="plg-tech">{{ p.load_error }}</p>
+                  </details>
+                {% endif %}
+              </td>
+              <td>{{ integration_readiness(p.readiness) }}</td>
+              <td>
+                <form method="post" action="/plugins/toggle" data-plugin-mutation class="plg-actions">
+                  <input type="hidden" name="name" value="{{ p.name }}" />
+                  {% if p.configured %}
+                  <button type="submit" name="action" value="disable" class="btn btn--ghost"
+                          data-plugin-action="disable" data-plugin-target="{{ p.name }}"
+                          data-plugin-label="{{ pname }}"
+                          aria-label="Turn off {{ pname }}">Turn off</button>
+                  {% else %}
+                  <button type="submit" name="action" value="enable" class="btn btn--primary"
+                          data-plugin-action="enable" data-plugin-target="{{ p.name }}"
+                          data-plugin-label="{{ pname }}"
+                          aria-label="Turn on {{ pname }}">Turn on</button>
+                  {% endif %}
+                  {% if p.forced %}
+                  <button type="submit" name="action" value="reset" class="btn btn--ghost"
+                          data-plugin-action="reset" data-plugin-target="{{ p.name }}"
+                          data-plugin-label="{{ pname }}"
+                          aria-label="Use your organization's default for {{ pname }}">Use default</button>
+                  {% endif %}
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted plg-flush">No {{ title | lower }} plugins installed.
+          {% if installable %}Install one from the list below.{% endif %}</p>
+        {% if installable %}<p><a class="btn" href="#install">Go to Install a Plugin</a></p>{% endif %}
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  <div class="section-head"><h2 id="install">Install a plugin</h2></div>
+  <div class="panel">
+    {% if installable %}
+      <p class="muted">
+        Plugins your administrator approved. Install one, then turn it on in the list above.
+        {% if not install_enabled %}
+          <strong>Installing from this page is switched off.</strong>
+          {% if plugins_can_admin %}Turn it on under Administration below.{% else %}Ask your administrator to turn it on.{% endif %}
+        {% endif %}
+      </p>
+      <table>
+        <thead><tr><th scope="col">Plugin</th><th scope="col">Action</th></tr></thead>
+        <tbody>
+        {% for pkg in installable %}
+          {% set plabel = pkg | humanize %}
+          <tr>
+            <td>{{ plabel }}</td>
+            <td>
+              <form method="post" action="/plugins/install" data-plugin-mutation class="plg-actions">
+                <input type="hidden" name="name" value="{{ pkg }}" />
+                <button type="submit" class="btn btn--primary"
+                        data-plugin-action="install" data-plugin-target="{{ pkg }}"
+                        data-plugin-label="{{ plabel }}"
+                        aria-label="Install plugin {{ plabel }}"
+                        {% if not install_enabled %}disabled{% endif %}>Install plugin</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted plg-flush">
+        No plugins are approved for installing here yet.
+        {%- if plugins_can_admin %} Approve one under Administration below.
+        {%- else %} Your administrator chooses which ones can be installed.
+        {%- endif %}
+      </p>
+      {% if plugins_can_admin %}<p><a class="btn btn--primary" href="#plg-admin">Approve a plugin</a></p>{% endif %}
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="to-versions-title">Approved versions</h2></div>
+  <section class="panel" aria-labelledby="to-versions-title">
+    <p class="muted plg-flush">Pin the add-on versions you have checked, and Lightwork tells you when an
+      installed add-on no longer matches. Reload an add-on after its files were updated, without restarting.</p>
+    <p id="to-versions-status" role="status" aria-live="polite">Checking…</p>
+    <div id="to-versions"></div>
+    <p><button type="button" class="btn btn--primary" id="to-versions-pin">Pin current versions</button></p>
+  </section>
+
+  <div class="section-head"><h2 id="to-plugin-usage-title">How often add-on tools are used</h2></div>
+  <section class="panel" aria-labelledby="to-plugin-usage-title">
+    <p id="to-plugin-usage-status" class="muted" role="status" aria-live="polite">Loading…</p>
+    <div id="to-plugin-usage"></div>
+  </section>
+
+  <div class="section-head"><h2 id="to-starter-title">Start a new plugin</h2></div>
+  <section class="panel" aria-labelledby="to-starter-title">
+    <p class="muted plg-flush">Download the starting files for a new add-on, ready for a developer to build on.
+      Nothing is installed or changed on this server.</p>
+    <form id="to-starter-form" class="plg-approvals">
+      <label class="plg-field" for="to-starter-name">Name of the add-on
+        <input id="to-starter-name" class="input" type="text" name="name" maxlength="42" required autocomplete="off"
+               spellcheck="false" placeholder="e.g. weather-tools" aria-describedby="to-starter-help"></label>
+      <span id="to-starter-help" class="muted plg-small">3 to 42 lowercase letters, numbers or dashes, starting with a letter.</span>
+      <label class="plg-field" for="to-starter-kind">What it adds
+        <select id="to-starter-kind" class="select" name="kind">
+          <option value="tool">A tool agents can use</option>
+          <option value="channel">A chat app connection</option>
+          <option value="persona">An agent personality</option>
+        </select></label>
+      <div><button type="submit" class="btn">Download starter plugin</button></div>
+    </form>
+    <p id="to-starter-status" class="muted" role="status" aria-live="polite"></p>
+  </section>
+
+  {% if plugins_can_admin %}
+  <div class="section-head"><h2 id="plg-admin">Administration</h2></div>
+  <div class="panel">
+    <h3 class="plg-flush">Approved plugins</h3>
+    <p class="muted">
+      Only plugins on this list can be installed from this page. Approve only
+      plugins you trust: installing one runs its own setup on this computer.
+    </p>
+    <form method="post" action="/plugins/approvals" data-plugin-mutation class="plg-approvals">
+      {% if installable %}
+      <fieldset class="plg-list">
+        <legend>Keep on the list (untick to remove)</legend>
+        {% for pkg in installable %}
+        <label class="plg-check"><input type="checkbox" name="names" value="{{ pkg }}" checked data-plugin-approved />
+          {{ pkg | humanize }}</label>
+        {% endfor %}
+      </fieldset>
+      {% endif %}
+      <label class="plg-field" for="plg-add">Add a plugin by its package name
+        <input id="plg-add" class="input" type="text" name="names" maxlength="100" autocomplete="off"
+               spellcheck="false" placeholder="e.g. acme-weather-tools" data-plugin-new
+               aria-describedby="plg-add-help" />
+      </label>
+      <span id="plg-add-help" class="muted plg-small">Use the name the plugin's maker gives for installing it: letters, numbers, dots and dashes only.</span>
+      <div>
+        <button type="submit" class="btn btn--primary"
+                data-plugin-action="replace-approvals"
+                data-plugin-target="approved list">Save approved list</button>
+      </div>
+    </form>
+
+    <h3 class="plg-gap">Installing from this page</h3>
+    {% if install_env_forced_off %}
+    <p class="muted plg-flush">
+      Installing is <strong>locked off by this server's setup</strong>, so it can't be
+      turned on here. Ask whoever runs the server to unlock it.
+    </p>
+    {% else %}
+    <p class="muted">
+      {% if install_enabled %}Installing is <strong>on</strong>: approved plugins show an
+      Install button for administrators.
+      {% else %}Installing is <strong>off</strong>: approved plugins are listed but can't
+      be installed until you turn this on.{% endif %}
+    </p>
+    <form method="post" action="/plugins/install-switch" data-plugin-mutation class="plg-actions">
+      <input type="hidden" name="enabled" value="{{ 'off' if install_enabled else 'on' }}" />
+      <button type="submit" class="btn {{ 'btn--ghost' if install_enabled else 'btn--primary' }}"
+              data-plugin-action="{{ 'install-switch-off' if install_enabled else 'install-switch-on' }}"
+              data-plugin-target="installing from this page">
+        {{ 'Turn installing off' if install_enabled else 'Turn installing on' }}
+      </button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+  <section id="plugin-workbench" class="panel" aria-labelledby="plugin-workbench-title">
+    <h2 id="plugin-workbench-title">Qualification workbench</h2>
+    <p>Review exact installed versions and declared access, then check synthetic inputs in a restricted local container. Starting a process is not acceptance by an external service. No credentials, network access, or host execution are permitted in these checks.</p>
+    <p><a class="btn btn--ghost" href="/settings/all?id=plugins.workbench_image">Choose a practice environment</a>. Choose from approved environments already installed on this computer. Loading the list does not download anything or start a check.</p>
+    <button type="button" class="btn" data-workbench-refresh>Refresh qualification evidence</button>
+    <button type="button" class="btn" data-workbench-cancel>Cancel active check</button>
+    <p role="status" aria-live="polite"></p><div data-workbench-list></div>
+  </section>
+  <style>
+    .plg-flush { margin: 0; }
+    .plg-gap { margin-top: var(--space-5); }
+    .plg-small { font-size: var(--text-sm); }
+    .plg-tech { overflow-wrap: anywhere; font-size: var(--text-sm); }
+    .plg-actions { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
+    .plg-approvals { display: flex; flex-direction: column; gap: var(--space-2); max-width: 32rem; }
+    .plg-list { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+    .plg-check { display: flex; align-items: center; gap: var(--space-2); }
+    .plg-field { display: flex; flex-direction: column; gap: var(--space-1); }
+    .to-scroll { overflow-x: auto; }
+    .to-technical { margin-top: var(--space-2); }
+  </style>
+{% endblock %}
+{% block scripts_extra %}
+  <script src="/static/lightwork-plugins.js" defer></script>
+  <script nonce="{{ csp_script_nonce }}">{% include "flow_designer_action_fields.js" %}</script>
+  <script src="/static/lightwork-plugin-practice.js" defer></script>
+  <script src="/static/lightwork-plugin-workbench.js" defer></script>
+  <script src="/static/lightwork-tool-ops.js" defer></script>
+{% endblock %}

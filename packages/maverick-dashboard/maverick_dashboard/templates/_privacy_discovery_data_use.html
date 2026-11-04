@@ -1,0 +1,31 @@
+{% if privacy_data_discovery_can_admin %}
+<section class="panel" id="pddb-root" aria-labelledby="pddb-title">
+  <h2 id="pddb-title">Use approved findings in Data Use</h2>
+  <p class="muted">Choose a complete scan and the saved dataset it describes. Review the personal-data categories before updating that dataset. Every finding needs approval from a second person.</p>
+  <p><a href="/data-use">Manage saved datasets</a> · <a href="/settings/all?id=privacy_automation.discovery_data_use_bridge.enable">Allow reviewed findings in Data Use</a></p>
+  <p id="pddb-status" class="muted" role="status" aria-live="polite">Loading available reports and datasets…</p>
+  <form id="pddb-form">
+    <div class="pdd-fields">
+      <label for="pddb-report">Scan report<select class="select" id="pddb-report" required disabled><option value="">Loading…</option></select></label>
+      <label for="pddb-dataset">Saved dataset<select class="select" id="pddb-dataset" required disabled><option value="">Loading…</option></select></label>
+    </div>
+    <p class="muted" id="pddb-scope"></p>
+    <div class="pdd-actions">
+      <button class="btn btn--primary" type="submit" id="pddb-prepare" disabled>Review dataset update</button>
+      <button class="btn btn--ghost" type="button" id="pddb-refresh">Refresh choices</button>
+    </div>
+  </form>
+  <section id="pddb-review" hidden aria-labelledby="pddb-review-title">
+    <h3 id="pddb-review-title">Review dataset update</h3>
+    <p id="pddb-summary"></p>
+    <dl id="pddb-categories"><dt>Currently recorded</dt><dd id="pddb-before"></dd><dt>Approved categories from this scan</dt><dd id="pddb-after"></dd></dl>
+    <p class="muted" id="pddb-impact"></p>
+    <p class="muted" id="pddb-expiry"></p>
+    <div class="pdd-actions">
+      <button class="btn" type="button" id="pddb-apply">Confirm dataset update</button>
+      <button class="btn btn--ghost" type="button" id="pddb-original">Read saved outcome</button>
+      <button class="btn btn--ghost" type="button" id="pddb-new">Choose another report</button>
+    </div>
+  </section>
+</section>
+{% endif %}

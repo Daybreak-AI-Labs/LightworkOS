@@ -1,0 +1,28 @@
+{% extends "public_base.html" %}
+{% block title %}{{ rf.status_title }}{% endblock %}
+{% block public_label %}{{ rf.page_title }}{% endblock %}
+{% block public_footer %}{{ rf.page_title }}{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+<div style="width: 100%; max-width: 40rem; margin: 0 auto;">
+{{ hero('', rf.status_title, compact=true) }}
+<section class="panel">
+  {% if view %}
+    {% if just_verified %}<p role="status">{{ rf.verify_button }} — done. Thank you.</p>{% endif %}
+    <dl>
+      <dt>{{ rf.status_reference }}</dt><dd>{{ view.reference }}</dd>
+      <dt>{{ rf.status_type }}</dt><dd>{{ view.request_type_label | capitalize }}</dd>
+      <dt>{{ rf.status_law }}</dt><dd>{{ view.jurisdiction_name }}</dd>
+      <dt>{{ rf.status_state }}</dt><dd>{{ view.status_label }}</dd>
+      <dt>{{ rf.status_received }}</dt><dd>{{ view.received_date }}</dd>
+      <dt>{{ rf.status_due }}</dt><dd>{{ view.due_date }}</dd>
+    </dl>
+    {% if view.status == 'unverified' %}<p class="muted">{{ rf.status_unverified }}</p>{% endif %}
+    {% if view.extended %}<p class="muted">{{ rf.status_extended }}</p>{% endif %}
+    <p class="muted" style="font-size: var(--text-xs);">{{ rf.non_legal_advice }}</p>
+  {% else %}
+    <p role="alert">{{ rf.verify_invalid if invalid == 'verify' else rf.status_invalid }}</p>
+  {% endif %}
+</section>
+</div>
+{% endblock %}

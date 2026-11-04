@@ -1,0 +1,12 @@
+[package]
+name = "mvk-scan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lightwork native safety scanners (pure logic; shared by the Python and WASM bindings)."
+
+[dependencies]
+unicode-normalization = "0.1"
+# All current detector patterns avoid lookaround and delegate to the engine's
+# linear regex backend. Boundaries are checked explicitly against the input.
+fancy-regex = "0.20"

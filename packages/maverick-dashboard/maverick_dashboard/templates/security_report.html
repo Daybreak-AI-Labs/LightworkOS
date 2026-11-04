@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Security readiness report · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  @media print { .sidebar,.topbar,.rpt-actions,#mv-sidebar,header { display:none!important; }
+                 .content { margin:0!important; max-width:none!important; } }
+  .rpt-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(10rem,1fr)); gap:var(--space-3); }
+  .rpt-grid .stat { break-inside:avoid; }
+  .rpt-note { border-left:4px solid var(--warn); padding:var(--space-3); background:var(--surface-2); }
+  .rpt-scroll { overflow-x:auto; }
+  .rpt-muted { color:var(--muted); font-size:var(--text-sm); }
+  .rpt-rationale { display:block; max-width:24rem; }
+  .rpt-facts { margin:0; display:grid; grid-template-columns:max-content 1fr;
+               gap:var(--space-1) var(--space-3); }
+  .rpt-facts dt { font-weight:var(--font-medium); }
+  .rpt-facts dd { margin:0; }
+  .rpt-actions { display:flex; gap:var(--space-2); flex-wrap:wrap; margin-bottom:var(--space-3); }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% set readiness = r.get('readiness', {}) or {} %}
+{% call hero('Governed workspaces', 'Security readiness report',
+             subtitle='Board pack',
+             lede='Made ' ~ (r.generated_at | datetime('absolute') if r.get('generated_at') is number else 'at an unknown time') ~ ' from your security records: every control, what it
+                   does, how far it is put in place, the reviewed evidence behind that, and who owns it.') %}
+  {{ state('Current state',
+           readiness.get('coverage_percent', 0) ~ '% of controls covered',
+           badge='Readiness, not certification',
+           badge_class='warn' if readiness.get('evidence_integrity_gaps') else 'ok',
+           copy=readiness.get('controls_implemented', 0) ~ ' implemented and '
+                ~ readiness.get('controls_partial', 0) ~ ' partial of '
+                ~ readiness.get('controls_applicable', 0) ~ ' applicable controls · '
+                ~ r.get('evidence', {}).get('approved', 0) ~ ' approved evidence items · '
+                ~ readiness.get('evidence_integrity_gaps', 0) ~ ' controls that lost their evidence') }}
+{% endcall %}
+<div class="rpt-actions">
+  <button class="btn btn--primary" type="button" id="rpt-print">Print or save as PDF</button>
+  <a class="btn btn--ghost" href="/api/v1/security/report" download="security-report.json">Download data (for other tools)</a>
+  {{ back_link('/security', 'Security & GRC') }}
+</div>
+<p class="rpt-note"><strong>Readiness, not certification.</strong> Lightwork’s suggestions help your review.
+  People still decide which rules apply, whether evidence is enough, which risks to accept and what auditors conclude.</p>
+
+<div class="rpt-grid">
+{% for label, key in [('Assessments','assessments'),('Controls','controls'),('Evidence','evidence'),('Risks','risks'),('Fix plans (POA&M)','poam'),('Vendors','vendors'),('Policies','policies'),('Incidents','incidents'),('Audits','audits')] %}
+  {% set value = r.get(key,{}) %}
+  <div class="stat"><div class="num">{{ value.get('total',0) if value is mapping else value }}</div><div class="label">{{ label }}</div></div>
+{% endfor %}
+</div>
+
+<div class="section-head"><h2>Control readiness</h2></div>
+<div class="panel">
+  <table><thead><tr><th scope="col">Framework</th><th scope="col">Covered</th><th scope="col">In place</th><th scope="col">Partly in place</th><th scope="col">Apply to you</th><th scope="col">Approved evidence</th><th scope="col">Lost their evidence</th></tr></thead><tbody>
+  {% if readiness %}
+    <tr><td>{{ framework_labels.get(readiness.get('framework') or 'all') or readiness.get('framework') }}</td><td>{{ readiness.get('coverage_percent',0) }}%</td>
+      <td>{{ readiness.get('controls_implemented',0) }}</td><td>{{ readiness.get('controls_partial',0) }}</td>
+      <td>{{ readiness.get('controls_applicable',0) }}</td>
+      <td>{{ readiness.get('approved_evidence',0) }}</td>
+      <td>{{ readiness.get('evidence_integrity_gaps',0) }}</td></tr>
+  {% else %}<tr><td colspan="7" class="muted">No controls yet. <a class="btn btn--ghost" href="/security#sec-controls">Set up controls</a></td></tr>{% endif %}
+  </tbody></table>
+  <p class="rpt-muted">A control only counts as in place once its evidence is approved. “Lost their evidence”
+    means a control was marked in place but its evidence was later withdrawn, so it needs another look.</p>
+</div>
+
+<div class="section-head"><h2>Control register detail</h2></div>
+<div class="panel">
+  <p class="rpt-muted">What each control does, whether it is in scope and why,
+    who owns it, and the reviewed evidence cited behind its status.</p>
+  <div class="rpt-scroll" tabindex="0" role="region" aria-label="Control register detail"><table>
+    <thead><tr><th scope="col">Control</th><th scope="col">Framework</th><th scope="col">Status</th><th scope="col">Applies?</th><th scope="col">Owner</th><th scope="col">Evidence</th></tr></thead>
+    <tbody>
+    {% for row in controls %}
+      <tr>
+        <td>{{ row.get('title','') or row.get('control_id') }}<br><span class="rpt-muted">{{ row.get('control_id') or '' }}</span></td>
+        <td>{{ framework_labels.get(row.get('framework')) or row.get('framework') or '—' }}
+          {% set mapped = row.get('mappings') or {} %}
+          {% if mapped %}<br><span class="rpt-muted">Also covers:
+            {% for fw, refs in mapped.items() %}{{ framework_labels.get(fw) or fw }} {{ refs | join('/') }}{{ '' if loop.last else ' · ' }}{% endfor %}</span>{% endif %}
+        </td>
+        <td>{% set impl = row.get('implementation_status') or 'not_started' %}
+          <span class="badge {{ 'done' if impl == 'implemented' else 'warn' }}">{{ impl | humanize }}</span></td>
+        <td>{{ 'Yes' if row.get('applicable', true) else 'No' }}
+          {% if row.get('applicability_rationale') %}<span class="rpt-muted rpt-rationale">{{ row.get('applicability_rationale') }}</span>{% endif %}
+        </td>
+        <td>{{ (row.get('owner') | identity) if row.get('owner') else '—' }}</td>
+        <td>
+          {% for item in row.get('cited_evidence', []) %}
+            {{ item.title }} <span class="badge {{ 'done' if item.status == 'approved' else 'warn' }}">{{ item.status | humanize }}</span>{% if not loop.last %}<br>{% endif %}
+          {% else %}<span class="rpt-muted">No evidence cited yet.</span>{% endfor %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">No controls yet. <a class="btn btn--ghost" href="/security#sec-controls">Set up controls</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="section-head"><h2>Program record detail</h2></div>
+<div class="panel">
+  <div class="rpt-grid">
+    <div class="stat"><div class="num">{{ r.get('evidence',{}).get('pending_review',0) }}</div><div class="label">Evidence waiting for review</div></div>
+    <div class="stat"><div class="num">{{ r.get('risks',{}).get('open',0) }}</div><div class="label">Open risks</div></div>
+    <div class="stat"><div class="num">{{ r.get('risks',{}).get('critical_high',0) }}</div><div class="label">High or critical after fixes</div></div>
+    <div class="stat"><div class="num">{{ r.get('risks',{}).get('expired_exceptions',0) }}</div><div class="label">Expired exceptions</div></div>
+    <div class="stat"><div class="num">{{ r.get('poam',{}).get('open',0) }}</div><div class="label">Open fix plans</div></div>
+    <div class="stat"><div class="num">{{ r.get('poam',{}).get('overdue',0) }}</div><div class="label">Overdue fix plans</div></div>
+    <div class="stat"><div class="num">{{ r.get('vendors',{}).get('pending_review',0) }}</div><div class="label">Vendors waiting for review</div></div>
+    <div class="stat"><div class="num">{{ r.get('vendors',{}).get('high_risk',0) }}</div><div class="label">High-risk vendors</div></div>
+    <div class="stat"><div class="num">{{ r.get('policies',{}).get('approved_or_attested',0) }}</div><div class="label">Policies approved or confirmed</div></div>
+    <div class="stat"><div class="num">{{ r.get('policies',{}).get('review_due',0) }}</div><div class="label">Policies due for review</div></div>
+    <div class="stat"><div class="num">{{ r.get('incidents',{}).get('open',0) }}</div><div class="label">Open incidents</div></div>
+    <div class="stat"><div class="num">{{ r.get('incidents',{}).get('clock_breached',0) }}</div><div class="label">Missed reporting deadlines</div></div>
+    <div class="stat"><div class="num">{{ r.get('audits',{}).get('active',0) }}</div><div class="label">Audits in progress</div></div>
+    <div class="stat"><div class="num">{{ r.get('audits',{}).get('open_findings',0) }}</div><div class="label">Open audit findings</div></div>
+    <div class="stat"><div class="num">{{ r.get('assessments',{}).get('review_due',0) }}</div><div class="label">Assessments due for another review</div></div>
+  </div>
+</div>
+
+<div class="section-head"><h2>Top gaps</h2></div>
+<div class="panel">
+  <table><thead><tr><th scope="col">Control or finding</th><th scope="col">Framework</th><th scope="col">Owner</th><th scope="col">Status</th></tr></thead><tbody>
+  {% for row in r.get('top_gaps',[]) %}
+    <tr><td>{{ row.get('title') or row.get('finding') or row.get('control_id') or row.get('id') }}</td>
+      <td>{{ framework_labels.get(row.get('framework')) or row.get('framework') or '—' }}</td><td>{{ (row.get('owner') | identity) if row.get('owner') else '—' }}</td>
+      <td>{{ (row.get('status','open') or 'open') | humanize }}
+        {% if row.get('declared_status') and row.get('declared_status') != row.get('status') %}
+          <span class="rpt-muted">(marked {{ row.get('declared_status') | humanize | lower }})</span>
+        {% endif %}</td></tr>
+  {% else %}<tr><td colspan="4" class="muted">No gaps to show. Gaps appear here when a control fails its check.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+<script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var p = document.getElementById('rpt-print');
+    if (p) p.addEventListener('click', function () { window.print(); });
+  })();
+</script>
+{% endblock %}

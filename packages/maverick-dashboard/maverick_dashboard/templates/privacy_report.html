@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Privacy program report · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .rpt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 var(--space-4); }
+  .rpt-actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-4); }
+  .rpt-note { color: var(--muted); font-size: var(--text-sm); }
+  @media print {
+    .sidebar, .topbar, nav, .rpt-actions, #mv-sidebar, header { display: none !important; }
+    .panel { break-inside: avoid; border: 1px solid var(--print-border); }
+    body { background: var(--print-paper); color: var(--print-ink-strong); }
+  }
+</style>
+{% set status_labels = {
+  'pending_review': 'Waiting for review', 'needs_more': 'Waiting for answers',
+  'approved': 'Approved', 'rejected': 'Rejected', 'in_progress': 'In progress',
+} %}
+{% set kind_labels = {
+  'access': 'Copy of data', 'portability': 'Move data', 'erasure': 'Delete data',
+  'rectification': 'Correct data', 'objection': 'Stop using data', 'restriction': 'Limit use of data',
+} %}
+{% set tier_labels = {'prohibited': 'Banned', 'high': 'High risk', 'limited': 'Limited risk', 'minimal': 'Minimal risk'} %}
+{% macro days(n) %}{{ n }} {{ 'day' if n == 1 else 'days' }}{% endmacro %}
+
+  <h1 class="page-title">Privacy program report</h1>
+  <p class="page-subtitle">Every number below is counted from your own records. These are assessments,
+    vendor data agreements (DPAs), AI systems, the record of processing (GDPR Article 30),
+    data-subject requests and breaches. Generated {{ r.generated_at | datetime('absolute') }}.</p>
+  <div class="rpt-actions">
+    <button class="btn btn--primary" id="rpt-print" type="button">Print or save as PDF</button>
+    <a class="btn btn--ghost" href="/api/v1/privacy/report" download="privacy-program-report.json">Download data</a>
+    <a class="btn btn--ghost" href="/privacy/board">Open the privacy dashboard</a>
+    {{ back_link('/privacy', 'Privacy') }}
+  </div>
+
+  {% set nothing = (r.assessments.total + r.dsar.total + r.incidents.total + r.dpa.total + r.ai.total + r.ropa.total) == 0 %}
+  {% if nothing %}
+  <div class="panel">
+    <p style="margin-top: 0;"><strong>Nothing recorded yet.</strong> The report fills in as requests, assessments and incidents are recorded in Privacy.</p>
+    <p class="muted">This report fills in as you start assessments, log data requests, review vendor agreements and record breaches in the Privacy workspace.</p>
+    <a class="btn btn--primary" href="/privacy">Go to the Privacy workspace</a>
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Assessments</h2></div>
+  <div class="panel">
+    <div class="rpt-grid">
+      <div class="stat"><div class="num">{{ r.assessments.total }}</div><div class="label">On record</div></div>
+      <div class="stat"><div class="num">{{ r.assessments.open }}</div><div class="label">Waiting for review or answers</div></div>
+      <div class="stat"><div class="num {{ 'pw-age-warn' if r.assessments.review_due }}">{{ r.assessments.review_due }}</div><div class="label">Due for another review</div></div>
+      <div class="stat"><div class="num">{{ days(r.assessments.oldest_open_days) }}</div><div class="label">Oldest open item</div></div>
+    </div>
+    <table>
+      <thead><tr><th scope="col">Status</th><th scope="col">Count</th>
+        <th scope="col">Risk after fixes</th><th scope="col">Count</th></tr></thead>
+      <tbody>
+        {% set statuses = r.assessments.by_status %}
+        {% set residuals = r.assessments.by_residual %}
+        {% set skeys = statuses.keys() | list %}
+        {% set rkeys = ['high', 'medium', 'low', 'minimal'] %}
+        {% for i in range([skeys | length, rkeys | length] | max) %}
+        <tr>
+          <td>{{ status_labels.get(skeys[i], skeys[i] | humanize) if i < skeys | length }}</td>
+          <td>{{ statuses[skeys[i]] if i < skeys | length }}</td>
+          <td>{{ (rkeys[i] | humanize) if i < rkeys | length }}</td>
+          <td>{{ residuals.get(rkeys[i], 0) if i < rkeys | length }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-head"><h2>Data-subject requests</h2></div>
+  <div class="panel">
+    <div class="rpt-grid">
+      <div class="stat"><div class="num">{{ r.dsar.total }}</div><div class="label">Requests tracked</div></div>
+      <div class="stat"><div class="num">{{ r.dsar.open }}</div><div class="label">Still open</div></div>
+      <div class="stat"><div class="num {{ 'pw-age-warn' if r.dsar.overdue }}">{{ r.dsar.overdue }}</div><div class="label">Past their deadline</div></div>
+      <div class="stat"><div class="num">{{ r.dsar.handled_on_time }} of {{ r.dsar.handled }}</div><div class="label">Handled requests answered on time</div></div>
+      <div class="stat"><div class="num {{ 'pw-age-warn' if r.dsar.closed_without_response }}">{{ r.dsar.closed_without_response }}</div><div class="label">Closed without a recorded answer</div></div>
+    </div>
+    <p class="rpt-note">A request counts as answered only when the answer is on record. That means recorded when it was closed, marked answered by a named person, or a completion or refusal notice that was actually sent.
+      A deletion request also needs what happened to the data, or the lawful reason for keeping it.
+      Still open includes requests waiting for email confirmation or for deletion.
+      This report uses recorded answers. It does not confirm delivery or deletion.
+      {% if r.dsar.answered_late %}{{ r.dsar.answered_late }} answered after the deadline.{% endif %}
+      {% if r.dsar.withdrawn %}{{ r.dsar.withdrawn }} withdrawn by the requester.{% endif %}</p>
+    {% if r.dsar.by_kind %}
+    <p class="rpt-note">By type:
+      {% for k, v in r.dsar.by_kind.items() %}{{ kind_labels.get(k, k | humanize) }} {{ v }}{{ ' · ' if not loop.last }}{% endfor %}</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Breaches (GDPR Article 33)</h2></div>
+  <div class="panel">
+    <div class="rpt-grid">
+      <div class="stat"><div class="num">{{ r.incidents.total }}</div><div class="label">Recorded</div></div>
+      <div class="stat"><div class="num">{{ r.incidents.open }}</div><div class="label">Open</div></div>
+      <div class="stat"><div class="num {{ 'pw-age-warn' if r.incidents.past_72h_undecided }}">{{ r.incidents.past_72h_undecided }}</div><div class="label">No decision after 72 hours</div></div>
+      <div class="stat"><div class="num">{{ r.incidents.notified }} / {{ r.incidents.documented_no_notify }}</div><div class="label">Regulator told / decided not to tell</div></div>
+    </div>
+  </div>
+
+  <div class="section-head"><h2>Vendor data agreements</h2></div>
+  <div class="panel">
+    <div class="rpt-grid">
+      <div class="stat"><div class="num">{{ r.dpa.total }}</div><div class="label">Agreements reviewed</div></div>
+      <div class="stat"><div class="num">{{ r.dpa.avg_clauses_present }}</div><div class="label">Average required clauses present (out of 10)</div></div>
+      <div class="stat"><div class="num {{ 'pw-age-warn' if r.dpa.high_residual }}">{{ r.dpa.high_residual }}</div><div class="label">Still high risk</div></div>
+    </div>
+    {% if r.dpa.top_gaps %}
+    <table>
+      <thead><tr><th scope="col">Clause most often missing</th><th scope="col">Agreements missing it</th></tr></thead>
+      <tbody>
+        {% for g in r.dpa.top_gaps %}
+        <tr><td>{{ g.requirement }}</td><td>{{ g.reviews_missing_it }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>AI systems and the record of processing</h2></div>
+  <div class="panel">
+    <div class="rpt-grid">
+      <div class="stat"><div class="num">{{ r.ai.total }}</div><div class="label">AI systems registered</div></div>
+      <div class="stat"><div class="num">{{ r.ropa.total }}</div><div class="label">Processing activities recorded</div></div>
+      <div class="stat"><div class="num">{{ r.ropa.with_transfers }}</div><div class="label">Sending data abroad</div></div>
+      <div class="stat"><div class="num">{{ r.ropa.from_assessments }} / {{ r.ropa.from_onetrust }}</div><div class="label">From assessments / imported from OneTrust</div></div>
+    </div>
+    {% if r.ai.by_tier %}
+    <p class="rpt-note">EU AI Act risk levels:
+      {% for t in ['prohibited', 'high', 'limited', 'minimal'] %}{% if r.ai.by_tier.get(t) %}{{ tier_labels[t] }} {{ r.ai.by_tier[t] }}{{ ' · ' if not loop.last }}{% endif %}{% endfor %}</p>
+    {% endif %}
+  </div>
+<script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var b = document.getElementById('rpt-print');
+    if (b) b.addEventListener('click', function () { window.print(); });
+  })();
+</script>
+{% endblock %}

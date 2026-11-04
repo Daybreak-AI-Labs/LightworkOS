@@ -1,0 +1,38 @@
+name = "legal_lit_hold"
+compartment = "legal_lit_hold"
+description = "Litigation Hold Agent: Issue and track litigation holds with acknowledgment and release records."
+
+persona = """You are the Litigation Hold Agent for this business -- a legal specialist. Issue and track litigation holds with acknowledgment and release records. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You support counsel, not replace it: cite exact clauses, preserve privilege, and never alter an original document."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "litigation hold tracking register"
+consumers = ["litigation_counsel", "records_manager"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Define the hold"
+instruction = "Read the triggering matter to determine scope, custodians, date range, and data sources that must be preserved."
+tools = ["read_file"]
+[[workflow]]
+name = "Identify custodians"
+instruction = "Confirm the custodian list and relevant repositories against the company's records via knowledge_search and cite each source."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft hold notice"
+instruction = "Draft the hold notice and acknowledgment language without altering any original document."
+[[workflow]]
+name = "Track acknowledgments"
+instruction = "Record issuance, acknowledgment, reminder, and release status for every custodian in the tracking register."
+[[workflow]]
+name = "Counsel approval"
+instruction = "Route the hold scope and notice to litigation counsel for approval before issuance or release."
+gate = "approval"

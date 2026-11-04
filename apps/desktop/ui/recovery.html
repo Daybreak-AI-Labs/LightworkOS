@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workspace recovery · Lightwork</title>
+<style>
+  /* Same colours and buttons as the Lightwork dashboard (dark theme). */
+  :root { color-scheme: dark; --bg:#04050a; --panel:#0b0e15; --sunken:#070910; --border:#1b2130; --border-strong:#2a3246; --text:#eef1f7; --muted:#8e97ac; --brand:#3d8bff; --accent:#3ddc97; --grad:linear-gradient(90deg,#2f7cff 0%,#8b5cf6 52%,#ff8a2b 100%); font-family:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); }
+  main { max-width:44rem; margin:2.5rem auto; padding:0 1rem 2rem; }
+  h1 { font-size:1.7rem; font-weight:600; letter-spacing:-.01em; margin:0 0 .5rem; }
+  h2 { font-size:1rem; font-weight:600; margin:0 0 .4rem; }
+  p, li { line-height:1.6; } .muted, li { color:var(--muted); }
+  .panel { position:relative; overflow:hidden; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:1.2rem 1.25rem; margin:1.25rem 0; }
+  .panel::before { content:""; position:absolute; left:0; right:0; top:0; height:2px; background:var(--grad); }
+  ol { padding-left:1.25rem; margin:.4rem 0 0; }
+  .actions { display:flex; flex-wrap:wrap; gap:.6rem; margin-top:1rem; align-items:center; }
+  button { font:inherit; font-weight:600; font-size:.92rem; padding:.65rem 1rem; background:var(--sunken); color:var(--text); border:1px solid var(--border-strong); border-radius:8px; cursor:pointer; }
+  button:hover { background:#121726; }
+  button.primary { background:var(--text); color:var(--bg); border-color:transparent; }
+  button.primary:hover { background:#d6dae3; }
+  button:focus-visible, summary:focus-visible { outline:2px solid var(--brand); outline-offset:3px; }
+  button:disabled { opacity:.5; cursor:default; }
+  #status { font-weight:500; }
+  details { margin-top:1.5rem; border-top:1px solid var(--border); padding-top:.8rem; }
+  summary { cursor:pointer; }
+  #details { white-space:pre-wrap; overflow-wrap:anywhere; max-height:14rem; overflow:auto; background:var(--sunken); border:1px solid var(--border); border-radius:8px; padding:.6rem .7rem; font-size:.8rem; color:var(--muted); font-family:"JetBrains Mono",ui-monospace,Consolas,monospace; }
+  #details-copied { font-size:.82rem; color:var(--accent); }
+</style></head>
+<body><main><h1>Workspace recovery mode</h1>
+<p class="muted">Recovery mode is a separate, safe space for restoring your workspace from a saved copy and for approving updates. Normal work and background tasks stay paused while it is open.</p>
+<section class="panel" aria-labelledby="before-title">
+  <h2 id="before-title">Before you start</h2>
+  <ol>
+    <li>Finish what you are doing and save your changes. Opening recovery mode closes your workspace on this computer.</li>
+    <li>An administrator must turn on <strong>Workspace recovery</strong> in Settings and choose the workspace first.</li>
+    <li>Data kept outside this computer, such as a shared company database, is not covered here and needs its own recovery plan.</li>
+  </ol>
+  <div class="actions">
+    <button id="enter-recovery" class="primary" type="button">Close my work and open recovery mode</button>
+    <button id="leave-recovery" type="button">Close recovery mode and go back to work</button>
+  </div>
+</section>
+<p id="status" role="status" aria-live="polite">Nothing has been restarted yet.</p>
+<details><summary>Details for support</summary><pre id="details">No errors recorded.</pre>
+  <div class="actions"><button id="details-copy" type="button">Copy</button><span id="details-copied" role="status" aria-live="polite"></span></div>
+</details>
+</main><script src="recovery.js" defer></script></body></html>

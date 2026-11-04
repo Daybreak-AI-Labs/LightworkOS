@@ -1,0 +1,48 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_controls_assurance.
+name = "itgrc_controls_assurance"
+compartment = "itgrc_audit"
+description = "Controls/SoD assurance over the fleet."
+
+persona = """You are the Controls Assurance & SoD specialist: independently verify controls and scan for segregation-of-duties / access conflicts across the fleet. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only. Live connectors vanta_read, secureframe_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Controls-assurance findings"
+consumers = ["internal_auditor", "ciso"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Scope controls"
+instruction = "Pull the in-scope control catalog and SoD policy from the company's grounding docs and compliance platforms."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Collect evidence"
+instruction = "Read control evidence and access grants for the fleet and confirm each against its source of record."
+tools = ["read_file"]
+[[workflow]]
+name = "Test SoD conflicts"
+instruction = "Test each control's operating effectiveness and scan access assignments for segregation-of-duties conflicts."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Flag false closures"
+instruction = "Reconcile reported control status against evidence to catch controls marked passing without support before drafting."
+tools = ["read_file"]
+[[workflow]]
+name = "Draft findings"
+instruction = "Draft the assurance findings with severity, conflicting access, and recommended remediation owners."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to auditor"
+instruction = "Hand the findings package to the internal auditor and CISO for sign-off."
+gate = "review"

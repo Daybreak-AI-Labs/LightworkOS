@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Checked answer regions · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Checked answer regions', lede='Find which version gives your reviewed answer, where another example is needed, and where neither answer is right.') }}
+<div id="applicability-regions" class="stack">
+  <section class="glass-card stack" aria-labelledby="apr-author-h">
+    <h2 id="apr-author-h" tabindex="-1">Choose current and proposed work</h2>
+    <p class="muted">Use an owned published local rule, a changed draft with the same starting limits, and complete comparisons of retained real cases. Reuse permission must be retained separately.</p>
+    <p id="apr-disabled" class="muted" hidden>Checked answer routing is off. An administrator can enable it in <a href="/settings#feature-applicability_regions">Settings</a>. Your original request history remains available below.</p>
+    <form id="apr-form" class="stack">
+      <label for="apr-flow">Local rule</label><select id="apr-flow" class="select"><option value="">Choose a local rule</option></select>
+      <div id="apr-comparisons" class="stack"></div>
+      <label for="apr-seconds">Total time for each check</label><select id="apr-seconds" class="select"><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option></select>
+      <p class="muted">Includes waiting, current permission checks, saved observations and separate answer comparisons. Larger ranges may need more time. Reaching the limit keeps the original outcome unconfirmed; it never restarts the work.</p>
+      <div class="lrn__actions"><button id="apr-review" type="button" class="btn btn--primary">Review the complete answer range</button><button id="apr-refresh" type="button" class="btn btn--ghost">Refresh current choices</button></div>
+    </form>
+    <p id="apr-status" class="muted" role="status" aria-live="polite">Reading current choices…</p><p id="apr-error" class="danger-text" role="alert"></p>
+    <div id="apr-preview" class="stack" hidden></div>
+    <details><summary>Prepare real cases</summary><p class="muted">Retain current reuse permission for each original case, then compare the two versions with your reviewed expected answer.</p><a class="btn btn--ghost" href="/learning/recheck-rules">Retain original case evidence</a><a class="btn btn--ghost" href="/learning/flow-checks">Compare actual retained cases</a></details>
+  </section>
+  <section class="glass-card stack" aria-labelledby="apr-original-h">
+    <h2 id="apr-original-h">Original checks and reviewed answers</h2>
+    <label for="apr-history">Your original request</label><select id="apr-history" class="select"><option value="">Choose an original request</option></select>
+    <button id="apr-read" type="button" class="btn btn--ghost">Check original outcome</button>
+    <div id="apr-result" class="stack" aria-live="polite"></div>
+    <form id="apr-question" class="stack" hidden><h3>Review an unresolved situation</h3><p class="muted">This is a hypothetical local test. Your answer does not establish what happened in real customer work. Recording it also permits its future reuse with these same rules while your access remains current.</p><div id="apr-question-values" class="stack"></div><div id="apr-expected-field" class="stack"></div><button id="apr-label-review" type="button" class="btn btn--primary">Review this expected answer and reuse</button></form>
+    <form id="apr-run" class="stack" hidden><h3>Try this checked routing</h3><p class="muted">Only reviewed situations can use a version. Unresolved or conflicting answers run neither version. Nothing is published.</p><div id="apr-inputs" class="stack"></div><button id="apr-run-review" type="button" class="btn btn--primary">Review local answer routing</button></form>
+    <button id="apr-withdraw-review" type="button" class="btn btn--ghost" hidden>Review withdrawal of this hypothetical answer</button>
+    <p class="muted">A lost reply never repeats the work. Original request custody remains available after learning is disabled or source reuse is withdrawn; private answers require current permission.</p>
+    <p class="muted">This local collection retains up to 500 checks, answers and routing attempts, including interrupted requests. Space is reserved for one separate withdrawal of every reviewed test answer.</p>
+  </section>
+  <details><summary>What these regions mean</summary><p class="muted">Every combination inside the displayed yes/no or whole-number limits is checked. Real retained case labels and your hypothetical test labels remain distinct. Where both versions match a reviewed answer, we keep the current version. Missing or contradictory labels, incomplete answers and answers matched by neither version still need review. A separate complete comparison uses all the same information and fresh rule calculations. This does not establish future accuracy, faster work or business savings. No AI service, connected action, approval or live publication is performed.</p></details>
+</div>
+<style>#applicability-regions{min-width:0;overflow-wrap:anywhere}#applicability-regions .glass-card{padding:var(--space-4)}#applicability-regions .input,#applicability-regions .select,#applicability-regions .btn{width:100%;min-width:0;max-width:100%;box-sizing:border-box;white-space:normal}#applicability-regions .apr-check{display:flex;gap:var(--space-2);align-items:flex-start}#applicability-regions .apr-check input{flex:none}#applicability-regions dd,#applicability-regions .apr-values{white-space:pre-wrap}#applicability-regions dd{margin-inline-start:var(--space-3)}#applicability-regions details{padding:var(--space-2)}</style>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-applicability-regions.js" defer></script>{% endblock %}

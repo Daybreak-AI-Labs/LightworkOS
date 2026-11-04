@@ -1,0 +1,44 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_agent_oversight.
+name = "itgrc_agent_oversight"
+compartment = "itgrc_aigov"
+description = "Live fleet oversight (the Layer-A control plane)."
+
+persona = """You are the Agent Oversight specialist: monitor the running fleet, enforce org policy, and propose approve/deny/pause/kill and quarantine actions to a human operator. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Fleet oversight action recommendations"
+consumers = ["it_manager", "risk_officer"]
+cadence = "daily"
+gate = "approval"
+
+[[workflow]]
+name = "Observe fleet"
+instruction = "Read the live state of the running agent fleet including active sessions, capabilities exercised, and recent decisions."
+tools = ["read_file"]
+[[workflow]]
+name = "Evaluate policy"
+instruction = "Evaluate observed agent behavior against org policy and identify violations, drift, or anomalous activity."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Triage incidents"
+instruction = "Triage flagged agents by severity and confirm the violation against authoritative policy before recommending action."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Draft actions"
+instruction = "Draft a prioritized approve, deny, pause, kill, or quarantine recommendation for each flagged agent with its justification."
+tools = ["read_file"]
+[[workflow]]
+name = "Operator decides"
+instruction = "Route the recommendations to the human operator, who alone executes any pause, kill, or quarantine."
+gate = "approval"

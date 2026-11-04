@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Embedded analytics · Lightwork{% endblock %}
+{% block content %}
+<h1 class="page-title">Embedded analytics</h1>
+<p class="page-subtitle">Put a live snapshot of your workspace — spend, activity, and outcomes — on any internal page, like a team wiki or status hub.</p>
+<div class="panel">
+  <p>
+    This is the analytics card, running live against this workspace. It shows
+    total spend, the cost trend, and work by status, and it updates every time
+    the page loads:
+  </p>
+  <lightwork-analytics></lightwork-analytics>
+</div>
+
+<h2>Add it to another page</h2>
+<div class="panel">
+  <p>
+    Copy the code below and give it to whoever looks after the page where the card should appear, such as your wiki or intranet team.
+    It already points at this dashboard. Each viewer uses their own signed-in
+    session and existing permissions. Do not paste an administrator access key into shared HTML.
+  </p>
+  <p>
+    <button type="button" class="btn btn--primary" id="embed-copy">Copy the code</button>
+  </p>
+  <details>
+    <summary>Technical details (the code to paste)</summary>
+    <pre id="embed-snippet" tabindex="0" role="region" aria-label="Embedded analytics installation code" style="overflow-x: auto;">&lt;script src="http://YOUR-DASHBOARD:8765/static/lightwork-analytics.js"&gt;&lt;/script&gt;
+&lt;lightwork-analytics
+    endpoint="http://YOUR-DASHBOARD:8765"&gt;&lt;/lightwork-analytics&gt;</pre>
+    <p class="muted">Host this alongside the dashboard so each viewer's session supplies their own access. A rejected request requires sign-in or an administrator's permission review, not a more powerful shared token.</p>
+  </details>
+  <h3 style="font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;">Good to know</h3>
+  <ul class="muted" style="font-size: 0.9rem;">
+    <li><strong>Works on pages served alongside Lightwork.</strong> For
+      security, browsers only let the card load data from pages on the same
+      address as this dashboard (or behind the same reverse proxy). A page
+      hosted elsewhere will show a "blocked" message rather than your data.</li>
+    <li><strong>Keep credentials out of shared pages.</strong> Legacy token
+      attributes remain supported, but the token is readable by everyone who
+      can inspect the page. Remove shared credentials and use individual sessions.</li>
+    <li><strong>Sample and freshness.</strong> Task counts cover at most the latest
+      100 accessible tasks. The card labels its scope and last update; Refresh reloads it.</li>
+    <li><strong>View-only.</strong> The card only reads data — it can't change
+      anything, and it shows the error plainly if a request fails.</li>
+    <li><strong>Already added somewhere?</strong> Cards added before Lightwork
+      was renamed keep working unchanged.</li>
+  </ul>
+</div>
+<script src="/static/lightwork-analytics.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+  (function () {
+    // Point the snippet at this dashboard so nobody has to edit an address.
+    var pre = document.getElementById("embed-snippet");
+    if (pre && window.location && window.location.origin) {
+      pre.textContent = pre.textContent.split("http://YOUR-DASHBOARD:8765").join(window.location.origin);
+    }
+    var btn = document.getElementById("embed-copy");
+    if (btn) btn.addEventListener("click", function () {
+      if (window.mvCopy) window.mvCopy(pre.textContent);
+      else if (navigator.clipboard) navigator.clipboard.writeText(pre.textContent);
+    });
+  })();
+</script>
+{% endblock %}

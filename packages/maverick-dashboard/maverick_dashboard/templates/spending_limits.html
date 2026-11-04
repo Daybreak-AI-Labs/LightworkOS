@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Spending limits · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% macro who(principal) %}{% set p = principal | identity %}<span title="{{ p.raw }}">{{ p.name }}{% if p.detail %} <span class="muted" style="font-weight: normal;">· {{ p.detail }}</span>{% endif %}</span>{% endmacro %}
+  {% macro describe(limit) %}{% if limit %}{{ limit.amount | money }} {{ period_labels[limit.period] }}{% else %}No limit{% endif %}{% endmacro %}
+  {% macro limit_fields(prefix, limit, options, form_id, scope='') %}
+    {% set drafted = draft.scope == scope and preview is not none %}
+    <fieldset style="border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2);">
+      <legend class="muted" style="font-size: var(--text-sm); padding: 0 0 var(--space-1);">Choose one</legend>
+      <label style="display: flex; gap: var(--space-2); align-items: center;">
+        <input type="radio" name="choice" value="none" {% if not limit and not drafted %}checked{% endif %} />
+        No limit
+      </label>
+      <label style="display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap;">
+        <input type="radio" name="choice" value="limit" {% if limit or drafted %}checked{% endif %} />
+        Limit spending to
+        <span style="display: inline-flex; align-items: center; gap: var(--space-1);">$
+          <input class="ctl" type="number" name="amount" min="0.01" step="0.01" inputmode="decimal"
+                 style="width: 8rem;" aria-label="{{ prefix }} amount in dollars" id="{{ form_id }}-amount"
+                 data-error-range="Enter an amount of at least $0.01, with at most two decimal places. For example: 250.00."
+                 data-error-format="Enter the amount in US dollars as a number. For example: 250.00."
+                 value="{% if drafted %}{{ '%.2f' | format(preview.limit.amount) }}{% elif limit %}{{ '%.2f' | format(limit.amount) }}{% endif %}" />
+        </span>
+        <select class="ctl" name="period" aria-label="{{ prefix }} resets">
+          {% for value, label in options %}
+          <option value="{{ value }}" {% if drafted %}{% if preview.limit.period == value %}selected{% endif %}{% elif limit and limit.period == value %}selected{% elif not limit and value == 'month' %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </fieldset>
+  {% endmacro %}
+  {# Report-only: what the proposed limit would have stopped in recorded history. #}
+  {% macro preview_button(scope) %}<button type="submit" class="btn btn--ghost" formmethod="get" formaction="/spending-limits#limit-preview" formnovalidate name="preview" value="{{ scope }}">Preview</button>{% endmacro %}
+  {% macro preview_result(scope) %}
+    {% if draft.scope == scope and (preview or preview_error) %}
+    <div class="panel" id="limit-preview" tabindex="-1" role="status" style="margin: var(--space-3) 0 0;">
+      {% if preview_error %}
+      <p style="margin: 0;"><strong>No preview.</strong> {{ preview_error }}</p>
+      {% else %}
+      <p style="margin: 0 0 var(--space-2);"><strong>Preview only. Nothing changes until you save.</strong></p>
+      <p style="margin: 0;">
+        {% if not preview.considered %}No tasks finished in the last {{ preview.days }} days{% if scope == 'person' %} for this person{% endif %}, so there is nothing to compare this limit with.
+        {% elif preview.tasks %}In the last {{ preview.days }} days, <strong>{{ preview.tasks }} task{{ '' if preview.tasks == 1 else 's' }}</strong>{% if scope != 'person' %} by <strong>{{ preview.people }} {{ 'person' if preview.people == 1 else 'people' }}</strong>{% endif %} would have stopped at {{ preview.limit.amount | money }} {{ period_labels[preview.limit.period] }}, of {{ preview.considered }} finished.
+        {% else %}In the last {{ preview.days }} days, none of the {{ preview.considered }} finished task{{ '' if preview.considered == 1 else 's' }} would have stopped at {{ preview.limit.amount | money }} {{ period_labels[preview.limit.period] }}.{% endif %}
+      </p>
+      <p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">Counted from the recorded cost of finished tasks. Work still running is not included.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  {% endmacro %}
+
+  {% from "_empty_state.html" import empty_state %}
+  {% from "_form_field.html" import error_summary %}
+  {% set limits_actions %}<a class="btn btn--primary" href="#workspace-limit">Set a workspace limit</a>{% endset %}
+  {% call hero('Administration', 'Spending limits',
+               subtitle='Keep costs predictable',
+               lede='By default there is no limit on what people can spend. Set a limit for
+                     the whole workspace, a limit for everyone, or a limit for one person.
+                     When a limit is reached, new work pauses until the limit resets or you
+                     raise it.',
+               actions=limits_actions) %}
+    {{ state('This month',
+             (view.workspace_month | money) ~ ' spent',
+             badge=('Limited' if view.workspace else 'No limit'),
+             badge_class=('warn' if view.workspace else 'ok'),
+             copy=(view.workspace_today | money) ~ ' spent today across the workspace.') }}
+  {% endcall %}
+
+  {% from "_spend_freshness.html" import spend_freshness %}
+  {{ spend_freshness(view.spend_recorded_at, live=true) }}
+  <p class="muted" id="spending-alerts">
+    {% if alert_at %}Administrators get an alert in Lightwork at {{ alert_at }} of each daily or monthly limit, and each person at the same points of their own limit. Each alerts once per day or month.
+    {% else %}Spending alerts are off. Limits still stop paid work when they are reached.{% endif %}
+    {% if can_open_page('/settings/all') %}<a href="/settings/all?id=spending_limits.alert_at">Change when alerts arrive</a>{% endif %}
+  </p>
+
+  {% if saved %}
+  <div class="panel" role="status" data-mv-toast="Saved. {{ saved }}" data-mv-keep-done="limits-{{ request.query_params.get('saved', '').split('_')[0] }}"
+       style="border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4);">
+    <strong>Saved.</strong> {{ saved }}
+  </div>
+  {% endif %}
+  {% if error or load_error %}
+  <div class="panel" role="alert" data-mv-toast="That didn't work. {{ error or load_error }}" data-mv-toast-error="true"
+       style="border-color: color-mix(in srgb, var(--warn) 40%, transparent); margin-bottom: var(--space-4);">
+    <strong>That didn't work.</strong> {{ error or load_error }}
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2 id="workspace-limit" tabindex="-1">Whole workspace</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      The most everyone together may spend. Currently: <strong>{{ describe(view.workspace) }}</strong>.
+      {{ view.workspace_today | money }} spent today, {{ view.workspace_month | money }} this month.
+    </p>
+    {% if organization_cap %}
+    <p class="muted">This workspace also has a daily limit of <strong>{{ organization_cap | money }}</strong>,
+      set on the <a href="/tenants">Workspaces</a> page. Whichever limit is reached first applies.</p>
+    {% endif %}
+    <form method="post" data-mv-save="background" data-mv-save-what="save the limit" action="/spending-limits/workspace" data-limit-form="the workspace" id="limit-workspace" data-mv-validate data-mv-keep="limits-workspace"
+          data-limit-amount="{{ view.workspace.amount if view.workspace else '' }}"
+          style="display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end;">
+      {{ error_summary('limit-workspace-errors') }}
+      {{ limit_fields('Workspace limit', view.workspace, workspace_periods, 'limit-workspace', 'workspace') }}
+      {{ preview_button('workspace') }}
+      <button type="submit" class="btn">Save workspace limit</button>
+    </form>
+    {{ preview_result('workspace') }}
+  </div>
+
+  <div class="section-head"><h2>Everyone</h2></div>
+  <div class="panel">
+    <p class="muted" style="margin-top: 0;">
+      A limit that applies to each person on their own, unless you give them a personal
+      limit below. Currently: <strong>{{ describe(view.default) }}</strong>.
+      "Per task" limits a single piece of work; "per day" and "per month" add up
+      everything the person runs.
+    </p>
+    <form method="post" data-mv-save="background" data-mv-save-what="save the limit" action="/spending-limits/default" data-limit-form="everyone" id="limit-default" data-mv-validate data-mv-keep="limits-default"
+          data-limit-amount="{{ view.default.amount if view.default else '' }}"
+          style="display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end;">
+      {{ error_summary('limit-default-errors') }}
+      {{ limit_fields('Limit for everyone', view.default, periods, 'limit-default', 'default') }}
+      {{ preview_button('default') }}
+      <button type="submit" class="btn">Save limit for everyone</button>
+    </form>
+    {{ preview_result('default') }}
+  </div>
+
+  <div class="section-head"><h2>People</h2></div>
+  <div class="panel">
+    {% if view.people %}
+    <table>
+      <thead><tr>
+        <th scope="col">Person</th><th scope="col">Limit</th>
+        <th scope="col">Spent today</th><th scope="col">Spent this month</th>
+        <th scope="col"><span class="sr-only">Actions</span></th>
+      </tr></thead>
+      <tbody>
+      {% for row in view.people %}
+        <tr>
+          <td>{{ who(row.principal) }}</td>
+          <td>{% if row.limit %}{{ describe(row.limit) }}{% elif row.uses_default %}{{ describe(view.default) }} <span class="muted">(everyone's limit)</span>{% else %}<span class="muted">No limit</span>{% endif %}</td>
+          <td>{{ row.today | money }}</td>
+          <td>{{ row.month | money }}</td>
+          <td>
+            {% if row.limit %}
+            <form method="post" action="/spending-limits/person" style="display: inline;"
+                  data-limit-remove="Remove the personal limit for {{ (row.principal | identity).name }}? They then follow the limit for everyone{{ '' if view.default else ', which is currently no limit' }}.">
+              <input type="hidden" name="principal" value="{{ row.principal }}" />
+              <input type="hidden" name="action" value="remove" />
+              <button type="submit" class="btn btn--ghost"
+                      aria-label="Remove the personal limit for {{ (row.principal | identity).name }}">Remove personal limit</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <h3 style="margin-top: var(--space-5);">Set a personal limit</h3>
+    <p class="muted" style="margin-top: 0;">A personal limit replaces the limit for everyone for that person.</p>
+    <form method="post" data-mv-save="background" data-mv-save-what="save the limit" action="/spending-limits/person" id="limit-person" data-mv-validate data-mv-keep="limits-person"
+          style="display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end;">
+      {{ error_summary('limit-person-errors') }}
+      <label style="display: flex; flex-direction: column; gap: var(--space-1); min-width: 14rem;">
+        <span>Person</span>
+        <select class="ctl" name="principal" required>
+          {% for row in view.people %}
+          <option value="{{ row.principal }}"{% if draft.scope == 'person' and draft.principal == row.principal %} selected{% endif %}>{{ (row.principal | identity).name }}{% if (row.principal | identity).detail %} · {{ (row.principal | identity).detail }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Amount</span>
+        <span style="display: inline-flex; align-items: center; gap: var(--space-1);">$
+          <input class="ctl" type="number" name="amount" min="0.01" step="0.01" inputmode="decimal" id="limit-person-amount"
+                 required style="width: 8rem;" aria-label="Personal limit in dollars"
+                 data-error-required="Enter the personal limit in US dollars. For example: 50.00."
+                 data-error-range="Enter an amount of at least $0.01, with at most two decimal places. For example: 50.00."
+                 data-error-format="Enter the personal limit in US dollars as a number. For example: 50.00."
+                 value="{% if draft.scope == 'person' and preview %}{{ '%.2f' | format(preview.limit.amount) }}{% endif %}" />
+        </span>
+      </label>
+      <label style="display: flex; flex-direction: column; gap: var(--space-1);">
+        <span>Resets</span>
+        <select class="ctl" name="period">
+          {% for value, label in periods %}
+          <option value="{{ value }}" {% if (draft.scope == 'person' and preview and preview.limit.period == value) or ((draft.scope != 'person' or not preview) and value == 'month') %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {{ preview_button('person') }}
+      <button type="submit" class="btn">Save personal limit</button>
+    </form>
+    {{ preview_result('person') }}
+    {% else %}
+    {{ empty_state('Nobody has been added yet',
+                   'People with a role appear here with what they spent, ready for a personal limit. Add people on the Users page.',
+                   action_label='Go to Users', action_href='/users', compact=true) }}
+    {% endif %}
+  </div>
+
+  <p class="muted" style="font-size: var(--text-sm);">
+    Spending is counted in US dollars from what each AI provider charges. Days and months
+    reset at midnight UTC<span data-mv-utc-midnight></span>. Work already running when a limit is reached stops before its
+    next paid step.
+  </p>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    // ask() returns {text, ok} when the change needs a yes, else null.
+    function guard(form, ask) {
+      form.addEventListener('submit', function (event) {
+        // A preview saves nothing, so it never needs the confirmation.
+        if (event.submitter && event.submitter.name === 'preview') return;
+        if (form.dataset.confirmed === 'true') { delete form.dataset.confirmed; return; }
+        var q = ask();
+        if (!q) return;
+        event.preventDefault();
+        window.mvConfirm(q.text, {okText: q.ok}).then(function (ok) {
+          if (!ok) return;
+          form.dataset.confirmed = 'true';
+          if (form.requestSubmit) form.requestSubmit(); else form.submit();
+        });
+      });
+    }
+    // Removing or loosening a limit lets more money be spent: ask first.
+    // Lowering or adding one is reversible and costs nothing, so it saves at once.
+    document.querySelectorAll('form[data-limit-form]').forEach(function (form) {
+      var amountField = form.querySelector('input[name="amount"]');
+      form.addEventListener('mv:validate', function (event) {
+        var choice = form.querySelector('input[name="choice"]:checked');
+        if (choice && choice.value === 'limit' && amountField && !amountField.value.trim()) {
+          event.detail.error(amountField, 'Enter the limit in US dollars, or choose No limit.');
+        }
+      });
+      guard(form, function () {
+        var current = parseFloat(form.dataset.limitAmount);
+        if (!isFinite(current)) return null;
+        var who = form.dataset.limitForm;
+        var choice = form.querySelector('input[name="choice"]:checked');
+        if (choice && choice.value === 'none') {
+          return {text: 'Remove the ' + window.mvMoney(current) + ' spending limit for ' + who + '? Nothing will stop spending until you set a limit again.',
+                  ok: 'Remove limit'};
+        }
+        var amount = parseFloat((amountField || {}).value);
+        if (isFinite(amount) && amount > current) {
+          return {text: 'Raise the spending limit for ' + who + ' from ' + window.mvMoney(current) + ' to ' + window.mvMoney(amount) + '? More can be spent before work pauses.',
+                  ok: 'Raise limit to ' + window.mvMoney(amount)};
+        }
+        return null;
+      });
+    });
+    document.querySelectorAll('form[data-limit-remove]').forEach(function (form) {
+      guard(form, function () { return {text: form.dataset.limitRemove, ok: 'Remove personal limit'}; });
+    });
+  })();
+  </script>
+  {% if comments_enabled() %}{% from "_comments.html" import comments %}{{ comments('policy', 'spending-limits', 'Comments on the spending limits') }}
+  <script src="/static/lightwork-comments.js" defer></script>{% endif %}
+{% endblock %}

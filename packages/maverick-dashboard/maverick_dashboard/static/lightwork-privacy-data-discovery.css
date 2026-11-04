@@ -1,0 +1,9 @@
+/* Layout only: colours, controls and panels come from the design system. */
+.pdd-shell { display: grid; gap: var(--space-4); min-width: 0; overflow-wrap: anywhere; }
+.pdd-fields { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); align-items: end; }
+.pdd-fields label { display: flex; flex-direction: column; gap: .25rem; }
+.pdd-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-top: .75rem; }
+.pdd-list { margin: .5rem 0 0; padding-left: 1.2rem; }
+.pdd-list li { margin: .25rem 0; }
+.pdd-top { margin-top: 0; }
+.pdd-wide { grid-column: 1 / -1; }

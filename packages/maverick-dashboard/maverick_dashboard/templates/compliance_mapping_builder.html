@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Build a task mapping · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Compliance', 'Build a task mapping', subtitle='From your final scope to a reviewed task mapping',
+        lede='Choose a final scope, decide who owns the controls and what evidence work they need, then ask another administrator to review the mapping.') }}
+<style>
+  .cm-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-4)}
+  .cm-form{display:grid;gap:var(--space-3)}
+  .cm-form label{display:grid;gap:var(--space-1)}
+  .cm-form .input{width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+  .cm-actions{display:flex;gap:var(--space-2);flex-wrap:wrap;align-items:center}
+  .cm-card{min-width:0;overflow-wrap:anywhere}
+  .cm-card dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:var(--space-2)}
+  .cm-card dd{margin:0}.cm-card fieldset{min-width:0;padding:var(--space-3);margin-bottom:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-card,16px)}
+  .cm-list{display:grid;gap:var(--space-3)}
+  #cm-control-editor fieldset{min-width:0}#cm-control-editor .input{width:100%;min-width:0;max-width:100%;box-sizing:border-box}#cm-control-editor .field{margin-bottom:var(--space-3)}
+  .cm-list article{padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-card,16px)}
+  #cm-form .draft-recovery{min-width:0;overflow-wrap:anywhere}#cm-form .draft-recovery button{white-space:normal;max-width:100%}#cm-form .draft-recovery dl{display:block}#cm-form .draft-recovery dd{margin:0 0 var(--space-3)}
+  .cm-confirm{display:flex!important;grid-template-columns:auto 1fr;gap:var(--space-2)!important;align-items:start}
+  .cm-confirm input{margin-top:.25rem;flex:none}
+  @media(max-width:900px){.cm-grid{grid-template-columns:minmax(0,1fr)}}
+</style>
+<div id="cm-app">
+  <p id="cm-status" role="status" aria-live="polite">Loading your final scopes and mappings…</p>
+  <div class="cm-actions" style="margin-bottom:var(--space-4)">
+    <button id="cm-refresh" class="btn btn--ghost" type="button">Refresh saved records</button>
+    <a href="/compliance/scope-actions" class="btn btn--ghost">Task plans</a>
+    <a href="/compliance/scoping" class="btn btn--ghost">Assessments and scopes</a>
+  </div>
+  <p class="muted">A mapping describes proposed work. Approval makes it available to task plans; it does not create tasks or send anything to another system.</p>
+  <div class="cm-grid">
+    <section class="panel cm-card" aria-labelledby="cm-title">
+      <h2 id="cm-title">Build or revise a mapping</h2>
+      <p id="cm-private-note" class="muted">Private recovery copies protect your entered choices. Restoring checks the exact current scope and saved mapping first, then returns the choices to this editor. It never saves or approves a mapping.</p>
+      <form id="cm-form" class="cm-form">
+        <label>Mapping to prepare<select id="cm-target" class="input"><option value="">Create a new mapping</option></select></label>
+        <label>Final scope<select id="cm-scope" class="input" required><option value="">Choose a final scope</option></select></label>
+        <div id="cm-source" class="muted"></div>
+        <details id="cm-controls"><summary>Review the controls in this scope</summary><div id="cm-control-list" class="cm-list"></div><button id="cm-more-controls" type="button" class="btn btn--ghost" hidden>Show more controls</button></details>
+        <label>Mapping name<input id="cm-name" class="input" maxlength="80" required placeholder="For example: Annual privacy evidence"></label>
+        <details id="cm-defaults" open><summary>Starting choices for a new mapping</summary><p class="muted">These choices apply to controls you have not changed individually. A revision keeps each saved control's choices. The responsible teams come from your final scope.</p>
+        <label>Initial control status<select id="cm-control-state" class="input"><option value="planned">Planned</option><option value="not_started">Not started</option><option value="not_implemented">Not in place yet</option></select></label>
+        <label>Control responsibility<select id="cm-control-owner" class="input"><option value="control_owner">Control owner</option><option value="second_line">Risk and compliance owner</option></select></label>
+        <label>Evidence work for each control<select id="cm-evidence-kind" class="input"><option value="collect">Collect evidence</option><option value="refresh">Refresh evidence</option><option value="review">Review evidence</option><option value="none">No evidence task</option></select></label>
+        <fieldset id="cm-evidence-fields" class="cm-form"><legend>Evidence work</legend>
+          <label>Evidence responsibility<select id="cm-evidence-owner" class="input"><option value="evidence_owner">Evidence owner</option><option value="control_owner">Control owner</option><option value="second_line">Risk and compliance owner</option></select></label>
+          <label>Evidence frequency<select id="cm-cadence" class="input"><option value="one_time">Once</option><option value="monthly">Every month</option><option value="quarterly">Every quarter</option><option value="annual">Every year</option><option value="continuous">Continuously</option></select></label>
+        </fieldset>
+        </details>
+        <fieldset id="cm-individual" class="cm-form"><legend>Individual control and evidence work</legend>
+          <p class="muted">Choose a named control to change its status, responsibility and evidence jobs. All controls are included; unchanged controls keep their starting or saved choices.</p>
+          <label>Control to edit<select id="cm-control-picker" class="input"><option value="">Choose a control</option></select></label>
+          <button id="cm-load-editors" class="btn btn--ghost" type="button" hidden>Load more named controls</button>
+          <div id="cm-control-editor"></div><p id="cm-edited-count" role="status" class="muted"></p>
+          <button id="cm-reset-control" class="btn btn--ghost" type="button" hidden>Use the starting or saved choices</button>
+          <button id="cm-reload-editor" class="btn btn--ghost" type="button" hidden>Reload current mapping choices</button>
+        </fieldset>
+        <button id="cm-review" class="btn btn--primary" type="submit">Review mapping</button>
+      </form>
+    </section>
+    <section class="panel cm-card" aria-labelledby="cm-saved-title">
+      <h2 id="cm-saved-title">Saved mappings</h2>
+      <div id="cm-mappings" class="cm-list"></div>
+      <p id="cm-listing" class="muted"></p>
+    </section>
+  </div>
+  <section id="cm-review-panel" class="panel cm-card" hidden style="margin-top:var(--space-4)">
+    <h2>Review before continuing</h2><p id="cm-consequence"></p><div id="cm-summary"></div><div id="cm-review-rows" class="cm-list"></div><button id="cm-more-review" class="btn btn--ghost" type="button" hidden>Review more mapped controls</button><p id="cm-review-count" class="muted"></p>
+    <label class="cm-confirm"><input id="cm-confirm" type="checkbox"><span>I reviewed these choices and their consequences.</span></label>
+    <div class="cm-actions"><button id="cm-apply" type="button" class="btn btn--primary">Save reviewed mapping</button><button id="cm-cancel" type="button" class="btn btn--ghost">Cancel review</button></div>
+  </section>
+  <section id="cm-recovery" class="panel cm-card" hidden style="margin-top:var(--space-4)">
+    <h2>Check the original request</h2><p>The reply was interrupted. Read the saved mapping before making another request; this check repeats no save or approval.</p>
+    <div class="cm-actions"><button id="cm-readback" type="button" class="btn btn--primary">Check saved result</button>
+      <button id="cm-retry" type="button" class="btn btn--ghost">Retry the exact reviewed request</button>
+      <button id="cm-dismiss" type="button" class="btn btn--ghost">I reviewed saved mappings</button></div>
+  </section>
+  <section id="cm-detail" class="panel cm-card" hidden style="margin-top:var(--space-4)"><h2 id="cm-detail-title"></h2><p id="cm-detail-status"></p><div id="cm-detail-rows" class="cm-list"></div><button id="cm-more-details" type="button" class="btn btn--ghost" hidden>Show more mapped controls</button></section>
+</div>
+<script nonce="{{ csp_script_nonce }}">{% include "flow_designer_action_fields.js" %}</script>
+<script src="{{ asset('lightwork-compliance-mapping-builder.js') }}" defer></script>
+{% endblock %}

@@ -1,0 +1,112 @@
+# Lightwork on Kubernetes — minimal reference architecture.
+#
+# One Deployment running the dashboard (web UI + API + webhooks), state on a
+# PVC, secrets from a Secret. Apply with:
+#
+#   kubectl apply -f deploy/reference-architectures/kubernetes/maverick.yaml
+#
+# Replace REGISTRY/maverick:0.1.7 with your built image at an immutable tag or
+# @sha256 digest (see deploy/docker/Dockerfile) and create the maverick-secrets
+# Secret first. The dashboard binds 0.0.0.0 here, so a bearer token is REQUIRED
+# (without it the non-loopback bind is refused / only loopback peers are trusted):
+#
+#   kubectl create secret generic maverick-secrets \
+#     --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+#
+#   # ...and add a dashboard bearer token (required for the 0.0.0.0 bind):
+#   kubectl create secret generic maverick-secrets --dry-run=client -o yaml \
+#     --from-literal=MAVERICK_DASHBOARD_TOKEN="$(openssl rand -hex 32)" | kubectl apply -f -  # pragma: allowlist secret
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: maverick-state
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maverick
+  labels:
+    app: maverick
+spec:
+  # Keep exactly one dashboard/control-plane replica. Postgres can share the
+  # world model, but flow/A2A/audit/learning/policy stores are not all shared;
+  # scale separate remote workers instead of raising this replica count.
+  replicas: 1
+  strategy:
+    type: Recreate          # RWO volume: tear down before re-attach
+  selector:
+    matchLabels:
+      app: maverick
+  template:
+    metadata:
+      labels:
+        app: maverick
+    spec:
+      # The image runs as the unprivileged "maverick" user (uid/gid 1000).
+      # fsGroup makes the RWO volume group-writable by that user; the hardening
+      # below satisfies the "restricted" Pod Security Standard.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: maverick
+          # Pin to an immutable version tag (or @sha256 digest); never :latest in prod.
+          image: REGISTRY/maverick:0.1.7
+          args: ["dashboard", "--host", "0.0.0.0", "--port", "8765"]
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]   # let the LB deregister before SIGTERM
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8765
+              name: http
+          envFrom:
+            - secretRef:
+                name: maverick-secrets
+          volumeMounts:
+            - name: state
+              mountPath: /home/maverick/.maverick
+          readinessProbe:
+            httpGet: {path: "/readyz", port: 8765}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: "/livez", port: 8765}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests: {cpu: "250m", memory: "512Mi"}
+            limits: {cpu: "2", memory: "2Gi"}
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: maverick-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maverick
+spec:
+  selector:
+    app: maverick
+  ports:
+    - port: 80
+      targetPort: 8765
+      name: http
+  # ClusterIP by default; front with your Ingress/Gateway + TLS. The dashboard
+  # has its own auth, but do not expose it without TLS.
+  type: ClusterIP

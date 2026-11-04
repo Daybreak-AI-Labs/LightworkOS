@@ -1,0 +1,36 @@
+/* Two separate reviewed native steps; uncertain effects are never retried. */
+(function () {
+  'use strict';
+  var root=document.getElementById('learning-holdout-setup');if(!root)return;
+  var get=function(id){return document.getElementById('learning-holdout-'+id);};
+  var location=get('location'),initialize=get('initialize'),refresh=get('refresh'),original=get('original'),status=get('status'),preview=get('review'),result=get('result');
+  var API='/api/v1/learning-holdout-setup',current=null,pending=null,busy=false,generation=0,reviewed=null;
+  function node(tag,text,parent){var item=document.createElement(tag);if(text!==undefined)item.textContent=text;if(parent)parent.append(item);return item;}
+  function lock(value){busy=value;refresh.disabled=original.disabled=value;location.hidden=!current||current.configured;initialize.hidden=!current||!current.configured||current.ready;location.disabled=value||!current||!!current.location_blocked||!current.revision;initialize.disabled=value||!current||!!current.initialize_blocked||!current.revision;}
+  function invalidate(){reviewed=null;preview.replaceChildren();}
+  function changed(){generation++;current=pending=null;invalidate();result.replaceChildren();original.hidden=true;status.textContent='Your account, workspace or access changed. Refresh before continuing.';lock(false);}
+  async function request(path,body){
+    var F='The current record could not be read. Check the original outcome before another attempt.';
+    return window.mvFetchJSON(API+path,{method:body?'POST':'GET',cache:'no-store',body:body||undefined,timeout:20000,serverDetail:F,messages:{timeout:F,offline:F,unreadable:F},onAccess:function(){},onContextChange:function(error){error.accessChanged=true;}},'check the hold-out setup');
+  }
+  function saved(context){try{var row=JSON.parse(sessionStorage.getItem('learning-holdout-request:'+context)||'null');return row&&row.context===context&&/^[a-f0-9]{32}$/.test(row.operation)?row:null;}catch(_){return null;}}
+  function remember(row){pending={operation:row.operation,context:row.context};sessionStorage.setItem('learning-holdout-request:'+row.context,JSON.stringify(pending));original.hidden=false;}
+  function show(row){result.replaceChildren();node('h4','Original setup outcome',result);node('p',row.message,result);node('h4','Current readiness',result);node('p',row.current,result);}
+  async function load(){if(busy)return;var started=++generation;invalidate();lock(true);try{var row=await request('');if(started!==generation)return;if(current&&row.context!==current.context){result.replaceChildren();pending=null;}current=row;pending=saved(row.context);original.hidden=!pending;status.textContent=row.message;}
+    catch(error){if(started!==generation)return;if(error.accessChanged){changed();return;}current=null;status.textContent=error.message;try{var identity=await request('/context');if(started===generation){pending=saved(identity.context);original.hidden=!pending;}}catch(failure){if(started===generation&&failure.accessChanged){changed();return;}}}finally{if(started===generation)lock(false);}}
+  async function read(operation){if(busy)return;var started=++generation;invalidate();lock(true);try{var row=await request('/requests/'+encodeURIComponent(operation));if(started!==generation)return;if(current&&row.context!==current.context){changed();return;}pending={operation:operation,context:row.context};original.hidden=false;show(row);}catch(error){if(started===generation){if(error.accessChanged){changed();return;}status.textContent=error.message+' Nothing was repeated.';}}finally{if(started===generation)lock(false);}}
+  async function prepare(action){if(busy||!current||!current.revision)return;var started=++generation;invalidate();lock(true);try{
+    var row=await request('/review',{action:action,context:current.context,revision:current.revision});if(started!==generation)return;reviewed=row;node('h4',action==='location'?'Review managed location':'Review one-time initialization',preview);
+    var fields=node('dl',undefined,preview);row.changes.forEach(function(change){node('dt',change.label,fields);var value=node('dd',String(change.after),fields);value.style.whiteSpace='pre-wrap';value.style.overflowWrap='anywhere';});
+    var label=node('label',undefined,preview),consent=node('input',undefined,label);consent.type='checkbox';label.append(document.createTextNode(' I reviewed the storage choice, one-time limits and exact change.'));
+    var apply=node('button',action==='location'?'Save reviewed location':'Initialize reviewed record',preview);apply.type='button';apply.className='btn btn--primary';apply.disabled=true;consent.addEventListener('change',function(){apply.disabled=busy||!consent.checked;});
+    apply.addEventListener('click',async function(){if(busy||!consent.checked||reviewed!==row||started!==generation)return;try{remember(row);}catch(_){status.textContent='The original request could not be kept in this browser. Nothing was submitted. Allow site storage before continuing.';return;}lock(true);apply.disabled=true;
+      try{var receipt=await request('/save',{token:row.token,confirmed:true});if(started!==generation)return;invalidate();show(receipt);}catch(error){if(started!==generation)return;if(error.accessChanged){changed();return;}invalidate();status.textContent='The original reply is unconfirmed. Check its original outcome; no setup will be repeated automatically.';}finally{if(started===generation){current.revision='';lock(false);}}
+      if(started===generation)await load();});
+    var cancel=node('button','Cancel this review',preview);cancel.type='button';cancel.className='btn btn--ghost';cancel.addEventListener('click',function(){if(!busy){invalidate();(action==='location'?location:initialize).focus();}});consent.focus();status.textContent='Review the complete change before saving. Nothing has changed yet.';
+  }catch(error){if(started===generation){if(error.accessChanged){changed();return;}status.textContent=error.message;}}finally{if(started===generation)lock(false);}}
+  location.addEventListener('click',function(){void prepare('location');});initialize.addEventListener('click',function(){void prepare('initialize');});refresh.addEventListener('click',load);original.addEventListener('click',function(){if(pending)void read(pending.operation);});
+  document.addEventListener('lightwork:workspace-changed',changed);document.addEventListener('lightwork:account-context-changed',changed);window.addEventListener('lightwork:context-changed',changed);document.addEventListener('lightwork:copilot-context-changed',function(event){if(event.detail?.reason!=='selection')changed();});
+  document.addEventListener('lightwork:product-operation-complete',function(event){if(!current||!['learning.setup_holdout_location','learning.initialize_holdout_record'].includes(event.detail?.operation)||!['confirmed','replayed'].includes(event.detail?.status))return;current.revision='';invalidate();status.textContent='Copilot saved a setup change. Check the current record before another review.';lock(busy);});
+  var operation=new URLSearchParams(window.location.search).get('holdout_request');load().then(function(){if(/^[a-f0-9]{32}$/.test(operation||''))void read(operation);});
+}());

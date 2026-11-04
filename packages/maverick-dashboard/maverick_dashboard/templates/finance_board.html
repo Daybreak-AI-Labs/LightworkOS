@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block title %}Finance command center · Lightwork{% endblock %}
+{% block content %}
+<style>
+  main#content { max-width: 1680px; }
+  .fb-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .fb-head .page-title { margin: 0; }
+  .fb-live { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs);
+             font-weight: var(--font-semibold); letter-spacing: 0.08em; color: var(--accent);
+             border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+             background: var(--success-subtle); border-radius: var(--radius-pill); padding: var(--space-0-5) 10px; }
+  .fb-kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-3);
+             margin: var(--space-4) 0; }
+  .fb-kpi { position: relative; border: 1px solid var(--hairline);
+            border-radius: var(--radius-lg); padding: var(--space-4); box-shadow: var(--shadow-sm);
+            overflow: hidden; min-width: 0; }
+  .fb-kpi::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 3px;
+                    background: var(--fb-edge, var(--brand)); }
+  .fb-kpi .k { font-size: var(--text-xs); font-weight: var(--font-semibold);
+               text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+  .fb-kpi .v { font-size: var(--text-3xl); font-weight: var(--font-semibold); line-height: 1.1;
+               margin-top: var(--space-0-5); font-variant-numeric: tabular-nums; }
+  .fb-kpi .s { font-size: var(--text-xs); color: var(--muted); margin-top: var(--space-1); }
+  .fb-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--space-4); }
+  .fb-card { grid-column: span 4; border: 1px solid var(--hairline);
+             border-radius: var(--radius-lg); padding: var(--space-4); box-shadow: var(--shadow-sm);
+             min-width: 0; }
+  .fb-span6 { grid-column: span 6; }
+  .fb-card h2 { margin: 0 0 var(--space-0-5); font-size: var(--text-sm); font-weight: var(--font-semibold);
+                text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+  .fb-sub { margin: 0 0 var(--space-3); font-size: var(--text-xs); color: var(--muted); }
+  .fb-gauge { margin-bottom: var(--space-3); }
+  .fb-gauge .lbl { display: flex; justify-content: space-between; font-size: var(--text-sm);
+                   margin-bottom: var(--space-1); font-variant-numeric: tabular-nums; }
+  .fb-gauge .track { height: 8px; border-radius: var(--radius-pill);
+                     background: var(--surface-sunken); overflow: hidden; }
+  .fb-gauge .fill { height: 100%; border-radius: var(--radius-pill); }
+  .fb-rows .row { display: grid; grid-template-columns: 1fr max-content; gap: var(--space-2);
+                  padding: 5px 0; border-bottom: 1px solid var(--hairline);
+                  font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+  .fb-empty { color: var(--muted); font-size: var(--text-sm); padding: var(--space-3) 0; }
+  .fb-note { font-size: var(--text-xs); color: var(--muted); margin-top: var(--space-2); }
+  @media (max-width: 1250px) { .fb-kpis { grid-template-columns: repeat(3, 1fr); }
+    .fb-card, .fb-span6 { grid-column: span 6; } }
+  .fb-actions { margin-inline-start: auto; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  @media (max-width: 800px) { .fb-kpis { grid-template-columns: repeat(2, 1fr); }
+    .fb-card, .fb-span6 { grid-column: span 12; } }
+</style>
+
+<div class="fb-head">
+  <h1 class="page-title">Finance command center</h1>
+  <span class="muted" id="fb-stamp" role="status" aria-live="off">Loading…</span>
+  <span class="fb-actions">
+    <button type="button" class="btn" id="fb-refresh">Refresh</button>
+    <a class="btn" href="/finance">Finance workspace</a>
+    <a class="btn" href="/audit/binder">Evidence binder</a>
+  </span>
+</div>
+<p class="page-subtitle">A live view of your finance controls (not an audit).
+  Every number comes from a record.</p>
+
+<div class="fb-kpis" id="fb-kpis"></div>
+
+<div class="fb-grid">
+  <section class="fb-card" aria-labelledby="fb-t-posture">
+    <h2 id="fb-t-posture">Control coverage</h2>
+    <p class="fb-sub" id="fb-posture-sub">Which finance controls are live in this deployment.</p>
+    <div id="fb-posture" class="fb-rows"></div>
+  </section>
+  <section class="fb-card" aria-labelledby="fb-t-lic">
+    <h2 id="fb-t-lic">Licence renewals</h2>
+    <p class="fb-sub">Your licences, grouped by how long until they renew.</p>
+    <div id="fb-licenses"></div>
+  </section>
+  <section class="fb-card" aria-labelledby="fb-t-learn">
+    <h2 id="fb-t-learn">Learning</h2>
+    <p class="fb-sub">How often finance decisions were accepted the first time.</p>
+    <div id="fb-learning"></div>
+  </section>
+  <section class="fb-card fb-span6" aria-labelledby="fb-t-types">
+    <h2 id="fb-t-types">By assessment type</h2>
+    <p class="fb-sub">How many assessments of each type, and how many are open.</p>
+    <div id="fb-types" class="fb-rows"></div>
+  </section>
+  <section class="fb-card fb-span6" aria-labelledby="fb-t-sod">
+    <h2 id="fb-t-sod">Separation of duties</h2>
+    <p class="fb-sub">Checks that no single AI team both records, approves, holds and
+      reconciles money.</p>
+    <div id="fb-sod"></div>
+    <p><button type="button" class="btn" id="fb-sod-check">Check separation of duties</button></p>
+    <p class="fb-note" role="status" aria-live="polite" id="fb-sod-check-status"></p>
+    <div id="fb-sod-check-out"></div>
+  </section>
+</div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, txt) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (txt != null) e.textContent = txt;
+    return e;
+  }
+  // Empty cards use the shared compact empty state (lightwork-ui.js).
+  function empty(box, title, body, action) {
+    if (window.mvEmpty) { box.appendChild(window.mvEmpty(title, body, action, { compact: true })); return; }
+    box.appendChild(el('p', 'fb-empty', title + '. ' + body));
+    var next = el('a', 'btn', action.label); next.href = action.href; box.appendChild(next);
+  }
+  function fmt(n) { return (n || 0).toLocaleString(); }
+  function tile(box, label, value, sub, edge) {
+    var t = el('div', 'fb-kpi');
+    if (edge) t.style.setProperty('--fb-edge', edge);
+    t.appendChild(el('div', 'k', label));
+    t.appendChild(el('div', 'v', value));
+    t.appendChild(el('div', 's', sub || ''));
+    box.appendChild(t);
+  }
+  function gauge(box, label, pct, note) {
+    var g = el('div', 'fb-gauge');
+    var lbl = el('div', 'lbl');
+    lbl.appendChild(el('span', '', label));
+    lbl.appendChild(el('span', '', pct == null ? '—' : pct.toFixed(0) + '%'));
+    g.appendChild(lbl);
+    var track = el('div', 'track');
+    var fill = el('div', 'fill');
+    fill.style.width = (pct || 0) + '%';
+    fill.style.background = pct == null ? 'var(--muted)'
+      : pct >= 90 ? 'var(--accent)' : pct >= 70 ? 'var(--warn)' : 'var(--danger)';
+    track.appendChild(fill);
+    g.appendChild(track);
+    if (note) g.appendChild(el('div', 'fb-note', note));
+    box.appendChild(g);
+  }
+
+  function load() {
+  ['fb-kpis', 'fb-posture', 'fb-licenses', 'fb-learning', 'fb-types', 'fb-sod'].forEach(function (id) { $(id).textContent = ''; });
+  fetch('/api/v1/finance/board').then(function (r) {
+    if (!r.ok) throw r;
+    return r.json();
+  }).then(function (d) {
+    $('fb-stamp').textContent = 'Updated ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(Date.now()) : new Date().toLocaleTimeString());
+    var k = $('fb-kpis');
+    var kp = d.kpis || {};
+    tile(k, 'Assessments', fmt(kp.assessments), 'finance assessments', 'var(--brand)');
+    tile(k, 'Open work', fmt(kp.open_work), 'waiting for review or answers', 'var(--info)');
+    var ct = d.control_tests || {};
+    tile(k, 'Control tests', ct.pct == null ? '—' : ct.pct + '%',
+         fmt(ct.passed) + ' of ' + fmt(ct.total) + ' passed (reporting and IT controls)',
+         'var(--accent)');
+    var cr = d.close_readiness || {};
+    tile(k, 'Close readiness', cr.pct == null ? '—' : cr.pct + '%',
+         fmt(cr.total) + ' close checks decided', 'var(--warn)');
+    var lic = d.licenses || {};
+    tile(k, 'Renewals in 90 days', fmt(lic.due_90d),
+         (lic.overdue ? lic.overdue + ' overdue · ' : '') +
+         fmt(lic.total) + ' active licences in ' + fmt(lic.jurisdictions) +
+         ' states', lic.overdue ? 'var(--danger)' : 'var(--warn)');
+    var sod = d.sod || {};
+    tile(k, 'Separation-of-duties conflicts', sod.conflicts == null ? '—' : fmt(sod.conflicts),
+         'across ' + fmt(sod.packs) + ' AI teams',
+         sod.conflicts ? 'var(--danger)' : 'var(--accent)');
+
+    var post = d.finance_posture || {};
+    var pb = $('fb-posture');
+    (post.controls || []).forEach(function (c) {
+      var row = el('div', 'row');
+      var name = window.mvHuman ? window.mvHuman(c.control) : c.control;
+      row.appendChild(el('span', '', name + (c.regulation ? ' — ' + c.regulation : '')));
+      if (c.status === 'active') {
+        row.appendChild(el('span', 'badge done', 'Active'));
+      } else {
+        var fix = el('a', 'btn btn--ghost', 'Set up');
+        fix.href = '/finance';
+        fix.setAttribute('aria-label', 'Set up ' + name);
+        row.appendChild(fix);
+      }
+      pb.appendChild(row);
+    });
+
+    var lb = $('fb-licenses');
+    var bands = (lic.bands || {});
+    var LB = {overdue: 'Overdue', d0_30: 'Within 30 days', d31_60: 'In 31 to 60 days',
+              d61_90: 'In 61 to 90 days', d90_plus: 'More than 90 days'};
+    if (!lic.total) {
+      empty(lb, 'No licences yet', 'Software licences appear here by how soon they renew. Add the first one in the Finance workspace.',
+        { label: 'Add a licence', href: '/finance#lic-form' });
+    } else {
+      Object.keys(LB).forEach(function (band) {
+        gauge(lb, LB[band] + ' · ' + fmt(bands[band] || 0),
+              lic.total ? 100.0 * (bands[band] || 0) / lic.total : 0);
+      });
+    }
+
+    var learn = d.learning || {};
+    var lbx = $('fb-learning');
+    gauge(lbx, 'Accepted the first time', learn.first_pass_rate,
+          fmt(learn.first_pass || 0) + ' of ' + fmt(learn.decided || 0) +
+          ' decisions accepted as they were' +
+          (learn.median_days_to_decision != null
+            ? ' · usually ' + learn.median_days_to_decision + ' days to decide'
+            : ''));
+    gauge(lbx, 'Accepted after follow-up questions',
+          learn.decided ? 100.0 * (learn.qualified || 0) / learn.decided
+                        : null);
+
+    var tb = $('fb-types');
+    (d.by_type || []).forEach(function (t) {
+      var row = el('div', 'row');
+      row.appendChild(el('span', '', window.mvHuman ? window.mvHuman(t.type) : (t.type || '').replace(/_/g, ' ')));
+      row.appendChild(el('span', 'muted',
+        fmt(t.total) + (t.open ? ' · ' + t.open + ' open' : '')));
+      tb.appendChild(row);
+    });
+    if (!(d.by_type || []).length) {
+      empty(tb, 'No finance assessments yet', 'Assessments appear here by questionnaire, with how many are still open. Start one in the Finance workspace.',
+        { label: 'Start an assessment', href: '/finance' });
+    }
+
+    var sb = $('fb-sod');
+    if (sod.conflicts === 0) {
+      sb.appendChild(el('p', '', '✓ No conflicts found across ' + fmt(sod.packs) + ' AI teams.'));
+    } else if (sod.conflicts == null) {
+      sb.appendChild(el('p', 'fb-empty', 'Couldn\'t check separation of duties right now.'));
+    } else {
+      (sod.detail || []).forEach(function (c) {
+        sb.appendChild(el('div', 'row', c));
+      });
+    }
+  }).catch(function (e) {
+    $('fb-stamp').textContent = window.mvErrorText ? window.mvErrorText(e, 'load the finance overview') : 'Could not load the finance overview. Refresh the page and try again.';
+  });
+  }
+  $('fb-refresh').addEventListener('click', load);
+  load();
+})();
+</script>
+<script src="/static/lightwork-finance-sod-check.js"></script>
+{% endblock %}

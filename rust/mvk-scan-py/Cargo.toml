@@ -1,0 +1,14 @@
+[package]
+name = "mvk-scan-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PyO3 binding for the Lightwork native safety scanners (Python module `maverick_native`)."
+
+[lib]
+name = "maverick_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+mvk-scan = { path = "../mvk-scan" }
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py310"] }

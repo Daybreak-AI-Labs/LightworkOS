@@ -1,0 +1,47 @@
+schema_version = 1
+version = "0.1.7"
+repository = "Daybreak-AI-Labs/LightworkOS"
+
+# The eight public Python distributions are released, tested, and supported as
+# one lockstep cohort.  Release workflows and tests consume this manifest
+# instead of maintaining independent package lists.
+
+[[packages]]
+distribution = "maverick-agent"
+path = "packages/maverick-core"
+runtime_module = "maverick"
+
+[[packages]]
+distribution = "maverick-shield"
+path = "packages/maverick-shield"
+runtime_module = "maverick_shield"
+
+[[packages]]
+distribution = "maverick-channels"
+path = "packages/maverick-channels"
+runtime_module = "maverick_channels"
+
+[[packages]]
+distribution = "maverick-evolve"
+path = "packages/maverick-evolve"
+runtime_module = "maverick_evolve"
+
+[[packages]]
+distribution = "maverick-dashboard"
+path = "packages/maverick-dashboard"
+runtime_module = "maverick_dashboard"
+
+[[packages]]
+distribution = "maverick-mcp-server"
+path = "packages/maverick-mcp"
+runtime_module = "maverick_mcp"
+
+[[packages]]
+distribution = "maverick-knowledge"
+path = "packages/maverick-knowledge"
+runtime_module = "maverick_knowledge"
+
+[[packages]]
+distribution = "maverick-installer"
+path = "apps/installer-cli"
+runtime_module = "maverick_installer"

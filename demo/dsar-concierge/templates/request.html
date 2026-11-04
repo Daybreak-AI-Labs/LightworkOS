@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Make a request · DSAR Concierge{% endblock %}
+{% block content %}
+  <h1>Your data, your rights</h1>
+  <p class="sub">Ask for a copy of your data, a portable export, or erasure.
+    The statutory clock starts the moment you submit — we will email you a
+    confirmation link to verify it's really you.</p>
+
+  {% if submitted %}
+  <div class="panel">
+    <h2>Request {{ submitted.id }} opened</h2>
+    <p>We emailed <b>{{ submitted.subject_id }}</b> a confirmation link.
+      Your {{ submitted.kind }} request is due by
+      <b>{{ submitted.due_at | dt }}</b> — the clock is already running.</p>
+    <a class="btn" href="/request">Make another request</a>
+  </div>
+  {% else %}
+  <div class="panel">
+    {% if error %}<p class="chip bad" role="alert">{{ error }}</p>{% endif %}
+    <form method="post" action="/request">
+      <label for="rq-email">Your email address</label>
+      <input id="rq-email" name="subject_id" type="email" required
+             maxlength="200" placeholder="you@example.com">
+      <label for="rq-kind">What would you like?</label>
+      <select id="rq-kind" name="kind">
+        <option value="access">Access — a copy of my data (Art. 15)</option>
+        <option value="portability">Portability — a machine-readable export (Art. 20)</option>
+        <option value="erasure">Erasure — delete my data (Art. 17)</option>
+      </select>
+      <label for="rq-note">Anything we should know? (optional)</label>
+      <textarea id="rq-note" name="note" rows="3" maxlength="2000"></textarea>
+      <p><button class="btn primary" type="submit">Submit request</button></p>
+    </form>
+  </div>
+  {% endif %}
+{% endblock %}

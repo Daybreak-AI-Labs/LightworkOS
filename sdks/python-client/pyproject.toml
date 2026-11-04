@@ -1,0 +1,25 @@
+# Checkout-only helper. Not published, not a uv workspace member, not in the
+# release cohort. Install from a checkout with: pip install ./sdks/python-client
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightwork-client"
+version = "0.1.0"
+description = "Standard-library Python client for the Lightwork /api/v1 REST API (not published)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Lightwork Authors" }]
+# Standard library only: no runtime dependencies.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Issues = "https://github.com/Daybreak-AI-Labs/LightworkOS/issues"
+
+[tool.setuptools]
+packages = ["lightwork_client"]

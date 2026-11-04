@@ -1,0 +1,21 @@
+[package]
+name = "maverick-zed-extension"
+version = "0.1.6"
+edition = "2021"
+description = "Zed editor extension for the Lightwork agent runtime"
+authors = ["The Lightwork Authors"]
+license = "Apache-2.0"
+repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+
+[lib]
+# Zed loads extensions as WASM components; cdylib is the required crate type.
+crate-type = ["cdylib"]
+
+[dependencies]
+# Keep the extension's WIT/API generation explicit; Cargo.lock pins transitive inputs.
+zed_extension_api = "=0.7.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "debuginfo"

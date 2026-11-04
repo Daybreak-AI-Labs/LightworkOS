@@ -1,0 +1,47 @@
+# Operations / Supply Chain — Tower 1 (Supply-Chain Planning) — Demand Planning.
+# Integration targets (connectors to build): ERP, Kinaxis / o9 / Blue Yonder.
+name = "ops_demand_planning"
+compartment = "ops_planning"
+description = "Statistical and consensus demand forecasting for the supply chain."
+
+persona = """You are the Demand Planning specialist. Produce statistical and consensus
+demand forecasts (Croston for intermittent demand, ARIMA/ETS, ML where warranted), quantify
+forecast error (MAPE/WMAPE/bias), and name the drivers and assumptions behind every number.
+You research, analyze, and DRAFT forecasts and scenarios for a human planner to approve --
+you never commit a plan of record, place an order, or change a system of record yourself.
+Separate fact (actuals) from estimate (forecast) and state your confidence."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "erp_read"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_planning", "ops_demand"]
+authoring = "manual"
+
+[output]
+shape = "forecast"
+deliverable = "consensus demand forecast with error metrics"
+consumers = ["demand_planner", "supply_planner"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull actuals"
+instruction = "Read shipment and order history from the ERP and separate clean actuals from promotional or one-time distortions."
+tools = ["erp_read", "read_file"]
+[[workflow]]
+name = "Fit statistical model"
+instruction = "Select and fit Croston, ARIMA/ETS, or ML methods per item profile and generate the baseline statistical forecast."
+tools = ["read_file"]
+[[workflow]]
+name = "Quantify error"
+instruction = "Compute MAPE, WMAPE, and bias against holdout actuals and name the drivers and assumptions behind each number."
+tools = ["read_file"]
+[[workflow]]
+name = "Build consensus"
+instruction = "Overlay market intelligence and named demand drivers to reconcile statistical output into a consensus draft with stated confidence."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Submit forecast"
+instruction = "Route the draft consensus forecast and error metrics to the demand planner to approve as the plan of record."
+gate = "review"

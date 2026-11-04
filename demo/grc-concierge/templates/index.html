@@ -1,0 +1,527 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <span class="pill">{{ caps.mode }} &middot; unsigned local workflow</span>
+  <h1>Move from scope to a review-ready GRC packet</h1>
+  <p>Work through a control screen, review explainable evidence matches, file risks and POA&amp;M items, reuse bounded vendor posture memory, then prepare and review a clearly labeled mock handoff. No chat model, voice service, connector, or external network is used.</p>
+  <nav aria-label="Guided workflow">
+    <ol class="workflow">
+      <li><a href="#assessment">1. Assess</a></li>
+      <li><a href="#evidence">2. Review evidence</a></li>
+      <li><a href="#risk">3. File risk</a></li>
+      <li><a href="#poam">4. Plan remediation</a></li>
+      <li><a href="#vendor">5. Vendor memory</a></li>
+      <li><a href="#handoff">6. Mock handoff</a></li>
+      <li><a href="#review-queue">7. Human review</a></li>
+    </ol>
+  </nav>
+</section>
+
+<aside class="boundary" aria-label="Authority boundary">
+  <strong>Authority boundary:</strong> records, vendor carry-forward, and review decisions are unsigned local demo state. {% if caps.core_analysis %}Lightwork's built-in questionnaire declarations and scorer are active, but platform stores, audit, and approval are not.{% else %}The bundled reduced questionnaire engine is active.{% endif %} Evidence matches require human review. Named GRC products are labels only.
+</aside>
+
+<section class="card" id="assessment" aria-labelledby="assessment-heading">
+  <h2 id="assessment-heading">1. Guided control questionnaire</h2>
+  <p class="hint">Choose a framework and scope, then answer every available control. Unknown answers count as gaps.</p>
+  <form id="assessment-form">
+    <label for="assessment-framework">Available framework
+      <select id="assessment-framework" name="framework" required>
+        {% for framework in frameworks %}<option value="{{ framework.id }}">{{ framework.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label for="assessment-subject">Scope or system
+      <span class="hint">For example: Customer API production environment</span>
+      <input id="assessment-subject" name="subject" maxlength="300" required autocomplete="organization-title">
+    </label>
+    {% for framework in framework_details %}
+    <fieldset class="control-set" data-framework="{{ framework.id }}" {% if not loop.first %}hidden{% endif %}>
+      <legend>{{ framework.name }} controls</legend>
+      {% for control in framework.controls %}
+      <fieldset class="control" data-control="{{ control.id }}">
+        <legend>{{ control.id }} &mdash; {{ control.family }}</legend>
+        <p>{{ control.requirement }}</p>
+        <div class="answers" role="radiogroup" aria-label="Answer for {{ control.id }}">
+          {% for value, label in [('yes', 'Implemented'), ('no', 'Not implemented'), ('na', 'Not applicable'), ('unknown', 'Unknown')] %}
+          <label><input type="radio" name="answer-{{ framework.id }}-{{ control.id }}" value="{{ value }}" {% if value == 'unknown' %}checked{% endif %}> {{ label }}</label>
+          {% endfor %}
+        </div>
+      </fieldset>
+      {% endfor %}
+    </fieldset>
+    {% endfor %}
+    <button type="submit">Score and save local assessment</button>
+    <div id="assessment-result" class="result" role="status" aria-live="polite" tabindex="-1"></div>
+  </form>
+</section>
+
+<section class="card" id="evidence" aria-labelledby="evidence-heading">
+  <h2 id="evidence-heading">2. Paste and review evidence</h2>
+  <p class="hint">The deterministic matcher cites the first relevant sentence. It does not approve evidence or replace a reviewer.</p>
+  <form id="evidence-form">
+    <label for="evidence-framework">Available framework
+      <select id="evidence-framework" name="framework" required>
+        {% for framework in frameworks %}<option value="{{ framework.id }}">{{ framework.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <label for="evidence-source">Evidence source label
+      <input id="evidence-source" name="source" maxlength="200" placeholder="access-policy.txt" required>
+    </label>
+    <label for="evidence-text">Evidence text
+      <textarea id="evidence-text" name="text" maxlength="20000" required placeholder="Paste the policy or procedure excerpt to review."></textarea>
+    </label>
+    <button type="submit">Review evidence matches</button>
+    <div id="evidence-result" class="result" role="status" aria-live="polite" tabindex="-1"></div>
+  </form>
+</section>
+
+<div class="grid">
+  <section class="card" id="risk" aria-labelledby="risk-heading">
+    <h2 id="risk-heading">3. File a local risk</h2>
+    <form id="risk-form">
+      <label for="risk-title">Risk title<input id="risk-title" name="title" maxlength="300" required></label>
+      <label for="risk-owner">Accountable owner<input id="risk-owner" name="owner" maxlength="160" required></label>
+      <label for="risk-likelihood">Likelihood (1 low, 5 high)
+        <select id="risk-likelihood" name="likelihood" required>{% for value in range(1, 6) %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select>
+      </label>
+      <label for="risk-impact">Impact (1 low, 5 high)
+        <select id="risk-impact" name="impact" required>{% for value in range(1, 6) %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select>
+      </label>
+      <label for="risk-treatment">Treatment
+        <select id="risk-treatment" name="treatment" required><option value="mitigate">Mitigate</option><option value="accept">Accept</option><option value="transfer">Transfer</option><option value="avoid">Avoid</option></select>
+      </label>
+      <button type="submit">Save local risk</button>
+      <div id="risk-result" class="result" role="status" aria-live="polite" tabindex="-1"></div>
+    </form>
+  </section>
+
+  <section class="card" id="poam" aria-labelledby="poam-heading">
+    <h2 id="poam-heading">4. File a POA&amp;M item</h2>
+    <form id="poam-form">
+      <label for="poam-finding">Finding or gap<textarea id="poam-finding" name="finding" maxlength="2000" required></textarea></label>
+      <label for="poam-owner">Remediation owner<input id="poam-owner" name="owner" maxlength="160" required></label>
+      <label for="poam-due">Target date<input id="poam-due" name="due_date" type="date" required></label>
+      <label for="poam-milestone">Next milestone<input id="poam-milestone" name="milestone" maxlength="300" required></label>
+      <button type="submit">Save local POA&amp;M item</button>
+      <div id="poam-result" class="result" role="status" aria-live="polite" tabindex="-1"></div>
+    </form>
+  </section>
+</div>
+
+<section class="card" id="vendor" aria-labelledby="vendor-heading">
+  <h2 id="vendor-heading">5. Create or refresh a vendor posture snapshot</h2>
+  <p class="hint">Carry-forward is local convenience memory, not fresh evidence. Choose a prior snapshot for the same vendor, then explicitly replace any field you revalidated. Every field records whether it was new, carried forward, or defaulted to unknown.</p>
+  <form id="vendor-form">
+    <label for="vendor-name">Vendor name<input id="vendor-name" name="vendor" maxlength="200" required autocomplete="organization"></label>
+    <label for="vendor-owner">Assessment owner<input id="vendor-owner" name="owner" maxlength="160" required autocomplete="name"></label>
+    <label for="vendor-carry-forward">Optional prior local snapshot
+      <select id="vendor-carry-forward" name="carry_forward_from">
+        <option value="">Start without prior answers</option>
+        {% for record in vendor_records|reverse %}<option value="{{ record.id }}" data-vendor="{{ record.vendor }}">{{ record.vendor }} &mdash; revision {{ record.revision }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="grid">
+      {% for field, label in [
+        ('data_encryption', 'Data encryption'),
+        ('mfa', 'Multi-factor authentication'),
+        ('incident_response', 'Incident response'),
+        ('vulnerability_management', 'Vulnerability management'),
+        ('business_continuity', 'Business continuity')
+      ] %}
+      <label for="vendor-{{ field }}">{{ label }}
+        <select id="vendor-{{ field }}" data-vendor-field="{{ field }}">
+          <option value="carry">Carry prior value, or unknown</option>
+          <option value="yes">Confirmed</option>
+          <option value="no">Gap</option>
+          <option value="unknown">Unknown</option>
+          <option value="na">Not applicable</option>
+        </select>
+      </label>
+      {% endfor %}
+    </div>
+    <button type="submit">Save local vendor snapshot</button>
+    <div id="vendor-result" class="result" role="status" aria-live="polite" tabindex="-1"></div>
+  </form>
+</section>
+
+<section class="card" id="handoff" aria-labelledby="handoff-heading">
+  <h2 id="handoff-heading">6. Prepare a mock delivery/review handoff</h2>
+  <aside class="boundary"><strong>No delivery occurs.</strong> This stores a receipt in a local mock tenant queue. GRC platform A, B and C are generic selector labels only; this app never calls a GRC product's API. Any real import and approval remain external/manual.</aside>
+  <form id="handoff-form">
+    <label for="handoff-record">Local source record
+      <select id="handoff-record" name="record_id" required>
+        <option value="">Choose a saved assessment, risk, POA&amp;M, or vendor item</option>
+        {% for record in records %}{% if record.type != 'mock_handoff_receipt' %}<option value="{{ record.id }}">{{ record.type }} &mdash; {{ record.subject or record.title or record.finding }}</option>{% endif %}{% endfor %}
+      </select>
+    </label>
+    <label for="handoff-destination">Mock destination
+      <select id="handoff-destination" name="destination" required>
+        <option value="grc_platform_a">GRC platform A</option>
+        <option value="grc_platform_b">GRC platform B</option>
+        <option value="grc_platform_c">GRC platform C</option>
+      </select>
+    </label>
+    <label for="handoff-prepared-by">Prepared by<input id="handoff-prepared-by" name="prepared_by" maxlength="160" required autocomplete="name"></label>
+    <label for="handoff-note">Reviewer note (optional)<textarea id="handoff-note" name="note" maxlength="1000"></textarea></label>
+    <button type="submit">Create local mock receipt</button>
+    <div id="handoff-result" class="result" role="status" aria-live="polite" tabindex="-1"></div>
+  </form>
+</section>
+
+<section class="card" id="review-queue" aria-labelledby="review-heading">
+  <h2 id="review-heading">7. Local mock tenant human review queue</h2>
+  <p class="hint">Approve or reject the prepared packet inside this demo. The decision demonstrates a tenant review workflow only; it has no authority in any GRC product or in Lightwork.</p>
+  <div id="pending-review-list">
+    {% for receipt in pending_handoffs %}
+    <article class="queue-item" data-receipt-id="{{ receipt.id }}">
+      <h3>{{ receipt.destination_label }} mock packet</h3>
+      <p>Source: {{ receipt.source_record_type }} <code>{{ receipt.source_record_id }}</code>. Prepared by {{ receipt.prepared_by }}.</p>
+      <form class="review-form" data-receipt-id="{{ receipt.id }}">
+        <label for="reviewer-{{ receipt.id }}">Human reviewer<input id="reviewer-{{ receipt.id }}" name="reviewer" maxlength="160" required autocomplete="name"></label>
+        <label for="rationale-{{ receipt.id }}">Decision rationale<textarea id="rationale-{{ receipt.id }}" name="rationale" maxlength="1000"></textarea></label>
+        <div class="actions">
+          <button type="submit" name="decision" value="approve">Approve in local mock queue</button>
+          <button type="submit" name="decision" value="reject" class="secondary">Reject in local mock queue</button>
+        </div>
+        <div class="review-result result" role="status" aria-live="polite" tabindex="-1"></div>
+      </form>
+    </article>
+    {% else %}
+    <p id="no-pending-reviews" class="muted">No mock packets are waiting for review.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card" id="speed-story" aria-labelledby="speed-heading">
+  <h2 id="speed-heading">Measured local workflow timing</h2>
+  <p class="hint">Observed elapsed time from saved source to mock packet, and from packet preparation to a human mock decision. These are local measurements, not projected savings or external-system timings.</p>
+  <div class="metrics" aria-live="polite">
+    <p><strong id="speed-prepared">{{ speed_story.receipts_prepared }}</strong><span> packets prepared</span></p>
+    <p><strong id="speed-reviewed">{{ speed_story.receipts_reviewed }}</strong><span> packets reviewed</span></p>
+    <p><strong id="speed-pending">{{ speed_story.pending_reviews }}</strong><span> reviews pending</span></p>
+    <p><strong id="speed-prepare-average">{% if speed_story.average_prepare_seconds is not none %}{{ '%.3f'|format(speed_story.average_prepare_seconds) }} s{% else %}Not measured{% endif %}</strong><span> average prepare time</span></p>
+    <p><strong id="speed-review-average">{% if speed_story.average_review_seconds is not none %}{{ '%.3f'|format(speed_story.average_review_seconds) }} s{% else %}Not measured{% endif %}</strong><span> average review time</span></p>
+  </div>
+</section>
+
+<section class="card" aria-labelledby="records-heading">
+  <h2 id="records-heading">Recent local records</h2>
+  <ul id="recent-records" class="records" aria-live="polite">
+    {% for record in records|reverse %}
+    <li data-record-id="{{ record.id }}"><strong>{{ record.type }}</strong> &mdash; {{ record.subject or record.vendor or record.title or record.finding or record.destination_label }}{% if record.status %} ({{ record.status }}){% endif %} <span class="record-meta">revision {{ record.revision }}</span></li>
+    {% else %}
+    <li id="no-records" class="muted">No local records yet. Start with the guided questionnaire above.</li>
+    {% endfor %}
+  </ul>
+</section>
+
+<div id="workspace-state" data-revision="{{ revision }}" hidden></div>
+<script>
+(() => {
+  "use strict";
+  let revision = Number(document.getElementById("workspace-state").dataset.revision || 0);
+  const handoffRecord = document.getElementById("handoff-record");
+
+  function setResult(target, message, isError = false) {
+    target.replaceChildren();
+    target.textContent = message;
+    target.classList.toggle("error", isError);
+    target.classList.toggle("success", !isError);
+    target.setAttribute("role", isError ? "alert" : "status");
+    target.focus({preventScroll: true});
+  }
+
+  function recordLabel(record) {
+    return record.subject || record.vendor || record.title || record.finding || record.destination_label || record.id;
+  }
+
+  function addRecord(record, selectable = true) {
+    document.getElementById("no-records")?.remove();
+    const recent = document.getElementById("recent-records");
+    [...recent.querySelectorAll("li[data-record-id]")]
+      .find((row) => row.dataset.recordId === record.id)?.remove();
+    const item = document.createElement("li");
+    item.dataset.recordId = record.id;
+    const name = document.createElement("strong");
+    name.textContent = record.type;
+    const meta = document.createElement("span");
+    meta.className = "record-meta";
+    meta.textContent = ` revision ${record.revision}`;
+    item.append(name, ` — ${recordLabel(record)} `, meta);
+    recent.prepend(item);
+    if (selectable) {
+      const option = document.createElement("option");
+      option.value = record.id;
+      option.textContent = `${record.type} — ${recordLabel(record)}`;
+      handoffRecord.append(option);
+      handoffRecord.value = record.id;
+    }
+  }
+
+  async function postForm(form, path, payload, result, onSuccess) {
+    const buttons = [...form.querySelectorAll("button[type=submit]")];
+    buttons.forEach((button) => { button.disabled = true; });
+    result.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+      onSuccess(data);
+    } catch (error) {
+      setResult(result, error instanceof Error ? error.message : "Request failed", true);
+    } finally {
+      if (form.dataset.completed !== "true") {
+        buttons.forEach((button) => { button.disabled = false; });
+      }
+      result.removeAttribute("aria-busy");
+    }
+  }
+
+  const frameworkSelect = document.getElementById("assessment-framework");
+  function showFramework() {
+    document.querySelectorAll(".control-set").forEach((fieldset) => {
+      fieldset.hidden = fieldset.dataset.framework !== frameworkSelect.value;
+    });
+  }
+  frameworkSelect.addEventListener("change", showFramework);
+
+  const assessmentForm = document.getElementById("assessment-form");
+  assessmentForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const selected = [...document.querySelectorAll(".control-set")].find(
+      (item) => item.dataset.framework === frameworkSelect.value
+    );
+    const answers = {};
+    selected.querySelectorAll(".control").forEach((control) => {
+      answers[control.dataset.control] = control.querySelector("input:checked").value;
+    });
+    postForm(assessmentForm, "/api/assessments", {
+      framework: frameworkSelect.value,
+      subject: document.getElementById("assessment-subject").value,
+      answers,
+      expected_revision: revision,
+    }, document.getElementById("assessment-result"), (record) => {
+      revision = record.revision;
+      addRecord(record);
+      setResult(document.getElementById("assessment-result"), `Saved ${record.subject}: ${record.score}% posture score, ${record.posture}; ${record.findings.length} gap(s) need human review.`);
+    });
+  });
+
+  const evidenceForm = document.getElementById("evidence-form");
+  evidenceForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    postForm(evidenceForm, "/api/evidence", {
+      framework: document.getElementById("evidence-framework").value,
+      source: document.getElementById("evidence-source").value,
+      text: document.getElementById("evidence-text").value,
+    }, document.getElementById("evidence-result"), (data) => {
+      const result = document.getElementById("evidence-result");
+      result.replaceChildren();
+      const warning = document.createElement("p");
+      warning.textContent = data.warning;
+      const table = document.createElement("table");
+      const caption = document.createElement("caption");
+      caption.textContent = "Deterministic evidence review; human decision required";
+      const head = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      ["Control", "Verdict", "Matched quote"].forEach((value) => {
+        const header = document.createElement("th");
+        header.scope = "col";
+        header.textContent = value;
+        headerRow.append(header);
+      });
+      head.append(headerRow);
+      const body = document.createElement("tbody");
+      data.verdicts.forEach((verdict) => {
+        const row = document.createElement("tr");
+        [verdict.control_id, verdict.status, verdict.quote || "No matching quote"].forEach((value) => {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          row.append(cell);
+        });
+        body.append(row);
+      });
+      table.append(caption, head, body);
+      result.append(warning, table);
+      result.classList.remove("error");
+      result.classList.add("success");
+      result.setAttribute("role", "status");
+      result.focus({preventScroll: true});
+    });
+  });
+
+  const riskForm = document.getElementById("risk-form");
+  riskForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    postForm(riskForm, "/api/risks", {
+      title: document.getElementById("risk-title").value,
+      owner: document.getElementById("risk-owner").value,
+      likelihood: Number(document.getElementById("risk-likelihood").value),
+      impact: Number(document.getElementById("risk-impact").value),
+      treatment: document.getElementById("risk-treatment").value,
+      expected_revision: revision,
+    }, document.getElementById("risk-result"), (record) => {
+      revision = record.revision;
+      addRecord(record);
+      setResult(document.getElementById("risk-result"), `Saved risk ${record.title} with score ${record.risk_score}.`);
+      riskForm.reset();
+    });
+  });
+
+  const poamForm = document.getElementById("poam-form");
+  poamForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    postForm(poamForm, "/api/poam", {
+      finding: document.getElementById("poam-finding").value,
+      owner: document.getElementById("poam-owner").value,
+      due_date: document.getElementById("poam-due").value,
+      milestone: document.getElementById("poam-milestone").value,
+      expected_revision: revision,
+    }, document.getElementById("poam-result"), (record) => {
+      revision = record.revision;
+      addRecord(record);
+      setResult(document.getElementById("poam-result"), `Saved POA&M item for ${record.finding}; target ${record.due_date}.`);
+      poamForm.reset();
+    });
+  });
+
+  const vendorForm = document.getElementById("vendor-form");
+  const vendorCarry = document.getElementById("vendor-carry-forward");
+  vendorCarry.addEventListener("change", () => {
+    const selected = vendorCarry.selectedOptions[0];
+    const vendorName = document.getElementById("vendor-name");
+    if (selected?.dataset.vendor && !vendorName.value) {
+      vendorName.value = selected.dataset.vendor;
+    }
+  });
+  vendorForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const answers = {};
+    document.querySelectorAll("[data-vendor-field]").forEach((select) => {
+      if (select.value !== "carry") answers[select.dataset.vendorField] = select.value;
+    });
+    const payload = {
+      vendor: document.getElementById("vendor-name").value,
+      owner: document.getElementById("vendor-owner").value,
+      answers,
+      expected_revision: revision,
+    };
+    if (vendorCarry.value) payload.carry_forward_from = vendorCarry.value;
+    postForm(vendorForm, "/api/vendors", payload, document.getElementById("vendor-result"), (record) => {
+      revision = record.revision;
+      addRecord(record);
+      const option = document.createElement("option");
+      option.value = record.id;
+      option.dataset.vendor = record.vendor;
+      option.textContent = `${record.vendor} \u2014 revision ${record.revision}`;
+      vendorCarry.append(option);
+      vendorCarry.value = record.id;
+      setResult(document.getElementById("vendor-result"), `Saved ${record.vendor}: ${record.posture}; ${record.carried_field_count} field(s) explicitly marked as carried forward.`);
+    });
+  });
+
+  function updateSpeed(speed) {
+    document.getElementById("speed-prepared").textContent = String(speed.receipts_prepared);
+    document.getElementById("speed-reviewed").textContent = String(speed.receipts_reviewed);
+    document.getElementById("speed-pending").textContent = String(speed.pending_reviews);
+    document.getElementById("speed-prepare-average").textContent = speed.average_prepare_seconds === null ? "Not measured" : `${Number(speed.average_prepare_seconds).toFixed(3)} s`;
+    document.getElementById("speed-review-average").textContent = speed.average_review_seconds === null ? "Not measured" : `${Number(speed.average_review_seconds).toFixed(3)} s`;
+  }
+
+  function wireReviewForm(form) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const result = form.querySelector(".review-result");
+      const decision = event.submitter?.value;
+      postForm(form, `/api/handoffs/mock/${encodeURIComponent(form.dataset.receiptId)}/decision`, {
+        decision,
+        reviewer: form.elements.reviewer.value,
+        rationale: form.elements.rationale.value,
+        expected_revision: revision,
+      }, result, (data) => {
+        revision = data.receipt.revision;
+        form.dataset.completed = "true";
+        addRecord(data.receipt, false);
+        updateSpeed(data.speed_story);
+        setResult(result, `${data.warning} Recorded ${data.receipt.decision} by ${data.receipt.reviewer}.`);
+        form.querySelectorAll("input, textarea, button").forEach((control) => {
+          control.disabled = true;
+        });
+      });
+    });
+  }
+
+  function addReviewCard(receipt) {
+    document.getElementById("no-pending-reviews")?.remove();
+    const article = document.createElement("article");
+    article.className = "queue-item";
+    article.dataset.receiptId = receipt.id;
+    const heading = document.createElement("h3");
+    heading.textContent = `${receipt.destination_label} mock packet`;
+    const summary = document.createElement("p");
+    summary.textContent = `Source: ${receipt.source_record_type} ${receipt.source_record_id}. Prepared by ${receipt.prepared_by}.`;
+    const form = document.createElement("form");
+    form.className = "review-form";
+    form.dataset.receiptId = receipt.id;
+    const reviewerLabel = document.createElement("label");
+    reviewerLabel.textContent = "Human reviewer";
+    const reviewer = document.createElement("input");
+    reviewer.name = "reviewer";
+    reviewer.maxLength = 160;
+    reviewer.required = true;
+    reviewer.autocomplete = "name";
+    reviewerLabel.append(reviewer);
+    const rationaleLabel = document.createElement("label");
+    rationaleLabel.textContent = "Decision rationale";
+    const rationale = document.createElement("textarea");
+    rationale.name = "rationale";
+    rationale.maxLength = 1000;
+    rationaleLabel.append(rationale);
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    for (const [decision, label] of [["approve", "Approve in local mock queue"], ["reject", "Reject in local mock queue"]]) {
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.name = "decision";
+      button.value = decision;
+      button.textContent = label;
+      if (decision === "reject") button.className = "secondary";
+      actions.append(button);
+    }
+    const result = document.createElement("div");
+    result.className = "review-result result";
+    result.setAttribute("role", "status");
+    result.setAttribute("aria-live", "polite");
+    result.tabIndex = -1;
+    form.append(reviewerLabel, rationaleLabel, actions, result);
+    article.append(heading, summary, form);
+    document.getElementById("pending-review-list").prepend(article);
+    wireReviewForm(form);
+  }
+
+  document.querySelectorAll(".review-form").forEach(wireReviewForm);
+
+  const handoffForm = document.getElementById("handoff-form");
+  handoffForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    postForm(handoffForm, "/api/handoffs/mock", {
+      record_id: handoffRecord.value,
+      destination: document.getElementById("handoff-destination").value,
+      prepared_by: document.getElementById("handoff-prepared-by").value,
+      note: document.getElementById("handoff-note").value,
+      expected_revision: revision,
+    }, document.getElementById("handoff-result"), (data) => {
+      revision = data.receipt.revision;
+      addRecord(data.receipt, false);
+      addReviewCard(data.receipt);
+      updateSpeed(data.speed_story);
+      setResult(document.getElementById("handoff-result"), `${data.warning} Local receipt ${data.receipt.id} awaits a human mock decision below.`);
+    });
+  });
+})();
+</script>
+{% endblock %}

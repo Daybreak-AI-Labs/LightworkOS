@@ -1,0 +1,34 @@
+<section id="ai-business-intake-panel" aria-labelledby="ai-business-intake-title">
+  <h3 id="ai-business-intake-title">AI business intake</h3>
+  <p>Describe a proposed use of AI, save your answers, and return to the draft later. Submitting routes it for independent human review; it does not approve the use or make a legal classification.</p>
+  <p id="abi-status" role="status" aria-live="polite" tabindex="-1">Loading the intake questions…</p>
+  <div class="assurance-actions"><button id="abi-new" type="button" class="btn">New intake</button><button id="abi-refresh" type="button" class="btn btn--ghost">Refresh workspace drafts</button></div>
+  <form id="abi-find" class="assurance-form" data-draft-recovery="off">
+    <label>Find by use-case name<input id="abi-search" class="input" maxlength="200" type="search"></label><button type="submit" class="btn">Find drafts</button>
+    <label class="assurance-form__wide">Workspace drafts and submitted intakes<select id="abi-drafts" class="input"><option value="">Choose a saved intake</option></select></label>
+    <div class="assurance-actions assurance-form__wide"><button id="abi-open" type="button" class="btn">Open selected intake</button><button id="abi-more" type="button" class="btn btn--ghost" hidden>Load more drafts</button><span id="abi-list-status" role="status"></span></div>
+  </form>
+  <p id="abi-current"></p><p id="abi-progress" role="status"></p><ul id="abi-missing"></ul>
+  <form id="abi-answers" data-draft-recovery="off" novalidate>
+    <p>Answer what you know. “Choose an answer” means unanswered. Save partial answers whenever you need to pause. Do not include passwords, access tokens, or private keys.</p>
+    <div id="abi-fields"></div>
+    <p id="abi-validation" role="alert"></p>
+    <div class="assurance-actions"><button id="abi-save" type="submit" class="btn">Start draft</button><button id="abi-submit" type="button" class="btn btn--primary" disabled>Submit for independent review</button></div>
+  </form>
+  <div class="assurance-actions">
+    <button id="abi-import-button" type="button" class="btn btn--ghost">Import answers from a file</button>
+    <input id="abi-import" type="file" accept=".json,application/json" aria-label="Answers file to import" data-draft-recovery="off" hidden>
+    <button id="abi-export" type="button" class="btn btn--ghost">Download answers</button>
+  </div>
+</section>
+<style>
+  #ai-business-intake-panel{min-width:0}#ai-business-intake-panel fieldset{min-width:0;margin-block:var(--space-3);padding:var(--space-3);border:1px solid var(--border)}
+  #abi-find>*{min-width:0}#abi-find input,#abi-find select{box-sizing:border-box;width:100%;max-width:100%;min-width:0}#abi-fields legend{max-width:100%}
+  #abi-fields .abi-field{margin-block:var(--space-3)}#abi-fields label{display:block;margin-block:var(--space-2)}
+  #abi-fields input:not([type=checkbox]),#abi-fields select,#abi-fields textarea{box-sizing:border-box;width:100%;max-width:100%;min-width:0}
+  #abi-fields .abi-choice{display:flex;gap:var(--space-2);align-items:flex-start}#abi-fields .abi-choice input{flex:0 0 auto;margin-top:.3em}
+  #ai-business-intake-panel button,#ai-business-intake-panel legend,#ai-business-intake-panel p,#ai-business-intake-panel li{white-space:normal;overflow-wrap:anywhere}
+  #ai-business-intake-panel pre{white-space:pre-wrap;overflow-wrap:anywhere}#abi-fields [aria-invalid=true]{outline:2px solid var(--warn)}
+  @media(max-width:880px){ #governance-operations-panel>.assurance-grid{grid-template-columns:minmax(0,1fr)} }
+</style>
+<script src="/static/lightwork-ai-business-intake.js" defer></script>

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Inventory · Permissions' if tab_host else 'Discovery' }} · Lightwork{% endblock %}
+{% block content %}
+  {% if tab_host %}
+  {% from "_tabs.html" import host_header, panel_attrs %}{{ host_header(tab_host) }}
+  <div {{ panel_attrs(tab_host.selected) }}>
+  <h2>Inventory</h2>
+  <p class="muted">You can't govern what you can't see.</p>
+  {% else %}
+  <h1 class="page-title">Discovery</h1>
+  <p class="page-subtitle">Everything Lightwork can use here and keep under your rules — actions, connected tool servers, AI providers, channels and outside agents. You can't govern what you can't see.</p>
+  {% endif %}
+
+  <p><a class="btn btn--primary" href="/api/v1/compliance/packet">Download the compliance file</a></p>
+
+  <div class="panel">
+    <div class="section-head"><h2>Actions agents can take <span class="muted">({{ discovery.tools.count }})</span></h2></div>
+    <p>
+      <span class="badge danger">{{ discovery.tools.by_tier.high or 0 }} high risk</span>
+      <span class="badge">{{ discovery.tools.by_tier.medium or 0 }} medium risk</span>
+      <span class="badge active">{{ discovery.tools.by_tier.low or 0 }} low risk</span>
+    </p>
+    {% if discovery.tools.entries %}
+    <table>
+      <thead><tr><th scope="col">Action</th><th scope="col">Risk</th></tr></thead>
+      <tbody>
+        {% for t in discovery.tools.entries %}
+        <tr><td>{{ t.name|humanize }}</td><td><span class="badge {{ 'danger' if t.risk == 'high' else '' }}">{{ t.risk|humanize }}</span></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <div class="section-head"><h2>Connected tool servers <span class="muted">({{ discovery.mcp_servers | length }})</span></h2></div>
+    {% if discovery.mcp_servers %}
+    <table>
+      <thead><tr><th scope="col">Name</th><th scope="col">Locked to a checked version?</th></tr></thead>
+      <tbody>
+        {% for m in discovery.mcp_servers %}
+        <tr>
+          <td>{{ m.name|humanize }}</td>
+          <td>
+            {% if m.pinned %}<span class="badge active">Yes</span>
+            {% else %}<span class="badge danger">No — it could change without review</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <details class="panel" style="margin-top: var(--space-3);">
+      <summary>Technical details</summary>
+      <ul>
+        {% for m in discovery.mcp_servers %}
+        <li>{{ m.name }}: <code>{{ m.command }}</code>{% if m.pinned %} · <code>{{ m.pin_sha256[:16] }}…</code>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% else %}<p class="muted">No tool servers connected. Add one in Tool servers to give agents more tools.</p>{% endif %}
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <div class="section-head"><h2>AI providers</h2></div>
+      {% if discovery.providers %}<p>{% for p in discovery.providers %}<span class="badge">{{ p|humanize }}</span> {% endfor %}</p>
+      {% else %}<p class="muted">None set up yet. Only names are shown here, never keys.</p>{% endif %}
+    </div>
+    <div class="panel">
+      <div class="section-head"><h2>Channels</h2></div>
+      {% if discovery.channels %}<p>{% for c in discovery.channels %}<span class="badge">{{ c|humanize }}</span> {% endfor %}</p>
+      {% else %}<p class="muted">No channels installed. Connect a chat app in Channels to give work from it.</p>{% endif %}
+    </div>
+    <div class="panel">
+      <div class="section-head"><h2>Outside agents</h2></div>
+      <p>
+        <strong>{{ discovery.agents.count }}</strong> registered ·
+        {% if discovery.agents.enforced %}<span class="badge active">Rules enforced</span>{% else %}<span class="badge">Rules advise only</span>{% endif %}
+        · <a href="/trust">See how they connect</a>
+      </p>
+    </div>
+  </div>
+  {% if tab_host %}</div>{% endif %}
+{% endblock %}

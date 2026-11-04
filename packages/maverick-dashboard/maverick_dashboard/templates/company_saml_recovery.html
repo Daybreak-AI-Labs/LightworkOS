@@ -1,0 +1,21 @@
+{% extends "public_base.html" %}
+{% block title %}Restore previous single sign-on · Lightwork{% endblock %}
+{% block content %}
+<main class="page" style="max-width:42rem;margin:auto;padding:1rem">
+<section class="panel" data-saml-recovery>
+  <h1>Restore previous single sign-on</h1>
+  <p>Only this computer's original owner can review restoring the single-sign-on choice from their retained activation. This does not change provider files, passwords, roles, proxy policy, enterprise requirements or second-factor rules. It never signs you into the dashboard.</p>
+  <label>Original owner's email <input class="input" type="email" data-saml-email maxlength="320" autocomplete="username"></label>
+  <label>Owner passphrase <input class="input" type="password" data-saml-phrase maxlength="1024" autocomplete="current-password"></label>
+  <label>Authenticator code or recovery code (only when the owner's app is on) <input class="input" type="text" data-saml-code maxlength="32" autocomplete="one-time-code" spellcheck="false"></label>
+  <button class="btn" type="button" data-saml-lookup>Read retained requests</button>
+  <label>Your original request <select class="select" data-saml-recovery-original><option value="">Choose a dated request</option></select></label>
+  <button class="btn" type="button" data-saml-original-read>Read original outcome</button>
+  <button class="btn" type="button" data-saml-restore-review>Review restoring the previous choice</button>
+  <div data-saml-recovery-review hidden></div>
+  <p role="status" aria-live="polite" data-saml-recovery-status></p>
+  <p><a href="/auth/local-login">Sign in with this computer's owner account</a></p>
+</section>
+</main>
+<script src="/static/lightwork-company-saml-setup.js" defer></script>
+{% endblock %}

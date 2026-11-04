@@ -1,0 +1,42 @@
+# Lightwork hosted demo — Fly.io blueprint (Option 3 in README.md).
+#
+# Run these from the REPO ROOT (the build context must include every package):
+#   flyctl launch --copy-config --config deploy/demo/fly.toml --no-deploy
+#   # then set your two secrets — the agent's provider key and a random dashboard token:
+#   DASHBOARD_TOKEN=$(openssl rand -hex 24)
+#   flyctl secrets set --config deploy/demo/fly.toml ANTHROPIC_API_KEY=<your-provider-key> MAVERICK_DASHBOARD_TOKEN="$DASHBOARD_TOKEN"
+#   flyctl deploy --config deploy/demo/fly.toml
+#
+# Your demo link is then https://<app-name>.fly.dev/ — authenticate with the
+# dashboard token via the Authorization: Bearer header (the dashboard does not
+# accept ?token= in the URL, which keeps the bearer out of logs/Referer headers).
+
+app = "maverick-demo"
+primary_region = "iad"
+
+[build]
+  # Relative to the repo root (where you run flyctl deploy from).
+  dockerfile = "deploy/docker/Dockerfile"
+
+# The image ENTRYPOINT is `maverick`; this becomes the CMD appended to it, so
+# the machine runs `maverick dashboard --host 0.0.0.0 --port 8765`.
+[processes]
+  app = "dashboard --host 0.0.0.0 --port 8765"
+
+[env]
+  MAVERICK_BUDGET_DOLLARS = "0.50"
+  MAVERICK_DASHBOARD_MAX_GOALS_PER_MIN = "3"
+  MAVERICK_DASHBOARD_MAX_GOALS_GLOBAL_PER_MIN = "10"
+
+[http_service]
+  internal_port = 8765
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    path = "/livez"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"

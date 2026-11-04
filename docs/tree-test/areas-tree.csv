@@ -1,0 +1,169 @@
+Level 1,Level 2,Level 3,Address
+Ask,Ask,Chat,/chat
+Ask,Ask,Task builder,/goal-builder
+Ask,Conversations,My conversations,/conversations
+Ask,Conversations,Human conversations,/human-conversations
+Ask,Start from a template,Templates,/templates
+Ask,My companion,,/companion
+Home,Home,Today,/today
+Home,Home,My work,/me
+Home,Home,Overview,/overview
+Home,Home,Get started,/start
+Home,Home,Your first useful result,/get-started/employee
+Work,Tasks,Tasks,/goals
+Work,Tasks,Private task calculations,/private-task-computation
+Work,Tasks,Task handoffs,/task-handoffs
+Work,Tasks,Task map,/graph-editor
+Work,Tasks,3D plan view,/plan-tree-3d
+Work,Tasks,My background work,/my-work
+Work,Business details,,/work-details
+Work,Approvals,Approvals,/approvals
+Work,Approvals,Action Center,/action-center
+Work,Results,Results,/deliverables
+Work,Results,Selected deliverable bundles,/deliverable-bundles
+Work,Projects,Projects,/projects
+Work,Projects,Project team reviews,/project-reviews
+Work,Projects,Project workspaces,/project-workspaces
+Work,Workflows,Workflows,/workflows
+Work,Workflows,Workflow pilots,/outcome-pilots
+Work,Workflows,Flow designer,/flows/designer
+Work,Workflows,Workflow builder,/workflow-builder
+Work,Workflows,Flow results,/flows/analytics
+Work,Automations,,/automations
+Work,Code changes,Code,/code
+Work,Promise reviews,,/commitment-reviews
+Work,Shared decision reviews,,/decision-evidence
+Work,Hand over a team's work,Autonomous shoring,/shoring
+Agents,Workforce,Workforce,/workforce
+Agents,Workforce,Teams,/fleets
+Agents,Workforce,Roles,/roles
+Agents,Workforce,Starter teams,/starter-teams
+Agents,Build an agent,Agent Factory,/agents
+Agents,Skills,Skills,/skills
+Agents,Skills,Skill store,/store
+Agents,Tools,Tools,/tools
+Agents,Tools,Plugins,/plugins
+Agents,Tools,Tool servers,/mcp
+Agents,Knowledge,Knowledge,/knowledge-access
+Agents,Knowledge,Cortex memory diagnostics,/cortex
+Agents,Knowledge,Facts,/facts
+Agents,Learning,Learning,/learning
+Agents,Learning,Recheck affected rules,/learning/recheck-rules
+Agents,Learning,Find missing distinctions,/learning/distinctions
+Agents,Learning,Check local rules together,/learning/rules-together
+Agents,Learning,Prepare an answer for this request,/learning/request-program
+Agents,Learning,Checked answer regions,/learning/applicability
+Agents,Learning,Rewrite and check local rules,/learning/rule-evolution
+Agents,Learning,Plan teaching questions,/learning/acquisition
+Agents,Learning,Understand a missing reply,/learning/recovery-visibility
+Agents,Learning,Share and qualify local rule structures,/learning/portable-rules
+Agents,Learning,Share preparation safely,/learning/work-restructuring
+Agents,Learning,Approval challenges,/learning/approval-challenges
+Agents,Learning,Instructions used in real work,/learning/instructions
+Agents,Learning,Learned,/learned
+Agents,Discover work to automate,Ekko,/ekko
+Agents,Response styles,,/styles
+Rules & safety,Overview,Oversight,/oversight
+Rules & safety,Agent controls,,/agent-control-plane
+Rules & safety,What Lightwork can do,Permissions,/permissions
+Rules & safety,What Lightwork can do,Discovery,/discovery
+Rules & safety,What Lightwork can do,Compartments,/compartments
+Rules & safety,Screening,Safety,/safety
+Rules & safety,Safety monitoring,,/immune
+Rules & safety,Outside agents,Outside agents,/external-agents
+Rules & safety,Outside agents,Agent trust,/trust
+Rules & safety,Test a rule,Test a safety rule,/simulate
+Rules & safety,Redaction check,,/redact
+Rules & safety,Regulations and rules,,/compliance/obligations
+Privacy,Overview,Privacy,/privacy
+Privacy,Requests,Privacy requests,/privacy/rights-orchestration
+Privacy,Requests,California DROP requests,/privacy/drop
+Privacy,Requests,Send people their data,/privacy/rights-consumer-delivery
+Privacy,Find personal data,,/privacy/data-discovery
+Privacy,Notices,Privacy notices,/privacy/notice-governance
+Privacy,Consent,Consent and preferences,/consent
+Privacy,Consent,Mobile app consent,/consent/native
+Privacy,Consent,Find people by preference,/consent/custom-indexes
+Privacy,Consent,Bulk consent changes,/consent/bulk-jobs
+Privacy,Consent,Website banner settings,/consent/publish-settings
+Privacy,Consent,Opt out everywhere,/consent/global-opt-out
+Privacy,Consent,App tracking checks,/consent/application-scans
+Privacy,Consent,Banner and preference center,/consent/publishing
+Privacy,Consent,Banner experiments,/consent/experiments
+Privacy,Consent,Send choices to other systems,/consent/delivery
+Privacy,Consent,Website and app keys,/consent/public-clients
+Privacy,Consent,Preference questions,/consent/profile-data
+Privacy,Consent,Tracker scans,/consent/scan-inventory
+Privacy,Consent,Disclosure suggestions,/consent/scan-notice-proposals
+Privacy,Consent,Trust center access,/consent/trust-center-authority
+Privacy,Data use rules,Data use rules,/data-use
+Privacy,Data use rules,Snowflake and Databricks,/data-use/providers
+Privacy,Law research,Privacy law research,/privacy/regulatory-intelligence
+Risk & compliance,Compliance,Compliance,/compliance
+Risk & compliance,Compliance,Autonomous compliance,/autonomous-compliance
+Risk & compliance,Compliance,Compliance studio,/compliance/grc-studio
+Risk & compliance,Compliance,Continuous evidence,/compliance/continuous-evidence
+Risk & compliance,Compliance,Policy links,/compliance/policy-links
+Risk & compliance,Compliance,Find which controls apply,/compliance/scoping
+Risk & compliance,Compliance,Turn scope into tasks,/compliance/scope-actions
+Risk & compliance,Compliance,Build a task mapping,/compliance/scope-actions/mapping
+Risk & compliance,Assessments,Assessments,/assessments
+Risk & compliance,Assessments,AI evidence analysis,/ai-evidence-analysis
+Risk & compliance,Assessments,Suggested assessment answers,/assess/evidence-autopopulation
+Risk & compliance,Security,Security & GRC,/security
+Risk & compliance,Security,Lightwork threat check,/security/threats
+Risk & compliance,Security,Threat monitoring,/security/soc
+Risk & compliance,Security,Security readiness report,/security/report
+Risk & compliance,Financial controls,Financial risk,/finance
+Risk & compliance,AI risk,AI governance,/security/governance
+Risk & compliance,AI risk,Governance assistants,/governance-agents
+Risk & compliance,AI risk,Governance inventory,/governance/inventory
+Risk & compliance,AI risk,AI system tasks,/ai-entity-tasks
+Risk & compliance,AI risk,AI assurance,/security/assurance
+Risk & compliance,Vendors,AI vendor onboarding,/third-party/vendor-onboarding
+Risk & compliance,Vendors,Contracts and engagements,/third-party/contracts
+Risk & compliance,Vendors,Executive vendor reports,/third-party/executive-reports
+Risk & compliance,Vendors,Third-party intelligence,/third-party/intelligence
+Risk & compliance,Vendors,Third-party lifecycle,/third-party/lifecycle
+Risk & compliance,Vendors,Third-party collaboration,/third-party/collaboration
+Evidence & audit,Activity log,,/audit
+Evidence & audit,Task replay,Task replay,/replay
+Evidence & audit,Task replay,Branches,/run-tree
+Evidence & audit,Task replay,Video walkthroughs,/walkthroughs
+Evidence & audit,Trust receipts,,/audit/receipts
+Evidence & audit,Learning history,,/audit/evolution-ledger
+Evidence & audit,Document vault,,/administration/document-vault
+Evidence & audit,Content access,,/content-access
+Costs & value,Spend,,/spend
+Costs & value,Work value & opportunities,,/work-value
+Costs & value,Savings,,/savings
+Costs & value,Billing,,/billing
+Costs & value,Budget,Your budget,/budget
+Costs & value,Provider spending,,/provider-spending
+Costs & value,Compare cost records,,/cost-reconciliation
+Costs & value,Spending limits,,/spending-limits
+Settings,General,Settings,/settings
+Settings,Setup,Workflow readiness,/workflow-readiness
+Settings,AI providers,AI on this computer,/settings/local-ai
+Settings,AI providers,Providers,/providers
+Settings,Connections,,/connections
+Settings,Chat apps,Channels,/channels
+Settings,People & roles,Employee companions,/companion/admin
+Settings,People & roles,Users,/users
+Settings,Workspaces,Workspaces,/tenants
+Settings,Workspaces,Choose a workspace,/workspace/tenant
+Settings,Backup & recovery,Workspace recovery,/workspace/recovery
+Settings,Partner fleet,,/partner
+Settings,Advanced,Sign-in and work protection,/settings/security-installation
+Settings,Advanced,Benchmarks,/benchmarks
+Settings,Advanced,Performance diagnostics,/perf
+Settings,Advanced,Cache,/cache
+Settings,Advanced,Embedded analytics,/embed-demo
+Account,Your account,,/account
+Account,Preferences,Your preferences,/preferences
+Account,Notifications,Your notifications,/notifications
+Account,Devices,Your paired devices,/devices
+Account,Sessions,,/settings/sessions
+Account,My data,,/my-data
+Account,Permission requests,,/access-requests
+Help,Help & diagnostics,Help and diagnostics,/help

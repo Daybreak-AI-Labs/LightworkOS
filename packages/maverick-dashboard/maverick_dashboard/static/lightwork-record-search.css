@@ -1,0 +1,15 @@
+.navfinder-record-controls{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.5rem 1rem}
+.navfinder-record-controls select{min-width:0;max-width:100%}
+.navfinder-record-coverage{margin:.7rem 1rem;font-size:.85rem;overflow-wrap:anywhere}
+.navfinder-record-coverage ul{padding-left:1.2rem}
+#navfinder-more{margin:.5rem 1rem}
+.navfinder__results .navfinder__label,.navfinder__results .navfinder__group{min-width:0;overflow-wrap:anywhere}
+.navfinder:has(.navfinder-record-controls){max-height:calc(100dvh - 2rem);overflow-y:auto}
+/* At short heights, keep wrapped guidance in flow instead of shrinking its
+   box until the text overlaps results. The dialog and result list can scroll. */
+.navfinder:has(.navfinder-record-controls)>*{flex-shrink:0}
+.navfinder:has(.navfinder-record-controls)>.navfinder__results{flex:0 0 auto;max-height:min(24rem,45dvh)}
+
+#navfinder-history:not([hidden]){display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));gap:var(--space-2);width:100%;min-width:0;border:1px solid var(--line);border-radius:var(--radius-sm)}
+#navfinder-history label{display:flex;flex-direction:column;gap:var(--space-1);min-width:0}
+#navfinder-history input{min-width:0;width:100%;box-sizing:border-box}

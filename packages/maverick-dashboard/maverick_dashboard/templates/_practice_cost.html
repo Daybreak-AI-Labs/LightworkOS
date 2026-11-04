@@ -1,0 +1,4 @@
+{#- Practice AI calls cost real provider money (maverick.practice_costs): every
+    view that reports real cost shows them on this labelled line, apart from
+    the real totals, limits and quotas. -#}
+{% if practice_cost %}<p class="practice-cost" data-practice-cost>{{ practice_cost }}</p>{% endif %}

@@ -1,0 +1,11 @@
+{#- The sign-in timer (lightwork-session.js, loaded with the shell's other
+    deferred scripts): when this browser's sign-in ends, the server clock, and
+    whether "Stay signed in" renews here or signs in again. Nothing when
+    nobody is signed in. Expects ``_session`` = page_session(request). -#}
+{%- if _session %}
+  <meta name="lightwork-session-expires" content="{{ _session.expires_at }}">
+  <meta name="lightwork-session-now" content="{{ _session.now }}">
+  <meta name="lightwork-session-idle-minutes" content="{{ _session.idle_minutes|default(0) }}">
+  <meta name="lightwork-session-renew" content="{{ _session.renew }}">
+  <meta name="lightwork-session-sign-in" content="{{ _session.sign_in }}">
+{%- endif %}

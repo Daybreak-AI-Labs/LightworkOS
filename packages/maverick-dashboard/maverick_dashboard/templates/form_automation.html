@@ -1,0 +1,89 @@
+{% extends "public_base.html" %}
+{% block title %}{{ form.title }} · Lightwork{% endblock %}
+{% block public_label %}Submission form{% endblock %}
+{% block public_footer %}Form submission{% endblock %}
+{% block content %}
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+  .af-page { width: 100%; max-width: 42rem; margin: auto; }
+  .af-field { margin-top: var(--space-4); }
+  .af-field label { display: block; font-weight: var(--font-medium); margin-bottom: var(--space-1); }
+  .af-field .input, .af-field .select, .af-field .textarea { width: 100%; box-sizing: border-box; }
+  .af-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-5); }
+  @media (max-width: 480px) { .af-actions .btn { width: 100%; } }
+</style>
+{% from "_hero.html" import hero %}
+<div class="af-page">
+{{ hero('', form.title, title_id='af-title', compact=true,
+        lede='Enter the details below. Lightwork records your submission, then the saved automation checks it. Submitting does not mean the work is finished.') }}
+<section class="panel af-wrap" aria-labelledby="af-title">
+  <form id="af-form" method="post" action="{{ request.url.path }}">
+    {% for field in form.fields %}
+    <div class="af-field">
+      <label for="af-field-{{ loop.index }}">{{ field.label }}{% if field.required %} <span aria-hidden="true">*</span>{% endif %}</label>
+      {% if field.long %}
+      <textarea class="textarea" id="af-field-{{ loop.index }}" name="{{ field.key }}" rows="5" maxlength="2000"{% if field.required %} required{% endif %}></textarea>
+      {% elif field.type == 'bool' %}
+      <select class="select" id="af-field-{{ loop.index }}" name="{{ field.key }}"{% if field.required %} required{% endif %}>
+        <option value="">Choose an answer</option><option value="true">Yes</option><option value="false">No</option>
+      </select>
+      {% else %}
+      <input class="input" id="af-field-{{ loop.index }}" name="{{ field.key }}"
+             type="{{ 'number' if field.type == 'number' else 'date' if field.type == 'date' else 'text' }}"
+             {% if field.type == 'number' %}step="any" {% endif %}maxlength="2000"{% if field.required %} required{% endif %}>
+      {% endif %}
+    </div>
+    {% endfor %}
+    <div class="af-actions">
+      <button class="btn btn--primary" id="af-submit" type="submit">Send submission</button>
+      <span id="af-status" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+</section>
+</div>
+<script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var form = document.getElementById('af-form');
+    var button = document.getElementById('af-submit');
+    var status = document.getElementById('af-status');
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      if (button.disabled || !form.reportValidity()) return;
+      var fields = Object.create(null);
+      form.querySelectorAll('[name]').forEach(function (input) {
+        if (input.value !== '') fields[input.name] = input.value;
+      });
+      button.disabled = true;
+      status.textContent = 'Sending…';
+      try {
+        var response = await fetch(form.action, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(fields)
+        });
+        if (!response.ok) {
+          if (response.status === 404 || response.status === 410) {
+            status.textContent = 'This link is no longer active. Ask the person who shared it for a new one.';
+          } else if (response.status === 400 || response.status === 422) {
+            status.textContent = 'Check your answers and try again.'; button.disabled = false;
+          } else if (response.status === 507) {
+            status.textContent = 'This form is full. Contact the person who shared it.';
+          } else {
+            status.textContent = 'This form could not accept your submission right now. Try again later.';
+            button.disabled = false;
+          }
+          return;
+        }
+        var receipt = await response.json().catch(function () { return null; });
+        if (response.status !== 201 || !receipt || receipt.ok !== true || !Number.isInteger(receipt.seq)) {
+          status.textContent = 'We could not confirm whether your submission was received. Ask the form owner before trying again.';
+          return;
+        }
+        form.querySelectorAll('input,textarea,select,button').forEach(function (control) { control.disabled = true; });
+        status.textContent = 'Thank you. Your submission was received. You can close this page.';
+      } catch (error) {
+        status.textContent = 'We could not confirm whether your submission was received. Ask the form owner before trying again.';
+      }
+    });
+  })();
+</script>
+{% endblock %}

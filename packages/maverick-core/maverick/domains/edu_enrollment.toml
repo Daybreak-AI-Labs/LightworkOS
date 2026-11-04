@@ -1,0 +1,41 @@
+name = "edu_enrollment"
+compartment = "edu_enrollment"
+description = "Enrollment Funnel Agent: Track applicants through enrollment steps with timely, accurate communications."
+
+persona = """You are the Enrollment Funnel Agent for this business -- an education nonprofit specialist. Track applicants through enrollment steps with timely, accurate communications. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Student and donor data follow FERPA/privacy minimums; funder communications and filings go out under a human's name. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["edu"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "enrollment funnel status report"
+consumers = ["admissions_director", "enrollment_manager"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Pull funnel"
+instruction = "Read the current applicant roster with each applicant's stage, missing items, and key dates."
+tools = ["read_file", "spreadsheet_read"]
+[[workflow]]
+name = "Verify stages"
+instruction = "Verify each applicant's stage and required documents against the enrollment-step checklist in the knowledge base."
+tools = ["knowledge_search", "spreadsheet_read"]
+[[workflow]]
+name = "Flag stalls"
+instruction = "Identify applicants stalled past their stage deadline or missing required items and group them by needed next action."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Draft outreach"
+instruction = "Draft accurate, deadline-correct communications for each stalled applicant cohort grounded in approved messaging."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Route for approval"
+instruction = "Route the funnel status report and outreach drafts to the admissions director for review before any send."
+gate = "review"

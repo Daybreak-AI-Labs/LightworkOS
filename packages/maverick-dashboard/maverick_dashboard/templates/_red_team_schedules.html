@@ -1,0 +1,64 @@
+{#- Scheduled attack tests: included inside the red-team section of the
+    assurance page once attack testing is on. The list loads from the
+    schedules list; only administrators see the controls that change it. -#}
+{% set RTS_AGENTS = {} %}{% for row in red_team_agents %}{% set _ = RTS_AGENTS.update({row.id: row.display_name or row.platform_label or 'Registered testing agent'}) %}{% endfor %}
+<div id="rts-root" class="rts" data-api-base="/api/v1/security/assurance/red-team" data-admin="{{ '1' if gateway_admin else '0' }}">
+  <div class="section-head"><h3 id="rts-title">Scheduled checks</h3></div>
+  <p class="muted">Repeat an attack test on a timetable so each AI system keeps being checked without anyone having to remember to start it.</p>
+  <script nonce="{{ csp_script_nonce }}" type="application/json" id="rts-names">{{ {"assets": MRA_NAMES, "agents": RTS_AGENTS}|tojson }}</script>
+  <div class="assurance-table"><table aria-labelledby="rts-title">
+    <thead><tr><th scope="col">AI system</th><th scope="col">Testing agent</th><th scope="col">How often</th>
+      <th scope="col">Next check</th><th scope="col">Checks so far</th><th scope="col">Status</th>
+      {% if gateway_admin %}<th scope="col">Actions</th>{% endif %}</tr></thead>
+    <tbody id="rts-rows"><tr><td colspan="{{ 7 if gateway_admin else 6 }}">Loading scheduled checks…</td></tr></tbody>
+  </table></div>
+  <p id="rts-status" role="status" aria-live="polite"></p>
+  {% if gateway_admin %}
+  <div class="assurance-actions">
+    <button class="btn" id="rts-run-due" type="button">Run due checks now</button>
+  </div>
+  <form id="rts-create" class="assurance-form" aria-labelledby="rts-create-title">
+    <h4 id="rts-create-title" class="assurance-form__wide">Schedule a check</h4>
+    <label>AI system to test
+      <select class="select" name="asset_id" required>
+        <option value="">Choose a model, agent or system</option>
+        {% for row in model_risk_assets %}
+          {% if row.identity.asset_type in ["model", "agent", "system", "component"] %}
+          <option value="{{ row.asset_id }}">{{ row.display_name }} ({{ row.identity.asset_type|humanize }})</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label>Testing agent
+      <select class="select" name="external_agent_id" required>
+        <option value="">Choose a registered agent</option>
+        {% for row in red_team_agents %}
+          <option value="{{ row.id }}">{{ row.display_name|default(row.id, true) }} ({{ row.platform_label }})</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>How often
+      <select class="select" name="cadence_seconds" required>
+        <option value="86400">Every day</option>
+        <option value="604800" selected>Every week</option>
+        <option value="1209600">Every two weeks</option>
+        <option value="2592000">Every 30 days</option>
+      </select>
+    </label>
+    <label>First check
+      <input class="input" type="datetime-local" name="first_run_at" aria-describedby="rts-first-help">
+      <span id="rts-first-help" class="muted">Leave empty to run the first check as soon as due checks are started.</span>
+    </label>
+    <input type="hidden" data-auto-reference name="idempotency_key">
+    <label class="assurance-form__wide">
+      <input type="checkbox" name="safe_target_environment" required>
+      I confirm every check will test a separate test copy of this AI system, not the live one.
+    </label>
+    <div class="assurance-form__wide assurance-actions">
+      <button class="btn btn--primary" type="submit">Schedule a check</button>
+      <span id="rts-create-status" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+  {% endif %}
+</div>
+<script src="/static/lightwork-red-team-schedules.js" defer></script>

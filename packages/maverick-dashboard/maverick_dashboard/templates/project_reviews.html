@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ ut("Project team reviews") }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<div id="pr-root" data-context="{{ review_context }}">
+  <p>{{ back_link('/projects', 'Projects') }}</p>
+  {% from "_hero.html" import hero %}
+  {{ hero('', ui("Project team reviews"),
+          lede=ui("Share a fixed task result with a named workspace reviewer. Their decision applies to that captured result. The owner remains responsible for any changes, final approval, or further work on the task."),
+          compact=true) }}
+  <p id="pr-status" role="status" aria-live="polite">{{ ui("Loading your reviews…") }}</p>
+  <button id="pr-refresh" class="btn" type="button">{{ ui("Refresh reviews") }}</button>
+  <section class="panel" aria-labelledby="pr-inbox-title">
+    <h2 id="pr-inbox-title">{{ ui("Reviews shared with you") }}</h2><p id="pr-counts"></p>
+    <label for="pr-search">{{ ui("Find a review by task or project") }}</label><input id="pr-search" class="input" maxlength="200"><button id="pr-search-button" type="button" class="btn">{{ ui("Search reviews") }}</button>
+    <div id="pr-inbox"></div><p id="pr-page"></p><button id="pr-previous" type="button" class="btn">{{ ui("Previous reviews") }}</button><button id="pr-next" type="button" class="btn">{{ ui("Next reviews") }}</button>
+  </section>
+  <section id="pr-owner" class="panel" hidden aria-labelledby="pr-owner-title">
+    <h2 id="pr-owner-title">{{ ui("Request a review") }}</h2>
+    <label for="pr-project">{{ ui("Your project") }}</label><select id="pr-project" class="input"></select>
+    <div id="pr-setup" hidden>
+      <h3>{{ ui("Project review team") }}</h3>
+      <p>{{ ui("Add only colleagues who should review results you choose. Removing someone ends their access straight away.") }}</p>
+      <p><a class="btn btn--ghost" href="/users">{{ ui("Manage people") }}</a></p>
+      <label for="pr-member">{{ ui("Colleague") }}</label><select id="pr-member" class="input"></select>
+      <button id="pr-grant" class="btn" type="button">{{ ui("Add as reviewer") }}</button>
+      <ul id="pr-members"></ul>
+      <h3>{{ ui("Select a result to share") }}</h3>
+      <label for="pr-goal">{{ ui("Stopped task with a saved result") }}</label><select id="pr-goal" class="input"></select>
+      <button id="pr-preview" class="btn" type="button">{{ ui("Preview selected result") }}</button>
+      <div id="pr-preview-panel" hidden><h4 id="pr-preview-title" lang="und" dir="auto" data-user-content></h4><pre lang="und" dir="auto" data-user-content id="pr-preview-text"></pre></div>
+      <form data-product-validation id="pr-send" data-draft-recovery="off">
+        <label for="pr-reviewer">{{ ui("Assigned reviewer") }}</label><select id="pr-reviewer" class="input" required></select>
+        <label for="pr-due">{{ ui("Review due") }}</label><input id="pr-due" class="input" type="datetime-local" required>
+        <label for="pr-note">{{ ui("What should they review?") }}</label><textarea lang="und" dir="auto" data-user-content id="pr-note" class="input" rows="3" maxlength="4000" required></textarea>
+        <fieldset id="pr-resubmit" hidden><legend>{{ ui("Fresh review after revision") }}</legend>
+          <p id="pr-previous-label"></p>
+          <label for="pr-change-summary">{{ ui("What changed since the previous review?") }}</label><textarea lang="und" dir="auto" data-user-content id="pr-change-summary" class="input" rows="3" maxlength="4000"></textarea>
+          <button id="pr-unlink" class="btn btn--ghost" type="button">{{ ui("Send as an unrelated review instead") }}</button>
+        </fieldset>
+        <button id="pr-send-button" class="btn btn--primary" type="submit">{{ ui("Send captured result for review") }}</button>
+      </form>
+    </div>
+  </section>
+  <section id="pr-packet" class="panel" hidden aria-labelledby="pr-packet-title">
+    <h2 id="pr-packet-title" lang="und" dir="auto" data-user-content tabindex="-1"></h2><p id="pr-packet-summary"></p><p id="pr-stale" role="status"></p>
+    <h3>{{ ui("Owner's review request") }}</h3><p id="pr-packet-note" lang="und" dir="auto" data-user-content></p>
+    <p id="pr-review-provenance"></p><ol id="pr-outcome-timeline"></ol>
+    <h3>{{ ui("Captured result") }}</h3><pre lang="und" dir="auto" data-user-content id="pr-result"></pre>
+    <p id="pr-owner-task"></p>
+    <h3>{{ ui("Comments and decisions") }}</h3><ol id="pr-history"></ol>
+    <form data-product-validation id="pr-respond" data-draft-recovery="off">
+      <label for="pr-action">{{ ui("Response") }}</label><select id="pr-action" class="input"><option value="comment" lang="{{ ul("Add comment") }}">{{ ut("Add comment") }}</option><option value="approve" lang="{{ ul("Approve captured result") }}">{{ ut("Approve captured result") }}</option><option value="request_changes" lang="{{ ul("Request changes") }}">{{ ut("Request changes") }}</option><option value="cancel" lang="{{ ul("Withdraw review request") }}">{{ ut("Withdraw review request") }}</option></select>
+      <label for="pr-response-note">{{ ui("Review comment") }}</label><textarea lang="und" dir="auto" data-user-content id="pr-response-note" class="input" rows="3" maxlength="4000" required></textarea>
+      <button id="pr-response-button" class="btn btn--primary" type="submit">{{ ui("Save review response") }}</button>
+    </form>
+    <p>{{ ui("Approving this review does not approve tool use, start the task, or give its final approval.") }}</p>
+  </section>
+</div>
+<style>
+  #pr-root{max-width:68rem}#pr-root .panel{margin-block:var(--space-4)}#pr-root label{display:block;margin-block:var(--space-3) var(--space-1)}
+  #pr-root .input{width:100%;max-width:44rem;min-width:0}#pr-root button{margin-block:var(--space-2);white-space:normal}
+  #pr-root pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:28rem;overflow:auto;padding:var(--space-3);border:1px solid var(--border)}
+  #pr-root li,#pr-root p,#pr-root h2{overflow-wrap:anywhere}#pr-root li{margin-block:var(--space-2)}#pr-root [hidden]{display:none!important}
+</style>
+<script src="/static/lightwork-project-reviews.js" defer></script>
+{% endblock %}

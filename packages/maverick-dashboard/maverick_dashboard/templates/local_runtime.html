@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}AI on this computer · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="{{ asset('lightwork-local-runtime.css') }}">{% endblock %}
+{% block content %}
+<div class="la-shell" id="la-root" data-draft-recovery="off">
+  {% call hero('Settings', 'AI on this computer', lede='Prepare and control an installed model server on this computer. Your model stays here; your choice of AI service for tasks is managed separately.') %}
+    <div class="hero-statebox">
+      <div class="hero-statebox__label">Managed server</div>
+      <div class="hero-statebox__row"><strong id="la-state">Checking current status</strong></div>
+      <p class="hero-statebox__copy" id="la-message">Reading your current settings and saved requests.</p>
+      <div class="la-actions"><button class="btn btn--ghost" id="la-refresh" type="button">Refresh</button><button class="btn btn--ghost" id="la-copilot" type="button">Ask Copilot</button></div>
+    </div>
+  {% endcall %}
+  <p id="la-status" class="la-status" role="status" aria-live="polite" aria-atomic="true"></p>
+  <div class="la-grid">
+    <section class="panel" aria-labelledby="la-server-title">
+      <div class="section-head"><h2 id="la-server-title">Run on this computer</h2></div>
+      <dl class="la-details"><div><dt>Program</dt><dd id="la-program">Checking</dd></div><div><dt>Model</dt><dd id="la-model">Checking</dd></div><div><dt>Model serving</dt><dd id="la-enabled">Checking</dd></div></dl>
+      <p id="la-blocked" class="la-notice" hidden></p>
+      <div class="la-actions"><button class="btn btn--primary" id="la-start" type="button" disabled>Review start</button><button class="btn btn--ghost" id="la-stop" type="button" disabled>Review stop</button><button class="btn btn--ghost" id="la-health" type="button" disabled>Check service health</button></div>
+      <p class="muted la-help" id="la-health-result">Starting a program does not establish model readiness or answer quality. Check health before use.</p>
+      <p class="muted la-help">A running model consumes memory, processing capacity and electricity until stopped. Lightwork does not download programs or models here, send a prompt, or charge a hosted AI fee.</p>
+    </section>
+    <section class="panel" aria-labelledby="la-setup-title">
+      <div class="section-head"><h2 id="la-setup-title">Choose your local model</h2></div>
+      <form id="la-form" class="la-form" autocomplete="off">
+        <label for="la-engine">Installed model server program</label><select class="input" id="la-engine" required disabled><option value="llamacpp">llama.cpp</option><option value="vllm">vLLM</option><option value="tgi">Text Generation Inference</option></select>
+        <label for="la-resource">Existing local model</label><select class="input" id="la-resource" required disabled aria-describedby="la-resource-help"><option value="">Checking available models</option></select>
+        <p class="muted la-help" id="la-resource-help">Choose a GGUF file for llama.cpp, or a complete model folder with safe tensor weights for the other programs. Your administrator must have supplied the model and installed its program.</p>
+        <label class="la-check"><input id="la-allow" type="checkbox" disabled> Allow local model serving</label>
+        <div class="la-actions"><button class="btn btn--primary" id="la-save" type="submit" disabled>Review settings</button><a class="btn btn--ghost" href="/settings/all?group=Integrations#local_runtime.enabled">All local AI settings</a></div>
+      </form>
+      <p class="muted la-help">Saving settings does not start or stop a server. A running server keeps its current model. Use standard options with one server and saved prompt reuse turned off for this guided control.</p>
+    </section>
+  </div>
+  <section class="panel la-history" aria-labelledby="la-history-title"><div class="section-head"><h2 id="la-history-title">Your recent requests</h2></div><p class="muted la-help">Read an original saved result after a page reload or interrupted response. Checking a request never repeats its change.</p><ul id="la-requests" class="la-requests"><li>Loading saved requests.</li></ul><p id="la-receipt" role="status" aria-live="polite"></p></section>
+  <dialog id="la-review" class="la-dialog" aria-labelledby="la-review-title" aria-describedby="la-review-summary"><form method="dialog"><h2 id="la-review-title">Review local AI change</h2><p id="la-review-summary"></p><p class="muted la-help">This review expires after ten minutes. Lightwork checks your access, settings and service state again before applying it.</p><label class="la-check"><input id="la-confirm-check" type="checkbox"> I understand and approve this change</label><div class="la-actions"><button class="btn btn--primary" id="la-confirm" type="button" disabled>Apply reviewed change</button><button class="btn btn--ghost" id="la-cancel" value="cancel">Keep current state</button></div></form></dialog>
+  <noscript><p class="panel">Turn on JavaScript to use the local AI controls.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-local-runtime.js') }}" defer></script>{% endblock %}

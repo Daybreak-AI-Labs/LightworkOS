@@ -1,0 +1,54 @@
+{% extends "public_base.html" %}
+{% from "_passphrase_fields.html" import styles with context %}
+{% block title %}{% if view == 'codes' %}Recovery codes{% elif view == 'setup' %}Set up your authenticator app{% else %}Enter your code{% endif %} · Lightwork{% endblock %}
+{% block public_label %}Sign in{% endblock %}
+{% block public_footer %}Sign in to this workspace{% endblock %}
+{% block head_extra %}{{ styles() }}{% endblock %}
+{% block content %}
+<div class="panel own">
+{% if view == 'code' %}
+  <h1 class="page-title">Enter your code</h1>
+  <p class="own__lede">Open your authenticator app and type the six-digit code for Lightwork. Lost your phone? Type one of your recovery codes instead. Each recovery code works once.</p>
+  {% if message %}<p class="own__alert" role="alert">{{ message }}</p>{% endif %}
+  <form method="post" action="{{ action }}" novalidate>
+    <label class="own__field"><span>Code</span>
+      <input class="input" type="text" name="code" maxlength="16" required autocomplete="one-time-code" inputmode="text" placeholder="123456 or ABCD-EFGH">
+      <span class="own__hint">Six digits from your app, or a recovery code.</span>
+    </label>
+    <div class="own__actions">
+      <button type="submit" class="btn btn--primary">Sign in</button>
+      <a href="{{ cancel }}">Start again</a>
+    </div>
+  </form>
+{% elif view == 'setup' %}
+  <h1 class="page-title">Set up your authenticator app</h1>
+  <p class="own__lede">Nothing is turned on yet. Add Lightwork to your authenticator app, then type the six-digit code it shows. The app is turned on when that code is accepted.</p>
+  {% if message %}<p class="own__alert" role="alert">{{ message }}</p>{% endif %}
+  <p class="own__field"><span>Setup key (type this into your app)</span>
+    <code>{% for group in secret|batch(4, '') %}{{ group|join('') }}{% if not loop.last %} {% endif %}{% endfor %}</code>
+  </p>
+  <label class="own__field"><span>Or paste this address into a link or QR tool</span>
+    <textarea class="input" rows="3" readonly>{{ uri }}</textarea>
+  </label>
+  <form method="post" action="{{ action }}" novalidate>
+    <label class="own__field"><span>Six-digit code from your app</span>
+      <input class="input" type="text" name="code" maxlength="6" required inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}">
+    </label>
+    <div class="own__actions">
+      <button type="submit" class="btn">Turn on authenticator app</button>
+      <a href="{{ cancel }}">Cancel</a>
+    </div>
+  </form>
+{% else %}
+  <h1 class="page-title">Save your recovery codes</h1>
+  <p class="own__lede">{{ message }}</p>
+  <ol>
+    {% for code in codes %}<li><code>{{ code }}</code></li>{% endfor %}
+  </ol>
+  <p class="own__hint">Keep them somewhere safe and away from your phone. Each one signs you in once if you lose your phone.</p>
+  <div class="own__actions">
+    <a class="btn" href="{{ next_href }}">Continue to Lightwork</a>
+  </div>
+{% endif %}
+</div>
+{% endblock %}

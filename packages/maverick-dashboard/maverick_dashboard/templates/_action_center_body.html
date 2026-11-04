@@ -1,0 +1,79 @@
+{#- The Action Center's list (every kind of decision and item needing
+    attention) and, for administrators, background work. Shared by
+    /action-center and, in the job-named navigation, Approvals' "All
+    decisions" view (/approvals?view=all). Needs action_context and can_admin. -#}
+<p>Everything waiting on you is in one place. That includes approvals, results waiting for approval, assessments and assigned project reviews.
+  It also includes vendor lifecycle reviews, DROP authority changes, Trust Center access, privacy notice updates and actions to double-check in other apps.
+  Open an item to review its evidence and approve or reject it.</p>
+<p class="muted">Read and snooze settings are private to your account and workspace.
+  Snoozing does not change a deadline or pause work. Overdue items remain in your active list.</p>
+<div class="panel" id="action-center" data-context="{{ action_context }}">
+  <form id="ac-filters" style="display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:end;">
+    <label>Show<select class="input" name="view"><option value="active">Active</option><option value="unread">Unread</option><option value="overdue">Overdue</option><option value="snoozed">Snoozed</option><option value="all">All</option></select></label>
+    <label>Type<select class="input" name="kind"><option value="all">All types</option><option value="connection_attention">Your connections</option><option value="task_attention">My task questions and recovery</option><option value="approval">Approvals</option><option value="evidence_source_approval">Evidence source approvals</option><option value="lifecycle_review">Vendor lifecycle reviews</option><option value="drop_authority_review">DROP authority reviews</option><option value="trust_center_review">Trust Center access reviews</option><option value="disclosure_review">Privacy notice update reviews</option><option value="signoff">Result approvals</option><option value="assessment">Assessments</option><option value="project_review">Project reviews</option><option value="vendor_reconciliation">Actions to double-check in other apps</option></select></label>
+    <label>Assignment<select class="input" name="assignment"><option value="all">Mine and available</option><option value="mine">Assigned to me</option><option value="available">Available to review</option></select></label>
+    <button class="btn" type="submit">Refresh list</button>
+  </form>
+  <p id="ac-summary" role="status" aria-live="polite"></p>
+  <ul id="ac-coverage"></ul>
+  <div id="ac-items"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;">
+    <button class="btn" id="ac-previous" type="button" disabled>Previous</button>
+    <span id="ac-page"></span>
+    <button class="btn" id="ac-next" type="button" disabled>Next</button>
+  </div>
+  <p id="ac-status" role="status" aria-live="polite"></p>
+</div>
+{% if can_admin %}
+<div class="section-head"><h2>Background work</h2></div>
+<div class="panel" id="ac-queue">
+  <p class="muted" style="margin-top:0;">Scheduled and automatic work waiting to run, running now, finished, or failed.</p>
+  <p id="ac-queue-counts" role="status" aria-live="polite">Loading…</p>
+  <div id="ac-queue-failed"></div>
+  <button class="btn" type="button" id="ac-queue-refresh">Refresh</button>
+</div>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var counts = document.getElementById('ac-queue-counts'), box = document.getElementById('ac-queue-failed');
+  function el(tag, cls, text) { var e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+  async function load() {
+    counts.textContent = 'Loading…'; box.textContent = '';
+    try {
+      var r = await fetch('/api/v1/queue/summary');
+      if (!r.ok) throw r;
+      var q = await r.json();
+      counts.textContent = q.waiting + ' waiting · ' + q.running + ' running · ' + q.finished + ' finished · ' + q.failed + ' failed';
+      if (!q.failed_items.length) { box.append(el('p', 'muted', 'Nothing has failed. Failed work appears here with what went wrong.')); return; }
+      var table = el('table'), head = el('thead'), row = el('tr');
+      ['What', 'Problem', 'Tries', 'When', ''].forEach(function (h) { var th = el('th', null, h); th.scope = 'col'; row.append(th); });
+      head.append(row); table.append(head);
+      var body = el('tbody');
+      q.failed_items.forEach(function (item) {
+        var tr = el('tr');
+        tr.append(el('td', null, item.what + (item.title ? ': ' + item.title : '')));
+        var problem = el('td', null, item.problem);
+        if (item.needs_operator) problem.append(el('span', 'muted', ' An operator must resume it on the server.'));
+        tr.append(problem);
+        tr.append(el('td', null, String(item.attempts)));
+        tr.append(el('td', null, window.mvWhen ? mvWhen(item.failed_at) : ''));
+        var cell = el('td');
+        if (item.detail) {
+          var d = el('details'); d.append(el('summary', null, 'Technical details')); d.append(el('p', 'muted', item.detail));
+          var copy = el('button', 'btn btn--ghost', 'Copy for support'); copy.type = 'button';
+          copy.addEventListener('click', function () { if (window.mvCopy) mvCopy(item.detail); });
+          d.append(copy); cell.append(d);
+        }
+        tr.append(cell); body.append(tr);
+      });
+      table.append(body); box.append(table);
+    } catch (e) {
+      counts.textContent = window.mvErrorText ? mvErrorText(e, 'load background work') : 'Could not load background work. Refresh the page and try again.';
+    }
+  }
+  document.getElementById('ac-queue-refresh').addEventListener('click', load);
+  load();
+})();
+</script>
+{% endif %}
+{% include "_assessment_review.html" %}
+<script src="/static/lightwork-action-center.js" defer></script>

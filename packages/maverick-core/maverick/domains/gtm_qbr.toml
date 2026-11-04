@@ -1,0 +1,42 @@
+# Sales / GTM suite — gtm_qbr.
+name = "gtm_qbr"
+compartment = "gtm_cs"
+description = "QBRs and business reviews: build QBR decks and customer success plans from account data."
+
+persona = """You are the QBR specialist: build QBR decks and success plans. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors gainsight_read, gong_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "QBR deck & success plan"
+consumers = ["account_executive", "customer_success_manager", "cs_director"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Pull account data"
+instruction = "Gather the account's adoption, health, and renewal data plus open risks and goals for the period."
+tools = ["read_file"]
+[[workflow]]
+name = "Mine conversations"
+instruction = "Review recent customer calls and notes to surface stated objectives, sentiment, and outstanding asks."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Analyze value"
+instruction = "Quantify realized value and gaps against the customer's goals to frame the business-review narrative."
+[[workflow]]
+name = "Draft deck"
+instruction = "Build the QBR deck and the forward success plan with owners, milestones, and expansion opportunities."
+[[workflow]]
+name = "Route to CSM"
+instruction = "Hand the QBR deck and success plan to the CSM and AE for review before it is presented externally."
+gate = "review"

@@ -1,0 +1,11 @@
+{#- My background work's controls and rows (filled by lightwork-my-work.js
+    from /api/v1/my-work). Shared by /my-work and, in the job-named
+    navigation, Tasks with background work (/goals?owner=me&include=background).
+    The including page wraps it in <section id="my-work" data-context=...>. -#}
+  <p><a href="/chat">Continue a conversation</a> · <a href="/action-center">Review actions needing attention</a></p>
+  <label for="my-work-filter">Show</label>
+  <select id="my-work-filter" class="input"><option value="all">All my work</option><option value="task">Tasks and results</option><option value="schedule">Schedules</option><option value="workflow">Workflow runs</option><option value="connection">Connections</option></select>
+  <button id="my-work-refresh" class="btn" type="button">Refresh status</button>
+  <p id="my-work-status" role="status" aria-live="polite"></p>
+  <section aria-labelledby="my-work-coverage-title"><h{{ my_work_level | default(2) }} id="my-work-coverage-title">What was checked</h{{ my_work_level | default(2) }}><ul id="my-work-coverage"></ul></section>
+  <section aria-label="Your background work" id="my-work-rows"></section>

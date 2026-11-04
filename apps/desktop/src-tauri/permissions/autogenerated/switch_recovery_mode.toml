@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-switch-recovery-mode"
+description = "Enables the switch_recovery_mode command without any pre-configured scope."
+commands.allow = ["switch_recovery_mode"]
+
+[[permission]]
+identifier = "deny-switch-recovery-mode"
+description = "Denies the switch_recovery_mode command without any pre-configured scope."
+commands.deny = ["switch_recovery_mode"]

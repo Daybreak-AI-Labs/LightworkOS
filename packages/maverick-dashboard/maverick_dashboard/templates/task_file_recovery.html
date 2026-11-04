@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ ut("Task files") }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<section id="task-files" data-goal="{{ goal.id }}" class="tf-wrap">
+  <p>{{ back_link('/chat/goal/' ~ goal.id, 'task') }}</p>
+  <h1 class="page-title">{{ ui("Review and restore task files") }}</h1>
+  <p class="page-subtitle" lang="und" dir="auto" data-user-content>{{ goal.title }}</p>
+  <div class="panel">
+    <p class="tf-flush">{{ ui("Put back the files this task changed during its latest run on this computer. You see every change first. Things done outside these files, such as commands, online files or tickets, are not undone.") }}</p>
+  </div>
+  <p id="tf-status" role="status" aria-live="polite" tabindex="-1">{{ ui("Loading file history…") }}</p>
+  <button id="tf-refresh" class="btn btn--ghost" type="button">{{ ui("Refresh file history") }}</button>
+  <div id="tf-enable-panel" class="panel" hidden>
+    <p>{{ ui("Turn on file protection before running a task. Lightwork then keeps an encrypted copy of each file before a task changes it, and refuses the change if it can't keep that copy. Earlier work can't be recovered this way.") }}</p>
+    <label><input id="tf-enable-confirm" type="checkbox">{{ ui("Turn on file protection for future tasks, and block file changes that can't be protected.") }}</label>
+    <button id="tf-enable" class="btn btn--primary" type="button" disabled>{{ ui("Turn on file protection") }}</button>
+  </div>
+  <details id="tf-disable-panel" class="panel" hidden>
+    <summary>{{ ui("Turn off file protection") }}</summary>
+    <p>{{ ui("Future tasks will change files without keeping a copy first, so their changes can't be put back from this page. Copies already kept for earlier tasks stay, and can still be restored here.") }}</p>
+    <label><input id="tf-disable-confirm" type="checkbox">{{ ui("I understand future task changes can't be undone here.") }}</label>
+    <button id="tf-disable" class="btn btn--danger" type="button" disabled>{{ ui("Turn off file protection") }}</button>
+  </details>
+  <button id="tf-preview" class="btn btn--primary" type="button" disabled>{{ ui("Review changes to restore") }}</button>
+  <div id="tf-files"></div>
+  <div id="tf-review" class="panel" hidden>
+    <p id="tf-operation"></p>
+    <label><input id="tf-confirm" type="checkbox">{{ ui("I reviewed these changes and want to put back the saved originals. New files this task created will be removed.") }}</label>
+    <button id="tf-restore" class="btn btn--danger" type="button" disabled>{{ ui("Restore reviewed files") }}</button>
+  </div>
+  <details class="tf-about"><summary>{{ ui("What this can restore") }}</summary>
+    <p>{{ ui("Only files changed by this task's own file tools on this computer. Up to 100 files per task, 8 MB each and 32 MB in total. Long previews may be shortened, but every file is fully checked before it is put back. Stop this task, and any other task using the same folder, before restoring. If a restore is interrupted, you can retry exactly the same restore. Tasks run on another computer, and very old tasks, can't be restored here.") }}</p>
+  </details>
+</section>
+<section id="task-changes" class="tf-wrap panel" data-goal="{{ goal.id }}" aria-labelledby="tc-title">
+  <h2 id="tc-title">{{ ui("What changed during this task") }}</h2>
+  <p class="tf-flush">{{ ui("See each file in this task's work folder as it was before the task first changed it, next to how it is now. Lightwork keeps only those two points, so in-between versions can't be compared. Looking changes nothing.") }}</p>
+  <button id="tc-show" class="btn btn--primary" type="button">{{ ui("Show what changed") }}</button>
+  <p id="tc-status" role="status" aria-live="polite" tabindex="-1"></p>
+  <div id="tc-files"></div>
+  <details class="tf-about"><summary>{{ ui("What this can show") }}</summary>
+    <p>{{ ui("Only files inside this task's own work folder that the task changed with its file tools while \"Keep a copy before files change\" was on. Files reached through a shortcut link, or kept outside the work folder, are never shown. Up to 100 files, each up to 256 KB and 4,000 lines; files that aren't text are listed without their content. Commands the task ran are not included.") }}</p>
+  </details>
+</section>
+<section id="task-journal" class="tf-wrap panel" data-goal="{{ goal.id }}" aria-labelledby="tj-title">
+  <h2 id="tj-title">{{ ui("Undo this task's recorded file changes") }}</h2>
+  <p class="tf-flush">{{ ui("While \"Keep a copy before files change\" is on, Lightwork records each file this task writes. List those writes, check what undoing them would do, then put the files back as they were before the task.") }}</p>
+  <button id="tj-list" class="btn btn--ghost" type="button">{{ ui("List recorded changes") }}</button>
+  <button id="tj-preview" class="btn btn--primary" type="button">{{ ui("Check what would be undone") }}</button>
+  <p id="tj-status" role="status" aria-live="polite" tabindex="-1"></p>
+  <ul id="tj-entries" class="tj-list" aria-label="{{ ut('Recorded file changes') }}" lang="{{ ul('Recorded file changes') }}"></ul>
+  <div id="tj-review" class="panel" hidden>
+    <p id="tj-plan"></p>
+    <label id="tj-partial-wrap" hidden><input id="tj-partial" type="checkbox">{{ ui("Undo only what was recorded. Some later changes weren't recorded, so they stay as they are.") }}</label>
+    <button id="tj-undo" class="btn btn--danger" type="button">{{ ui("Undo these changes") }}</button>
+  </div>
+  <details class="tf-about"><summary>{{ ui("What this can undo") }}</summary>
+    <p>{{ ui("Only files this task wrote with its file tools while recording was on, inside its own work folder. Commands the task ran, online files and tickets aren't undone. Stop the task first. After an undo the history is kept as a record, so the same undo can't run twice by accident.") }}</p>
+  </details>
+</section>
+<style>
+  .tf-wrap{max-width:900px;margin-inline:auto;min-width:0}.tf-flush{margin:0}
+  #task-files p,#task-files h1,#task-files h2,#task-files button{overflow-wrap:anywhere}
+  #task-files label{display:flex;align-items:flex-start;gap:var(--space-2);margin-block:var(--space-3)}#task-files label input{flex:0 0 auto;margin-top:.3em}
+  #task-files button{white-space:normal;max-width:100%;margin-block:var(--space-2)}#tf-files article{min-width:0;border:1px solid var(--border);padding:var(--space-3);margin-block:var(--space-3);border-radius:var(--radius-md)}
+  #tf-files h2{font-size:var(--text-md,1rem);margin-top:0}
+  #tf-files pre{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}#tf-files code{overflow-wrap:anywhere;word-break:break-all}
+  #task-changes{margin-block:var(--space-4)}#task-changes h2,#task-changes p,#task-changes button{overflow-wrap:anywhere}#task-changes button{white-space:normal;max-width:100%}
+  #tc-files article{min-width:0;border:1px solid var(--border);padding:var(--space-3);margin-block:var(--space-3);border-radius:var(--radius-md)}
+  #tc-files h3{font-size:var(--text-md,1rem);margin:0 0 var(--space-2)}
+  .tc-diff{max-height:360px;overflow:auto;font-family:var(--font-mono,monospace);font-size:var(--text-sm,.875rem);white-space:pre-wrap;overflow-wrap:anywhere}
+  .tc-line{padding-inline-start:var(--space-2);border-inline-start:3px solid transparent}
+  .tc-line--add{border-inline-start-color:var(--success)}.tc-line--remove{border-inline-start-color:var(--danger)}
+  .tc-line--gap{color:var(--muted)}
+  #task-journal{margin-block:var(--space-4)}#task-journal h2,#task-journal p,#task-journal button,#task-journal li{overflow-wrap:anywhere}#task-journal button{white-space:normal;max-width:100%;margin-block:var(--space-2)}
+  #task-journal label{display:flex;align-items:flex-start;gap:var(--space-2);margin-block:var(--space-3)}.tj-list{list-style:none;padding:0;margin:var(--space-2) 0}
+</style>
+{% endblock %}
+{% block scripts_extra %}
+<script src="/static/lightwork-task-file-recovery.js"></script>
+<script src="/static/lightwork-task-changes.js"></script>
+<script src="/static/lightwork-task-journal.js"></script>
+{% endblock %}

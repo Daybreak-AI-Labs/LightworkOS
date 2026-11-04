@@ -1,0 +1,115 @@
+{#- Workforce page: what each specialist can do and what stops it, a check of
+    every specialist's setup, and the specialist test suite. Filled by
+    lightwork-workforce-ops.js; download and setup check appear for
+    administrators only (the routes check again). -#}
+<div id="wo-root" class="wo" data-can-open-agents="{{ 'true' if can_open_page is defined and can_open_page('/agents') else 'false' }}">
+  <div class="section-head"><h2 id="wo-inv-h">What each agent and specialist can do, and what stops it</h2></div>
+  <section class="panel" aria-labelledby="wo-inv-h">
+    <p class="muted">For each agent and specialist: whether it can reach tools that change things, whether a person signs off its work, and what it refuses. Useful for an audit or a risk review.</p>
+    <div class="wo-row">
+      <label for="wo-inv-suite">Department</label>
+      <select id="wo-inv-suite" class="select"><option value="">Every department</option></select>
+      <button type="button" class="btn btn--ghost wo-admin" id="wo-inv-download" hidden>Download the full inventory</button>
+    </div>
+    <div id="wo-inv" role="status" aria-live="polite"></div>
+  </section>
+
+  <div class="section-head wo-admin" hidden><h2 id="wo-lint-h">Check every agent's and specialist's setup</h2></div>
+  <section class="panel wo-admin" aria-labelledby="wo-lint-h" hidden>
+    <p class="muted">Looks through every agent and specialist for setup problems that weaken its safety limits, and for gaps
+      worth improving. Nothing is changed.</p>
+    <button type="button" class="btn" id="wo-lint-run">Check setups</button>
+    <p class="muted" id="wo-lint-status" role="status" aria-live="polite"></p>
+    <div id="wo-lint-out"></div>
+  </section>
+
+  <div class="section-head"><h2 id="wo-suite-h">Specialist test suite</h2></div>
+  <section class="panel" aria-labelledby="wo-suite-h">
+    <p class="muted">The fixed tasks used to check that specialists do their job, and whether each one is complete.</p>
+    <div id="wo-suite" role="status" aria-live="polite">Loading…</div>
+  </section>
+
+  <div class="section-head"><h2 id="wo-my-tests-h">Check answers from your agents and specialists</h2></div>
+  <section class="panel" aria-labelledby="wo-my-tests-h" id="wo-my-tests">
+    <p class="muted">Write examples from your business, then check the current instructions of an agent or specialist against them.
+      These are answer checks only: no actions or outside systems run, and no company knowledge is retrieved.
+      Use fictional examples and review each answer yourself.</p>
+    <div class="wo-row">
+      <label for="wo-test-specialist">Agent or specialist</label>
+      <select id="wo-test-specialist" class="select"><option value="">Choose an agent or specialist</option></select>
+    </div>
+    <p id="wo-test-status" role="status" aria-live="polite"></p>
+    <div id="wo-tests-list"></div>
+    <form id="wo-test-form" class="wo-test-admin wo-test-form" hidden>
+      <h3 id="wo-test-form-title">Add an answer check</h3>
+      <label for="wo-test-task">Question or request</label>
+      <textarea id="wo-test-task" rows="3" maxlength="1000" required placeholder="For example: What would you do if these two invoices had the same purchase order and amount?"></textarea>
+      <div class="wo-test-grid">
+        <label for="wo-test-includes">Must mention <span class="muted">(one phrase per line)</span>
+          <textarea id="wo-test-includes" rows="2" placeholder="duplicate"></textarea></label>
+        <label for="wo-test-excludes">Must never say <span class="muted">(one phrase per line)</span>
+          <textarea id="wo-test-excludes" rows="2" placeholder="payment sent"></textarea></label>
+      </div>
+      <div class="wo-row">
+        <label><input id="wo-test-refusal" type="checkbox"> Must refuse</label>
+        <label><input id="wo-test-citation" type="checkbox"> Must include a source reference</label>
+      </div>
+      <div class="wo-row wo-test-tools-row" hidden>
+        <label><input id="wo-test-tools" type="checkbox"> Check which tools it calls</label>
+      </div>
+      <div class="wo-test-grid wo-test-tools-fields" hidden>
+        <label for="wo-test-tools-called">Must call <span class="muted">(one per line: tool name, or tool name | text its call must include)</span>
+          <textarea id="wo-test-tools-called" rows="2" placeholder="send_email | Acme"></textarea></label>
+        <label for="wo-test-tools-absent">Must not call <span class="muted">(one tool name per line)</span>
+          <textarea id="wo-test-tools-absent" rows="2" placeholder="delete_record"></textarea></label>
+        <label for="wo-test-tools-results">Fixed results <span class="muted">(one per line: tool name | the answer the tool gives)</span>
+          <textarea id="wo-test-tools-results" rows="2" placeholder="lookup_invoice | Invoice 77 is a duplicate."></textarea></label>
+      </div>
+      <p class="muted wo-test-tools-fields" hidden>Each tool is replaced by a test stub. The call is recorded and answered with the fixed result, or with a note that the tool is not available in a test. No real tool, file, network call or shell command runs.</p>
+      <p class="muted">Phrase checks match text literally. A source check detects a reference marker; it does not verify the source.</p>
+      <div class="wo-row"><button type="submit" class="btn" id="wo-test-save">Save check</button>
+        <button type="button" class="btn btn--ghost" id="wo-test-cancel" hidden>Cancel editing</button></div>
+    </form>
+    <div class="wo-test-admin wo-test-run-row" hidden>
+      <button type="button" class="btn" id="wo-test-run">Check answers</button>
+      <button type="button" class="btn btn--ghost" id="wo-test-new-run" hidden>Start a separate check</button>
+      <span class="muted">The whole saved set, up to the limit in Settings (20 by default), runs at once. Each run can make paid AI requests and stops at its spending limit of $0.05 a question.</span>
+    </div>
+    <p id="wo-test-run-status" role="status" aria-live="polite"></p>
+    <div id="wo-test-run-out"></div>
+    <details class="wo-test-admin" hidden id="wo-compare">
+      <summary>Compare proposed instructions</summary>
+      <p class="muted">Try a different way of answering the same questions. Both versions keep the specialist’s safety rules and use the same model without tools or company knowledge. Instructions stay unchanged.</p>
+      <details><summary>Current answer instructions</summary><p id="wo-test-current-instructions" class="wo-answer-text"></p></details>
+      <form id="wo-compare-form" class="wo-test-form">
+        <label for="wo-compare-instructions">Proposed answer instructions</label>
+        <textarea id="wo-compare-instructions" class="textarea" rows="5" minlength="8" maxlength="6000" required placeholder="Describe how this specialist should answer. Use fictional examples."></textarea>
+        <button type="submit" class="btn" id="wo-compare-review-button">Review comparison</button>
+      </form>
+      <section id="wo-compare-review" class="panel" hidden tabindex="-1" aria-labelledby="wo-compare-review-title">
+        <h3 id="wo-compare-review-title">Review instruction comparison</h3>
+        <div id="wo-compare-reviewed"></div>
+        <p class="muted">At most $0.05 a question, up to the saved-check limit in Settings and 2 answers per question. Each answer is limited in length. Literal checks do not prove correctness or business improvement. No instructions will be published here: when every proposed answer passes on every saved check, Agent Factory can publish these exact instructions.</p>
+        <div class="wo-row"><button type="button" class="btn" id="wo-compare-start">Start comparison</button>
+          <button type="button" class="btn btn--ghost" id="wo-compare-edit">Change proposal</button></div>
+      </section>
+    </details>
+    <h3>Previous checks</h3>
+    <div id="wo-test-history"></div>
+  </section>
+</div>
+<style>
+  .wo-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0 1rem; }
+  .wo table { width: 100%; }
+  .wo-test-form { margin: 1rem 0; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-sunken); }
+  .wo-test-form > label, .wo-test-grid label { display: block; margin: .6rem 0; }
+  .wo-test-form textarea { display: block; width: 100%; max-width: 100%; margin-top: .3rem; padding: .6rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); color: var(--text); font: inherit; }
+  .wo-test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+  @media (max-width: 700px) { .wo-test-grid { grid-template-columns: 1fr; } }
+  .wo-test-run-row { align-items: center; gap: .7rem; margin: 1rem 0; }
+  .wo-answer-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .wo-answer-card { min-width:0; padding:var(--space-3); border:1px solid var(--border); border-radius:var(--radius-lg); }
+  #wo-compare > summary { margin:var(--space-3) 0; }
+</style>
+<script src="/static/lightwork-ops-jobs.js" defer></script>
+<script src="/static/lightwork-workforce-ops.js" defer></script>

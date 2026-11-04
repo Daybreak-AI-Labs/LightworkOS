@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}Privacy law research · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+{% set places = [
+  ('EU', 'European Union'), ('GB', 'United Kingdom'), ('US', 'United States (federal)'),
+  ('US-CA', 'California'), ('US-VA', 'Virginia'), ('US-CO', 'Colorado'), ('US-CT', 'Connecticut'),
+  ('US-TX', 'Texas'), ('CA', 'Canada'), ('BR', 'Brazil'), ('AU', 'Australia'), ('JP', 'Japan'),
+  ('IN', 'India'), ('SG', 'Singapore'), ('CN', 'China'),
+] %}
+{% set authorities = [
+  ('EDPB', 'European Data Protection Board'), ('EU-COM', 'European Commission'), ('ICO', 'UK Information Commissioner'),
+  ('FTC', 'US Federal Trade Commission'), ('CA-AG', 'California Attorney General'), ('CPPA', 'California Privacy Protection Agency'),
+  ('OPC', 'Canada Privacy Commissioner'), ('ANPD', 'Brazil data protection authority'), ('OAIC', 'Australia Information Commissioner'),
+  ('LEGISLATURE', 'A legislature (the law itself)'), ('COURT', 'A court'),
+] %}
+{% set doc_types = [
+  ('law', 'Law'), ('regulation', 'Regulation'), ('authority_guidance', 'Guidance from a regulator'),
+  ('case_law', 'Court decision'), ('enforcement_action', 'Enforcement action'),
+  ('regulatory_update', 'Regulatory update'), ('standard', 'Standard'),
+] %}
+{% set languages = [('en', 'English'), ('fr', 'French'), ('de', 'German'), ('es', 'Spanish'), ('it', 'Italian'),
+  ('pt-BR', 'Portuguese (Brazil)'), ('nl', 'Dutch'), ('ja', 'Japanese'), ('zh', 'Chinese')] %}
+<style>
+  .pri-fields { display: grid; gap: .75rem; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); align-items: end; }
+  .pri-fields label, .pri-stack label { display: flex; flex-direction: column; gap: .25rem; }
+  .pri-stack { display: grid; gap: .75rem; }
+  .pri-choices { display: flex; flex-wrap: wrap; gap: .4rem 1rem; border: 1px solid var(--border); border-radius: var(--radius-md); padding: .5rem .75rem; margin: 0; }
+  .pri-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }
+  .pri-answer { white-space: pre-wrap; }
+  .pri-cites { margin: .5rem 0 0; padding-left: 1.4rem; }
+</style>
+{% from "_hero.html" import hero %}
+{{ hero('Privacy', 'Privacy law research',
+        subtitle='Research privacy laws using sources you are licensed to use',
+        lede='Add the legal texts your organization is licensed to use, ask questions and compare
+              countries or states with every answer tied to its source, and get alerts when things
+              change. This supports your research; it is not legal advice.') }}
+<p>{{ back_link('/privacy', 'Privacy') }}</p>
+<details class="panel">
+  <summary>About this page&rsquo;s safeguards</summary>
+  <ul>
+    <li>Lightwork does not include any third-party legal database. An administrator adds each source, and a different administrator confirms your organization may use it.</li>
+    <li>Answers only use approved sources and always show where they come from. When there is not enough evidence, Lightwork says so instead of guessing.</li>
+    <li>Your counsel remains responsible for interpreting the law and making decisions.</li>
+  </ul>
+</details>
+
+{% from "_module_gate.html" import module_gate %}
+{% if not privacy_regulatory_intelligence_enabled %}
+{{ module_gate('privacy_automation.regulatory_intelligence', 'Privacy law research',
+               detail='Research privacy laws from sources your organization is licensed to use, compare places, and get alerts when they change.',
+               can_activate=can_admin) }}
+{% else %}
+<div id="pri-app" data-can-admin="{{ 'true' if can_admin else 'false' }}">
+  <p id="pri-status" class="muted" role="status" aria-live="polite">Loading…</p>
+
+  <div class="section-head"><h2>Ask a question</h2></div>
+  <section class="panel">
+    <form id="pri-research" class="pri-stack" autocomplete="off">
+      <label for="pri-question">Your question
+        <textarea id="pri-question" class="textarea" rows="3" maxlength="2048" required
+                  placeholder="For example: How long do we have to answer an access request?"></textarea>
+      </label>
+      <fieldset class="pri-choices"><legend>Where</legend>
+        {% for code, name in places %}<label><input type="checkbox" name="pri-where" value="{{ code }}"> {{ name }}</label>{% endfor %}
+      </fieldset>
+      <label for="pri-asof" style="max-width: 16rem;">As the law stood on (optional)
+        <input id="pri-asof" type="date" class="input">
+      </label>
+      <div class="pri-actions">
+        <button class="btn btn--primary" type="submit" value="research">Get an answer</button>
+        <button class="btn btn--ghost" type="submit" value="compare">Compare the places I ticked</button>
+        <button class="btn btn--ghost" type="submit" value="search">Find passages</button>
+        <button class="btn btn--ghost" type="button" id="pri-save-report">Save as a report</button>
+        <button class="btn btn--ghost" type="button" id="pri-track">Alert me when this changes</button>
+      </div>
+    </form>
+    <div id="pri-answer" role="status" aria-live="polite"></div>
+  </section>
+
+  <div class="section-head"><h2>Alerts</h2></div>
+  <div class="panel" id="pri-trackers"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>Saved reports</h2></div>
+  <div class="panel" id="pri-reports"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>Legal texts</h2>
+    {% if can_admin %}<button type="button" class="btn btn--ghost" id="pri-new-document">Add a legal text</button>{% endif %}</div>
+  <div class="panel" id="pri-documents"><p class="muted">Loading…</p></div>
+
+  {% if can_admin %}
+  <section class="panel" id="pri-document-panel" hidden aria-labelledby="pri-document-title">
+    <h2 id="pri-document-title">Add a legal text</h2>
+    <form id="pri-document" autocomplete="off">
+      <div class="pri-fields">
+        <label for="pri-doc-title">Title
+          <input id="pri-doc-title" class="input" maxlength="1000" required>
+        </label>
+        <label for="pri-doc-source">From source
+          <select id="pri-doc-source" class="select" required></select>
+        </label>
+        <label for="pri-doc-where">Where it applies
+          <select id="pri-doc-where" class="select">{% for code, name in places %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select>
+        </label>
+        <label for="pri-doc-authority">Issued by
+          <select id="pri-doc-authority" class="select">{% for code, name in authorities %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select>
+        </label>
+        <label for="pri-doc-type">Kind of text
+          <select id="pri-doc-type" class="select">{% for code, name in doc_types %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select>
+        </label>
+        <label for="pri-doc-lang">Language
+          <select id="pri-doc-lang" class="select">{% for code, name in languages %}<option value="{{ code }}">{{ name }}</option>{% endfor %}</select>
+        </label>
+        <label for="pri-doc-published">Published on
+          <input id="pri-doc-published" type="date" class="input" required>
+        </label>
+        <label for="pri-doc-effective">Takes effect on (optional)
+          <input id="pri-doc-effective" type="date" class="input">
+        </label>
+        <label for="pri-doc-superseded">Replaced on (optional)
+          <input id="pri-doc-superseded" type="date" class="input">
+        </label>
+        <label for="pri-doc-link">Link to the official text
+          <input id="pri-doc-link" type="url" class="input" maxlength="2048" required placeholder="https://">
+        </label>
+        <label for="pri-doc-section">Section or article
+          <input id="pri-doc-section" class="input" maxlength="500" required placeholder="For example: Article 15">
+        </label>
+      </div>
+      <div class="pri-stack" style="margin-top:.75rem;">
+        <label for="pri-doc-text">The text
+          <textarea id="pri-doc-text" class="textarea" rows="8" maxlength="524288" required></textarea>
+        </label>
+        <label for="pri-doc-file">Or load the text from a file
+          <input id="pri-doc-file" type="file" class="input" accept=".txt,text/plain">
+        </label>
+      </div>
+      <div class="pri-actions">
+        <button type="submit" class="btn btn--primary">Add the text</button>
+        <button type="button" class="btn btn--ghost" id="pri-document-cancel">Cancel</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  <div class="section-head"><h2>Sources</h2>
+    {% if can_admin %}<button type="button" class="btn btn--ghost" id="pri-new-source">Add a source</button>{% endif %}</div>
+  <div class="panel" id="pri-sources"><p class="muted">Loading…</p></div>
+
+  {% if can_admin %}
+  <section class="panel" id="pri-source-panel" hidden aria-labelledby="pri-source-title">
+    <h2 id="pri-source-title">Add a source</h2>
+    <form id="pri-source" autocomplete="off">
+      <div class="pri-fields">
+        <label for="pri-src-name">Name
+          <input id="pri-src-name" class="input" maxlength="500" required placeholder="For example: EU official journal">
+        </label>
+        <label for="pri-src-license">Licence or subscription name
+          <input id="pri-src-license" class="input" maxlength="500" required>
+        </label>
+        <label for="pri-src-origin">Where the texts come from (web address)
+          <input id="pri-src-origin" type="url" class="input" maxlength="2048" required placeholder="https://">
+        </label>
+        <label for="pri-src-keep">Keep texts for
+          <select id="pri-src-keep" class="select">
+            <option value="31536000">1 year</option><option value="94608000" selected>3 years</option>
+            <option value="220752000">7 years</option><option value="315360000">10 years</option>
+          </select>
+        </label>
+      </div>
+      <div class="pri-stack" style="margin-top:.75rem;">
+        <label for="pri-src-rights">Why your organization may use it
+          <textarea id="pri-src-rights" class="textarea" rows="2" maxlength="2000" required></textarea>
+        </label>
+        <fieldset class="pri-choices"><legend>Places it covers</legend>
+          {% for code, name in places %}<label><input type="checkbox" name="pri-src-where" value="{{ code }}"> {{ name }}</label>{% endfor %}
+        </fieldset>
+        <fieldset class="pri-choices"><legend>Issued by</legend>
+          {% for code, name in authorities %}<label><input type="checkbox" name="pri-src-authority" value="{{ code }}"> {{ name }}</label>{% endfor %}
+        </fieldset>
+        <fieldset class="pri-choices"><legend>Kinds of text</legend>
+          {% for code, name in doc_types %}<label><input type="checkbox" name="pri-src-type" value="{{ code }}" checked> {{ name }}</label>{% endfor %}
+        </fieldset>
+        <fieldset class="pri-choices"><legend>Languages</legend>
+          {% for code, name in languages %}<label><input type="checkbox" name="pri-src-lang" value="{{ code }}"{% if code == 'en' %} checked{% endif %}> {{ name }}</label>{% endfor %}
+        </fieldset>
+        <fieldset class="pri-choices"><legend>May be used for</legend>
+          <label><input type="checkbox" name="pri-src-use" value="search" checked> Finding passages</label>
+          <label><input type="checkbox" name="pri-src-use" value="research" checked> Answers</label>
+          <label><input type="checkbox" name="pri-src-use" value="compare" checked> Comparing places</label>
+          <label><input type="checkbox" name="pri-src-use" value="alerts" checked> Alerts</label>
+          <label><input type="checkbox" name="pri-src-use" value="reports" checked> Reports</label>
+          <label><input type="checkbox" name="pri-src-use" value="share"> Sharing outside your team</label>
+        </fieldset>
+      </div>
+      <div class="pri-actions">
+        <button type="submit" class="btn btn--primary">Add the source</button>
+        <button type="button" class="btn btn--ghost" id="pri-source-cancel">Cancel</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  <div class="panel pri-actions" style="margin-top: 1rem;">
+    <button type="button" class="btn btn--ghost" id="pri-integrity">Check records are intact</button>
+    {% if can_admin %}
+    <button type="button" class="btn btn--ghost" id="pri-send-alerts">Send due alerts now</button>
+    <button type="button" class="btn btn--ghost" id="pri-purge">Delete expired texts</button>
+    {% endif %}
+  </div>
+</div>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-privacy-regulatory-intelligence.js" defer></script>
+{% endif %}
+{% endblock %}

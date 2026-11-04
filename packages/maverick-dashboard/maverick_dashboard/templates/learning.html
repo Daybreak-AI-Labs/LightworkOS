@@ -1,0 +1,1063 @@
+{% extends "base.html" %}
+{% block title %}Learning · Lightwork{% endblock %}
+{% block content %}
+{% from "_tabs.html" import panel_tabs, tab_panel %}
+<style>
+  .lrn :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .lrn__section-h { font-size: var(--text-lg); margin: 0 0 var(--space-1); }
+  .lrn__section-sub { color: var(--muted); font-size: var(--text-sm); margin: 0 0 var(--space-3); }
+  .lrn__comp { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .lrn__row { display: flex; align-items: center; gap: var(--space-3); border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+  .lrn__row[data-on="true"] { border-left-color: var(--success); }
+  .lrn__row[data-on="false"] { border-left-color: var(--border-strong); }
+  .lrn__row-main { flex: 1 1 auto; min-width: 0; }
+  .lrn__row-label { font-weight: var(--font-medium); }
+  .lrn__row-desc { color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-0-5); }
+  .lrn__row-members { color: var(--muted); font-size: var(--text-xs); margin-top: var(--space-1); }
+  /* Failure text must be LOUD: a quiet line under the row reads as "I
+     clicked Turn on and nothing happened" (a real field complaint). */
+  .lrn__row-err:not(:empty) { color: var(--danger); font-size: var(--text-sm); font-weight: var(--font-medium); margin-top: var(--space-1); }
+  .lrn__moat { --glass-tint: var(--brand-subtle); border: 1px solid var(--brand-border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-5); }
+  .lrn__moat strong { color: var(--brand); }
+  .lrn__enable-note { color: var(--muted); font-size: var(--text-sm); margin-top: var(--space-3); }
+  #lrn-flows-on { scroll-margin-top: var(--space-7); }
+  .lrn__actions { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .lrn [hidden] { display: none !important; }
+  .lrn__pane { min-width: 0; }
+  .lrn__next { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-block: var(--space-4); }
+  .lrn__disclosure { margin-block: var(--space-4); }
+  .lrn__disclosure > summary { padding-block: var(--space-2); font-weight: var(--font-semibold); cursor: pointer; }
+  .lrn__disclosure[open] > summary { margin-bottom: var(--space-3); }
+  @media (max-width: 640px) {
+    .lrn__row { flex-wrap: wrap; align-items: flex-start; padding: var(--space-3); gap: var(--space-2); }
+    .lrn__row-main { flex-basis: calc(100% - 5rem); }
+    .lrn__row > button { margin-inline-start: auto; }
+    .lrn__actions > label, .lrn__actions > select { max-width: 100%; }
+    #lrn-score-entry table { width: 100%; table-layout: fixed; }
+    #lrn-score-entry th, #lrn-score-entry td { padding-inline: var(--space-1); }
+    #lrn-score-entry th:first-child { width: 18%; }
+    #lrn-score-entry th:nth-child(2), #lrn-score-entry th:nth-child(3) { width: 26%; }
+    #lrn-score-entry input { width: 100% !important; min-width: 0; }
+    #lrn-score-entry .btn { min-width: 0; padding-inline: var(--space-1); font-size: var(--text-xs); }
+  }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% call hero('Self-improving workforce', 'Learning',
+             subtitle='Guide how your workforce learns',
+             lede='Review what Lightwork has learned, choose how it improves,
+                   and restore earlier learning when you need to.') %}
+  {{ state('Current state',
+           snap.components_on ~ ' of ' ~ snap.components_total ~ ' core components on',
+           badge='all core on' if snap.components_on == snap.components_total
+                 else ('core partially on' if snap.components_on else 'core off'),
+           badge_class='ok' if snap.components_on == snap.components_total
+                       else ('warn' if snap.components_on else 'idle'),
+           copy='Learning controls apply across this installation.
+                 Review results before relying on an improvement.') }}
+{% endcall %}
+
+<div class="lrn">
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">Loading…</span></span>
+  </div>
+
+  {% if not learning_can_manage %}
+  <p class="notice" role="note">
+    View only: only an administrator can change learning settings.
+  </p>
+  {% endif %}
+
+  {{ panel_tabs('Learning sections', [('overview', 'Overview'), ('controls', 'Learning controls'), ('review', 'Review & restore')], 'overview',
+                data='learning-tab', tab_prefix='learning-tab-', panel_prefix='learning-') }}
+
+  <section class="lrn__pane" {{ tab_panel('overview', 'overview', tab_prefix='learning-tab-', panel_prefix='learning-') }} tabindex="0">
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+
+  {% if snap.overnight %}
+  <section class="panel" aria-labelledby="lrn-night-h" style="margin-bottom:var(--space-4)">
+    <h2 id="lrn-night-h">Overnight improvement review</h2>
+    <p>{{ 'Scheduled reviews are on.' if snap.overnight.enabled else 'Scheduled reviews are off.' }}
+      <a href="/settings/all#self_harness.auto_run">Manage overnight learning</a></p>
+    <p role="status">
+    {% if snap.overnight.state == 'completed' %}
+      Last review: {{ snap.overnight.models_reviewed }} AI models reviewed,
+      {{ snap.overnight.patterns_found }} recurring patterns found,
+      {{ snap.overnight.improvements_adopted }} improvements adopted,
+      {{ snap.overnight.examples_prepared }} examples prepared.
+      {% if snap.overnight.inspection_only %}New improvements were inspected only; add reviewed examples on Learned before testing them.{% endif %}
+      {% if snap.overnight.reviews_held_back %}{{ snap.overnight.reviews_held_back }} reviews were held back by the configured learning checks.{% endif %}
+      {% if snap.overnight.transfer_held_back %}Sharing improvements between AI models needs separate approved checks and was held back.{% endif %}
+    {% elif snap.overnight.state == 'running' %}
+      A review started. Its completion has not yet been recorded.
+    {% elif snap.overnight.state == 'stopped' %}
+      The last review stopped before completion. Some completed changes may remain. Review Learned and the learning controls before the next review.
+    {% elif snap.overnight.state == 'unavailable' %}
+      The review history could not be loaded. Try reloading this page.
+    {% else %}
+      No scheduled improvement review has been recorded yet.
+    {% endif %}
+    {% if snap.overnight.when %}<time id="lrn-night-time" data-when="{{ snap.overnight.when }}"></time>{% endif %}
+    </p>
+    <a class="btn" href="/learned">Review learned improvements</a>
+  </section>
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      var time = document.getElementById('lrn-night-time');
+      if (!time) return;
+      var date = new Date(Number(time.dataset.when) * 1000);
+      if (!Number.isFinite(date.getTime())) return;
+      time.dateTime = date.toISOString();
+      time.textContent = ' Recorded ' + date.toLocaleString() + '.';
+    })();
+  </script>
+  {% endif %}
+
+  <div class="viz-grid">
+    <div class="panel viz-card">
+      <h2>Core learning components</h2>
+      <p class="viz-sub">See which learning features are on. Manage them in Learning controls.</p>
+      <div id="bd-systems"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide">
+      <h2>Accumulated judgement</h2>
+      <p class="viz-sub">From your Operating Record and what Lightwork has learned. Only your own work is counted.</p>
+      <div id="bd-acc"></div>
+    </div>
+  </div>
+
+  <div class="lrn__next" aria-label="Next learning actions">
+    <a class="btn btn--primary" href="#learning-controls">Manage learning</a>
+    <a class="btn btn--ghost" href="#learning-review">Review results and saved points</a>
+    <a class="btn btn--ghost" href="/learned">Open learned improvements</a>
+    {% if learning_can_operate %}<a class="btn btn--ghost" href="/learning/approval-challenges">Explore approval safeguards</a>{% endif %}
+    {% if can_open_page('/learning/recheck-rules') %}<a class="btn btn--ghost" href="/learning/recheck-rules">Recheck affected rules</a>{% endif %}
+    {% if can_open_page('/learning/distinctions') %}<a class="btn btn--ghost" href="/learning/distinctions">Find missing distinctions</a>{% endif %}
+    {% if can_open_page('/private-task-computation') %}<a class="btn btn--ghost" href="/private-task-computation">Private task calculations</a>{% endif %}
+    {% if can_open_page('/learning/rules-together') %}<a class="btn btn--ghost" href="/learning/rules-together">Check local rules together</a>{% endif %}
+    {% if can_open_page('/learning/request-program') %}<a class="btn btn--ghost" href="/learning/request-program">Prepare an answer for this request</a>{% endif %}
+    {% if can_open_page('/learning/recovery-visibility') %}<a class="btn btn--ghost" href="/learning/recovery-visibility">Understand a missing reply</a>{% endif %}
+    {% if can_open_page('/learning/portable-rules') %}<a class="btn btn--ghost" href="/learning/portable-rules">Share and qualify local rule structures</a>{% endif %}
+    {% if can_open_page('/learning/applicability') %}<a class="btn btn--ghost" href="/learning/applicability">Checked answer regions</a>{% endif %}
+    {% if can_open_page('/learning/rule-evolution') %}<a class="btn btn--ghost" href="/learning/rule-evolution">Rewrite and check local rules</a>{% endif %}
+    {% if can_open_page('/learning/acquisition') %}<a class="btn btn--ghost" href="/learning/acquisition">Plan teaching questions</a>{% endif %}
+    {% if can_open_page('/learning/work-restructuring') %}<a class="btn btn--ghost" href="/learning/work-restructuring">Share preparation safely</a>{% endif %}
+    {% if can_open_page('/decision-evidence') %}<a class="btn btn--ghost" href="/decision-evidence">Review shared decision facts</a>{% endif %}
+  </div>
+  </section>
+
+  <section class="lrn__pane" {{ tab_panel('controls', 'overview', tab_prefix='learning-tab-', panel_prefix='learning-') }} tabindex="0">
+  <div class="lrn__moat">
+    <strong>{{ snap.components_on }} of {{ snap.components_total }} core learning components are on.</strong>
+    Every task in Lightwork can teach the workforce — from failures, from consolidation, and from the
+    recorded outcomes of its own work. Review each feature below to decide which ones to use.
+    <div style="margin-top: var(--space-3); display:flex; gap: var(--space-3); align-items:center;">
+      <button type="button" id="lrn-enable" class="btn btn--primary"
+              {% if not learning_can_manage %}disabled aria-disabled="true"{% endif %}>
+        {{ 'Turn core learning off' if snap.components_on == snap.components_total else 'Turn core learning on' }}
+      </button>
+      <span class="lrn__enable-note" id="lrn-enable-msg" aria-live="polite" style="margin-top:0;"></span>
+    </div>
+  </div>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var btn = document.getElementById('lrn-enable');
+    if (!btn) return;
+    var canManage = {{ 'true' if learning_can_manage else 'false' }};
+    if (!canManage) return;
+    var allOn = {{ 'true' if snap.components_on == snap.components_total else 'false' }};
+    btn.addEventListener('click', async function () {
+      if (btn.dataset.inFlight === 'true') return;
+      btn.dataset.inFlight = 'true';
+      var msg = document.getElementById('lrn-enable-msg');
+      var action = allOn ? 'Turn every core learning component off?' : 'Turn every core learning component on?';
+      if (!(await mvConfirm(action + ' This changes the deployment-wide learning posture.', {
+        okText: allOn ? 'Turn core off' : 'Turn core on'
+      }))) { delete btn.dataset.inFlight; return; }
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true'); msg.textContent = 'Applying…';
+      try {
+        var r = await fetch('/api/v1/learning', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !allOn }),
+        });
+        if (!r.ok) {
+          var b = await r.json().catch(function () { return {}; });
+          msg.textContent = r.status === 403
+            ? 'Only an administrator can change this. Ask your administrator.'
+            : window.mvErrorText(r, 'change learning');
+          delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false; return;
+        }
+        location.reload();   // re-render with the new on/off state
+      } catch (e) {
+        msg.textContent = 'Could not reach the server — check your connection and try again.';
+        delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false;
+      }
+    });
+  })();
+  </script>
+
+  {% include "_learning_acquisition.html" %}
+  <details class="panel lrn__disclosure" id="learning-systems">
+    <summary id="lrn-comp-h">Learning systems</summary>
+      <p class="lrn__section-sub">What each system does, in plain language — and a switch to turn it
+        on or off, right here. Changes apply immediately; turning a system off pauses it without
+        losing anything it has already learned.</p>
+      <ul class="lrn__comp" id="lrn-switches" aria-label="Learning system switches">
+        <li class="lrn__row"><div class="lrn__row-main"><div class="lrn__row-desc">Loading the system switches…</div></div></li>
+      </ul>
+      <p class="lrn__enable-note" id="lrn-switches-msg" role="status" aria-live="polite" style="margin-top: var(--space-2);"></p>
+
+      <details style="margin-top: var(--space-4);">
+      <summary id="lrn-detail-h">Turn each part of learning on or off</summary>
+      <p class="lrn__section-sub">Each part has its own switch. The “Turn core learning on/off” button above
+        still switches every part together. More detailed learning settings are in
+        <a href="/settings/all">All settings</a> under Memory &amp; learning.</p>
+      <ul class="lrn__comp" aria-labelledby="lrn-detail-h" id="lrn-parts">
+        {% for c in snap.components %}
+        <li class="lrn__row" data-on="{{ 'true' if c.on else 'false' }}">
+          <span class="badge {{ 'active' if c.on else '' }}">{{ 'On' if c.on else ('Waiting' if c.waiting_on else 'Off') }}</span>
+          <div class="lrn__row-main">
+            <div class="lrn__row-label" id="lrn-part-{{ c.key }}">{{ c.label }}</div>
+            {% if c.description %}<div class="lrn__row-desc">{{ c.description }}</div>{% endif %}
+            {% if c.waiting_on %}<div class="lrn__row-members">Waits until “{{ c.waiting_on }}” is on.</div>{% endif %}
+            {% if c.managed %}<div class="lrn__row-members">Set by your server's deployment settings, so it can't be changed here.</div>{% endif %}
+            <div class="lrn__row-err" role="status"></div>
+          </div>
+          {% if learning_can_manage and not c.managed %}
+          <button type="button" class="btn lrn-part-btn" data-part="{{ c.key }}"
+                  data-label="{{ c.label }}" data-wanted="{{ 'true' if c.wanted else 'false' }}"
+                  aria-pressed="{{ 'true' if c.wanted else 'false' }}"
+                  aria-describedby="lrn-part-{{ c.key }}">{{ 'Turn off' if c.wanted else 'Turn on' }}</button>
+          {% else %}
+          <button type="button" class="btn" disabled aria-disabled="true"
+                  aria-describedby="lrn-part-{{ c.key }}">Read only</button>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      </details>
+      <script nonce="{{ csp_script_nonce }}">
+      (function () {
+        var list = document.getElementById('lrn-parts');
+        if (!list) return;
+        list.addEventListener('click', async function (ev) {
+          var btn = ev.target.closest('.lrn-part-btn');
+          if (!btn || btn.dataset.inFlight === 'true') return;
+          btn.dataset.inFlight = 'true';
+          var next = btn.getAttribute('data-wanted') !== 'true';
+          var label = btn.getAttribute('data-label');
+          var err = btn.parentNode.querySelector('.lrn__row-err');
+          var impact = next
+            ? 'It starts again for the whole installation.'
+            : 'It pauses for the whole installation. Nothing it has already learned is deleted.';
+          if (!(await mvConfirm((next ? 'Turn on “' : 'Turn off “') + label + '”? ' + impact,
+                                { okText: next ? 'Turn on' : 'Turn off' }))) {
+            delete btn.dataset.inFlight; return;
+          }
+          btn.disabled = true; btn.setAttribute('aria-busy', 'true'); err.textContent = '';
+          try {
+            var r = await fetch('/api/v1/learning', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enabled: next, subsystem: btn.getAttribute('data-part') }),
+            });
+            if (!r.ok) {
+              var b = await r.json().catch(function () { return {}; });
+              err.textContent = r.status === 403
+                ? 'Only an administrator can change this. Ask your administrator.'
+                : ((r.status === 409 && window.mvPlainDetail(b.detail))
+                   || window.mvErrorText(r, 'change “' + label + '”'));
+              delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false;
+              return;
+            }
+            location.reload();
+          } catch (e) {
+            err.textContent = 'Could not reach the server — check your connection and try again.';
+            delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false;
+          }
+        });
+      })();
+      </script>
+      <p class="lrn__enable-note">Once outcome tracking is on, every approval a person gives a result
+        automatically becomes feedback your workforce learns from — see
+        <a href="/workforce">Workforce</a> for what your teams have delivered, and
+        <a href="/learned">Learned</a> for capabilities picked up along the way.</p>
+  </details>
+  {# The per-component → switch-section map, derived from the shared registry
+     (each component's config section), so the switch rows can say which
+     systems they cover without surfacing config keys in the UI. #}
+  {% set _members = {} %}
+  {% for c in snap.components %}
+    {% set _sec = c.how.split(']', 1)[0][1:] %}
+    {% if _members.update({_sec: _members.get(_sec, []) + [c.label]}) %}{% endif %}
+  {% endfor %}
+  <script nonce="{{ csp_script_nonce }}" type="application/json" id="lrn-switch-members">{{ _members | tojson }}</script>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    // threat_hunt / env_hunt are switched from the Security page, not here.
+    var HIDDEN = { threat_hunt: true, env_hunt: true };
+    var list = document.getElementById('lrn-switches');
+    var msg = document.getElementById('lrn-switches-msg');
+    var canManage = {{ 'true' if learning_can_manage else 'false' }};
+    if (!list) return;
+    var members = {};
+    try {
+      members = JSON.parse(document.getElementById('lrn-switch-members').textContent) || {};
+    } catch (e) { /* advisory only */ }
+
+    async function flip(sw, btn, err) {
+      if (btn.dataset.inFlight === 'true') return;
+      btn.dataset.inFlight = 'true';
+      var next = !sw.enabled;
+      var impact = next
+        ? 'It immediately resumes this learning system across the deployment.'
+        : 'It immediately pauses this learning system across the deployment without deleting prior learning.';
+      if (!(await mvConfirm(
+        (next ? 'Turn on “' : 'Turn off “') + sw.label + '” for this deployment? ' + impact,
+        { okText: next ? 'Turn on system' : 'Turn off system' }
+      ))) { delete btn.dataset.inFlight; return; }
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true'); err.textContent = '';
+      try {
+        var r;
+        try {
+          r = await fetch('/api/v1/features/switches', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section: sw.section, enabled: next }),
+          });
+        } catch (networkError) {
+          throw new Error('Could not reach the server — check your connection and try again.');
+        }
+        if (r.status === 403) {
+          throw new Error('Only an administrator can change this. Ask your administrator.');
+        }
+        if (!r.ok) {
+          var body = await r.json().catch(function () { return {}; });
+          throw new Error(window.mvErrorText(r, 'change “' + sw.label + '”'));
+        }
+        location.reload();   // re-render the whole page with the new state
+      } catch (e) {
+        err.textContent = (e && e.message) || 'Could not reach the server — check your connection and try again.';
+        delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false;
+      }
+    }
+
+    function row(sw) {
+      var li = document.createElement('li');
+      li.className = 'lrn__row';
+      li.setAttribute('data-on', sw.enabled ? 'true' : 'false');
+      var badge = document.createElement('span');
+      badge.className = 'badge' + (sw.enabled ? ' active' : '');
+      badge.textContent = sw.enabled ? 'On' : 'Off';
+      var main = document.createElement('div');
+      main.className = 'lrn__row-main';
+      var label = document.createElement('div');
+      label.className = 'lrn__row-label';
+      label.textContent = sw.label;
+      main.appendChild(label);
+      var desc = document.createElement('div');
+      desc.className = 'lrn__row-desc';
+      desc.textContent = sw.description;
+      main.appendChild(desc);
+      var covered = members[sw.section];
+      if (covered && covered.length) {
+        var mem = document.createElement('div');
+        mem.className = 'lrn__row-members';
+        mem.textContent = 'Covers: ' + covered.join(' · ');
+        main.appendChild(mem);
+      }
+      var err = document.createElement('div');
+      err.className = 'lrn__row-err';
+      err.setAttribute('role', 'status');
+      main.appendChild(err);
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn';
+      btn.textContent = canManage ? (sw.enabled ? 'Turn off' : 'Turn on') : 'Read only';
+      btn.setAttribute('aria-pressed', sw.enabled ? 'true' : 'false');
+      btn.setAttribute('aria-label', canManage
+        ? (sw.enabled ? 'Turn off ' : 'Turn on ') + sw.label
+        : 'Read only: ' + sw.label);
+      if (canManage) {
+        btn.addEventListener('click', function () { flip(sw, btn, err); });
+      } else {
+        btn.disabled = true;
+        btn.setAttribute('aria-disabled', 'true');
+        btn.title = 'A global administrator is required to change this learning system.';
+      }
+      li.appendChild(badge);
+      li.appendChild(main);
+      li.appendChild(btn);
+      return li;
+    }
+
+    fetch('/api/v1/features/switches').then(function (r) {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    }).then(function (d) {
+      list.textContent = '';
+      (d.switches || []).forEach(function (sw) {
+        if (HIDDEN[sw.section]) return;
+        list.appendChild(row(sw));
+      });
+      if (!list.children.length) {
+        msg.textContent = 'There are no learning systems to switch here.';
+      }
+    }).catch(function () {
+      msg.textContent = 'Could not load the learning switches. Refresh the page to try again.';
+    });
+  })();
+  </script>
+
+  <details class="panel lrn__disclosure" id="learning-system-tools">
+    <summary>Run or inspect a learning system</summary>
+    {% include "_learning_ops.html" %}
+  </details>
+  </section>
+
+  <section class="lrn__pane" {{ tab_panel('review', 'overview', tab_prefix='learning-tab-', panel_prefix='learning-') }} tabindex="0">
+
+  {% include "_learning_jobs.html" %}
+
+  {% if learning_can_manage %}
+  <section aria-labelledby="lrn-run-h">
+    <div class="section-head"><h2 id="lrn-run-h" class="lrn__section-h">Run learning now</h2></div>
+    <div class="panel">
+      <p class="lrn__section-sub">Lightwork usually learns overnight. Use these to run it now, check the result, or go back.</p>
+      <h3 class="lrn__section-h">Learn from recent work</h3>
+      <p class="lrn__section-sub">Reviews recently finished tasks, writes lessons from repeated problems and turns repeated successes into skills.
+        A saved point is made first, so you can go back.</p>
+      <div class="lrn__actions">
+        <button type="button" class="btn btn--ghost" id="lrn-dream-preview">Preview what would change</button>
+        <button type="button" class="btn btn--primary" id="lrn-dream-run">Learn now</button>
+        <button type="button" class="btn btn--ghost" id="lrn-dream-activity">Check recent learning</button>
+      </div>
+      <div id="lrn-dream-result" role="status" aria-live="polite"></div>
+      <div id="lrn-dream-activity-result" role="status" aria-live="polite"></div>
+      <p class="lrn__section-sub">Learning requires signed activity records. <a href="/settings/all?id=audit.sign">Review the activity record setting</a>.</p>
+
+      <h3 class="lrn__section-h">Go back to a saved point</h3>
+      <p class="lrn__section-sub">Restore the learned information covered by a saved point. Completed work and changes in connected services are not undone.</p>
+      <div class="lrn__actions">
+        <label for="lrn-snapshot">Saved point</label>
+        <select id="lrn-snapshot" class="select"><option value="">Loading…</option></select>
+        <button type="button" class="btn btn--danger" id="lrn-rollback" disabled>Go back to this point</button>
+      </div>
+      <div id="lrn-snapshot-coverage" role="status" aria-live="polite"></div>
+
+      <h3 class="lrn__section-h">Check whether anything useful was lost</h3>
+      <p class="lrn__section-sub">Compares past tasks against the saved point above: which ones Lightwork now has a lesson for, and which ones it lost.
+        Nothing is re-run and no AI is used.</p>
+      <div class="lrn__actions">
+        <label><input type="checkbox" id="lrn-hs-all"> Include tasks that went well</label>
+        <label><input type="checkbox" id="lrn-hs-record"> Keep the result in the activity log</label>
+        <button type="button" class="btn btn--ghost" id="lrn-hindsight">Check now</button>
+      </div>
+      <div id="lrn-hindsight-result" role="status" aria-live="polite"></div>
+
+      <h3 class="lrn__section-h">Compare recorded results</h3>
+      <p class="lrn__section-sub">Enter two scores for each task, from 0 to 100 percent.
+        This compares your entries; it does not verify how tasks were assigned or prove that learning caused a difference.
+        For planned cases and reviewed outcomes, use <a href="/outcome-pilots">Workflow pilots</a>.</p>
+      <label for="lrn-score-source">Results source</label>
+      <select id="lrn-score-source" class="select"><option value="scores">Scores entered below</option><option value="file">Exported results file</option></select>
+      <div id="lrn-score-entry" style="margin-block:var(--space-3)">
+        <div class="table-scroll" style="max-width:100%;overflow:auto"><table>
+          <caption class="sr-only">Paired task scores, in percent</caption>
+          <thead><tr><th scope="col">Task</th><th scope="col">Before</th><th scope="col">After</th><th scope="col"><span class="sr-only">Remove</span></th></tr></thead>
+          <tbody id="lrn-score-rows"></tbody>
+        </table></div>
+        <button type="button" class="btn btn--ghost" id="lrn-score-add">Add task</button>
+      </div>
+      <div class="lrn__actions">
+        <label id="lrn-score-file-label" hidden>Results file<input type="file" id="lrn-prove-file" class="input" accept=".json,application/json"></label>
+        <button type="button" class="btn btn--ghost" id="lrn-prove">Check the results</button>
+      </div>
+      <div id="lrn-prove-result" role="status" aria-live="polite"></div>
+    </div>
+  </section>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    function $(id) { return document.getElementById(id); }
+    function show(id, lines) {
+      var box = $(id); box.textContent = '';
+      lines.forEach(function (t, i) { var p = document.createElement(i ? 'p' : 'p'); p.textContent = t; box.appendChild(p); });
+    }
+    async function call(method, url, body, action, target) {
+      try { return (await window.mvFetchJSON(url, { method: method, body: body || undefined }, action)) || {}; }
+      catch (e) {
+        var text = ([404, 409, 422, 503].indexOf(e.status) >= 0 && window.mvPlainDetail(e.detail)) || e.message;
+        if (target) show(target, [text]); else window.mvToast(text, { error: true });
+        return null;
+      }
+    }
+    function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+    function dreamLines(d) {
+      var head = d.preview ? 'If Lightwork learned now, it would:' : (d.activity_recorded ? 'Learning completed. Lightwork:' : 'Learning completion is unconfirmed. The cycle reported:');
+      return [head,
+        '• review ' + plural(d.tasks_reviewed, 'finished task', 'finished tasks') + ' and ' + plural(d.failures_reviewed, 'problem', 'problems'),
+        '• write ' + plural(d.lessons_written, 'lesson', 'lessons') + ' and learn ' + plural(d.skills_learned, 'skill', 'skills'),
+        '• retire ' + plural(d.skills_retired, 'skill', 'skills') + ' that stopped working and tidy ' + plural(d.notes_tidied, 'old note', 'old notes')]
+        .concat(d.paused ? ['Learning is paused while its checks recover. Earlier changes may have been kept.'] : [])
+        .concat(d.notice ? [d.notice] : []);
+    }
+    var dreamGeneration = 0;
+    function clearDreamState(event) {
+      if (event.detail && event.detail.reason === 'selection') return;
+      dreamGeneration += 1;
+      show('lrn-dream-result', []); show('lrn-dream-activity-result', []);
+    }
+    ['lightwork:workspace-changed', 'lightwork:account-context-changed', 'lightwork:copilot-context-changed'].forEach(function (name) {
+      document.addEventListener(name, clearDreamState);
+    });
+    window.addEventListener('lightwork:context-changed', clearDreamState);
+    $('lrn-dream-activity').addEventListener('click', async function () {
+      var button = $('lrn-dream-activity'), generation = dreamGeneration;
+      button.disabled = true;
+      show('lrn-dream-activity-result', ['Checking recorded learning…']);
+      var d = await call('GET', '/api/v1/learning/dream/activity', null, 'check recorded learning', 'lrn-dream-activity-result');
+      button.disabled = false;
+      if (!d || generation !== dreamGeneration) return;
+      var lines = [d.notice];
+      if (!(d.cycles || []).length) lines.push('There is no recorded cycle to show for today. This is not proof that earlier work failed or changed nothing.');
+      (d.cycles || []).forEach(function (cycle) {
+        var line = cycle.when + ' — ' + cycle.status;
+        if (cycle.lessons_written !== undefined) line += '. ' + plural(cycle.lessons_written, 'lesson written', 'lessons written') + ' and ' + plural(cycle.skills_learned, 'skill learned', 'skills learned') + '.';
+        lines.push(line);
+      });
+      if (d.saved_point_notice) lines.push(d.saved_point_notice);
+      show('lrn-dream-activity-result', lines);
+      if (d.learning_saved_point) {
+        var open = document.createElement('button'); open.type = 'button'; open.className = 'btn btn--ghost'; open.textContent = 'Review the latest cycle’s saved point';
+        open.addEventListener('click', async function () {
+          open.disabled = true;
+          var accepted = await window.LightworkLearningSavedPoints.open(d.learning_saved_point.name, d.learning_saved_point.revision);
+          if (open.isConnected && generation === dreamGeneration) {
+            open.disabled = false;
+            if (!accepted) window.mvToast('The saved point changed or is no longer available. Read the current saved points before restoring.', { error: true });
+          }
+        });
+        $('lrn-dream-activity-result').appendChild(open);
+      }
+    });
+    var savedPointCoverage = null, savedPointGeneration = 0;
+    async function loadCoverage() {
+      var generation = ++savedPointGeneration, name = $('lrn-snapshot').value;
+      savedPointCoverage = null;
+      $('lrn-rollback').disabled = true;
+      if (!name) { show('lrn-snapshot-coverage', ['There is no saved point to review yet.']); return; }
+      show('lrn-snapshot-coverage', ['Checking the saved learning information…']);
+      var d = await call('GET', '/api/v1/learning/snapshots/' + encodeURIComponent(name) + '/coverage', null, 'read this saved point', 'lrn-snapshot-coverage');
+      if (generation !== savedPointGeneration || $('lrn-snapshot').value !== name) return;
+      if (!d) return;
+      if (!Array.isArray(d.labels) || !/^[a-f0-9]{64}$/.test(d.revision || '')) {
+        show('lrn-snapshot-coverage', ['This saved point could not be verified. Nothing was restored.']); return;
+      }
+      savedPointCoverage = { name: name, revision: d.revision, labels: d.labels };
+      show('lrn-snapshot-coverage', ['This saved point covers: ' + d.labels.join(', ') + '.', d.notice, d.source_notice, d.preserved].filter(Boolean));
+      $('lrn-rollback').disabled = false;
+    }
+    $('lrn-snapshot').addEventListener('change', loadCoverage);
+    window.LightworkLearningSavedPoints = {
+      open: async function (name, revision) {
+        var sel = $('lrn-snapshot');
+        if (!Array.from(sel.options).some(function (option) { return option.value === name; })) await loadSnapshots();
+        if (!Array.from(sel.options).some(function (option) { return option.value === name; })) return false;
+        sel.value = name;
+        await loadCoverage();
+        if (!savedPointCoverage || savedPointCoverage.name !== name || savedPointCoverage.revision !== revision) return false;
+        $('learning-tab-review').click();
+        sel.scrollIntoView({ block: 'center' });
+        sel.focus({ preventScroll: true });
+        return true;
+      }
+    };
+    async function loadSnapshots() {
+      var sel = $('lrn-snapshot');
+      var d = await call('GET', '/api/v1/learning/snapshots', null, 'load the saved points');
+      sel.textContent = '';
+      var list = (d && d.snapshots) || [];
+      if (!list.length) {
+        var o = document.createElement('option'); o.value = ''; o.textContent = 'No saved points yet'; sel.appendChild(o);
+      }
+      list.forEach(function (s) { var o = document.createElement('option'); o.value = s.value; o.textContent = s.label; sel.appendChild(o); });
+      await loadCoverage();
+    }
+    $('lrn-dream-preview').addEventListener('click', async function (ev) {
+      var generation = dreamGeneration;
+      ev.target.disabled = true;
+      show('lrn-dream-result', ['Working it out…']);
+      var d = await call('POST', '/api/v1/learning/dream', { preview: true }, 'preview learning', 'lrn-dream-result');
+      ev.target.disabled = false;
+      if (d && generation === dreamGeneration) show('lrn-dream-result', dreamLines(d));
+    });
+    $('lrn-dream-run').addEventListener('click', async function (ev) {
+      var generation = dreamGeneration;
+      if (!(await mvConfirm('Learn from recent work now? A saved point is made first so you can go back.', { okText: 'Learn now' }))) return;
+      if (generation !== dreamGeneration) return;
+      ev.target.disabled = true;
+      show('lrn-dream-result', ['Learning…']);
+      var d = await call('POST', '/api/v1/learning/dream', { preview: false }, 'run learning', 'lrn-dream-result');
+      ev.target.disabled = false;
+      if (d && generation === dreamGeneration) { show('lrn-dream-result', dreamLines(d)); loadSnapshots(); }
+    });
+    $('lrn-rollback').addEventListener('click', async function (ev) {
+      var sel = $('lrn-snapshot'), reviewed = savedPointCoverage;
+      if (!reviewed || reviewed.name !== sel.value) { window.mvToast('Read the saved point before restoring it.', { error: true }); return; }
+      var label = sel.options[sel.selectedIndex].textContent;
+      if (!(await mvConfirm('Restore ' + reviewed.labels.join(', ') + ' from ' + label + '? Newer information in these learning families will be replaced. Completed work, approvals and activity remain current.', { okText: 'Go back' }))) return;
+      if (savedPointCoverage !== reviewed || sel.value !== reviewed.name) { window.mvToast('The selected saved point changed. Review it again.', { error: true }); return; }
+      ev.target.disabled = true;
+      var d = await call('POST', '/api/v1/learning/rollback', { snapshot: reviewed.name, revision: reviewed.revision }, 'go back to the saved point', 'lrn-snapshot-coverage');
+      if (d) {
+        window.mvToast('Restored the reviewed learning information from ' + label + '.');
+        await loadCoverage();
+      } else {
+        savedPointCoverage = null;
+        var warning = document.createElement('p'); warning.textContent = 'Check current lessons and learning records before another attempt.';
+        $('lrn-snapshot-coverage').appendChild(warning);
+        var check = document.createElement('button'); check.type = 'button'; check.className = 'btn btn--ghost';
+        check.textContent = 'Read this saved point again'; check.addEventListener('click', loadCoverage);
+        $('lrn-snapshot-coverage').appendChild(check);
+      }
+    });
+    $('lrn-hindsight').addEventListener('click', async function (ev) {
+      ev.target.disabled = true;
+      var d = await call('POST', '/api/v1/learning/hindsight', { snapshot: $('lrn-snapshot').value || null,
+        all_tasks: $('lrn-hs-all').checked, record: $('lrn-hs-record').checked }, 'check past tasks', 'lrn-hindsight-result');
+      ev.target.disabled = false;
+      if (!d) return;
+      var lines = ['Compared ' + plural(d.tasks, 'past task', 'past tasks') + ' with ' + d.compared_with + ': ' +
+        d.covered_before + ' had a lesson then, ' + d.covered_now + ' have one now.'];
+      lines.push(d.lost.length ? 'Lessons lost for: ' + d.lost.join('; ') : 'Nothing useful was lost.');
+      if (d.gained.length) lines.push('New lessons for: ' + d.gained.join('; '));
+      if (d.recorded) lines.push('Kept in the activity log.');
+      show('lrn-hindsight-result', lines);
+    });
+    var scoreSequence = 0;
+    function addScoreRow() {
+      var rows = $('lrn-score-rows');
+      if (rows.children.length >= 100) return;
+      var number = ++scoreSequence, row = document.createElement('tr');
+      var label = document.createElement('th'); label.scope = 'row'; label.textContent = number; row.appendChild(label);
+      ['Before', 'After'].forEach(function (title) {
+        var cell = document.createElement('td'), input = document.createElement('input');
+        input.type = 'number'; input.min = '0'; input.max = '100'; input.step = 'any'; input.required = true;
+        input.className = 'input'; input.style.width = '5rem'; input.setAttribute('aria-label', title + ' score for task ' + number);
+        cell.appendChild(input); row.appendChild(cell);
+      });
+      var cell = document.createElement('td'), remove = document.createElement('button');
+      remove.type = 'button'; remove.className = 'btn btn--ghost'; remove.textContent = 'Remove';
+      remove.setAttribute('aria-label', 'Remove task ' + number);
+      remove.addEventListener('click', function () { row.remove(); $('lrn-score-add').disabled = false; $('lrn-score-add').focus(); });
+      cell.appendChild(remove); row.appendChild(cell); rows.appendChild(row);
+      $('lrn-score-add').disabled = rows.children.length >= 100;
+    }
+    for (var i = 0; i < 3; i++) addScoreRow();
+    $('lrn-score-add').addEventListener('click', addScoreRow);
+    $('lrn-score-source').addEventListener('change', function () {
+      var fileMode = this.value === 'file';
+      $('lrn-score-entry').hidden = fileMode; $('lrn-score-file-label').hidden = !fileMode;
+    });
+    $('lrn-prove').addEventListener('click', async function (ev) {
+      if (ev.target.disabled) return;
+      ev.target.disabled = true;
+      try {
+        var data;
+        if ($('lrn-score-source').value === 'file') {
+          var input = $('lrn-prove-file'), file = input.files && input.files[0];
+          if (!file) { show('lrn-prove-result', ['Choose an exported results file first.']); return; }
+          if (file.size > 256 * 1024) { show('lrn-prove-result', ['That results file is too large. Use a file smaller than 256 KB.']); return; }
+          try { data = JSON.parse(await file.text()); } catch (e) { data = null; }
+          if (!data || !Array.isArray(data.baseline) || !Array.isArray(data.treatment)) {
+            show('lrn-prove-result', ['That file is not a results file Lightwork can read.']); return;
+          }
+        } else {
+          data = { baseline: [], treatment: [] };
+          var rows = $('lrn-score-rows').querySelectorAll('tr');
+          if (!rows.length) { show('lrn-prove-result', ['Add at least one task.']); return; }
+          for (var r = 0; r < rows.length; r++) {
+            var scores = rows[r].querySelectorAll('input');
+            if (Array.from(scores).some(function (score) { return score.value.trim() === '' || !score.checkValidity(); })) {
+              show('lrn-prove-result', ['Enter both scores for every task, from 0 to 100 percent.']); scores[0].focus(); return;
+            }
+            data.baseline.push(Number(scores[0].value) / 100); data.treatment.push(Number(scores[1].value) / 100);
+          }
+        }
+        var d = await call('POST', '/api/v1/learning/prove', data, 'compare the results', 'lrn-prove-result');
+        if (!d) return;
+        var verdict = d.verdict === 'improved' ? 'The recorded scores are higher.' :
+          d.verdict === 'worse' ? 'The recorded scores are lower.' : 'There is no clear difference in the recorded scores.';
+        show('lrn-prove-result', [verdict, 'Across ' + plural(d.tasks, 'task', 'tasks') + ': average score ' +
+          Math.round(d.before * 100) + '% before and ' + Math.round(d.after * 100) + '% after. ' +
+          d.better + ' got better, ' + d.worse + ' got worse, ' + d.same + ' stayed the same.',
+          'This comparison does not establish that learning caused the difference.']);
+      } finally { ev.target.disabled = false; }
+    });
+    // The shell's helpers (lightwork-ui.js) load after the page content.
+    if (window.mvFetchJSON) loadSnapshots(); else document.addEventListener('DOMContentLoaded', loadSnapshots);
+  })();
+  </script>
+  {% endif %}
+  </section>
+
+  {% if snap.flow_autonomy %}
+  <section aria-labelledby="lrn-auto-h" data-learning-group="controls">
+    <div class="section-head"><h2 id="lrn-auto-h" class="lrn__section-h">Workflow improvements</h2></div>
+    <div class="panel">
+      <p class="lrn__section-sub" style="margin-bottom: var(--space-3);">
+        Review suggestions from recorded workflow results before changing what a step does.
+        Automatic undo can restore a measured change that makes results clearly worse.</p>
+      {% if not snap.flow_autonomy.engine_on %}
+      <p class="lrn__section-sub">Turn on workflows first. These options appear once workflows are running.</p>
+      <button type="button" class="btn btn--primary" id="lrn-flows-on"
+              {% if not learning_can_manage %}disabled aria-disabled="true"{% endif %}>Turn on workflows</button>
+      <span class="lrn__enable-note" id="lrn-flows-msg" role="status" aria-live="polite"></span>
+      <script nonce="{{ csp_script_nonce }}">
+      (function () {
+        var btn = document.getElementById('lrn-flows-on');
+        if (!btn) return;
+        var canManage = {{ 'true' if learning_can_manage else 'false' }};
+        if (!canManage) return;
+        btn.addEventListener('click', async function () {
+          if (btn.dataset.inFlight === 'true') return;
+          btn.dataset.inFlight = 'true';
+          var msg = document.getElementById('lrn-flows-msg');
+          if (!(await mvConfirm(
+            'Turn on workflows? Scheduled and triggered workflows may start running.',
+            { okText: 'Turn on workflows' }
+          ))) { delete btn.dataset.inFlight; return; }
+          btn.disabled = true; btn.setAttribute('aria-busy', 'true'); msg.textContent = 'Turning on…';
+          fetch('/api/v1/features/switches', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section: 'flows', enabled: true }),
+          }).then(function (r) {
+            if (r.status === 403) {
+              throw new Error('Only an administrator can turn this on. Ask your administrator.');
+            }
+            if (!r.ok) {
+              return r.json().catch(function () { return {}; }).then(function (body) {
+                throw new Error(window.mvErrorText(r, 'turn on workflows'));
+              });
+            }
+            location.reload(); return null;
+          }).catch(function (e) {
+            msg.textContent = e && e.name !== 'TypeError' && e.message
+              ? e.message
+              : 'Could not reach the server — check your connection and try again.';
+            delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false;
+          });
+        });
+      })();
+      </script>
+      {% else %}
+      <div style="display:flex; flex-direction:column; gap: var(--space-2);">
+        <button type="button" class="btn" id="lrn-auto-evolve" data-on="{{ 'true' if snap.flow_autonomy.auto_evolve else 'false' }}"
+                aria-pressed="{{ 'true' if snap.flow_autonomy.auto_evolve else 'false' }}"
+                {% if not learning_can_manage %}disabled aria-disabled="true"{% endif %}>
+          {{ 'Automatic undo is on: turn it off' if snap.flow_autonomy.auto_evolve else 'Turn on automatic undo' }}
+        </button>
+        <span class="lrn__enable-note" style="margin-top:0;">Automatically undo a workflow change that makes results clearly worse. This is the safety net.</span>
+        <p class="lrn__enable-note" style="margin-top:0;">Workflow suggestions require your review. Replacing a fixed action needs complete replacement instructions; past failure rates do not supply them. <a href="/automations">Review workflow suggestions</a>.</p>
+        <span class="lrn__enable-note" style="margin-top:0;">Suggestions wait for complete review. Automatic undo is a separate control.</span>
+        <span class="lrn__enable-note" id="lrn-auto-msg" aria-live="polite" style="margin-top:0;"></span>
+      </div>
+      <script nonce="{{ csp_script_nonce }}">
+      (function () {
+        var canManage = {{ 'true' if learning_can_manage else 'false' }};
+        function wire(id, field) {
+          var btn = document.getElementById(id);
+          if (!btn || !canManage) return;
+          btn.addEventListener('click', async function () {
+            if (btn.dataset.inFlight === 'true') return;
+            btn.dataset.inFlight = 'true';
+            var msg = document.getElementById('lrn-auto-msg');
+            var next = btn.getAttribute('data-on') !== 'true';
+            var prompt;
+            var okText;
+            prompt = next
+              ? 'Enable automatic rollback of measured workflow regressions? The deployment may revert a harmful self-improvement without another human click.'
+              : 'Disable automatic rollback of workflow regressions? Deployed self-improvements will lose this automatic safety net.';
+            okText = next ? 'Turn on' : 'Turn off';
+            if (!(await mvConfirm(prompt, { okText: okText }))) { delete btn.dataset.inFlight; return; }
+            var body = {}; body[field] = next;
+            btn.disabled = true; btn.setAttribute('aria-busy', 'true'); msg.textContent = 'Applying…';
+            try {
+              var r = await fetch('/api/v1/learning/flow-autonomy', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+              });
+              if (!r.ok) {
+                var b = await r.json().catch(function () { return {}; });
+                msg.textContent = r.status === 403
+                  ? 'Only an administrator can change this. Ask your administrator.'
+                  : window.mvErrorText(r, 'change this setting');
+                delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false; return;
+              }
+              location.reload();
+            } catch (e) {
+              msg.textContent = 'Could not reach the server — check your connection and try again.';
+              delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false;
+            }
+          });
+        }
+        wire('lrn-auto-evolve', 'auto_evolve');
+      })();
+      </script>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if snap.dgm %}
+  <section aria-labelledby="lrn-dgm-h" data-learning-group="controls">
+    <div class="section-head"><h2 id="lrn-dgm-h" class="lrn__section-h">Experimental: let Lightwork try improving its own code</h2></div>
+    <div class="panel">
+      <p class="lrn__section-sub" style="margin-bottom: var(--space-3);">
+        Separate from everyday learning and <strong>off unless you turn it on</strong>. When on, Lightwork may try
+        small changes to its own code in a safe practice area and keep the results for review. It can never install them.</p>
+      <p style="margin:0 0 var(--space-3);">
+        <span class="badge {{ 'active' if snap.dgm.state == 'ready' else '' }}">
+          {{ 'On and ready' if snap.dgm.state == 'ready' else ('On, but something is blocking it' if snap.dgm.state == 'blocked' else 'Off') }}
+        </span>
+      </p>
+      {% if snap.dgm.blockers %}
+      <p class="muted" style="font-size: var(--text-sm); margin-top:0;">{{ snap.dgm.blockers | length }} setting{{ '' if snap.dgm.blockers | length == 1 else 's' }} outside this page must be changed first. The files and tests it may use are in
+        <a href="/settings/all">All settings</a> under Memory &amp; learning, Research experiments; ask your IT administrator about the rest.</p>
+      {% endif %}
+      <button type="button" class="btn" id="lrn-dgm"
+              data-on="{{ 'true' if snap.dgm.requested else 'false' }}"
+              {% if snap.dgm.control_managed or not learning_can_manage %}disabled aria-disabled="true"{% endif %}>
+        {{ 'Turn this off' if snap.dgm.requested else 'Turn this on' }}
+      </button>
+      {% if snap.dgm.control_managed %}
+      <span class="lrn__enable-note">This is set by your IT administrator and cannot be changed here.</span>
+      {% endif %}
+      <span class="lrn__enable-note" id="lrn-dgm-msg" aria-live="polite"></span>
+      <script nonce="{{ csp_script_nonce }}">
+      (function () {
+        var btn = document.getElementById('lrn-dgm');
+        if (!btn) return;
+        var canManage = {{ 'true' if learning_can_manage else 'false' }};
+        if (!canManage) return;
+        btn.addEventListener('click', async function () {
+          if (btn.dataset.inFlight === 'true') return;
+          btn.dataset.inFlight = 'true';
+          var msg = document.getElementById('lrn-dgm-msg');
+          var next = btn.getAttribute('data-on') !== 'true';
+          var prompt = next
+            ? 'Let Lightwork try changes to its own code in a safe practice area? It can never install them.'
+            : 'Stop these experiments? Results so far are kept.';
+          if (!(await mvConfirm(prompt, { okText: next ? 'Turn on' : 'Turn off' }))) {
+            delete btn.dataset.inFlight; return;
+          }
+          btn.disabled = true; btn.setAttribute('aria-busy', 'true'); msg.textContent = 'Applying…';
+          try {
+            var r = await fetch('/api/v1/learning/dgm', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                enabled: next,
+                acknowledge_research_only: next,
+              }),
+            });
+            if (!r.ok) {
+              var body = await r.json().catch(function () { return {}; });
+              msg.textContent = window.mvErrorText(r, 'change this setting');
+              delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false; return;
+            }
+            location.reload();
+          } catch (e) {
+            msg.textContent = 'Could not reach the server — check your connection and try again.';
+            delete btn.dataset.inFlight; btn.removeAttribute('aria-busy'); btn.disabled = false;
+          }
+        });
+      })();
+      </script>
+    </div>
+  </section>
+  {% endif %}
+</div>
+
+<script src="/static/board.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var B = window.LWBoard;
+
+  function render(D) {
+    var acc = D.accumulated || {};
+    var learned = Number.isFinite(acc.learned_capabilities) ? acc.learned_capabilities : null;
+    var grounded = Number.isFinite(acc.grounded_outcomes) ? acc.grounded_outcomes : null;
+
+    var k = document.getElementById('bd-kpis');
+    k.textContent = '';
+    k.appendChild(B.kpi({ label: 'Core learning components on', value: D.components_on,
+      sub: 'of ' + D.components_total + ' components' }));
+    k.appendChild(B.kpi({ label: 'Decisions recorded', value: acc.decisions }));
+    k.appendChild(B.kpi({ label: 'Human decisions', value: acc.human_decisions,
+      sub: 'approvals: ' + B.fmt(acc.approvals) }));
+    k.appendChild(B.kpi({ label: 'Learned capabilities', value: learned === null ? 'Not available' : learned,
+      sub: grounded === null ? 'A current count could not be confirmed. Refresh the page and try again.' : B.fmt(grounded) + ' results checked against real outcomes' }));
+
+    B.donut(document.getElementById('bd-systems'), {
+      segments: [
+        { label: 'On', value: D.components_on, cls: 'ok' },
+        { label: 'Off', value: D.components_total - D.components_on,
+          cls: 'idle' }],
+      center: D.components_on,
+      centerSub: 'of ' + D.components_total,
+      aria: 'Core learning components: ' + D.components_on + ' on of ' +
+            D.components_total + ' total.' });
+
+    var rows = [
+      { label: 'Decisions', value: acc.decisions || 0 },
+      { label: 'Human decisions', value: acc.human_decisions || 0 },
+      { label: 'Approvals', value: acc.approvals || 0 }];
+    if (learned !== null) rows.push({label: 'Learned capabilities', value: learned});
+    if (grounded !== null) rows.push({label: 'Results checked against real outcomes', value: grounded});
+    if ((acc.flow_self_improvements || 0) > 0) {
+      rows.push({ label: 'Workflow self-improvements',
+                  value: acc.flow_self_improvements, cls: 'info' });
+    }
+    var max = 1;
+    rows.forEach(function (r) { max = Math.max(max, r.value); });
+    B.hbars(document.getElementById('bd-acc'),
+      rows.map(function (r) {
+        return { label: r.label, value_text: B.fmt(r.value),
+                 pct: r.value / max * 100, cls: r.cls,
+                 title: r.label + ' — ' + B.fmt(r.value) };
+      }), 'What the workforce has accumulated, scaled to the largest count.');
+  }
+
+  B.attach({ board: 'learning', endpoint: '/api/v1/learning', render: render });
+})();
+</script>
+
+  <div data-learning-group="review">
+  {# Per-specialist and per-agent ratings and the reasons people picked on a thumbs-down. Written
+     comments stay with the person and their task, so they are not listed. #}
+  <div class="section-head"><h2 id="agent-feedback-title">What people said about each agent and specialist</h2></div>
+  <section class="panel" id="agent-feedback" aria-labelledby="agent-feedback-title">
+    {% if agent_feedback %}
+    <div class="fa-scroll">
+      <table>
+        <thead><tr><th scope="col">Agent or specialist</th><th scope="col">Useful</th><th scope="col">Not useful</th><th scope="col">Reasons picked</th><th scope="col">Most recent reasons</th></tr></thead>
+        <tbody>
+        {% for row in agent_feedback %}
+          <tr>
+            <th scope="row">{% if row.agent %}<a href="/agents?name={{ row.agent | urlencode }}">{{ row.title }}</a>{% else %}{{ row.title }}{% endif %}</th>
+            <td>{{ row.up }}</td>
+            <td>{{ row.down }}</td>
+            <td>{% if row.reasons %}{% for item in row.reasons %}{{ item.label }} ({{ item.count }}){% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="muted">None picked</span>{% endif %}</td>
+            <td>{% if row.recent %}{% for item in row.recent %}{{ item.label }} <span class="muted">{{ item.ts | datetime }}</span>{% if not loop.last %}; {% endif %}{% endfor %}{% else %}<span class="muted">None yet</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">Counts use each person's latest rating of an answer. People can add a written comment to a thumbs-down; it stays with them and their task and is not shown here.</p>
+    {% else %}
+    <p class="muted">No one has rated an answer yet. When people press thumbs up or down on an answer, each agent's and specialist's ratings and the reasons they picked appear here.</p>
+    {% endif %}
+  </section>
+
+  {% if flow_feedback %}
+  <div class="section-head"><h2 id="flow-feedback-title">{{ ui('What people said about each flow') }}</h2></div>
+  <section class="panel" id="flow-feedback" aria-labelledby="flow-feedback-title">
+    <div class="fa-scroll">
+      <table>
+        <thead><tr><th scope="col">{{ ui('Flow') }}</th><th scope="col">{{ ui('Useful') }}</th><th scope="col">{{ ui('Not useful') }}</th></tr></thead>
+        <tbody>
+        {% for row in flow_feedback %}
+          <tr><th scope="row"><a href="/flows/designer/{{ row.flow_id | urlencode }}">{{ row.title }}</a></th><td>{{ row.up }}</td><td>{{ row.down }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">{{ ui("Counts use each person's latest rating of a finished run. Only the rating is kept, for up to a year.") }}</p>
+  </section>
+  {% endif %}
+
+  <div class="section-head"><h2 id="fa-flywheel-title">What Lightwork learned from results</h2></div>
+  <section class="panel" aria-labelledby="fa-flywheel-title">
+    <p class="muted" id="fa-flywheel-status">Loading…</p>
+    <div id="fa-flywheel"></div>
+  </section>
+  <div data-fa-needs="installation_admin" hidden>
+    <div class="section-head"><h2 id="fa-lessons-title">Share lessons with another installation</h2></div>
+    <section class="panel" id="fa-lessons" aria-labelledby="fa-lessons-title">
+      <p class="muted">Swap what your agents have learned with another Lightwork installation you trust. Only the lessons are shared, never tasks or customer details, and every lesson you receive is checked before it is used.</p>
+      <div class="fa-row">
+        <label class="fa-field"><span>How many recent lessons</span>
+          <select class="select" id="fa-lessons-count">
+            <option value="10">10</option><option value="25">25</option>
+            <option value="50" selected>50</option><option value="100">100</option>
+          </select></label>
+        <button type="button" class="btn" id="fa-lessons-export">Download lessons to share</button>
+      </div>
+      <label class="fa-field"><span>Add lessons from another installation (choose the file they sent you)</span>
+        <input class="input" type="file" id="fa-lessons-file" accept=".json,application/json"></label>
+      <p class="muted" id="fa-lessons-status" role="status" aria-live="polite"></p>
+      <div id="fa-lessons-out"></div>
+    </section>
+  </div>
+  <style>
+    .fa-scroll { overflow-x: auto; }
+    .fa-inline { list-style: none; padding: 0; margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .fa-list { margin: var(--space-2) 0; }
+    .fa-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+    .fa-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .fa-grow { flex: 1 1 18rem; }
+    .fa-technical { margin-top: var(--space-2); }
+  </style>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+  </div>
+
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var tabs = Array.from(document.querySelectorAll('[data-learning-tab]'));
+    var names = ['overview', 'controls', 'review'];
+    var panes = names.map(function (name) { return document.getElementById('learning-' + name); });
+    document.querySelectorAll('[data-learning-group]').forEach(function (group) {
+      var pane = document.getElementById('learning-' + group.dataset.learningGroup);
+      if (pane) pane.appendChild(group);
+    });
+    function select(name, focus) {
+      if (names.indexOf(name) < 0) name = 'overview';
+      tabs.forEach(function (tab) {
+        var chosen = tab.dataset.learningTab === name;
+        tab.setAttribute('aria-selected', chosen ? 'true' : 'false'); tab.tabIndex = chosen ? 0 : -1;
+        if (chosen && focus) tab.focus();
+      });
+      panes.forEach(function (pane) { pane.hidden = pane.id !== 'learning-' + name; });
+    }
+    function openHash() {
+      var hash;
+      try { hash = decodeURIComponent(window.location.hash.slice(1)); } catch (_) { hash = ''; }
+      var target = hash && document.getElementById(hash);
+      var pane = target && target.closest('[role="tabpanel"]');
+      select(pane ? pane.id.slice('learning-'.length) : 'overview', false);
+      if (target && pane) {
+        for (var parent = target.parentElement; parent && parent !== pane; parent = parent.parentElement)
+          if (parent.tagName === 'DETAILS') parent.open = true;
+        if (target.tagName === 'DETAILS') target.open = true;
+        if (target !== pane) target.scrollIntoView({block: 'start'});
+      }
+    }
+    // Each tab is a Back step (#learning-<name>). The shared tab bar
+    // (lightwork-tabs.js) gives the arrow, Home and End keys; they select
+    // through a click, so both arrive here.
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        select(tab.dataset.learningTab, false);
+        if (window.history && window.history.pushState) window.history.pushState(null, '', '#learning-' + tab.dataset.learningTab);
+      });
+    });
+    window.addEventListener('hashchange', openHash);
+    window.addEventListener('popstate', openHash);
+    openHash();
+  })();
+  </script>
+
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-procedure-interactions.js') }}" defer></script>{% endblock %}

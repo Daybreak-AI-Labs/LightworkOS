@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Contracts and engagements · Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .tpc-grid { display:grid; gap:var(--space-3); grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr)); }
+  .tpc-grid label, .tpc-field { display:grid; gap:.3rem; }
+  .tpc-actions { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .tpc-row { border:1px solid var(--border); border-radius:var(--radius-sm); padding:var(--space-3); margin-bottom:var(--space-2); }
+  .tpc-fieldset { border:0; margin:0; padding:0; min-width:0; }
+  .tpc-checks { display:grid; gap:.25rem; }
+  .tpc-admin-actions { margin-top:var(--space-3); }
+  .tpc-checks label { display:flex; gap:.4rem; align-items:center; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_module_gate.html" import module_gate %}
+<div id="third-party-contracts-shell" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
+     data-module-enabled="{{ 'true' if contracts_module_enabled else 'false' }}"
+     data-can-operate="{{ 'true' if contracts_can_operate else 'false' }}"
+     data-can-audit="{{ 'true' if contracts_can_audit else 'false' }}"
+     data-can-admin="{{ 'true' if contracts_can_admin else 'false' }}">
+  {% call hero('Third-party management', 'Contracts and engagements',
+               lede='Keep track of vendor agreements and the work each vendor does for you, with a clear history of every change.', title_id='tpc-title') %}
+    <div class="hero-statebox" aria-live="polite"{% if not contracts_module_enabled %} hidden{% endif %}>
+      <div class="hero-statebox__label">Availability</div>
+      <div class="hero-statebox__row"><strong id="tpc-readiness">Checking…</strong><span class="badge idle" id="tpc-status-mark">Checking</span></div>
+      <p class="hero-statebox__copy" id="tpc-readiness-detail" role="status" aria-live="polite">Checking that contracts are available…</p>
+      <p><button class="btn btn--ghost" id="tpc-refresh-status" type="button">Refresh</button></p>
+    </div>
+  {% endcall %}
+  {% if not contracts_module_enabled %}
+  {{ module_gate('third_party_management.contracts', 'Contracts and engagements',
+                 detail='Turns on Third-Party Management and contract records together.',
+                 can_activate=contracts_can_activate) }}
+  {% endif %}
+  <p class="muted">Record the key facts here, not the full contract text.</p>
+
+  <fieldset class="tpc-fieldset" id="tpc-operations" disabled>
+    <legend class="sr-only">Contracts and engagements</legend>
+    <div class="section-head"><h2>Your contracts and engagements</h2>
+      <button class="btn btn--primary" id="tpc-new" type="button"{% if not contracts_can_operate %} disabled{% endif %}>Add a contract or engagement</button></div>
+    <section class="panel" aria-label="Filters and records">
+      <form id="tpc-filter-form" autocomplete="off">
+        <div class="tpc-grid">
+          <label>Kind<select class="select" name="record_kind"><option value="">Both</option><option value="contract">Contracts</option><option value="engagement">Engagements</option></select></label>
+          <label>Vendor<select class="select" name="vendor_id"><option value="">All vendors</option></select></label>
+          <label>Status<select class="select" name="status"><option value="">Any status</option></select></label>
+          <label>Owner<select class="select" name="owner_ref"><option value="">Anyone</option></select></label>
+          {% if contracts_can_audit %}<label class="tpc-actions"><input name="include_sensitive_fields" type="checkbox"> Show confidential fields (auditors only)</label>{% endif %}
+        </div>
+      </form>
+      <p class="muted" id="tpc-list-status" role="status" aria-live="polite">{{ 'Loading…' if contracts_module_enabled else 'Contracts and engagements appear here once this is turned on.' }}</p>
+      <div id="tpc-record-list"></div>
+      <div id="tpc-detail" hidden></div>
+    </section>
+
+    <section class="panel" id="tpc-editor" hidden aria-labelledby="tpc-editor-title">
+      <h2 id="tpc-editor-title">Add a contract or engagement</h2>
+      <form id="tpc-create-form" autocomplete="off">
+        <input type="hidden" name="record_id" value="">
+        <input type="hidden" name="expected_revision" value="">
+        <div class="tpc-grid">
+          <label>Kind<select class="select" name="record_kind"><option value="contract">Contract</option><option value="engagement">Engagement</option></select></label>
+          <label>Vendor<select class="select" name="vendor_id" required></select></label>
+          <label>Name<input class="input" name="title" maxlength="120" required placeholder="For example: Acme master agreement 2026"></label>
+          <label>Owner<select class="select" name="owner_ref" required></select></label>
+        </div>
+        <fieldset class="tpc-fieldset" id="tpc-contract-fields"><legend>Contract details</legend>
+          <div class="tpc-grid">
+            <label>Status<select class="select" name="contract_status"><option value="draft">Draft</option><option value="negotiation">In negotiation</option><option value="active">Active</option></select></label>
+            <label>Type<select class="select" name="agreement_type"><option value="master_services">Master services agreement</option><option value="statement_of_work">Statement of work</option><option value="data_processing">Data processing agreement</option><option value="license">License</option><option value="subscription">Subscription</option><option value="nda">Non-disclosure agreement</option><option value="other">Other</option></select></label>
+            <label>Signed document (name or where it's kept)<input class="input" name="agreement" maxlength="120" required placeholder="For example: Legal drive, Acme MSA signed"></label>
+            <label>Renewal<select class="select" name="renewal_mode"><option value="none">Doesn't renew</option><option value="manual">We renew it</option><option value="automatic">Renews automatically</option></select></label>
+            <label>Starts<input class="input" name="effective_at" type="date"></label>
+            <label>Ends<input class="input" name="expires_at" type="date"></label>
+            <label>Notice period (days)<input class="input" name="notice_period_days" type="number" min="0" max="3650" value="30"></label>
+            <label>Governing law<select class="select" name="governing_law"><option value="">Not set</option><option value="england-and-wales">England and Wales</option><option value="new-york">New York</option><option value="california">California</option><option value="delaware">Delaware</option><option value="ireland">Ireland</option><option value="germany">Germany</option><option value="france">France</option><option value="netherlands">Netherlands</option><option value="singapore">Singapore</option><option value="other">Other</option></select></label>
+            <label>Part of another contract<select class="select" name="parent_contract_id"><option value="">No</option></select></label>
+          </div>
+        </fieldset>
+        <fieldset class="tpc-fieldset" id="tpc-engagement-fields" hidden disabled><legend>Engagement details</legend>
+          <div class="tpc-grid">
+            <label>Status<select class="select" name="engagement_status"><option value="planned">Planned</option><option value="active">Active</option></select></label>
+            <label>Type<select class="select" name="engagement_type"><option value="service">Service</option><option value="software">Software</option><option value="data_processing">Data processing</option><option value="consulting">Consulting</option><option value="outsourcing">Outsourcing</option><option value="other">Other</option></select></label>
+            <label>What they do for us<select class="select" name="service_category"><option value="cloud-hosting">Cloud hosting</option><option value="software">Software</option><option value="payments">Payments</option><option value="professional-services">Professional services</option><option value="data-processing">Data processing</option><option value="logistics">Logistics</option><option value="other">Other</option></select></label>
+            <label>Business owner<select class="select" name="business_owner_ref"></select></label>
+            <label>Starts<input class="input" name="start_at" type="date"></label>
+            <label>Ends<input class="input" name="end_at" type="date"></label>
+            <label>How critical<select class="select" name="operational_criticality"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
+            <label>Access to our data<select class="select" name="data_access"><option value="none">None</option><option value="metadata">Basic details only</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option></select></label>
+            <label>Where it runs<select class="select" name="hosting_model"><option value="none">Not applicable</option><option value="vendor_cloud">The vendor's cloud</option><option value="customer_cloud">Our cloud</option><option value="on_premises">Our premises</option><option value="hybrid">A mix</option></select></label>
+          </div>
+          <fieldset class="tpc-checks"><legend>Related contracts</legend><div id="tpc-linked"></div></fieldset>
+        </fieldset>
+        <h3>Custom fields</h3>
+        <div id="tpc-custom-fields"></div>
+        <p><button type="button" class="btn btn--ghost" id="tpc-add-field">Add a custom field</button>
+           <button type="button" class="btn btn--ghost" id="tpc-add-formula">Add a calculation</button></p>
+        <div id="tpc-formulas"></div>
+        <div class="tpc-actions">
+          <button class="btn btn--primary" type="submit" id="tpc-save">Save contract</button>
+          <button class="btn btn--ghost" type="button" id="tpc-cancel">Cancel</button>
+        </div>
+        <p class="muted" id="tpc-form-status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <details class="panel">
+      <summary><strong>Administrator tools</strong></summary>
+      <div class="tpc-actions tpc-admin-actions">
+        <button class="btn" id="tpc-verify-integrity" type="button"{% if not contracts_can_audit %} disabled{% endif %}>Check records haven't been changed</button>
+        <button class="btn" id="tpc-retention-due" type="button"{% if not contracts_can_audit %} disabled{% endif %}>Show contracts due for deletion</button>
+        <button class="btn" id="tpc-recovery-preflight" type="button"{% if not contracts_can_admin %} disabled{% endif %}>Check backup readiness</button>
+        <button class="btn btn--danger" id="tpc-purge" type="button"{% if not contracts_can_admin %} disabled{% endif %}>Delete expired contracts</button>
+      </div>
+      <p class="muted" id="tpc-operation-status" role="status" aria-live="polite"></p>
+      <div id="tpc-admin-list"></div>
+    </details>
+  </fieldset>
+  <noscript><p class="panel">Turn on JavaScript to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}
+  <script src="/static/lightwork-record-workflows.js" defer></script>
+  <script src="/static/lightwork-third-party-contracts.js" defer></script>
+{% endblock %}

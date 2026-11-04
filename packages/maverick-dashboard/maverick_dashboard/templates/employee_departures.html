@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Employee departures · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Administration', 'Employee departures', compact=true) }}
+<section class="panel"><p>Review an employee's access and work across this installation before deactivating their named account. Existing data and preservation holds are retained. A handoff owner becomes responsible for retained work; this does not grant access to private employee content.</p>
+<p>Deactivation revokes Lightwork sessions and prevents new sign-ins for this exact identity. This workflow can remove reviewed local connection credentials and retire reviewed recurring schedules and cancel the person's waiting background work of every kind. Running work, other module queues, external identity accounts and provider-side consent still require explicit handoff. A case stays open until each reviewed item and external obligation has an active named owner. Closure preserves unresolved external outcomes as retained obligations; it does not verify provider revocation.</p>
+<p id="ed-status" role="status" aria-live="polite">Loading departure controls.</p><button type="button" class="btn" id="ed-refresh">Refresh saved cases</button></section>
+<section class="panel" id="ed-new" hidden><h2>Review an employee</h2><form id="ed-preview" data-draft-recovery="off"><label>Employee <select class="select" id="ed-person" required></select></label><button class="btn" type="submit">Preview access and work</button></form>
+<div id="ed-inventory"></div><form id="ed-begin" hidden data-draft-recovery="off"><label>Retained-data and handoff owner <select class="select" id="ed-custodian" required></select></label><p><label><input id="ed-preserve" type="checkbox" required> Retain all existing data and preservation holds. I understand this does not transfer private content access or revoke external provider consent.</label></p><button class="btn btn--danger" type="submit">Deactivate and begin handoff</button></form></section>
+<section class="panel"><h2>Saved cases and outstanding handoffs</h2><div id="ed-cases"></div></section>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  const byId = id => document.getElementById(id); let model, reviewed, busy = false;
+  function say(text) { window.mvStatus(byId('ed-status'), text); }
+  function node(tag, text) { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; }
+  async function call(path, body) { return window.mvFetchJSON('/api/v1/employee-departures' + path, {method: body ? 'POST' : 'GET', body, plainDetail: true}, body ? 'save the departure step' : 'load the departure'); }
+  function choose(select, rows) { select.replaceChildren(new Option('Choose a person', '')); rows.forEach(p => select.appendChild(new Option(p.label, p.principal))); }
+  function inventory(parent, data) { parent.replaceChildren(); parent.appendChild(node('p', data.coverage)); const list = node('ul'); data.items.forEach(item => list.appendChild(node('li', (item.tenant || 'Main workspace') + ': ' + item.kind.replaceAll('_', ' ') + ' ' + item.id + ' — ' + item.status))); parent.appendChild(list); if (data.truncated) parent.appendChild(node('p', 'The preview is incomplete. Deactivation is blocked until the full inventory can be reviewed.')); }
+  async function load() {
+    reviewed = null; byId('ed-begin').hidden = true; byId('ed-inventory').replaceChildren();
+    model = await call(''); byId('ed-new').hidden = !model.enabled;
+    choose(byId('ed-person'), model.people.filter(p => !p.admin && !p.departed)); choose(byId('ed-custodian'), model.people.filter(p => p.admin && p.active));
+    say(model.enabled ? 'Current cases loaded. Dispatching steps without a later confirmation have an unknown outcome; do not repeat them blindly.' : 'Departure actions are off. Existing cases remain readable. An installation administrator can enable actions in Settings.');
+    const cases = byId('ed-cases'); cases.replaceChildren(); if (!model.cases.length) cases.appendChild(node('p', 'No departure cases yet. Start one above when someone leaves, to hand over their work.'));
+    model.cases.forEach(row => {
+      const article = node('article'); article.className = 'panel'; article.appendChild(node('h3', row.person + ' — ' + row.status.replaceAll('_', ' ')));
+      article.appendChild(node('p', row.closure ? row.closure.notice : 'Review current inventory, assign every item and external obligation to an active administrator, then review closure. Unknown provider outcomes remain explicitly retained obligations.'));
+      const details = node('details'); details.appendChild(node('summary', 'Reviewed work and access')); const inv = node('div'); inventory(inv, row.inventory); details.appendChild(inv); article.appendChild(details);
+      const steps = node('ul'); (row.steps || []).forEach(step => steps.appendChild(node('li', step.kind.replaceAll('_', ' ') + ' ' + (step.id || '') + ': ' + step.status + (step.provider_revocation ? '; provider revocation ' + step.provider_revocation : '')))); article.appendChild(steps);
+      const handoffs = node('ul'); Object.values(row.handoffs || {}).forEach(h => handoffs.appendChild(node('li', h.disposition.replaceAll('_', ' ') + '; owner ' + h.owner + '; reported evidence: ' + h.evidence + '. Human attestation; not automatically verified.'))); article.appendChild(handoffs);
+      if (row.audit_pending) { article.appendChild(node('p', 'Activity recording is pending; no new action may rely on this receipt.')); if (model.enabled) { const retry = node('button', 'Retry activity recording'); retry.className = 'btn'; retry.type = 'button'; retry.onclick = () => act(() => call('/' + encodeURIComponent(row.id) + '/retry-audit', {expected_revision: row.revision})); article.appendChild(retry); } }
+      if (model.enabled) {
+        const rescan = node('button', 'Refresh case inventory'); rescan.type = 'button'; rescan.className = 'btn'; rescan.onclick = () => act(() => call('/' + encodeURIComponent(row.id) + '/refresh-inventory', {expected_revision: row.revision})); article.appendChild(rescan);
+        const reviewClosure = node('button', 'Review closure'); reviewClosure.type = 'button'; reviewClosure.className = 'btn'; article.appendChild(reviewClosure); const closeArea = node('div'); article.appendChild(closeArea);
+        reviewClosure.onclick = async () => { if (busy) return; busy = true; closeArea.replaceChildren(); try { const review = await call('/' + encodeURIComponent(row.id) + '/closure-preview', {expected_revision: row.revision}); closeArea.appendChild(node('p', review.notice)); review.blockers.forEach(text => closeArea.appendChild(node('p', text))); if (review.can_close) { const confirmLabel = node('label'), confirm = document.createElement('input'); confirm.type = 'checkbox'; confirmLabel.append(confirm, document.createTextNode(' I reviewed every handoff and accept that all unverified or external outcomes remain with the named owners, with data and holds retained.')); closeArea.appendChild(confirmLabel); const close = node('button', 'Close with retained obligations'); close.type = 'button'; close.className = 'btn'; close.disabled = true; confirm.onchange = () => { close.disabled = !confirm.checked; }; close.onclick = () => { if (confirm.checked) act(() => call('/' + encodeURIComponent(row.id) + '/close', {expected_revision: row.revision, snapshot: review.snapshot, confirm_retained_obligations: true})); }; closeArea.appendChild(close); } } catch (error) { say(error.message); } finally { busy = false; } };
+        const form = node('form'); form.dataset.draftRecovery = 'off';
+        const itemLabel = node('label', 'Handoff item '), item = node('select'); item.className = 'select'; item.appendChild(new Option('External identities, providers and other module queues', 'external')); row.inventory.items.forEach(i => item.appendChild(new Option((i.tenant || 'Main') + ': ' + i.kind + ' ' + i.id, i.key))); itemLabel.appendChild(item); form.appendChild(itemLabel);
+        const ownerLabel = node('label', 'Responsible administrator '), owner = node('select'); owner.className = 'select'; owner.required = true; choose(owner, model.people.filter(p => p.active && p.admin)); ownerLabel.appendChild(owner); form.appendChild(ownerLabel);
+        const dispositionLabel = node('label', 'Reported disposition '), disposition = node('select'); disposition.className = 'select'; [['retained','Retained with named owner'],['transfer_reported','Transfer reported'],['revocation_reported','Revocation reported']].forEach(x => disposition.appendChild(new Option(x[1],x[0]))); dispositionLabel.appendChild(disposition); form.appendChild(dispositionLabel);
+        const evidenceLabel = node('label', 'Evidence or handoff reference (no employee content or secrets) '), evidence = node('textarea'); evidence.required = true; evidence.minLength = 10; evidence.maxLength = 1000; evidenceLabel.appendChild(evidence); form.appendChild(evidenceLabel);
+        const save = node('button', 'Record responsibility and evidence'); save.type = 'submit'; save.className = 'btn'; form.appendChild(save); form.onsubmit = event => { event.preventDefault(); act(() => call('/' + encodeURIComponent(row.id) + '/handoff', {expected_revision: row.revision, item_key: item.value, owner: owner.value, disposition: disposition.value, evidence: evidence.value})); }; article.appendChild(form);
+      }
+      cases.appendChild(article);
+    });
+  }
+  async function act(operation) { if (busy) return; busy = true; try { await operation(); await load(); } catch (error) { say(error.message + ' Refresh saved cases to inspect any confirmed or interrupted progress.'); } finally { busy = false; } }
+  byId('ed-person').onchange = () => { reviewed = null; byId('ed-begin').hidden = true; byId('ed-inventory').replaceChildren(); };
+  byId('ed-preview').onsubmit = async event => { event.preventDefault(); if (busy) return; busy = true; try { reviewed = await call('/preview', {principal: byId('ed-person').value}); inventory(byId('ed-inventory'), reviewed); byId('ed-begin').hidden = reviewed.truncated; byId('ed-preserve').checked = false; } catch (error) { reviewed = null; byId('ed-begin').hidden = true; say(error.message); } finally { busy = false; } };
+  byId('ed-begin').onsubmit = event => { event.preventDefault(); if (!reviewed || !byId('ed-preserve').checked) return; act(async () => { await call('', {principal: reviewed.principal, snapshot: reviewed.snapshot, custodian: byId('ed-custodian').value, confirm_preservation: true}); reviewed = null; byId('ed-begin').hidden = true; }); };
+  byId('ed-refresh').onclick = () => load().catch(error => say(error.message));
+  // The shell's shared helpers (lightwork-ui.js) load after the page content.
+  const start = () => load().catch(error => say(error.message));
+  if (window.mvFetchJSON) start(); else document.addEventListener('DOMContentLoaded', start);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Page speed · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero %}
+  {% from "_empty_state.html" import empty_state %}
+  {% set speed_actions %}{% if not enabled and can_open_page('/settings/all') %}<a class="btn btn--primary" href="/settings/all?id=analytics.web_vitals">Turn on page speed measurement</a>{% endif %}{% endset %}
+  {% call hero('Settings', 'Page speed',
+               subtitle='How fast pages load and respond for the people using Lightwork',
+               lede='Measured in a sample of real visits over the last ' ~ report.window_days ~ ' days, separately on phones and computers. Only counts per page are kept: no names, addresses or browsing history, and nothing is sent anywhere.',
+               actions=speed_actions) %}{% endcall %}
+
+  {% if not enabled %}
+  <div class="panel" role="status">
+    <strong>Page speed measurement is turned off.</strong> No visits are measured. Results already collected are still shown below.
+    {% if can_open_page('/settings/all') %}<a href="/settings/all?id=analytics.web_vitals">Change this setting</a>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2 id="speed-results">Each page at the 75th percentile</h2></div>
+  <div class="panel">
+    <p class="muted">Three in four visits were at least this fast. A page is good when it shows its main content within {{ (report.thresholds.lcp / 1000) | round(1) }} seconds and responds to a click or key press within {{ report.thresholds.inp | int }} milliseconds. Its layout must also move less than {{ report.thresholds.cls }} (the web.dev Core Web Vitals). A page needs at least {{ report.minimum }} measured visits before it is judged. About {{ (report.sample_rate * 100) | int }}% of visits are measured.</p>
+    {% if not report.rows %}
+      {{ empty_state('No visits measured yet', 'When page speed measurement is on, a sample of visits is measured and each page appears here.', compact=true) }}
+    {% else %}
+    <table class="table--stacked">
+      <thead><tr><th scope="col">Page</th><th scope="col">Device</th><th scope="col">Visits</th><th scope="col">Shows content</th><th scope="col">Responds</th><th scope="col">Layout moves</th><th scope="col">Result</th></tr></thead>
+      <tbody>
+      {% for row in report.rows %}
+        <tr>
+          <td data-label="Page"><code>{{ row.route }}</code></td>
+          <td data-label="Device">{{ 'Phone' if row.device == 'phone' else 'Computer' }}</td>
+          <td data-label="Visits">{{ [row.lcp.n, row.inp.n, row.cls.n] | max }}</td>
+          <td data-label="Shows content">{% if row.lcp.p75 is defined %}{{ '%.1f' | format(row.lcp.p75 / 1000) }}{{ '+' if row.lcp.above }} s{% else %}<span class="muted">Not enough visits</span>{% endif %}</td>
+          <td data-label="Responds">{% if row.inp.p75 is defined %}{{ row.inp.p75 | int }}{{ '+' if row.inp.above }} ms{% else %}<span class="muted">Not enough visits</span>{% endif %}</td>
+          <td data-label="Layout moves">{% if row.cls.p75 is defined %}{{ '%.2f' | format(row.cls.p75) }}{{ '+' if row.cls.above }}{% else %}<span class="muted">Not enough visits</span>{% endif %}</td>
+          <td data-label="Result">{% if row.passes is sameas true %}<span class="badge ok">Good</span>{% elif row.passes is sameas false %}<span class="badge blocked">Needs work</span>{% else %}<span class="muted">Not enough visits yet</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+{% endblock %}

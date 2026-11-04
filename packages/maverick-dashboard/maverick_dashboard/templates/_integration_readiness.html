@@ -1,0 +1,71 @@
+{# One plain status for a provider, channel or tool-server connection, with
+   the individual checks kept inside a collapsed "Technical details".
+   `r` is the readiness contract from integration_readiness.contract(). #}
+{% macro provider_status(p) %}
+  {# One plain status for an AI service from provider_readiness.workspace_readiness():
+     "Connected" only after a passing test; "Key saved, not tested yet";
+     "Connection failed: <plain reason>". `p` is a provider row. #}
+  {% set cls = {'connected': 'active', 'failed': 'blocked', 'blocked': 'blocked', 'untested': 'warn'}.get(p.status, '') %}
+  <div class="integration-readiness" style="display: grid; gap: var(--space-1); min-width: min(100%, 15rem); font-size: var(--text-sm);">
+    <div><span class="muted">Status:</span> <span class="badge {{ cls }}">{{ p.status_label }}</span></div>
+    <p class="muted integration-readiness__copy" style="margin: 0;">{{ p.reason }}{% if p.last_test.tested_at %} Last tested {{ p.last_test.tested_at | datetime }}.{% endif %}</p>
+    {% if p.used_by_roles %}<p class="muted integration-readiness__copy" style="margin: 0;">Used by your models for: {{ p.used_by_roles | join(', ') | replace('_', ' ') }}.</p>{% endif %}
+    <details>
+      <summary>Technical details</summary>
+      <ul class="muted integration-readiness__steps" style="margin: var(--space-1) 0; padding-left: var(--space-4);">
+        <li>Set up: {{ 'Yes' if p.configured else 'No' }}</li>
+        <li>Connection test: {{ {'passed': 'Passed', 'failed': 'Failed', 'never': 'Not run yet'}[p.last_test.status] }}</li>
+      </ul>
+      <p class="muted integration-readiness__copy" style="margin: 0;">{{ p.last_test.detail or p.readiness.live.detail }}</p>
+    </details>
+  </div>
+{% endmacro %}
+
+{% macro integration_readiness(r) %}
+  {% set step_words = {'passed': 'Passed', 'failed': 'Failed', 'unknown': 'Not checked yet', 'not_applicable': 'Not needed', 'verified': 'Passed'} %}
+  {% if r.policy_allowed is sameas false %}
+    {% set overall, cls, sentence = 'Blocked', 'blocked', "Your organization's rules don't allow this connection." %}
+  {% elif not r.configured %}
+    {% set overall, cls, sentence = 'Not set up', '', 'Add the details to set up this connection.' %}
+  {% elif r.dependency.status == 'failed' %}
+    {% if r.dependency.evidence.kind == 'channel_adapter' %}
+      {% set overall, cls, sentence = 'Needs attention', 'blocked', r.dependency.detail %}
+    {% else %}
+      {% set overall, cls, sentence = 'Needs attention', 'blocked', 'Something this connection needs is missing on the computer running Lightwork. Share the technical details with whoever installed it.' %}
+    {% endif %}
+  {% elif r.runtime.status == 'failed' %}
+    {% set overall, cls, sentence = 'Needs attention', 'blocked', 'Some details are missing or wrong. Check them and save again.' %}
+  {% elif r.live.status == 'failed' %}
+    {% set overall, cls, sentence = 'Test failed', 'blocked', 'The last test did not work. Check the details and test again.' %}
+  {% elif r.live.status == 'verified' %}
+    {% set overall, cls, sentence = 'Working', 'active', 'The last test worked.' %}
+  {% else %}
+    {% set overall, cls, sentence = 'Not tested yet', 'warn', 'Saved, but not tested yet. Test it to make sure it works.' %}
+  {% endif %}
+  <div class="integration-readiness" style="display: grid; gap: var(--space-1); min-width: min(100%, 15rem); font-size: var(--text-sm);">
+    <div><span class="muted">Status:</span> <span class="badge {{ cls }}">{{ overall }}</span></div>
+    <p class="muted integration-readiness__copy" style="margin: 0;">{{ sentence }}</p>
+    {% if r.dependency.status == 'failed' and r.dependency.evidence.kind == 'channel_adapter' %}
+    <p class="muted integration-readiness__copy" style="margin: 0;">This local check does not prove messages can be delivered. <a href="/settings?focus=ops-services-title">Manage the chat service</a> after the installation is repaired, then send a test message.</p>
+    {% endif %}
+    <details>
+      <summary>Technical details</summary>
+      <ul class="muted integration-readiness__steps" style="margin: var(--space-1) 0; padding-left: var(--space-4);">
+        <li>Set up: {{ 'Yes' if r.configured else 'No' }}</li>
+        <li>Organization rules: {% if r.policy_allowed is sameas true %}Allowed{% elif r.policy_allowed is sameas false %}Not allowed{% else %}Not checked yet{% endif %}</li>
+        <li>Required software: {{ step_words.get(r.dependency.status, 'Not checked yet') }}</li>
+        <li>Local check: {{ step_words.get(r.runtime.status, 'Not checked yet') }}</li>
+        <li>Connection test: {{ step_words.get(r.live.status, 'Not checked yet') }}</li>
+      </ul>
+      <p class="muted integration-readiness__copy" style="margin: 0;">
+      {% if r.policy_allowed is sameas false %}{{ r.policy_detail }}
+      {% elif r.runtime.status == 'failed' %}{{ r.runtime.detail }}
+      {% elif r.dependency.status == 'failed' %}{{ r.dependency.detail }}
+      {% else %}{{ r.live.detail }}{% endif %}
+      </p>
+      {% if r.dependency.evidence.kind == 'channel_adapter' and r.dependency.evidence.missing_modules %}
+      <p class="muted integration-readiness__copy" style="margin: 0;">Missing component names for your installer: {{ r.dependency.evidence.missing_modules | join(', ') }}.</p>
+      {% endif %}
+    </details>
+  </div>
+{% endmacro %}

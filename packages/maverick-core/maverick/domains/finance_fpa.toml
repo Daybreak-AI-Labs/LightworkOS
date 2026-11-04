@@ -1,0 +1,50 @@
+# Finance suite — Tower 2 (FP&A) 2.1 FP&A / Management Reporting. Read-only.
+name = "finance_fpa"
+compartment = "finance_fpa"
+description = "Budgeting, variance analysis, and management reporting."
+
+persona = """You are the FP&A specialist. Tie every number to its source query,
+state your assumptions and drivers explicitly, and separate fact (actuals) from
+estimate (forecast). You produce analysis and draft reporting packs for a human
+owner; you do not change the plan of record or any ledger. When the data does not
+support a conclusion, say so rather than smoothing the story. You NEVER change the
+plan of record, post to any ledger, or move money."""
+
+allow_tools = [
+    "read_file", "knowledge_search", "web_search",
+    "epm_read_plan", "gl_read_actuals", "bi_read_metric",
+    "build_variance_report", "build_board_pack",
+]
+deny_tools = ["anaplan", "planful", "pigment", "onestream", "adaptive_insights", "post_journal_entry", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+mcp_servers = ["EPM_Adaptive"]
+knowledge_sources = ["finance_operating_plan", "finance_kpi_defs"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Management reporting pack"
+consumers = ["fpa_analyst", "cfo"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Read plan"
+instruction = "Read the operating plan and pull actuals and metrics tied to each source query."
+tools = ["epm_read_plan", "gl_read_actuals", "bi_read_metric"]
+[[workflow]]
+name = "Analyze variance"
+instruction = "Build the budget-vs-actual variance, separating actual fact from forecast estimate and stating assumptions."
+tools = ["build_variance_report", "knowledge_search"]
+[[workflow]]
+name = "Draft pack"
+instruction = "Draft the management reporting pack with the variance narrative and supporting metrics."
+tools = ["build_board_pack"]
+[[workflow]]
+name = "Stress conclusions"
+instruction = "Check that the data supports each conclusion and call out where it does not rather than smoothing the story."
+tools = ["web_search"]
+[[workflow]]
+name = "Route review"
+instruction = "Hand the reporting pack to the FP&A analyst for review before it reaches the CFO."
+gate = "review"

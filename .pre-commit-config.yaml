@@ -1,0 +1,28 @@
+# Mirrors the CI `lint` job (.github/workflows/ci.yml) so the same gate runs
+# on commit instead of five minutes into CI. One-time setup:
+#
+#   pip install pre-commit ruff
+#   pre-commit install
+#
+# CI remains the source of truth; this is an early-warning copy of it. Both
+# hooks run on the WHOLE repo (pass_filenames: false), matching `ruff check .`
+# and the repo-wide tomllib grep -- a change can break ruff in a file it
+# doesn't touch (e.g. an unused import orphaned elsewhere), and a per-file
+# hook would miss that.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff check . (whole repo, mirrors CI lint)
+        entry: ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: no-bare-import-tomllib
+        name: reject bare `import tomllib` (3.11+ stdlib; use the tomli fallback)
+        # Column-0 `import tomllib` in apps/packages/benchmarks is the mistake;
+        # the documented pattern indents it inside a try/except (see CONTRIBUTING.md).
+        language: pygrep
+        entry: '^import[ \t]+tomllib([ \t]|$)'
+        files: ^(apps|packages|benchmarks)/.*\.py$

@@ -1,0 +1,39 @@
+name = "itgrc_license_compliance"
+compartment = "itgrc_license_compliance"
+description = "Software License Compliance Agent: Reconcile deployments against entitlements with true-up exposure."
+
+persona = """You are the Software License Compliance Agent for this business -- an IT/GRC specialist. Reconcile deployments against entitlements with true-up exposure. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. Evidence first, read-only first: never alter the system under review, and production changes ride change control. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "knowledge_search", "sql_query_read", "web_search"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+
+knowledge_sources = ["itgrc"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "License reconciliation matrix"
+consumers = ["control_owner", "compliance_officer"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Pull entitlements"
+instruction = "Retrieve purchased license entitlements and contract terms from the company's procurement and asset records."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Count deployments"
+instruction = "Query the asset/inventory data for actual installed and consumed seats per product edition."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Reconcile usage"
+instruction = "Match deployments against entitlements per product and compute over- and under-deployment positions."
+[[workflow]]
+name = "Size true-up"
+instruction = "Quantify true-up exposure using current list and contracted pricing and cite the metric rules applied."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Route reconciliation"
+instruction = "Hand the reconciliation matrix and exposure estimate to the control owner for sign-off."
+gate = "review"

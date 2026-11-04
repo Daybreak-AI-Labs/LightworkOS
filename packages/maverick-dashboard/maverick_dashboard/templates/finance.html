@@ -1,0 +1,510 @@
+{% extends "base.html" %}
+{% block title %}Financial risk · Lightwork{% endblock %}
+{% block content %}
+  <style>
+    .fin-links { display:flex; gap:var(--space-2); flex-wrap:wrap; margin:var(--space-3) 0 var(--space-5); }
+    .fin-scroll { overflow-x:auto; }
+    .fin-caveat { border-inline-start:3px solid var(--warn); padding-inline-start:var(--space-3); }
+    .fin-note { font-size: var(--text-sm); }
+    .fin-flush { margin-top: 0; }
+    .fin-form { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: flex-end; margin-bottom: var(--space-3); }
+    .fin-field { display: flex; flex-direction: column; gap: var(--space-1); }
+    .fin-grow { flex: 1 1 12rem; }
+    /* The static stat tiles live in the shared worklist chassis
+       (_workspace_worklist.html, also used by /security); on this page the
+       live board below the hero carries those numbers, so hide the tiles. */
+  </style>
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Governed workspaces', 'Financial risk',
+               subtitle='Program of record',
+               lede='The finance team\'s workspace: every control and risk
+                     assessment Lightwork has run (financial reporting controls
+                     under SOX, fraud risk, IT controls, credit risk and close
+                     readiness) with risk ratings, age and open follow-ups.
+                     <a href="/finance/board">Open the finance overview</a>' | safe) %}
+    {{ state('Current state',
+             stats.total ~ ' assessment' ~ ('' if stats.total == 1 else 's') ~ ' on record',
+             badge=(stats.pending ~ ' to review') if stats.pending else 'clear',
+             badge_class='warn' if stats.pending else 'ok',
+             copy='High risk after controls: ' ~ stats.high_residual ~ ' · due for
+                   another review: ' ~ stats.review_due ~ ' · waiting for answers: '
+                   ~ stats.needs_more) }}
+  {% endcall %}
+
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Assessments over time</h2>
+      <p class="viz-sub">Assessments started and decided, month by month over the
+        last year.</p>
+      <div id="bd-flow"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Risk after controls</h2>
+      <p class="viz-sub">Every assessment on record, by its risk after controls.</p>
+      <div id="bd-risk"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide">
+      <h2>By assessment type</h2>
+      <p class="viz-sub">Approved compared with the total, for each type.</p>
+      <div id="bd-types"></div>
+    </div>
+  </div>
+
+  <div class="section-head"><h2>Licences and renewals</h2></div>
+  <div class="panel">
+    <p class="muted fin-note">Track each licence and when it renews. After you renew with the
+      regulator, press Record renewal and note the receipt or confirmation number.</p>
+    <form id="lic-form" class="fin-form">
+      <label class="fin-field fin-grow"><span>Licence type</span>
+        <input class="input" name="name" required maxlength="200" list="lic-types" placeholder="e.g. Money transmitter">
+        <datalist id="lic-types"><option value="Money transmitter"></option><option value="Insurance producer"></option>{% for pack in operations.licensing_packs %}<option value="{{ pack.title }}"></option>{% endfor %}</datalist></label>
+      <label class="fin-field"><span>State or territory</span>
+        <select class="select" name="jurisdiction" required><option value="">Choose…</option><option value="AL">Alabama</option><option value="AK">Alaska</option><option value="AZ">Arizona</option><option value="AR">Arkansas</option><option value="CA">California</option><option value="CO">Colorado</option><option value="CT">Connecticut</option><option value="DE">Delaware</option><option value="DC">District of Columbia</option><option value="FL">Florida</option><option value="GA">Georgia</option><option value="HI">Hawaii</option><option value="ID">Idaho</option><option value="IL">Illinois</option><option value="IN">Indiana</option><option value="IA">Iowa</option><option value="KS">Kansas</option><option value="KY">Kentucky</option><option value="LA">Louisiana</option><option value="ME">Maine</option><option value="MD">Maryland</option><option value="MA">Massachusetts</option><option value="MI">Michigan</option><option value="MN">Minnesota</option><option value="MS">Mississippi</option><option value="MO">Missouri</option><option value="MT">Montana</option><option value="NE">Nebraska</option><option value="NV">Nevada</option><option value="NH">New Hampshire</option><option value="NJ">New Jersey</option><option value="NM">New Mexico</option><option value="NY">New York</option><option value="NC">North Carolina</option><option value="ND">North Dakota</option><option value="OH">Ohio</option><option value="OK">Oklahoma</option><option value="OR">Oregon</option><option value="PA">Pennsylvania</option><option value="RI">Rhode Island</option><option value="SC">South Carolina</option><option value="SD">South Dakota</option><option value="TN">Tennessee</option><option value="TX">Texas</option><option value="UT">Utah</option><option value="VT">Vermont</option><option value="VA">Virginia</option><option value="WA">Washington</option><option value="WV">West Virginia</option><option value="WI">Wisconsin</option><option value="WY">Wyoming</option><option value="PR">Puerto Rico</option><option value="GU">Guam</option><option value="VI">U.S. Virgin Islands</option></select></label>
+      <label class="fin-field fin-grow"><span>Regulator</span>
+        <input class="input" name="authority" required maxlength="200" placeholder="e.g. New York Department of Financial Services"></label>
+      <label class="fin-field"><span>Licence number</span>
+        <input class="input" name="license_number" required maxlength="120"></label>
+      <label class="fin-field"><span>Renews</span>
+        <select class="select" name="days"><option value="182">Every 6 months</option><option value="365" selected>Every year</option><option value="730">Every 2 years</option><option value="1095">Every 3 years</option></select></label>
+      <button class="btn btn--primary" type="submit">Add licence</button>
+      <span class="muted fin-note" id="lic-msg" role="status" aria-live="polite"></span>
+    </form>
+    <div id="lic-table" class="pw-scroll" style="overflow-x:auto;"></div>
+  </div>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var STATUS = { active: 'Active', lapsed: 'Lapsed', due: 'Renewal due', pending: 'Pending' };
+    function load() {
+      var box = document.getElementById('lic-table');
+      fetch('/api/v1/licenses').then(function (r) { if (!r.ok) throw r; return r.json(); }).then(function (d) {
+        box.textContent = '';
+        var rows = d.licenses || [];
+        if (!rows.length) {
+          var p = document.createElement('p');
+          p.className = 'muted';
+          p.textContent = 'No licences yet. Add your first licence above.';
+          box.appendChild(p);
+          return;
+        }
+        var tbl = document.createElement('table');
+        var hd = tbl.createTHead().insertRow();
+        ['Licence', 'State', 'Regulator', 'Number', 'Status', 'Renewal', 'Records', 'Actions'].forEach(function (h) {
+          var th = document.createElement('th');
+          th.scope = 'col'; th.textContent = h; hd.appendChild(th);
+        });
+        var tb = tbl.createTBody();
+        rows.forEach(function (r) {
+          var tr = tb.insertRow();
+          tr.insertCell().textContent = r.name;
+          tr.insertCell().textContent = r.jurisdiction;
+          tr.insertCell().textContent = r.authority;
+          tr.insertCell().textContent = r.license_number;
+          var st = tr.insertCell();
+          var badge = document.createElement('span');
+          badge.className = 'badge ' + (r.status === 'active' ? 'done' : r.status === 'lapsed' ? 'blocked' : 'info');
+          badge.textContent = STATUS[r.status] || (window.mvHuman ? window.mvHuman(r.status) : r.status);
+          st.appendChild(badge);
+          var due = tr.insertCell();
+          var n = Math.abs(r.days_left);
+          due.textContent = r.overdue ? n + ' day' + (n === 1 ? '' : 's') + ' overdue' : r.days_left + ' day' + (r.days_left === 1 ? '' : 's') + ' left';
+          if (r.overdue || r.days_left <= 30) due.style.color = 'var(--danger)';
+          var records = (r.evidence || []).length;
+          tr.insertCell().textContent = records + ' record' + (records === 1 ? '' : 's');
+          var act = tr.insertCell();
+          var btn = document.createElement('button');
+          btn.type = 'button'; btn.className = 'btn';
+          btn.textContent = 'Record renewal';
+          btn.setAttribute('aria-label', 'Record renewal for ' + r.name + ' (' + r.jurisdiction + ')');
+          btn.onclick = async function () {
+            var values = await window.mvForm('Record a renewal', [
+              { key: 'note', label: 'Receipt or confirmation number', type: 'text', required: true,
+                help: 'From the regulator\'s filing receipt or confirmation email.' }
+            ], { okText: 'Record renewal' });
+            if (!values) return;
+            var msg = document.getElementById('lic-msg');
+            try {
+              var res = await fetch('/api/v1/licenses/' + encodeURIComponent(r.id) + '/renew', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ note: values.note })
+              });
+              msg.textContent = res.ok ? 'Renewal recorded.' : window.mvErrorText(res, 'record the renewal');
+              if (res.ok) load();
+            } catch (e) { msg.textContent = window.mvErrorText(e, 'record the renewal'); }
+          };
+          act.appendChild(btn);
+        });
+        box.appendChild(tbl);
+      }).catch(function (e) {
+        box.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'muted';
+        p.textContent = window.mvErrorText(e, 'load the licences') + ' ';
+        var retry = document.createElement('button');
+        retry.type = 'button'; retry.className = 'btn'; retry.textContent = 'Try again';
+        retry.onclick = load;
+        p.appendChild(retry);
+        box.appendChild(p);
+      });
+    }
+    document.getElementById('lic-form').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var f = ev.target;
+      var msg = document.getElementById('lic-msg');
+      fetch('/api/v1/licenses', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: f.name.value, jurisdiction: f.jurisdiction.value,
+          authority: f.authority.value, license_number: f.license_number.value,
+          cadence_days: parseInt(f.days.value, 10) || 365
+        })
+      }).then(function (r) {
+        msg.textContent = r.ok ? 'Licence added.' : (r.status === 422 ? 'Couldn\'t add the licence. Check that every field is filled in.' : window.mvErrorText(r, 'add the licence'));
+        if (r.ok) { f.reset(); load(); }
+      }).catch(function (e) { msg.textContent = window.mvErrorText(e, 'add the licence'); });
+    });
+    load();
+  })();
+  </script>
+
+  {% include "_workspace_worklist.html" %}
+
+  <div class="section-head"><h2 id="tax-title">Tax preparation</h2></div>
+  <section class="panel" id="tax-root" aria-labelledby="tax-title">
+    <p class="muted">Turn a client's tax documents into a first draft of their federal and state return for a qualified
+      preparer to review. Every figure shows which document it came from. Nothing is ever filed.</p>
+    <p class="muted" id="tax-tables-line" role="status" aria-live="polite">Loading tax tables…</p>
+
+    <details class="tax-part" open>
+      <summary><strong>Prepare a first draft</strong></summary>
+      <form id="tax-prepare" class="tax-form">
+        <label class="fa-field fa-grow"><span>Client documents (text copies of W-2s, 1099s and similar)</span>
+          <input class="input" type="file" name="documents" multiple accept=".txt,text/plain" required></label>
+        <div class="fa-row">
+          <label class="fa-field"><span>Filing status</span>
+            <select class="select" name="filing_status">
+              <option value="single">Single</option>
+              <option value="mfj">Married filing jointly</option>
+              <option value="hoh">Head of household</option>
+            </select></label>
+          <label class="fa-field"><span>Children under 17</span>
+            <select class="select" name="dependents">
+              <option value="0">None</option><option value="1">1</option><option value="2">2</option>
+              <option value="3">3</option><option value="4">4</option><option value="5">5</option>
+              <option value="6">6 or more</option>
+            </select></label>
+          <label class="fa-field"><span>Home state</span>
+            <select class="select" name="state" data-tax-states>
+              <option value="">Work it out from the documents</option>
+            </select></label>
+        </div>
+        <div class="fa-row">
+          <label class="fa-field"><span>Estimated tax already paid ($)</span>
+            <input class="input" type="number" name="estimated_payments" min="0" step="0.01" value="0"></label>
+          <label class="fa-field"><span>Last year's refund applied to this year ($)</span>
+            <input class="input" type="number" name="prior_year_overpayment" min="0" step="0.01" value="0"></label>
+        </div>
+        <fieldset class="tax-checks">
+          <legend>Also applies</legend>
+          <label><input type="checkbox" name="taxpayer_65"> Client is 65 or older</label>
+          <label><input type="checkbox" name="taxpayer_blind"> Client is blind</label>
+          <label><input type="checkbox" name="spouse_65"> Spouse is 65 or older</label>
+          <label><input type="checkbox" name="spouse_blind"> Spouse is blind</label>
+        </fieldset>
+        <p class="fa-row"><button type="submit" class="btn btn--primary">Prepare draft</button></p>
+      </form>
+      <p class="muted" id="tax-prepare-status" role="status" aria-live="polite"></p>
+      <div id="tax-prepare-out"></div>
+    </details>
+
+    <details class="tax-part">
+      <summary><strong>Check whether your firm is ready to try it</strong></summary>
+      <form id="tax-readiness" class="tax-form">
+        <div class="fa-row">
+          <label class="fa-field fa-grow"><span>Firm name</span>
+            <input class="input" name="firm" maxlength="200" required></label>
+          <label class="fa-field"><span>Number of clients</span>
+            <input class="input" type="number" name="clients" min="0" step="1" value="0"></label>
+        </div>
+        <fieldset class="tax-checks tax-states">
+          <legend>States you prepare returns for</legend>
+          <div data-tax-state-boxes></div>
+        </fieldset>
+        <fieldset class="tax-checks">
+          <legend>Forms your clients bring</legend>
+          <div data-tax-form-boxes></div>
+          <label class="fa-field fa-grow"><span>Other forms (one per line)</span>
+            <textarea class="textarea" name="other_forms" rows="2"></textarea></label>
+        </fieldset>
+        <fieldset class="tax-checks">
+          <legend>Your own names for documents (optional)</legend>
+          <div data-tax-names></div>
+          <button type="button" class="btn btn--ghost" data-tax-add-name>Add a document name</button>
+        </fieldset>
+        <p class="fa-row"><button type="submit" class="btn btn--primary">Check readiness</button></p>
+      </form>
+      <p class="muted" id="tax-readiness-status" role="status" aria-live="polite"></p>
+      <div id="tax-readiness-out"></div>
+    </details>
+
+    <details class="tax-part">
+      <summary><strong>Test it on returns you already filed</strong></summary>
+      <p class="muted">Choose a .zip file with one folder per client. Each folder holds that client's documents and a
+        filed-figures file with what the firm actually filed. Lightwork prepares each draft and shows how close it came.</p>
+      <label class="fa-field fa-grow"><span>Past returns (.zip)</span>
+        <input class="input" type="file" id="tax-backtest-file" accept=".zip,application/zip"></label>
+      <p class="muted" id="tax-backtest-status" role="status" aria-live="polite"></p>
+      <div id="tax-backtest-out"></div>
+    </details>
+
+    <details class="tax-part" data-fa-needs="installation_admin" hidden>
+      <summary><strong>Tax tables</strong></summary>
+      <p class="muted">Tax rates and limits come from signed updates published when the law changes.</p>
+      <div class="fa-row">
+        <button type="button" class="btn" id="tax-tables-check">Check for newer tables</button>
+        <button type="button" class="btn btn--ghost" id="tax-tables-back" hidden>Go back to the previous tables</button>
+      </div>
+      <label class="fa-field fa-grow"><span>Apply an update file you were sent</span>
+        <input class="input" type="file" id="tax-tables-file" accept=".json,application/json"></label>
+      <details>
+        <summary>Technical details</summary>
+        <label class="fa-field fa-grow"><span>Check a different update address once (it must start with https://)</span>
+          <input class="input" type="url" id="tax-tables-url" maxlength="500" placeholder="https://"></label>
+        <button type="button" class="btn btn--ghost" id="tax-tables-check-url">Check this address</button>
+      </details>
+      <p class="muted" id="tax-tables-status" role="status" aria-live="polite"></p>
+      <div id="tax-tables-out"></div>
+    </details>
+  </section>
+  <style>
+    .tax-part { margin-top: var(--space-3); border-top: 1px solid var(--hairline); padding-top: var(--space-3); }
+    .tax-form { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+    .tax-checks { border: 1px solid var(--hairline); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+    .tax-checks > div { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+    .tax-checks label { display: inline-flex; gap: var(--space-1); align-items: center; }
+    .tax-name-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: flex-end; }
+    .fa-scroll { overflow-x: auto; }
+    .fa-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+    .fa-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .fa-grow { flex: 1 1 18rem; }
+  </style>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+  <script src="/static/lightwork-tax.js" defer></script>
+
+  <div class="section-head"><h2>Automated finance checks</h2></div>
+  {% from "_module_gate.html" import module_gate %}
+  {% if not operations.enabled %}
+  {{ module_gate('finance_operations', 'Finance operations',
+                 detail='Watch for regulation changes, unusual payments and control
+                         tests. The assessment list above works either way.') }}
+  {% else %}
+    {% if operations.degraded %}
+    <section class="panel" role="status">
+      <h3 class="fin-flush">Some finance checks couldn't be loaded</h3>
+      <p>Try again in a few minutes. Nothing was lost.</p>
+    </section>
+    {% endif %}
+
+    <div class="grid" aria-label="Finance operations counts">
+      <div class="stat"><div class="num">{{ operations.regulatory_alerts|length }}</div><div class="label">Regulation changes</div></div>
+      <div class="stat"><div class="num">{{ operations.anomaly_cases|length }}</div><div class="label">Unusual payments</div></div>
+      <div class="stat"><div class="num">{{ operations.aml_cases|length }}</div><div class="label">Anti-money-laundering reviews</div></div>
+      <div class="stat"><div class="num">{{ operations.control_cycles|length }}</div><div class="label">Control tests</div></div>
+    </div>
+    <div class="fin-links">
+      <a class="btn" href="/security">Open Security &amp; compliance evidence</a>
+    </div>
+    <p id="fin-review-msg" class="muted" role="status" aria-live="polite"></p>
+
+    <section class="panel">
+      <h3 class="fin-flush">Regulation changes to review</h3>
+      <p class="muted">Lightwork watches official regulator websites and flags changes that affect you. These checks don't use AI.</p>
+      <div class="fin-scroll"><table aria-label="Regulation changes">
+        <thead><tr><th scope="col">Change</th><th scope="col">Affects</th><th scope="col">Status</th><th scope="col">Source</th><th scope="col">Actions</th></tr></thead>
+        <tbody>
+        {% for row in operations.regulatory_alerts %}
+          <tr>
+            <td>{{ row.title }}</td>
+            <td>{{ (row.matched_regimes + row.matched_domains)|map('humanize')|join(', ') or '—' }}</td>
+            <td><span class="badge {{ row.status }}">{{ row.status|humanize }}</span></td>
+            <td>{% set citation = (row.citations|first) %}
+              {% if citation %}<a href="{{ citation.url }}" rel="noopener noreferrer">Official source</a>
+              {% else %}<span class="muted">No official source link</span>{% endif %}</td>
+            <td><button type="button" class="btn" data-fin-review="alert" data-fin-id="{{ row.alert_id }}" data-fin-revision="{{ row.revision }}"
+                        aria-label="Review {{ row.title }}">Review</button></td>
+          </tr>
+        {% else %}<tr><td colspan="5" class="muted">No regulation changes are waiting for review.</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="panel">
+      <h3 class="fin-flush">State licensing guides</h3>
+      <p class="fin-caveat">These guides point to each regulator's official source. Always confirm
+        details, fees and deadlines with the regulator or your lawyer.</p>
+      <div class="fin-scroll"><table aria-label="State licensing guides">
+        <thead><tr><th scope="col">Licence type</th><th scope="col">Last updated</th><th scope="col">States covered</th></tr></thead>
+        <tbody>{% for pack in operations.licensing_packs %}
+          <tr><td>{{ pack.title }}</td><td>{{ pack.as_of }}</td>
+            <td>{{ pack.jurisdictions }} states ({{ pack.source_check_required }} to confirm with the regulator)</td></tr>
+        {% else %}<tr><td colspan="3" class="muted">No licensing guides are available.</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </section>
+
+    <section class="panel">
+      <h3 class="fin-flush">Unusual payments</h3>
+      <p class="muted">Duplicate payments, unusual number patterns, payments just under approval
+        limits, split payments and out-of-hours postings, each explained for a person to decide.</p>
+      <div class="fin-scroll"><table aria-label="Unusual payments">
+        <thead><tr><th scope="col">What was found</th><th scope="col">Severity</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+        <tbody>{% for row in operations.anomaly_cases %}<tr>
+          <td>{{ (row.rule_id or '')|replace('finance.','')|humanize }}</td>
+          <td><span class="badge {{ 'danger' if row.severity in ('high','critical') else 'warn' }}">{{ row.severity|humanize }}</span></td>
+          <td><span class="badge {{ row.status }}">{{ row.status|humanize }}</span></td>
+          <td><button type="button" class="btn" data-fin-review="anomaly" data-fin-id="{{ row.id }}" data-fin-revision="{{ row.revision }}"
+                      aria-label="Review this {{ (row.rule_id or '')|replace('finance.','')|humanize|lower }} finding">Review</button></td>
+        </tr>{% else %}<tr><td colspan="4" class="muted">No unusual payments are open.</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </section>
+
+    <section class="panel">
+      <h3 class="fin-flush">Anti-money-laundering, customer checks and sanctions</h3>
+      <p class="muted">{{ operations.aml_list_versions }} watch list{{ '' if operations.aml_list_versions == 1 else 's' }} loaded.
+        Names are hidden here. A case is only cleared or escalated when two different reviewers agree.</p>
+      <div class="fin-scroll"><table aria-label="Screening cases">
+        <thead><tr><th scope="col">Case</th><th scope="col">Possible matches</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+        <tbody>{% for row in operations.aml_cases %}<tr>
+          <td>Case {{ loop.index }}</td><td>{{ row.hit_count }}</td>
+          <td><span class="badge {{ row.status }}">{{ row.status|humanize }}</span></td>
+          <td><button type="button" class="btn" data-fin-review="aml" data-fin-id="{{ row.id }}" data-fin-revision="{{ row.revision }}"
+                      aria-label="Review screening case {{ loop.index }}">Review</button></td>
+        </tr>{% else %}<tr><td colspan="4" class="muted">No screening cases are waiting for review.</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </section>
+
+    <section class="panel">
+      <h3 class="fin-flush">Control tests</h3>
+      <p class="muted">Scheduled checks arrive in Security &amp; compliance as tests waiting for a person
+        to review. They never mark themselves as passed or failed.</p>
+      <div class="fin-scroll"><table aria-label="Control tests">
+        <thead><tr><th scope="col">Test</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+        <tbody>{% for row in operations.control_cycles %}<tr>
+          <td>Control test {{ loop.index }}</td><td><span class="badge {{ row.status }}">{{ row.status|humanize }}</span></td>
+          <td>{% if row.engagement_id %}<a class="btn btn--ghost" href="/security">Open in Security &amp; compliance</a>{% else %}<span class="muted">Not sent yet</span>{% endif %}</td>
+        </tr>{% else %}<tr><td colspan="3" class="muted">No scheduled control test has run yet.</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </section>
+  {% endif %}
+
+  {% include "_workspace_memory_catalog.html" %}
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var msg = document.getElementById('fin-review-msg');
+    var FORMS = {
+      alert: { title: 'Review this regulation change', path: '/regulatory/alerts/', action: 'review',
+        fields: [{ key: 'status', label: 'Decision', type: 'select', required: true, default: 'in_review',
+                   options: [{ value: 'in_review', label: 'Looking into it' }, { value: 'accepted', label: 'It affects us' }, { value: 'dismissed', label: 'It does not affect us' }] },
+                 { key: 'note', label: 'Note (optional)', type: 'text' }],
+        body: function (v, rev) { return { status: v.status, note: v.note || '', expected_revision: rev }; } },
+      anomaly: { title: 'Review this payment finding', path: '/anomalies/cases/', action: 'disposition',
+        fields: [{ key: 'outcome', label: 'Decision', type: 'select', required: true, default: 'needs_information',
+                   options: [{ value: 'confirmed', label: 'Confirmed problem' }, { value: 'false_positive', label: 'False alarm' }, { value: 'accepted_risk', label: 'Accept the risk' }, { value: 'needs_information', label: 'Need more information' }, { value: 'escalated', label: 'Escalate' }] },
+                 { key: 'rationale', label: 'Reason', type: 'text', required: true }],
+        body: function (v, rev) { return { outcome: v.outcome, rationale: v.rationale, expected_revision: rev }; } },
+      aml: { title: 'Review this screening case', path: '/aml/cases/', action: 'disposition',
+        fields: [{ key: 'decision', label: 'Decision', type: 'select', required: true, default: 'clear',
+                   options: [{ value: 'clear', label: 'Clear: not a match' }, { value: 'escalate', label: 'Escalate: possible match' }],
+                   help: 'Two different reviewers must agree before the case closes.' },
+                 { key: 'rationale', label: 'Reason', type: 'text', required: true }],
+        body: function (v, rev) { return { decision: v.decision, rationale: v.rationale, expected_revision: rev }; } }
+    };
+    document.querySelectorAll('[data-fin-review]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        var spec = FORMS[button.dataset.finReview];
+        var values = await window.mvForm(spec.title, spec.fields, { okText: 'Save decision' });
+        if (!values) return;
+        button.disabled = true;
+        try {
+          var r = await fetch('/api/v1/finance-operations' + spec.path + encodeURIComponent(button.dataset.finId) + '/' + spec.action, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+            body: JSON.stringify(spec.body(values, Number(button.dataset.finRevision)))
+          });
+          if (!r.ok) { msg.textContent = window.mvErrorText(r, 'save the decision'); button.disabled = false; return; }
+          msg.textContent = 'Decision saved.';
+          window.setTimeout(function () { window.location.reload(); }, 400);
+        } catch (e) { msg.textContent = window.mvErrorText(e, 'save the decision'); button.disabled = false; }
+      });
+    });
+  })();
+  </script>
+
+  <script src="/static/board.js"></script>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var B = window.LWBoard;
+    var EMPTY = 'No assessments yet. Start one from the list below.';
+
+    function render(D) {
+      var k = document.getElementById('bd-kpis');
+      k.textContent = '';
+      k.appendChild(B.kpi({ label: 'Assessments', value: D.kpis.total,
+        sub: 'assessments in this workspace' }));
+      k.appendChild(B.kpi({ label: 'Open', value: D.kpis.open,
+        sub: D.kpis.needs_more + ' waiting for answers' }));
+      k.appendChild(B.kpi({ label: 'Approved', value: D.kpis.approved,
+        sub: D.kpis.rejected + ' rejected' }));
+      k.appendChild(B.kpi({ label: 'Due for another review', value: D.kpis.due_review,
+        sub: D.kpis.due_review ? 'time for a scheduled review' : 'nothing due' }));
+
+      if (D.kpis.total) {
+        B.area(document.getElementById('bd-flow'), {
+          data: D.monthly,
+          x: 'd',
+          series: [{ key: 'opened', label: 'Opened', cls: 'brand' },
+                   { key: 'decided', label: 'Decided', cls: 'ok' }],
+          aria: 'Assessments opened vs decided per month over the last year.',
+          tipHead: function (r) { return r.d; },
+          xTick: function (r, i) { return i % 2 === 0 ? r.d.slice(2) : ''; } });
+        B.donut(document.getElementById('bd-risk'), {
+          segments: [
+            { label: 'High', value: D.risk.high, cls: 'danger' },
+            { label: 'Medium', value: D.risk.medium, cls: 'warn' },
+            { label: 'Low', value: D.risk.low, cls: 'info' },
+            { label: 'Minimal', value: D.risk.minimal, cls: 'ok' },
+            { label: 'Unrated', value: D.risk.unrated, cls: 'idle' }],
+          center: D.kpis.total, centerSub: 'assessments',
+          aria: 'Risk after controls: ' + D.risk.high + ' high, ' + D.risk.medium +
+                ' medium, ' + D.risk.low + ' low, ' + D.risk.minimal +
+                ' minimal, ' + D.risk.unrated + ' unrated.' });
+      } else {
+        B.empty(document.getElementById('bd-flow'), EMPTY);
+        B.empty(document.getElementById('bd-risk'), EMPTY);
+      }
+
+      var tmax = 1;
+      (D.types || []).forEach(function (r) { tmax = Math.max(tmax, r.total); });
+      if ((D.types || []).length) {
+        B.hbars(document.getElementById('bd-types'),
+          D.types.map(function (r) {
+            return { label: r.label, value_text: r.approved + ' of ' + r.total,
+                     pct: r.approved / tmax * 100, pct_bg: r.total / tmax * 100,
+                     title: r.label + ' — ' + r.approved + ' approved of ' + r.total };
+          }), 'Assessments by type: approved compared with the total.');
+      } else {
+        B.empty(document.getElementById('bd-types'), EMPTY);
+      }
+    }
+
+    B.attach({ board: 'finance', render: render });
+  })();
+  </script>
+{% endblock %}

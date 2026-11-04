@@ -1,0 +1,11 @@
+{% extends "public_base.html" %}
+{% block title %}Shared result not available · Lightwork{% endblock %}
+{% block public_label %}Shared result{% endblock %}
+{% block public_footer %}Shared result{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 40rem; margin: 0 auto;" aria-labelledby="share-unavailable-title">
+  <h1 id="share-unavailable-title">This shared result is not available</h1>
+  <p class="muted">The link may have expired, been turned off, or been copied incompletely.
+    Ask the person who shared it to send you a new link.</p>
+</section>
+{% endblock %}

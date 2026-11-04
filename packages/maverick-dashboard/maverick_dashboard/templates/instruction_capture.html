@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Instructions used in real work · Lightwork{% endblock %}
+{% block content %}
+<div class="page-header"><h1>Instructions used in real work</h1><p>Get a recorded instruction set without reconstructing a file yourself.</p></div>
+<section class="panel" id="instruction-capture">
+  <p>Authorize one of your tasks to keep the instructions from its next successful AI call started after your consent. A call already in progress cannot be recorded. These instructions may include your preferences and guidance learned from permitted earlier work. The conversation, answers and action results are not recorded separately. Instructions that contain detectable secrets, exceed the size limit or lack current source permission are withheld.</p>
+  <p>This does not start work or make an extra paid AI call. A capture expires after 24 hours if no eligible call completes. Only your signed-in account can review or withdraw your records.</p>
+  <p id="instruction-capture-status" role="status" aria-live="polite">Checking current records…</p>
+  <p id="instruction-capture-setting"></p><button class="btn" id="instruction-capture-setup" type="button">Change recording setting</button>
+  <form id="instruction-capture-request">
+    <label>Your task<select class="input" name="task" required><option value="">Choose a task</option></select></label>
+    <button type="submit" class="btn btn--primary">Capture the next instruction set</button>
+  </form>
+  <hr>
+  <label>Saved instruction record<select class="input" id="instruction-capture-choice"><option value="">Choose a saved record</option></select></label>
+  <div class="toolbar"><button class="btn" id="instruction-capture-read" type="button">Review exact instructions</button><button class="btn btn--ghost" id="instruction-capture-refresh" type="button">Refresh records</button></div>
+  <div id="instruction-capture-review" hidden>
+    <h2 id="instruction-capture-title"></h2><p id="instruction-capture-origin"></p><p id="instruction-capture-limit"></p>
+    <textarea class="input" id="instruction-capture-text" rows="14" readonly aria-label="Recorded standing instructions"></textarea>
+    <div class="toolbar"><a class="btn" id="instruction-capture-download" hidden>Download instruction file</a><button class="btn" id="instruction-capture-finish" type="button" hidden>Finish capture request</button><button class="btn btn--ghost" id="instruction-capture-withdraw" type="button">Withdraw this capture</button></div>
+    <p>This record shows an earlier call. Review whether these instructions still apply before using the file in a learning pass. The file does not prove accurate answers, improved results or that the instructions are still in use.</p>
+  </div>
+  <p><a class="btn btn--ghost" href="/learned">Open learning passes and decisions</a></p>
+</section>
+<style>
+#instruction-capture{max-width:58rem;min-width:0}#instruction-capture form{display:grid;gap:var(--space-3)}#instruction-capture select,#instruction-capture textarea{width:100%;min-width:0;max-width:100%}#instruction-capture .toolbar{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-block:var(--space-3)}#instruction-capture-review textarea{white-space:pre-wrap;overflow-wrap:anywhere}#instruction-capture h2,#instruction-capture p{overflow-wrap:anywhere}
+</style>
+<script src="/static/lightwork-instruction-capture.js" defer></script>
+{% endblock %}

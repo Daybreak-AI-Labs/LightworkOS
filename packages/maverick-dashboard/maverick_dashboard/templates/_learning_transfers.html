@@ -1,0 +1,20 @@
+<section id="learning-transfers" class="glass-card stack" aria-labelledby="lt-title">
+  <h3 id="lt-title">Test lessons on another model</h3>
+  <p class="muted">Choose one receiving model and supply its current standing instructions. Review every included lesson and question before starting. Lessons that pass the existing learning approval checks start on trial; test results do not establish performance on customer work.</p>
+  <label for="lt-source">Lessons from</label><select id="lt-source" class="select"><option value="">Choose a model</option></select>
+  <label for="lt-target">Receiving model</label><select id="lt-target" class="select"><option value="">Choose a different model</option></select>
+  <label for="lt-instructions">Receiving model's current standing instructions</label>
+  <textarea id="lt-instructions" class="textarea" rows="5" maxlength="1048576" aria-describedby="lt-instructions-help"></textarea>
+  <p id="lt-instructions-help" class="muted">Enter a reviewed copy or choose a plain text file up to 1 MB. This supplied copy is not independent proof of what the model currently uses.</p>
+  <label for="lt-file">Choose an instructions copy</label><input id="lt-file" type="file" class="input" accept=".txt,.md,text/plain">
+  <label><input id="lt-retry" type="checkbox"> Also test lessons already judged on this receiving model; this can spend money again</label>
+  <div class="lrn__actions"><button id="lt-refresh" type="button" class="btn btn--ghost">Refresh current choices</button><button id="lt-review" type="button" class="btn btn--primary">Review complete lesson test</button></div>
+  <p id="lt-status" class="muted" role="status" aria-live="polite">Checking current learning choices…</p>
+  <div id="lt-preview" class="stack"></div>
+  <label for="lt-choice">Your recent original lesson tests</label><select id="lt-choice" class="select"><option value="">Choose an original test</option></select>
+  <button id="lt-original" type="button" class="btn btn--ghost" hidden>Check original lesson test</button>
+  <div id="lt-result" class="stack" aria-live="polite"></div>
+  <p class="muted">The selector shows your newest 20 retained tests. Interrupted replies are checked through the original request, also kept in this browser when submitted. No AI test is automatically repeated. <a href="/learned#learning-job-history">Current progress and stop controls</a> remain separate; detailed observations are kept among the 40 most recent learning tasks.</p>
+</section>
+<style>#learning-transfers{overflow-wrap:anywhere;gap:var(--space-3)}#learning-transfers .input,#learning-transfers .select,#learning-transfers .textarea{width:100%;max-width:100%;min-width:0}#learning-transfers button{max-width:100%;white-space:normal}#lt-preview p,#lt-result p{white-space:pre-wrap}</style>
+<script src="/static/lightwork-learning-transfers.js" defer></script>

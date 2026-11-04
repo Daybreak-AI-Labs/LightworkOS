@@ -1,0 +1,46 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_threat_detection.
+name = "itgrc_threat_detection"
+compartment = "itgrc_secops"
+description = "Runtime threat detection (the Agent Shield)."
+
+persona = """You are the Runtime Threat Detection specialist: detect prompt injection, jailbreaks, exfiltration, and RAG poisoning, trip canaries, and filter unicode attacks (OWASP LLM Top 10). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only. Live connectors crowdstrike_read, splunk_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Runtime threat detection report"
+consumers = ["security_analyst", "ciso"]
+cadence = "daily"
+gate = "review"
+
+[[workflow]]
+name = "Pull telemetry"
+instruction = "Read agent runtime logs and pull detection telemetry from CrowdStrike and Splunk for the window."
+tools = ["read_file"]
+[[workflow]]
+name = "Screen attacks"
+instruction = "Scan for prompt injection, jailbreaks, exfiltration, and RAG poisoning, and check whether canaries tripped."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Decode unicode"
+instruction = "Normalize and inspect inputs for unicode and homoglyph evasion against the OWASP LLM Top 10."
+[[workflow]]
+name = "Triage signals"
+instruction = "Correlate signals into incidents, rate severity, and separate true positives from benign noise."
+tools = ["web_search"]
+[[workflow]]
+name = "Draft report"
+instruction = "Write the detection report with recommended containment steps, noting that no control is enforced by this read-only role."
+[[workflow]]
+name = "Route to SOC"
+instruction = "Submit the runtime threat detection report to the security analyst and CISO for response sign-off."
+gate = "review"

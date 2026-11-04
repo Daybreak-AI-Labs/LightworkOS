@@ -1,0 +1,31 @@
+<section class="panel cs-stack" id="cs-questionnaire-design" hidden aria-labelledby="cqb-title">
+  <h2 id="cqb-title">Design your questionnaire</h2>
+  <p class="muted">Use your team’s approved question names and scope rules. Cover all eight topics. A different administrator must review each saved version before it can be used. Lightwork does not supply licensed framework text or verify that these rules satisfy a framework.</p>
+  <label>Starting point<select class="select" id="cqb-source"><option value="">New questionnaire</option></select></label>
+  <p id="cqb-notice" class="muted"></p>
+  <section class="panel cs-stack" aria-labelledby="cqb-studio-title">
+    <h3 id="cqb-studio-title">Start from a live studio form</h3>
+    <p class="muted">Bring supported questions from Compliance studio into this new version. Keep their answer formats and choices, assign all eight topics, and add your team’s scope rules. The questionnaire will need a different administrator’s approval before use.</p>
+    <button type="button" class="btn btn--ghost" id="cqb-studio-load">Find live forms</button>
+    <label>Live form<select class="select" id="cqb-studio-source"><option value="">Choose a form</option></select></label>
+    <button type="button" class="btn btn--ghost" id="cqb-studio-preview">Preview form</button>
+    <div id="cqb-studio-preview-body" aria-live="polite"></div>
+    <button type="button" class="btn" id="cqb-studio-import" hidden>Import these questions</button>
+    <p id="cqb-studio-linked" class="muted" role="status"></p>
+  </section>
+  <section id="cqb-latest" hidden aria-labelledby="cqb-latest-title"><h3 id="cqb-latest-title">Current starting version</h3><div id="cqb-latest-preview"></div></section>
+  <button type="button" class="btn btn--ghost" id="cqb-update-source" hidden>Review current starting version and keep my draft</button>
+  <div id="cqb-draft"></div>
+  <div id="cqb-work"></div>
+  <section id="cqb-review" hidden aria-labelledby="cqb-review-title"><h3 id="cqb-review-title">Review the whole new version</h3><div id="cqb-preview"></div>
+    <label class="cs-confirm"><input type="checkbox" id="cqb-confirm"><span>I reviewed every question, choice and scope rule. Save this exact version for independent approval.</span></label>
+    <button type="button" class="btn btn--primary" id="cqb-apply">Save for approval</button>
+    <button type="button" class="btn btn--ghost" id="cqb-edit">Keep editing</button>
+  </section>
+  <p id="cqb-status" class="muted" role="status" aria-live="polite"></p>
+  <div class="actions" style="display:flex;flex-wrap:wrap;gap:var(--space-2)">
+    <button type="button" class="btn btn--primary" id="cqb-prepare">Review new version</button>
+    <button type="button" class="btn btn--ghost" id="cqb-recover" hidden>Check original save</button>
+    <button type="button" class="btn btn--ghost" id="cqb-close">Close</button>
+  </div>
+</section>

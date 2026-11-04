@@ -1,0 +1,108 @@
+{#- The one sidebar navigation, shared by both shells (base.html and
+    chat_base.html): the person's Pinned pages, the "Most used" shortcuts,
+    their Recent pages, then every registry group. nav_groups comes from the
+    _nav_context context processor: the page registry
+    (maverick_dashboard.ui_visibility.PAGES) filtered to what the caller's
+    RBAC role may see. Auth off -> the full nav, as before. -#}
+{# One sidebar link. Approvals carries an empty count badge that the sidebar
+   script fills after the page has loaded (hidden while nothing waits). A page
+   whose module is switched off (only administrators still see it) says so in
+   text, not colour alone. #}
+{% macro _nav_link(link, active, current) -%}
+{#- A page kept out of the sidebar highlights the sidebar page it sits under
+    (nav_where), marked aria-current="true": "you are inside this". -#}
+{%- set _parent_of_here = nav_where is defined and nav_where and nav_where.sidebar and nav_where.parent.href == link.href -%}
+<a href="{{ link.href }}"{% if active %} class="active"{% if current %} aria-current="page"{% endif %}{% elif _parent_of_here %} class="active nav-parent"{% if current %} aria-current="true"{% endif %}{% endif %}{% if link.off %} aria-label="{{ ut('{page} (turned off)', page=ut(link.label)) }}"{% endif %}{% if link.href == '/approvals' %} data-approvals-badge{% endif %}><svg class="nav-ic" aria-hidden="true"><use href="#i-{{ link.icon or 'dot' }}"></use></svg><span class="nav-label">{{ ui(link.label) }}</span>{% if link.off %}<span class="nav-off" aria-hidden="true">{{ ui('Off') }}</span>{% endif %}{% if link.href == '/approvals' %}<span class="nav-count" hidden></span>{% endif %}</a>
+{%- endmacro %}
+{# A pinned page's reorder and unpin buttons, shown while the list is being
+   edited (lightwork-pins.js builds the same buttons for a page pinned later). #}
+{% macro _pin_tools(link) -%}
+<span class="navpins__tools" hidden><button type="button" class="navpins__tool" data-pin-op="up" aria-label="{{ ut('Move {page} up', page=ut(link.label)) }}" lang="{{ ul('Move {page} up') }}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12.5v-9M4.5 7 8 3.5 11.5 7"/></svg></button><button type="button" class="navpins__tool" data-pin-op="down" aria-label="{{ ut('Move {page} down', page=ut(link.label)) }}" lang="{{ ul('Move {page} down') }}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.5v9M4.5 9 8 12.5 11.5 9"/></svg></button><button type="button" class="navpins__tool" data-pin-op="remove" aria-label="{{ ut('Unpin {page}', page=ut(link.label)) }}" lang="{{ ul('Unpin {page}') }}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg></button></span>
+{%- endmacro %}
+{# The five most-used pages sit above the groups so a first visit never
+   lands on closed headers alone. Only pages the caller may see appear. #}
+{% set _quick_hrefs = ['/chat', '/goals', '/approvals', '/deliverables', '/settings'] if nav_mode != 'areas' else [] %}
+{% set _path = request.url.path if request else '' %}
+{# The dashboard lands on /chat, so highlight Chat when at the bare root. #}
+{% set _active_path = '/chat' if _path == '/' else ('/workflows' if _path.startswith('/flows/') else _path) %}
+{# Prefer the most-specific visible route so nested pages do not expose
+   more than one aria-current="page" landmark. #}
+{% set _active_nav = namespace(href='') %}
+{% for _group in nav_groups %}
+  {% for _link in _group.links %}
+    {% if (_active_path == _link.href or _active_path.startswith(_link.href ~ '/')) and (_link.href|length > _active_nav.href|length) %}
+      {% set _active_nav.href = _link.href %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+{# Pinned and recent pages (navigation_api.personal_view): only for someone
+   signed in with personal preferences on, and only pages they may open now.
+   Pins start as the role's preset until the person chooses their own. Each
+   page appears once among these quick lists: Most used leaves out pinned
+   pages, and Recent pages leaves out the page shown and pages listed above. #}
+{% set _personal = nav_personal() if nav_personal is defined and nav_personal else none %}
+{% set _pin_hrefs = (_personal.pins | map(attribute='href') | list) if _personal else [] %}
+{% set _quick = namespace(links=[]) %}
+{% for _href in _quick_hrefs if _href not in _pin_hrefs %}
+  {% for _group in nav_groups %}{% for _link in _group.links if _link.href == _href %}
+    {% set _quick.links = _quick.links + [_link] %}
+  {% endfor %}{% endfor %}
+{% endfor %}
+{% set _quick_shown = _quick.links | map(attribute='href') | list %}
+{% if _personal %}
+<div class="navpins" id="navpins" data-nav-pins data-nav-current="{{ _personal.current }}" data-nav-current-label="{{ ut(_personal.current_label) if _personal.current_label else '' }}"{% if _personal.record %} data-nav-record{% endif %}>
+  <div class="navpins__head">
+    <span class="navpins__label" id="navpins-label">{{ ui('Pinned pages') }}</span>
+    <button type="button" class="navpins__edit" id="navpins-edit" aria-expanded="false" aria-controls="navpins-list"
+            aria-label="{{ ut('Edit pinned pages') }}" lang="{{ ul('Edit pinned pages') }}"{% if not _personal.pins %} hidden{% endif %}>{{ ui('Edit') }}</button>
+  </div>
+  <ul class="navquick-list navpins__list" id="navpins-list" aria-labelledby="navpins-label" data-nav-list="pins">
+    {% for _link in _personal.pins %}
+    <li data-pin="{{ _link.href }}">{{ _nav_link(_link, _active_nav.href == _link.href, false) }}{{ _pin_tools(_link) }}</li>
+    {% endfor %}
+  </ul>
+  <p class="navpins__empty" id="navpins-empty"{% if _personal.pins %} hidden{% endif %}>{{ ui('No pinned pages. Use Pin to sidebar on a page you use often.') }}</p>
+  <p class="sr-only" id="navpins-status" role="status" aria-live="polite"></p>
+</div>
+{% endif %}
+{% if _quick.links %}
+<ul class="navquick-list" aria-label="{{ ut('Most used') }}" lang="{{ ul('Most used') }}">
+  {% for _link in _quick.links %}
+    {% set _active = (_active_nav.href == _link.href) %}
+    <li>{{ _nav_link(_link, _active, true) }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if _personal %}
+  {% set _shown = _pin_hrefs + _quick_shown + [_personal.current] %}
+  {% set _recent = namespace(links=[]) %}
+  {% for _link in _personal.recent %}
+    {% if _link.href not in _shown and _recent.links | length < 5 %}{% set _recent.links = _recent.links + [_link] %}{% endif %}
+  {% endfor %}
+  {% if _recent.links %}
+<div class="navrecent">
+  <span class="navpins__label" id="navrecent-label">{{ ui('Recent pages') }}</span>
+  <ul class="navquick-list navrecent__list" aria-labelledby="navrecent-label" data-nav-list="recent">
+    {% for _link in _recent.links %}
+    <li>{{ _nav_link(_link, false, false) }}</li>
+    {% endfor %}
+  </ul>
+</div>
+  {% endif %}
+{% endif %}
+{% for _group in (nav_groups if nav_mode != 'areas' else []) %}
+  <div class="navgrp">
+    <button type="button" class="navgrp__toggle" data-grp="{{ _group.label }}"
+            aria-expanded="true" aria-controls="navgrp-{{ loop.index0 }}">
+      <span class="navgrp__label">{{ ui(_group.title or _group.label) }}</span>
+      <svg class="navgrp__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <ul class="navgrp__items" id="navgrp-{{ loop.index0 }}">
+      {% for _link in _group.links %}
+        {% set _active = (_active_nav.href == _link.href) %}
+        {# A page that also sits in the Most used list carries its aria-current there. #}
+        <li>{{ _nav_link(_link, _active, _link.href not in _quick_shown) }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endfor %}{% if nav_mode == 'areas' and nav_areas %}{% include "_sidebar_areas.html" %}{% endif %}

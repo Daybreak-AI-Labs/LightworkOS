@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}Get started · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .gs { max-width: 760px; margin-inline: auto; }
+  .gs__head { margin-bottom: var(--space-5); }
+  .gs__head h1 { margin: 0 0 var(--space-1); }
+  .gs__sub { color: var(--muted); margin: 0; }
+  .gs__progress { margin: var(--space-4) 0 var(--space-5); }
+  .gs__bar { height: 6px; border-radius: var(--radius-pill); background: var(--surface-2); overflow: hidden; }
+  .gs__bar > i { display: block; height: 100%; background: var(--brand); border-radius: inherit; transition: width .3s ease; }
+  .gs__steps { display: flex; flex-direction: column; gap: var(--space-3); list-style: none; margin: 0; padding: 0; }
+  .gs__step { display: flex; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); align-items: center; }
+  .gs__step--done { --glass-tint: var(--brand-subtle); border-color: var(--brand-border); }
+  .gs__mark { flex: none; width: 1.9rem; height: 1.9rem; border-radius: var(--radius-pill); display: inline-flex; align-items: center; justify-content: center; font-weight: var(--font-semibold); font-variant-numeric: tabular-nums; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border); }
+  .gs__step--done .gs__mark { background: var(--brand); color: var(--brand-fg); border-color: var(--brand); }
+  .gs__body { flex: 1 1 auto; min-width: 0; }
+  .gs__title { font-weight: var(--font-semibold); margin: 0 0 var(--space-0-5); }
+  .gs__desc { color: var(--muted); font-size: var(--text-sm); margin: 0; }
+  .gs__cta { flex: none; align-self: center; }
+  .gs__preflight { margin-bottom: var(--space-5); }
+  .gs__preflight-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .gs__preflight-head h2 { margin: 0; }
+  .gs__status { border: 1px solid var(--border); border-radius: var(--radius-pill); padding: .2rem .6rem; font-size: var(--text-xs); font-weight: var(--font-semibold); }
+  .gs__status--ready { color: var(--success); border-color: var(--success); }
+  .gs__status--blocked { color: var(--danger); border-color: var(--danger); }
+  .gs__checks { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-2); }
+  .gs__check { padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+  .gs__check:last-child { border-bottom: 0; }
+  .gs__check-state { display: inline-block; min-width: 4.5rem; font-size: var(--text-xs); font-weight: var(--font-semibold); text-transform: uppercase; }
+  .gs__check--blocked .gs__check-state { color: var(--danger); }
+  .gs__check--attention .gs__check-state { color: var(--warn); }
+  .gs__check--ready .gs__check-state { color: var(--success); }
+  .gs__tech summary { font-size: var(--text-xs); cursor: pointer; }
+  .gs__tech p { overflow-wrap: anywhere; font-size: var(--text-xs); margin: var(--space-1) 0; }
+  .gs__links { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: calc(-1 * var(--space-3)) 0 var(--space-5); }
+  .gs__demo { margin-top: var(--space-5); border-left: 4px solid var(--warn); }
+  .gs__demo-label { display: inline-block; color: var(--warn); font-size: var(--text-xs); font-weight: var(--font-semibold); letter-spacing: .06em; }
+  @media (max-width: 560px) {
+    .gs__step { flex-wrap: wrap; }
+    .gs__cta { width: 100%; }
+    .gs__preflight-head { align-items: flex-start; flex-direction: column; }
+  }
+  .gs__next { margin-bottom: var(--space-5); border-left: 4px solid var(--brand); }
+  .gs__next-label { display: inline-block; color: var(--brand); font-size: var(--text-xs); font-weight: var(--font-semibold); letter-spacing: .06em; text-transform: uppercase; }
+  .gs__next h2 { margin: var(--space-1) 0 var(--space-2); font-size: var(--text-xl); text-transform: none;
+                letter-spacing: -.01em; color: var(--text); }
+  .gs__next h3 { margin: var(--space-4) 0 var(--space-1); font-size: var(--text-md, 1rem); }
+  .gs__next .gs__or { margin: var(--space-3) 0 0; }
+  .gs__step--next { border-color: var(--brand-border); }
+  .gs__fold { margin-bottom: var(--space-5); }
+  .gs__fold > summary { cursor: pointer; font-weight: var(--font-semibold); }
+  .gs__fold > summary .gs__status { margin-left: var(--space-2); }
+  .gs__status--optional { color: var(--muted); }
+  .gs__fold-body { margin-top: var(--space-3); }
+</style>
+
+{#- One next step with one primary action. Everything else stays on the page,
+    without competing: done and later steps use plain buttons, other ways in
+    and the optional assurance features are folded away. -#}
+{% set setup_first = needs_initial_settings or local_owner_setup_available %}
+{% set next_s = steps[next_index] if (next_index is not none and not setup_first) else none %}
+{% set sample = first_outcomes if (first_outcomes and first_outcomes.outcomes) else none %}
+{% set sample_is_next = sample and sample.can_operate and sample.ready and next_s and next_s.key in ('build', 'run') %}
+
+{% macro sample_form(sample, primary) %}
+    {% if sample.can_operate %}
+    <form id="first-outcome-form" style="display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:end;">
+      <label>Which team will try Lightwork first?<select class="input" id="first-outcome-department" name="department">
+        {% for row in sample.outcomes %}<option value="{{ row.department }}" data-goal="{{ row.goal }}" data-lands-in="{{ row.lands_in }}" {% if row.department == sample.selected %}selected{% endif %}>{{ row.label }}</option>{% endfor %}
+      </select></label>
+      {% if sample.ready %}
+      {% set run_button_class = 'btn btn--primary' if primary else 'btn' %}
+      <button class="{{ run_button_class }}" type="submit" id="first-outcome-run">Run the sample task</button>
+      {% elif sample.can_connect %}
+      {# Not a button that answers "not ready" after a click: say it first. #}
+      <a class="btn btn--ghost" id="first-outcome-connect" href="{{ sample.connect_href }}">Connect an AI service first</a>
+      {% endif %}
+    </form>
+    <p id="first-outcome-goal" class="muted"></p>
+    {% if not sample.ready %}
+    <p id="first-outcome-message" role="status" aria-live="polite">{{ sample.not_ready_detail if sample.can_connect
+      else 'No AI service is ready yet, so the sample task cannot run. Ask an administrator to connect one.' }}</p>
+    {% else %}
+    <p id="first-outcome-message" role="status" aria-live="polite"></p>
+    {% endif %}
+    {% else %}
+    <p class="muted" role="note">Someone who can run work can start the sample task. You can view its result.</p>
+    {% endif %}
+{% endmacro %}
+
+<div class="gs">
+  <div class="gs__head">
+    <h1 class="page-title">Get started</h1>
+    <p class="gs__sub">Set up your workspace, run a first task and review its result. Your progress updates from recorded work.</p>
+    <p><button type="button" class="btn btn--ghost" data-product-tour-open>Take a quick tour</button></p>
+    <div class="gs__progress">
+      <div class="gs__bar" role="progressbar" aria-label="Setup progress"
+           aria-valuenow="{{ done_count }}" aria-valuemin="0" aria-valuemax="{{ total }}">
+        <i style="width: {{ (100 * done_count // total) }}%;"></i>
+      </div>
+      <p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">{{ done_count }} of {{ total }} done</p>
+    </div>
+  </div>
+
+  {% if local_owner_setup_available %}
+  <section class="panel" aria-labelledby="local-owner-title" style="margin-bottom:var(--space-5)">
+    <h2 id="local-owner-title">Set up named sign-in</h2>
+    <p>Create the local owner before inviting colleagues or recording named vendor and project reviews. You will review the change from anonymous local administration to named sign-in.</p>
+    <a class="btn btn--primary" href="/auth/local-owner">Set up the local owner</a>
+  </section>
+  {% endif %}
+  {% if needs_initial_settings %}
+  <section class="panel" aria-labelledby="initial-settings-title" style="margin-bottom:var(--space-5)">
+    <h2 id="initial-settings-title">Set up Lightwork</h2>
+    <ul>
+      <li>Strict safety checks are on, and controlling the computer or changing files is off.</li>
+      <li>There is no spending or time limit for each task yet, but all use is counted. Workspace limits still apply.</li>
+      <li>{% if can_configure %}Review <a href="/permissions">Permissions</a> and set optional limits in <a href="/settings">Settings</a> before starting work.{% else %}Your administrator reviews permissions before work starts.{% endif %}</li>
+    </ul>
+    {% if can_configure %}
+    <form id="setup-initialize">
+      <label><input type="checkbox" id="setup-confirm" required> I reviewed these initial settings.</label>
+      <button class="btn {{ 'btn--primary' if not local_owner_setup_available else '' }}" type="submit">Save initial settings</button>
+      <p id="setup-message" role="status" aria-live="polite"></p>
+    </form>
+    {% else %}<p>Your administrator can complete this step in the app.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if next_s %}
+  <section class="panel gs__next" aria-labelledby="gs-next-title">
+    <span class="gs__next-label">Next step</span>
+    <h2 id="gs-next-title">{{ next_s.title }}</h2>
+    <p class="gs__desc">{{ next_s.body }}</p>
+    {% if sample_is_next %}
+    <h3 id="first-outcome-title">Run your first task on sample data</h3>
+    <p>Pick your team. Lightwork runs that team's specialist on a small set of made-up files
+      (a sample company) and hands the result to you for review. {{ sample.rule }}</p>
+    {{ sample_form(sample, true) }}
+    <p class="gs__or muted">Or work on your own:
+      <a href="{{ next_s.cta }}">{{ next_s.cta_label }}</a>.</p>
+    {% elif next_s.allowed %}
+    <a class="btn btn--primary" href="{{ next_s.cta }}">{{ next_s.cta_label }}</a>
+    {% else %}
+    <p class="muted" role="note">{{ next_s.readonly_label }}</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if runtime_all_set %}
+  <div class="mv-empty" style="margin-bottom: var(--space-5);">
+    <p class="mv-empty__title">Your setup checklist is complete</p>
+    <p class="mv-empty__body">Your saved settings pass the installation checks.
+      {% if can_configure %}<a class="btn btn--ghost" href="/settings#settings-integrations">Test connections</a>{% endif %}
+      {% if can_operate %} Manage your work from
+      <a href="/workflows">Workflows</a> and
+      <a href="/automations">Automations</a>.{% else %} Someone who can run work manages
+      workflows and automations; you can view them.{% endif %}</p>
+  </div>
+  {% endif %}
+
+  <h2 class="gs__checklist-title" id="gs-checklist-title">Your setup checklist</h2>
+  <ol class="gs__steps" style="margin-bottom: var(--space-5);" aria-labelledby="gs-checklist-title">
+    {% for s in steps %}
+    {% set is_next = next_s and loop.index0 == next_index %}
+    <li class="gs__step{% if s.done %} gs__step--done{% endif %}{% if is_next %} gs__step--next{% endif %}">
+      <span class="gs__mark" aria-hidden="true">{% if s.done %}✓{% else %}{{ loop.index }}{% endif %}</span>
+      <div class="gs__body">
+        <p class="gs__title">{{ s.title }}{% if s.done %} <span class="muted">· done</span>{% elif is_next %} <span class="muted">· next step</span>{% endif %}</p>
+        <p class="gs__desc">{{ s.body }}</p>
+      </div>
+      {% if is_next %}
+      {# Its action is the one primary button above; not repeated here. #}
+      {% elif s.allowed %}
+      <a class="btn btn--ghost gs__cta" href="{{ s.cta }}">{{ s.cta_label }}</a>
+      {% else %}
+      <span class="muted gs__cta" role="note">{{ s.readonly_label }}</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+
+  {% if sample and not sample_is_next %}
+  <section class="panel gs__demo" aria-labelledby="first-outcome-title" style="margin-bottom:var(--space-5)">
+    <span class="gs__demo-label">Sample data</span>
+    <h2 id="first-outcome-title">Run your first task on sample data</h2>
+    <p>Pick your team. Lightwork runs that team's specialist on a small set of made-up files
+      (a sample company) and hands the result to you for review. {{ sample.rule }}</p>
+    {{ sample_form(sample, false) }}
+  </section>
+  {% endif %}
+
+  {% if can_operate and practice_available and not practice_mode %}
+  {# A safe place to try tasks, specialists and approvals. #}
+  <section class="panel gs__practice" aria-labelledby="gs-practice-title" style="margin-bottom:var(--space-5)">
+    <h2 id="gs-practice-title">Practice first, without real effects</h2>
+    <p>Practice mode gives you a separate place to try tasks, specialists and approvals. Nothing is sent, paid or
+      changed outside practice, and nothing there counts as real work. AI answers still cost real money, counted
+      apart from your spending limits with a small daily practice limit. A marker stays on every screen until you
+      choose Back to live.</p>
+    <button type="button" class="btn" data-practice-start data-practice-status="gs-practice-status">Start practice mode</button>
+    <p id="gs-practice-status" role="status" aria-live="polite"></p>
+  </section>
+  {% elif can_operate and practice_unavailable_reason and not practice_mode %}
+  <section class="panel gs__practice" aria-labelledby="gs-practice-title" style="margin-bottom:var(--space-5)">
+    <h2 id="gs-practice-title">Practice mode isn't available here</h2>
+    <p>{{ practice_unavailable_reason }} Ask your administrator if you need a separate place to try things out.</p>
+  </section>
+  {% endif %}
+
+  {% macro check_rows(report) %}
+      <ul class="gs__checks">
+        {% for check in report.checks %}
+        <li class="gs__check gs__check--{{ check.status }}">
+          <span class="gs__check-state">{{ check.state_label }}</span>
+          <strong>{{ check.title }}</strong> — {{ check.summary }}
+          {% if can_configure and check.module %}
+          <span data-module-gate="{{ check.module }}"><button type="button" class="btn mg-on" aria-label="{{ check.fix_label or ('Turn on ' ~ check.title) }}">Turn on</button><span class="mg-err" role="alert"></span></span>
+          {% elif can_configure and check.fix_href %}
+          <a class="btn btn--ghost" href="{{ check.fix_href }}" aria-label="{{ check.fix_label }} ({{ check.title }})">{{ check.fix_label }}</a>
+          {% endif %}
+          {% if can_configure and (check.detail or check.remediation) %}
+          <details class="gs__tech"><summary>Technical details</summary>
+            <p class="muted">{{ check.detail }}</p>{% if check.remediation %}<p class="muted">{{ check.remediation }}</p>{% endif %}
+          </details>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+  {% endmacro %}
+
+  <section class="panel gs__preflight" aria-labelledby="install-preflight-title">
+    <div class="gs__preflight-head">
+      <h2 id="install-preflight-title">Installation checks</h2>
+      <span class="gs__status gs__status--{{ 'ready' if preflight.ready else 'blocked' }}">
+        {{ "Setup complete" if preflight.ready else "Needs attention" }}
+      </span>
+    </div>
+    <p class="muted">These checks look at your saved settings without contacting other services.</p>
+    {% set fix = preflight.next_fix %}
+    {% if fix and can_configure %}
+    <p role="{{ 'alert' if fix.status == 'blocked' else 'status' }}"><strong>Fix next:</strong> {{ fix.title }}.
+      {% if fix.outcome %}{{ fix.outcome[0] | upper }}{{ fix.outcome[1:] }}.{% endif %}
+      {% if next_s and next_s.key == 'connect' and fix.id == 'provider' %}
+      {# The same fix is the next step above: say so instead of a second button. #}
+      This is the next step above.
+      {% elif fix.module %}
+      <span data-module-gate="{{ fix.module }}"><button type="button" class="btn mg-on">{{ fix.fix_label or ('Turn on ' ~ (fix.title | lower)) }}</button>
+        <span class="mg-err" role="alert"></span></span>
+      {% elif fix.fix_href %}<a class="btn" href="{{ fix.fix_href }}">{{ fix.fix_label }}</a>{% endif %}
+    </p>
+    {% elif fix %}
+    <p role="status">Some setup is still needed. Ask your administrator to finish it.</p>
+    {% endif %}
+    <details>
+      <summary>All {{ preflight.checks|length }} checks</summary>
+      {{ check_rows(preflight) }}
+    </details>
+  </section>
+
+  <details class="panel gs__fold gs__more">
+    <summary>More ways to get started</summary>
+    <div class="gs__fold-body">
+      {% if employee_activation_enabled %}<p><a class="btn btn--ghost" href="/get-started/employee">Choose a task and review your first result</a></p>{% endif %}
+      {% if guided %}
+      <section aria-labelledby="guided-outcome-title">
+        <h2 id="guided-outcome-title">Choose your first outcome</h2>
+        <p class="muted">Your current access: {{ guided.role_label|role_label }}. Choosing a path does not change your permissions.</p>
+        <form method="get" action="/start" style="display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:end;">
+          <label>What would you like to complete?<select class="input" name="use_case">
+            {% for key, plan in guided.plans.items() %}<option value="{{ key }}" {% if key == guided.selected_plan %}selected{% endif %}>{{ plan.label }}</option>{% endfor %}
+          </select></label><button class="btn" type="submit">Use this path</button>
+        </form>
+        <ol>
+          <li><p>{{ guided.plan.prepare }}</p>{% if can_operate %}<a href="{{ guided.plan.prepare_href }}">{{ guided.plan.prepare_label }}</a>{% else %}<p class="muted">Ask someone who can run work to do this step.</p>{% endif %}</li>
+          <li><p>{{ guided.plan.work }}</p>{% if can_operate %}<a href="{{ guided.plan.work_href }}">{{ guided.plan.work_label }}</a>{% else %}<p class="muted">Ask someone who can run work to do this step.</p>{% endif %}</li>
+          <li><p>{{ guided.plan.review }}</p>{% if can_operate %}<a href="{{ guided.plan.review_href }}">{{ guided.plan.review_label }}</a>{% else %}<p class="muted">Ask someone who can run work to record the review.</p>{% endif %}</li>
+        </ol>
+        <p role="status"><strong>{{ 'Reviewed outcome recorded' if guided.outcome.complete else 'Awaiting a reviewed outcome' }}.</strong> {{ guided.outcome.detail }}</p>
+        {% if guided.outcome.complete %}<p><a href="{{ guided.outcome.href }}">Open {{ guided.outcome.title }}</a></p>{% endif %}
+        <p class="muted">An approval covers this result only, not future tasks.</p>
+      </section>
+      {% endif %}
+      <p class="gs__links" style="margin: var(--space-3) 0 0;">{% if can_configure %}<a class="btn" href="/settings#settings-integrations">Test connections</a>
+        <a class="btn btn--ghost" href="/permissions">Permissions and work environment</a>
+        <a class="btn btn--ghost" href="/start/setup">Full setup guide</a>
+        {% endif %}
+        <a class="btn btn--ghost" href="/start">Run checks again</a>
+        {% if can_configure %}<button class="btn btn--ghost" id="setup-download" type="button">Download setup report (for your IT team)</button>{% endif %}</p>
+      <p id="setup-report-message" role="status"></p>
+    </div>
+  </details>
+
+  {#- Assurance features are optional and for later: never an alarm on a
+      fresh install, and their switches stay one click away. -#}
+  <details class="panel gs__fold gs__optional">
+    <summary><span id="assurance-preflight-title">Assurance setup, for later</span>
+      <span class="gs__status gs__status--{{ 'ready' if assurance_preflight.ready else 'optional' }}">{{ "Setup complete" if assurance_preflight.ready else "Optional" }}</span></summary>
+    <div class="gs__fold-body">
+      <p class="muted">Reviews, evidence and assurance features need extra setup. Turn them on when you need them; connecting an AI service alone does not finish them.</p>
+      {{ check_rows(assurance_preflight) }}
+      <section class="gs__demo" aria-labelledby="synthetic-demo-title" style="margin-top:var(--space-4);padding-left:var(--space-3);">
+        <span class="gs__demo-label">Sample data</span>
+        <h2 id="synthetic-demo-title">Try a sample assurance review</h2>
+        <p>The sample works without connecting anything. Use an empty or practice
+          workspace. Everything it makes is marked as sample data and never counts as real evidence.</p>
+        {% if can_operate %}
+        <a class="btn btn--ghost" href="/security/assurance">Open the assurance workspace</a>
+        {% else %}
+        <p class="muted" role="note">Someone who can run work can open the assurance workspace.
+          You can view results.</p>
+        {% endif %}
+      </section>
+    </div>
+  </details>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-setup.js" defer></script>{% endblock %}

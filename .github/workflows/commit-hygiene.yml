@@ -1,0 +1,64 @@
+name: Commit hygiene
+
+# Refuse AI-attribution trailers, generator footers and assistant session
+# links in commit messages and PR text (project policy; see "Commits and pull
+# requests" in CONTRIBUTING.md). Squash merges are prefilled from the branch's
+# commit messages, so the refusal has to happen BEFORE the merge, on the
+# commits and the PR text, and again on the merge-queue commit (the exact
+# message that becomes main's history).
+#
+# The push trigger is detective: if a trailer still gets through (a merge made
+# outside the queue), main goes red instead of quietly accumulating them.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-hygiene-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  no-ai-attribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # The commit range starts at the base branch's tip (PR), the queue
+          # entry's base (merge group) or the previous main tip (push); a
+          # shallow clone has none of them.
+          fetch-depth: 0
+      - name: Reject AI attribution in commit messages and PR text
+        # PR title/body reach the script through the environment and a file,
+        # never through shell interpolation: they are attacker-controlled text.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The first push to a branch (for example a new repository's first
+          # main commit) has no previous tip: GitHub sends an all-zero
+          # "before" SHA, which is not a valid range start. Inspect the pushed
+          # history itself in that case.
+          if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            args=(--commits "${HEAD_SHA}")
+          else
+            args=(--commits "${BASE_SHA}..${HEAD_SHA}")
+          fi
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr-text.md"
+            args+=(--text "$RUNNER_TEMP/pr-text.md")
+          fi
+          python3 scripts/check_attribution.py "${args[@]}"

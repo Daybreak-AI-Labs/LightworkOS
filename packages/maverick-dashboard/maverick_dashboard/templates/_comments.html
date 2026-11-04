@@ -1,0 +1,28 @@
+{# Comments and @mentions on one task, run, approval or policy (NOT-4).
+   comments(kind, object_id): a thread section; collapsed=True puts it in a
+   disclosure that loads when opened (one per approval card). The people
+   offered for a mention are only those who can open the item, checked on the
+   server; static/lightwork-comments.js loads, posts and deletes. #}
+{% macro comments(kind, object_id, title='Comments', collapsed=False) %}
+{% set uid = 'comments-' ~ kind ~ '-' ~ (object_id | string | replace(':', '-') | replace('.', '-')) %}
+{% if collapsed %}<details class="mv-comments mv-comments--collapsed" id="{{ uid }}" data-comments-kind="{{ kind }}" data-comments-id="{{ object_id }}">
+  <summary>{{ title }}</summary>
+{% else %}<section class="panel mv-comments" id="{{ uid }}" data-comments-kind="{{ kind }}" data-comments-id="{{ object_id }}" aria-labelledby="{{ uid }}-title">
+  <h2 class="mv-comments__title" id="{{ uid }}-title">{{ title }}</h2>
+{% endif %}
+  <p class="muted mv-comments__lede">Discuss this with the people who can open it. Mention someone to send them a notification.</p>
+  <ol class="mv-comments__list" aria-label="{{ title }}"></ol>
+  <form class="mv-comments__form" hidden>
+    <label for="{{ uid }}-body">Add a comment</label>
+    <textarea class="input mv-comments__body" id="{{ uid }}-body" name="body" rows="3" maxlength="4000" required></textarea>
+    <div class="mv-comments__mention">
+      <label for="{{ uid }}-who">Mention someone</label>
+      <select class="select mv-comments__who" id="{{ uid }}-who"><option value="">Choose a person</option></select>
+      <button type="button" class="btn btn--ghost mv-comments__add">Add mention</button>
+    </div>
+    <p class="muted mv-comments__mentioned"></p>
+    <button type="submit" class="btn">Post comment</button>
+  </form>
+  <p class="mv-comments__status muted" data-mv-status></p>
+{% if collapsed %}</details>{% else %}</section>{% endif %}
+{% endmacro %}

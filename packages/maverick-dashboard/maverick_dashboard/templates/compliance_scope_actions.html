@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Turn scope into tasks · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .csa-grid { display:grid; grid-template-columns:minmax(18rem,1fr) minmax(24rem,2fr);
+              gap:var(--space-4); }
+  .csa-stack { display:flex; flex-direction:column; gap:var(--space-3); }
+  .csa-stack label { display:flex; flex-direction:column; gap:var(--space-1); }
+  .csa-stack textarea { min-height:18rem; font-family:var(--font-mono); }
+  .csa-output { min-height:24rem; max-height:52rem; overflow:auto; white-space:pre-wrap;
+                word-break:break-word; }
+  .csa-warning { border:2px solid var(--danger); padding:var(--space-3);
+                 border-radius: var(--radius-md); background:var(--surface-2); }
+  .csa-confirm { display:flex; gap:var(--space-2); align-items:flex-start; }
+  @media (max-width:880px) { .csa-grid { grid-template-columns:1fr; } }
+</style>
+
+{% from "_hero.html" import hero %}
+{{ hero('Compliance', 'Turn scope into tasks',
+        subtitle='A to-do list of controls and evidence from your final scope',
+        lede='Pick a final compliance scope and an approved mapping, and Lightwork proposes the controls
+              to put in place and the evidence to collect, with the reason for each one.
+              A second person approves the plan before any task is created.') }}
+<details class="panel">
+  <summary>About this page&rsquo;s safeguards</summary>
+  <ul>
+    <li>Lightwork does not include licensed framework text, store raw evidence, or contact outside services from this page.</li>
+    <li>Scope details are read from your final scope; nobody can type them in.</li>
+    <li>Tasks are only created in your other systems when your administrator has connected a task system. Until then, the plan is a list you can review and download.</li>
+  </ul>
+</details>
+
+{% from "_module_gate.html" import module_gate %}
+{% if not compliance_scope_actions_enabled %}
+{{ module_gate('tech_risk_compliance.scope_actions', 'Turning scope into tasks',
+               detail='Turns your approved compliance scope into a to-do list of controls and evidence to collect.',
+               can_activate=can_admin) }}
+{% else %}
+<div id="csa-app" data-can-admin="{{ 'true' if can_admin else 'false' }}" data-can-audit="{{ 'true' if can_audit else 'false' }}">
+  <p id="csa-status" class="muted" role="status" aria-live="polite">Loading your records…</p>
+
+  <div class="section-head"><h2>Final scopes</h2></div>
+  <div class="panel" id="csa-scopes"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>Task plans</h2></div>
+  <div class="panel" id="csa-plans"><p class="muted">Loading…</p></div>
+  <section class="panel" id="csa-plan-detail" hidden aria-live="polite"></section>
+
+  <div class="section-head"><h2>Reports</h2></div>
+  <div class="panel" id="csa-reports"><p class="muted">Loading…</p></div>
+
+  <div class="section-head"><h2>Mappings</h2>
+    <a class="btn btn--primary" href="/compliance/scope-actions/mapping">Build a mapping from a final scope</a>
+    <button type="button" class="btn btn--ghost" id="csa-add-catalog">Add a mapping from a file</button></div>
+  <p class="muted">A mapping says which tasks each control in a scope needs. Your compliance team provides it.</p>
+  <div class="panel" id="csa-catalogs"><p class="muted">Loading…</p></div>
+
+  {% if can_audit %}
+  <div class="panel"><button type="button" class="btn btn--ghost" id="csa-integrity">Check records are intact</button></div>
+  {% endif %}
+</div>
+
+<details class="panel" id="csa-technical">
+<summary>Technical details: advanced operations</summary>
+<p><button class="btn" id="csa-load-status" type="button">Check availability</button></p>
+<div class="csa-grid">
+  <section class="panel csa-stack">
+    <h2>Choose an action</h2>
+    <p>The workspace and the person acting come only from your sign-in. Unknown fields,
+      framework prose, raw evidence, key values, provider or target selectors,
+      and code are rejected.</p>
+    <label>Operation
+      <select id="csa-operation" data-guided-api="/api/v1/compliance/scope-actions">
+        <option value="catalog-create" data-method="PUT" data-path="/catalogs/{catalog_id}/versions">Catalog: create immutable mapping version</option>
+        <option value="catalog-get" data-method="GET" data-path="/catalogs/{catalog_id}/versions/{version}">Catalog: get version</option>
+        <option value="catalog-approve" data-method="POST" data-path="/catalogs/{catalog_id}/versions/{version}/approve">Catalog: independent approval</option>
+        <option value="plan-create" data-method="PUT" data-path="/scopes/{scope_id}/plans/{plan_id}">Plan: derive from finalized scope</option>
+        <option value="plan-get" data-method="GET" data-path="/plans/{plan_id}">Plan: get current state</option>
+        <option value="plan-history" data-method="GET" data-path="/plans/{plan_id}/history">Plan: get immutable history</option>
+        <option value="plan-approve" data-method="POST" data-path="/plans/{plan_id}/approve">Plan: independent approval</option>
+        <option value="plan-apply" data-method="POST" data-path="/plans/{plan_id}/apply">Plan: apply through injected local callback</option>
+        <option value="plan-reconcile" data-method="POST" data-path="/plans/{plan_id}/reconcile">Plan: reconcile through injected local callback</option>
+        <option value="plan-rollback" data-method="POST" data-path="/plans/{plan_id}/rollback">Plan: rollback through injected local callback</option>
+        <option value="plan-export" data-method="PUT" data-path="/plans/{plan_id}/exports/{export_id}">Plan: create signed local export</option>
+        <option value="export-get" data-method="GET" data-path="/exports/{export_id}">Export: get and verify signature</option>
+        <option value="integrity" data-method="GET" data-path="/integrity">Integrity: check this workspace’s records</option>
+      </select>
+    </label>
+    <label>Record references (JSON)
+      <input class="input" id="csa-path-values" value="{}" autocomplete="off">
+    </label>
+    <label>Action details (JSON)
+      <textarea class="input" id="csa-body">{}</textarea>
+    </label>
+    <div class="csa-warning" id="csa-confirm-panel">
+      <label class="csa-confirm"><input id="csa-confirm" type="checkbox">
+        <span>I reviewed the independent approval, local action, rollback, or
+          signed-export consequences and the exact CAS revision.</span>
+      </label>
+    </div>
+    <button class="btn btn--primary" id="csa-submit" type="button">Continue with selected action</button>
+  </section>
+  <section class="panel">
+    <h2>Result</h2>
+    <pre class="csa-output" id="csa-output" aria-live="polite">No request made.</pre>
+  </section>
+</div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/compliance/scope-actions";
+  var operation = document.getElementById("csa-operation");
+  var paths = document.getElementById("csa-path-values");
+  var body = document.getElementById("csa-body");
+  var confirmation = document.getElementById("csa-confirm");
+  var confirmationPanel = document.getElementById("csa-confirm-panel");
+  var output = document.getElementById("csa-output");
+  var highImpact = new Set([
+    "catalog-approve", "plan-approve", "plan-apply", "plan-reconcile",
+    "plan-rollback", "plan-export"
+  ]);
+  var forbiddenKeys = new Set([
+    "tenant", "tenant_id", "actor", "actor_ref", "principal", "principal_ref",
+    "framework_text", "raw_framework_text", "raw_evidence", "evidence_text",
+    "description", "task_description", "signing_key", "signing_key_value",
+    "secret", "secret_value", "provider", "provider_id", "target", "target_id",
+    "endpoint", "url", "code", "expression"
+  ]);
+
+  function show(value) {
+    output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  }
+  // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
+  function requestProblem(status, detail) {
+    return window.mvPlainDetail(detail) || window.mvErrorText({status: status, detail: detail}, "complete the request");
+  }
+  function problemText(error) {
+    var kind = error && error.name;
+    if (kind === "SyntaxError") {
+      return "Record references and Action details must be valid JSON. Check the quotes, commas and brackets, then try again.";
+    }
+    if (kind === "TypeError" || kind === "AbortError") {
+      return window.mvErrorText(error, "complete the request");
+    }
+    return error && error.message ? error.message : window.mvErrorText(error, "complete the request");
+  }
+  function selectedRoute() {
+    return operation.options[operation.selectedIndex];
+  }
+  function updateConfirmation() {
+    confirmation.checked = false;
+    confirmationPanel.hidden = !highImpact.has(operation.value);
+  }
+  function containsForbiddenKey(value) {
+    if (!value || typeof value !== "object") { return false; }
+    if (Array.isArray(value)) { return value.some(containsForbiddenKey); }
+    return Object.keys(value).some(function (key) {
+      return forbiddenKeys.has(key) || containsForbiddenKey(value[key]);
+    });
+  }
+  function buildPath(template, values) {
+    return template.replace(/\{([A-Za-z0-9_]+)\}/g, function (_match, key) {
+      var value = values[key];
+      if ((typeof value !== "string" && typeof value !== "number") || value === "") {
+        throw new Error("Add \"" + key + "\" to Record references, then try again.");
+      }
+      return encodeURIComponent(String(value));
+    });
+  }
+  async function run(method, path, payload) {
+    var options = {method: method, headers: {"Accept": "application/json"}};
+    if (method !== "GET") {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(payload);
+    }
+    var response = await fetch(API + path, options);
+    var responseText = await response.text();
+    var result;
+    try {
+      if (!responseText) { throw new Error("empty response"); }
+      result = JSON.parse(responseText);
+    } catch (_error) {
+      throw new Error("Lightwork's reply could not be read. Refresh the page and try again.");
+    }
+    if (!response.ok) {
+      throw new Error(requestProblem(response.status, result && result.detail));
+    }
+    show({status: response.status, ok: response.ok, result: result});
+  }
+
+  document.getElementById("csa-load-status").addEventListener("click", function () {
+    run("GET", "/status", {}).catch(function (error) { show(problemText(error)); });
+  });
+  operation.addEventListener("change", updateConfirmation);
+  document.getElementById("csa-submit").addEventListener("click", async function () {
+    try {
+      if (highImpact.has(operation.value) && !confirmation.checked) {
+        throw new Error("Confirm the governed state change before continuing.");
+      }
+      var route = selectedRoute();
+      var pathValues = JSON.parse(paths.value || "{}");
+      var payload = JSON.parse(body.value || "{}");
+      if (containsForbiddenKey(payload)) {
+        throw new Error("Authority, raw content, secrets, provider targets, and code are never accepted. Remove them from Action details, then try again.");
+      }
+      var path = buildPath(route.dataset.path, pathValues);
+      await run(route.dataset.method, path, payload);
+    } catch (error) { show(problemText(error)); }
+  });
+  updateConfirmation();
+}());
+</script>
+</details>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-compliance-scope-actions.js" defer></script>
+{% endif %}
+{% endblock %}

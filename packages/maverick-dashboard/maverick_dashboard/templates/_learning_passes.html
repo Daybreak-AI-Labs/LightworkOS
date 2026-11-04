@@ -1,0 +1,24 @@
+<section id="learning-passes" class="glass-card stack" aria-labelledby="lp-title">
+  <h3 id="lp-title">Run a reviewed learning pass</h3>
+  <p class="muted">Find repeated mistakes in up to 500 recent records of shareable work. Review the current models, questions and spending before starting. Existing learning approvals and a safety copy protect changes.</p>
+  <label for="lp-scope">Which models</label>
+  <select id="lp-scope" class="select"><option value="main">The main assistant</option><option value="all">Every model in use</option><option value="chosen">One model chosen below</option></select>
+  <label for="lp-model">One model</label>
+  <select id="lp-model" class="select"><option value="">Loading models…</option></select>
+  <label><input type="checkbox" id="lp-trial"> Put new lessons on trial first</label>
+  <label><input type="checkbox" id="lp-retire" checked> Also retire lessons not confirmed lately</label>
+  <label for="lp-instructions">Standing instructions for this test</label>
+  <textarea id="lp-instructions" class="textarea" rows="4" maxlength="1048576" aria-describedby="lp-instructions-help"></textarea>
+  <p id="lp-instructions-help" class="muted">Enter a reviewed copy, or choose a plain text file up to 1 MB. Careful testing needs these instructions. A supplied copy is not proof of what agents currently use.</p>
+  <label for="lp-file">Choose an instructions copy</label><input type="file" id="lp-file" class="input" accept=".txt,.md,text/plain">
+  <a href="/learning/instructions">Review instructions recorded from real work</a>
+  <div class="lrn__actions"><button type="button" class="btn btn--ghost" id="lp-refresh">Refresh current work</button><button type="button" class="btn btn--primary" id="lp-review">Review learning pass</button></div>
+  <p id="lp-status" role="status" aria-live="polite" class="muted">Checking current learning…</p>
+  <div id="lp-preview" class="stack"></div>
+  <label for="lp-original-choice">Your original learning passes</label><select id="lp-original-choice" class="select"><option value="">Choose an original pass</option></select>
+  <button type="button" id="lp-original" class="btn btn--ghost" hidden>Check original pass</button>
+  <div id="lp-result" class="stack" aria-live="polite"></div>
+  <p class="muted">An original request is retained on this installation. Detailed progress is kept among the 40 most recent learning tasks. After a restart, retained progress does not mean a worker is still running. An uncertain pass is never restarted automatically.</p>
+</section>
+<style>#learning-passes{overflow-wrap:anywhere;gap:var(--space-3)}#learning-passes .input,#learning-passes .select,#learning-passes .textarea{width:100%;max-width:100%;min-width:0}#learning-passes button,#learning-passes .btn{max-width:100%;white-space:normal}#lp-preview p{white-space:pre-wrap}</style>
+<script src="/static/lightwork-learning-passes.js" defer></script>

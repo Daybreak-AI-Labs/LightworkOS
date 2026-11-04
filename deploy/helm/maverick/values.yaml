@@ -1,0 +1,167 @@
+# Default values for the maverick chart.
+# Override with `helm install maverick ./deploy/helm/maverick -f my-values.yaml`.
+
+image:
+  repository: ghcr.io/daybreak-ai-labs/lightworkos
+  tag: ""              # defaults to .Chart.AppVersion when empty
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Dashboard listen port (the image's `dashboard` subcommand).
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8765
+
+# Control-plane replicas. Keep this at exactly 1. Postgres centralizes the
+# world model, but flow releases/runs, A2A task claims, audit/learning ledgers,
+# and tenant-local policy state are still file-backed. The chart refuses to
+# split those approval/idempotency authorities across dashboard/serve pods.
+# Scale remote goal workers separately.
+replicaCount: 1
+
+# Persistent state (~/.maverick). Required with SQLite AND Postgres: approvals,
+# external-operation recovery, credentials, flow versions and audit remain local.
+persistence:
+  enabled: true
+  size: 10Gi
+  accessMode: ReadWriteOnce
+  storageClass: ""     # "" = cluster default
+  # Mounted at the non-root user's home; do not change unless the image does.
+  mountPath: /home/maverick/.maverick
+
+# World-model backend. Postgres provides managed HA, pooling, and DB-enforced
+# tenant isolation for world-model rows. It does not by itself make every
+# Lightwork control-plane store replica-safe; replicaCount remains 1.
+worldModel:
+  backend: sqlite      # sqlite | postgres
+  # When backend=postgres, the DSN is read from env MAVERICK_PG_DSN, sourced
+  # from the secret below (key: MAVERICK_PG_DSN). Enable Postgres row-level
+  # security for DB-enforced tenant isolation.
+  postgres:
+    rls: true
+
+# Secrets. Provide provider keys / tokens here (chart creates a Secret) OR set
+# create=false and reference an existing Secret by name.
+secret:
+  create: true
+  name: ""             # defaults to <fullname>-secrets
+  # Key/value pairs rendered into the Secret (base64-encoded by Helm).
+  # e.g. ANTHROPIC_API_KEY, MAVERICK_DASHBOARD_TOKEN, MAVERICK_PG_DSN.
+  data: {}
+  #   ANTHROPIC_API_KEY: sk-ant-...
+  #   MAVERICK_DASHBOARD_TOKEN: <strong-random>
+
+# Extra plain (non-secret) env vars.
+env: {}
+#   MAVERICK_TENANT_BY_USER: "1"
+
+# Enterprise (regulated-deployment) hardening. Off by default: the kernel runs
+# fail-open and cloud-capable unless you opt in. When required=true the chart
+# sets MAVERICK_REQUIRE_ENTERPRISE=1 so the dashboard refuses to start unless the
+# data-boundary guarantees actually hold (egress lock, at-rest sealing, audit
+# signing). Turn the boundary ON separately via the enterprise config / its env
+# (e.g. env.MAVERICK_ENTERPRISE: "1" + a self-hosted provider); requiring the
+# preflight without enabling the boundary is exactly the misconfiguration this
+# gate is meant to catch.
+enterprise:
+  # Deployment posture (MAVERICK_PROFILE). "enterprise" (the default for this
+  # chart — a server deployment is the regulated path) turns the data boundary ON
+  # by default: the egress lock pins every LLM call to a self-hosted/allow-listed
+  # provider, consent fails closed, and capabilities are enforced. This means you
+  # MUST configure a local/self-hosted provider (ollama / vllm / tgi) or an
+  # allow-listed endpoint, otherwise cloud LLM calls are refused by design. Set to
+  # "standard" to run fail-open and cloud-capable (e.g. a quick non-regulated pilot
+  # with a hosted Anthropic key). Any explicit [enterprise] knob still wins.
+  profile: enterprise
+  required: false
+
+# Pod/container security. Matches the image: unprivileged uid/gid 1000.
+# Satisfies the restricted Pod Security Standard.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false   # workspace + sqlite need writes under $HOME
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# Liveness/readiness hit the deep health endpoints (/livez, /readyz) which
+# verify DB writability and provider config — not the HTML root, which returns
+# 200 even when the instance is degraded. The dashboard has its own auth; do not
+# expose it without TLS — front with your Ingress/Gateway.
+probes:
+  enabled: true
+
+# Total grace includes the 5-second preStop, the dashboard's shared 20-second
+# shutdown budget, and 5 seconds for process exit. If env.MAVERICK_SHUTDOWN_TIMEOUT
+# (or legacy env.MAVERICK_DRAIN_TIMEOUT) changes, increase this total accordingly.
+terminationGracePeriodSeconds: 30
+
+# PodDisruptionBudget. Gates voluntary disruptions (node drains, upgrades). With
+# the supported single control-plane replica + Recreate strategy, a PDB cannot
+# prevent downtime, so it remains off until the control plane is replica-safe.
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# Horizontal Pod Autoscaler. Reserved for a future fully transactional shared
+# control plane. The chart currently fails closed when this is enabled, even on
+# Postgres; scale remote workers instead of the dashboard/serve process.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: ""   # "" = omit the memory metric
+
+# NetworkPolicy. Default-deny ingress except to the dashboard port, and (when
+# restrictEgress=true) deny egress to RFC1918/link-local ranges to blunt SSRF to
+# cloud metadata while still allowing DNS + public LLM/provider egress.
+networkPolicy:
+  enabled: false
+  restrictEgress: false
+
+# Prometheus Operator ServiceMonitor for /metrics. /metrics is bearer-gated when
+# a dashboard token is set, so the scrape must authenticate — this wires the
+# bearer from a secret. Requires the Prometheus Operator CRDs to be installed.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  # Secret + key holding the dashboard bearer token used to scrape /metrics.
+  # Leave name empty to use the chart's own secret.
+  bearerTokenSecret:
+    name: ""
+    key: MAVERICK_DASHBOARD_TOKEN
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: maverick.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

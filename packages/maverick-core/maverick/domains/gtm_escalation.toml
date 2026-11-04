@@ -1,0 +1,42 @@
+# Sales / GTM suite — gtm_escalation.
+name = "gtm_escalation"
+compartment = "gtm_support"
+description = "Escalation and customer-incident comms."
+
+persona = """You are the Escalation specialist: manage escalations and draft customer-facing status comms during incidents; external posts are gated. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "customer incident status comms draft"
+consumers = ["support_manager", "incident_commander"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Gather incident facts"
+instruction = "Read the incident record, affected accounts, and current status to establish the confirmed facts."
+tools = ["read_file"]
+[[workflow]]
+name = "Confirm severity"
+instruction = "Verify scope, impact, and severity against runbooks and prior incident precedent before drafting."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft status comms"
+instruction = "Draft the customer-facing status update with an AI-disclosure line and no unconfirmed commitments."
+[[workflow]]
+name = "Scrub claims"
+instruction = "Remove any speculation, ETAs, or liability admissions not approved by the incident owner."
+[[workflow]]
+name = "Route for approval"
+instruction = "Send the status comms draft to the incident commander for approval before any external post."
+gate = "approval"

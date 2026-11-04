@@ -1,0 +1,32 @@
+<section class="panel human-conversations" data-human-conversations data-goal="{{ goal.id if goal is defined else request.query_params.get('goal_id', '') }}" data-context="{{ conversation_context if conversation_context is defined else human_conversation_context }}" data-customer="{{ '1' if goal is defined else '0' }}" aria-labelledby="human-title">
+<h2 id="human-title">{{ ui('Human help in this conversation' if goal is defined else 'Human conversations') }}</h2>
+<p>{{ ui('Choose one on-duty person, review exactly what you share, and pause AI work before they take over. Human replies stay in this web conversation. Earlier messages and files are excluded; they are not sent to the person or added to AI automatically.') }}</p>
+<p data-human-status role="status" aria-live="polite">{{ ui('Checking current conversation permission.') }}</p>
+<p data-human-enabled hidden>{{ ui('New human handoffs are turned off. Earlier originals and authorized hand-back remain available.') }} <a href="/settings#feature-human_conversation_handoffs">{{ ui('Open Human help in Chat in Settings') }}</a></p>
+<button class="btn btn--ghost" type="button" data-human-refresh>{{ ui('Refresh human conversation') }}</button><button class="btn btn--ghost" type="button" data-human-original hidden>{{ ui('Read this original decision') }}</button>
+<div data-human-current></div>
+{% if goal is defined %}
+<form data-human-request-form hidden>
+<label>{{ ui('On-duty person') }}<select class="input" data-human-person required><option value="">{{ ui('Choose an on-duty person') }}</option></select></label>
+<label>{{ ui('Why do you need a person?') }}<textarea class="input" data-human-purpose rows="3" maxlength="1000" required></textarea></label>
+<label>{{ ui('Sharing permission lasts') }}<select class="input" data-human-hours><option value="1">{{ ui('1 hour') }}</option><option value="2">{{ ui('2 hours') }}</option><option value="4">{{ ui('4 hours') }}</option><option value="8">{{ ui('8 hours') }}</option></select></label>
+<button class="btn btn--primary" type="submit">{{ ui('Review handoff to this person') }}</button>
+</form>
+{% elif not request.query_params.get('goal_id') %}
+<form data-human-duty-form>
+<label>{{ ui('Name customers see') }}<input class="input" data-human-duty-label maxlength="120" autocomplete="name"></label>
+<label>{{ ui('Your availability') }}<select class="input" data-human-duty-hours><option value="0">{{ ui('Off duty') }}</option><option value="1">{{ ui('1 hour') }}</option><option value="2">{{ ui('2 hours') }}</option><option value="4">{{ ui('4 hours') }}</option><option value="8">{{ ui('8 hours') }}</option></select></label>
+<button class="btn" type="submit">{{ ui('Review my availability') }}</button>
+</form>
+{% endif %}
+<form data-human-reply-form hidden>
+<label>{{ ui('Reply to this human conversation') }}<textarea class="input" data-human-reply-text rows="4" maxlength="4000" required></textarea></label>
+<p>{{ ui('This sends only the exact reply reviewed below. It does not start AI work, send files or add human messages to AI context.') }}</p>
+<button class="btn" type="submit">{{ ui('Review human reply') }}</button>
+</form>
+<div data-human-review class="human-full-review" aria-live="polite"></div>
+<label>{{ ui('Earlier original decisions') }}<select class="input" data-human-history><option value="">{{ ui('Choose an original decision') }}</option></select></label>
+<div data-human-history-result></div>
+<a href="{{ '/human-conversations' if goal is defined else '/goals' }}">{{ ui('Open on-duty human conversations' if goal is defined else 'Return to Tasks') }}</a>
+</section>
+<style>.human-conversations{margin-block:var(--space-4)}.human-conversations label{display:block;margin-block:var(--space-3)}.human-conversations .input{display:block;width:100%;max-width:100%}.human-conversations button{margin:var(--space-1);white-space:normal}.human-conversations p,.human-conversations dd{white-space:pre-wrap;overflow-wrap:anywhere}.human-conversations dt{font-weight:600}.human-review-row,.human-message{border-block-start:1px solid var(--border);padding-block:var(--space-3)}.human-conversations [hidden]{display:none!important}.human-full-review{scroll-margin-block:var(--space-5)}</style>

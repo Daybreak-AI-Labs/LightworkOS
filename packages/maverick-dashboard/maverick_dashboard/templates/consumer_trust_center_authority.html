@@ -1,0 +1,642 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Trust center access · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set tc_admin = consent_can_admin if consent_can_admin is defined else true %}
+{% set tc_audit = consent_can_audit if consent_can_audit is defined else true %}
+<div class="governance-workbench" id="tca-root" data-enabled="{{ 'true' if consumer_trust_center_authority_enabled else 'false' }}" data-branding="{{ 'true' if trust_center_branding_enabled else 'false' }}" data-can-admin="{{ 'true' if tc_admin else 'false' }}" data-can-audit="{{ 'true' if tc_audit else 'false' }}">
+  {{ hero('Consent review', 'Trust center access',
+          lede='Decide what each person can see and do in your public Trust Center: the published notice, their consent history, their profile data and their privacy requests. Every kind of access needs two approvals from people other than the one who asked for it.') }}
+  {% include "_consent_nav.html" %}
+  {% if not consumer_trust_center_authority_enabled %}
+  {{ module_gate('consent_preferences.trust_center', 'Consumer Trust Center',
+                 detail='Gives people a private page where they can see their consent choices and make privacy requests. Decide who approves access first.',
+                 can_activate=tc_admin) }}
+  {% else %}
+  <p id="tca-status" class="muted" role="status" aria-live="polite"></p>
+
+  <section class="panel" aria-labelledby="tca-people-heading">
+    <div class="section-head">
+      <h2 id="tca-people-heading">People connected to the Trust Center</h2>
+      <button class="btn btn--primary" type="button" id="tca-new"{% if not tc_admin %} disabled{% endif %}>Connect a person</button>
+    </div>
+    <div id="tca-contexts"><p class="muted">Loading…</p></div>
+
+    <form id="tca-connect" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not tc_admin %} disabled{% endif %}>
+        <legend class="sr-only">Connect a person</legend>
+        <h3 class="cw-wide">Connect a person</h3>
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Website or app key<select class="select" name="client" required></select></label>
+        <label>Person<select class="select" name="profile" required></select></label>
+        <label>Access until<input class="input" type="date" name="valid_until" required></label>
+        <label>Keep the record until<input class="input" type="date" name="retained_until" required></label>
+        <details class="cw-wide"><summary>More options</summary>
+          <div class="cw-form">
+            <label>Past notices they can see<select class="select" name="publication_history_limit"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label>
+            <label>Past choices they can see<select class="select" name="receipt_limit"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option></select></label>
+          </div>
+        </details>
+        <p class="muted cw-wide">After connecting, ask for the kinds of access the person needs. Each one then needs two approvals.</p>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Connect account</button>
+          <button class="btn btn--ghost" type="button" data-tca-close="tca-connect">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+
+    <form id="tca-grant" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form">
+        <legend class="sr-only">Ask for access</legend>
+        <h3 class="cw-wide" id="tca-grant-title">Ask for access</h3>
+        <input type="hidden" name="context_ref">
+        <input type="hidden" name="expected_context_revision">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>What they can use
+          <select class="select" name="capability">
+            <option value="active_publication">See the published notice</option>
+            <option value="consent_history">See their consent history</option>
+            <option value="profile_data">See their profile data</option>
+            <option value="rights_cases">Make privacy requests</option>
+          </select>
+        </label>
+        <label>Until<input class="input" type="date" name="valid_until" required></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Ask for approval</button>
+          <button class="btn btn--ghost" type="button" data-tca-close="tca-grant">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+
+    <form id="tca-case" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form">
+        <legend class="sr-only">Link a privacy request</legend>
+        <h3 class="cw-wide" id="tca-case-title">Link a privacy request</h3>
+        <input type="hidden" name="context_ref">
+        <input type="hidden" name="expected_context_revision">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Privacy request<select class="select" name="case_id" required></select></label>
+        <label>Until<input class="input" type="date" name="valid_until" required></label>
+        <p class="muted cw-wide">The person can follow this request in the Trust Center once two people approve. The person must already be allowed to make privacy requests.</p>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Ask for approval</button>
+          <button class="btn btn--ghost" type="button" data-tca-close="tca-case">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+
+    <form id="tca-extend" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form"{% if not tc_admin %} disabled{% endif %}>
+        <legend class="sr-only">Change dates</legend>
+        <h3 class="cw-wide">Change dates</h3>
+        <input type="hidden" name="context_ref">
+        <input type="hidden" name="expected_revision">
+        <input type="hidden" name="publication_history_limit">
+        <input type="hidden" name="receipt_limit">
+        <input data-auto-reference hidden name="idempotency_key" aria-label="Request reference">
+        <label>Access until<input class="input" type="date" name="valid_until" required></label>
+        <label>Keep the record until<input class="input" type="date" name="retained_until" required></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Save dates</button>
+          <button class="btn btn--ghost" type="button" data-tca-close="tca-extend">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+    <div id="tca-detail" class="cw-editor" hidden tabindex="-1">
+      <h3 id="tca-detail-title">History</h3>
+      <div id="tca-detail-body"></div>
+      <div class="cw-actions"><button class="btn btn--ghost" type="button" data-tca-close="tca-detail">Close</button></div>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="tca-access-heading">
+    <h2 id="tca-access-heading">Access and approvals</h2>
+    <p class="muted">Each request for access needs two approvals from different people, neither of whom asked for it.</p>
+    <div id="tca-access"><p class="muted">Loading…</p></div>
+  </section>
+
+  <section class="panel" aria-labelledby="tca-brand-heading" id="tca-brand"{% if not trust_center_branding_enabled %} hidden{% endif %}>
+    <h2 id="tca-brand-heading">Your brand on the Trust Center</h2>
+    <p class="muted">Upload your logo, have a different person approve it, then show it on a website’s Trust Center. You can also give the Trust Center your own web address.</p>
+    <div class="section-head">
+      <h3>Logos and icons</h3>
+      <button class="btn btn--primary" type="button" id="tcb-new-logo">Upload a logo</button>
+    </div>
+    <div id="tcb-assets"><p class="muted">Loading…</p></div>
+    <form id="tcb-upload" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form">
+        <legend class="sr-only">Upload a logo</legend>
+        <label>Image (PNG or JPEG)<input class="input" type="file" name="file" accept="image/png,image/jpeg" required></label>
+        <label>Used as<select class="select" name="asset_kind"><option value="logo">Logo</option><option value="icon">Small icon</option></select></label>
+        <div class="cw-wide"><img id="tcb-preview" alt="Preview of the chosen image" hidden></div>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Send for review</button>
+          <button class="btn btn--ghost" type="button" data-tca-close="tcb-upload">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+
+    <div class="section-head">
+      <h3>Your own web address</h3>
+      <button class="btn" type="button" id="tcb-new-domain"{% if not tc_admin %} disabled{% endif %}>Add a web address</button>
+    </div>
+    <div id="tcb-domains"><p class="muted">Loading…</p></div>
+    <div id="tcb-challenge" class="cw-secret cw-editor" hidden role="status" aria-live="polite">
+      <strong>Verification code for <span id="tcb-challenge-host"></span></strong>
+      <code id="tcb-challenge-code"></code>
+      <div class="cw-actions"><button class="btn btn--primary" type="button" id="tcb-copy-code">Copy code</button><button class="btn btn--ghost" type="button" data-tca-close="tcb-challenge">Done</button></div>
+      <p class="muted">Ask whoever manages your domain to add this code as a text (TXT) record for this address. Then use “Check address”. The code is shown only now.</p>
+    </div>
+
+    <div class="section-head">
+      <h3>Brand shown on each website</h3>
+      <button class="btn" type="button" id="tcb-new-projection"{% if not tc_admin %} disabled{% endif %}>Show the brand on a website</button>
+    </div>
+    <div id="tcb-projections"><p class="muted">Loading…</p></div>
+    <form id="tcb-project" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form">
+        <legend class="sr-only">Show the brand on a website</legend>
+        <label>Website or app key<select class="select" name="client" required></select></label>
+        <label>Logo<select class="select" name="asset" required></select></label>
+        <label>Web address<select class="select" name="domain"></select></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Show brand</button>
+          <button class="btn btn--ghost" type="button" data-tca-close="tcb-project">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="tca-upkeep-heading">
+    <h2 id="tca-upkeep-heading">Upkeep</h2>
+    <div class="cw-actions">
+      <button class="btn" type="button" id="tca-integrity"{% if not tc_audit %} disabled{% endif %}>Check that records are intact</button>
+    </div>
+    <form id="tca-retention" class="cw-form" novalidate>
+      <label>Records whose keeping period ended before<input class="input" type="date" name="before" required></label>
+      <div class="cw-actions"><button class="btn btn--danger" type="submit"{% if not tc_admin %} disabled{% endif %}>Delete expired records</button></div>
+    </form>
+    <div id="tca-upkeep-result" class="cw-result" role="status" aria-live="polite"></div>
+  </section>
+
+  <details class="panel">
+    <summary>About this page’s safeguards</summary>
+    <p class="muted">Your name and your workspace come from your sign-in, never from this page. The person a record is about cannot manage it, the person who asks for access cannot approve it, and two different people must approve. Nothing personal is shown here: people are identified only by their references. Logos stay private until a different person approves them, and a custom web address goes live only after its records are checked.</p>
+  </details>
+  {% endif %}
+</div>
+{% if consumer_trust_center_authority_enabled %}
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/consent/trust-center-authority";
+  var BRAND = "/api/v1/consent/trust-center-branding";
+  // The page's JSON clients: a non-2xx or malformed response is never success.
+  async function run(method, path, body, base) {
+    var opts = {method: method, cache: "no-store", credentials: "same-origin", headers: {Accept: "application/json"}};
+    if (body !== undefined && method !== "GET") { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
+    var response = await fetch((base || API) + path, opts);
+    var text = await response.text(), parsed;
+    try { parsed = JSON.parse(text); } catch (_error) { var bad = new Error("The reply from the server could not be read. Try again."); bad.status = response.ok ? 0 : response.status; throw bad; }
+    if (!response.ok) { var failure = new Error(parsed && typeof parsed.detail === "string" ? parsed.detail : "That didn't work. Refresh the page and try again."); failure.status = response.status; throw failure; }
+    return parsed;
+  }
+  var CW = window.LightworkConsentWorkbench;
+  if (CW && document.getElementById("tca-root")) start();
+
+  function start() {
+    var $ = function (id) { return document.getElementById(id); };
+    var root = $("tca-root"), status = $("tca-status");
+    var canAdmin = root.dataset.canAdmin === "true", canAudit = root.dataset.canAudit === "true";
+    var branding = root.dataset.branding === "true";
+    var state = {contexts: [], grants: [], rights: [], clients: [], profiles: [], cases: [], assets: [], domains: [], projections: []};
+    var CAPS = {active_publication: "See the published notice", consent_history: "See their consent history", profile_data: "See their profile data", rights_cases: "Make privacy requests"};
+    var STAGE = {proposed: ["Waiting for 2 approvals", "warn"], first_approved: ["Waiting for 1 more approval", "warn"], active: ["Approved", "ok"], revoked: ["Removed", "idle"]};
+    function say(text, isError) { CW.say(status, text, isError); }
+    function fail(error, action) { return CW.fail(status, error, action); }
+    function days(n) { return CW.toInput(Date.now() / 1000 + n * 86400, true); }
+    function endOfDay(value) { var s = CW.toSeconds(value); return s > 0 ? s + 86399 : NaN; }
+    document.querySelectorAll("[data-tca-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.tcaClose).hidden = true; }); });
+    function contextName(ref) {
+      var c = state.contexts.filter(function (x) { return x.context_ref === ref; })[0];
+      if (!c) return "Removed connection";
+      return (c.profile_label || "A person") + (c.property_label ? " on " + CW.human(c.property_label) : "");
+    }
+
+    async function load() {
+      try {
+        var overview = await run("GET", "/overview");
+        state.contexts = overview.contexts || []; state.grants = overview.grants || []; state.rights = overview.rights_authorizations || [];
+        renderContexts(); renderAccess();
+      } catch (error) {
+        if (error && error.status === 503) {
+          $("tca-contexts").replaceChildren(CW.el("p", "muted", "The Trust Center is turned on but not ready yet. An administrator needs to finish setting it up."));
+          $("tca-access").replaceChildren();
+          return;
+        }
+        fail(error, "load Trust Center access");
+      }
+      if (branding) loadBrand();
+    }
+
+    // ----- People (contexts) -----
+    function accessSummary(ref) {
+      var parts = state.grants.filter(function (g) { return g.context_ref === ref && g.status !== "revoked"; }).map(function (g) {
+        return CAPS[g.capability] + (g.status === "active" ? "" : " (waiting)");
+      });
+      return parts.length ? parts.join("; ") : "Nothing yet";
+    }
+    function renderContexts() {
+      CW.table($("tca-contexts"), state.contexts, {label: "People connected to the Trust Center", name: function (c) { return contextName(c.context_ref); },
+        columns: [
+          {label: "Person", value: function (c) { return c.profile_label || "A person"; }},
+          {label: "Website", value: function (c) { return c.property_label ? CW.human(c.property_label) : "—"; }},
+          {label: "Can Use", value: function (c) { return accessSummary(c.context_ref); }},
+          {label: "Access Until", value: function (c) { return CW.when(c.valid_until); }},
+          {label: "Status", value: function (c) { return c.status === "active" ? CW.badge("Connected", "ok") : CW.badge("Disconnected", "idle"); }},
+        ],
+        actions: [
+          {label: "Ask for access", kind: "primary", when: function (c) { return c.status === "active"; }, run: openGrant},
+          {label: "Link a privacy request", when: function (c) { return c.status === "active"; }, run: function (c, b) { CW.busy(b, function () { return openCase(c); }); }},
+          {label: "Change dates", when: function (c) { return canAdmin && c.status === "active"; }, run: openExtend},
+          {label: "Download record", run: function (c, b) { CW.busy(b, function () { return download(c); }); }},
+          {label: "History", run: function (c, b) { CW.busy(b, function () { return history("context", c.context_ref, contextName(c.context_ref)); }); }},
+          {label: "Disconnect", kind: "danger", when: function (c) { return canAdmin && c.status === "active"; }, run: function (c, b) { CW.busy(b, function () { return disconnect(c); }); }},
+        ],
+        empty: {title: "No one is connected yet.", body: "Connect a person who uses your website or app so they can use the Trust Center.", action: canAdmin ? {label: "Connect a person", run: openConnect} : null}});
+    }
+    async function openConnect() {
+      var form = $("tca-connect"), f = form.elements;
+      try {
+        var both = await Promise.all([run("GET", "?limit=500", undefined, "/api/v1/consent/public-clients"), run("GET", "/profiles?limit=500", undefined, "/api/v1/consent/public-clients"), run("GET", "/profiles?limit=500", undefined, "/api/v1/consent")]);
+        state.clients = (both[0].items || []).filter(function (c) { return c.status === "active"; });
+        state.profiles = (both[1].items || []).filter(function (p) { return p.profile_status === "active" && p.client_status === "active"; });
+        state.consentProfiles = both[2].profiles || [];
+      } catch (error) { fail(error, "load websites and people"); return; }
+      if (!state.profiles.length) { say("No one has saved choices through your website or app yet, so there is no one to connect.", true); return; }
+      form.reset(); f.idempotency_key.value = CW.reference();
+      var clientIds = [];
+      state.profiles.forEach(function (p) { if (clientIds.indexOf(p.client_credential_id) < 0) clientIds.push(p.client_credential_id); });
+      CW.fill(f.client, clientIds.map(function (id) { var p = state.profiles.filter(function (x) { return x.client_credential_id === id; })[0]; return {value: id, label: CW.human(p.property_id)}; }));
+      fillPeople();
+      f.valid_until.value = days(90); f.retained_until.value = days(365);
+      CW.open(form, "select");
+    }
+    function fillPeople() {
+      var f = $("tca-connect").elements;
+      CW.fill(f.profile, state.profiles.filter(function (p) { return p.client_credential_id === f.client.value; }).map(function (p) { return {value: p.profile_id, label: p.profile_id}; }));
+    }
+    $("tca-connect").elements.client.addEventListener("change", fillPeople);
+    $("tca-new").addEventListener("click", function (event) { CW.busy(event.currentTarget, openConnect); });
+    $("tca-connect").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, f = form.elements;
+      var binding = state.profiles.filter(function (p) { return p.client_credential_id === f.client.value && p.profile_id === f.profile.value; })[0];
+      if (!binding) { say("Choose a person.", true); return; }
+      var consentProfile = (state.consentProfiles || []).filter(function (p) { return p.profile_id === binding.profile_id; })[0];
+      var valid = endOfDay(f.valid_until.value), retained = endOfDay(f.retained_until.value);
+      if (!(valid > Date.now() / 1000) || !(retained >= valid)) { say("Choose an access date in the future, and a keep-until date on or after it.", true); return; }
+      try {
+        await run("POST", "/privacy-rights-contexts/prepare", {client_credential_id: binding.client_credential_id, property_id: binding.property_id, profile_id: binding.profile_id,
+          expected_client_revision: binding.client_revision, expected_profile_revision: consentProfile ? consentProfile.revision : 0,
+          valid_until: valid, retained_until: retained, publication_history_limit: Number(f.publication_history_limit.value), receipt_limit: Number(f.receipt_limit.value), idempotency_key: f.idempotency_key.value});
+        form.hidden = true; say("Person connected. Now ask for the access they need."); await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not connect this person. Their key or record changed, or they have not confirmed who they are yet. Refresh and try again.", true); return; }
+        fail(error, "connect the person");
+      }
+    });
+    function openGrant(c) {
+      var form = $("tca-grant"), f = form.elements;
+      form.reset(); f.idempotency_key.value = CW.reference();
+      f.context_ref.value = c.context_ref; f.expected_context_revision.value = String(c.revision);
+      f.valid_until.value = CW.toInput(Math.min(c.valid_until, Date.now() / 1000 + 90 * 86400), true);
+      $("tca-grant-title").textContent = "Ask for access for " + contextName(c.context_ref);
+      CW.open(form, "select");
+    }
+    $("tca-grant").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var f = event.currentTarget.elements, valid = endOfDay(f.valid_until.value);
+      try {
+        await run("POST", "/contexts/" + encodeURIComponent(f.context_ref.value) + "/capability-grants", {capability: f.capability.value, expected_context_revision: Number(f.expected_context_revision.value), valid_until: valid, idempotency_key: f.idempotency_key.value});
+        event.currentTarget.hidden = true; say("Access requested. Two other people must now approve it below."); await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not ask for access. The date may be after the connection ends, or the connection changed. Refresh and try again.", true); return; }
+        fail(error, "ask for access");
+      }
+    });
+    async function openCase(c) {
+      try { state.cases = (await run("GET", "/rights-cases")).items || []; }
+      catch (error) { fail(error, "load privacy requests"); return; }
+      var open = state.cases.filter(function (k) { return k.status !== "closed"; });
+      if (!open.length) { say("There are no open privacy requests to link.", true); return; }
+      var form = $("tca-case"), f = form.elements;
+      form.reset(); f.idempotency_key.value = CW.reference();
+      f.context_ref.value = c.context_ref; f.expected_context_revision.value = String(c.revision);
+      CW.fill(f.case_id, open.map(function (k) { return {value: k.case_id, label: (k.rights || []).map(CW.human).join(", ") + " – opened " + CW.when(k.created_at)}; }));
+      f.valid_until.value = CW.toInput(Math.min(c.valid_until, Date.now() / 1000 + 90 * 86400), true);
+      $("tca-case-title").textContent = "Link a privacy request for " + contextName(c.context_ref);
+      CW.open(form, "select");
+    }
+    $("tca-case").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var f = event.currentTarget.elements;
+      try {
+        await run("POST", "/contexts/" + encodeURIComponent(f.context_ref.value) + "/rights-authorizations/for-case", {case_id: f.case_id.value, expected_context_revision: Number(f.expected_context_revision.value), valid_until: endOfDay(f.valid_until.value), idempotency_key: f.idempotency_key.value});
+        event.currentTarget.hidden = true; say("Request linked. Two other people must now approve it below."); await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not link the request. The person first needs approved access to make privacy requests; approve their access, then link it again.", true); return; }
+        fail(error, "link the request");
+      }
+    });
+    function openExtend(c) {
+      var form = $("tca-extend"), f = form.elements;
+      form.reset(); f.idempotency_key.value = CW.reference();
+      f.context_ref.value = c.context_ref; f.expected_revision.value = String(c.revision);
+      f.publication_history_limit.value = String(c.publication_history_limit); f.receipt_limit.value = String(c.receipt_limit);
+      f.valid_until.value = CW.toInput(c.valid_until, true); f.retained_until.value = CW.toInput(c.retained_until, true);
+      CW.open(form, "input[type=date]");
+    }
+    $("tca-extend").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var f = event.currentTarget.elements, valid = endOfDay(f.valid_until.value), retained = endOfDay(f.retained_until.value);
+      if (!(retained >= valid)) { say("The keep-until date must be on or after the access date.", true); return; }
+      try {
+        await run("PATCH", "/contexts/" + encodeURIComponent(f.context_ref.value), {expected_revision: Number(f.expected_revision.value), valid_until: valid, retained_until: retained, publication_history_limit: Number(f.publication_history_limit.value), receipt_limit: Number(f.receipt_limit.value), idempotency_key: f.idempotency_key.value});
+        event.currentTarget.hidden = true; say("Dates saved."); await load();
+      } catch (error) { fail(error, "save the dates"); }
+    });
+    async function disconnect(c) {
+      if (!(await CW.confirm("Disconnect " + contextName(c.context_ref) + " from the Trust Center? All of their access and linked requests end now. This cannot be undone.", "Disconnect"))) return;
+      try { await run("POST", "/contexts/" + encodeURIComponent(c.context_ref) + "/revoke", {expected_revision: c.revision, idempotency_key: CW.reference()}); say("Disconnected."); await load(); }
+      catch (error) { fail(error, "disconnect"); }
+    }
+    async function download(c) {
+      try {
+        var exported = await run("POST", "/contexts/" + encodeURIComponent(c.context_ref) + "/exports", {idempotency_key: CW.reference()});
+        var blob = new Blob([JSON.stringify(exported, null, 2)], {type: "application/json"});
+        var link = document.createElement("a");
+        link.href = URL.createObjectURL(blob); link.download = "trust-center-record.json";
+        document.body.appendChild(link); link.click(); link.remove();
+        say("Signed record downloaded.");
+      } catch (error) { fail(error, "download the record"); }
+    }
+    async function history(kind, ref, name) {
+      var body = $("tca-detail-body");
+      $("tca-detail-title").textContent = "History of " + name;
+      try {
+        var result = await run("GET", "/history/" + kind + "/" + encodeURIComponent(ref) + "?limit=100");
+        var events = Array.isArray(result) ? result : (result.items || result.history || []);
+        var list = CW.el("ul");
+        events.forEach(function (e) { list.appendChild(CW.el("li", "", CW.when(e.updated_at || e.created_at) + " – " + ((STAGE[e.status] || [CW.human(e.status || "changed")])[0]))); });
+        body.replaceChildren(events.length ? list : CW.el("p", "muted", "No changes recorded."));
+        CW.open($("tca-detail"), null);
+      } catch (error) { fail(error, "load the history"); }
+    }
+
+    // ----- Access and approvals -----
+    function renderAccess() {
+      var rows = state.grants.map(function (g) { return {kind: "grant", ref: g.grant_ref, item: g, what: CAPS[g.capability] || CW.human(g.capability)}; })
+        .concat(state.rights.map(function (r) { return {kind: "rights_authorization", ref: r.authorization_ref, item: r, what: "Follow a privacy request"}; }));
+      CW.table($("tca-access"), rows, {label: "Access and approvals", name: function (r) { return r.what + " for " + contextName(r.item.context_ref); },
+        columns: [
+          {label: "Person", value: function (r) { return contextName(r.item.context_ref); }},
+          {label: "Access", value: function (r) { return r.what; }},
+          {label: "Until", value: function (r) { return CW.when(r.item.valid_until); }},
+          {label: "Stage", value: function (r) { var m = STAGE[r.item.status] || [CW.human(r.item.status), "idle"]; return CW.badge(m[0] + (r.item.requested_by_me && r.item.status !== "active" && r.item.status !== "revoked" ? " (you asked)" : ""), m[1]); }},
+        ],
+        actions: [
+          {label: "Approve", kind: "primary", when: function (r) { return canAdmin && (r.item.status === "proposed" || r.item.status === "first_approved") && !r.item.requested_by_me && !r.item.approved_by_me; }, run: function (r, b) { CW.busy(b, function () { return decide(r, "approve"); }); }},
+          {label: "Remove", kind: "danger", when: function (r) { return canAdmin && r.item.status !== "revoked"; }, run: function (r, b) { CW.busy(b, function () { return decide(r, "revoke"); }); }},
+          {label: "History", run: function (r, b) { CW.busy(b, function () { return history(r.kind, r.ref, r.what); }); }},
+        ],
+        empty: {title: "No access requested yet.", body: "Use “Ask for access” on a connected person."}});
+    }
+    var reviewGeneration = 0, reviewing = false;
+    function clearReview() {
+      reviewGeneration += 1;
+      if (reviewing) { var cancel = $("mv-confirm-cancel"); if (cancel) cancel.click(); }
+    }
+    [window, document].forEach(function (target) { ["lightwork:workspace-changed", "lightwork:account-context-changed"].forEach(function (name) { target.addEventListener(name, clearReview); }); });
+    async function confirmReview(message, label) {
+      var dialog = $("mv-confirm"), text = $("mv-confirm-msg");
+      if (dialog && dialog.open) return false;
+      var previous = text ? text.style.cssText : "";
+      var answer = CW.confirm(message, label); reviewing = true;
+      if (text) { text.style.whiteSpace = "pre-wrap"; text.style.overflowWrap = "anywhere"; text.style.maxHeight = "60vh"; text.style.overflowY = "auto"; }
+      try { return await answer; }
+      finally { reviewing = false; if (text) { text.textContent = ""; text.style.cssText = previous; } }
+    }
+    async function decide(row, action) {
+      var generation = reviewGeneration;
+      var overview;
+      try { overview = await run("GET", "/overview"); }
+      catch (error) { fail(error, "read the current access request"); return; }
+      if (generation !== reviewGeneration) return;
+      var current = (row.kind === "grant" ? overview.grants : overview.rights_authorizations).filter(function (item) { return (item.grant_ref || item.authorization_ref) === row.ref; })[0];
+      var parent = overview.contexts.filter(function (item) { return item.context_ref === row.item.context_ref; })[0];
+      var previous = state.contexts.filter(function (item) { return item.context_ref === row.item.context_ref; })[0];
+      if (!current || !parent || !previous || JSON.stringify(current) !== JSON.stringify(row.item) || JSON.stringify(parent) !== JSON.stringify(previous)) {
+        say("This request or the person's connection changed. Refresh and read its current details before deciding.", true); return;
+      }
+      var path = (row.kind === "grant" ? "/capability-grants/" : "/rights-authorizations/") + encodeURIComponent(row.ref) + "/" + action;
+      var message = "Person: " + (parent.profile_label || "Name unavailable in this view") + "\nWebsite or app: " + (parent.property_label ? CW.human(parent.property_label) : "Name unavailable in this view") +
+        "\nRequested access: " + row.what + "\nAccess until: " + CW.when(current.valid_until) +
+        "\nConnection valid until: " + CW.when(parent.valid_until) + "\nKeep connection records until: " + CW.when(parent.retained_until) +
+        "\nNotice versions this person may read: up to " + parent.publication_history_limit + "\nConsent records this person may read: up to " + parent.receipt_limit +
+        "\nApprovals already recorded: " + current.approval_count + " of 2\nRequested on: " + CW.when(current.created_at) +
+        (current.case_id ? "\nLinked privacy request: " + current.case_id + ". Read its complete request from Privacy before approving this access." : "") +
+        (action === "approve" ? "\n\nApprove this exact access?" + (current.approval_count === 1 ? " This is the second approval, so the access starts now." : " One more person must approve after you.") : "\n\nRemove this exact access? It ends straight away and cannot be restored.");
+      if (!(await confirmReview(message, action === "approve" ? "Approve" : "Remove")) || generation !== reviewGeneration) return;
+      try {
+        await run("POST", path, {expected_revision: current.revision, expected_context_revision: parent.revision, idempotency_key: CW.reference()});
+        say(action === "approve" ? "Approval recorded." : "Access removed."); await load();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not record this. The person who asked, or someone who already approved, cannot approve again; or it changed since you opened the page.", true); return; }
+        fail(error, action === "approve" ? "approve" : "remove the access");
+      }
+    }
+
+    // ----- Brand -----
+    var ASSET_STAGE = {pending_review: ["Waiting for review", "warn"], approved: ["Approved", "ok"], rejected: ["Rejected", "danger"], active: ["In use", "ok"], revoked: ["Removed", "idle"], purged: ["Deleted", "idle"]};
+    var DOMAIN_STAGE = {challenged: ["Waiting for the verification record", "warn"], pending: ["Waiting for the verification record", "warn"], verified: ["Verified", "ok"], active: ["Live", "ok"], revoked: ["Removed", "idle"], expired: ["Expired", "idle"]};
+    async function loadBrand() {
+      try {
+        var all = await Promise.all([run("GET", "/assets", undefined, BRAND), run("GET", "/domains", undefined, BRAND), run("GET", "/projections", undefined, BRAND)]);
+        state.assets = all[0].items || []; state.domains = all[1].items || []; state.projections = all[2].items || [];
+      } catch (error) {
+        $("tcb-assets").replaceChildren(CW.el("p", "muted", CW.errorText(error, "load your brand")));
+        return;
+      }
+      CW.table($("tcb-assets"), state.assets, {label: "Logos and icons", name: function (a) { return CW.human(a.asset_id) + " " + a.asset_version; },
+        columns: [
+          {label: "Image", value: function (a) { return (a.asset_kind === "icon" ? "Icon" : "Logo") + " version " + a.asset_version; }},
+          {label: "Size", value: function (a) { return a.width + " × " + a.height; }},
+          {label: "Uploaded", value: function (a) { return CW.when(a.created_at); }},
+          {label: "Stage", value: function (a) { var m = ASSET_STAGE[a.state] || [CW.human(a.state), "idle"]; return CW.badge(m[0], m[1]); }},
+        ],
+        actions: [
+          {label: "Approve", kind: "primary", when: function (a) { return canAdmin && a.state === "pending_review"; }, run: function (a, b) { CW.busy(b, function () { return assetAction(a, "review", {approve: true}); }); }},
+          {label: "Reject", when: function (a) { return canAdmin && a.state === "pending_review"; }, run: function (a, b) { CW.busy(b, function () { return assetAction(a, "review", {approve: false}); }); }},
+          {label: "Make live", when: function (a) { return canAdmin && a.state === "approved"; }, run: function (a, b) { CW.busy(b, function () { return assetAction(a, "activate", {}); }); }},
+          {label: "Remove", kind: "danger", when: function (a) { return canAdmin && (a.state === "active" || a.state === "approved"); }, run: function (a, b) { CW.busy(b, function () { return assetAction(a, "revoke", {}); }); }},
+        ],
+        empty: {title: "No logo yet.", body: "Upload your logo so the Trust Center looks like your brand.", action: {label: "Upload a logo", run: openUpload}}});
+      CW.table($("tcb-domains"), state.domains, {label: "Web addresses", name: function (d) { return d.host; },
+        columns: [
+          {label: "Address", value: function (d) { return d.host; }},
+          {label: "Checked Until", value: function (d) { return d.verified_until ? CW.when(d.verified_until) : "—"; }},
+          {label: "Stage", value: function (d) { var m = DOMAIN_STAGE[d.state] || [CW.human(d.state), "idle"]; return CW.badge(m[0], m[1]); }},
+        ],
+        actions: [
+          {label: "Check address", kind: "primary", when: function (d) { return canAdmin && d.state !== "active" && d.state !== "verified" && d.state !== "revoked" && d.state !== "expired"; }, run: function (d, b) { CW.busy(b, function () { return domainAction(d, "verify"); }); }},
+          {label: "Go live", when: function (d) { return canAdmin && d.state === "verified"; }, run: function (d, b) { CW.busy(b, function () { return domainAction(d, "activate"); }); }},
+          {label: "Check again", when: function (d) { return canAdmin && d.state === "active"; }, run: function (d, b) { CW.busy(b, function () { return domainAction(d, "reverify"); }); }},
+          {label: "New verification code", when: function (d) { return canAdmin && d.state !== "active"; }, run: function (d, b) { CW.busy(b, function () { return challenge(d.host, d.claim_id, d.claim_version); }); }},
+          {label: "Remove", kind: "danger", when: function (d) { return canAdmin && d.state !== "revoked" && d.state !== "expired"; }, run: function (d, b) { CW.busy(b, function () { return domainAction(d, "revoke"); }); }},
+        ],
+        empty: {title: "No web address yet.", body: "The Trust Center uses a Lightwork address until you add your own."}});
+      CW.table($("tcb-projections"), state.projections, {label: "Brand shown on each website", name: function (p) { return CW.human(p.property_id); },
+        columns: [
+          {label: "Website", value: function (p) { return CW.human(p.property_id); }},
+          {label: "Address", value: function (p) { return p.public_host; }},
+          {label: "Logo", value: function (p) { return "Version " + p.asset_version; }},
+          {label: "Status", value: function (p) { return p.state === "active" ? CW.badge("Shown", "ok") : CW.badge("Not shown", "idle"); }},
+        ],
+        actions: [{label: "Stop showing", kind: "danger", when: function (p) { return canAdmin && p.state === "active"; }, run: function (p, b) { CW.busy(b, function () { return unproject(p); }); }}],
+        empty: {title: "The brand is not shown anywhere yet.", body: "Approve and make a logo live, then show it on a website."}});
+    }
+    function openUpload() { var form = $("tcb-upload"); form.reset(); $("tcb-preview").hidden = true; CW.open(form, "input[type=file]"); }
+    $("tcb-new-logo").addEventListener("click", openUpload);
+    $("tcb-upload").elements.file.addEventListener("change", function (event) {
+      var file = event.target.files && event.target.files[0], img = $("tcb-preview");
+      if (!file) { img.hidden = true; return; }
+      img.src = URL.createObjectURL(file); img.hidden = false;
+    });
+    function asBase64(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onerror = function () { reject(Object.assign(new Error("read"), {plain: "That image could not be read. Try another file."})); };
+        reader.onload = function () { resolve(String(reader.result).split(",", 2)[1] || ""); };
+        reader.readAsDataURL(file);
+      });
+    }
+    $("tcb-upload").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, file = form.elements.file.files[0], kind = form.elements.asset_kind.value;
+      if (!file) { say("Choose an image.", true); return; }
+      if (["image/png", "image/jpeg"].indexOf(file.type) < 0) { say("Choose a PNG or JPEG image.", true); return; }
+      var assetId = kind === "icon" ? "trust-center-icon" : "trust-center-logo";
+      var latest = state.assets.filter(function (a) { return a.asset_id === assetId; }).reduce(function (n, a) { return Math.max(n, a.asset_version); }, 0);
+      try {
+        await run("POST", "/assets/" + assetId + "/versions", {expected_version: latest, asset_kind: kind, media_type: file.type, content_base64: await asBase64(file)}, BRAND);
+        form.hidden = true; say("Image sent for review. A different person must approve it."); await loadBrand();
+      } catch (error) {
+        if (error && error.plain) { say(error.plain, true); return; }
+        if (error && error.status === 422) { say("That image cannot be used. Use a PNG or JPEG of a sensible size.", true); return; }
+        fail(error, "upload the image");
+      }
+    });
+    async function assetAction(a, action, extra) {
+      var messages = {review: extra.approve ? "Approve this " + a.asset_kind + "?" : "Reject this " + a.asset_kind + "? It will be deleted after the keeping period.", activate: "Make this " + a.asset_kind + " the one in use? It replaces the current one.", revoke: "Remove this " + a.asset_kind + "? Websites showing it will stop showing it."};
+      if (!(await CW.confirm(messages[action], action === "review" ? (extra.approve ? "Approve" : "Reject") : action === "activate" ? "Make live" : "Remove"))) return;
+      try {
+        await run("POST", "/assets/" + encodeURIComponent(a.asset_id) + "/versions/" + a.asset_version + "/" + action, Object.assign({expected_authority_revision: a.authority_revision}, extra), BRAND);
+        say("Saved."); await loadBrand();
+      } catch (error) {
+        if (error && error.status === 409) { say("Could not save. The person who uploaded an image cannot approve it, or it changed since you opened the page.", true); return; }
+        fail(error, "save");
+      }
+    }
+    async function challenge(host, claimId, version) {
+      try {
+        var result = await run("POST", "/domains/" + encodeURIComponent(claimId) + "/challenges", {host: host, expected_claim_version: version || 0}, BRAND);
+        $("tcb-challenge-host").textContent = host; $("tcb-challenge-code").textContent = result.dns_challenge_token || "";
+        CW.open($("tcb-challenge"), "button"); await loadBrand();
+      } catch (error) {
+        if (error && error.status === 422) { say("Enter a web address like trust.example.com.", true); return; }
+        fail(error, "create a verification code");
+      }
+    }
+    $("tcb-copy-code").addEventListener("click", function () { window.mvCopy($("tcb-challenge-code").textContent); });
+    $("tcb-new-domain").addEventListener("click", async function () {
+      var answers = await window.mvForm("Add a web address", [{key: "host", label: "Web address, for example trust.example.com", type: "text", required: true}], {okText: "Review web address"});
+      if (!answers || !answers.host) return;
+      var host = String(answers.host).trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      var claimId = CW.slug(host, "address");
+      var latest = state.domains.filter(function (d) { return d.claim_id === claimId; }).reduce(function (n, d) { return Math.max(n, d.claim_version); }, 0);
+      await challenge(host, claimId, latest);
+    });
+    async function domainAction(d, action) {
+      var messages = {verify: "Check that the verification record for " + d.host + " is in place?", activate: "Make " + d.host + " the Trust Center’s address now?", reverify: "Check " + d.host + " again?", revoke: "Remove " + d.host + "? The Trust Center stops using it straight away."};
+      if (!(await CW.confirm(messages[action], action === "revoke" ? "Remove" : "Continue"))) return;
+      try {
+        await run("POST", "/domains/" + encodeURIComponent(d.claim_id) + "/versions/" + d.claim_version + "/" + action, {expected_authority_revision: d.authority_revision}, BRAND);
+        say("Done."); await loadBrand();
+      } catch (error) {
+        if (error && (error.status === 503 || error.status === 409)) { say("The address could not be checked yet. Make sure the verification record was added, wait a while, and try again.", true); return; }
+        fail(error, "update the address");
+      }
+    }
+    $("tcb-new-projection").addEventListener("click", async function () {
+      var form = $("tcb-project"), f = form.elements;
+      var live = state.assets.filter(function (a) { return a.state === "active"; });
+      if (!live.length) { say("Approve a logo and make it live first.", true); return; }
+      try { state.clients = ((await run("GET", "?limit=500", undefined, "/api/v1/consent/public-clients")).items || []).filter(function (c) { return c.status === "active"; }); }
+      catch (error) { fail(error, "load your websites"); return; }
+      form.reset();
+      CW.fill(f.client, state.clients.map(function (c) { return {value: c.credential_id, label: CW.human(c.property_id) + " (" + (c.browser_origin || c.target_origin || c.target_bundle_id || "") + ")"}; }));
+      CW.fill(f.asset, live.map(function (a) { return {value: a.asset_id + "|" + a.asset_version, label: (a.asset_kind === "icon" ? "Icon" : "Logo") + " version " + a.asset_version}; }));
+      CW.fill(f.domain, state.domains.filter(function (d) { return d.state === "active"; }).map(function (d) { return {value: d.claim_id + "|" + d.claim_version, label: d.host}; }), "Lightwork address");
+      CW.open(form, "select");
+    });
+    $("tcb-project").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var f = event.currentTarget.elements, client = state.clients.filter(function (c) { return c.credential_id === f.client.value; })[0];
+      if (!client) { say("Choose a website.", true); return; }
+      var asset = f.asset.value.split("|"), domain = f.domain.value ? f.domain.value.split("|") : null;
+      var current = state.projections.filter(function (p) { return p.property_id === client.property_id; })[0];
+      if (!(await CW.confirm("Show this brand on the Trust Center for " + CW.human(client.property_id) + "? People will see it straight away.", "Show brand"))) return;
+      var body = {client_credential_id: client.credential_id, asset_id: asset[0], asset_version: Number(asset[1]), expected_projection_revision: current ? current.projection_revision : 0};
+      if (domain) { body.domain_claim_id = domain[0]; body.domain_claim_version = Number(domain[1]); }
+      try { await run("PUT", "/projections/" + encodeURIComponent(client.property_id), body, BRAND); event.currentTarget.hidden = true; say("Brand shown."); await loadBrand(); }
+      catch (error) { fail(error, "show the brand"); }
+    });
+    async function unproject(p) {
+      if (!(await CW.confirm("Stop showing your brand on the Trust Center for " + CW.human(p.property_id) + "?", "Stop showing"))) return;
+      try { await run("POST", "/projections/" + encodeURIComponent(p.property_id) + "/revoke", {expected_projection_revision: p.projection_revision}, BRAND); say("Brand no longer shown."); await loadBrand(); }
+      catch (error) { fail(error, "stop showing the brand"); }
+    }
+
+    // ----- Upkeep -----
+    $("tca-integrity").addEventListener("click", function (event) {
+      CW.busy(event.currentTarget, async function () {
+        try { await run("GET", "/integrity"); CW.say($("tca-upkeep-result"), "All records are intact."); }
+        catch (error) { CW.fail($("tca-upkeep-result"), error, "check the records"); }
+      });
+    });
+    $("tca-retention").elements.before.value = days(0);
+    $("tca-retention").addEventListener("submit", async function (event) {
+      event.preventDefault();
+      var before = CW.toSeconds(event.currentTarget.elements.before.value);
+      if (!(before > 0)) { say("Choose a date.", true); return; }
+      try {
+        var due = await run("GET", "/retention/due?before=" + encodeURIComponent(String(before)) + "&limit=500");
+        var count = typeof due.count === "number" ? due.count : (due.contexts || []).length;
+        if (!count) { CW.say($("tca-upkeep-result"), "Nothing has reached the end of its keeping period."); return; }
+        if (!(await CW.confirm("Delete " + count + " expired Trust Center records? This cannot be undone.", "Delete"))) return;
+        await run("POST", "/retention/purge", {before: before, limit: 500, idempotency_key: CW.reference()});
+        CW.say($("tca-upkeep-result"), "Expired records deleted."); await load();
+      } catch (error) { CW.fail($("tca-upkeep-result"), error, "delete expired records"); }
+    });
+    if (!canAudit) $("tca-integrity").disabled = true;
+
+    load();
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}

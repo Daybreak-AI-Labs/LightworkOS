@@ -1,0 +1,53 @@
+{# Help and keyboard shortcuts, shared by both shells. Opened by the sidebar's
+   "Help and shortcuts" button (_shortcuts_open.html) or the ? key.
+   This list is the single source for the keys: lightwork-shortcuts.js binds
+   exactly the [data-shortcut] entries below and nothing else, so what is
+   listed is what works. Go-to keys appear only for pages the person may
+   open. The "In the search box" keys belong to the command menu
+   (lightwork-navfinder.js); its prefixes are listed only where they apply. #}
+{% set _can_open = can_open_page if can_open_page is defined else none %}
+{% set _people_keys = _can_open and _can_open('/users') %}
+{% macro _sequence(first, second) -%}
+<kbd>{{ first }}</kbd> <span class="shortcuts__then">{{ ui('then') }}</span> <kbd>{{ second }}</kbd>
+{%- endmacro %}
+<dialog class="shortcuts" id="shortcuts-dialog" aria-labelledby="shortcuts-title">
+  <div class="shortcuts__head">
+    <h2 id="shortcuts-title">{{ ui('Help and shortcuts') }}</h2>
+    <button type="button" class="iconbtn shortcuts__close" id="shortcuts-close" aria-label="{{ ut('Close help and shortcuts') }}" lang="{{ ul('Close help and shortcuts') }}">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3.5 3.5 9 9m0-9-9 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div class="shortcuts__body">
+    <h3>{{ ui('Get help') }}</h3>
+    <ul class="shortcuts__links">
+      <li><a href="/help">{{ ui('Help and diagnostics') }}</a> <span class="muted">{{ ui('Check what is working and get support.') }}</span></li>
+      <li><a href="{{ docs_home }}" target="_blank" rel="noopener noreferrer">{{ ui('Documentation') }}<span class="sr-only"> {{ ui('(opens in a new tab)') }}</span></a> <span class="muted">{{ ui('Guides for every page.') }}</span></li>
+      <li><button type="button" class="linkbtn" id="shortcuts-finder">{{ ui('Search or run a command') }}</button> <span class="muted">{{ ui('Find a page, record or setting, or start a command.') }}</span></li>
+    </ul>
+    <h3>{{ ui('Keyboard shortcuts') }}</h3>
+    <p class="muted">{{ ui('Single keys work when you are not typing in a field.') }}</p>
+    <h4>{{ ui('Anywhere') }}</h4>
+    <dl class="shortcuts__list" data-shortcut-list>
+      <div data-shortcut="mod+k" data-shortcut-run="finder"><dt><kbd data-shortcut-mod>Ctrl</kbd> <kbd>K</kbd></dt><dd>{{ ui('Search or run a command') }}</dd></div>
+      <div data-shortcut="/" data-shortcut-run="finder"><dt><kbd>/</kbd></dt><dd>{{ ui('Search') }}</dd></div>
+      <div data-shortcut="?" data-shortcut-run="shortcuts"><dt><kbd>?</kbd></dt><dd>{{ ui('Show help and shortcuts') }}</dd></div>
+      {# navigation_api.GO_TO_KEYS; the command menu shows the same keys. #}
+      {% for _key, _href, _label in (nav_go_to_keys if nav_go_to_keys is defined else []) %}
+      {% if _href == '/' or (_can_open and _can_open(_href)) %}
+      <div data-shortcut="g {{ _key }}" data-shortcut-href="{{ _href }}"><dt>{{ _sequence('G', _key | upper) }}</dt><dd>{{ ui(_label) }}</dd></div>
+      {% endif %}
+      {% endfor %}
+    </dl>
+    <h4>{{ ui('In the search box') }}</h4>
+    <dl class="shortcuts__list" data-shortcut-scope="finder">
+      <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>{{ ui('Choose a result') }}</dd></div>
+      <div><dt><kbd>Enter</kbd></dt><dd>{{ ui('Open the result or run the command') }}</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>{{ ui('Close, or go back from a list of choices') }}</dd></div>
+      <div data-finder-prefix="&gt;"><dt><kbd>&gt;</kbd></dt><dd>{{ ui('Show commands only') }}</dd></div>
+      <div data-finder-prefix="/"><dt><kbd>/</kbd></dt><dd>{{ ui('Show pages only') }}</dd></div>
+      {% if record_search_context %}<div data-finder-prefix="#"><dt><kbd>#</kbd></dt><dd>{{ ui('Show records only') }}</dd></div>{% endif %}
+      {% if _people_keys %}<div data-finder-prefix="@"><dt><kbd>@</kbd></dt><dd>{{ ui('Show people only') }}</dd></div>{% endif %}
+      <div data-finder-prefix=":"><dt><kbd>:</kbd></dt><dd>{{ ui('Show settings only') }}</dd></div>
+    </dl>
+  </div>
+</dialog>

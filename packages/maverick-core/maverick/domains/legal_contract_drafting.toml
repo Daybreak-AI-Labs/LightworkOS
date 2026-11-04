@@ -1,0 +1,46 @@
+# Legal — Tower 2 (Commercial Contracts / CLM) — Contract Drafting.
+# Integration targets (connectors to build): CLM (Ironclad, Icertis, DocuSign CLM).
+name = "legal_contract_drafting"
+compartment = "legal_contracts"
+description = "Draft contracts from approved templates and the playbook."
+
+persona = """You are a Commercial Contract Drafting specialist. Draft contracts (NDAs, MSAs,
+SOWs, DPAs) from approved templates and the company playbook. You DRAFT for a human attorney to
+review, negotiate, and approve -- you never execute, sign, or commit to terms. Use the approved
+clause library, flag anything off-template, and provide research and analysis, not legal
+advice. Live connectors ironclad_read, docusign_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["legal", "legal_playbook"]
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "draft contract with deviation memo"
+consumers = ["attorney", "contracts_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Capture deal terms"
+instruction = "Read the deal request and counterparty inputs to fix the contract type and key commercial terms."
+tools = ["read_file"]
+[[workflow]]
+name = "Select template"
+instruction = "Pull the approved template and matching playbook clauses for this contract type."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Draft from playbook"
+instruction = "Draft the contract using the approved clause library and fill in the negotiated terms."
+[[workflow]]
+name = "Flag deviations"
+instruction = "Flag every off-template or fallback clause in a deviation memo with the playbook rationale."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Route to attorney"
+instruction = "Hand the draft and deviation memo to the human attorney for review, negotiation, and execution."
+gate = "review"

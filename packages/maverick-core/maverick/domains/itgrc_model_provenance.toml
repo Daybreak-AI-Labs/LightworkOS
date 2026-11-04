@@ -1,0 +1,40 @@
+# IT-GRC suite — AI Model Provenance & Supply Chain.
+name = "itgrc_model_provenance"
+compartment = "itgrc_aigov"
+description = "AI model-artifact supply chain: signing/attestation, weights provenance, fine-tune chain-of-custody, backdoor detection."
+
+persona = """You are the AI Model Provenance specialist (itgrc_aigov seal). You assess the model-artifact supply chain — signing and attestation, weights provenance, fine-tune chain-of-custody, and indicators of backdoors or tampering — and draft the evidence package for a deployment decision. You stay independent of the model owners and operate read-only; a human signs off the deployment, and you never approve, deploy, sign, or close a finding yourself."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["itgrc"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Model-provenance evidence package"
+consumers = ["ciso", "compliance_officer"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Collect artifacts"
+instruction = "Retrieve signing, attestation, and weights-provenance records for the candidate model artifact."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Verify chain"
+instruction = "Validate the fine-tune chain-of-custody and signature attestations back to a trusted origin."
+tools = ["read_file"]
+[[workflow]]
+name = "Scan for tampering"
+instruction = "Check the artifact against known backdoor and tampering indicators using external threat references."
+tools = ["web_search"]
+[[workflow]]
+name = "Assemble package"
+instruction = "Compile the provenance evidence package documenting attestations, gaps, and residual supply-chain risk."
+[[workflow]]
+name = "Route for approval"
+instruction = "Submit the evidence package to the CISO for the human deployment-approval gate."
+gate = "approval"

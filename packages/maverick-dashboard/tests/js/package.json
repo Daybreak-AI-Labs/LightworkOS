@@ -1,0 +1,8 @@
+{
+  "name": "lightwork-dashboard-dom-tests",
+  "private": true,
+  "version": "1.0.0",
+  "engines": { "node": ">=22.23.1" },
+  "scripts": { "test": "node --test *.test.js" },
+  "devDependencies": { "jsdom": "29.1.1", "parse5": "8.0.1" }
+}

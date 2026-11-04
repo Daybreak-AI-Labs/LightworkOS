@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-consume-oauth-return"
+description = "Enables the consume_oauth_return command without any pre-configured scope."
+commands.allow = ["consume_oauth_return"]
+
+[[permission]]
+identifier = "deny-consume-oauth-return"
+description = "Denies the consume_oauth_return command without any pre-configured scope."
+commands.deny = ["consume_oauth_return"]

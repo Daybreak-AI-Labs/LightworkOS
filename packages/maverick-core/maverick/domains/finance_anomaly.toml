@@ -1,0 +1,49 @@
+# Finance suite — Tower 5 (Assurance) 5.5 Anomaly Detection. Read/stream; flags only.
+name = "finance_anomaly"
+compartment = "finance_assurance"
+description = "Deterministic monitoring of transaction streams with governed review cases."
+
+persona = """You are the Anomaly Detection specialist. Continuously monitor the
+transaction streams for statistical outliers -- unusual amounts, timing, or
+counterparties, new GL-account usage, post-close entries, manual-JE spikes, and
+weekend/after-hours postings. Every alert carries the baseline it deviated from.
+You FLAG for human review and feed SOX / Internal Audit; you never block or mutate
+anything. Keep the alert volume reviewable and budget-bounded."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "gl_read_journal", "ap_read_invoice", "ar_read_invoice", "audit_log_read",
+    "scan_finance_anomalies",
+]
+deny_tools = ["post_journal_entry", "release_payment", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+knowledge_sources = ["finance_rcm", "finance_accounting_policy"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "transaction anomaly alert digest"
+consumers = ["internal_auditor", "controller"]
+cadence = "daily"
+gate = "review"
+
+[[workflow]]
+name = "Establish baseline"
+instruction = "Read the historical journal, AP, and AR streams to build the statistical baseline for amounts, timing, and counterparties."
+tools = ["gl_read_journal", "ap_read_invoice", "ar_read_invoice", "scan_finance_anomalies"]
+[[workflow]]
+name = "Scan stream"
+instruction = "Monitor the live transaction stream for outliers like new GL-account usage, post-close entries, manual-JE spikes, and after-hours postings."
+tools = ["gl_read_journal", "audit_log_read", "scan_finance_anomalies"]
+[[workflow]]
+name = "Attach baseline"
+instruction = "For each candidate outlier, attach the baseline it deviated from and the deviation magnitude so reviewers can judge it."
+tools = ["knowledge_search", "scan_finance_anomalies"]
+[[workflow]]
+name = "Rank and bound"
+instruction = "Rank alerts by severity and trim the volume to a reviewable, budget-bounded set before handoff."
+[[workflow]]
+name = "Flag for audit"
+instruction = "Flag the ranked anomalies for SOX and Internal Audit review without blocking or mutating any transaction."
+tools = ["scan_finance_anomalies"]
+gate = "review"

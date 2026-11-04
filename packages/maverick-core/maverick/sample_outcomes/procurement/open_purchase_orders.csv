@@ -1,0 +1,6 @@
+po_number,supplier,item,quantity,order_date,promised_date,acknowledged,delivery_status,stock_on_hand_days
+PO-2301,Northwind Fixtures Ltd,steel shelving units,40,2026-09-01,2026-09-22,yes,delivered,30
+PO-2302,Blue Harbor Packaging,shipping cartons,800,2026-09-03,2026-09-17,yes,not delivered,4
+PO-2303,Quickline Logistics,pallet wrap,200,2026-09-05,2026-09-26,no,not delivered,12
+PO-2304,Cedar Point Office Supply,label printers,6,2026-09-08,2026-09-30,yes,in transit,20
+PO-2305,Granite Ridge Fasteners,bolt packs,1500,2026-09-02,2026-09-12,yes,not delivered,3

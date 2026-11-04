@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Third-party collaboration - Lightwork{% endblock %}
+{% block content %}
+<style>
+  .tpc-actions { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .tpc-once { border:2px solid var(--warn); border-radius:var(--radius-sm); padding:var(--space-3); margin:var(--space-3) 0; }
+  .tpc-once .input { font-family:var(--font-mono, monospace); }
+  .tpc-grid { display:grid; gap:var(--space-3); grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr)); }
+  .tpc-grid label, .tpc-field { display:grid; gap:.3rem; }
+  .tpc-checks { display:grid; gap:.25rem; }
+  .tpc-checks label { display:flex; gap:.4rem; align-items:center; }
+</style>
+{{ hero('Third-party management', 'Third-party collaboration',
+        lede='Invite vendors to answer your security questionnaire, follow their progress, and ask for more information when you need it.') }}
+
+{% if not third_party_collaboration_enabled %}
+{{ module_gate('third_party_management.lifecycle.portal', 'Third-party collaboration portal',
+               detail='Vendors also need a public web address to reach the questionnaire. Your IT team sets this up.') }}
+{% else %}
+<div id="tpc-root" data-api="/api/v1/third-party/collaboration" data-lifecycle-api="/api/v1/third-party/lifecycle"
+     data-can-admin="{{ 'true' if collaboration_can_admin else 'false' }}"
+     data-can-audit="{{ 'true' if collaboration_can_audit else 'false' }}">
+  <p class="muted">Each invitation's access code is shown only once. Copy it and send it to the vendor yourself; Lightwork doesn't email vendors.</p>
+  <p class="muted" id="tpc-status" role="status" aria-live="polite">Loading…</p>
+
+  <div id="tpc-once" class="tpc-once" hidden role="alert"></div>
+
+  <div class="section-head"><h2>Invitations</h2><button type="button" class="btn btn--primary" id="tpc-invite">Invite a vendor</button></div>
+  <section class="panel" aria-label="Invitations">
+    <div id="tpc-invitations"><p class="muted">Loading invitations…</p></div>
+    <p><button type="button" class="btn btn--ghost" id="tpc-more" hidden>Show more invitations</button></p>
+  </section>
+
+  <section class="panel" id="tpc-invite-panel" hidden aria-labelledby="tpc-invite-title">
+    <h2 id="tpc-invite-title">Invite a vendor</h2>
+    <form id="tpc-invite-form">
+      <div class="tpc-grid">
+        <label>Assessment<select class="select" name="assessment" required></select></label>
+        <label>Who answers<select class="select" name="respondent" required></select></label>
+        <label>Link works for<select class="select" name="expires"></select></label>
+        <label>Keep their answers for<select class="select" name="keep"></select></label>
+      </div>
+      <fieldset class="tpc-checks" style="margin-top:var(--space-3)"><legend>Questions they answer</legend><div id="tpc-questions"><p class="muted">Choose an assessment first.</p></div></fieldset>
+      <fieldset class="tpc-checks" style="margin-top:var(--space-3)"><legend>Documents they may attach</legend>
+        <label><input type="checkbox" name="kind" value="audit_report" checked> Audit reports</label>
+        <label><input type="checkbox" name="kind" value="certification" checked> Certifications</label>
+        <label><input type="checkbox" name="kind" value="policy" checked> Policies</label>
+        <label><input type="checkbox" name="kind" value="questionnaire"> Completed questionnaires</label>
+        <label><input type="checkbox" name="kind" value="test_report"> Test reports</label>
+        <label><input type="checkbox" name="kind" value="other_evidence"> Other evidence</label>
+      </fieldset>
+      <div class="tpc-grid" style="margin-top:var(--space-3)">
+        <label>Most documents<select class="select" name="max_files"></select></label>
+        <label>Largest total size<select class="select" name="max_size"></select></label>
+        <div class="tpc-field"><span>Notice shown to the vendor</span>
+          <button type="button" class="btn" id="tpc-notice">Choose the notice file</button>
+          <span class="muted" id="tpc-notice-name">No file chosen yet. Choose the notice file to attach.</span></div>
+      </div>
+      <div class="tpc-actions" style="margin-top:var(--space-3)">
+        <button type="submit" class="btn btn--primary">Create invitation</button>
+        <button type="button" class="btn btn--ghost" id="tpc-invite-cancel">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <details class="panel">
+    <summary><strong>Administrator tools</strong></summary>
+    <div class="tpc-actions" style="margin-top:var(--space-3)">
+      <button type="button" class="btn" id="tpc-integrity">Check records haven't been changed</button>
+      <label class="tpc-field" for="tpc-purge-before">Delete kept answers that expired before
+        <input class="input" type="date" id="tpc-purge-before"></label>
+      <button type="button" class="btn btn--danger" id="tpc-purge">Clean up expired data</button>
+    </div>
+    <p class="muted" id="tpc-admin-result" role="status" aria-live="polite"></p>
+  </details>
+</div>
+{% include "_portal_routing_key.html" %}
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-third-party-collaboration.js" defer></script>
+{% endif %}
+{% endblock %}

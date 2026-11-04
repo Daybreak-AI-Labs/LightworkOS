@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Governance assistants · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .ga-shell { display:grid; gap:var(--space-5); }
+  .ga-shell .panel h2 { margin:0; }
+  .ga-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(14rem,1fr)); gap:var(--space-3); }
+  .ga-cards .panel { display:flex; flex-direction:column; gap:var(--space-2); }
+  .ga-cards .panel h3 { margin:0; }
+  .ga-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center; }
+  .ga-form { display:grid; gap:var(--space-3); max-width:44rem; }
+  .ga-form label { display:grid; gap:.35rem; font-weight: var(--font-semibold); }
+  .ga-choices { border:1px solid var(--hairline); border-radius:var(--radius-md,8px); padding:var(--space-3); display:flex; flex-wrap:wrap; gap:var(--space-2) var(--space-4); }
+  .ga-choices label { display:flex; gap:.4rem; align-items:center; font-weight: var(--font-normal); }
+  .ga-table { overflow:auto; }
+  .ga-output { white-space:pre-wrap; word-break:break-word; max-height:22rem; overflow:auto; }
+</style>
+
+{{ hero('Governance', 'Governance assistants', lede='AI assistants prepare breach, privacy, program, knowledge-base and vendor-risk reviews for your team. A person decides; nothing is sent or changed without two people approving.') }}
+
+{% if not governance_agents_enabled %}
+{{ module_gate('governance_agents', 'Governance assistants',
+               detail='Turn this on to let AI assistants prepare breach, privacy and vendor-risk reviews for your team to approve.') }}
+{% endif %}
+
+<div class="ga-shell" id="ga-root" data-api="/api/v1/governance-agents"
+     data-enabled="{{ 'true' if governance_agents_enabled else 'false' }}"
+     data-can-operate="{{ 'true' if governance_can_operate else 'false' }}"
+     data-can-admin="{{ 'true' if governance_can_admin else 'false' }}"
+     data-can-audit="{{ 'true' if governance_can_audit else 'false' }}">
+  <details>
+    <summary>About this page's safeguards</summary>
+    <p class="muted">Assistants only read records Lightwork already holds; this page never accepts pasted evidence, workspace choices, credentials or destinations. Every result waits for a person to review it. Carrying out an action is off unless a policy allows it. It needs two different people to approve, and is recorded so it can be checked later.</p>
+  </details>
+
+  <section aria-label="Assistants">
+    <div class="ga-cards">
+      {% for kind, title, blurb in [
+        ('breach_response', 'Breach response', 'Checks evidence preservation, containment, notification deadlines and who needs to know.'),
+        ('privacy_risk_assessment', 'Privacy risk', 'Reviews data minimization, lawful basis, impact assessments, transfers and people’s rights.'),
+        ('program_copilot', 'Program copilot', 'Summarizes program status, control gaps and evidence requests, and drafts improvement plans.'),
+        ('knowledgebase_governance', 'Knowledgebase governance', 'Checks citations, freshness, who can see what, and conflicting guidance.'),
+        ('third_party_risk', 'Third-party risk', 'Reviews intake, inherent risk, questionnaires, critical events and fixes for vendors.')] %}
+      <section class="panel" data-agent="{{ kind }}">
+        <h3>{{ title }}</h3>
+        <p class="muted">{{ blurb }}</p>
+        <div class="ga-actions">
+          {% if governance_agents_enabled and governance_can_operate %}<button class="btn btn--primary" type="button" data-op="analysis" data-start="{{ kind }}" disabled>Start a review</button>{% endif %}
+          {% if governance_agents_enabled %}<button class="btn btn--ghost" type="button" data-op="run-list" data-show="{{ kind }}" disabled>See past reviews</button>{% endif %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+  </section>
+
+{% if governance_agents_enabled %}
+  <section class="panel" aria-labelledby="ga-status-title">
+    <div class="section-head"><h2 id="ga-status-title">Availability</h2><button class="btn btn--ghost" id="ga-load-status" type="button">Check again</button></div>
+    <p id="ga-readiness-note" role="status" aria-live="polite">Checking what is set up…</p>
+    <ul id="ga-missing"></ul>
+    {% if not (governance_can_operate and governance_can_admin and governance_can_audit) %}<p class="muted">Some actions need administrator or auditor access.</p>{% endif %}
+  </section>
+
+  <section class="panel" id="ga-start-panel" aria-labelledby="ga-start-title" hidden>
+    <div class="section-head"><h2 id="ga-start-title" tabindex="-1">Start a review</h2></div>
+    <form class="ga-form" id="ga-start-form" autocomplete="off" novalidate>
+      <p id="ga-start-agent"></p>
+      <label>Policy to follow<select class="select" name="policy" id="ga-start-policy" required></select></label>
+      <label>What to prepare<select class="select" name="capability" id="ga-start-capability" required></select></label>
+      <fieldset class="ga-choices" id="ga-start-sources">
+        <legend>Records the assistant may read</legend>
+      </fieldset>
+      <input type="hidden" name="idempotency_key" data-auto-reference>
+      <div class="ga-actions"><button class="btn btn--primary" type="submit">Start review</button><button class="btn btn--ghost" type="button" id="ga-start-cancel">Cancel</button></div>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="ga-runs-title">
+    <div class="section-head"><h2 id="ga-runs-title">Reviews</h2>
+      <label class="sr-only" for="ga-runs-filter">Show</label>
+      <select class="select" id="ga-runs-filter"><option value="">All assistants</option><option value="breach_response">Breach response</option><option value="privacy_risk_assessment">Privacy risk</option><option value="program_copilot">Program copilot</option><option value="knowledgebase_governance">Knowledgebase governance</option><option value="third_party_risk">Third-party risk</option></select>
+    </div>
+    <div class="ga-table"><table><caption class="sr-only">Reviews prepared by governance assistants</caption>
+      <thead><tr><th scope="col">Assistant</th><th scope="col">Prepared</th><th scope="col">Status</th><th scope="col">Findings</th><th scope="col">Last updated</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="ga-runs"><tr><td colspan="6">Loading…</td></tr></tbody></table></div>
+  </section>
+
+  <section class="panel" id="ga-detail-panel" aria-labelledby="ga-detail-title" hidden>
+    <div class="section-head"><h2 id="ga-detail-title" tabindex="-1">Findings</h2></div>
+    <div id="ga-detail"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="ga-policies-title">
+    <div class="section-head"><h2 id="ga-policies-title">Policies</h2></div>
+    <p class="muted">A policy says what each assistant may prepare and who must approve it. Policies are published by an administrator.</p>
+    <div class="ga-table"><table><caption class="sr-only">Governance assistant policies</caption>
+      <thead><tr><th scope="col">Policy</th><th scope="col">Assistant</th><th scope="col">Approvals needed</th><th scope="col">Can carry out actions</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="ga-policies"><tr><td colspan="6">Loading…</td></tr></tbody></table></div>
+  </section>
+
+  {% if governance_can_admin or governance_can_audit %}
+  <details class="panel">
+    <summary>Maintenance</summary>
+    <div class="ga-form">
+      {% if governance_can_audit %}
+      <div class="ga-actions">
+        <button class="btn" type="button" data-op="integrity" disabled>Check records are intact</button>
+        <button class="btn" type="button" data-op="intent-list" disabled>Count pending internal actions</button>
+      </div>
+      {% endif %}
+      {% if governance_can_admin %}
+      <div class="ga-actions">
+        <button class="btn" type="button" data-op="maintenance-readiness" disabled>Run a readiness check</button>
+        <button class="btn" type="button" data-op="custody-rotate" disabled>Replace the recovery key</button>
+        <button class="btn" type="button" data-op="token-reconcile" disabled>Tidy up unused action permissions</button>
+        <button class="btn btn--danger" type="button" data-op="retention-purge" disabled>Delete finished reviews past their keep date</button>
+      </div>
+      <label>Assistant to update
+        <select class="select" id="ga-maint-kind"><option value="breach_response">Breach response</option><option value="privacy_risk_assessment">Privacy risk</option><option value="program_copilot">Program copilot</option><option value="knowledgebase_governance">Knowledgebase governance</option><option value="third_party_risk">Third-party risk</option></select>
+      </label>
+      <div class="ga-actions">
+        <button class="btn" type="button" data-op="adapter-rotate" disabled>Refresh its analysis engine</button>
+        <button class="btn btn--danger" type="button" data-op="adapter-revoke" disabled>Switch off its analysis engine</button>
+        <button class="btn" type="button" data-op="dispatcher-rotate" disabled>Refresh how it carries out actions</button>
+        <button class="btn btn--danger" type="button" data-op="dispatcher-revoke" disabled>Switch off carrying out actions</button>
+      </div>
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
+
+  <section class="panel" aria-labelledby="ga-result-title">
+    <div class="section-head"><h2 id="ga-result-title">Last action</h2></div>
+    <p id="ga-result" role="status" aria-live="polite">Nothing has been done yet.</p>
+    <details><summary>Technical details</summary><pre class="ga-output" id="ga-output" tabindex="0"></pre></details>
+  </section>
+{% endif %}
+</div>
+{% if governance_agents_enabled %}<script src="/static/lightwork-governance-agents.js" defer></script>{% endif %}
+{% endblock %}

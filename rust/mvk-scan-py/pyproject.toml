@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "maverick-native"
+version = "0.1.0"
+description = "Native (Rust) safety scanners for Lightwork — Python binding."
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Lightwork Authors" }]
+classifiers = ["Programming Language :: Rust"]
+
+[project.urls]
+Homepage = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Issues = "https://github.com/Daybreak-AI-Labs/LightworkOS/issues"
+
+[tool.maturin]
+module-name = "maverick_native"
+# abi3 wheel built against the CPython 3.10 stable ABI (Cargo.toml), so it
+# loads on every supported CPython; one wheel per platform, not per minor.
+features = ["pyo3/extension-module"]

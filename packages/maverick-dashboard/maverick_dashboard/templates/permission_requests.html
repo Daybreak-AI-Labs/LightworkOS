@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Permission requests — Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% set permission_lede %}See the policy that blocks an action, then send your business need to the administrator responsible for that policy. These requests never grant access automatically. Private employee content requires its separate <a href="/content-access">content-access review</a>.{% endset %}
+{{ hero('Your account', 'Permission requests', lede=permission_lede, compact=true) }}
+<p id="par-status" role="status" aria-live="polite">Loading current permissions.</p>
+<section class="panel"><h2>Explain an action</h2><form id="par-explain" data-draft-recovery="off">
+<label>Action type <select id="par-kind" class="select"><option value="permission">Dashboard action</option><option value="tool">Tool action</option></select></label>
+<label id="par-search-label" hidden>Find an action <input id="par-search" class="input" type="search" maxlength="128" placeholder="Search by name or activity"></label>
+<label>Action to review <select id="par-capability" class="select" required aria-describedby="par-help"><option value="">Choose an action</option></select></label>
+<div id="par-pages" hidden><button class="btn btn--ghost" id="par-previous" type="button">Previous actions</button><button class="btn btn--ghost" id="par-next" type="button">Next actions</button></div>
+<p id="par-help" role="status" aria-live="polite">Loading named actions.</p><button class="btn" id="par-check" type="submit" disabled>Check current policy</button></form><div id="par-explanation"></div>
+<form id="par-submit" hidden data-draft-recovery="off"><label>Business need, shared with the reviewing administrator <textarea id="par-reason" required minlength="10" maxlength="1000"></textarea></label><p><label><input id="par-confirm" type="checkbox" required> Share this business need with the policy owner. I have not included private task content or secrets.</label></p><button class="btn" type="submit">Request policy review</button></form></section>
+<section class="panel"><h2>Your requests and authorized reviews</h2><p>Reviewers change actual policy in <a href="/users">People</a> or <a href="/settings">Settings</a>. Confirming a request checks the current effective permission and fails if it is still blocked.</p><button class="btn" type="button" id="par-refresh">Refresh current policy and requests</button><div id="par-cases"></div></section>
+<script src="/static/lightwork-permission-requests.js" defer></script>
+{% endblock %}

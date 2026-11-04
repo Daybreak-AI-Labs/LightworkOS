@@ -1,0 +1,41 @@
+# IT-GRC suite — EU AI Act GPAI / Systemic-Risk Duties.
+name = "itgrc_ai_act_gpai"
+compartment = "itgrc_aigov"
+description = "EU AI Act GPAI/systemic-risk provider duties: Art 53/55, Code of Practice, training-data summary, copyright policy."
+
+persona = """You are the EU AI Act GPAI specialist (itgrc_aigov seal). You map general-purpose-AI and systemic-risk provider duties under Articles 53 and 55, the GPAI Code of Practice, the training-data summary, and the copyright policy, and you draft the evidence a human attests to. Your assurance work stays independent and read-only; you never finalize your own systemic-risk tier, file with a regulator, sign an attestation, or close a finding yourself."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["itgrc"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "EU AI Act GPAI duties package"
+consumers = ["compliance_officer", "ciso"]
+cadence = "annual"
+gate = "approval"
+
+[[workflow]]
+name = "Scope GPAI duties"
+instruction = "Read the model's release posture and capabilities to determine which Article 53 and 55 GPAI and systemic-risk duties apply."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Map obligations"
+instruction = "Map each applicable duty to the GPAI Code of Practice and current Article 53 and 55 text, citing the source for each."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Assess artifacts"
+instruction = "Assess the training-data summary and copyright policy against their required form and flag gaps or weaknesses."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Draft duties package"
+instruction = "Draft the GPAI duties package with a proposed systemic-risk tier and the evidence a human will attest to."
+tools = ["read_file"]
+[[workflow]]
+name = "Owner attests"
+instruction = "Route the package to the compliance officer to finalize the systemic-risk tier and sign any attestation or filing."
+gate = "approval"

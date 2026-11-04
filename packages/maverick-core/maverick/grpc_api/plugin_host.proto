@@ -1,0 +1,70 @@
+// Maverick gRPC plugin contract — tools served by an external process over
+// gRPC, implementable in any language with gRPC support (Go, Rust, Java, ...).
+//
+// A plugin is a gRPC server implementing MaverickPlugin. The Maverick host
+// (maverick/grpc_plugin_host.py) connects to an operator-configured target
+// (host:port or unix:///path.sock), optionally spawning the server process
+// first, then:
+//
+//   - calls Describe once at load to build the tool catalog (it must be
+//     cheap and side-effect free), and
+//   - issues one Call per tool invocation. The host sets a gRPC deadline on
+//     the RPC and mirrors it in ToolCall.deadline_ms. Report a tool failure
+//     via ToolResult.error rather than failing the RPC — a failed RPC reads
+//     as an unknown outcome to the host. A possible Call is never replayed.
+//
+// Generate Python stubs with:
+//   python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. plugin_host.proto
+// (the host does this on demand when the [grpc] extra is installed.)
+syntax = "proto3";
+
+package maverick.plugin.v1;
+
+service MaverickPlugin {
+  // The plugin's tool manifest, fetched once when the host loads the plugin.
+  rpc Describe(DescribeRequest) returns (Manifest);
+
+  // Invoke one tool by name with JSON-encoded arguments.
+  rpc Call(ToolCall) returns (ToolResult);
+}
+
+message DescribeRequest {}
+
+message Manifest {
+  repeated ToolSpec tools = 1;
+}
+
+message ToolSpec {
+  // Name the model calls the tool by. Must match [A-Za-z0-9_-]{1,64} (the
+  // model-facing tool catalog constraint); other names are skipped at load.
+  string name = 1;
+
+  // What the tool does, shown to the model verbatim.
+  string description = 2;
+
+  // JSON Schema for the tool's arguments, serialized as one JSON object,
+  // e.g. {"type": "object", "properties": {"text": {"type": "string"}}}.
+  // Empty or unparseable -> the host substitutes {"type": "object"}.
+  string input_schema_json = 3;
+}
+
+message ToolCall {
+  // ToolSpec.name of the tool to run.
+  string tool = 1;
+
+  // The arguments as one JSON object, e.g. {"text": "hi"}.
+  string args_json = 2;
+
+  // The host's call budget in milliseconds (also enforced as the gRPC
+  // deadline). Tools that may run long should give up by then.
+  int64 deadline_ms = 3;
+}
+
+message ToolResult {
+  // Set exactly one. `result` is shown to the model verbatim; a non-empty
+  // `error` becomes an "ERROR: ..." string on the host side.
+  oneof outcome {
+    string result = 1;
+    string error = 2;
+  }
+}

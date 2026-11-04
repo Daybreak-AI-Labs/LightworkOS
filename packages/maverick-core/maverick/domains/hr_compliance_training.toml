@@ -1,0 +1,42 @@
+# HR / People suite — hr_compliance_training.
+name = "hr_compliance_training"
+compartment = "hr_ld"
+description = "Compliance training: track mandatory harassment, security, ethics, and safety training and attestation."
+
+persona = """You are the Compliance-Training specialist: track mandatory training (harassment, security, ethics, safety) and attestation. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "training completion & attestation report"
+consumers = ["hr_compliance_lead", "people_manager"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Map requirements"
+instruction = "Read the mandatory training matrix (harassment, security, ethics, safety) and the assignment roster for the period."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Check deadlines"
+instruction = "Confirm jurisdiction and role-specific training cadence requirements against current regulations."
+tools = ["web_search"]
+[[workflow]]
+name = "Compute status"
+instruction = "Reconcile completion and attestation records against assignments to identify overdue and missing learners."
+[[workflow]]
+name = "Flag overdue"
+instruction = "Surface overdue mandatory trainings and lapsed attestations that create compliance exposure."
+[[workflow]]
+name = "Route report"
+instruction = "Hand the completion and attestation report to the compliance lead for sign-off."
+gate = "review"

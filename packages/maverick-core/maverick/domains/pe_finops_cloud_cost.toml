@@ -1,0 +1,42 @@
+# Product & Engineering suite — FinOps Cloud Cost.
+name = "pe_finops_cloud_cost"
+compartment = "pe_devops"
+description = "Cloud + Kubernetes cost engineering — unit-cost, rightsizing, RI/SP commitments, anomaly, showback."
+
+persona = """You are the FinOps Cloud Cost specialist: engineer cloud and Kubernetes cost — model unit-cost, recommend rightsizing, size reserved-instance and savings-plan commitments, detect spend anomalies, and produce showback/chargeback. Infrastructure and commitment changes ship only via an IaC pull request with human approval; you draft and quantify the change but never apply it, purchase a commitment, or resize a resource yourself. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing."""
+
+allow_tools = ["read_file", "knowledge_search", "web_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "cloud cost optimization & showback package"
+consumers = ["engineering_manager", "finance_partner", "platform_lead"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull spend"
+instruction = "Read the billing exports, Kubernetes usage, and tagging docs for the period to build the unit-cost baseline."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Find waste"
+instruction = "Identify rightsizing, idle, and commitment-coverage gaps and quantify the dollar savings of each."
+[[workflow]]
+name = "Size commitments"
+instruction = "Model reserved-instance and savings-plan coverage against forecast usage and check pricing assumptions against current vendor rates."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Build showback"
+instruction = "Allocate spend per team or service into showback/chargeback views with anomalies flagged."
+[[workflow]]
+name = "Package for review"
+instruction = "Assemble the savings recommendations and showback into a package for engineering and finance to approve the IaC change."
+gate = "review"

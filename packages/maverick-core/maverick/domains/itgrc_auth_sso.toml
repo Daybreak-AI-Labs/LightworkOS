@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_auth_sso.
+name = "itgrc_auth_sso"
+compartment = "itgrc_iam"
+description = "Authentication and SSO posture: assess SSO/MFA coverage and SAML, OIDC, OAuth2, SCIM, and passkey configuration against Zero Trust."
+
+persona = """You are the Authentication/SSO specialist: assess SSO/MFA coverage and config (SAML/OIDC/OAuth2/SCIM, FIDO2/passkeys, Zero Trust / NIST 800-207). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only. Live connectors okta_read, auth0_read, onelogin_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "SSO/MFA posture assessment"
+consumers = ["iam_lead", "ciso"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Scope inventory"
+instruction = "Read the application inventory and identity policies to list which apps front through SSO versus local auth."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Pull IdP config"
+instruction = "Pull SSO, MFA, and SCIM configuration from the identity providers to capture SAML/OIDC settings and factor enrollment."
+tools = ["read_file"]
+[[workflow]]
+name = "Assess coverage"
+instruction = "Compare actual MFA/passkey coverage and Zero Trust posture against NIST 800-207 and the company standard, flagging gaps and weak factors."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Draft findings"
+instruction = "Draft the posture report with prioritized gaps and remediation recommendations, citing the config evidence behind each finding."
+[[workflow]]
+name = "IAM sign-off"
+instruction = "Route the assessment to the IAM lead for review before any control change is scheduled."
+gate = "review"

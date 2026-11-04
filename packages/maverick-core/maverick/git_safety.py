@@ -1,0 +1,176 @@
+"""Host-side git hardening shared by every module that runs `git` against a
+workdir the agent (or an untrusted clone) can write to.
+
+Git honours repo-local config: a `core.fsmonitor` hook, a `[filter "x"]`
+smudge/clean command, or a config `include`/`includeIf` can make git execute
+an attacker-controlled program during `diff`, `add`, `reset --hard`, or
+`worktree add` -- independent of `--no-ext-diff`/`--no-textconv`, which only
+disable two of those surfaces (the external-diff driver and textconv), not
+fsmonitor or filter commands. A workdir the agent can write to (via
+`write_file`/SEARCH-REPLACE) or that came from cloning an untrusted repo
+(`github_app.process_issue`) is exactly such a workdir.
+
+Every host-side git call against a workdir in that position must:
+  1. Refuse when `git_metadata_may_execute_filters` finds config/attributes
+     that could define one of these hooks (fail open: skip the git call
+     rather than let it run).
+  2. Run under `git_env_without_user_config` so global/system config, the
+     calling process's environment (including provider API keys and other
+     secrets), repo-local fsmonitor and repo-local hooks are never in scope
+     even when (1) is a false negative.
+
+`orchestrator.py`'s best-of-N candidate path, `edit_format.render_diff`,
+`reviewer.get_diff` and `coding_mode`'s candidate evaluation all run `git` on
+the host, and all share these protections. Without them, host-side git allows
+code execution through repository config and leaks secrets into the child
+environment.
+
+Known limits: this is a static scan of what git will read, not a sandbox, and
+these git calls do not run through `sandbox.exec()`. So a workdir whose git
+settings define a filter at all -- git-lfs included -- is refused, because the
+host cannot tell a legitimate clean/smudge command from a planted one.
+"""
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path
+
+
+def git_env_without_user_config() -> dict[str, str]:
+    """Return a scrubbed environment for host-side git calls against a
+    workdir that isn't a fully-isolated ephemeral checkout.
+
+    Never let global/system config, the calling process's environment, or
+    repo-local fsmonitor settings add executable helpers to these host-side
+    git invocations. Local repo config is still checked separately (see
+    `git_metadata_may_execute_filters`) before any git command runs.
+    """
+    env = {
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_PAGER": "",
+        "HOME": os.devnull,
+        "PATH": os.environ.get("PATH", ""),
+        # Override repo-local config entries that can otherwise make a
+        # read-only host-side git probe execute workspace-controlled programs.
+        # Hooks too: `reset --hard` runs `.git/hooks/reference-transaction`
+        # and `post-index-change`, and whatever can write `.git` can plant one.
+        "GIT_CONFIG_COUNT": "3",
+        "GIT_CONFIG_KEY_0": "core.fsmonitor",
+        "GIT_CONFIG_VALUE_0": "false",
+        "GIT_CONFIG_KEY_1": "core.untrackedCache",
+        "GIT_CONFIG_VALUE_1": "false",
+        "GIT_CONFIG_KEY_2": "core.hooksPath",
+        "GIT_CONFIG_VALUE_2": os.devnull,
+    }
+    for key in ("LANG", "LC_ALL", "LC_CTYPE", "TMPDIR"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+# Config text (lower-cased) that can make git run a command: a `[filter ...]`
+# section (modern `[filter "name"]` or deprecated-but-supported `[filter.name]`
+# syntax), a config include that could pull one in, `core.fsmonitor`, or an
+# attributes file chosen from config. git accepts any run of blanks between a
+# section name and its quoted subsection (`[filter   "x"]`), so the section
+# names are matched as a pattern, not as the literal `[filter "`.
+_CONFIG_SECTION = re.compile(r"\[\s*(?:filter|include)")
+_CONFIG_NEEDLES = ("include.path", "includeif", "fsmonitor", "attributesfile")
+
+
+def _text(path: Path) -> str:
+    """Lower-cased contents of ``path``; empty when it is not a file. A read
+    error propagates, and the caller treats that as unsafe."""
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8", errors="ignore").lower()
+
+
+def _config_may_run_commands(text: str) -> bool:
+    # The bare word "filter" is NOT sufficient and caused a false positive
+    # on every partial clone: `git clone --filter=blob:none` writes a benign
+    # `partialclonefilter = blob:none` into .git/config that never runs a
+    # command, so matching "filter" would skip every git call on the entire
+    # staged corpus. Match the executable surfaces precisely.
+    return bool(_CONFIG_SECTION.search(text)) or any(n in text for n in _CONFIG_NEEDLES)
+
+
+def _attributes_name_a_filter(text: str) -> bool:
+    # An attributes file assigning a `filter` attribute references a named
+    # filter whose clean/smudge command lives in config -- treat that
+    # reference as unsafe. Attributes files never contain a
+    # `partialclonefilter` value, so there is no blobless-clone false
+    # positive here.
+    return "filter=" in text or "filter " in text
+
+
+def _git_directories(wd: Path) -> list[Path] | None:
+    """The git directories git reads its settings from for a command run in
+    ``wd``: the `.git` directory, or the one a `gitdir:` pointer file or a
+    symlinked `.git` leads to, plus a linked worktree's common directory. With
+    no `.git` entry at all git takes ``wd`` itself for the repository when it
+    looks like a bare one, so that is scanned too. ``[]`` when there is
+    nothing to read; ``None`` when a `.git` entry exists but cannot be
+    followed, which the caller treats as unsafe."""
+    dotgit = wd / ".git"
+    if dotgit.is_symlink() or dotgit.exists():
+        gitdir = None
+        if dotgit.is_dir():
+            gitdir = dotgit.resolve()
+        elif dotgit.is_file():
+            # A pointer file: `gitdir: <path>`, relative to the file's directory.
+            lines = dotgit.read_text(encoding="utf-8", errors="ignore").strip().splitlines()
+            if lines and lines[0].lower().startswith("gitdir:"):
+                target = (wd / lines[0][len("gitdir:"):].strip()).resolve()
+                gitdir = target if target.is_dir() else None
+        if gitdir is None:
+            return None
+    elif (wd / "HEAD").is_file() and (wd / "objects").is_dir() and (wd / "refs").is_dir():
+        gitdir = wd.resolve()
+    else:
+        return []
+    directories = [gitdir]
+    commondir = gitdir / "commondir"
+    if commondir.is_file():
+        # A linked worktree keeps its config and info/ in the main repository.
+        shared = (gitdir / commondir.read_text(encoding="utf-8", errors="ignore").strip()).resolve()
+        if not shared.is_dir():
+            return None
+        directories.append(shared)
+    return directories
+
+
+def git_metadata_may_execute_filters(wd: Path) -> bool:
+    """Conservatively detect local git metadata that can make git run commands.
+
+    A coding attempt can write the mounted workdir, including
+    `.gitattributes`, `.git/info/attributes`, and local config. If those
+    mention filters, config includes, or fsmonitor hooks, host-side
+    `git diff`/`add`/`reset`/`worktree` may execute attacker-controlled
+    commands. Fail open by skipping the git call instead.
+
+    The settings git reads are not always `<wd>/.git/config`: a `.git`
+    pointer file or symlink moves the git directory (possibly inside the
+    workspace), a linked worktree reads its main repository's, and
+    `extensions.worktreeConfig` adds `config.worktree`. All of those are
+    scanned, and anything that cannot be followed or read counts as unsafe.
+    """
+    try:
+        wd = Path(wd)
+        directories = _git_directories(wd)
+        if directories is None:
+            return True
+        for directory in directories:
+            config_files = [directory / "config", directory / "config.worktree"]
+            config_files.extend(directory.glob("worktrees/*/config.worktree"))
+            if any(_config_may_run_commands(_text(path)) for path in config_files):
+                return True
+            if _attributes_name_a_filter(_text(directory / "info" / "attributes")):
+                return True
+        return any(_attributes_name_a_filter(_text(path)) for path in wd.glob("**/.gitattributes"))
+    except Exception:
+        return True

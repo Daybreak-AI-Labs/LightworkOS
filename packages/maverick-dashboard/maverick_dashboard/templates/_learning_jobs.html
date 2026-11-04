@@ -1,0 +1,18 @@
+<section class="panel" id="learning-job-history" aria-labelledby="learning-job-title">
+  <style>#learning-job-history .select{width:100%;min-width:0;max-width:100%;box-sizing:border-box}#learning-job-history dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:var(--space-2)}#learning-job-history dd{margin:0;overflow-wrap:anywhere}#learning-job-history p,#learning-job-history h3{overflow-wrap:anywhere}#learning-job-history button{white-space:normal}#learning-job-history input[type=checkbox]{width:20px;height:20px;vertical-align:middle}</style>
+  <h2 id="learning-job-title">Your recent learning tasks</h2>
+  <p class="muted">Read progress and results from learning tasks you started. Completed work is kept when you request a stop.</p>
+  <div class="stack">
+    <label for="learning-job-choice">Learning task</label>
+    <select class="select" id="learning-job-choice"><option value="">Reading your recent tasks…</option></select>
+    <div class="actions"><button class="btn btn--ghost" id="learning-job-refresh" type="button">Refresh recent tasks</button></div>
+    <p class="muted" id="learning-job-status" role="status" aria-live="polite"></p>
+    <div id="learning-job-result"></div>
+    <button class="btn btn--ghost" id="learning-job-stop" type="button" hidden disabled>Review a stop</button>
+    <div id="learning-job-review"></div>
+    <button class="btn btn--ghost" id="learning-job-original" type="button" hidden>Check original stop outcome</button>
+    <p id="learning-job-original-status" role="status" aria-live="polite"></p>
+    <p class="muted">Up to 40 recent task observations are retained across restarts. Older observations may be retired as new tasks start; a worker still held on this installation keeps its observation. A task recorded as working may have an unavailable worker here. That does not prove it stopped, failed or finished. Nothing is resumed or repeated automatically.</p>
+  </div>
+</section>
+<script src="/static/lightwork-learning-jobs.js" defer></script>

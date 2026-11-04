@@ -1,0 +1,141 @@
+name: Windows test suite
+
+# The deterministic Python suite on Windows, on request only. Windows is a
+# supported platform (the MSI and desktop builds), but the required test matrix
+# runs on Linux, and the Windows jobs in ci.yml run focused checks only. This
+# lets a maintainer see what the full suite does on Windows -- before a release,
+# or after a change to file locking, paths or processes -- without adding a
+# required check or a schedule that bills Windows minutes every week.
+on:
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: 'Interpreter to test on'
+        type: choice
+        options: ['3.12', '3.11']
+        default: '3.12'
+      paths:
+        description: 'Test paths to run, separated by spaces (default: every collected test)'
+        type: string
+        default: ''
+      slice:
+        description: 'Which of the four file slices to run (default: all four)'
+        type: choice
+        options: ['all', '1', '2', '3', '4']
+        default: 'all'
+
+# Same reviewed dependency set as ci.yml.
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-suite-${{ github.ref }}-${{ inputs.python-version }}
+  cancel-in-progress: true
+
+jobs:
+  windows-suite:
+    name: Windows suite (Python ${{ inputs.python-version }}, slice ${{ matrix.shard }}/4)
+    runs-on: windows-2022
+    # The first whole-suite run on one two-core Windows runner reached 74% in
+    # 150 minutes, so the suite is split into the same four file slices as the
+    # Linux test-shard jobs (conftest.py --shard). Each slice has room to
+    # finish and print its own failure summary.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.slice == 'all' && '[1, 2, 3, 4]' || format('[{0}]', inputs.slice)) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      # setup-python's Windows image carries runner-owned pipx packages in the
+      # global environment, which the constraint closure check rejects. Install
+      # into a fresh venv outside the checkout (as windows-customer.yml does),
+      # so the image cannot change the tested set and tests that walk the
+      # checkout never see the venv. Later steps' `python` is this venv's.
+      - name: Isolate package resolution from runner preinstalled packages
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:RUNNER_TEMP 'windows-suite-python'
+          & (Join-Path $env:pythonLocation 'python.exe') -I -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'Test environment creation failed.' }
+          (Join-Path $venv 'Scripts') >> $env:GITHUB_PATH
+      - name: Install packages
+        shell: bash
+        # The same installation as .github/actions/test-shard, so a failure
+        # here is a Windows difference, not a different environment.
+        run: |
+          set -x
+          python -c "import sys; print(sys.executable); assert sys.prefix != sys.base_prefix, 'not the isolated venv'"
+          python -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -m pip install \
+            -e './packages/maverick-core[openai,evidence-analysis,spreadsheet,pdf,postgres,plugin-workbench]' \
+            -e ./packages/maverick-shield \
+            -e './packages/maverick-channels[sms]' \
+            -e ./packages/maverick-evolve \
+            -e ./packages/maverick-dashboard \
+            -e ./packages/maverick-mcp \
+            -e ./packages/maverick-knowledge \
+            -e ./apps/installer-cli \
+            pytest pytest-asyncio pytest-timeout pytest-xdist 'pyjwt[crypto]' pyyaml sqlalchemy
+          python -m pip check
+          python scripts/verify_constraint_closure.py
+      - name: Test
+        shell: bash
+        env:
+          PYTHONFAULTHANDLER: "1"
+          SHARD: ${{ matrix.shard }}
+          # Passed through the environment, never interpolated into the script.
+          TEST_PATHS: ${{ inputs.paths }}
+        # Two phases, as in test-shard: everything under xdist, then the
+        # heavy_concurrency files serially. pytest-timeout uses its thread
+        # method here (Windows has no SIGALRM), which ends the whole worker with
+        # no traceback ("node down: Not properly terminated"). Exit 5 (nothing
+        # collected) from the serial phase is a pass. -v names every test as it
+        # starts and as it finishes, so a test that never finishes is named in
+        # the log. faulthandler_timeout, set just under each phase's timeout,
+        # writes every thread's stack to the log first, so the log also shows
+        # the line a hung test is blocked on.
+        # Each phase is bounded (Git Bash's GNU timeout) inside the job limit,
+        # so the log is always uploaded even if a worker hangs at shutdown.
+        run: |
+          set -o pipefail
+          status=0
+          if timeout --version 2>/dev/null | grep -q coreutils; then
+            bound() { timeout --verbose --kill-after=30s "$@"; }
+          else
+            bound() { shift; "$@"; }
+          fi
+          # shellcheck disable=SC2086 # TEST_PATHS is a space-separated list
+          bound 100m python -m pytest -v -n auto --dist loadfile --shard "$SHARD/4" \
+            -m "not heavy_concurrency" --tb=short --durations=50 --timeout=180 \
+            -o faulthandler_timeout=170 \
+            --junitxml="test-results-windows-$SHARD.xml" $TEST_PATHS \
+            2>&1 | tee "pytest-windows-$SHARD.log" || status=$?
+          # shellcheck disable=SC2086
+          bound 30m python -m pytest -v --shard "$SHARD/4" -m heavy_concurrency --tb=short --timeout=600 \
+            -o faulthandler_timeout=590 \
+            --junitxml="test-results-windows-$SHARD-serial.xml" $TEST_PATHS \
+            2>&1 | tee -a "pytest-windows-$SHARD.log" || serial=$?
+          if [ "${serial:-0}" -ne 0 ] && [ "${serial:-0}" -ne 5 ]; then status=$serial; fi
+          exit "$status"
+      - name: Upload test diagnostics
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: pytest-windows-${{ inputs.python-version }}-${{ matrix.shard }}
+          path: |
+            test-results-windows-${{ matrix.shard }}.xml
+            test-results-windows-${{ matrix.shard }}-serial.xml
+            pytest-windows-${{ matrix.shard }}.log
+          if-no-files-found: warn
+          retention-days: 14

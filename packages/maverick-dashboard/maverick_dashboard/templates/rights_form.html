@@ -1,0 +1,223 @@
+{% extends "public_base.html" %}
+{% block title %}{{ rf.page_title }} · {{ form.property.organisation }}{% endblock %}
+{% block public_label %}{{ rf.page_title }}{% endblock %}
+{% block public_footer %}{{ rf.page_title }}{% endblock %}
+{% block content %}
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+  .rf-page { width: 100%; max-width: 44rem; margin: 0 auto; }
+  .rf-field { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) 0;
+              border-bottom: 1px solid var(--border); }
+  .rf-field label, .rf-field legend { font-weight: var(--font-medium); }
+  .rf-help { color: var(--muted); font-size: var(--text-sm); }
+  .rf-check { display: flex; gap: var(--space-2); align-items: flex-start; }
+  .rf-check input { margin-top: .3rem; }
+  .rf-actions { margin-top: var(--space-4); display: flex; gap: var(--space-3); align-items: center;
+                flex-wrap: wrap; }
+  .rf-hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+  .rf-note { color: var(--muted); font-size: var(--text-xs); margin-top: var(--space-4); }
+  .rf-errors { border: 2px solid var(--danger); border-radius: var(--radius-md); padding: var(--space-3);
+               margin-bottom: var(--space-3); }
+  .rf-errors h2 { font-size: var(--text-base); margin: 0 0 var(--space-2); }
+  .rf-errors ul { margin: 0; padding-left: 1.2rem; }
+  .rf-error { color: var(--danger); font-size: var(--text-sm); margin: 0; }
+</style>
+{% from "_hero.html" import hero %}
+<div class="rf-page">
+{{ hero('', rf.heading.replace('{organisation}', form.property.organisation),
+        lede=rf.intro.replace('{organisation}', form.property.organisation), compact=true) }}
+<section class="panel rf-wrap"
+         data-slug="{{ slug }}"
+         data-api="/api/v1/public/rights/{{ slug }}/requests"
+         data-form="/api/v1/public/rights/{{ slug }}/form">
+  <form id="rf-form" novalidate>
+    {# Problems are listed in a summary that takes focus and next to each field; nothing typed is cleared. #}
+    <div class="rf-errors" id="rf-errors" tabindex="-1" aria-labelledby="rf-errors-title" hidden>
+      <h2 id="rf-errors-title">{{ rf.error_summary_title }}</h2>
+      <ul id="rf-errors-list"></ul>
+    </div>
+    <div class="rf-field">
+      <label for="rf-jurisdiction">{{ rf.jurisdiction_label }}</label>
+      <span class="rf-help" id="rf-jurisdiction-help">{{ rf.jurisdiction_help }}</span>
+      <select id="rf-jurisdiction" name="jurisdiction" class="select" aria-describedby="rf-jurisdiction-help" required>
+        {% for j in form.jurisdictions %}
+        <option value="{{ j.id }}" data-rights="{{ j.rights | join(',') }}"{% if j.id == form.default_jurisdiction %} selected{% endif %}>{{ j.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="rf-field">
+      <label for="rf-type">{{ rf.request_type_label }}</label>
+      <select id="rf-type" name="request_type" class="select" required>
+        {% for key, label in form.request_type_labels.items() %}
+        <option value="{{ key }}">{{ label | capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="rf-field">
+      <label for="rf-name">{{ rf.name_label }}</label>
+      <input id="rf-name" name="name" class="input" maxlength="200" autocomplete="name">
+    </div>
+    <div class="rf-field">
+      <label for="rf-email">{{ rf.email_label }}</label>
+      <span class="rf-help" id="rf-email-help">{{ rf.email_help }}</span>
+      <p class="rf-error" id="rf-email-error" hidden></p>
+      <input id="rf-email" name="email" class="input" type="email" maxlength="200" autocomplete="email" aria-describedby="rf-email-help" required>
+    </div>
+    <div class="rf-field">
+      <fieldset>
+        <legend>{{ rf.relationship_label.replace('{organisation}', form.property.organisation) }}</legend>
+        <div class="rf-check"><input type="radio" id="rf-rel-customer" name="relationship" value="customer" checked><label for="rf-rel-customer">{{ rf.relationship_customer }}</label></div>
+        <div class="rf-check"><input type="radio" id="rf-rel-employee" name="relationship" value="employee"><label for="rf-rel-employee">{{ rf.relationship_employee }}</label></div>
+        <div class="rf-check"><input type="radio" id="rf-rel-other" name="relationship" value="other"><label for="rf-rel-other">{{ rf.relationship_other }}</label></div>
+      </fieldset>
+    </div>
+    <div class="rf-field">
+      <label for="rf-message">{{ rf.message_label }}</label>
+      <span class="rf-help" id="rf-message-help">{{ rf.message_help }}</span>
+      <textarea id="rf-message" name="message" class="textarea" rows="4" maxlength="{{ form.max_message_chars }}" aria-describedby="rf-message-help"></textarea>
+    </div>
+    <div class="rf-field">
+      <div class="rf-check">
+        <input type="checkbox" id="rf-agent" name="authorised_agent" value="1" aria-describedby="rf-agent-help">
+        <label for="rf-agent">{{ rf.agent_label }}</label>
+      </div>
+      <span class="rf-help" id="rf-agent-help">{{ rf.agent_help }}</span>
+    </div>
+    <div class="rf-hp" aria-hidden="true">
+      <label for="rf-website">Website</label>
+      <input id="rf-website" name="website" type="text" tabindex="-1" autocomplete="off">
+    </div>
+    <div class="rf-field">
+      <label for="rf-answer" id="rf-challenge-label">{{ rf.challenge_label.replace('{question}', form.challenge.question) }}</label>
+      <span class="rf-help" id="rf-challenge-help">{{ rf.challenge_help }}</span>
+      <p class="rf-error" id="rf-answer-error" hidden></p>
+      <input id="rf-answer" name="challenge_answer" class="input" inputmode="numeric" pattern="[0-9]*" maxlength="3" aria-describedby="rf-challenge-help" required>
+      <input type="hidden" id="rf-token" name="challenge_token" value="{{ form.challenge.token }}">
+    </div>
+    <div class="rf-actions">
+      <button class="btn btn--primary" type="submit" id="rf-submit">{{ rf.submit }}</button>
+      <span id="rf-msg" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+  <p class="rf-note">
+    {% if form.property.privacy_policy_url %}<a href="{{ form.property.privacy_policy_url }}" rel="noopener">{{ rf.privacy_policy }}</a> · {% endif %}
+    {{ rf.contact.replace('{contact_email}', form.property.contact_email) }}<br>
+    {{ rf.non_legal_advice }}
+  </p>
+</section>
+</div>
+<script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var root = document.querySelector('.rf-wrap');
+    var form = document.getElementById('rf-form');
+    var msg = document.getElementById('rf-msg');
+    var btn = document.getElementById('rf-submit');
+    var T = {
+      sending: {{ rf.sending | tojson }}, generic: {{ rf.error_generic | tojson }},
+      challenge: {{ rf.error_challenge | tojson }}, rate: {{ rf.error_rate | tojson }},
+      label: {{ rf.challenge_label | tojson }}, submit: {{ rf.submit | tojson }},
+      prefix: {{ rf.error_title_prefix | tojson }}, emailMissing: {{ rf.error_email_missing | tojson }},
+      emailFormat: {{ rf.error_email_format | tojson }}, answerMissing: {{ rf.error_answer_missing | tojson }},
+      answerFormat: {{ rf.error_answer_format | tojson }}
+    };
+    // Each problem next to its field and in a summary that takes focus;
+    // the page title starts with the error prefix while problems remain.
+    var summary = document.getElementById('rf-errors');
+    var title = document.title;
+    function mark(field, message) {
+      var note = document.getElementById(field.id + '-error');
+      var help = (field.getAttribute('aria-describedby') || '').split(' ').filter(function (id) { return id && id !== note.id; });
+      note.textContent = message || ''; note.hidden = !message;
+      if (message) { field.setAttribute('aria-invalid', 'true'); help.unshift(note.id); }
+      else field.removeAttribute('aria-invalid');
+      field.setAttribute('aria-describedby', help.join(' '));
+    }
+    function problems() {
+      var email = document.getElementById('rf-email'), answer = document.getElementById('rf-answer'), found = [];
+      var emailText = !email.value.trim() ? T.emailMissing : (email.validity && email.validity.typeMismatch) ? T.emailFormat : '';
+      var answerText = !answer.value.trim() ? T.answerMissing : !/^[0-9]+$/.test(answer.value.trim()) ? T.answerFormat : '';
+      mark(email, emailText); mark(answer, answerText);
+      if (emailText) found.push([email, emailText]);
+      if (answerText) found.push([answer, answerText]);
+      return found;
+    }
+    function showProblems(found) {
+      var list = document.getElementById('rf-errors-list');
+      list.textContent = '';
+      found.forEach(function (item) {
+        var li = document.createElement('li'), link = document.createElement('a');
+        link.href = '#' + item[0].id; link.textContent = item[1];
+        link.addEventListener('click', function (ev) { ev.preventDefault(); item[0].focus(); });
+        li.appendChild(link); list.appendChild(li);
+      });
+      summary.hidden = !found.length;
+      document.title = found.length ? T.prefix + title : title;
+      if (found.length) summary.focus();
+    }
+    var jurisdiction = document.getElementById('rf-jurisdiction');
+    var type = document.getElementById('rf-type');
+    function filterTypes() {
+      var chosen = jurisdiction.options[jurisdiction.selectedIndex];
+      var rights = (chosen && chosen.getAttribute('data-rights') || '').split(',');
+      var firstVisible = null;
+      Array.prototype.forEach.call(type.options, function (opt) {
+        var ok = rights.indexOf(opt.value) !== -1;
+        opt.hidden = !ok; opt.disabled = !ok;
+        if (ok && !firstVisible) firstVisible = opt;
+      });
+      if (type.options[type.selectedIndex] && type.options[type.selectedIndex].disabled && firstVisible) {
+        type.value = firstVisible.value;
+      }
+    }
+    jurisdiction.addEventListener('change', filterTypes);
+    filterTypes();
+    function newChallenge(challenge) {
+      document.getElementById('rf-token').value = challenge.token;
+      document.getElementById('rf-challenge-label').textContent = T.label.replace('{question}', challenge.question);
+      document.getElementById('rf-answer').value = '';
+    }
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var found = problems();
+      showProblems(found);
+      if (found.length) return;
+      var body = {
+        jurisdiction: jurisdiction.value, request_type: type.value,
+        name: document.getElementById('rf-name').value,
+        email: document.getElementById('rf-email').value,
+        relationship: (form.querySelector('input[name=relationship]:checked') || {}).value || 'other',
+        message: document.getElementById('rf-message').value,
+        authorised_agent: document.getElementById('rf-agent').checked,
+        website: document.getElementById('rf-website').value,
+        challenge_token: document.getElementById('rf-token').value,
+        challenge_answer: document.getElementById('rf-answer').value
+      };
+      btn.disabled = true; msg.textContent = T.sending;
+      fetch(root.getAttribute('data-api'), {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        return r.json().then(function (data) { return { status: r.status, data: data }; });
+      }).then(function (out) {
+        if (out.status === 202) {
+          form.querySelectorAll('input,textarea,select,button').forEach(function (el) { el.disabled = true; });
+          msg.textContent = out.data.message;
+          return;
+        }
+        btn.disabled = false;
+        if (out.status === 422 && out.data.code === 'challenge') {
+          if (out.data.challenge) newChallenge(out.data.challenge);
+          msg.textContent = T.challenge;
+          var answer = document.getElementById('rf-answer');
+          mark(answer, T.challenge); showProblems([[answer, T.challenge]]);
+        } else if (out.status === 429) {
+          msg.textContent = T.rate;
+        } else {
+          msg.textContent = (out.data && out.data.detail) ? out.data.detail : T.generic;
+        }
+      }).catch(function () { btn.disabled = false; msg.textContent = T.generic; });
+    });
+  })();
+</script>
+{% endblock %}

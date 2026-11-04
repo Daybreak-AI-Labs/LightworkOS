@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Find which controls apply · Lightwork{% endblock %}
+{% block content %}
+<style>
+  #cs-questionnaire-head { flex-wrap:wrap; }
+  #cs-questionnaire-design { min-width:0; overflow-wrap:anywhere; }
+  #cs-questionnaire-design fieldset { min-width:0; }
+  #cs-questionnaire-design button { max-width:100%; white-space:normal; }
+  .cs-grid { display:grid; grid-template-columns:minmax(18rem,1fr) minmax(24rem,2fr);
+             gap:var(--space-4); }
+  .cs-stack { display:flex; flex-direction:column; gap:var(--space-3); }
+  .cs-stack label { display:flex; flex-direction:column; gap:var(--space-1); }
+  .cs-stack textarea { min-height:18rem; font-family:var(--font-mono); }
+  .cs-output { min-height:24rem; max-height:52rem; overflow:auto; white-space:pre-wrap;
+               word-break:break-word; }
+  .cs-warning { border:2px solid var(--danger); padding:var(--space-3);
+                border-radius: var(--radius-md); background:var(--surface-2); }
+  .cs-confirm { display:flex; gap:var(--space-2); align-items:flex-start; }
+  @media (max-width:880px) { .cs-grid { grid-template-columns:1fr; } }
+</style>
+
+{% from "_hero.html" import hero %}
+{{ hero('Compliance', 'Find which controls apply',
+             subtitle='A short questionnaire that works out your compliance scope',
+             lede='Answer a questionnaire about your organization, and Lightwork works out which
+                   frameworks and controls apply, who owns them and where requirements overlap.
+                   This is guidance, not legal advice.') }}
+<details class="panel">
+  <summary>About this page&rsquo;s safeguards</summary>
+  <ul>
+    <li>Lightwork does not include licensed framework text, give legal advice, certify you, or contact outside services from this page.</li>
+    <li>Evidence is recorded as a fingerprint of the file you upload, not the file itself.</li>
+    <li>A scope needs approval from a second person before it is final, and reports are signed so later changes can be detected.</li>
+  </ul>
+</details>
+
+{% from "_module_gate.html" import module_gate %}
+{% if not compliance_scoping_enabled %}
+{{ module_gate('tech_risk_compliance.scoping', 'Compliance scoping',
+               detail='Answer a questionnaire to find out which frameworks and controls apply to you.',
+               can_activate=can_admin) }}
+{% else %}
+<div id="cs-app" data-can-admin="{{ 'true' if can_admin else 'false' }}" data-can-audit="{{ 'true' if can_audit else 'false' }}">
+  <p id="cs-status" class="muted" role="status" aria-live="polite">Loading your records…</p>
+
+  <div class="section-head"><h2>Assessments</h2>
+    <button type="button" class="btn btn--primary" id="cs-new-assessment">Start an assessment</button></div>
+  <div class="panel" id="cs-assessments"><p class="muted">Loading…</p></div>
+
+  <section class="panel" id="cs-answer" hidden aria-labelledby="cs-answer-title">
+    <h2 id="cs-answer-title">Answer the questions</h2>
+    <p class="muted">Choose an answer for each question and attach the document that supports it. Each answer is saved as you go.</p>
+    <form id="cs-answer-form"></form>
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.75rem;">
+      <button type="button" class="btn btn--primary" id="cs-answer-save">Save answers</button>
+      <button type="button" class="btn btn--ghost" id="cs-answer-close">Close</button>
+    </div>
+  </section>
+
+  <div class="section-head"><h2>Scopes</h2></div>
+  <div class="panel" id="cs-scopes"><p class="muted">Loading…</p></div>
+  <section class="panel" id="cs-scope-detail" hidden aria-live="polite"></section>
+
+  <div class="section-head"><h2>Reports</h2></div>
+  <div class="panel" id="cs-reports"><p class="muted">Loading…</p></div>
+
+  <div class="section-head" id="cs-questionnaire-head"><h2>Questionnaires</h2>
+    <div class="actions"><button type="button" class="btn btn--primary" id="cs-add-questionnaire">Build a questionnaire</button>
+    <button type="button" class="btn btn--ghost" id="cs-import-questionnaire">Import an existing file</button></div></div>
+  <div class="panel" id="cs-questionnaires"><p class="muted">Loading…</p></div>
+  {% include "_compliance_questionnaire_builder.html" %}
+
+  {% if can_audit or can_admin %}
+  <div class="panel" style="display:flex; gap:.5rem; flex-wrap:wrap;">
+    {% if can_audit %}<button type="button" class="btn btn--ghost" id="cs-integrity">Check records are intact</button>{% endif %}
+    {% if can_admin %}<button type="button" class="btn btn--ghost" id="cs-purge">Delete expired records</button>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<details class="panel" id="cs-technical">
+<summary>Technical details: advanced operations</summary>
+<p><button class="btn" id="cs-load-status" type="button">Check availability</button></p>
+<div class="cs-grid">
+  <section class="panel cs-stack">
+    <h2>Choose an action</h2>
+    <p>The workspace and the person acting come only from your sign-in. Unknown fields,
+      free-text framework or evidence content, and key values are rejected.</p>
+    <label>Operation
+      <select id="cs-operation" data-guided-api="/api/v1/compliance/scoping">
+        <option value="questionnaire-create" data-method="PUT" data-path="/questionnaires/{questionnaire_id}/versions">Questionnaire: create immutable version</option>
+        <option value="questionnaire-get" data-method="GET" data-path="/questionnaires/{questionnaire_id}/versions/{version}">Questionnaire: get version</option>
+        <option value="questionnaire-publish" data-method="POST" data-path="/questionnaires/{questionnaire_id}/versions/{version}/publish">Questionnaire: independent publish</option>
+        <option value="assessment-create" data-method="PUT" data-path="/assessments/{assessment_id}">Assessment: create</option>
+        <option value="assessment-get" data-method="GET" data-path="/assessments/{assessment_id}">Assessment: get</option>
+        <option value="required-questions" data-method="GET" data-path="/assessments/{assessment_id}/required-questions">Assessment: next required questions</option>
+        <option value="response-record" data-method="POST" data-path="/assessments/{assessment_id}/responses/{question_id}">Assessment: record closed response and evidence digest</option>
+        <option value="scope-compute" data-method="PUT" data-path="/assessments/{assessment_id}/scopes/{scope_id}">Scope: compute with responsibilities</option>
+        <option value="scope-get" data-method="GET" data-path="/scopes/{scope_id}">Scope: get</option>
+        <option value="scope-overlaps" data-method="GET" data-path="/scopes/{scope_id}/overlaps">Scope: get overlaps</option>
+        <option value="scope-crosswalks" data-method="GET" data-path="/scopes/{scope_id}/crosswalks">Scope: get crosswalks</option>
+        <option value="scope-responsibilities" data-method="GET" data-path="/scopes/{scope_id}/responsibilities">Scope: get responsibility assignments</option>
+        <option value="scope-approve" data-method="POST" data-path="/scopes/{scope_id}/approve">Scope: independent approval</option>
+        <option value="scope-finalize" data-method="POST" data-path="/scopes/{scope_id}/finalize">Scope: finalize as original computer</option>
+        <option value="scope-export" data-method="PUT" data-path="/scopes/{scope_id}/exports/{export_id}">Scope: create signed local export</option>
+        <option value="export-get" data-method="GET" data-path="/exports/{export_id}">Export: get and verify signature</option>
+        <option value="retention-purge" data-method="POST" data-path="/retention/purge">Retention: purge expired state</option>
+        <option value="integrity" data-method="GET" data-path="/integrity">Integrity: check this workspace’s records</option>
+      </select>
+    </label>
+    <label>Record references (JSON)
+      <input class="input" id="cs-path-values" value="{}" autocomplete="off">
+    </label>
+    <label>Action details (JSON)
+      <textarea class="input" id="cs-body">{}</textarea>
+    </label>
+    <div class="cs-warning" id="cs-confirm-panel">
+      <label class="cs-confirm"><input id="cs-confirm" type="checkbox">
+        <span>I reviewed the immutable publication, independent approval,
+          finalization, or retention-purge consequences and the exact revision.</span>
+      </label>
+    </div>
+    <button class="btn btn--primary" id="cs-submit" type="button">Continue with selected action</button>
+  </section>
+  <section class="panel">
+    <h2>Result</h2>
+    <pre class="cs-output" id="cs-output" aria-live="polite">No request made.</pre>
+  </section>
+</div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  "use strict";
+  var API = "/api/v1/compliance/scoping";
+  var operation = document.getElementById("cs-operation");
+  var paths = document.getElementById("cs-path-values");
+  var body = document.getElementById("cs-body");
+  var confirmation = document.getElementById("cs-confirm");
+  var confirmationPanel = document.getElementById("cs-confirm-panel");
+  var output = document.getElementById("cs-output");
+  var highImpact = new Set([
+    "questionnaire-publish", "scope-approve", "scope-finalize", "retention-purge"
+  ]);
+  var forbiddenKeys = new Set([
+    "tenant", "tenant_id", "actor", "actor_ref", "framework_text",
+    "question_text", "raw_evidence", "evidence_text", "signing_key",
+    "signing_key_value", "secret", "secret_value"
+  ]);
+
+  function show(value) {
+    output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  }
+  // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
+  function requestProblem(status, detail) {
+    return window.mvPlainDetail(detail) || window.mvErrorText({status: status, detail: detail}, "complete the request");
+  }
+  function problemText(error) {
+    var kind = error && error.name;
+    if (kind === "SyntaxError") {
+      return "Record references and Action details must be valid JSON. Check the quotes, commas and brackets, then try again.";
+    }
+    if (kind === "TypeError" || kind === "AbortError") {
+      return window.mvErrorText(error, "complete the request");
+    }
+    return error && error.message ? error.message : window.mvErrorText(error, "complete the request");
+  }
+  function selectedRoute() {
+    return operation.options[operation.selectedIndex];
+  }
+  function updateConfirmation() {
+    confirmation.checked = false;
+    confirmationPanel.hidden = !highImpact.has(operation.value);
+  }
+  function containsForbiddenKey(value) {
+    if (!value || typeof value !== "object") { return false; }
+    if (Array.isArray(value)) { return value.some(containsForbiddenKey); }
+    return Object.keys(value).some(function (key) {
+      return forbiddenKeys.has(key) || containsForbiddenKey(value[key]);
+    });
+  }
+  function buildPath(template, values) {
+    return template.replace(/\{([A-Za-z0-9_]+)\}/g, function (_match, key) {
+      var value = values[key];
+      if ((typeof value !== "string" && typeof value !== "number") || value === "") {
+        throw new Error("Add \"" + key + "\" to Record references, then try again.");
+      }
+      return encodeURIComponent(String(value));
+    });
+  }
+  async function run(method, path, payload) {
+    var options = {method: method, headers: {"Accept": "application/json"}};
+    if (method !== "GET") {
+      options.headers["Content-Type"] = "application/json";
+      options.body = JSON.stringify(payload);
+    }
+    var response = await fetch(API + path, options);
+    var responseText = await response.text();
+    var result;
+    try {
+      if (!responseText) { throw new Error("empty response"); }
+      result = JSON.parse(responseText);
+    } catch (_error) {
+      throw new Error("Lightwork's reply could not be read. Refresh the page and try again.");
+    }
+    if (!response.ok) {
+      throw new Error(requestProblem(response.status, result && result.detail));
+    }
+    show({status: response.status, ok: response.ok, result: result});
+  }
+
+  document.getElementById("cs-load-status").addEventListener("click", function () {
+    run("GET", "/status", {}).catch(function (error) { show(problemText(error)); });
+  });
+  operation.addEventListener("change", updateConfirmation);
+  document.getElementById("cs-submit").addEventListener("click", async function () {
+    try {
+      if (highImpact.has(operation.value) && !confirmation.checked) {
+        throw new Error("Confirm the governed state change before continuing.");
+      }
+      var route = selectedRoute();
+      var pathValues = JSON.parse(paths.value || "{}");
+      var payload = JSON.parse(body.value || "{}");
+      if (containsForbiddenKey(payload)) {
+        throw new Error("Workspace, person acting, raw text, evidence, and key values are never accepted. Remove them from Action details, then try again.");
+      }
+      var path = buildPath(route.dataset.path, pathValues);
+      await run(route.dataset.method, path, payload);
+    } catch (error) { show(problemText(error)); }
+  });
+  updateConfirmation();
+}());
+</script>
+</details>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-compliance-questionnaire-builder.js" defer></script>
+<script src="/static/lightwork-compliance-scoping.js" defer></script>
+{% endif %}
+{% endblock %}

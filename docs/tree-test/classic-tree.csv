@@ -1,0 +1,169 @@
+Level 1,Level 2,Level 3,Address
+Work,Shared decision reviews,,/decision-evidence
+Work,Private task calculations,,/private-task-computation
+Work,My data,,/my-data
+Work,Your account,,/account
+Work,Your preferences,,/preferences
+Work,Today,,/today
+Work,Code,,/code
+Work,My work,,/me
+Work,Workflow pilots,,/outcome-pilots
+Work,Promise reviews,,/commitment-reviews
+Work,Project team reviews,,/project-reviews
+Work,Selected deliverable bundles,,/deliverable-bundles
+Work,Task handoffs,,/task-handoffs
+Work,Action Center,,/action-center
+Work,Get started,,/start
+Work,Chat,,/chat
+Work,My companion,,/companion
+Work,Tasks,,/goals
+Work,Business details,,/work-details
+Work,Task builder,,/goal-builder
+Work,Task map,,/graph-editor
+Work,Projects,,/projects
+Work,Results,,/deliverables
+Work,Agent Factory,,/agents
+Work,Roles,,/roles
+Work,Workforce,,/workforce
+Work,Workflows,,/workflows
+Work,Flow designer,,/flows/designer
+Work,Workflow builder,,/workflow-builder
+Work,Automations,,/automations
+Work,Teams,,/fleets
+Work,Starter teams,,/starter-teams
+Work,Help and diagnostics,,/help
+Work,Your notifications,,/notifications
+Work,My background work,,/my-work
+Work,My conversations,,/conversations
+Work,Human conversations,,/human-conversations
+Work,Your first useful result,,/get-started/employee
+Work,Project workspaces,,/project-workspaces
+Work,Your paired devices,,/devices
+Work,Permission requests,,/access-requests
+Insights,Recheck affected rules,,/learning/recheck-rules
+Insights,Find missing distinctions,,/learning/distinctions
+Insights,Check local rules together,,/learning/rules-together
+Insights,Prepare an answer for this request,,/learning/request-program
+Insights,Checked answer regions,,/learning/applicability
+Insights,Rewrite and check local rules,,/learning/rule-evolution
+Insights,Plan teaching questions,,/learning/acquisition
+Insights,Understand a missing reply,,/learning/recovery-visibility
+Insights,Share and qualify local rule structures,,/learning/portable-rules
+Insights,Share preparation safely,,/learning/work-restructuring
+Insights,Approval challenges,,/learning/approval-challenges
+Insights,Instructions used in real work,,/learning/instructions
+Insights,Content access,,/content-access
+Insights,Workflow readiness,,/workflow-readiness
+Insights,Overview,,/overview
+Insights,Ekko,,/ekko
+Insights,Oversight,,/oversight
+Insights,Discovery,,/discovery
+Insights,Branches,,/run-tree
+Insights,Spend,,/spend
+Insights,Work value & opportunities,,/work-value
+Insights,Savings,,/savings
+Insights,Autonomous shoring,,/shoring
+Insights,Billing,,/billing
+Insights,Providers,,/providers
+Insights,Flow results,,/flows/analytics
+Insights,Knowledge,,/knowledge-access
+Insights,Learning,,/learning
+Insights,Learned,,/learned
+Insights,Video walkthroughs,,/walkthroughs
+Insights,Facts,,/facts
+Insights,3D plan view,,/plan-tree-3d
+Insights,Your budget,,/budget
+Insights,Compare cost records,,/cost-reconciliation
+Insights,Provider spending,,/provider-spending
+Administration,AI on this computer,,/settings/local-ai
+Administration,Sign-in and work protection,,/settings/security-installation
+Administration,Permissions,,/permissions
+Administration,Connections,,/connections
+Administration,Document vault,,/administration/document-vault
+Administration,Workspace recovery,,/workspace/recovery
+Administration,Settings,,/settings
+Administration,Employee companions,,/companion/admin
+Administration,Users,,/users
+Administration,Sessions,,/settings/sessions
+Administration,Spending limits,,/spending-limits
+Administration,Workspaces,,/tenants
+Administration,Choose a workspace,,/workspace/tenant
+Governance,Autonomous compliance,,/autonomous-compliance
+Governance,Approvals,,/approvals
+Governance,Agent controls,,/agent-control-plane
+Governance,Security & GRC,,/security
+Governance,Lightwork threat check,,/security/threats
+Governance,Threat monitoring,,/security/soc
+Governance,Security readiness report,,/security/report
+Governance,AI assurance,,/security/assurance
+Governance,AI governance,,/security/governance
+Governance,Financial risk,,/finance
+Governance,Test a safety rule,,/simulate
+Governance,Redaction check,,/redact
+Governance,Safety,,/safety
+Governance,Assessments,,/assessments
+Governance,Compliance,,/compliance
+Governance,Compliance studio,,/compliance/grc-studio
+Governance,Policy links,,/compliance/policy-links
+Governance,Find which controls apply,,/compliance/scoping
+Governance,Turn scope into tasks,,/compliance/scope-actions
+Governance,Build a task mapping,,/compliance/scope-actions/mapping
+Governance,Continuous evidence,,/compliance/continuous-evidence
+Governance,Regulations and rules,,/compliance/obligations
+Governance,Compartments,,/compartments
+Governance,Activity log,,/audit
+Governance,Trust receipts,,/audit/receipts
+Governance,Safety monitoring,,/immune
+Governance,Learning history,,/audit/evolution-ledger
+Governance,Task replay,,/replay
+Governance,Agent trust,,/trust
+Privacy,Privacy,,/privacy
+Privacy,Find personal data,,/privacy/data-discovery
+Privacy,Privacy law research,,/privacy/regulatory-intelligence
+Privacy,Privacy requests,,/privacy/rights-orchestration
+Privacy,Send people their data,,/privacy/rights-consumer-delivery
+Privacy,Privacy notices,,/privacy/notice-governance
+Privacy,Data use rules,,/data-use
+Privacy,Snowflake and Databricks,,/data-use/providers
+Privacy,California DROP requests,,/privacy/drop
+Consent,Consent and preferences,,/consent
+Consent,Banner and preference center,,/consent/publishing
+Consent,Banner experiments,,/consent/experiments
+Consent,Send choices to other systems,,/consent/delivery
+Consent,Website and app keys,,/consent/public-clients
+Consent,Mobile app consent,,/consent/native
+Consent,Preference questions,,/consent/profile-data
+Consent,Find people by preference,,/consent/custom-indexes
+Consent,Bulk consent changes,,/consent/bulk-jobs
+Consent,Website banner settings,,/consent/publish-settings
+Consent,Opt out everywhere,,/consent/global-opt-out
+Consent,App tracking checks,,/consent/application-scans
+Consent,Tracker scans,,/consent/scan-inventory
+Consent,Disclosure suggestions,,/consent/scan-notice-proposals
+Consent,Trust center access,,/consent/trust-center-authority
+AI oversight,Governance assistants,,/governance-agents
+AI oversight,Governance inventory,,/governance/inventory
+AI oversight,AI evidence analysis,,/ai-evidence-analysis
+AI oversight,Suggested assessment answers,,/assess/evidence-autopopulation
+AI oversight,AI system tasks,,/ai-entity-tasks
+AI oversight,Outside agents,,/external-agents
+Third parties,AI vendor onboarding,,/third-party/vendor-onboarding
+Third parties,Contracts and engagements,,/third-party/contracts
+Third parties,Executive vendor reports,,/third-party/executive-reports
+Third parties,Third-party intelligence,,/third-party/intelligence
+Third parties,Third-party lifecycle,,/third-party/lifecycle
+Third parties,Third-party collaboration,,/third-party/collaboration
+Third parties,Partner fleet,,/partner
+Library,Skills,,/skills
+Library,Skill store,,/store
+Library,Templates,,/templates
+Library,Tools,,/tools
+Library,Response styles,,/styles
+Library,Channels,,/channels
+Advanced tools,Benchmarks,,/benchmarks
+Advanced tools,Performance diagnostics,,/perf
+Advanced tools,Cortex memory diagnostics,,/cortex
+Advanced tools,Plugins,,/plugins
+Advanced tools,Tool servers,,/mcp
+Advanced tools,Cache,,/cache
+Advanced tools,Embedded analytics,,/embed-demo

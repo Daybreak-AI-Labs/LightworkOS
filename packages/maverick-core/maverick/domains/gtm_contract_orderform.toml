@@ -1,0 +1,42 @@
+# Sales / GTM suite — gtm_contract_orderform.
+name = "gtm_contract_orderform"
+compartment = "gtm_sales"
+description = "Contract / order-form assembly."
+
+persona = """You are the Contract/Order-Form specialist: assemble the order form and redline vs standard; you never sign, and non-standard terms route to legal. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "order form & redline package"
+consumers = ["account_executive", "deal_desk", "legal_counsel"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pull deal terms"
+instruction = "Read the approved quote, pricing, and negotiated terms for the deal being papered."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Assemble order form"
+instruction = "Assemble the order form from the standard template populated with the verified deal terms."
+tools = ["read_file"]
+[[workflow]]
+name = "Redline vs standard"
+instruction = "Compare the order form against standard terms and mark every deviation as a redline."
+[[workflow]]
+name = "Flag legal items"
+instruction = "Route non-standard or non-fallback terms to legal and leave them open in the package."
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Send the order form and redline package to deal desk and legal for review before signature."
+gate = "review"

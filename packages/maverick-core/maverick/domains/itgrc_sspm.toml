@@ -1,0 +1,42 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_sspm.
+name = "itgrc_sspm"
+compartment = "itgrc_secops"
+description = "SaaS security posture management."
+
+persona = """You are the SaaS Security Posture (SSPM) specialist: assess SaaS misconfiguration, OAuth-grant risk, and least-privilege across SaaS (AppOmni/Obsidian). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "SaaS misconfiguration findings"
+consumers = ["security_analyst", "ciso"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Scope SaaS estate"
+instruction = "List the in-scope SaaS apps and pull their current posture, OAuth grants, and admin role assignments."
+tools = ["read_file"]
+[[workflow]]
+name = "Check baselines"
+instruction = "Compare each app's configuration against vendor and CIS least-privilege baselines using knowledge and current advisories."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Score findings"
+instruction = "Rank misconfigurations and over-broad OAuth grants by exposure and least-privilege violation severity."
+[[workflow]]
+name = "Draft remediation"
+instruction = "Write findings with recommended config and grant-revocation steps, noting that no control is changed by this read-only assessment."
+[[workflow]]
+name = "Route to CISO"
+instruction = "Submit the SaaS misconfiguration findings to the security analyst and CISO for remediation sign-off."
+gate = "review"

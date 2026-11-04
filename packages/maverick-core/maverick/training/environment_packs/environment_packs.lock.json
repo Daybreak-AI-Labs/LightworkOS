@@ -1,0 +1,17 @@
+{
+  "schema": "lightwork.training-environment-lock.v1",
+  "packs": {
+    "article28_clause_v1": {
+      "file_sha256": "766bf0a25628b714ab084d83ac560be83c6e3570b5a761bffff6352d84abeecb",
+      "semantic_sha256": "fa2563569d4e826d62e7bf7afa35841a18f9c1ac316d05c090c137734bab5296"
+    },
+    "dsar_routing_v1": {
+      "file_sha256": "ca64eaf61019574cc65d509d7ef150db9a1435572ac634d5835668875173b99b",
+      "semantic_sha256": "c3b7bdf723fc6c9f9436f98fee75612b53fa77f8613bfbdaead7896059f401eb"
+    },
+    "privacy_assessment_v1": {
+      "file_sha256": "2fd0a1d431438fc954a05c2b1c51e1aca6d4595b700bee5188b0d162cf3fcac0",
+      "semantic_sha256": "0c3e8e149b41228e7b59f83adb5e6c854d96fb10212f50818157889891cf59f8"
+    }
+  }
+}

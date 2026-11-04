@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}My data - Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Your account', 'My data',
+        lede='Your personal memory, verified channel identities and retained work in this workspace. Personal choices can narrow administrator policy; they cannot enable tools, expand companion sources or remove preservation holds.',
+        compact=true) }}
+<section class="panel">
+<p id="pd-status" role="status" aria-live="polite">Current account controls loaded.</p><button class="btn" id="pd-refresh" type="button">Refresh saved state</button></section>
+<section class="panel"><h2>Verified channel identities</h2>
+<p>Choose a channel, send the generated text to Lightwork from your own account, then confirm the sender here. Linking alone shares nothing. Send the text as a normal message, not a slash command.</p>
+<p>New channel history is bound to the verified adapter account and sender. Older history without that account proof is kept separate; ask your privacy administrator for a governed export. Lightwork does not guess its owner.</p>
+<form id="pd-link" data-draft-recovery="off"><label>Channel <select class="select" id="pd-channel" required></select></label><button class="btn" type="submit">Create linking text</button></form>
+<p id="pd-command" role="status"></p><div id="pd-links"></div><div id="pd-proofs"></div></section>
+<section class="panel"><h2>Personal recall and response style</h2><p id="pd-ceiling"></p>
+<p>Channel-only is the default. To share, choose one verified source as the preference authority. This resolves conflicts explicitly: its notes replace the other channels' recalled notes; your account response style also applies to linked channels. Unlinking stops future sharing. Existing messages are unchanged.</p>
+<form id="pd-share" data-draft-recovery="off"><label>Recall scope <select class="select" id="pd-source"></select></label><button class="btn" type="submit">Save recall scope</button></form>
+<p><a href="/preferences">Edit your account response style</a></p><div id="pd-memory"></div></section>
+<section class="panel"><h2>Allowed use and retained data</h2>
+<p>Turning off personal recall stops future recall and preference collection. It does not delete business history or unlearn a model. Task exclusions separately stop automatic local reuse, examples and learning. Shared knowledge uses its own source purpose and consent; copied or external material needs its custodian.</p>
+<p>Download available account records separately from a selected conversation scope. Each download rechecks your current account and workspace.</p><form id="pd-account-export" data-draft-recovery="off"><label>Account store <select id="pd-export-store" class="select"><option value="model_test_history">Model-test history</option><option value="conversation_inbox">Conversation work and human exchanges</option><option value="saved_views_and_pins">Saved views and task pins</option></select></label><button class="btn" type="submit">Prepare private download</button></form><p id="pd-export-link"></p>
+<div id="pd-policy"></div><button class="btn" type="button" id="pd-inventory">Review my retained stores</button><div id="pd-stores"></div><div id="pd-tasks"></div></section>
+<section class="panel"><h2>Reviewed deletion and its status</h2>
+<p>Choose one verified conversation scope and the stores to remove. Account-wide drafts, preferences, companion history, saved views and task pins, notification receipts and diagnostic reports belong to your named dashboard account. A different workspace administrator confirms preservation obligations before dispatch. The review grants no access to private content.</p>
+<p>Shared outputs, prior models, external copies, content-minimized audit evidence and privacy restrictions remain separately reported. A point-in-time deletion does not disable your account or every future data collection path.</p>
+<form id="pd-delete" data-draft-recovery="off"><label>Verified scope <select class="select" id="pd-delete-scope"></select></label><fieldset id="pd-delete-stores"><legend>Stores in this request</legend></fieldset><button class="btn" type="submit">Preview exact deletion request</button></form>
+<div id="pd-delete-preview"></div><button class="btn" type="button" id="pd-delete-status">Refresh my deletion requests</button><button class="btn" type="button" id="pd-delete-review" hidden>Review workspace deletion requests</button><div id="pd-delete-requests"></div></section>
+<section class="panel"><h2>Source of a remembered preference</h2><pre id="pd-source-text" style="white-space:pre-wrap;overflow-wrap:anywhere">Choose a note's source to read the authorized original turn.</pre></section>
+<script nonce="{{ csp_script_nonce }}" id="pd-bootstrap" type="application/json">{{ personal_data|tojson }}</script>
+<script src="/static/lightwork-personal-data.js" defer></script>
+{% endblock %}

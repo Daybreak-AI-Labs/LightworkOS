@@ -1,0 +1,51 @@
+/* The product's existing self-hosted typefaces and brand colours. */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 700;
+  font-display: swap;
+  src: url("manrope-var.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("jbm-400.woff2") format("woff2");
+}
+
+:root {
+  --md-text-font: "Manrope";
+  --md-code-font: "JetBrains Mono";
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #0a1020;
+  --md-primary-fg-color--light: #21426f;
+  --md-primary-fg-color--dark: #08101f;
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: #21426f;
+  --md-typeset-a-color: #21426f;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #08101f;
+  --md-primary-fg-color--light: #21426f;
+  --md-primary-fg-color--dark: #08101f;
+  --md-primary-bg-color: #ffffff;
+  --md-accent-fg-color: #5297ff;
+  --md-typeset-a-color: #5297ff;
+}
+
+.md-header__button.md-logo img {
+  width: 2.1rem;
+  height: 1.4rem;
+  object-fit: contain;
+}
+
+.md-header__topic:first-child {
+  font-weight: 600;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}

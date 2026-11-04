@@ -1,0 +1,70 @@
+# Automated dependency-update PRs. Complements the blocking pip-audit / bandit /
+# license CI gates (they fail AFTER a vuln ships; Dependabot proposes the bump).
+# Updates are grouped to keep PR volume manageable across this monorepo.
+version: 2
+updates:
+  # GitHub Actions used by every workflow (pinned by SHA — Dependabot keeps the
+  # version comments and SHAs current).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Keep the explicitly pinned Dockerfile base image under review.
+  - package-ecosystem: docker
+    directory: "/deploy/docker"
+    schedule:
+      interval: weekly
+
+  # Python packages (uv workspace). One entry per package so each pyproject's
+  # floors are surfaced; grouped so a sweep lands as a single PR per package.
+  - package-ecosystem: pip
+    directories:
+      - "/"
+      - "/packages/maverick-core"
+      - "/packages/maverick-shield"
+      - "/packages/maverick-channels"
+      - "/packages/maverick-dashboard"
+      - "/packages/maverick-mcp"
+      - "/packages/maverick-evolve"
+      - "/packages/maverick-knowledge"
+      - "/apps/installer-cli"
+    schedule:
+      interval: weekly
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+    # The reviewed SBOM dependency closure requires chardet below 6.
+    # A standalone chardet major bump therefore cannot resolve the reviewed
+    # CI environment. Remove this range only after the SBOM tool supports it.
+    ignore:
+      - dependency-name: chardet
+        versions: [">=6"]
+      # Provider major releases can replace the HTTP transport and therefore
+      # require the egress/retry compatibility review enforced in CI. Minor
+      # and patch updates remain automated inside the supported major.
+      - dependency-name: anthropic
+        update-types: ["version-update:semver-major"]
+      - dependency-name: openai
+        update-types: ["version-update:semver-major"]
+
+  # TypeScript plugin SDK (published npm artifact).
+  - package-ecosystem: npm
+    directory: "/sdks/plugin-ts"
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+
+  # Rust workspace (includes the audit-chain verifier binary).
+  - package-ecosystem: cargo
+    directory: "/rust"
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]

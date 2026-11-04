@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Overview · Compliance' if tab_host else 'Autonomous compliance' }} · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .acm-shell { max-width: 1180px; margin: 0 auto; padding: 1.25rem; }
+  .acm-suite { margin: 1.75rem 0; }
+  .acm-suite__head { margin-bottom: .75rem; }
+  .acm-suite__head h2 { margin: 0 0 .2rem; }
+  .acm-suite__desc { color: var(--muted); margin: 0; max-width: 52rem; }
+  .acm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .75rem; }
+  .acm-card { text-decoration: none; color: inherit; gap: .6rem; }
+  .acm-card__row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+  .acm-card__name { font-weight: var(--font-semibold); }
+  .acm-card__path { color: var(--muted); font-size: var(--text-sm);  }
+  .acm-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .75rem; margin: .5rem 0 0; padding: 0; list-style: none; }
+  .acm-legend li { display: flex; flex-direction: column; gap: .3rem; }
+  .acm-legend p { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+</style>
+{% if tab_host %}
+{% from "_tabs.html" import host_header, panel_attrs %}{{ host_header(tab_host) }}
+{% endif %}
+<div class="acm-shell"{% if tab_host %} {{ panel_attrs(tab_host.selected) }}{% endif %}>
+  {% if tab_host %}
+  <h2>Autonomous Compliance</h2>
+  <p class="muted">Compliance, run by governed agents: one product, six suites, one workforce.
+    {{ module_count }} tools in {{ suites | length }} areas. The labels are explained at the bottom of the page.</p>
+  {% else %}
+  {% from "_hero.html" import hero %}
+  {% call hero('Compliance, run by governed agents', 'Autonomous compliance',
+               subtitle='One product, six suites, one workforce',
+               lede='Everything you need to run your compliance program, in six areas.
+                     Pick a card to open that part of Lightwork. Each card says whether
+                     it is ready to use today.') %}
+    {% from "_hero.html" import state %}
+    {{ state('What is here',
+             module_count ~ ' tools in ' ~ (suites | length) ~ ' areas',
+             badge='Ready · Preview · Needs outside service', badge_class='info',
+             copy='The labels are explained at the bottom of the page.') }}
+  {% endcall %}
+  {% endif %}
+
+  {% for suite in suites %}
+  <section class="acm-suite" aria-labelledby="acm-suite-{{ suite.key }}">
+    <div class="acm-suite__head">
+      <h2 id="acm-suite-{{ suite.key }}">{{ suite.label }}</h2>
+      <p class="acm-suite__desc">{{ suite.description }}</p>
+    </div>
+    <div class="acm-grid">
+      {% for module in suite.modules %}
+      {% set _name = page_names.get(module.path, module.label) %}
+      <a class="card acm-card" href="{{ module.path }}">
+        <span class="acm-card__row">
+          <span class="acm-card__name">{{ _name }}</span>
+          <span class="badge {{ status_badge_class[module.status] }}">{{ status_labels[module.status] }}</span>
+        </span>
+        <span class="acm-card__path">{{ module_summaries.get(module.path, "Open " ~ _name ~ ".") }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+
+  <section class="panel acm-legend-panel" aria-labelledby="acm-legend-title">
+    <h2 id="acm-legend-title">What the labels mean</h2>
+    <ul class="acm-legend">
+      {% for status in status_order %}
+      <li>
+        <span class="badge {{ status_badge_class[status] }}">{{ status_labels[status] }}</span>
+        <p>{{ status_meanings[status] }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

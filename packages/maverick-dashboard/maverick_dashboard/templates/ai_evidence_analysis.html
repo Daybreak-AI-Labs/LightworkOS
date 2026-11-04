@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}AI evidence analysis · Lightwork{% endblock %}
+{% block head_extra %}
+  <link rel="stylesheet" href="/static/lightwork-ai-evidence-analysis.css">
+{% endblock %}
+{% block content %}
+<div class="evidence-workbench" id="evidence-shell" data-api-base="{{ api_base }}"
+     data-module-enabled="{{ 'true' if evidence_module_enabled else 'false' }}"
+     data-can-operate="{{ 'true' if evidence_can_operate else 'false' }}"
+     data-can-audit="{{ 'true' if evidence_can_audit else 'false' }}"
+     data-can-admin="{{ 'true' if evidence_can_admin else 'false' }}"
+     data-can-register="{{ 'true' if evidence_can_activate else 'false' }}">
+  {{ hero('Governance', 'AI evidence analysis', lede='Check a document against your review criteria, then have a second person approve or reject the findings.') }}
+  {% if not evidence_module_enabled %}
+  {{ module_gate('ai_evidence_analysis', 'AI evidence analysis',
+                 detail='Turn this on to have AI check documents against your review criteria. A person still approves every result.',
+                 can_activate=evidence_can_activate) }}
+  {% endif %}
+
+{% if evidence_workspace_missing %}
+  <section class="panel" aria-labelledby="workspace-title">
+    <h2 id="workspace-title">Choose a workspace first</h2>
+    <p>Evidence is kept separately for each workspace. Choose a workspace from the workspace menu, then open this page again.</p>
+  </section>
+{% else %}
+  <p class="muted">Findings are aids for your reviewers, not legal advice or a compliance conclusion.</p>
+  <details>
+    <summary>About this page's safeguards</summary>
+    <ul class="muted">
+      <li>Uploaded files are read within size limits and are not kept. The text read from them is not stored either.</li>
+      <li>Lightwork checks your workspace, your permissions, the document's registration and the review criteria before reading anything.</li>
+      <li>Every result waits for a different, authorized person to approve or reject it.</li>
+      <li>Which file types can be read depends on how Lightwork is set up. Unsupported or unsafe files are refused.</li>
+    </ul>
+  </details>
+
+  <section class="panel status-card evidence-status-card" aria-labelledby="status-title"{% if not evidence_module_enabled %} hidden{% endif %}>
+    <div class="section-head"><h2 id="status-title">Availability</h2><button class="btn btn--ghost" type="button" id="refresh-status">Check again</button></div>
+    <p id="runtime-status" class="status" role="status" aria-live="polite">Checking whether analysis is available…</p>
+  </section>
+
+  <fieldset class="evidence-grid governance-fieldset" id="evidence-operations" disabled>
+    <legend class="sr-only">Evidence analysis actions</legend>
+
+    <section class="panel" aria-labelledby="analyze-title"{% if not evidence_can_operate %} hidden{% endif %}>
+      <div class="section-head"><h2 id="analyze-title">Analyze a document</h2></div>
+      <form id="analyze-form" class="evidence-form" autocomplete="off" novalidate>
+        <fieldset class="permission-fieldset" id="evidence-analyze-controls"{% if not evidence_can_operate %} disabled aria-disabled="true"{% endif %}>
+          <legend class="sr-only">Analyze a document</legend>
+          <label for="artifact-select">Document</label>
+          <select class="select" id="artifact-select" name="artifact" required><option value="">{{ 'Loading…' if evidence_module_enabled else 'Choose a document…' }}</option></select>
+          <p class="help" id="artifact-help">Choose a registered document, then pick the same file from your computer. Lightwork checks it is unchanged before reading it.</p>
+          <label for="artifact-file">The file on your computer</label>
+          <input class="input" id="artifact-file" name="artifact_file" type="file" required>
+          <label for="criteria-select">Review criteria</label>
+          <select class="select" id="criteria-select" name="criteria" required><option value="">{{ 'Loading…' if evidence_module_enabled else 'Choose review criteria…' }}</option></select>
+          <p class="help">Review criteria are set up by an administrator.</p>
+          <input type="hidden" id="analyze-operation-id" name="idempotency_key" data-auto-reference>
+          <button class="btn btn--primary" type="submit" id="analyze-button">Analyze document</button>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="register-title"{% if not evidence_can_activate %} hidden{% endif %}>
+      <div class="section-head"><h2 id="register-title">Register a document for analysis</h2></div>
+      <p class="help">Administrators register a document once. Lightwork records its fingerprint and size, not its contents.</p>
+      <form id="register-form" class="evidence-form" autocomplete="off" novalidate>
+        <label for="register-file">Document</label>
+        <input class="input" id="register-file" name="register_file" type="file" required>
+        <label for="register-matter">Case or matter it belongs to</label>
+        <input class="input" id="register-matter" name="matter" maxlength="80" required placeholder="For example: Supplier review 2026">
+        <label for="register-received">Date received</label>
+        <input class="input" id="register-received" name="received" type="date" required>
+        <label for="register-valid">Can be analyzed for</label>
+        <select class="select" id="register-valid" name="valid_for">
+          <option value="30">30 days</option>
+          <option value="90" selected>90 days</option>
+          <option value="365">1 year</option>
+        </select>
+        <button class="btn" type="submit">Register document</button>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="analyses-title">
+      <div class="section-head"><h2 id="analyses-title">Analyses</h2>
+        <label class="sr-only" for="analysis-filter">Show</label>
+        <select class="select" id="analysis-filter"><option value="">All analyses</option><option value="pending_review" selected>Waiting for review</option><option value="review_approved">Approved</option><option value="review_rejected">Rejected</option><option value="revoked">Withdrawn</option></select>
+      </div>
+      <div class="evidence-table" role="region" tabindex="0" aria-labelledby="analyses-title"><table><caption class="sr-only">Evidence analyses and the actions you can take</caption>
+        <thead><tr><th scope="col">Document</th><th scope="col">Criteria</th><th scope="col">Result</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead>
+        <tbody id="analyses-rows"><tr><td colspan="6">{{ 'Loading…' if evidence_module_enabled else 'Analyses appear here once AI evidence analysis is turned on.' }}</td></tr></tbody></table></div>
+    </section>
+
+    <section class="panel" id="detail-panel" aria-labelledby="detail-title" hidden>
+      <div class="section-head"><h2 id="detail-title" tabindex="-1">Findings</h2></div>
+      <div id="detail-body"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="operations-title"{% if not evidence_can_audit %} hidden{% endif %}>
+      <div class="section-head"><h2 id="operations-title">Checks and clean-up</h2></div>
+      <div class="actions">
+        <button class="btn" type="button" id="verify-integrity"{% if not evidence_can_audit %} disabled aria-disabled="true"{% endif %}>Check records are intact</button>
+        {% if evidence_can_admin %}<button class="btn btn--danger" type="button" id="purge-expired">Delete expired records</button>{% endif %}
+      </div>
+      <p class="help" id="retention-summary" role="status"></p>
+    </section>
+  </fieldset>
+
+  <section class="panel result-panel" aria-labelledby="result-title">
+    <div class="section-head"><h2 id="result-title">Last action</h2></div>
+    <p id="operation-status" class="status" role="status" aria-live="polite">Nothing has been done yet.</p>
+    <details class="governance-details"><summary>Technical details</summary><pre id="operation-output" class="output" tabindex="0"></pre></details>
+  </section>
+
+  <noscript><p class="panel">Turn on JavaScript in your browser to use this page.</p></noscript>
+{% endif %}
+</div>
+{% endblock %}
+{% block scripts_extra %}
+  {% if not evidence_workspace_missing %}<script src="/static/lightwork-ai-evidence-analysis.js" defer></script>{% endif %}
+{% endblock %}

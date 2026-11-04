@@ -1,0 +1,1234 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Release-readiness reviews can exercise the full interpreter and
+  # security-posture matrix on a branch without merging it into main.
+  workflow_dispatch: {}
+  # The merge queue builds a temporary branch per entry and gates the merge on
+  # this workflow's required checks. Without this trigger nothing reports on
+  # that branch and every entry times out (.github/rulesets/protect-main.json).
+  merge_group:
+
+# Resolve the test environment from one reviewed set. Consumer package
+# manifests keep compatible ranges; CI must not silently change behavior when
+# an upstream dependency publishes a new release.
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  document-engines:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"document-engines\": false') }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12.13"
+      - name: Install document test dependencies
+        run: python -m pip install -e './packages/maverick-core[spreadsheet,pdf,latex]' pytest pytest-timeout pillow
+      - name: Test LaTeX conversion and failure recovery
+        run: >-
+          python -m pytest -q packages/maverick-core/tests/test_latex_tool.py
+          --timeout=30 --junitxml=latex-tool-results.xml
+      - name: Test LaTeX recovery under secure defaults
+        env:
+          MAVERICK_TEST_SECURE_DEFAULT: "1"
+        run: >-
+          python -m pytest -q packages/maverick-core/tests/test_latex_tool.py
+          --timeout=30 --junitxml=latex-tool-secure-results.xml
+      - name: Build the offline native document worker
+        run: docker build -f deploy/docker/Dockerfile.documents -t lightwork-documents:test .
+      - name: Exercise actual Calc and scanned-PDF OCR
+        env:
+          MAVERICK_TEST_DOCUMENT_IMAGE: lightwork-documents:test
+        run: >-
+          python -m pytest -q packages/maverick-core/tests/test_native_document_engines.py
+          packages/maverick-core/tests/test_native_container_cleanup.py
+          --timeout=180 --junitxml=document-engine-results.xml
+      - name: Retain native engine results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: document-engine-results
+          path: |
+            document-engine-results.xml
+            latex-tool-results.xml
+            latex-tool-secure-results.xml
+          retention-days: 14
+
+  lint:
+    runs-on: ubuntu-24.04
+    # The secret scan is the slow step; 30 minutes gives two hosted cores room
+    # for it plus the custom gates.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install ruff
+        run: python -m pip install 'ruff==0.17.3'
+      - name: Lint
+        # Also enforces the C901 cyclomatic-complexity ceiling (max 20, see
+        # pyproject [tool.ruff.lint.mccabe]). Functions already over it carry
+        # an explicit `# noqa: C901`; new over-complex code fails here.
+        run: python -m ruff check .
+      - name: Check types at selected boundaries
+        run: |
+          python -m pip install 'mypy==1.18.2'
+          python -m mypy
+      - name: Check standalone demo support copies
+        run: python scripts/sync_standalone_support.py --check
+      - name: Dead-code scan (vulture)
+        # Catches unused parameters / module-level symbols that ruff's
+        # F401/F841 don't (e.g. a vestigial function arg nothing passes).
+        # Config + paths + the 80% confidence floor live in pyproject
+        # [tool.vulture]; the repo is clean at that floor, so any new finding
+        # fails the gate. Add a real false positive to [tool.vulture]
+        # ignore_names rather than lowering the floor.
+        run: |
+          python -m pip install 'vulture==2.16'
+          python -m vulture
+      - name: Reject bare `import tomllib` (keep the tomli fallback)
+        # tomllib is 3.11+ stdlib. The supported floor is now 3.11, but the
+        # documented tomli fallback stays for helpers that still run on older
+        # interpreters (when the floor was 3.10, three PRs in a row broke CI by
+        # importing tomllib without it). Catch a bare import here so the
+        # mistake fails the lint job in seconds, not minutes into the matrix.
+        #
+        # Column-0 match only: the legit pattern indents the import
+        # inside a try-block, so anything at column 0 is the mistake.
+        run: |
+          if grep -rn --include='*.py' -E '^import[[:space:]]+tomllib([[:space:]]|$)' apps packages benchmarks; then
+            echo ""
+            echo "ERROR: bare 'import tomllib' found above. tomllib is 3.11+ stdlib."
+            echo "Use the try/except fallback documented in CONTRIBUTING.md."
+            exit 1
+          fi
+      - name: Confine `shell=True` to the sandbox backends (kernel rule 4)
+        # Security boundary: tools must never call subprocess with shell=True
+        # directly -- model-generated input goes through sandbox.exec(), the
+        # single chokepoint that applies the configured backend AND the
+        # secret-scrubbed env. A shell=True anywhere else is a command-
+        # injection / unsandboxed-exec foothold. The only legitimate
+        # occurrence is the LocalBackend itself under maverick/sandbox/.
+        run: |
+          hits="$(grep -rn --include='*.py' 'shell=True' apps packages \
+                  | grep -v '/sandbox/' | grep -v '/tests/' || true)"
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo ""
+            echo "ERROR: shell=True outside maverick/sandbox/. Route shell through"
+            echo "sandbox.exec() (kernel rule 4), or move the call into a sandbox"
+            echo "backend. If genuinely required, add it to this grep's allowlist"
+            echo "with a justification."
+            exit 1
+          fi
+      - name: Secret scan (detect-secrets, no new secrets vs audited baseline)
+        # Source-hygiene gate: catches an API key / token / private key
+        # accidentally committed to ANY tracked file -- tests included, which
+        # is exactly where a real key tends to get pasted by mistake. Every
+        # current finding was hand-audited and is a placeholder, a public
+        # constant (e.g. X's web-client bearer), AWS's docs example key, or a
+        # deliberately-fake redaction-test fixture; all are recorded by hash in
+        # .secrets.baseline. Lockfiles (dependency-hash churn) and the exact
+        # signed governance manifest (rotating public digests/signatures) are
+        # excluded via the baseline's recorded filter. Its neighboring key and
+        # verifier files remain scanned.
+        #
+        # We re-scan into a throwaway copy of the baseline and fail only when a
+        # NEW (file, secret-hash) pair appears. Comparing by HASH -- not via the
+        # `detect-secrets-hook` line-number sync, which exits non-zero whenever
+        # an unrelated edit shifts a known fixture's line -- means only a
+        # genuinely new secret trips the gate, never code movement.
+        #
+        # To clear a real false positive: add an inline `pragma: allowlist
+        # secret` comment at the line (preferred), or re-audit the baseline with
+        # `detect-secrets scan --baseline .secrets.baseline` and commit it.
+        run: |
+          python -m pip install 'detect-secrets==1.5.0'
+          cp .secrets.baseline /tmp/scan.baseline
+          python -m detect_secrets scan --baseline /tmp/scan.baseline
+          python3 - <<'PY'
+          import json, sys
+          old = json.load(open(".secrets.baseline"))["results"]
+          new = json.load(open("/tmp/scan.baseline"))["results"]
+          pairs = lambda r: {(f, i["hashed_secret"]) for f, items in r.items() for i in items}
+          extra = sorted(pairs(new) - pairs(old))
+          if extra:
+              print("ERROR: new secret(s) not in the audited .secrets.baseline:")
+              for f, h in extra:
+                  print(f"  {f}  (sha1 {h[:16]}...)")
+              print("")
+              print("If real: remove and ROTATE it. If a false positive: add an inline")
+              print("`pragma: allowlist secret` comment, or re-audit the baseline via")
+              print("`detect-secrets scan --baseline .secrets.baseline` and commit it.")
+              sys.exit(1)
+          print("detect-secrets: no new secrets vs audited baseline")
+          PY
+      - name: Plugin compatibility matrix (no enabled plugin may be API-incompatible)
+        # Inspects every installed maverick entry point's manifest against
+        # SUPPORTED_API_MAJORS + the permission grants. In this repo's CI the
+        # install is plugin-free, so this validates the gate machinery; a
+        # deployment pipeline runs the same command against its real install.
+        run: |
+          pip install -e ./packages/maverick-core -q
+          python -m maverick.plugin_matrix --ci
+      - name: Specialist catalog gate (zero envelope errors)
+        # Every domain pack, built-in or operator-supplied, must keep a
+        # non-empty tool allowlist, a valid risk ceiling and effort level, and
+        # pass the prose lint (text defects, duplicate personas, unknown
+        # tools). Errors fail the build.
+        run: maverick domains-lint --ci
+      - name: Reachability ledger (nothing goes dark unnoticed)
+        # Answers "does production code reach this module?" mechanically
+        # instead of relying on module header comments, which drift in both
+        # directions: a module can look shipped with no production importer,
+        # or look unbuilt while it backs a shipping CLI command.
+        #
+        # This walks the import graph from real entry points and fails when a
+        # module loses its last caller, or when a new one arrives that nothing
+        # reaches. Regenerate with `--regen` after reviewing the diff.
+        run: python -m maverick.reachability --ci
+      - name: Tool dispatch contract (no ungated path to the registry)
+        # Agent._run_tool runs eleven gates, and it must be the only way into
+        # the tool registry: an ungated dispatch site (for example a flow step
+        # bound at automation_queue) would reach every registered connector --
+        # stripe, gmail, s3, salesforce, sap, workday -- with a partial check
+        # and NO audit row.
+        #
+        # The missing row is the structural problem. The attestation asserts
+        # "no RECORDED action violated the policy envelope", so an unrecorded
+        # dispatch satisfies it by construction: the claim was unfalsifiable,
+        # not merely incomplete. This fails the build on a new ungated site,
+        # and re-checks the premise of the one exempt-because-unreachable site
+        # rather than trusting a comment.
+        run: python -m maverick.dispatch_contract --ci
+      - name: Egress contract (no outbound path outside the guarded libraries)
+        # enterprise.py promises one property -- "sensitive data physically cannot
+        # reach a third-party API" -- and documented it as enforced "at each
+        # tool's request". The check existed at 11 call sites; 87 of the 94
+        # modules that make outbound HTTP had none, including gmail,
+        # salesforce, slack_bot and the knowledge-store embedder.
+        #
+        # egress_guard moved enforcement to the send path of httpx, requests
+        # and urllib, which covers every connector including ones not yet
+        # written. This gate keeps that true: it fails when a module reaches
+        # the network through a library the guard does not wrap, and when a
+        # recorded hole is left in the register after being migrated.
+        run: python -m maverick.egress_contract --ci
+      - name: Audit refusal contract (an audit write may not be swallowed)
+        # The audit subsystem raises AuditRefused when it DECLINES to write --
+        # a compliance floor mandates a signed chain and the signer won't
+        # start, or custody policy forbids a co-located key. A caller that
+        # catches it and continues turns "we could not record this action"
+        # into "we recorded nothing and did it anyway", which is the exact
+        # failure the guarantee exists to prevent.
+        #
+        # This lived in a docstring and was honoured at 1 of ~93 call sites.
+        # The gate ratchets the pre-existing 50 in audit_contract.baseline.json
+        # (a debt register to shrink, not an exemption list) and fails the
+        # build on any NEW one. It also exits non-zero if it inspects zero
+        # files, so a bad path can never be mistaken for a pass.
+        run: python -m maverick.audit_contract --ci
+      - name: Sunset gate (past-due deprecations must be removed)
+        # The deprecation registry (maverick/deprecations.py) records every
+        # deprecated path with its removal version. Once the package version
+        # reaches an entry's remove_in, this fails until the old path AND its
+        # registry entry are deleted together -- deprecations can't rot.
+        run: python -m maverick.deprecations --ci
+      - name: gRPC API v1 stability contract (no breaking proto changes)
+        # Parses maverick.proto into a structural inventory and diffs it
+        # against the committed golden: additive changes pass, removals /
+        # renumbers / type changes / rpc-shape changes fail. Breaking the v1
+        # contract requires a maverick.v2 package, not an edit.
+        run: python -m maverick.grpc_api.contract --check
+      - name: Accessibility audit (static WCAG pass over dashboard templates)
+        # Offline structural a11y checks (img alt, form labels, lang, focus
+        # order, heading levels) over the shipped HTML — keeps the dashboard
+        # from regressing on the basics without a browser/Node. Complements
+        # the live `a11y` tool (pa11y/axe).
+        run: python -m maverick.a11y_audit --ci
+      - name: Async route audit (no new event-loop-blocking dashboard routes)
+        # A FastAPI `async def` route runs on the single event loop thread
+        # that serves every request -- unlike a plain `def` route, which
+        # FastAPI thread-pools automatically. The lock is empty, which makes every detected
+        # zero-await/blocking-call route a CI failure. Runtime regressions
+        # also verify responsiveness and tenant context during slow storage.
+        run: python -m maverick.async_route_audit --ci
+      - name: Failure-policy gate (audit-subsystem broad excepts are classified)
+        # Requires every broad `except` in maverick/audit/* to declare its
+        # failure mode (# failure-policy: fail_closed | fail_soft_with_audit |
+        # best_effort) so a silently-swallowed error in the tamper-evident audit
+        # log can't ship unreviewed. Narrowly scoped to audit integrity (not a
+        # codebase-wide except sweep; bugbear stays off). See failure_policy.py.
+        run: python -m maverick.failure_policy --ci
+      - name: Schema-migration gate (no unreviewed/unsafe world-model migrations)
+        # Lints world_model.MIGRATIONS: fails if a migration is malformed or an
+        # unclassifiable SQL shape, so a new migration can't ship without being
+        # reviewed for online/offline (hot-deploy) safety. Pure offline
+        # SQL-shape check, no DB. See maverick/schema_migrations.py.
+        run: python -m maverick.schema_migrations --ci
+      - name: Migration governance gate (released migrations are immutable)
+        # Fingerprints both backend ladders (SQLite + Postgres) and diffs them
+        # against the committed migrations.lock.json: editing/removing a
+        # released migration fails (it would diverge already-migrated DBs), a
+        # new destructive (DROP/RENAME) migration fails, and the two backends
+        # must stay at the same declared head. Add a migration -> regenerate the
+        # lock (`python -m maverick.migration_governance --regen`) so the change
+        # is reviewed. Pure offline check, no DB. See migration_governance.py.
+        run: python -m maverick.migration_governance --ci
+      - name: Regulatory-compiler gate (obligations compile to live, non-vacuous gates)
+        # Compiles every shipped regulatory profile (GDPR, EU AI Act, HIPAA)
+        # into governance rules and proves each obligation actually bites: every
+        # bound tool is a classified tool, the compiled policy denies / pauses
+        # it, a risk floor catches at least one real tool, and an attenuation
+        # narrows a capability. A stale tool name or a silent overlay fails the
+        # build; inspecting nothing exits 2. --all resolves the released
+        # compiler registry, so a newly shipped profile cannot bypass the gate.
+        run: python -m maverick.regulatory_compiler --ci --all
+      - name: Evaluator-anchor governance gate (released anchors are immutable)
+        # Pins every evaluator ground-truth anchor's checksum in the committed
+        # evaluator_anchors.lock.json: editing a released anchor's labels or
+        # dropping one fails (it invalidates every evaluator promotion judged
+        # against the old ground truth), and a new anchor must be locked so the
+        # addition is reviewed. The anchor is the guardrail for evaluator
+        # co-evolution -- a weak or mutable anchor launders drift. Add an anchor
+        # -> regenerate the lock (`python -m maverick.evaluator_evolution
+        # --regen`). Pure offline check. See evaluator_evolution.py.
+        run: python -m maverick.evaluator_evolution --ci
+      - name: Control/data-plane e2e (goals provably run out-of-process)
+        # Drives the real QueueDispatcher -> SQLite JobQueue -> Worker ->
+        # shared WorldModel path end-to-end (no Redis/gRPC) and fails if the
+        # split doesn't hold: the control plane must only enqueue (goal stays
+        # pending), a separate worker must claim+execute, and the terminal
+        # status must flow back through the shared store. Agent execution is
+        # stubbed at the LLM boundary. See control_data_plane_e2e.py.
+        run: python -m maverick.control_data_plane_e2e --ci
+      - name: "Control/data-plane soak (concurrent dispatch holds: zero-loss, exactly-once)"
+        # Drives many goals through the real QueueDispatcher -> SQLite JobQueue
+        # -> a pool of concurrent Workers and fails if the substrate doesn't
+        # hold under contention: every goal must reach 'done' exactly once (a
+        # duplicate means JobQueue.claim's pending->running guard is broken =
+        # double work/spend), nothing lost, queue drained clean. No Redis/gRPC;
+        # execution stubbed at the LLM boundary. See control_data_plane_soak.py.
+        run: python -m maverick.control_data_plane_soak --ci
+
+  audit:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"audit\": false') }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Verify reviewed local dependency sources
+        run: python scripts/check_vendor_patches.py
+      - name: OSV Scanner across every reviewed dependency surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          scanner="$RUNNER_TEMP/osv-scanner"
+          report="$GITHUB_WORKSPACE/osv-results.json"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            --output "$scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64"
+          echo "bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc  $scanner" |
+            sha256sum --check
+          chmod 0755 "$scanner"
+
+          # OSV recognizes a conventional requirements.txt filename. The
+          # reviewed CI lock is copied byte-for-byte so every platform-marked
+          # exact pin is scanned without creating a second Python lock.
+          python_lock="$RUNNER_TEMP/requirements.txt"
+          cp requirements/ci.txt "$python_lock"
+          scan_status=0
+          "$scanner" scan source \
+            --config osv-scanner.toml \
+            --lockfile "$python_lock" \
+            --lockfile rust/Cargo.lock \
+            --lockfile vendor/tests/Cargo.lock \
+            --lockfile examples/clients/rust/Cargo.lock \
+            --lockfile apps/desktop/src-tauri/Cargo.lock \
+            --lockfile apps/installer-desktop/src-tauri/Cargo.lock \
+            --lockfile examples/clients/typescript/package-lock.json \
+            --lockfile apps/installer-desktop/pnpm-lock.yaml \
+            --lockfile examples/clients/csharp/packages.lock.json \
+            --lockfile examples/clients/go/go.mod \
+            --lockfile go/model-proxy/go.mod \
+            --lockfile examples/clients/java/pom.xml \
+            --lockfile demo/dsar-concierge/requirements-standalone.txt \
+            --lockfile demo/environment-threat-hunter/requirements.txt \
+            --lockfile demo/grc-concierge/requirements.txt \
+            --lockfile demo/model-risk-ai-assurance-officer/requirements.txt \
+            --lockfile demo/platform-threat-hunter/requirements.txt \
+            --format json \
+            --output-file "$report" || scan_status=$?
+          python -m scripts.check_osv_results "$report" \
+            --scanner-exit "$scan_status" \
+            --output "$GITHUB_WORKSPACE/osv-remediation.json"
+      - name: Upload cross-ecosystem vulnerability report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: osv-cross-ecosystem
+          path: |
+            osv-results.json
+            osv-remediation.json
+          if-no-files-found: warn
+      - name: Install packages (so pip-audit sees the real dependency tree)
+        run: |
+          set -x
+          python -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          # Resolve all first-party base dependencies together so pip-audit
+          # sees the complete cohort plus the document-processing surface.
+          python -m pip install \
+            -e './packages/maverick-core[evidence-analysis]' \
+            -e ./packages/maverick-shield \
+            -e ./packages/maverick-channels \
+            -e ./packages/maverick-evolve \
+            -e ./packages/maverick-dashboard \
+            -e ./packages/maverick-mcp \
+            -e ./packages/maverick-knowledge \
+            -e ./apps/installer-cli
+          python -m pip check
+          # Install the network-facing deps at the patched floors declared in
+          # the package extras, plus twilio (which pulls requests/urllib3), so
+          # pip-audit sees the real surface we ship -- not a stale bare env.
+          python -m pip install \
+            'fastapi>=0.110' 'uvicorn>=0.27' 'jinja2>=3.1' \
+            'httpx>=0.27' 'python-multipart>=0.0.31' \
+            'starlette>=1.3.1' 'requests>=2.33.0' 'urllib3>=2.7.0' \
+            'pillow>=13.0.0' 'pypdf>=6.14.2' 'aiohttp>=3.14.1' \
+            'click>=8.3.3' 'cryptography>=48.0.1' 'twilio>=9.0'
+          python -m pip check
+      - name: pip-audit (known CVEs in dependencies)
+        # BLOCKING: the dependency floors are now bumped past every CVE this
+        # surfaced (including aiohttp/cryptography/pillow/python-multipart/
+        # requests/starlette/urllib3). A new
+        # advisory should fail the build and prompt a floor bump -- that's the
+        # whole point of the gate. Re-add `|| true` only as a temporary
+        # measure if an upstream CVE lands with no fix available yet.
+        run: |
+          # The runner's default pip (26.1.1) is itself flagged by
+          # PYSEC-2026-196; 26.1.2 patches it. Bump pip to the fixed floor
+          # before auditing so the gate reflects our shipped dependency tree,
+          # not a stale CVE in the runner's own tooling.
+          python -m pip install --upgrade 'pip==26.2.2' 'setuptools==84.2.1'
+          python -m pip install 'pip-audit==2.10.1'
+          pip-audit
+      - name: pip-audit every reviewed optional-dependency lock entry
+        # The installed runtime above exercises the primary network surface.
+        # This second pass audits every exact pin in requirements/ci.txt,
+        # including integrations and platform markers that are not installable
+        # together on one Linux runner. Removing markers is safe here because
+        # the file has one version per project across every supported platform.
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOCK_AUDIT_FILE="$RUNNER_TEMP/lightwork-all-python-lock.txt"
+          export LOCK_AUDIT_FILE
+          python -I - <<'PY'
+          import os
+          from pathlib import Path
+
+          from packaging.requirements import Requirement
+
+          source = Path("requirements/ci.txt")
+          locked = []
+          seen = set()
+          for line_number, raw in enumerate(
+              source.read_text(encoding="utf-8").splitlines(),
+              start=1,
+          ):
+              value = raw.strip()
+              if not value or value.startswith("#"):
+                  continue
+              requirement = Requirement(value)
+              specifiers = list(requirement.specifier)
+              if (
+                  requirement.url
+                  or requirement.extras
+                  or len(specifiers) != 1
+                  or specifiers[0].operator != "=="
+                  or "*" in specifiers[0].version
+              ):
+                  raise SystemExit(
+                      f"{source}:{line_number}: not one exact registry pin"
+                  )
+              name = requirement.name.lower().replace("_", "-")
+              if name in seen:
+                  raise SystemExit(f"{source}:{line_number}: duplicate project {name}")
+              seen.add(name)
+              locked.append(f"{requirement.name}=={specifiers[0].version}")
+          if len(locked) < 100:
+              raise SystemExit(f"unexpectedly small Python lock: {len(locked)}")
+          Path(os.environ["LOCK_AUDIT_FILE"]).write_text(
+              "\n".join(sorted(locked, key=str.casefold)) + "\n",
+              encoding="utf-8",
+          )
+          print(f"materialized {len(locked)} exact cross-platform pins")
+          PY
+          python -I -m pip_audit \
+            --requirement "$LOCK_AUDIT_FILE" \
+            --no-deps \
+            --disable-pip \
+            --strict
+      - name: SAST (bandit, high-severity)
+        # BLOCKING static-analysis gate over shipped source (tests excluded:
+        # asserts / subprocess there are expected). High-severity tests catch
+        # the serious classes -- shell/command injection, weak crypto, insecure
+        # deserialization, disabled TLS verification, bidi/trojan-source chars
+        # (B613), etc. -- so a new instance fails the build. By-design findings
+        # carry an inline `# nosec <id>` with justification. The shield's
+        # invisible-char DETECTION patterns are written as \u escapes (not
+        # literal bidi chars), so B613 runs with no skip. Tighten to medium
+        # severity once the B608 false-positive parameterized-IN sites are
+        # annotated.
+        run: |
+          python -m pip install 'bandit==1.9.4'
+          python -m bandit -q -r packages apps -lll -ii \
+            -x '*/tests/*,*/test_*.py'
+      - name: License policy (no strong-copyleft — GPL / AGPL / SSPL)
+        # BLOCKING: a strong-copyleft dependency would impose copyleft terms
+        # on distributions of Lightwork, which is licensed under Apache-2.0.
+        # Runs the shipped scanner over the installed tree (the same env
+        # pip-audit saw).
+        run: |
+          python - <<'PY'
+          import sys
+          from maverick.license_scan import scan_distributions, policy_check
+          # OS/distro Python packages (Ubuntu base image) are not part of the
+          # shipped Lightwork tree; their licenses create no obligation for us.
+          SYSTEM_PKGS = {
+              "python-apt", "launchpadlib", "lazr.restfulclient", "lazr.uri",
+              "wadllib", "pygobject", "dbus-python", "command-not-found",
+              "ubuntu-pro-client", "unattended-upgrades", "distro-info",
+          }
+          scanned = scan_distributions()
+          violations = [v for v in policy_check(scanned)  # default: strong-copyleft
+                        if v["name"].lower() not in SYSTEM_PKGS]
+          if violations:
+              print(f"::error::{len(violations)} strong-copyleft dependency(ies):")
+              for v in violations:
+                  print(f"  - {v['name']} {v['version']}: {v['license']} ({v['category']})")
+              sys.exit(1)
+          print(f"license policy OK: 0 strong-copyleft across {len(scanned)} packages")
+          PY
+      - name: SBOM (CycloneDX, supply-chain transparency)
+        # Build the same isolated release-runtime profile shipped in frozen
+        # binaries/containers, then describe that target environment. CI tools
+        # (bandit, pip-audit, CycloneDX itself) are deliberately excluded from
+        # the release-runtime inventory.
+        run: |
+          set -euo pipefail
+          python -I -m pip install 'cyclonedx-bom==7.6.0'
+          SBOM_ENV="$RUNNER_TEMP/lightwork-ci-release-runtime"
+          python -m venv "$SBOM_ENV"
+          "$SBOM_ENV/bin/python" -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python scripts/install_release_cohort.py \
+            --source-root . \
+            --target-python "$SBOM_ENV/bin/python" \
+            --constraint requirements/ci.txt \
+            --core-extra release-runtime
+          "$SBOM_ENV/bin/python" -I -m pip check
+          "$SBOM_ENV/bin/python" -I scripts/verify_constraint_closure.py
+          "$SBOM_ENV/bin/maverick" release-runtime-check
+          cyclonedx-py environment "$SBOM_ENV/bin/python" \
+            --pyproject packages/maverick-core/pyproject.toml \
+            -o sbom.release-runtime.cyclonedx.json
+          test -s sbom.release-runtime.cyclonedx.json
+      - name: Verify installed dependency constraint closure
+        run: python scripts/verify_constraint_closure.py
+      - name: Upload SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: sbom-cyclonedx
+          path: sbom.release-runtime.cyclonedx.json
+          if-no-files-found: error
+
+  release-cohort:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"release-cohort\": false') }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install release verification tools
+        run: python -m pip install build pytest pyyaml
+      - name: Verify the release cohort manifest and package metadata
+        env:
+          PYTHONPATH: ${{ github.workspace }}/packages/maverick-core
+        run: >-
+          python -m pytest -q
+          packages/maverick-core/tests/test_release_packaging.py
+      - name: Build every public wheel from the reviewed cohort
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t package_dirs < <(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          cohort = tomllib.loads(Path("release-cohort.toml").read_text(encoding="utf-8"))
+          for package in cohort["packages"]:
+              print(package["path"])
+          PY
+          )
+          mkdir -p "$GITHUB_WORKSPACE/dist-cohort"
+          for package_dir in "${package_dirs[@]}"; do
+            echo "==> building $package_dir"
+            (
+              cd "$package_dir"
+              python -m build --wheel \
+                --outdir "$GITHUB_WORKSPACE/dist-cohort" .
+            )
+          done
+          test "$(find dist-cohort -maxdepth 1 -name '*.whl' | wc -l)" -eq 8
+
+  select-tests:
+    # On a pull request, choose the test files the floor-interpreter `test`
+    # legs run from the files the PR changes (scripts/select_pr_tests.py): a
+    # change to the kernel, a conftest, the pinned requirements, the
+    # workflows or the scripts still means the whole suite; a change inside
+    # another package means its tests plus every test that names it; any
+    # other file means the tests that name it by path. Everywhere else -- the
+    # merge queue's commit, pushes to main, workflow_dispatch -- the mode is
+    # `full` and the legs run everything, so a selection that was too narrow
+    # fails in the queue, before the commit reaches main, never on it.
+    #
+    # The same change set gates the heavier jobs below (`jobs` output, one
+    # boolean per job id from JOB_PREFIXES in the script): a job whose inputs
+    # the pull request cannot have touched is skipped on that pull request
+    # and runs on the queue's commit. A skipped job reports success to the
+    # required check; a job skipped because this selection failed would too,
+    # so every gated job runs under `!cancelled()` and is skipped only when
+    # the map carries the literal `"<job>": false`: a missing map or entry
+    # (the selection failed, or an event the script did not see) runs it.
+    # (`fromJSON(map)[job] != false` does not do that: a missing entry is
+    # null, which the expression language compares equal to false, and the
+    # first push to main after the gate landed skipped every gated job.)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      paths: ${{ steps.select.outputs.paths }}
+      jobs: ${{ steps.select.outputs.jobs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          # The change set is diffed from the PR's merge base, which a
+          # shallow clone does not have.
+          fetch-depth: 0
+      - name: Select the test files the changed files can affect
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            python3 scripts/select_pr_tests.py \
+              --full "$EVENT_NAME: the test legs run the whole suite and every gated job runs" \
+              --github-output "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Merge-base to head is what the PR changes even after main moved;
+          # when git cannot answer the script selects the full suite.
+          python3 scripts/select_pr_tests.py --git "$BASE_SHA" "$HEAD_SHA" \
+            --output "$RUNNER_TEMP/test-selection.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+  test:
+    runs-on: ubuntu-24.04
+    # The complete deterministic suite is intentionally broad: ~39,000 tests
+    # (~24,700 when this job was first sliced). Each leg runs one of four
+    # disjoint file-level slices (--shard, root conftest.py) under pytest-xdist
+    # (one worker per core, tests grouped by file so module-scoped fixtures
+    # and module-level TestClients stay per-worker). On the two-core hosted
+    # runners the suite was first sliced on, in-job parallelism alone
+    # measured ~17 minutes at ~24,700 tests; at ~39,000 three slices ran out
+    # the 20-minute bound, so four slices keep a leg inside it for one
+    # extra install each. At ~45,000 tests the slowest hosted slice needs more
+    # than that, so the parallel phase now allows 45 minutes (test-shard
+    # action) and the job 60. Beyond ~45,000 tests prefer more slices (and the
+    # matching required checks) over a longer ceiling. The ceiling below is
+    # headroom for runner variance and setup, not the expected duration: a run
+    # that needs all of it is hung, and pytest-timeout/GNU timeout say where.
+    #
+    # On a pull request these legs run only the test files `select-tests`
+    # chose from the changed files (mode=paths, or none when no test names a
+    # changed file); the merge queue's commit and main run the whole suite
+    # (mode=full), as do these legs when a shared file changed. `!cancelled()`
+    # runs them even if the selection job failed: its empty outputs mean
+    # mode=full to the action, whereas a skipped job would still satisfy the
+    # required check and let an untested PR through.
+    needs: select-tests
+    if: ${{ !cancelled() }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # A pull request tests the floor interpreter only; `test-window`
+        # below carries the rest of the supported window and runs only where
+        # the commit actually lands. Keep both version lists in step with the
+        # required checks in .github/rulesets/protect-main.json, and the shard
+        # COUNT with the --shard in .github/actions/test-shard.
+        python-version: ["3.11"]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/test-shard
+        with:
+          python-version: ${{ matrix.python-version }}
+          shard: ${{ matrix.shard }}
+          mode: ${{ needs.select-tests.outputs.mode }}
+          paths: ${{ needs.select-tests.outputs.paths }}
+
+  test-window:
+    # The rest of the supported window. A pull request proves the floor
+    # (`test`, above) on 3.11; the rest of the window -- 3.12, and the
+    # 3.12 production-posture run (`posture`, gated the same way) -- moves
+    # to the merge queue and pushes to main, where a version- or posture-
+    # specific break still blocks the merge or goes red on main. So on
+    # pull_request these legs start, skip every step and report success within
+    # seconds. The gate is on the steps, not the job: a job
+    # skipped by `if` never expands its matrix and reports one check named
+    # with the raw template, so the required `test (3.12, n)` contexts
+    # would never appear. On the merge queue's commit and on pushes to main
+    # they run for real, where a version-specific break still blocks the
+    # merge or goes red on main. The explicit name keeps the check contexts
+    # identical to the single-job matrix they replace.
+    name: test (${{ matrix.python-version }}, ${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Not run on pull requests
+        if: github.event_name == 'pull_request'
+        run: >-
+          echo "test (${{ matrix.python-version }}, ${{ matrix.shard }}) runs on
+          the merge queue's commit and on main, not on pull requests."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: github.event_name != 'pull_request'
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/test-shard
+        if: github.event_name != 'pull_request'
+        with:
+          python-version: ${{ matrix.python-version }}
+          shard: ${{ matrix.shard }}
+
+  windows-process-containment:
+    name: Windows process containment (Python ${{ matrix.python-version }})
+    # Gated on its steps, not the job: a job skipped by `if` never expands its
+    # matrix, so the required check context would never appear (see
+    # test-window). The steps skip when the pull request's change set cannot
+    # reach the local sandbox backend (select-tests `jobs`).
+    needs: select-tests
+    if: ${{ !cancelled() }}
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor on every pull request; the rest of the window is
+        # windows-process-containment-window below (queue and main only).
+        python-version: ["3.11"]
+    steps:
+      - name: Not needed on this pull request
+        if: "contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false')"
+        run: >-
+          echo "No changed file reaches the local sandbox backend; the merge
+          queue runs this job on the queue's commit."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the focused test dependency
+        if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
+        run: python -m pip install "pytest==9.1.1"
+      - name: Test Windows Job Object process-tree containment
+        if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
+        env:
+          PYTHONPATH: ${{ github.workspace }}/packages/maverick-core
+        run: >-
+          python -m pytest -q
+          packages/maverick-core/tests/test_local_backend_process_reaping.py
+
+  windows-process-containment-window:
+    # Same check names as the single-job matrix they replace. Gated at the
+    # step level like test-window (a job-level `if` would collapse the
+    # matrix into one raw-named check): on pull_request the legs start, skip
+    # every step and report success; on the merge queue's commit and on
+    # pushes to main they run for real.
+    name: Windows process containment (Python ${{ matrix.python-version }})
+    runs-on: windows-2022
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - name: Not run on pull requests
+        if: github.event_name == 'pull_request'
+        run: >-
+          echo "Windows process containment (Python ${{ matrix.python-version }})
+          runs on the merge queue's commit and on main, not on pull requests."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: github.event_name != 'pull_request'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: github.event_name != 'pull_request'
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the focused test dependency
+        if: github.event_name != 'pull_request'
+        run: python -m pip install "pytest==9.1.1"
+      - name: Test Windows Job Object process-tree containment
+        if: github.event_name != 'pull_request'
+        env:
+          PYTHONPATH: ${{ github.workspace }}/packages/maverick-core
+        run: >-
+          python -m pytest -q
+          packages/maverick-core/tests/test_local_backend_process_reaping.py
+
+  posture:
+    # The main suite runs with MAVERICK_SECURE_DEFAULT=0, which keeps each
+    # control's explicit on/off mechanics under test; this job runs the same
+    # maverick-core tree under the PRODUCTION posture (audit signing,
+    # at-rest encryption, fail-closed consent for high-risk actions, the
+    # tool-risk ceiling) -- the configuration a production deployment runs.
+    #
+    # The debt register started at 91 tests and has been driven to zero, so
+    # this job is fully blocking: any posture failure is new by definition.
+    # The ratchet mechanics remain -- deliberately re-admitted debt must be
+    # committed to the baseline in the open. requirements/ci.txt keeps the
+    # measurement reproducible instead of absorbing dependency drift.
+    runs-on: ubuntu-24.04
+    # Same suite as the test matrix, same slicing and pytest-xdist parallelism;
+    # see the test job for why the ceiling is headroom, not expected duration.
+    # The posture gate compares each slice against the (empty) baseline, so a
+    # slice is a complete gate on its own.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      # Gated off pull requests at the step level (like test-window): on a
+      # pull_request these legs start, skip every step and report success in
+      # seconds, so the required posture (1|2|3|4) contexts still appear; on the
+      # merge queue's commit and on pushes to main they run the whole suite for
+      # real. A pull request is already gated on the 3.11 `test` matrix and
+      # lint; the production-posture run (3.12, secure defaults) moves to the
+      # queue, which blocks the merge if it fails. A job-level `if` would
+      # collapse the matrix into one raw-named check, so the guard is on the
+      # steps, not the job -- see the note above the `test-window` job.
+      - name: Not run on pull requests
+        if: github.event_name == 'pull_request'
+        run: >-
+          echo "posture (${{ matrix.shard }}) runs on the merge queue's commit
+          and on main, not on pull requests."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: github.event_name != 'pull_request'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: github.event_name != 'pull_request'
+        with:
+          python-version: "3.12.13"
+      - name: Install packages
+        if: github.event_name != 'pull_request'
+        run: |
+          set -x
+          python -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -m pip install \
+            -e './packages/maverick-core[openai,evidence-analysis,spreadsheet,pdf,postgres]' \
+            -e ./packages/maverick-shield \
+            -e './packages/maverick-channels[sms]' \
+            -e ./packages/maverick-evolve \
+            -e ./packages/maverick-dashboard \
+            -e ./packages/maverick-mcp \
+            -e ./packages/maverick-knowledge \
+            -e ./apps/installer-cli \
+            pytest pytest-asyncio pytest-timeout pytest-xdist 'pyjwt[crypto]' pyyaml sqlalchemy
+          python -m pip check
+          python scripts/verify_constraint_closure.py
+      - name: Test and gate the production security posture
+        if: github.event_name != 'pull_request'
+        env:
+          MAVERICK_TEST_SECURE_DEFAULT: "1"
+          PYTHONFAULTHANDLER: "1"
+        # Scope: the WHOLE workspace. It began scoped to maverick-core --
+        # where every control the posture flips lives -- because that was
+        # the only tree the baseline had actually been measured over, and
+        # asserting a baseline nobody took is the defect class this gate
+        # exists to close. The measurement has since been taken across the
+        # workspace (20,899 passed, zero posture failures), so the claim
+        # and the coverage now match.
+        #
+        # With an empty baseline, pytest exit 1 means a real posture failure
+        # and --ci fails on it as "new". Other pytest exit codes
+        # (collection/internal/timeout errors) fail directly; --ci then
+        # compares the completed report with the exact (empty) baseline.
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          # Same two phases as the test job (parallel, then the
+          # heavy_concurrency files alone on the box); both append to one
+          # report so the gate sees every FAILED line. Exit 5 from the serial
+          # phase means the slice has no heavy files.
+          timeout --verbose --signal=ABRT --kill-after=30s 45m \
+            python -m pytest -q -p no:randomly -n auto --dist loadfile \
+              --shard "${{ matrix.shard }}/4" -m "not heavy_concurrency" \
+              --tb=no --timeout=180 --timeout-method=signal \
+            2>&1 | tee "posture-report-${{ matrix.shard }}.txt"
+          pytest_status=${PIPESTATUS[0]}
+          timeout --verbose --signal=ABRT --kill-after=30s 10m \
+            python -m pytest -q -p no:randomly \
+              --shard "${{ matrix.shard }}/4" -m heavy_concurrency \
+              --tb=no --timeout=600 --timeout-method=signal \
+            2>&1 | tee -a "posture-report-${{ matrix.shard }}.txt"
+          serial_status=${PIPESTATUS[0]}
+          set -e
+          for code in "$pytest_status" "$serial_status"; do
+            if [ "$code" -ne 0 ] && [ "$code" -ne 1 ] && [ "$code" -ne 5 ]; then
+              echo "posture pytest did not complete normally (exit $code)" >&2
+              exit "$code"
+            fi
+          done
+          python -m maverick.posture_gate --ci --report "posture-report-${{ matrix.shard }}.txt"
+      - name: Upload the posture report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always() && github.event_name != 'pull_request'
+        with:
+          name: posture-report-${{ matrix.shard }}
+          path: posture-report-${{ matrix.shard }}.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  redteam:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"redteam\": false') }}"
+    # Red-team CI: run the labelled adversarial
+    # corpus through the shield's built-in detector and fail the build on any
+    # missed attack or over-blocked benign case. A named job (not buried in
+    # the test matrix) so the gate is visible in the checks list. The corpus
+    # is maverick_shield/redteam_corpus.jsonl — grow it by PR.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install shield
+        run: pip install -e ./packages/maverick-shield
+      - name: Red-team gate (zero missed attacks)
+        run: python -m maverick_shield.redteam
+      - name: Calibration report (informational)
+        run: python -m maverick_shield.redteam --calibrate
+
+  eval-smoke:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"eval-smoke\": false') }}"
+    # Eval-gated-release foundation. Real evals drive `maverick
+    # start` against a live provider -- no models/network in CI -- so this gate
+    # runs the eval harness machinery (registry + scorers + tau2 verifier +
+    # pass@1 aggregation) against scripted solvers and asserts grading still
+    # works. A code change that breaks the harness wiring fails here, fast,
+    # without any API key. Deterministic and offline by construction.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install packages
+        run: |
+          set -x
+          # Mirror the test job's core install. The smoke imports nothing that
+          # needs the network-facing extras, so we skip them to stay fast.
+          pip install -e ./packages/maverick-core
+          pip install pytest pytest-asyncio
+      - name: Eval-harness smoke (offline regression gate)
+        run: python -m pytest -vvs --tb=long benchmarks/test_eval_smoke.py
+
+  governance-frontier-offline:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"governance-frontier-offline\": false') }}"
+    # Forty deterministic control-path definitions, each in governed and
+    # controls-disabled arms under three pinned order seeds. No provider key,
+    # model, or network. Semantics and signed evidence are hard gates; local
+    # latency observations are captured in the temporary report but are not an
+    # environment-sensitive pass/fail threshold.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install governance benchmark dependencies
+        run: |
+          python -m pip install -e './packages/maverick-core[audit-signing]'
+          python -m pip install -e ./packages/maverick-shield
+          python -m pip install pytest pytest-asyncio
+      - name: Governance-frontier focused tests
+        run: >-
+          python -m pytest -q
+          benchmarks/test_eval_governance_frontier.py
+          benchmarks/test_governance_metrics.py
+          benchmarks/test_eval_governance.py
+          benchmarks/test_governance_frontier_submissions.py
+      - name: Verify checked-in governance-frontier artifacts
+        run: >-
+          python benchmarks/eval_governance_frontier.py
+          --verify-tracked-artifacts
+      - name: Verify third-party Governance Frontier submission artifacts
+        run: python benchmarks/governance_frontier_submissions.py verify
+      - name: Measured offline governed-vs-baseline run
+        run: >-
+          python benchmarks/eval_governance_frontier.py
+          --output "$RUNNER_TEMP/governance-frontier-manifest.json"
+          --report "$RUNNER_TEMP/governance-frontier-report.md"
+          --publisher-key-out "$RUNNER_TEMP/governance-frontier.pub"
+      - name: Verify signed run manifest
+        run: >-
+          python benchmarks/eval_governance_frontier.py
+          --verify-manifest "$RUNNER_TEMP/governance-frontier-manifest.json"
+          --trusted-pubkey-file "$RUNNER_TEMP/governance-frontier.pub"
+
+  harness-overhead:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"harness-overhead\": false') }}"
+    # What the governance record COSTS: identical deterministic tasks run in
+    # governed and ungoverned arms, stubbed at the model boundary so both call
+    # the same pure function. No provider key, model, or network. The
+    # deterministic invariants (equal model calls / tokens / steps, identical
+    # results, the expected evidence artifacts) are hard gates; measured wall
+    # time is recorded but never a pass/fail threshold — it is machine noise.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install overhead benchmark dependencies
+        run: |
+          python -m pip install -e './packages/maverick-core[audit-signing]'
+          python -m pip install -e ./packages/maverick-shield
+          python -m pip install pytest pytest-asyncio
+      - name: Harness-overhead focused tests
+        run: >-
+          python -m pytest -q
+          packages/maverick-core/tests/test_eval_harness_overhead.py
+      - name: Verify checked-in harness-overhead artifacts
+        run: >-
+          python benchmarks/eval_harness_overhead.py
+          --verify-tracked-artifacts
+      - name: Assert the deterministic overhead invariants
+        run: python benchmarks/eval_harness_overhead.py --ci
+      - name: Measured offline governed-vs-ungoverned run
+        run: >-
+          python benchmarks/eval_harness_overhead.py
+          --output "$RUNNER_TEMP/harness-overhead-manifest.json"
+          --report "$RUNNER_TEMP/harness-overhead-report.md"
+          --publisher-key-out "$RUNNER_TEMP/harness-overhead.pub"
+      - name: Verify signed run manifest
+        run: >-
+          python benchmarks/eval_harness_overhead.py
+          --verify-manifest "$RUNNER_TEMP/harness-overhead-manifest.json"
+          --trusted-pubkey-file "$RUNNER_TEMP/harness-overhead.pub"
+
+  postgres:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"postgres\": false') }}"
+    # DB-backed tests for the Postgres world-model backend. The default `test`
+    # job has no Postgres, so test_postgres_world.py skips there; this job
+    # stands up a service + DSN so the backend is actually exercised in CI.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        # pgvector image = postgres:16 + the `vector` extension, so the same
+        # service also exercises the pgvector knowledge store (round-trip below).
+        # pgvector/pgvector:pg16 multi-arch index, resolved 2026-07-29.
+        image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+        env:
+          POSTGRES_USER: maverick
+          POSTGRES_PASSWORD: maverick
+          POSTGRES_DB: maverick_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Install
+        run: |
+          set -x
+          python -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          pip install -e './packages/maverick-core[postgres]'
+          pip install -e ./packages/maverick-knowledge
+          # Event-origin goals take the dashboard's event registry lock before
+          # they start (maverick.event_admission), so the live Postgres start
+          # boundary tests need the dashboard package importable.
+          pip install -e ./packages/maverick-dashboard
+          pip install \
+            'psycopg==3.3.6' 'psycopg-binary==3.3.6' \
+            'psycopg-pool==3.3.3' 'sqlalchemy==2.0.55'
+          pip install pytest pytest-asyncio pytest-timeout
+          python -m pip check
+          python scripts/verify_constraint_closure.py
+      - name: Test live Postgres backends and governance invariants
+        env:
+          MAVERICK_PG_DSN: postgres://maverick:maverick@localhost:5432/maverick_test
+        run: >-
+          timeout --verbose --signal=ABRT --kill-after=30s 10m
+          python -m pytest -vvs --timeout=180 --timeout-method=signal
+          packages/maverick-core/tests/test_postgres_world.py
+          packages/maverick-core/tests/test_intent_value.py
+          packages/maverick-core/tests/test_database_tool.py
+          packages/maverick-core/tests/test_database_connection_timeouts.py
+          packages/maverick-core/tests/test_database_connection_hosts.py
+          packages/maverick-core/tests/test_production_runtime_regressions.py
+          packages/maverick-core/tests/test_pgvector_isolation_pg.py
+          packages/maverick-core/tests/test_postgres_fact_history.py
+          packages/maverick-core/tests/test_postgres_facts_trust.py
+          packages/maverick-core/tests/test_postgres_governed_records_capacity.py
+          packages/maverick-core/tests/test_consent_storage.py
+      - name: Test database connection recovery under secure defaults
+        env:
+          MAVERICK_TEST_SECURE_DEFAULT: "1"
+        run: >-
+          timeout --verbose --signal=ABRT --kill-after=30s 5m
+          python -m pytest -vvs --timeout=45 --timeout-method=signal
+          packages/maverick-core/tests/test_database_tool.py
+          packages/maverick-core/tests/test_database_connection_timeouts.py
+          packages/maverick-core/tests/test_database_connection_hosts.py
+          packages/maverick-core/tests/test_production_runtime_regressions.py
+      - name: Test pgvector knowledge store
+        env:
+          MAVERICK_PG_DSN: postgres://maverick:maverick@localhost:5432/maverick_test
+        run: >-
+          timeout --verbose --signal=ABRT --kill-after=30s 5m
+          python -m pytest -vvs --timeout=180 --timeout-method=signal
+          packages/maverick-knowledge/tests/test_knowledge.py -k PgVectorLive
+
+  docker:
+    needs: select-tests
+    # Skipped on a pull request whose change set cannot affect this job (select-tests).
+    if: "${{ !cancelled() && !contains(needs.select-tests.outputs.jobs, '\"docker\": false') }}"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build image
+        # Docker Hub base-image pulls intermittently time out on CI runners
+        # (registry-1.docker.io i/o timeout). Retry with backoff so a transient
+        # registry blip doesn't fail the whole job.
+        run: |
+          n=0; max=4
+          until docker build \
+            --build-arg 'PYTHON_DIGEST=@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de' \
+            -f deploy/docker/Dockerfile -t maverick:ci .; do
+            n=$((n+1))
+            if [ "$n" -ge "$max" ]; then
+              echo "::error::docker build failed after $max attempts (registry/network)"
+              exit 1
+            fi
+            echo "docker build attempt $n/$max failed; retrying in $((n*15))s"
+            sleep $((n*15))
+          done
+      - name: Smoke run
+        # Beyond --help: dashboard and mcp import maverick-dashboard /
+        # maverick-mcp. Before those packages were added to the image they
+        # exited 2 ("Install: pip install ..."). These prove they're present.
+        run: |
+          docker run --rm maverick:ci --help
+          docker run --rm maverick:ci dashboard --help
+          docker run --rm maverick:ci mcp --help
+          docker run --rm --entrypoint python maverick:ci -c \
+            "import maverick_evolve, maverick_knowledge"

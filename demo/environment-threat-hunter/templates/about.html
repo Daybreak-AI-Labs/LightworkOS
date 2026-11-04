@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Capabilities &middot; Environment Hunter{% endblock %}
+{% block content %}
+<style>
+  table{width:100%;border-collapse:collapse}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #25505b;padding:.65rem}caption{text-align:left;margin-bottom:.7rem;color:#b7d5d1}code{overflow-wrap:anywhere}
+</style>
+<section class="hero">
+  <h1>{{ caps.mode }}</h1>
+  <p><strong>Analysis backend:</strong> <code>{{ caps.analysis_backend }}</code>. {% if caps.forced_standalone %}<code>ENV_HUNTER_STANDALONE=1</code> forced the vendored engine and prevented all <code>maverick</code> imports.{% elif caps.core_analysis %}Auto mode found and reuses Lightwork core analysis adapters only.{% else %}Auto mode did not find the core library, so the vendored ingestion and detection engine is active.{% endif %}</p>
+  <p><strong>Governance authority:</strong> unsigned local only. This standalone web app is proposal-only: it has no delivery endpoint or local approval assertion, even when it reuses the Lightwork core library. Finding core analysis does not enable integrated governance. Use <code>/security/soc</code> for governed approval and execution.</p>
+</section>
+<section class="card" aria-labelledby="capability-matrix-heading">
+  <h2 id="capability-matrix-heading">Capability and authority matrix</h2>
+  <table>
+    <caption>Every advertised capability and its backend binding in this runtime</caption>
+    <thead><tr><th scope="col">Capability</th><th scope="col">Status</th><th scope="col">Backend binding</th><th scope="col">Authority boundary</th></tr></thead>
+    <tbody>{% for row in caps.capabilities %}<tr><th scope="row">{{ row.label }}</th><td>{% if row.active %}Included here{% else %}Integrated Lightwork only{% endif %}</td><td><code>{{ row.implementation }}</code></td><td>{{ row.authority }}</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,0 +1,31 @@
+{# The page finder's destinations: every page the caller may open, from the
+   same role-filtered registry as the sidebar (plus pages folded out of the
+   rail). Served by GET /nav/finder and inserted into the finder's listbox
+   the first time it opens, so the ~80 KB list is not part of every page.
+   JavaScript only filters and ranks these existing links; it never
+   manufactures a destination. data-label, data-heading and data-synonyms
+   hold "|"-separated names the ranking compares whole; data-search is
+   everything a match may come from. #}
+{% set _group_labels = {'Operate': 'Work', 'Observe': 'Insights', 'Govern': 'Governance', 'Admin': 'Administration', 'Extend': 'Library'} %}
+{% set _go_to_keys = nav_go_to_keys if nav_go_to_keys is defined else [] %}
+{% for _group in finder_pages %}
+  {% set _navfinder_group_index = loop.index0 %}
+  {% for _link in _group.links %}
+    {% set _heading = _link.heading or '' %}
+    {% set _synonyms = (_link.synonyms or ()) | join('|') %}
+    <li role="none">
+      <a id="navfinder-option-{{ _navfinder_group_index }}-{{ loop.index0 }}"
+         href="{{ _link.href }}" role="option" tabindex="-1"
+         aria-selected="false" data-navfinder-target
+         data-label="{{ _link.label }}|{{ ut(_link.label) }}"
+         data-heading="{{ _heading }}{% if _heading %}|{{ ut(_heading) }}{% endif %}"
+         data-synonyms="{{ _synonyms }}"
+         data-search="{{ _link.label }} {{ ut(_link.label) }} {{ _group_labels.get(_group.label, _group.label) }} {{ ut(_group_labels.get(_group.label, _group.label)) }} {{ _group.label }} {{ _link.href }} {{ _link.aliases }} {{ _heading }} {{ _synonyms | replace('|', ' ') }}{% if _link.area %} {{ _link.area }} {{ ut(_link.area) }} {{ _link.section }} {{ ut(_link.section) }}{% endif %}">
+        <span class="navfinder__label">{{ ui(_link.label) }}</span>
+        {# Where the page lives: "Group › Page" ("Area › Section" with the
+           areas navigation), and its go-to keys if it has them. #}
+        <span class="navfinder__group">{% if _link.area %}{{ ui(_link.area) }} › {{ ui(_link.section) }}{% else %}{{ ui(_group_labels.get(_group.label, _group.label)) }} › {{ ui(_link.label) }}{% endif %}{% for _key, _href, _label in _go_to_keys if _href == _link.href %} <span class="navfinder__keys" aria-hidden="true"><kbd>G</kbd> <kbd>{{ _key | upper }}</kbd></span>{% endfor %}</span>
+      </a>
+    </li>
+  {% endfor %}
+{% endfor %}

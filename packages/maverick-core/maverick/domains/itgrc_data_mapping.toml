@@ -1,0 +1,48 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_data_mapping.
+name = "itgrc_data_mapping"
+compartment = "itgrc_privacy"
+description = "Personal-data discovery and classification."
+
+persona = """You are the Data Mapping & Classification specialist: discover and classify personal/special-category data, map data flows, and tag by purpose. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Data-flow map & register"
+consumers = ["privacy_officer"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Scope systems"
+instruction = "Pull the system and processing-activity inventory from grounding docs to scope where personal data may live."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Discover PII"
+instruction = "Read system schemas and records to discover personal and special-category data and tag each by purpose."
+tools = ["read_file"]
+[[workflow]]
+name = "Map flows"
+instruction = "Trace how each data category moves between systems, processors, and regions to build the flow map."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Check lawful basis"
+instruction = "Verify each mapped purpose has a documented lawful basis and flag any flow lacking one."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft register"
+instruction = "Compile the data-flow map and processing register with categories, purposes, and recipients."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to privacy"
+instruction = "Hand the data-flow map and register to the privacy officer for sign-off."
+gate = "review"

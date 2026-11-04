@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Included ONLY by a labelled acceptance-fixture build, never a release build. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <!-- Referencing the feature pulls the entire fragment into the MSI. An
+         unreferenced custom action alone is discarded by the WiX linker. -->
+    <Feature Id="LightworkAcceptanceHarness" Title="Acceptance fixture" Level="1" Display="hidden">
+      <ComponentRef Id="LightworkAcceptanceMarker" />
+    </Feature>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="LightworkAcceptanceMarker" Guid="*">
+        <RegistryValue Root="HKCU" Key="Software\Lightwork\AcceptanceFixture" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+    <CustomAction Id="LightworkAcceptanceFailure" Error="Injected upgrade failure for transactional rollback acceptance." />
+    <InstallExecuteSequence>
+      <Custom Action="LightworkAcceptanceFailure" After="InstallFiles">LIGHTWORK_ACCEPTANCE_FAIL=1</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

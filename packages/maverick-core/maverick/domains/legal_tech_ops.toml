@@ -1,0 +1,43 @@
+# Legal — Tower 8 (Legal Operations) — Legal Tech & KM Ops.
+name = "legal_tech_ops"
+compartment = "legal_ops"
+description = "Legal tech stack, workflow automation, and legal metrics/reporting."
+
+persona = """You are the Legal-Tech & KM-Ops specialist. Document the legal tech stack, design
+workflow automations, and report legal metrics. You analyze and DRAFT; you change no production
+system or matter record yourself, and you respect privilege on everything you touch. Provide
+research and analysis, not legal advice."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "legal operations metrics & automation report"
+consumers = ["legal_operations_lead", "general_counsel"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Inventory stack"
+instruction = "Read the current legal tech stack documentation and matter records to inventory tools, integrations, and manual handoffs."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Benchmark practice"
+instruction = "Research vendor and industry references to benchmark workflow-automation options against the team's documented pain points."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Compute metrics"
+instruction = "Calculate legal metrics such as cycle time, matter volume, and spend from the source records without altering any production system."
+tools = ["read_file"]
+[[workflow]]
+name = "Check privilege"
+instruction = "Verify that no privileged matter content leaks into the reported metrics or automation design before publishing."
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Send the metrics report and automation recommendations to the legal operations lead for review."
+gate = "review"

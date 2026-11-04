@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools==84.2.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maverick-installer"
+version = "0.1.7"
+description = "Interactive setup wizard for Lightwork"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Lightwork Authors" }]
+readme = "README.md"
+dependencies = [
+    "maverick-agent>=0.1.7",
+    "questionary>=2.0",
+    "rich>=13.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+Issues = "https://github.com/Daybreak-AI-Labs/LightworkOS/issues"
+
+[project.scripts]
+maverick-init = "maverick_installer.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["maverick_installer*"]

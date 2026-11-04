@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Skill store · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set can_install = is_admin and install_allowed %}
+  {% call hero('Workforce capability', 'Skill store',
+               subtitle='Ready-made skills',
+               lede='Skills are supplied by the listed catalogs. Review the
+                     source and author before adding one; catalog-provided
+                     hashes alone do not verify the publisher.') %}
+    {{ state('Current state',
+             ((entries | length) ~ ' skills to choose from') if entries
+             else 'No skills to show right now',
+             badge='Ready' if entries else 'Empty',
+             badge_class='ok' if entries else 'idle',
+             copy=('Choose a skill and press Add.' if can_install else
+                   ('Adding skills is switched off on this server.' if is_admin
+                    else 'Only administrators can add skills.'))) }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel st-saved{{ ' st-saved--failed' if saved == 'bad-address' }}" role="{{ 'alert' if saved == 'bad-address' else 'status' }}">
+    {% if saved == 'bad-address' %}<strong>Not saved.</strong> Enter the full web address of the catalog, starting with https://. You can list up to five.
+    {% elif saved == 'reset' %}<strong>Done.</strong> The Store uses the built-in catalog again.
+    {% elif saved == 'remove' %}<strong>Done.</strong> That catalog was removed.
+    {% else %}<strong>Done.</strong> The catalog was added. Its skills appear below.{% endif %}
+  </div>
+  {% endif %}
+
+  {% if is_admin and not install_allowed %}
+  <div class="panel" role="status">
+    <p class="st-flush">Adding skills from the Store is switched off on this server. Ask whoever runs the
+      server to allow it; you can still browse what is available.</p>
+  </div>
+  {% endif %}
+
+  {% if entries %}
+    <div class="st-toolbar">
+      <label class="st-field" for="st-filter"><span>Find a skill</span>
+        <input class="input" id="st-filter" type="search" placeholder="What should it help with?" autocomplete="off" />
+      </label>
+      <label class="st-field" for="st-sort"><span>Sort by</span>
+        <select class="select" id="st-sort">
+          <option value="name">Name</option>
+          <option value="popular">Most added</option>
+        </select>
+      </label>
+    </div>
+    <div class="card-grid" id="st-grid">
+      {% for e in entries %}
+        {% set label = e.name | humanize %}
+        <div class="card" data-st-name="{{ label | lower }}" data-st-text="{{ (label ~ ' ' ~ (e.summary or '') ~ ' ' ~ (e.author or '')) | lower }}"
+             data-st-count="{{ e.install_count or 0 }}">
+          <div class="store__head">
+            <strong class="store__name">{{ label }}</strong>
+          </div>
+          <p class="store__summary">{{ e.summary or "No description." }}</p>
+          <p class="muted store__meta">
+            {% if e.author %}By {{ e.author }} · {% endif %}Version {{ e.version }}
+            {% if e.install_count %} · Added {{ e.install_count }} times{% endif %}
+            {% if e.ratings_count %} · Rated {{ e.rating }} out of 5{% endif %}
+          </p>
+          {% if e.name in installed %}
+            <button class="btn btn--ghost store__btn" disabled>Added</button>
+          {% else %}
+            <button class="btn btn--primary store__btn install" data-name="{{ e.name }}" data-label="{{ label }}"
+                    aria-label="Add to workspace: {{ label }}" {% if not can_install %}disabled{% endif %}>Add to workspace</button>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    <p id="st-none" class="muted" hidden>No skills match. Try other words.</p>
+  {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No skills to show</p>
+      <p class="mv-empty__body">The catalog is empty or couldn't be reached. Try again in a minute{% if catalog_admin %}, or
+        add your organization's own catalog below{% endif %}.</p>
+      <p class="st-actions"><a class="btn btn--primary" href="/store">Try again</a>
+        <a class="btn" href="/skills">Create your own skill</a></p>
+    </div>
+  {% endif %}
+
+  <p id="store-msg" role="status" aria-live="polite" class="muted st-msg"></p>
+
+  {% if catalog_admin %}
+  <div class="section-head"><h2>Where skills come from</h2></div>
+  <div class="panel">
+    <p class="muted">The Store lists skills from these catalogs. Add your organization's own catalog to
+      offer your team the skills you have checked.</p>
+    <table>
+      <thead><tr><th scope="col">Catalog</th><th scope="col">Action</th></tr></thead>
+      <tbody>
+      {% for url in catalogs %}
+        <tr>
+          <td>{% if catalogs_default %}Built-in catalog{% else %}{{ url }}{% endif %}</td>
+          <td>
+            {% if not catalogs_default %}
+            <form method="post" action="/store/catalogs" data-st-ok="Stop listing this catalog" data-st-confirm="Stop listing skills from {{ url }}?" class="st-inline">
+              <input type="hidden" name="action" value="remove" />
+              <input type="hidden" name="url" value="{{ url }}" />
+              <button type="submit" class="btn btn--danger" aria-label="Remove catalog {{ url }}">Remove catalog</button>
+            </form>
+            {% else %}<span class="muted">Always available</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" action="/store/catalogs" class="st-add">
+      <input type="hidden" name="action" value="add" />
+      <label class="st-field" for="st-catalog-url"><span>Add a catalog</span>
+        <input class="input" id="st-catalog-url" type="url" name="url" required maxlength="300"
+               placeholder="https://…" aria-describedby="st-catalog-help" />
+      </label>
+      <button type="submit" class="btn btn--primary">Add catalog</button>
+    </form>
+    <p id="st-catalog-help" class="muted st-small">Your IT team gives you this web address. Adding your own
+      catalog replaces the built-in one.</p>
+    {% if not catalogs_default %}
+    <form method="post" action="/store/catalogs" data-st-ok="Use the built-in catalog" data-st-confirm="Go back to the built-in catalog? Your own catalogs will be removed from this list." class="st-inline">
+      <input type="hidden" name="action" value="reset" />
+      <button type="submit" class="btn">Use the built-in catalog</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <style>
+    .card-grid .card { display: flex; flex-direction: column; }
+    .store__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+    .store__summary { margin: 0 0 var(--space-3); flex: 1 1 auto; }
+    .store__meta { font-size: var(--text-xs); margin: 0 0 var(--space-3); }
+    .store__btn { align-self: flex-start; margin-top: auto; }
+    .st-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: end; margin-bottom: var(--space-3); }
+    .st-field { display: grid; gap: var(--space-1); }
+    .st-flush { margin: 0; }
+    .st-small { font-size: var(--text-sm); }
+    .st-msg { min-height: 1em; margin-top: var(--space-4); }
+    .st-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .st-add { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; margin-top: var(--space-3); }
+    .st-add .input { min-width: min(100%, 22rem); }
+    .st-inline { display: inline; margin: 0; }
+    .st-saved { margin-bottom: var(--space-4); border-color: var(--brand-border); background: var(--brand-subtle); }
+    .st-saved--failed { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+  </style>
+
+  <script nonce="{{ csp_script_nonce }}">
+    (function() {
+      const msg = document.getElementById('store-msg');
+
+      // Find and sort.
+      const grid = document.getElementById('st-grid');
+      const filter = document.getElementById('st-filter');
+      const sort = document.getElementById('st-sort');
+      const none = document.getElementById('st-none');
+      function applyView() {
+        if (!grid) return;
+        const q = (filter.value || '').trim().toLowerCase();
+        const cards = Array.prototype.slice.call(grid.children);
+        let shown = 0;
+        cards.forEach(function(c) {
+          const hit = !q || c.dataset.stText.indexOf(q) !== -1;
+          c.hidden = !hit; if (hit) shown += 1;
+        });
+        const key = sort.value;
+        cards.sort(function(a, b) {
+          if (key === 'popular') return Number(b.dataset.stCount) - Number(a.dataset.stCount);
+          return a.dataset.stName.localeCompare(b.dataset.stName);
+        }).forEach(function(c) { grid.appendChild(c); });
+        none.hidden = shown !== 0;
+      }
+      if (filter) filter.addEventListener('input', applyView);
+      if (sort) sort.addEventListener('change', applyView);
+
+      document.querySelectorAll('form[data-st-confirm]').forEach(function(form) {
+        form.addEventListener('submit', function(event) {
+          if (form.dataset.confirmed === 'true') { delete form.dataset.confirmed; return; }
+          event.preventDefault();
+          window.mvConfirm(form.dataset.stConfirm, {okText: form.dataset.stOk}).then(function(ok) {
+            if (!ok) return;
+            form.dataset.confirmed = 'true';
+            if (form.requestSubmit) form.requestSubmit(); else form.submit();
+          });
+        });
+      });
+
+      document.querySelectorAll('button.store__btn.install').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          if (btn.dataset.inFlight === 'true') return;
+          btn.dataset.inFlight = 'true';
+          const name = btn.dataset.name;
+          const label = btn.dataset.label || name;
+          if (!(await mvConfirm(
+            'Add the skill “' + label + '”? Your agents will follow its steps from the next task.',
+            {okText: 'Add skill'}
+          ))) { delete btn.dataset.inFlight; return; }
+          btn.disabled = true;
+          btn.setAttribute('aria-busy', 'true');
+          btn.textContent = 'Adding…';
+          msg.textContent = '';
+          let installed = false;
+          try {
+            const r = await fetch('/api/v1/catalog/skills/install', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              credentials: 'same-origin',
+              body: JSON.stringify({name: name}),
+            });
+            if (r.ok) {
+              installed = true;
+              btn.textContent = 'Added';
+              btn.classList.remove('install', 'btn--primary');
+              btn.classList.add('btn--ghost');
+              msg.textContent = 'Added ' + label + '. Agents use it from the next task.';
+            } else if (r.status === 400) {
+              msg.textContent = 'The skill “' + label + '” couldn’t be added: it may not match the catalog hash, or it failed a safety check.';
+            } else {
+              msg.textContent = window.mvErrorText(r, 'add the skill');
+            }
+          } catch (e) {
+            msg.textContent = window.mvErrorText(e, 'add the skill');
+          } finally {
+            delete btn.dataset.inFlight;
+            btn.removeAttribute('aria-busy');
+            if (!installed) {
+              btn.disabled = false;
+              btn.textContent = 'Add to workspace';
+            }
+          }
+        });
+      });
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lightwork-execution
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lightwork-controller
+  namespace: lightwork-execution
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lightwork-controller
+  namespace: lightwork-execution
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [get, create]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lightwork-controller
+  namespace: lightwork-execution
+subjects:
+  - kind: ServiceAccount
+    name: lightwork-controller
+    namespace: lightwork-execution
+roleRef:
+  kind: Role
+  name: lightwork-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: maverick-deny-all
+  namespace: lightwork-execution
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: execution-budget
+  namespace: lightwork-execution
+spec:
+  hard:
+    pods: "16"
+    requests.cpu: "32"
+    requests.memory: 64Gi
+    limits.cpu: "32"
+    limits.memory: 64Gi

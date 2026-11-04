@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Suggested assessment answers · Lightwork{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="{{ style_path }}">
+{% endblock %}
+{% block content %}
+<div class="aep-shell" id="assessment-evidence-shell"
+      data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
+      data-module-enabled="{{ 'true' if proposal_module_enabled else 'false' }}"
+      data-can-operate="{{ 'true' if proposal_can_operate else 'false' }}">
+  {{ hero('Assessments', 'Suggested assessment answers', lede='Use evidence your team has already approved to suggest answers for an open questionnaire. Someone reviews the suggestions, then chooses which ones to add.') }}
+  {% if not proposal_module_enabled %}
+  {{ module_gate('assessment_evidence_autopopulation', 'Suggested assessment answers',
+                 detail='Turn this on to have Lightwork suggest questionnaire answers from evidence your team has already approved. AI evidence analysis must be on too.',
+                 can_activate=proposal_can_admin) }}
+  {% endif %}
+{% if proposal_workspace_missing %}
+  <section class="panel" aria-labelledby="aep-workspace-title">
+    <h2 id="aep-workspace-title">Choose a workspace first</h2>
+    <p>Assessments are kept separately for each workspace. Choose a workspace from the workspace menu, then open this page again.</p>
+  </section>
+{% else %}
+  <p class="muted">Suggestions never change an assessment until someone adds them, and they only ever fill unanswered questions.</p>
+  <details>
+    <summary>About this page's safeguards</summary>
+    <ul class="muted">
+      <li>Only evidence a person has approved can support a suggestion.</li>
+      <li>Partial, missing, conflicting or low-confidence evidence is never offered as an answer that can be added.</li>
+      <li>Approving picks exact questions; it does not change the assessment.</li>
+      <li>Before adding answers Lightwork checks that the evidence and the assessment are unchanged. It fills only unanswered questions and never overwrites an answer a person gave.</li>
+      <li>Suggestions are not legal conclusions and do not prove a supplier's claims.</li>
+    </ul>
+  </details>
+
+  <section class="panel" aria-labelledby="aep-status-title">
+    <div class="section-head"><h2 id="aep-status-title">Availability</h2><button class="btn btn--ghost" id="aep-refresh-status" type="button">Check again</button></div>
+    <p><span class="badge idle" id="aep-status-pill" data-state="checking">Checking</span> <span id="aep-status-detail" role="status" aria-live="polite">Checking whether suggestions are available.</span></p>
+  </section>
+
+  <section class="panel" aria-labelledby="aep-create-title">
+    <div class="section-head"><h2 id="aep-create-title">Suggest answers from approved evidence</h2></div>
+    <form class="aep-form" id="aep-create-form" autocomplete="off" novalidate>
+      <fieldset id="aep-create-controls" data-aep-mutation disabled aria-disabled="true">
+        <legend class="sr-only">Suggest answers</legend>
+        <label for="aep-assessment-id">Open assessment</label>
+        <select class="select" id="aep-assessment-id" name="assessment_id" required><option value="">Loading…</option></select>
+        <fieldset class="aep-selection" id="aep-analysis-choices">
+          <legend>Approved evidence to use</legend>
+          <p class="muted">Loading approved evidence…</p>
+        </fieldset>
+        <input type="hidden" id="aep-create-idempotency" name="idempotency_key" data-auto-reference>
+        <button class="btn btn--primary" type="submit">Suggest answers</button>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="aep-queue-title">
+    <div class="section-head"><h2 id="aep-queue-title">Suggestions</h2><button class="btn btn--ghost" id="aep-refresh-list" type="button">Refresh</button></div>
+    <div class="aep-table"><table><caption class="sr-only">Suggested answer sets and what you can do with each</caption>
+      <thead><tr><th scope="col">Assessment</th><th scope="col">Status</th><th scope="col">Suggested answers</th><th scope="col">Created</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="aep-queue"><tr><td colspan="5">Loading…</td></tr></tbody></table></div>
+  </section>
+
+  <section class="panel" id="aep-review-panel" aria-labelledby="aep-review-title" hidden>
+    <div class="section-head"><h2 id="aep-review-title" tabindex="-1">Review suggestions</h2></div>
+    <p id="aep-review-subject"></p>
+    <div class="aep-candidates" id="aep-candidates" aria-live="polite"></div>
+    <form class="aep-form" id="aep-review-form" autocomplete="off" novalidate>
+      <fieldset id="aep-review-controls" data-aep-mutation disabled aria-disabled="true">
+        <legend class="sr-only">Your decision</legend>
+        <fieldset class="aep-selection" id="aep-candidate-selection">
+          <legend>Answers you approve</legend>
+        </fieldset>
+        <label for="aep-review-rationale">Reason for your decision</label>
+        <textarea class="textarea input" id="aep-review-rationale" name="rationale" rows="3" maxlength="4000" required></textarea>
+        <input type="hidden" id="aep-review-idempotency" name="idempotency_key" data-auto-reference>
+        <div class="aep-actions">
+          <button class="btn btn--primary" type="submit" name="decision" value="approve">Approve selected answers</button>
+          <button class="btn btn--danger" type="submit" name="decision" value="reject">Reject all suggestions</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="aep-result-title">
+    <div class="section-head"><h2 id="aep-result-title">Last action</h2></div>
+    <p class="aep-status" id="aep-operation-status" role="status" aria-live="polite">Nothing has been done yet.</p>
+    <details class="aep-details"><summary>Technical details</summary><pre class="aep-output" id="aep-output" tabindex="0"></pre></details>
+  </section>
+{% endif %}
+</div>
+{% if not proposal_workspace_missing %}<script src="{{ script_path }}" defer></script>{% endif %}
+{% endblock %}

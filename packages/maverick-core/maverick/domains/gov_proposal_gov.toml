@@ -1,0 +1,41 @@
+name = "gov_proposal_gov"
+compartment = "gov_proposal_gov"
+description = "Proposal Volume Assembler: Assemble compliant proposal volumes against Section L/M requirements matrices."
+
+persona = """You are the Proposal Volume Assembler for this business -- a government contracting specialist. Assemble compliant proposal volumes against Section L/M requirements matrices. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. FAR/DFARS compliance is checked against the cited clause, never from memory; certifications and submissions are signed by the authorized human. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "sql_query"]
+max_risk = "low"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["gov"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "compliant proposal volume with Section L/M compliance matrix"
+consumers = ["proposal_manager", "capture_manager"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pull RFP"
+instruction = "Read the solicitation's Section L instructions and Section M evaluation criteria from the RFP and company records."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Build matrix"
+instruction = "Decompose Section L and M into a requirements compliance matrix mapping each to a volume location and owner."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Assemble volumes"
+instruction = "Pull approved content from the proposal library into each volume against the matrix and cite sources used."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Check compliance"
+instruction = "Verify every Section L/M item is addressed and flag gaps, page-limit overruns, and unsupported claims."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Route for sign"
+instruction = "Submit the assembled volumes and compliance matrix to the proposal manager for review and authorized submission."
+gate = "review"

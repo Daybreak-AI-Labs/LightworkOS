@@ -1,0 +1,65 @@
+{#- The job-named sidebar ([dashboard] navigation = "areas"), included at the
+    end of _sidebar_nav.html after the person's Pinned and Recent pages. One
+    entry per area, named like the area's hub; an area's sections open under
+    it. nav_areas comes from navigation_api.area_context: only pages the
+    person may already open, so an area with nothing for them is not listed.
+    The area order and which areas start open follow the role's preset until
+    the person arranges their own. -#}
+{% set _here = nav_areas.here %}
+{% set _ask = nav_areas.by_title.get('Ask') %}
+<div class="navareas" data-nav-areas="{{ nav_areas.preset }}">
+  {% if _ask and not can_create_goal %}
+  <ul class="navquick-list">
+    <li>{{ _nav_link({'href': _ask.href, 'label': 'Ask', 'icon': 'chat'}, _here and _here.area.title == 'Ask', _here and _here.path == _ask.href) }}</li>
+  </ul>
+  {% endif %}
+  <ul class="navareas__list" aria-label="{{ ut('Areas') }}" lang="{{ ul('Areas') }}">
+  {% for _area in nav_areas.sidebar %}
+    {% set _in_area = _here and _here.area.title == _area.title %}
+    <li class="navarea">
+      <a href="{{ _area.href }}" class="navarea__link{% if _in_area %} active{% endif %}"{% if _in_area and _here.path == _area.href %} aria-current="page"{% endif %}><span class="nav-label">{{ ui(_area.title) }}</span></a>
+      {% if _area.sections | length > 1 %}
+      <button type="button" class="navgrp__toggle navarea__toggle" data-grp="area:{{ _area.title }}" data-grp-open="{{ 'true' if _area.open else 'false' }}"
+              aria-expanded="true" aria-controls="navarea-{{ loop.index0 }}" aria-label="{{ ut('{area} sections', area=ut(_area.title)) }}" lang="{{ ul('{area} sections') }}"><svg class="navgrp__caret" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 L5 6.5 L8 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <ul class="navgrp__items navarea__sections" id="navarea-{{ loop.index0 }}">
+        {% for _section in _area.sections %}
+          {% set _in_section = _in_area and _here.section and _here.section.title == _section.title %}
+          <li>{{ _nav_link({'href': _section.href, 'label': _section.title, 'icon': 'dot', 'off': _section.off}, _in_section, _in_section and _here.path == _section.href and _here.path != _area.href) }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+  {% if _personal %}
+  {# Each person can move or hide areas; a plain form, so it works without
+     scripts. Floors still decide every page inside an area. #}
+  <details class="navareas__arrange">
+    <summary>{{ ui('Arrange areas') }}</summary>
+    <ul class="navareas__arrange-list">
+      {% for _area in nav_areas.sidebar %}
+      <li><span>{{ ui(_area.title) }}</span>
+        <form method="post" action="/navigation/areas">
+          <input type="hidden" name="context" value="{{ display_preference_context }}"><input type="hidden" name="back" value="{{ request.url.path if request else '/' }}"><input type="hidden" name="area" value="{{ _area.title }}">
+          {% if not loop.first %}<button type="submit" class="btn btn--ghost" name="op" value="up" aria-label="{{ ut('Move {area} up', area=ut(_area.title)) }}" lang="{{ ul('Move {area} up') }}">{{ ui('Up') }}</button>{% endif %}
+          {% if not loop.last %}<button type="submit" class="btn btn--ghost" name="op" value="down" aria-label="{{ ut('Move {area} down', area=ut(_area.title)) }}" lang="{{ ul('Move {area} down') }}">{{ ui('Down') }}</button>{% endif %}
+          {% if nav_areas.sidebar | length > 1 %}<button type="submit" class="btn btn--ghost" name="op" value="hide" aria-label="{{ ut('Hide {area}', area=ut(_area.title)) }}" lang="{{ ul('Hide {area}') }}">{{ ui('Hide') }}</button>{% endif %}
+        </form>
+      </li>
+      {% endfor %}
+      {% for _area in nav_areas.hidden %}
+      <li><span>{{ ui(_area.title) }} ({{ ui('hidden') }})</span>
+        <form method="post" action="/navigation/areas">
+          <input type="hidden" name="context" value="{{ display_preference_context }}"><input type="hidden" name="back" value="{{ request.url.path if request else '/' }}"><input type="hidden" name="area" value="{{ _area.title }}">
+          <button type="submit" class="btn btn--ghost" name="op" value="show" aria-label="{{ ut('Show {area}', area=ut(_area.title)) }}" lang="{{ ul('Show {area}') }}">{{ ui('Show') }}</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="/navigation/areas">
+      <input type="hidden" name="context" value="{{ display_preference_context }}"><input type="hidden" name="back" value="{{ request.url.path if request else '/' }}">
+      <button type="submit" class="btn btn--ghost" name="op" value="reset">{{ ui('Use the layout for my role') }}</button>
+    </form>
+  </details>
+  {% endif %}
+</div>

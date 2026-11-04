@@ -1,0 +1,54 @@
+{% if public_chat_section %}
+<div class="section-head"><h2 id="public-chat">Chat on your public website</h2></div>
+<section class="panel" data-public-chat aria-labelledby="public-chat">
+  <p class="muted ch-help">Visitors to the websites you list can ask one published specialist questions here. They cannot use tools, files or your records. Each website has a daily spending limit. Stopping a website ends its open chats and deletes its stored messages.</p>
+  <p class="ch-result" id="pc-status" role="status" aria-live="polite"></p>
+
+  <div id="pc-secret" class="ch-saved" hidden role="region" aria-labelledby="pc-secret-heading">
+    <h3 id="pc-secret-heading">Your publishable key (shown once)</h3>
+    <p><code id="pc-key"></code></p>
+    <div class="ch-actions">
+      <button class="btn" type="button" id="pc-copy-key">Copy key</button>
+      <button class="btn" type="button" id="pc-copy-snippet">Copy website code</button>
+      <button class="btn btn--ghost" type="button" id="pc-secret-done">I have copied it</button>
+    </div>
+    <p class="muted ch-help">Put this website code on the website, with the key in place. Lightwork keeps only a fingerprint of the key, so it cannot be shown again. If you lose it, rotate the key; the old key then stops at once.</p>
+    <pre class="governance-output" id="pc-snippet"></pre>
+  </div>
+
+  <h3>Your websites</h3>
+  <div id="pc-sites"><p class="muted">Loading websites…</p></div>
+  {% if public_chat_specialists %}
+  <div class="ch-actions"><button class="btn" type="button" id="pc-new" aria-expanded="false" aria-controls="pc-create">Add a website</button></div>
+  {% endif %}
+
+  <form id="pc-create" class="ch-form" hidden aria-labelledby="pc-create-heading">
+    <h3 id="pc-create-heading">Add a website</h3>
+    <p class="muted ch-help">Enter each address exactly as visitors see it: https, with no path, for example https://shop.example. Lightwork then creates a key that you copy once.</p>
+    <label class="ch-field"><span>Website name</span><input class="input" name="display_name" type="text" maxlength="80" required></label>
+    <label class="ch-field"><span>Website addresses, one per line</span><textarea class="input" name="origins" rows="3" required placeholder="https://shop.example"></textarea></label>
+    <label class="ch-field"><span>Specialist</span>
+      <select class="select" name="specialist" required>
+        {% for name in public_chat_specialists %}<option value="{{ name }}">{{ name | humanize }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="ch-field"><span>Greeting (optional)</span><input class="input" name="greeting" type="text" maxlength="280"></label>
+    <label class="ch-field"><span>Daily spending limit (dollars)</span><input class="input" name="daily_cap_dollars" type="number" min="0.01" max="1000" step="0.01" required placeholder="for example 5"><span class="muted ch-help">When today's answers reach this amount, visitors get a short "not available right now" reply until tomorrow.</span></label>
+    <label class="ch-field"><span>Messages per visit</span><input class="input" name="messages_per_session" type="number" min="1" max="30" value="20" required></label>
+    <label class="ch-field"><span>Messages per minute</span><input class="input" name="messages_per_minute" type="number" min="1" max="6" value="6" required></label>
+    <label class="ch-field"><span>Messages per visitor address per day</span><input class="input" name="messages_per_client_per_day" type="number" min="1" max="5000" value="200" required><span class="muted ch-help">Counts every message from one internet address across visits, in any 24 hours. People who share an address, such as one company network, share this limit.</span></label>
+    <label class="ch-field"><span>Keep conversations for (days)</span><input class="input" name="retention_days" type="number" min="1" max="365" value="30" required></label>
+    <div class="ch-actions">
+      <button class="btn btn--primary" type="submit" id="pc-save">Create key</button>
+      <button class="btn" type="button" id="pc-cancel">Cancel</button>
+    </div>
+  </form>
+
+  <section id="pc-messages" hidden aria-labelledby="pc-messages-heading">
+    <h3 id="pc-messages-heading">Recent messages</h3>
+    <p class="muted ch-help">Read-only. Each time you open a website's messages, Lightwork records that in the activity log. The 50 most recent are shown, newest first.</p>
+    <div id="pc-messages-body"></div>
+  </section>
+</section>
+<script src="/static/lightwork-public-chat-admin.js" defer></script>
+{% endif %}

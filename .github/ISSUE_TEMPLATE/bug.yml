@@ -1,0 +1,69 @@
+name: Bug report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before submitting:
+          - Run `lightwork doctor` and paste the output below
+          - Remove any API keys or tokens from what you paste
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: lightwork doctor output
+      description: Paste the full output of `lightwork doctor`
+      placeholder: |
+        Lightwork health check
+        ✓ config  (~/.maverick/config.toml)
+        ✓ anthropic  (key validated)
+        ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what did you get?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact command(s), and the goal title / channel message that triggered it
+      render: shell
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      description: |
+        Recent output of `journalctl -u maverick` (VPS service) or of the
+        `lightwork serve` process (local). Remove secrets.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The package version shown by `lightwork version` and, for a source install, the commit from `git rev-parse --short HEAD`
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Docker
+        - VPS (systemd)
+    validations:
+      required: true

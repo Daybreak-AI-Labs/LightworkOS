@@ -1,0 +1,8 @@
+#provider-spending {max-width: 58rem; margin: 0 auto; overflow-wrap: anywhere;}
+#provider-spending section {margin: 1.5rem 0; padding: 1rem; border: 1px solid var(--border, #666); border-radius: .6rem;}
+#provider-spending form > label, #provider-spending #spend-totals label, #provider-spending section > label {display: block; margin-top: .8rem;}
+#provider-spending form > :is(input, select, textarea), #provider-spending #spend-totals :is(input, select), #provider-spending section > input {display: block; width: 100%; max-width: 100%; box-sizing: border-box; margin: .35rem 0 .75rem;}
+#provider-spending textarea {min-height: 5rem;}
+#provider-spending .spend-row {display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end;}
+#provider-spending .spend-row label {display: flex; flex-direction: column; gap: .25rem;}
+#provider-spending [hidden] {display: none !important;}

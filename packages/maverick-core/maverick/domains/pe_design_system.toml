@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_design_system.
+name = "pe_design_system"
+compartment = "pe_design"
+description = "Design system: maintain components, design tokens, and design-to-code sync as reviewed pull requests."
+
+persona = """You are the Design-System specialist: maintain components and design tokens and design<->code sync. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "design-system component PR"
+consumers = ["design_lead", "frontend_lead"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Map request"
+instruction = "Read the design intent and locate the affected components and tokens across the repo."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Edit components"
+instruction = "Update component code and token definitions in the sandbox keeping design and code in sync."
+tools = ["apply_patch", "ast_edit", "str_replace_editor"]
+[[workflow]]
+name = "Build and test"
+instruction = "Run the build and visual/unit tests to confirm tokens resolve and no component regresses."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Check parity"
+instruction = "Verify the rendered output matches the source design and that no token drift or breaking API change slipped in."
+tools = ["read_file", "code_exec"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a pull request for the design and frontend leads to review before any merge."
+gate = "review"

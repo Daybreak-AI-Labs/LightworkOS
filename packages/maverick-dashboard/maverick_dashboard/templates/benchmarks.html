@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Benchmarks · Lightwork{% endblock %}
+{% block content %}
+{% macro score(x) -%}
+  {%- if x is none -%}—{%- elif 0 <= x <= 1 -%}{{ '%.1f'|format(x * 100) }}%{%- else -%}{{ '%.2f'|format(x) }}{%- endif -%}
+{%- endmacro %}
+{% macro change(s) -%}
+  {%- if s.baseline_mean is none -%}First score
+  {%- elif s.delta > 0 -%}Up {{ score(s.delta) }}
+  {%- elif s.delta < 0 -%}Down {{ score(-s.delta) }}
+  {%- else -%}No change{%- endif -%}
+{%- endmacro %}
+<h1 class="page-title">Benchmarks</h1>
+<p class="page-subtitle">How the scores you record for Lightwork are trending. Each new score is compared with the average of the ones before it, and big drops are flagged.</p>
+<div class="panel{% if not suites %} empty{% endif %}">
+  {% if suites %}
+    <table>
+      <caption class="sr-only">Recorded test scores</caption>
+      <thead>
+        <tr>
+          <th scope="col">Test</th>
+          <th scope="col">Times scored</th>
+          <th scope="col">Latest score</th>
+          <th scope="col">Usual score (average of earlier ones)</th>
+          <th scope="col">Change</th>
+          <th scope="col">Trend</th>
+          <th scope="col">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in suites %}
+        <tr>
+          <td>{{ s.name | humanize }}</td>
+          <td>{{ s.runs }}</td>
+          <td>{{ score(s.latest) }}</td>
+          <td class="muted">{{ score(s.baseline_mean) }}</td>
+          <td class="muted">{{ change(s) }}</td>
+          <td>
+            <svg width="160" height="36" role="img"
+                 aria-label="Score trend for {{ s.name | humanize }}: {{ s.runs }} scores, latest {{ score(s.latest) }}">
+              <polyline points="{{ s.spark }}" fill="none"
+                        stroke="{{ 'var(--danger)' if s.regressed else 'var(--accent)' }}"
+                        stroke-width="1.5"/>
+            </svg>
+          </td>
+          <td>
+            {% if s.regressed %}
+              <span class="badge failure">Dropped {{ '%.1f'|format(s.drop_pct * 100) }}%</span>
+            {% else %}
+              <span class="badge success">Steady</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted" style="font-size: 0.8rem;">
+      A test is flagged when its latest score is more than 5% below the average
+      of the (up to 5) scores before it.
+    </p>
+  {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No scores recorded yet</p>
+      <p class="mv-empty__body">
+        Scores appear here when an assistant records a test result, or when you
+        add one below.
+      </p>
+    </div>
+  {% endif %}
+</div>
+
+<section class="panel" aria-labelledby="bench-record-title">
+  <h2 id="bench-record-title">Add a score</h2>
+  {% if can_record %}
+  <p class="muted">Record the result of a test you ran, for example the share of practice tasks Lightwork got right. Higher scores are better.</p>
+  <form id="bench-record" class="mv-form" novalidate>
+    <div class="mv-form__field"><label for="bench-test">Test</label>
+      <select id="bench-test" class="select" name="test">
+        {% for s in suites %}<option value="{{ s.name }}">{{ s.name | humanize }}</option>{% endfor %}
+        <option value="__new__"{% if not suites %} selected{% endif %}>A new test…</option>
+      </select></div>
+    <div class="mv-form__field" id="bench-new-wrap"{% if suites %} hidden{% endif %}><label for="bench-new-name">Name of the new test</label>
+      <input id="bench-new-name" class="input" name="new_name" maxlength="80" autocomplete="off"></div>
+    <div class="mv-form__field"><label for="bench-score">Score</label>
+      <input id="bench-score" class="input" name="score" type="number" step="any" inputmode="decimal" required></div>
+    <div class="mv-form__field"><label for="bench-scale">The score is</label>
+      <select id="bench-scale" class="select" name="scale">
+        <option value="percent" selected>A percentage (0 to 100)</option>
+        <option value="plain">A plain number</option>
+      </select></div>
+    <div class="mv-form__field"><label for="bench-note">Note (optional)</label>
+      <input id="bench-note" class="input" name="note" maxlength="120" autocomplete="off" placeholder="For example: after the March update"></div>
+    <button type="submit" class="btn btn--primary" id="bench-save">Add this score</button>
+    <p id="bench-msg" role="status" aria-live="polite" class="muted"></p>
+  </form>
+  {% else %}
+  <p class="muted">Only an administrator can add scores.</p>
+  {% endif %}
+</section>
+
+<p class="muted" style="font-size: 0.8rem;">
+  This page shows <strong>this deployment’s own recorded scores only</strong>.
+  No numbers from other products are shown or made up here.
+</p>
+{% if can_record %}
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var form = document.getElementById('bench-record');
+  if (!form) return;
+  var pick = document.getElementById('bench-test');
+  var wrap = document.getElementById('bench-new-wrap');
+  var msg = document.getElementById('bench-msg');
+  var btn = document.getElementById('bench-save');
+  pick.addEventListener('change', function () { wrap.hidden = pick.value !== '__new__'; });
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    if (btn.disabled) return;
+    var name = pick.value === '__new__' ? form.new_name.value.trim() : pick.value;
+    var raw = form.score.value.trim();
+    var value = Number(raw);
+    if (!name) { msg.textContent = 'Give the new test a name.'; return; }
+    if (raw === '' || !isFinite(value)) { msg.textContent = 'Enter the score as a number.'; return; }
+    if (form.scale.value === 'percent') {
+      if (value < 0 || value > 100) { msg.textContent = 'A percentage must be between 0 and 100.'; return; }
+      value = value / 100;
+    }
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true'); msg.textContent = 'Saving…';
+    try {
+      var r = await fetch('/api/v1/benchmarks/scores', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, score: value, note: form.note.value.trim() }),
+      });
+      if (!r.ok) {
+        var body = await r.json().catch(function () { return {}; });
+        msg.textContent = (r.status === 422 && window.mvPlainDetail(body.detail))
+          || window.mvErrorText(r, 'add this score');
+        btn.disabled = false; btn.removeAttribute('aria-busy');
+        return;
+      }
+      location.reload();
+    } catch (e) {
+      msg.textContent = window.mvErrorText(e, 'add this score');
+      btn.disabled = false; btn.removeAttribute('aria-busy');
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

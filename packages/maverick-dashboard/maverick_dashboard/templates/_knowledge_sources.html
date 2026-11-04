@@ -1,0 +1,28 @@
+<section class="panel" id="knowledge-sources" aria-labelledby="knowledge-sources-heading" data-knowledge-sources>
+  <div class="section-head"><h2 id="knowledge-sources-heading">Saved Knowledge sources</h2><button class="btn btn--ghost" type="button" data-ks-reload>Refresh status</button></div>
+  <p>Keep selected company folders and pages current, then add their approved knowledge to specialists.</p>
+  <p class="muted">SharePoint, OneDrive, Google Drive and Confluence use the named account you select. Folder refreshes include direct files; subfolders need separate sources. Imported snapshots need a different authorized reviewer before specialists may use them.</p>
+  <p role="status" aria-live="polite" tabindex="-1" data-ks-status>Loading your saved sources…</p>
+  <div data-ks-original hidden><h3>Retained original decision</h3><p data-ks-original-message></p><button type="button" class="btn" data-ks-read-original>Read original without repeating</button><div data-ks-original-output></div></div>
+  <div data-ks-list></div>
+  <details data-ks-editor hidden><summary>Add or change a source</summary>
+    <form data-ks-form>
+      <label>Source name <input name="name" required maxlength="120" autocomplete="off"></label>
+      <label>Company source <select name="kind" required></select></label>
+      <label>Saved account <select name="connection" required></select></label>
+      <p class="muted">Missing an account? <a href="/connections">Open Connections</a> to set up a named Microsoft, Google Drive or Confluence account.</p>
+      <div data-ks-containers></div>
+      <label>Current approved use <select name="decision_id" required></select></label>
+      <p class="muted" data-ks-permission-state></p>
+      <p class="muted">Source access and content-use permission are separate. <a href="/data-use">Review data-use permissions</a> before adding an unapproved asset.</p>
+      <label>Purpose <select name="purpose" required></select></label>
+      <label>Refresh schedule <select name="interval_seconds"><option value="0">Manual only</option><option value="3600">Hourly</option><option value="21600">Every six hours</option><option value="86400">Daily</option></select></label>
+      <label>Maximum AI search preparation cost per refresh (USD) <input name="max_dollars" type="number" min="0" max="100" step="0.01" value="0" required></label>
+      <p class="muted">$0 uses local search preparation. If an AI service prepares search, its charge is reserved and recorded within the reviewed limit.</p>
+      <label><input name="paused" type="checkbox"> Pause scheduled refreshes</label>
+      <button class="btn btn--primary" type="submit">Review complete source settings</button>
+    </form>
+  </details>
+  <div data-ks-review hidden></div>
+  <p class="muted">{% if knowledge_source_limits %}Each refresh supports {{ knowledge_source_limits.max_items }} documents or pages, downloads up to {{ knowledge_source_limits.max_download_mib }} MiB per document, and reads up to {{ knowledge_source_limits.max_text_kib }} KiB of source text.{% else %}Each refresh uses this workspace's configured document and text limits; the saved-source list names any setting that cannot be read.{% endif %} {% if knowledge_source_limits and knowledge_source_limits.permission_filter == "by_email" %}Each file is shown only to the people it is shared with by email, email domain or link. Files shared only with a group are withheld. Files show only after a refresh made while this setting is on; a refresh that does not finish keeps the sharing records it already has. {% endif %}Choose a smaller folder when a source exceeds these limits. File errors, unsupported content and unknown outcomes remain visible in history. This does not prove permanent provider deletion. Attaching a source saves a complete specialist draft; its existing Publish review changes the specialist people use.</p>
+</section>

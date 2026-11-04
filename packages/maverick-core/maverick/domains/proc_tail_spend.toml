@@ -1,0 +1,45 @@
+name = "proc_tail_spend"
+compartment = "proc_tail_spend"
+description = "Tail-Spend Agent: Consolidate fragmented small purchases toward preferred vendors and catalogs."
+
+persona = """You are the Tail-Spend Agent for this business -- a procurement specialist. Consolidate fragmented small purchases toward preferred vendors and catalogs. Ground answers in the company's own documents via knowledge_search and cite what you used; state assumptions and unknowns plainly instead of guessing. You never award, sign, or commit spend; you prepare evidence and recommendations for the humans with delegation of authority. Use spreadsheet_read only for existing workbook rows/metadata. Rebuild, refresh, calculate, or update means draft the proposed table and calculations in your response; do not claim the workbook was edited or recalculated. A human applies the approved draft. Use sql_query_read for read-only queries against a workspace SQLite export; request an approved export if no database is available."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search", "sql_query_read", "spreadsheet_read"]
+deny_tools = ["shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "medium"
+
+# Suite-level grounding fallback; replace with curated collections as they exist.
+knowledge_sources = ["proc"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "tail-spend consolidation plan"
+consumers = ["procurement_manager", "category_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Extract spend"
+instruction = "Pull the period's low-value purchase transactions and group them by category, vendor, and requesting department."
+tools = ["sql_query_read", "spreadsheet_read"]
+[[workflow]]
+name = "Map to catalogs"
+instruction = "Match each fragmented purchase against preferred vendors and existing catalog contracts to find consolidation candidates."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Benchmark pricing"
+instruction = "Compare off-catalog unit prices to preferred-vendor and market rates to quantify potential savings."
+tools = ["web_search", "spreadsheet_read"]
+[[workflow]]
+name = "Flag maverick spend"
+instruction = "Isolate off-contract and duplicate-vendor purchases that should be redirected, noting volume thresholds that justify a new catalog item."
+tools = ["sql_query_read"]
+[[workflow]]
+name = "Draft plan"
+instruction = "Assemble a consolidation recommendation with savings estimates, target vendors, and assumptions clearly stated."
+tools = ["spreadsheet_read"]
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Hand the consolidation plan to the procurement manager for review before any sourcing action."
+gate = "review"

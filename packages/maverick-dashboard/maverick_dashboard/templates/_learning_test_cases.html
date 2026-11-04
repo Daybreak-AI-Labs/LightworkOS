@@ -1,0 +1,53 @@
+<section class="stack" id="learning-test-questions" aria-labelledby="learning-case-title">
+  <h3 id="learning-case-title">Learning questions</h3>
+  <p class="muted">Give Lightwork a real question and the answer it should work toward. Review saved questions, improve an answer or retire a question from future checks.</p>
+  <div class="stack" id="learning-case-setup" hidden>
+    <p class="muted">Set up your shared question collection once. Lightwork chooses its managed location for you; your current learning and storage choices stay in place.</p>
+    <button class="btn btn--primary" id="learning-case-setup-review" type="button">Set up learning questions</button>
+  </div>
+  <details id="learning-task-examples" class="stack">
+    <summary>Use one of my completed tasks</summary>
+    <p class="muted">Choose your own completed work, read its task text and recorded answer, then edit the expected answer before reviewing. Attachments, conversation history and other task inputs are not copied. Some protected work and Knowledge analyses cannot be used here. If the complete answer cannot fit, or needs those other inputs, write a separate question.</p>
+    <label for="learning-task-example">Completed task</label>
+    <select class="select" id="learning-task-example"><option value="">Refresh task choices</option></select>
+    <div class="actions">
+      <button class="btn btn--ghost" id="learning-task-refresh" type="button">Refresh my completed tasks</button>
+      <button class="btn btn--ghost" id="learning-task-more" type="button" hidden>More completed tasks</button>
+      <button class="btn" id="learning-task-open" type="button" disabled>Open this task</button>
+      <button class="btn btn--ghost" id="learning-task-clear" type="button">Write a separate new question</button>
+    </div>
+    <p class="muted" id="learning-task-status" role="status" aria-live="polite"></p>
+    <div id="learning-task-source" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>
+  </details>
+  <form id="learning-case-form" class="stack">
+    <label for="learning-case-model">Model</label>
+    <select class="select" id="learning-case-model" name="model" required disabled><option value="">Reading available models…</option></select>
+    <details id="learning-case-browse" class="stack">
+      <summary>Saved questions for this model</summary>
+      <p id="learning-case-page-status" class="muted" role="status"></p>
+      <div id="learning-case-list" class="stack"></div>
+      <div class="actions">
+        <button class="btn btn--ghost" id="learning-case-previous" type="button" hidden>Previous questions</button>
+        <button class="btn btn--ghost" id="learning-case-next" type="button" hidden>More questions</button>
+      </div>
+    </details>
+    <p id="learning-case-editing" class="muted">Add a new question.</p>
+    <label for="learning-case-question">Question or task</label>
+    <textarea class="input" id="learning-case-question" name="question" rows="4" maxlength="4000" required disabled></textarea>
+    <label for="learning-case-expected">Expected answer</label>
+    <textarea class="input" id="learning-case-expected" name="expected" rows="4" maxlength="4000" required disabled></textarea>
+    <div class="actions">
+      <button class="btn btn--primary" id="learning-case-review" type="submit" disabled>Review question</button>
+      <button class="btn btn--ghost" id="learning-case-refresh" type="button">Refresh current collection</button>
+      <button class="btn btn--ghost" id="learning-case-new" type="button" hidden>Add a new question</button>
+      <button class="btn btn--ghost" id="learning-case-retire" type="button" hidden>Review retirement</button>
+    </div>
+  </form>
+  <p id="learning-case-status" class="muted" role="status" aria-live="polite"></p>
+  <div id="learning-case-preview"></div>
+  <button class="btn btn--ghost" id="learning-case-original" type="button" hidden>Check original save outcome</button>
+  <button class="btn btn--ghost" id="learning-case-setup-original" type="button" hidden>Check original setup outcome</button>
+  <div id="learning-case-result" aria-live="polite"></div>
+  <p class="muted">Questions are shared with administrators who manage this learning storage. Future checks can send them to your configured AI providers. Saving uses no AI and spends nothing.</p>
+</section>
+<script src="/static/lightwork-learning-test-cases.js" defer></script>

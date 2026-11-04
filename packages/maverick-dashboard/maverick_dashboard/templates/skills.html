@@ -1,0 +1,390 @@
+{% extends "base.html" %}
+{% block title %}Skills · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set can_author = is_admin and install_allowed %}
+  {% call hero('Workforce capability', 'Skills',
+               subtitle='Teach it once, reuse it everywhere',
+               lede='A skill is a reusable set of steps you teach your agents in
+                     plain English: a name, the phrases that bring it up, and
+                     what to do. Agents start using it on their next task. Every
+                     skill is checked for passwords and unsafe content before
+                     it is saved.') %}
+    {{ state('Current state', (skills | length) ~ ' skills added',
+             badge='Ready' if skills else 'None yet',
+             badge_class='ok' if skills else 'idle',
+             copy='Create one here, or add one from a web address you trust.
+                   It is used from the next task.') }}
+  {% endcall %}
+  {% if can_open_page('/store') %}<p><a href="/store">Browse ready-made skills</a> that other people have written and checked.</p>{% endif %}
+
+  <div class="sk-grid">
+    <section class="panel" aria-labelledby="sk-create-title">
+      <h2 id="sk-create-title" class="sk-flush">Create a skill</h2>
+      {% if not is_admin %}
+        <p class="muted">Only administrators can add skills. Ask an administrator to add the one you need.</p>
+      {% elif not install_allowed %}
+        <p class="muted" role="status">Adding skills from this page is switched off on this server.
+          Ask whoever runs the server to allow it; until then the form below can't be used.</p>
+      {% endif %}
+      <form id="skill-create-form" class="sk-form">
+        <fieldset class="sk-fieldset" {% if not can_author %}disabled{% endif %}>
+          <legend class="sr-only">Skill details</legend>
+          <label class="sk-field">
+            <span>Name</span>
+            <input class="input" type="text" id="sc-name" required maxlength="80"
+                   placeholder="e.g. Weekly status summary" aria-describedby="sc-name-help" />
+            <span id="sc-name-help" class="muted sk-small">A short, memorable name.</span>
+          </label>
+          <label class="sk-field">
+            <span>When should agents use it?</span>
+            <textarea class="textarea" id="sc-triggers" rows="3" required aria-describedby="sc-triggers-help"
+                      placeholder="weekly status&#10;status summary&#10;summarize the week"></textarea>
+            <span id="sc-triggers-help" class="muted sk-small">One phrase per line. When a task mentions one of these, agents use this skill.</span>
+          </label>
+          <label class="sk-field">
+            <span>What should it do?</span>
+            <textarea class="textarea" id="sc-body" rows="9" required aria-describedby="sc-body-help"
+                      placeholder="What this skill is for&#10;&#10;1. First, …&#10;2. Then, …"></textarea>
+            <span id="sc-body-help" class="muted sk-small">Write the steps in plain sentences. Number them if the order matters.</span>
+          </label>
+          <fieldset class="sk-tools">
+            <legend>Tools it needs (optional)</legend>
+            {% if can_author %}
+            <label class="sk-field">
+              <span class="sr-only">Find a tool</span>
+              <input class="input" type="search" id="sc-tool-filter" placeholder="Find a tool…"
+                     aria-label="Find a tool" autocomplete="off" />
+            </label>
+            {# A scroll box a keyboard can reach. Not a live region: reading every
+               tool aloud when the list loads was noise. #}
+            <div id="sc-tool-list" class="sk-tool-list" role="region" tabindex="0" aria-label="Tools to choose from"></div>
+            {% else %}
+            {# A form that cannot be used has no tool list to scroll through. #}
+            <p class="muted sk-small">The tools a skill may use are chosen here when adding skills is allowed.</p>
+            {% endif %}
+          </fieldset>
+          <div class="sk-actions">
+            <button type="submit" class="btn btn--primary">Create skill</button>
+            <span id="skill-create-msg" role="status" aria-live="polite" class="muted sk-small"></span>
+          </div>
+        </fieldset>
+      </form>
+
+      <details class="sk-more" id="to-skill-install">
+        <summary>Add a skill from a web address</summary>
+        <p class="muted sk-small">Point Lightwork at a skill someone shared with you. Lightwork reads it and
+          shows you what it would make agents do before anything is added. <strong>Only add skills from
+          people you trust:</strong> agents follow a skill's instructions the next time they use it.</p>
+        <fieldset class="sk-fieldset" {% if not is_admin %}disabled{% endif %}>
+          <legend class="sk-small">Where is the skill?</legend>
+          <div class="sk-choice">
+            <label><input type="radio" name="to-skill-kind" value="web" checked> A web address</label>
+            <label><input type="radio" name="to-skill-kind" value="github"> A GitHub project</label>
+          </div>
+          <div id="to-skill-web">
+            <label class="sk-field"><span>Web address of the skill</span>
+              <input class="input" type="url" id="to-skill-url" maxlength="2000" placeholder="https://…" autocomplete="off"
+                     aria-label="Web address of the skill"></label>
+          </div>
+          <div id="to-skill-gh" hidden>
+            <label class="sk-field"><span>GitHub project (owner and name)</span>
+              <input class="input" type="text" id="to-skill-gh-project" maxlength="200" placeholder="your-company/skills" autocomplete="off" spellcheck="false"></label>
+            <label class="sk-field"><span>File in the project (optional)</span>
+              <input class="input" type="text" id="to-skill-gh-file" maxlength="300" placeholder="SKILL.md" autocomplete="off" spellcheck="false"
+                     aria-describedby="to-skill-gh-help"></label>
+            <span id="to-skill-gh-help" class="muted sk-small">Leave empty to use the project's main skill file.</span>
+          </div>
+          <div class="sk-actions"><button type="button" class="btn" id="to-skill-check">Check this skill</button></div>
+        </fieldset>
+        {% if not is_admin %}<p class="muted sk-small">Only administrators can add skills.</p>
+        {% elif not install_allowed %}<p class="muted sk-small">You can check a skill here, but adding one is switched off on this server.</p>{% endif %}
+        <p id="skill-install-msg" role="status" aria-live="polite" class="muted sk-small"></p>
+        <div id="to-skill-preview"></div>
+      </details>
+      <details class="sk-more">
+        <summary>Check a skill file before adding it</summary>
+        <p class="muted sk-small">Choose a skill file someone shared with you. Lightwork checks it for mistakes and unsafe
+          instructions without adding it.</p>
+        <label class="sk-field"><span>Skill file</span>
+          <input class="input" type="file" id="fa-skill-file" accept=".md,text/markdown,text/plain"></label>
+        <p id="fa-skill-status" role="status" aria-live="polite" class="muted sk-small"></p>
+        <div id="fa-skill-out"></div>
+      </details>
+    </section>
+
+    <section aria-labelledby="sk-list-title">
+      <div class="section-head"><h2 id="sk-list-title">Your skills</h2></div>
+      <div id="installed-skills">
+        {% for s in skills %}
+          {% set label = s.name | humanize %}
+          <div class="panel skill-card" data-skill="{{ s.name }}">
+            <div class="skill-card__head">
+              <strong>{{ label }}</strong>
+              {% if is_admin %}
+              <button type="button" class="btn btn--danger" data-skill-remove="{{ s.name }}"
+                      data-skill-label="{{ label }}" aria-label="Remove skill {{ label }}">Remove skill</button>
+              {% endif %}
+            </div>
+            {% if s.triggers %}
+            <p class="muted sk-small">Used when a task mentions:</p>
+            <div class="skill-tags">{% for t in s.triggers %}<span class="badge">{{ t }}</span>{% endfor %}</div>
+            {% endif %}
+            {% if s.tools_needed %}
+            <p class="muted sk-small">Uses: {% for t in s.tools_needed %}{{ t | humanize }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+            {% endif %}
+          </div>
+        {% endfor %}
+        {% if not skills %}
+          <div class="panel" id="no-skills">
+            <p class="muted sk-flush">No skills yet. Create your first one: give it a name, a few
+              phrases that bring it up, and the steps.</p>
+            {% if can_author %}<p><a class="btn btn--primary" href="#sc-name">Create a skill</a></p>{% endif %}
+          </div>
+        {% endif %}
+      </div>
+      {% if is_admin %}
+      <section id="manual-skill-removal" class="stack" aria-labelledby="manual-skill-removal-title">
+        <h3 id="manual-skill-removal-title">Remove a saved skill</h3>
+        <p class="muted sk-small">Review its exact current instructions before removing it. Nothing changes until you confirm; a lost reply can be checked here without removing it again.</p>
+        <div class="sk-actions">
+          <label for="manual-skill-original">Original removal</label>
+          <select id="manual-skill-original" class="select"><option value="">Choose an original removal</option></select>
+          <button type="button" class="btn btn--ghost" id="manual-skill-read" disabled>Read original result</button>
+          <button type="button" class="btn btn--ghost" id="manual-skill-refresh">Refresh original removals</button>
+        </div>
+        <p id="manual-skill-status" role="status" aria-live="polite" class="muted sk-small"></p>
+        <div id="manual-skill-review" class="stack" style="overflow-wrap:anywhere"></div>
+        <div id="manual-skill-result" class="stack" style="overflow-wrap:anywhere"></div>
+      </section>
+      {% endif %}
+    </section>
+  </div>
+
+  {% if is_admin %}
+  <section class="panel sk-section" aria-labelledby="to-learned-title" id="to-learned-skills">
+    <div class="section-head"><h2 id="to-learned-title">Suggestions from completed work</h2></div>
+    <p class="muted sk-small">Lightwork drafts these from repeated completed tasks. No suggestion guides an agent until you read its full instructions and choose to add it. You can remove an added suggestion here at any time.</p>
+    <p id="to-learned-status" role="status" aria-live="polite" class="muted">Checking suggestions…</p>
+    <div class="sk-actions"><button type="button" class="btn" id="to-learned-refresh">Refresh suggestions</button><button type="button" class="btn" id="to-learned-original" disabled>Check original result</button></div>
+    <div id="to-learned-list"></div>
+    <div id="to-learned-added"></div>
+    <div id="to-learned-review" class="stack" aria-live="polite"></div>
+    <div id="to-learned-result" class="stack" aria-live="polite"></div>
+    <div id="to-learned-history" class="stack"></div>
+  </section>
+  {% endif %}
+
+  <section class="panel sk-section" aria-labelledby="to-skill-usage-title">
+    <div class="section-head"><h2 id="to-skill-usage-title">How your skills are doing</h2></div>
+    <p class="muted sk-small">Each time agents use a skill, Lightwork notes whether the task went well.</p>
+    <p id="to-skill-usage-status" class="muted" role="status" aria-live="polite">Loading…</p>
+    <div id="to-skill-usage"></div>
+  </section>
+
+  {% if is_admin %}
+  <section class="panel sk-section" aria-labelledby="to-tidy-title">
+    <div class="section-head"><h2 id="to-tidy-title">Tidy up skills that rarely help</h2></div>
+    <p class="muted sk-small">Find skills that have had a fair trial and still rarely help, then remove them.
+      Lightwork allows for chance, so a skill is only listed when the evidence is clear.</p>
+    <div class="sk-row">
+      <label class="sk-field"><span>Used at least</span>
+        <select class="select" id="to-tidy-uses">
+          <option value="3">3 times</option><option value="5" selected>5 times</option>
+          <option value="10">10 times</option><option value="20">20 times</option>
+        </select></label>
+      <label class="sk-field"><span>And helped in at most</span>
+        <select class="select" id="to-tidy-rate">
+          <option value="0.1">1 in 10 tasks</option><option value="0.2" selected>1 in 5 tasks</option>
+          <option value="0.3">3 in 10 tasks</option>
+        </select></label>
+    </div>
+    <div class="sk-actions"><button type="button" class="btn" id="to-tidy-check">Find skills that rarely help</button></div>
+    <p id="to-tidy-status" class="muted" role="status" aria-live="polite"></p>
+    <div id="to-tidy-out"></div>
+  </section>
+  {% endif %}
+
+  <style>
+    .sk-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: var(--space-5); align-items: start; }
+    @media (max-width: 880px) { .sk-grid { grid-template-columns: 1fr; } }
+    .sk-flush { margin-top: 0; }
+    .sk-small { font-size: var(--text-sm); }
+    .sk-form, .sk-fieldset { display: flex; flex-direction: column; gap: var(--space-3); }
+    .sk-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+    .sk-field { display: flex; flex-direction: column; gap: var(--space-1); }
+    .sk-tools { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+    .sk-tool-list { max-height: 14rem; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-1); }
+    .sk-tool-list label { display: flex; gap: var(--space-2); align-items: flex-start; }
+    .sk-actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+    .sk-more { margin-top: var(--space-4); }
+    .sk-more > summary { cursor: pointer; }
+    .sk-install { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .sk-install .input { flex: 1 1 16rem; }
+    .skill-card { margin-bottom: var(--space-3); }
+    .skill-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+    .skill-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+    .sk-section { margin-top: var(--space-5); }
+    .sk-choice, .sk-row { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+    .to-card { margin: var(--space-3) 0; }
+    .to-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+    .to-text { white-space: pre-wrap; max-height: 16rem; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); }
+    .to-scroll { overflow-x: auto; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  </style>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var installedEl = document.getElementById('installed-skills');
+    var canRemove = {{ 'true' if is_admin else 'false' }};
+    function human(v) { return window.mvHuman ? window.mvHuman(v) : String(v || ''); }
+    function slug(text) {
+      return String(text || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+    }
+
+    // Show a newly created or added skill in the list without reloading.
+    function appendSkill(s) {
+      var empty = document.getElementById('no-skills');
+      if (empty) empty.remove();
+      var card = document.createElement('div');
+      card.className = 'panel skill-card';
+      card.setAttribute('data-skill', s.name);
+      var head = document.createElement('div');
+      head.className = 'skill-card__head';
+      var nm = document.createElement('strong');
+      nm.textContent = human(s.name);
+      head.appendChild(nm);
+      if (canRemove) {
+        var rm = document.createElement('button');
+        rm.type = 'button'; rm.className = 'btn btn--danger'; rm.textContent = 'Remove skill';
+        rm.setAttribute('data-skill-remove', s.name);
+        rm.setAttribute('data-skill-label', human(s.name));
+        rm.setAttribute('aria-label', 'Remove skill ' + human(s.name));
+        head.appendChild(rm);
+      }
+      card.appendChild(head);
+      if (s.triggers && s.triggers.length) {
+        var lead = document.createElement('p');
+        lead.className = 'muted sk-small'; lead.textContent = 'Used when a task mentions:';
+        card.appendChild(lead);
+        var tags = document.createElement('div');
+        tags.className = 'skill-tags';
+        s.triggers.forEach(function (t) {
+          var tag = document.createElement('span');
+          tag.className = 'badge'; tag.textContent = t; tags.appendChild(tag);
+        });
+        card.appendChild(tags);
+      }
+      if (s.tools_needed && s.tools_needed.length) {
+        var p = document.createElement('p');
+        p.className = 'muted sk-small';
+        p.textContent = 'Uses: ' + s.tools_needed.map(human).join(', ');
+        card.appendChild(p);
+      }
+      installedEl.appendChild(card);
+    }
+    window.lwAppendSkill = appendSkill;
+
+    // Review the current version first. The card stays until the native
+    // original receipt confirms removal; a lost reply never means success.
+    installedEl.addEventListener('click', function (event) {
+      var btn = event.target.closest('[data-skill-remove]');
+      if (!btn) return;
+      var name = btn.getAttribute('data-skill-remove');
+      if (window.LightworkManualSkillRemoval) window.LightworkManualSkillRemoval.review(name);
+      else window.mvToast('Removal controls are still loading. Nothing was removed.');
+    });
+
+    // Tools picker: a filterable checklist of the tools agents can use.
+    var toolList = document.getElementById('sc-tool-list');
+    var toolFilter = document.getElementById('sc-tool-filter');
+    function renderTools(tools) {
+      toolList.textContent = '';
+      if (!tools.length) {
+        var none = document.createElement('p');
+        none.className = 'muted sk-small'; none.textContent = 'No tools are available yet. You can still create the skill.';
+        toolList.appendChild(none); return;
+      }
+      tools.sort(function (a, b) { return human(a.name).localeCompare(human(b.name)); }).forEach(function (t) {
+        var label = document.createElement('label');
+        var box = document.createElement('input');
+        box.type = 'checkbox'; box.value = t.name; box.setAttribute('data-skill-tool', '');
+        var text = document.createElement('span');
+        text.textContent = human(t.name) + (t.description ? ' — ' + t.description : '');
+        label.setAttribute('data-search', (human(t.name) + ' ' + (t.description || '')).toLowerCase());
+        label.appendChild(box); label.appendChild(text); toolList.appendChild(label);
+      });
+    }
+    function loadTools() {
+      // The shared loading state (lightwork-ui.js, loaded at the end of the page).
+      var toolWait = window.mvLoading(toolList, {text: 'Loading tools…'});
+      window.mvFetchJSON('/api/v1/tools', {}, 'load the list of tools').then(async function (data) { await toolWait.done(); renderTools((data && data.tools) || []); }).catch(async function (e) {
+        await toolWait.done();
+        toolList.textContent = '';
+        var p = document.createElement('p');
+        p.className = 'muted sk-small';
+        p.textContent = window.mvErrorText(e, 'load the list of tools') + ' You can still create the skill without choosing tools.';
+        toolList.appendChild(p);
+      });
+    }
+    if (toolList) {
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadTools); else loadTools();
+      toolFilter.addEventListener('input', function () {
+        var q = toolFilter.value.trim().toLowerCase();
+        toolList.querySelectorAll('label[data-search]').forEach(function (l) {
+          l.hidden = !!q && l.getAttribute('data-search').indexOf(q) === -1;
+        });
+      });
+    }
+
+    // Create a skill from the form.
+    var form = document.getElementById('skill-create-form');
+    if (!form) return;
+    var name = document.getElementById('sc-name');
+    var triggers = document.getElementById('sc-triggers');
+    var body = document.getElementById('sc-body');
+    var msg = document.getElementById('skill-create-msg');
+    var submit = form.querySelector('button[type="submit"]');
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      var key = slug(name.value);
+      if (!key) { msg.textContent = 'Give the skill a name that includes letters or numbers.'; name.focus(); return; }
+      var existing = Array.prototype.filter.call(installedEl.querySelectorAll('[data-skill]'), function (c) { return c.getAttribute('data-skill') === key; });
+      if (existing.length) {
+        var replace = await window.mvConfirm('A skill called “' + human(key) + '” already exists. Replace it with this one?', {okText: 'Replace'});
+        if (!replace) return;
+        existing.forEach(function (c) { c.remove(); });
+      }
+      var payload = {
+        name: key,
+        triggers: triggers.value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean),
+        tools_needed: Array.prototype.map.call(form.querySelectorAll('[data-skill-tool]:checked'), function (b) { return b.value; }),
+        instructions: body.value
+      };
+      var btn = submit;
+      if (btn) btn.disabled = true;
+      msg.textContent = 'Creating…';
+      try {
+        var r = await fetch('/api/v1/skills/create', {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+          body: JSON.stringify(payload)
+        });
+        if (r.ok) {
+          var s = await r.json().catch(function () { return null; });
+          if (s && s.name) { appendSkill(s); msg.textContent = 'Created ' + human(s.name) + '. Agents use it from the next task.'; form.reset(); }
+          else msg.textContent = 'Created.';
+        } else if (r.status === 422) {
+          msg.textContent = 'The skill wasn’t saved. It needs a name, at least one phrase and some steps, and it can’t contain passwords or unsafe instructions.';
+        } else {
+          msg.textContent = window.mvErrorText(r, 'create the skill');
+        }
+      } catch (e) { msg.textContent = window.mvErrorText(e, 'create the skill'); }
+      finally { if (btn) btn.disabled = false; }
+    });
+  })();
+  </script>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+  <script src="/static/lightwork-tool-ops.js" defer></script>
+  <script src="/static/lightwork-manual-skill-removal.js" defer></script>
+{% endblock %}

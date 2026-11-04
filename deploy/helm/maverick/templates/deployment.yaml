@@ -1,0 +1,118 @@
+{{- include "maverick.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "maverick.fullname" . }}
+  labels:
+    {{- include "maverick.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    {{- if and .Values.persistence.enabled (not .Values.autoscaling.enabled) }}
+    type: Recreate          # single-replica RWO volume: tear down before re-attach
+    {{- else }}
+    # Reserved future shared-state autoscaling path, or no local volume.
+    type: RollingUpdate
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "maverick.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "maverick.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 30 }}
+      containers:
+        - name: maverick
+          image: {{ include "maverick.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["dashboard", "--host", "0.0.0.0", "--port", "{{ .Values.service.targetPort }}"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+          env:
+            {{- if not (hasKey .Values.env "MAVERICK_WORKDIR") }}
+            - name: MAVERICK_WORKDIR
+              value: {{ printf "%s/workspace" (.Values.persistence.mountPath | trimSuffix "/") | quote }}
+            {{- end }}
+            {{- if eq .Values.worldModel.backend "postgres" }}
+            - name: MAVERICK_WORLD_BACKEND
+              value: "postgres"
+            {{- if .Values.worldModel.postgres.rls }}
+            - name: MAVERICK_PG_RLS
+              value: "1"
+            {{- end }}
+            {{- end }}
+            {{- if .Values.enterprise.profile }}
+            # Named deployment posture. "enterprise" turns the data-boundary on by
+            # default (egress lock + fail-closed consent + capabilities); requires a
+            # self-hosted/allow-listed LLM provider. "standard" leaves it off.
+            - name: MAVERICK_PROFILE
+              value: {{ .Values.enterprise.profile | quote }}
+            {{- end }}
+            {{- if .Values.enterprise.required }}
+            # Hard preflight gate: dashboard startup aborts unless the enterprise
+            # data-boundary guarantees hold (see values.yaml: enterprise.required).
+            - name: MAVERICK_REQUIRE_ENTERPRISE
+              value: "1"
+            {{- end }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "maverick.secretName" . }}
+          {{- if .Values.probes.enabled }}
+          readinessProbe:
+            httpGet: {path: "/readyz", port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: "/livez", port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          {{- end }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]   # let the LB deregister before SIGTERM
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if and .Values.persistence.enabled (not .Values.autoscaling.enabled) }}
+          volumeMounts:
+            - name: state
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and .Values.persistence.enabled (not .Values.autoscaling.enabled) }}
+      volumes:
+        # A single ReadWriteOnce PVC can only attach to one node. The currently
+        # supported control plane is one replica; the reserved HPA path is
+        # rejected until every durable control-plane store is shared.
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ include "maverick.fullname" . }}-state
+      {{- end }}

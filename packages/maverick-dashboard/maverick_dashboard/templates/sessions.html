@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Sessions · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Administration', 'Sessions',
+               subtitle='Where you are signed in',
+               lede='Every device signed in with a named account, how it signed in, and
+                     whether that sign-in included a second factor. Sign out a device you
+                     do not recognise, or sign out everywhere to end every session at once.') %}
+    {{ state('Current state',
+             rows | length ~ ' active ' ~ ('session' if rows | length == 1 else 'sessions'),
+             badge='Second factor required' if mfa_required else 'Second factor optional',
+             badge_class='ok' if mfa_required else 'idle',
+             copy=('Showing everyone' if everyone else ('Showing ' ~ (filter_principal | identity).name if filter_principal else 'Showing your sessions'))) }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel users-saved" role="status"><strong>Done.</strong> {{ saved }}</div>
+  {% endif %}
+
+  {% if is_admin and people | length > 1 %}
+  <div class="panel">
+    <form method="get" action="/settings/sessions" class="users-row-form">
+      <label for="sessions-person">Show one person</label>
+      <select id="sessions-person" name="principal">
+        <option value="">Everyone</option>
+        {% for person in people %}
+        <option value="{{ person }}"{% if person == filter_principal %} selected{% endif %}>{{ (person | identity).name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn">Show</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Active sessions</h2></div>
+  <div class="panel">
+    {% if rows %}
+    <table>
+      <thead><tr>
+        <th scope="col">Person</th><th scope="col">Signed in with</th>
+        <th scope="col">Second factor</th><th scope="col">Signed in</th>
+        <th scope="col">Last seen</th><th scope="col">Address</th>
+        <th scope="col">Device</th><th scope="col">Actions</th>
+      </tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ (row.principal | identity).name }}{% if row.principal == you %} <span class="muted">(you)</span>{% endif %}</td>
+          <td>{{ row.method }}</td>
+          <td>{% if row.mfa %}Yes{% else %}No{% endif %}</td>
+          <td>{{ row.issued_at | datetime('absolute') }}</td>
+          <td>{{ row.last_seen | datetime }}{% if row.current %} <span class="muted">(this device)</span>{% endif %}</td>
+          <td>{{ row.ip or '—' }}</td>
+          <td>{{ row.user_agent }}</td>
+          <td>
+            <form method="post" action="/settings/sessions/revoke" class="users-row-form">
+              <input type="hidden" name="sid" value="{{ row.sid }}" />
+              <button type="submit" class="btn btn--ghost">{% if row.current %}Sign out this device{% else %}Sign out{% endif %}</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No active sessions are recorded. Sessions appear here once people sign in
+      with a named account. Sign-ins from before session tracking was added are not listed
+      and end when they expire, or with <strong>Sign out everywhere</strong>.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Sign out everywhere</h2></div>
+  <div class="panel">
+    <p class="muted">Ends every session for one person, including sign-ins this page cannot
+      list and any access tokens issued before now. That person will need to sign in again.</p>
+    <form method="post" action="/settings/sessions/revoke-all" class="users-row-form">
+      {% if is_admin %}
+      <label for="sessions-everyone-person">Person</label>
+      <select id="sessions-everyone-person" name="principal">
+        {% if you %}<option value="{{ you }}">Me</option>{% endif %}
+        {% for person in people if person != you %}
+        <option value="{{ person }}">{{ (person | identity).name }}</option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <input type="hidden" name="principal" value="{{ you or '' }}" />
+      {% endif %}
+      <button type="submit" class="btn btn--primary">Sign out everywhere</button>
+    </form>
+  </div>
+{% endblock %}

@@ -1,0 +1,9 @@
+<section class="panel" id="wx-panel" aria-labelledby="wx-title" hidden
+         data-flow-id="{{ flow_id }}" data-run-id="{{ run_id|default('') }}">
+  <div class="section-head"><h2 id="wx-title">Learning, permissions and results</h2>
+    <button type="button" class="btn btn--ghost" id="wx-refresh">Check current evidence</button></div>
+  <p id="wx-status" class="muted" role="status" aria-live="polite">Checking the saved workflow…</p>
+  <div id="wx-content"></div>
+  <p><a class="btn btn--ghost" href="/research?release_flow={{ flow_id|urlencode }}#local-flow-release">Review a taught workflow release</a></p>
+</section>
+<script src="/static/lightwork-workflow-explanation.js" defer></script>

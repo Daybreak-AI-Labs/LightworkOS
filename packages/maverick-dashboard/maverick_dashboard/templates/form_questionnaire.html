@@ -1,0 +1,94 @@
+{% extends "public_base.html" %}
+{% block title %}Questionnaire · Lightwork{% endblock %}
+{% block content %}
+<style{% if csp_style_nonce is defined %} nonce="{{ csp_style_nonce }}"{% endif %}>
+  .fq-page { width: 100%; max-width: 46rem; margin: 0 auto; }
+  .fq-q { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+  .fq-q fieldset { border: 0; padding: 0; margin: 0; }
+  .fq-q legend { font-weight: var(--font-medium); margin-bottom: var(--space-1); }
+  .fq-section { color: var(--muted, #777); font-size: var(--text-xs);
+                text-transform: uppercase; letter-spacing: 0.04em; }
+  .fq-choices { display: flex; gap: var(--space-4); margin-top: var(--space-1); }
+  .fq-choices label { display: flex; gap: var(--space-1); align-items: center; }
+  .fq-actions { margin-top: var(--space-4); display: flex; gap: var(--space-3);
+                align-items: center; }
+</style>
+{% from "_hero.html" import hero %}
+<div class="fq-page">
+{{ hero('', questionnaire.vendor ~ ' — security & risk questionnaire', compact=true,
+        lede='Requested by your customer through their Lightwork
+              governance platform. Answer each question honestly; you can add context
+              in the notes box at the end. Your answers are recorded against this
+              link only.') }}
+<section class="panel fq-wrap">
+  <form id="fq-form">
+    {% for q in questionnaire.questions %}
+    <div class="fq-q">
+      <fieldset>
+        <legend><span class="fq-section">{{ q.section }}</span><br>{{ q.text }}</legend>
+        <div class="fq-choices">
+          <label><input type="radio" name="{{ q.qid }}" value="yes" required> Yes</label>
+          <label><input type="radio" name="{{ q.qid }}" value="no"> No</label>
+        </div>
+      </fieldset>
+    </div>
+    {% endfor %}
+    <div class="fq-q">
+      <label for="fq-notes"><strong>Anything we should know?</strong> (optional)</label><br>
+      <textarea id="fq-notes" name="_notes" rows="4" maxlength="4000"
+                style="width:100%;margin-top:var(--space-1);"></textarea>
+    </div>
+    <div class="fq-actions">
+      <button class="btn btn--primary" type="submit" id="fq-submit">Submit answers</button>
+      <span id="fq-msg" role="status" aria-live="polite"></span>
+    </div>
+  </form>
+</section>
+</div>
+<script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var form = document.getElementById('fq-form');
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var msg = document.getElementById('fq-msg');
+      var btn = document.getElementById('fq-submit');
+      var body = {};
+      form.querySelectorAll('[name]').forEach(function (el) {
+        if (el.type === 'radio') {
+          if (el.checked) body[el.name] = el.value;
+        } else if (el.value) {
+          body[el.name] = el.value;
+        }
+      });
+      btn.disabled = true; msg.textContent = 'Submitting…';
+      fetch(location.pathname, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function (r) {
+        if (!r.ok) {
+          var e = new Error('send');
+          e.status = r.status;
+          throw e;
+        }
+        form.querySelectorAll('input,textarea,button').forEach(function (el) {
+          el.disabled = true;
+        });
+        msg.textContent = 'Thank you — your answers were recorded. You can close this page.';
+      }).catch(function (e) {
+        btn.disabled = false;
+        if (e && (e.status === 404 || e.status === 410)) {
+          msg.textContent = 'This link is no longer active. Ask the person who sent it for a new one.';
+        } else if (e && (e.status === 400 || e.status === 422)) {
+          msg.textContent = 'Please answer every question, then submit again.';
+        } else if (e && e.status === 409) {
+          msg.textContent = 'These answers were already sent. You can close this page.';
+        } else {
+          msg.textContent = 'Your answers could not be sent. Check your connection and try again.';
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}

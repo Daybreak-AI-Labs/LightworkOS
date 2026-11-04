@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ "Safety settings need attention" if policy_error else ("Lightwork can't save changes right now" if read_only_error else "Something went wrong") }} · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero %}
+  {% if policy_error %}
+    {% set failure_actions %}
+      <a class="btn btn--primary" href="/help#installation-health">Run a health check</a>
+      <a class="btn" href="/settings#settings-features">Open safety settings</a>
+      <a class="btn btn--ghost" href="/">Back to home</a>
+    {% endset %}
+    {{ hero('', 'Safety settings need attention',
+            lede='Lightwork stopped safely because its policy configuration could not be
+                  read or validated. An administrator must restore or repair it before
+                  this operation can continue.',
+            actions=failure_actions) }}
+    <details class="panel">
+      <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">For administrators</summary>
+      <p class="muted" style="margin: 0.5rem 0 0;">
+        Lightwork’s safety settings couldn’t be read. Restore the last reviewed
+        safety settings, then run the health check before trying again. The
+        Help page can prepare a support report if you need assistance.
+      </p>
+    </details>
+  {% elif read_only_error %}
+    {% set failure_actions %}<a class="btn" href="/help">Open Help and diagnostics</a><a class="btn btn--ghost" href="/">Back to home</a>{% endset %}
+    {{ hero('', "Lightwork can't save changes right now",
+            lede="Its database is read-only, so nothing was changed. Everything already saved is safe and you can
+                  still read and export it. It works again as soon as an administrator makes the database
+                  writable; Help and diagnostics shows where it is.",
+            actions=failure_actions) }}
+    <p class="muted">Support reference: {{ failure_reference or 'Unavailable' }}</p>
+  {% else %}
+    {% set failure_lede %}{% if uncertain_mutation %}The change could not be confirmed. Check its current state before repeating it.{% else %}This page could not be loaded. You can retry loading it.{% endif %} If this keeps happening, contact your administrator with the support details below.{% endset %}
+    {% set failure_actions %}<a class="btn" href="/">Back to home</a>{% endset %}
+    {{ hero('', 'Something went wrong', lede=failure_lede, actions=failure_actions) }}
+    <details class="panel">
+      <summary class="muted" style="cursor: pointer; font-size: var(--text-sm);">Support details</summary>
+      <p class="muted">Support reference: {{ failure_reference or 'Unavailable' }}</p>
+      {% if failure_time %}<p class="muted">Time: {{ failure_time }}</p>{% endif %}
+      <p class="muted" style="margin: 0.5rem 0 0;">An administrator can locate this reference in restricted server logs, or prepare a support report on the <a href="/help{% if failure_reference %}?failure={{ failure_reference }}{% endif %}">Help</a> page.</p>
+      <button type="button" class="btn btn--ghost" id="support-copy"{% if failure_reference %} data-failure-reference="{{ failure_reference }}"{% endif %} data-copy="Support reference: {{ failure_reference or 'Unavailable' }}{% if failure_time %} | Time: {{ failure_time }}{% endif %}">Copy support details</button>
+    </details>
+  {% endif %}
+  <script nonce="{{ csp_script_nonce }}">
+    (function () { var b = document.getElementById('support-copy'); if (b) b.addEventListener('click', function () { if (window.mvCopy) mvCopy(b.getAttribute('data-copy')); }); })();
+  </script>
+{% endblock %}

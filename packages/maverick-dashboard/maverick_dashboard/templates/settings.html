@@ -1,0 +1,1336 @@
+{% extends "base.html" %}
+{% block title %}Settings · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_integration_readiness.html" import provider_status %}
+  {% from "_form_field.html" import error_summary %}
+  {# The main action is the AI-service setup step the workspace still needs;
+     each section's own Save stays a plain button. #}
+  {% set settings_actions %}{% if workspace.next_action %}<a class="btn btn--primary" href="{{ workspace.next_action.href }}">{{ workspace.next_action.label }}</a>{% endif %}{% endset %}
+  {% call hero('Administration', 'Settings',
+               subtitle='Set up Lightwork',
+               lede='Appearance, AI models, spending, connections and features.
+                     Each section saves on its own and applies to the next task.',
+               actions=settings_actions if workspace.next_action else '') %}
+    {{ state('Current state',
+             'AI services: ' ~ workspace.summary,
+             badge=workspace.verdict_label,
+             badge_class=workspace.badge_class,
+             copy=workspace.reason ~ ' Keys are stored securely and never shown again.') }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel settings-saved" role="status" data-mv-toast="Saved. {{ saved }}" data-mv-keep-done="settings-{{ request.query_params.get('saved', '') }}">
+    <strong>Saved.</strong> {{ saved }}
+  </div>
+  {% endif %}
+  {% if notice %}
+  <div class="panel settings-saved" role="status" id="settings-notice">{{ notice }}</div>
+  {% endif %}
+
+  <p class="muted">Review setting changes and who made them in the
+    <a href="/audit?kind=setting_changed">Activity log</a>. This metadata view does not display the values before and after a change. A prepared entry alone does not confirm a save.
+    If a save reports that its completion record is unavailable, refresh Settings and Activity before retrying.</p>
+
+  {# The group shown first is decided here, not by the page script, so the
+     page never paints all six groups and then hides five of them. #}
+  {% set settings_tabs = [('general', 'General'), ('models', 'Models'), ('integrations', 'Connections'),
+                          ('controls', 'Features'), ('access', 'Access'), ('maintenance', 'Maintenance')] %}
+  {% set settings_group = saved_section if saved_section in settings_tabs | map('first') | list else 'general' %}
+  <section class="settings-index" aria-labelledby="settings-index-title"
+           data-initial-group="{{ saved_section or 'general' }}">
+    <div>
+      <h2 id="settings-index-title">Settings sections</h2>
+      <p class="muted">Choose a section, or search settings by name and description.</p>
+    </div>
+    <label for="settings-search">Find a setting
+      <input class="input" id="settings-search" type="search" maxlength="100"
+             placeholder="Provider, budget, visibility…" aria-controls="settings-sections">
+    </label>
+    {% from "_tabs.html" import panel_tabs %}
+    {{ panel_tabs('Settings sections', settings_tabs, settings_group, id='settings', data='settings-tab', controls='settings-sections') }}
+    <p class="muted" id="settings-filter-status" role="status" aria-live="polite"></p>
+    <p class="settings-all-link">
+      <a class="btn btn--ghost" href="/settings/all">All settings</a>
+      <span class="muted">Every other product setting, from safety and privacy to data retention and alerts.</span>
+    </p>
+  </section>
+
+  <style>
+    /* Before the page script takes over the tabs, the sections element names
+       the one group that shows; every other group's headings and panels stay
+       hidden from the first paint. */
+    {% for key, _label in settings_tabs %}#settings-sections[data-settings-active="{{ key }}"] [data-settings-group]:not([data-settings-group="{{ key }}"]){{ ',' if not loop.last }}
+    {% endfor %}{ display: none; }
+  </style>
+  <div id="settings-sections" data-settings-active="{{ settings_group }}" role="tabpanel" aria-labelledby="settings-tab-{{ settings_group }}">
+  <script nonce="{{ csp_script_nonce }}">
+  // A link to /settings#settings-<group> (or an older section name) shows that
+  // group, and selects its tab, from the first paint: the server cannot see
+  // the address fragment. The page script below then takes over the tabs.
+  window.mvSettingsGroupFor = function (hash) {
+    var aliases = {appearance: 'general', budget: 'general', providers: 'integrations', webhooks: 'integrations', 'webhook-settings': 'integrations', 'webhook-secret': 'integrations', capabilities: 'controls', features: 'controls', visibility: 'access', voice: 'models', discovery: 'models', connections: 'integrations', system: 'maintenance'};  // pragma: allowlist secret -- settings section names, not a value
+    var name = String(hash || '').replace(/^#settings-?/, '').replace(/^#/, '');
+    if (/^feature-[a-z][a-z0-9_]*$/.test(name)) return 'controls';
+    if (Object.prototype.hasOwnProperty.call(aliases, name)) name = aliases[name];
+    return ['general', 'models', 'integrations', 'controls', 'access', 'maintenance'].indexOf(name) === -1 ? '' : name;
+  };
+  (function () {
+    var wanted = window.mvSettingsGroupFor(window.location.hash);
+    var sections = document.getElementById('settings-sections');
+    if (!wanted || !sections || sections.dataset.settingsActive === wanted) return;
+    sections.dataset.settingsActive = wanted;
+    sections.setAttribute('aria-labelledby', 'settings-tab-' + wanted);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-settings-tab]'), function (tab) {
+      var selected = tab.dataset.settingsTab === wanted;
+      tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+      tab.tabIndex = selected ? 0 : -1;
+    });
+  })();
+  </script>
+  <div class="section-head" data-settings-group="general" id="settings-general"><h2>Appearance</h2></div>
+  <div class="panel" data-settings-group="general">
+    <p class="muted settings-lead">Theme, density and font follow your signed-in account. Use Display preferences for an explicit device-only override. Applies without leaving your draft.</p>
+    <form method="get" action="/settings" class="settings-row-form">
+      <input type="hidden" name="saved" value="appearance" />
+      <label class="settings-field">
+        <span>Theme</span>
+        <select class="select" id="settings-theme" name="theme">
+          <option value="system" {% if theme == 'system' %}selected{% endif %}>Follow system</option>
+          <option value="dark" {% if theme == 'dark' %}selected{% endif %}>Dark</option>
+          <option value="light" {% if theme == 'light' %}selected{% endif %}>Light</option>
+          <option value="solarized" {% if theme == 'solarized' %}selected{% endif %}>Solarized</option>
+          <option value="hicontrast" {% if theme == 'hicontrast' %}selected{% endif %}>High contrast</option>
+          {% for name in custom_theme_names %}
+          <option value="{{ name }}" {% if theme == name %}selected{% endif %}>{{ name|humanize }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="settings-field">
+        <span>Density</span>
+        <select class="select" id="settings-density" name="density">
+          <option value="comfortable" {% if density == 'comfortable' %}selected{% endif %}>Comfortable</option>
+          <option value="compact" {% if density == 'compact' %}selected{% endif %}>Compact</option>
+        </select>
+      </label>
+      <label class="settings-field">
+        <span>Font</span>
+        <select class="select" id="settings-font" name="font">
+          <option value="default" {% if font == 'default' %}selected{% endif %}>{{ t('font.default') }}</option>
+          <option value="dyslexic" {% if font == 'dyslexic' %}selected{% endif %}>{{ t('font.dyslexic') }}</option>
+        </select>
+      </label>
+      <button type="submit" class="btn">Apply</button>
+    </form>
+  </div>
+
+  <div class="panel" data-settings-group="integrations"><h3>Notification delivery</h3><p>Check whether organization alerts reached the notification service.</p><a class="btn btn--ghost" href="/settings/notifications">Delivery history and test</a></div>
+  {% if show_personal_notifications %}
+  <div class="panel" data-settings-group="integrations"><h3>Your task alerts</h3><p>See when your work finishes or needs your answer, then choose which private alerts you receive.</p><a class="btn btn--ghost" href="/notifications#notification-preferences">Your notifications</a></div>
+  {% endif %}
+
+  <div class="section-head" data-settings-group="models" id="settings-models"><h2>Models</h2></div>
+  <div class="panel" data-settings-group="models">
+    <p class="muted settings-lead">
+      Choose from provider model lists and Lightwork's built-in choices.
+      Previous lists stay visible when a check fails or becomes out of date.
+      Nothing changes until you save a choice below.
+    </p>
+    <div class="models-overview" role="group" aria-label="Model availability">
+      <div class="stat"><span class="num">{{ configured_count }}</span><span class="muted">provider{{ '' if configured_count == 1 else 's' }} set up</span></div>
+      <div class="stat"><span class="num">{{ offered_specs|length }}</span><span class="muted">model choice{{ '' if offered_specs|length == 1 else 's' }} listed</span></div>
+      <div class="stat"><span class="num">{{ live_count }}</span><span class="muted">up-to-date list{{ '' if live_count == 1 else 's' }}{% if last_refresh_ago %} · refreshed {{ last_refresh_ago }}{% endif %}</span></div>
+      <form method="post" action="/settings/models/discover" class="models-overview-action">
+        <button type="submit" class="btn"{% if not discovery_enabled or not configured_count %} disabled aria-disabled="true"{% endif %}>Refresh model lists</button>
+      </form>
+    </div>
+    {% if not discovery_enabled %}
+    <div class="settings-callout" data-settings-search-item>
+      <p>Automatic model lists are turned off, so only Lightwork's built-in model list is shown.</p>
+      {% if discovery_locked %}
+      <p class="muted">This is controlled by your installation. Ask whoever installed Lightwork to change it.</p>
+      {% else %}
+      <form method="post" action="/settings/models/discovery">
+        <input type="hidden" name="enabled" value="on" />
+        <button type="submit" class="btn">Turn on automatic model lists</button>
+      </form>
+      {% endif %}
+    </div>
+    {% elif not configured_count %}
+    <p class="muted">No AI service is set up yet. Add one under <a href="#settings-integrations" data-settings-jump="integrations">Provider keys</a> and its models will appear here.</p>
+    {% endif %}
+    {% set status_words = {'live': 'Up to date', 'unavailable': 'Could not confirm', 'unconfigured': 'Not set up', 'pending': 'Not checked yet', 'disabled': 'Built-in list', 'unsupported': 'Built-in list', 'configured': 'Saved model', 'catalog': 'Added by your installation'} %}
+    <ul class="models-status" aria-label="Model list status by provider">
+      {% for g in model_groups if g.name != 'custom' %}
+      {% set current_list = g.status == 'live' and not g.stale %}
+      <li data-settings-search-item>
+        <span class="models-status-label">{{ g.label }}</span>
+        <span class="badge {{ 'active' if current_list else ('blocked' if g.status == 'unavailable' else '') }}">{{ 'Previous list' if g.status == 'live' and g.stale else status_words.get(g.status, 'Built-in list') }}</span>
+        <span class="muted">
+          {%- if current_list %}{{ g.live_count }} model{{ '' if g.live_count == 1 else 's' }} listed in the current check.
+          {%- elif g.status == 'live' and g.stale %}The earlier model list needs a fresh check.
+          {%- elif g.status == 'unavailable' %}The current model list could not be confirmed. Try refreshing later.
+          {%- elif g.status == 'unconfigured' %}{{ g.detail }}
+          {%- elif g.status == 'pending' %}Refresh to see the models this connection can reach.
+          {%- elif g.status == 'configured' %}Using the model saved in your connection.
+          {%- else %}Showing Lightwork's built-in list for this provider.{% endif %}
+          {%- if g.previous_count|default(0) %} {{ g.previous_count }} previous choice{{ '' if g.previous_count == 1 else 's' }} kept; availability needs a fresh check.{% endif %}
+          {%- if g.fetched_ago %} · last successful list {{ g.fetched_ago }}{% endif %}
+          {%- if g.last_attempt_ago and not current_list %} · last attempt {{ g.last_attempt_ago }}{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="muted">Current availability and any reported free rate need a fresh successful check. Review a spending ceiling when a usable price is missing; your saved model choices stay as you left them.</p>
+    {% if discovery_enabled and not discovery_locked %}
+    <form method="post" action="/settings/models/discovery" class="settings-inline-form">
+      <input type="hidden" name="enabled" value="off" />
+      <button type="submit" class="btn btn--ghost">Turn off automatic model lists</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if model_guidance_enabled %}
+  <div class="panel" data-settings-group="models">
+    <h3>Find a suitable model</h3>
+    <label>Filter choices <select class="select" id="model-capability-filter">
+      <option value="all">All approved choices</option><option value="tools">Known tool support</option>
+      <option value="vision">Known image support</option><option value="self_hosted">Local or self-hosted</option>
+      <option value="unknown">Unknown capabilities</option>
+    </select></label>
+    <p class="muted">Filters use reported evidence. Missing metadata does not mean a model lacks a capability. Other model (advanced) stays available and the approved-model policy still applies.</p>
+    <p class="muted">Refresh model lists above checks availability with a bounded request; it does not run a paid generation or prove tool quality. Pricing is a dated planning reference, not a final invoice.</p>
+    <script nonce="{{ csp_script_nonce }}" type="application/json" id="model-guidance-data">{{ model_guidance|tojson }}</script>
+  </div>
+  {% endif %}
+
+  <section class="panel" data-settings-group="models" id="settings-model-prices" aria-labelledby="model-prices-title">
+    <h3 id="model-prices-title">Prices for the models you use</h3>
+    <p class="muted">A model without a usable price stops <strong>before</strong> Lightwork sends a paid request. Review the models that will be used on the next task:</p>
+    <table data-model-rate-status><thead><tr><th scope="col">Work</th><th scope="col">Model</th><th scope="col">Price status</th></tr></thead>
+      <tbody>{% for route in route_prices %}<tr>
+        <td>{{ route.label }}</td><td>{{ route.spec|model_label }}<br><span class="muted">Exact model: {{ route.spec }}</span></td>
+        <td><span class="badge {{ 'active' if route.ready else 'blocked' }}">{{ route.status }}</span></td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    <p class="muted">For a company contract or private gateway, enter the <strong>highest USD input and output rates</strong> that apply to the exact model route, including any cache charges. Lightwork uses them to guard its spending limit and assumes no cache discount. Your provider's invoice remains the final bill. An entered rate is shown as an estimate and is never invoice evidence.</p>
+    <form method="post" action="/settings/models/rate" class="settings-row-form" data-settings-local="true">
+      <label class="settings-field">Model
+        <select class="select" name="rate_model" data-model-picker="rate-model-custom" required>
+          <option value="">Choose a model</option>
+          {% for pg in picker_groups %}<optgroup label="{{ pg.label }}">{% for m in pg.options %}<option value="{{ m.spec }}">{{ m.spec|model_label }}{% if m.last_known %} · previous list{% endif %}</option>{% endfor %}</optgroup>{% endfor %}
+          <option value="{{ custom_marker }}">Other model (advanced)…</option>
+        </select>
+      </label>
+      <label class="settings-field" id="rate-model-custom" hidden>Exact model route
+        <input class="input" name="rate_model_custom" maxlength="128" placeholder="provider:model-name">
+      </label>
+      <label class="settings-field">Maximum input price, USD per million tokens
+        <input class="input" type="number" name="input_per_mtok" min="0" max="1000000" step="any" required>
+      </label>
+      <label class="settings-field">Maximum output price, USD per million tokens
+        <input class="input" type="number" name="output_per_mtok" min="0" max="1000000" step="any" required>
+      </label>
+      <label class="settings-field">Where you checked the price
+        <input class="input" name="source" maxlength="300" required placeholder="Provider price page or contract reference (no secrets)">
+      </label>
+      <label class="settings-field">Price applies from
+        <input class="input" type="date" name="as_of" max="{{ price_today }}" value="{{ price_today }}" required>
+      </label>
+      <label class="settings-field">Review again by
+        <input class="input" type="date" name="valid_until" min="{{ price_today }}" value="{{ price_review_until }}" required>
+      </label>
+      <label class="settings-field"><input type="checkbox" name="confirm" required>
+        I checked this model's own USD rate and used a ceiling high enough for our agreement.
+      </label>
+      <button class="btn" type="submit">Save spending ceiling</button>
+    </form>
+    {% if operator_rates %}
+    <h4>Saved company rates</h4>
+    <table><thead><tr><th scope="col">Model</th><th scope="col">Ceiling per million tokens</th><th scope="col">Source and review</th><th scope="col">Action</th></tr></thead>
+      <tbody>{% for rate in operator_rates %}<tr>
+        <td>{{ rate.spec|model_label }}<br><span class="muted">Exact model: {{ rate.spec }}</span><br><span class="badge {{ 'active' if rate.active else 'blocked' }}">{{ 'Active' if rate.active else 'Expired — requests stop' }}</span></td>
+        <td>Input {{ rate.input_per_mtok | money(decimals=4) }} · Output {{ rate.output_per_mtok | money(decimals=4) }}</td>
+        <td>{{ rate.source }}<br><span class="muted">Applies {{ rate.as_of }} · review by {{ rate.valid_until }}</span></td>
+        <td><form method="post" action="/settings/models/rate/remove" data-settings-local="true"><input type="hidden" name="model" value="{{ rate.spec }}"><button class="btn btn--ghost" type="submit">Remove rate</button></form></td>
+      </tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section class="panel" data-settings-group="models" id="model-tests" aria-labelledby="model-tests-title">
+    <h3 id="model-tests-title">Try one bounded model sample</h3>
+    <p>A model-list refresh does not generate a response. This separate test sends a synthetic text or image sample to the model you select, after you review and confirm the possible cost. It does not change your model choices.</p>
+    <p class="muted">One request, at most USD 0.05 and 64 output tokens or lower policy limits, with up to 30 seconds of local waiting. Stop cannot retract a request already sent to the provider. Tools remain provider-reported and untested; a successful sample does not establish suitability for your tasks.</p>
+    <p><a href="/settings/all">Enable or disable bounded model tests in All settings</a></p>
+    <form id="model-test-form">
+      <label>Model <select class="select" id="model-test-model" data-model-picker="model-test-custom">
+        {% for pg in picker_groups %}<optgroup label="{{ pg.label }}">{% for m in pg.options %}<option value="{{ m.spec }}">{{ m.spec|model_label }}{% if m.last_known %} · previous list{% endif %}</option>{% endfor %}</optgroup>{% endfor %}
+        <option value="__custom__">Other model (advanced)</option>
+      </select></label>
+      <label id="model-test-custom" hidden>Exact model name from your provider <input class="input" id="model-test-custom-value" maxlength="200"></label>
+      <label>Sample <select class="select" id="model-test-kind"><option value="generation">Short text generation</option><option value="vision">Synthetic image recognition</option></select></label>
+      <button class="btn" type="submit" id="model-test-review">Review test and limits</button>
+    </form>
+    <div id="model-test-review-card" hidden tabindex="-1">
+      <p id="model-test-review-text"></p>
+      <button class="btn" type="button" id="model-test-confirm">Confirm one potentially paid test</button>
+      <button class="btn" type="button" id="model-test-abandon">Cancel review</button>
+    </div>
+    <p id="model-test-status" role="status" aria-live="polite"></p>
+    <button class="btn btn--ghost" type="button" id="model-test-refresh">Refresh original test results</button>
+    <div id="model-test-history" aria-label="Model test receipts"></div>
+  </section>
+
+  <div class="section-head" data-settings-group="models"><h2>Default model</h2></div>
+  <div class="panel" data-settings-group="models">
+    <p class="muted settings-lead">
+      Used by every role unless a role below has its own model. Changes apply to
+      the next task. If a model is missing, refresh the model lists above.
+    </p>
+    {% if allowed_models %}
+    <p class="muted settings-lead">
+      Only approved models are offered: {{ allowed_models|length }} model(s) approved below.
+    </p>
+    {% endif %}
+    {% set pinned_typed = pinned_model and pinned_model not in offered_specs %}
+    <form method="post" action="/settings/models" class="model-pick-form">
+      <label class="model-pick">
+        <span>Default model</span>
+        <select class="select" id="settings-model-default" name="model" data-model-picker="default-model-custom" aria-label="Default model">
+          <option value=""{% if not pinned_model %} selected{% endif %}>Lightwork's recommended model</option>
+          {% for pg in picker_groups %}
+          <optgroup label="{{ pg.label }}">
+            {% for m in pg.options %}
+            <option value="{{ m.spec }}"{% if pinned_model == m.spec %} selected{% endif %}>{{ m.spec|model_label }}{% if m.live %} · up to date{% elif m.last_known %} · previous list{% endif %}</option>
+            {% endfor %}
+          </optgroup>
+          {% endfor %}
+          <option value="{{ custom_marker }}"{% if pinned_typed %} selected{% endif %}>Other model (advanced)…</option>
+        </select>
+      </label>
+      <label class="model-pick" id="default-model-custom"{% if not pinned_typed %} hidden{% endif %}>
+        <span>Model name, exactly as your provider lists it</span>
+        <input class="input" type="text" name="model_custom" value="{{ pinned_model if pinned_typed else '' }}" aria-label="Default model name" />
+      </label>
+      <button type="submit" class="btn">Save default</button>
+    </form>
+    <p class="muted settings-foot" id="settings-current-default">Current default: <strong>{{ pinned_model|model_label if pinned_model else "Lightwork's recommended model" }}</strong>.{% if pinned_model %} Choose "Lightwork's recommended model" and save to go back.{% endif %}</p>
+  </div>
+
+  <div class="section-head" data-settings-group="models"><h2>Models for each role</h2></div>
+  <div class="panel" data-settings-group="models">
+    <p class="muted settings-lead">
+      Give a role its own model, for example a strong model for planning and a
+      cheaper one for summaries. "Use default" follows the default model above.
+      The last column shows what each role will use on the next task.
+    </p>
+    <form method="post" action="/settings/models/roles">
+      <table>
+        <thead><tr>
+          <th scope="col">Role</th>
+          <th scope="col">Model</th>
+          <th scope="col">Will use</th>
+        </tr></thead>
+        <tbody>
+          {% for label, role, effective, override in role_models %}
+          {% set typed = override and override not in offered_specs %}
+          <tr>
+            <td>{{ label }}</td>
+            <td>
+              <div class="model-pick-row">
+                <select class="select" name="{{ role }}" data-model-picker="{{ role }}-model-custom" aria-label="Model for {{ label }}">
+                  <option value=""{% if not override %} selected{% endif %}>Use default</option>
+                  {% for pg in picker_groups %}
+                  <optgroup label="{{ pg.label }}">
+                    {% for m in pg.options %}
+                    <option value="{{ m.spec }}"{% if override == m.spec %} selected{% endif %}>{{ m.spec|model_label }}{% if m.live %} · up to date{% elif m.last_known %} · previous list{% endif %}</option>
+                    {% endfor %}
+                  </optgroup>
+                  {% endfor %}
+                  <option value="{{ custom_marker }}"{% if typed %} selected{% endif %}>Other model (advanced)…</option>
+                </select>
+                <input class="input" type="text" id="{{ role }}-model-custom" name="{{ role }}_custom" value="{{ override if typed else '' }}" aria-label="Model name for {{ label }}, exactly as your provider lists it"{% if not typed %} hidden{% endif %} />
+              </div>
+            </td>
+            <td data-role-effective="{{ role }}">{{ effective|model_label }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit" class="btn settings-submit">Save role models</button>
+    </form>
+  </div>
+
+  <div class="section-head" data-settings-group="models"><h2>Approved models</h2></div>
+  <div class="panel" data-settings-group="models">
+    <p class="muted settings-lead">
+      Limit which models anyone may use. Tick the ones you approve and save:
+      the pickers above then offer only those, and <strong>no task can use a
+      model outside this list</strong>. Leave every box unticked to allow all
+      models. Models marked <span class="badge active">Up to date</span> were
+      confirmed by the provider for your connection.
+    </p>
+    <form method="post" action="/settings/models/allowed">
+      {% for g in model_groups %}
+      <details data-model-group="{{ g.name }}"{% if g.configured %} open{% endif %} class="model-group">
+        <summary>
+          <span class="model-group-title">{{ 'Added by your installation' if g.name == 'custom' else g.label }}</span>
+          <span class="muted">{{ g.models|length }} model{{ '' if g.models|length == 1 else 's' }}{% if g.live_count %} · {{ g.live_count }} up to date{% endif %}{% if not g.configured and g.name != 'custom' %} · not set up{% endif %}</span>
+        </summary>
+        {% if g.models %}
+        <div class="model-group-actions">
+          <button type="button" class="btn btn--ghost" data-model-select-all="{{ g.name }}">Select all</button>
+          <button type="button" class="btn btn--ghost" data-model-select-none="{{ g.name }}">Clear</button>
+        </div>
+        {% endif %}
+        {% for m in g.models %}
+        <label class="model-row" data-settings-search-item data-model-source="{{ 'live' if m.live else ('previous' if m.last_known else 'catalog') }}">
+          <span>{{ m.spec|model_label }}{% if m.live %} <span class="badge active">Up to date</span>{% elif m.last_known %} <span class="badge">Previous list · refresh to confirm</span>{% endif %}</span>
+          <input type="checkbox" name="models" value="{{ m.spec }}"{% if m.spec in allowed_models %} checked{% endif %} />
+        </label>
+        {% endfor %}
+        {% if not g.models %}<p class="muted">No models known for this provider yet. Set up its connection and press Test connection to load them.</p>{% endif %}
+      </details>
+      {% endfor %}
+      <p class="settings-foot">
+        <button type="submit" class="btn">Save approved models</button>
+        {% if allowed_models %}<span class="muted">{{ allowed_models|length }} model(s) approved. Untick all and save to allow every model.</span>{% endif %}
+      </p>
+    </form>
+  </div>
+
+  <div class="section-head" data-settings-group="models"><h2 id="voice-model-setup">{{ ui("Voice dictation on this computer") }}</h2></div>
+  <section class="panel voice-setup" data-settings-group="models" aria-labelledby="voice-model-setup" data-draft-recovery="off">
+    <p>{{ ui('Get voice dictation ready on the computer running Lightwork. The voice model is shared by all its workspaces. Your speech-provider choice stays the same.') }}</p>
+    <p id="voice-setup-policy" class="muted"></p>
+    <p><strong>{{ ui('Voice model:') }}</strong> <span id="voice-setup-model">{{ ui('Checking…') }}</span></p>
+    <p id="voice-setup-model-details"></p>
+    <details><summary>{{ ui('Technical details (for your IT team)') }}</summary><p id="voice-setup-technical"></p></details>
+    <p id="voice-setup-readiness" class="muted"></p>
+    <label class="voice-setup-confirm" for="voice-setup-confirm"><input id="voice-setup-confirm" type="checkbox" aria-describedby="voice-setup-model-details" disabled>{{ ui('I agree to check the voice model already on this computer, or download it from the source shown, using the disk space shown.') }}</label>
+    <div class="voice-setup-actions">
+      <button class="btn" id="voice-setup-start" type="button" disabled>{{ ui('Check or download voice model') }}</button>
+      <button class="btn" id="voice-setup-cancel" type="button" disabled>{{ ui('Stop download') }}</button>
+      <button class="btn" id="voice-setup-refresh" type="button">{{ ui('Refresh status') }}</button>
+    </div>
+    <progress id="voice-setup-progress" aria-label="{{ ut("Voice model download progress") }}" hidden></progress>
+    <p id="voice-setup-progress-text" class="muted"></p>
+    <p id="voice-setup-status" role="status" aria-live="polite">{{ ui('Checking voice setup…') }}</p>
+    <p><a class="btn" id="voice-setup-try" href="/chat" hidden>{{ ui('Try dictation in Chat') }}</a></p>
+    <p class="muted">{{ ui('You can leave Settings and come back to check progress. Lightwork checks the downloaded file before using it.') }}</p>
+    <p><a href="/settings/voice-unlock">{{ ui('Voice unlock: record your voice so spoken requests are checked against it') }}</a></p>
+  </section>
+
+  <div class="section-head" data-settings-group="general"><h2>Spending per task</h2></div>
+  <div class="panel" data-settings-group="general">
+    <p class="muted settings-lead">
+      Choose whether Lightwork stops a single task that goes over a set amount.
+      To limit what the whole workspace or each person spends per day or month, use
+      <a href="/spending-limits">Spending limits</a>.
+    </p>
+    {% set limit_mode = 'off' if not task_limits_enabled else ('amount' if budget is not none else 'default') %}
+    <form method="post" action="/settings/budget" class="settings-stack-form" id="settings-budget-form" data-mv-validate data-mv-keep="settings-budget">
+      {{ error_summary('settings-budget-errors') }}
+      <fieldset class="settings-choice">
+        <legend>Stop tasks that go over a limit</legend>
+        <label><input type="radio" name="mode" value="disabled"{% if limit_mode == 'off' %} checked{% endif %} /> No limit for each task</label>
+        <label><input type="radio" name="mode" value="default"{% if limit_mode == 'default' %} checked{% endif %} /> Use your installation's standard limits</label>
+        <label><input type="radio" name="mode" value="configured"{% if limit_mode == 'amount' %} checked{% endif %} /> Stop a task when it has spent</label>
+        <label class="settings-field settings-amount">
+          <span>Amount per task (US dollars)</span>
+          <input class="input" id="settings-task-budget" type="number" name="max_dollars" min="0.01" step="0.01" inputmode="decimal"
+                 value="{% if budget is not none %}{{ '%.2f'|format(budget) }}{% endif %}"
+                 aria-describedby="task-limit-help" />
+        </label>
+        <p class="mv-form__err settings-amount-error" id="settings-task-budget-error" role="alert" hidden></p>
+      </fieldset>
+      <p class="muted" id="task-limit-help">
+        Turning the limit off keeps your saved amount for later. Workspace spending limits,
+        cancelling a task and the safety checks on each action still apply.
+      </p>
+      <p class="settings-foot"><button type="submit" class="btn">Save task limit</button></p>
+    </form>
+    <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      // A written error beside the amount, tied to the field, in place of the
+      // browser's bubble: it says what is wrong and how to fix it.
+      var field = document.getElementById('settings-task-budget');
+      var error = document.getElementById('settings-task-budget-error');
+      if (!field || !error) return;
+      var help = field.getAttribute('aria-describedby') || '';
+      field.addEventListener('invalid', function (event) {
+        event.preventDefault();
+        var validity = field.validity;
+        error.textContent = validity.rangeUnderflow
+          ? 'Enter an amount of at least $0.01, or choose No limit for each task.'
+          : validity.stepMismatch
+            ? 'Use dollars and cents, with at most two decimal places. For example: 7.50.'
+            : 'Enter the amount in US dollars as a number. For example: 7.50.';
+        error.hidden = false;
+        field.setAttribute('aria-invalid', 'true');
+        field.setAttribute('aria-describedby', (error.id + ' ' + help).trim());
+        field.focus();
+      });
+      field.addEventListener('input', function () {
+        if (error.hidden) return;
+        error.hidden = true;
+        error.textContent = '';
+        field.removeAttribute('aria-invalid');
+        field.setAttribute('aria-describedby', help);
+      });
+      // "Stop a task when it has spent" needs an amount; an empty one would
+      // fall back to the standard limits without saying so.
+      if (field.form) field.form.addEventListener('mv:validate', function (event) {
+        var mode = field.form.querySelector('input[name="mode"]:checked');
+        if (mode && mode.value === 'configured' && !field.value.trim()) {
+          event.detail.error(field, 'Enter the amount per task in US dollars, or choose another option.');
+        }
+      });
+    })();
+    </script>
+    <p class="muted settings-foot" role="note">Right now:
+      {% if limit_mode == 'off' %}tasks have no spending limit of their own.
+      {% elif limit_mode == 'amount' %}each task stops after spending {{ budget | money }}.
+      {% else %}each task follows your installation's standard limits.{% endif %}</p>
+  </div>
+
+  <div class="section-head" data-settings-group="integrations" id="settings-integrations"><h2>Provider keys</h2></div>
+  <div class="panel" data-settings-group="integrations">
+    <p class="muted settings-lead">
+      Connect the AI service your company uses. Azure, Bedrock and Vertex AI can use the
+      server's company sign-in instead of a key. Keys are stored securely and
+      never shown again. Leave a key or server address blank to keep its current value.
+    </p>
+    {% for p in providers %}
+    <div class="provider-row" data-settings-search-item id="provider-{{ p.name }}" role="group" aria-labelledby="provider-name-{{ p.name }}"{% if p.name == ai_focus_provider %} data-ai-provider-focus{% endif %}>
+      <div class="provider-row__about">
+        <div class="provider-row__name" id="provider-name-{{ p.name }}">{{ p.label }}</div>
+        <div class="muted provider-row__meta">
+          {% if p.configured %}Set up{% if p.via %}, {{ p.via|source_label }}{% endif %}{% if p.key_hint %} · {{ p.key_hint }}{% endif %}
+          {% elif p.name in ('azure', 'bedrock', 'vertex') %}Not ready yet. Enter the connection details below.
+          {% elif p.base_url_field %}Enter your model server's address. Add a key only if that service requires one.
+          {% else %}No key yet. Paste one to use this provider.{% endif %}
+          {% if p.source_errors %}<div><span class="badge blocked">Settings could not be read</span></div>{% endif %}
+          {% if not p.dashboard_can_set_api_key %}<div>This key is {{ p.api_key_source|source_label }}, so it can't be changed here.</div>{% endif %}
+          {% if p.base_url_field and not p.dashboard_can_set_base_url %}<div>The server address is {{ p.base_url_source|source_label }}, so it can't be changed here.</div>{% endif %}
+          {% if p.base_url_field and p.base_url %}<div>Server address in use: {{ p.base_url }}{% if p.base_url_source and p.base_url_source.startswith('environment:') %} (set on the computer running Lightwork){% endif %}</div>{% endif %}
+          {% if p.base_url_needs_repair %}<div>This address needs attention before its connection can be tested. Enter a clean server address below and use the key field for access.</div>{% endif %}
+          {% if p.api_key_source and p.api_key_source.startswith('environment:') and p.dashboard_can_set_api_key %}<div>This key comes from the computer running Lightwork. Paste a key below to use a different one instead; removing it again brings the original back.</div>{% endif %}
+          {% if p.key_help and p.name != 'ollama' %}<div><a href="{{ p.key_help }}" target="_blank" rel="noopener noreferrer">Where do I get a key?</a></div>{% endif %}
+        </div>
+        <div class="provider-row__readiness">{{ provider_status(p) }}</div>
+        {% if p.discovery and p.configured %}
+        <div class="muted provider-row__meta">
+          Models:
+          {% if p.discovery.status == 'live' %}<span class="badge active">{{ p.discovery.live_count }} available</span>{% if p.discovery.fetched_ago %} refreshed {{ p.discovery.fetched_ago }}{% endif %}
+          {% elif p.discovery.status == 'unavailable' %}<span class="badge blocked">Could not check</span> The provider did not answer. Try refreshing later.
+          {% elif p.discovery.status == 'configured' %}<span class="badge">Saved model</span> Choose it under Models after testing the connection.
+          {% else %}Showing Lightwork's built-in list.{% endif %}
+        </div>
+        {% endif %}
+      </div>
+      <div class="provider-row__actions">
+        <form method="post" action="/settings/providers" class="settings-row-form">
+          <input type="hidden" name="provider" value="{{ p.name }}" />
+          {% if p.name == 'azure' %}
+          <label class="settings-field"><span>Azure resource address</span>
+            <input class="input" id="provider-url-azure" type="url" name="base_url" value="" maxlength="320"
+                   placeholder="https://your-resource.openai.azure.com" autocomplete="off"
+                   aria-describedby="provider-url-help-azure"{% if not p.base_url or p.base_url_needs_repair %} required{% endif %}
+                   {% if not p.dashboard_can_set_base_url %}disabled{% endif %} /></label>
+          <p class="muted provider-row__meta" id="provider-url-help-azure">{% if p.base_url %}Leave blank to keep the address above. Enter an address only to change it.{% else %}Use the resource address from your Azure account.{% endif %}</p>
+          <label class="settings-field"><span>Azure model deployment</span>
+            <input class="input" name="deployment" value="{{ p.setup.deployment }}" maxlength="64" required
+                   placeholder="Your deployment name" {% if p.setup_locked.deployment %}disabled{% endif %} /></label>
+          <label class="settings-field"><span>How Lightwork signs in</span>
+            <select class="input" name="auth_mode" {% if p.setup_locked.auth_mode %}disabled{% endif %}>
+              <option value="api_key"{% if p.setup.auth_mode != 'entra_id' %} selected{% endif %}>Azure resource key</option>
+              <option value="entra_id"{% if p.setup.auth_mode == 'entra_id' %} selected{% endif %}>Server's Microsoft sign-in</option>
+            </select></label>
+          <details class="settings-field"><summary>Azure service version</summary>
+            <label for="azure-api-version">Service version</label>
+            <input class="input" id="azure-api-version" name="api_version" value="{{ p.setup.api_version }}" placeholder="Use Lightwork's standard version"
+                   {% if p.setup_locked.api_version %}disabled{% endif %} /></details>
+          <p class="muted provider-row__meta">The Microsoft sign-in option uses the identity already set up on this server and removes a key saved here. After saving, test the connection below, choose the deployment under Models, and <a href="#settings-model-prices" data-settings-jump="models">review its spending ceiling</a>.</p>
+          {% elif p.name == 'bedrock' %}
+          <label class="settings-field"><span>AWS region</span>
+            <input class="input" name="region" value="{{ p.setup.region }}" maxlength="20" required placeholder="us-east-1"
+                   {% if p.setup_locked.region %}disabled{% endif %} /></label>
+          <label class="settings-field"><span>Claude model in your AWS account</span>
+            <input class="input" name="model_id" value="{{ p.setup.model_id }}" maxlength="120" required
+                   placeholder="Paste the model ID from Bedrock" {% if p.setup_locked.model_id %}disabled{% endif %} /></label>
+          <label class="settings-field"><span>Bedrock service</span>
+            <select class="input" name="endpoint" {% if p.setup_locked.endpoint %}disabled{% endif %}>
+              <option value="mantle"{% if p.setup.endpoint != 'legacy' %} selected{% endif %}>Current Claude service</option>
+              <option value="legacy"{% if p.setup.endpoint == 'legacy' %} selected{% endif %}>Older Claude service</option>
+            </select></label>
+          <label class="settings-field"><span>How Lightwork signs in</span>
+            <select class="input" name="auth_mode" {% if p.setup_locked.auth_mode %}disabled{% endif %}>
+              <option value="iam"{% if p.setup.auth_mode != 'api_key' %} selected{% endif %}>Server's AWS sign-in or role</option>
+              <option value="api_key"{% if p.setup.auth_mode == 'api_key' %} selected{% endif %}>Bedrock access key</option>
+            </select></label>
+          <p class="muted provider-row__meta">This connection runs Claude through your AWS account. Choosing server sign-in removes a Bedrock key saved here. After saving, test the connection, choose this model under Models, and <a href="#settings-model-prices" data-settings-jump="models">review its spending ceiling</a>.</p>
+          {% elif p.name == 'vertex' %}
+          <label class="settings-field"><span>Google Cloud project ID</span>
+            <input class="input" name="project_id" value="{{ p.setup.project_id }}" maxlength="128" required placeholder="my-project-id"
+                   {% if p.setup_locked.project_id %}disabled{% endif %} /></label>
+          <label class="settings-field"><span>Vertex AI region</span>
+            <input class="input" name="region" value="{{ p.setup.region }}" maxlength="63" required placeholder="us-east5"
+                   {% if p.setup_locked.region %}disabled{% endif %} /></label>
+          <label class="settings-field"><span>Claude model in your Google Cloud project</span>
+            <input class="input" name="model_id" value="{{ p.setup.model_id }}" maxlength="120" required
+                   placeholder="Paste the model ID from Vertex AI Model Garden" {% if p.setup_locked.model_id %}disabled{% endif %} /></label>
+          <p class="muted provider-row__meta">This connection runs Claude through your Google Cloud project and signs in with the server's Google credentials, so no key is stored here. After saving, test the connection, choose this model under Models, and <a href="#settings-model-prices" data-settings-jump="models">review its spending ceiling</a>.</p>
+          {% elif p.base_url_field %}
+          <label class="settings-field">
+            <span>Model server address</span>
+            <input class="input" id="provider-url-{{ p.name }}" type="url" name="base_url" value="" maxlength="320"
+                   placeholder="{{ 'http://localhost:11434' if p.name == 'ollama' else 'http://localhost:8080/v1' if p.name == 'tgi' else 'http://localhost:8000/v1' if p.name == 'vllm' else 'https://your-model-server.example/v1' }}" autocomplete="off"
+                   aria-describedby="provider-url-help-{{ p.name }}"{% if p.base_url_needs_repair %} required{% endif %}
+                   {% if not p.dashboard_can_set_base_url %}disabled{% endif %} />
+          </label>
+          <p class="muted provider-row__meta" id="provider-url-help-{{ p.name }}">{% if p.base_url %}Leave blank to keep the address above. Enter an address only to change it.{% else %}Use the address supplied by your model service.{% endif %}</p>
+          {% endif %}
+          {% if p.name != 'vertex' %}
+          <label class="settings-field">
+            <span>{{ 'Azure resource key' if p.name == 'azure' else 'Bedrock access key' if p.name == 'bedrock' else 'Server access key (if required)' if p.base_url_field else p.label ~ ' key' }}</span>
+            <input class="input" id="provider-key-{{ p.name }}" type="password" name="api_key"
+                   placeholder="Paste your key" autocomplete="off"
+                   {% if not p.dashboard_can_set_api_key %}disabled{% endif %} />
+          </label>
+          {% endif %}
+          <button type="submit" class="btn"
+                  {% if p.name not in ('azure', 'bedrock', 'vertex') and (not p.dashboard_can_set_api_key) and ((not p.base_url_field) or (not p.dashboard_can_set_base_url)) %}disabled aria-disabled="true"{% endif %}>Save</button>
+        </form>
+        <div class="settings-row-form provider-row__buttons">
+          {% if p.configured %}
+          <form method="post" action="/settings/providers/test">
+            <input type="hidden" name="provider" value="{{ p.name }}" />
+            <button type="submit" class="btn">Test connection</button>
+          </form>
+          {% if p.name in ('azure', 'bedrock', 'vertex') %}<span class="muted provider-row__meta">This sends one small model request. Your provider may charge for it.</span>{% endif %}
+          {% endif %}
+          {% if p.configured and p.discovery and p.discovery.supported and discovery_enabled %}
+          <form method="post" action="/settings/models/discover">
+            <input type="hidden" name="provider" value="{{ p.name }}" />
+            <button type="submit" class="btn btn--ghost">Refresh models</button>
+          </form>
+          {% endif %}
+          {% if p.dashboard_set %}
+          <form method="post" action="/settings/providers/clear" data-confirm="Remove the saved {{ p.label }} setup? Tasks using this provider will stop until you set it up again." data-confirm-ok="Remove setup">
+            <input type="hidden" name="provider" value="{{ p.name }}" />
+            <button type="submit" class="btn btn--danger">{{ 'Remove setup' if p.name in ('azure', 'bedrock', 'vertex') else 'Remove key' }}</button>
+          </form>
+          {% endif %}
+        </div>
+        {# Save, Test connection and Remove key report here; the row above is
+           re-rendered from the server's answer, so this line stays put. #}
+        <p class="muted provider-row__status" data-provider-status role="status" aria-live="polite"></p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="section-head" data-settings-group="integrations"><h2>Secure connected automations</h2></div>
+  <section class="panel" data-settings-group="integrations" id="webhook-settings" aria-label="Secure connected automations">
+    <p>A signing secret is a shared connection credential that lets other systems securely start your workflows. It can also verify outgoing workflow notifications. Review which secret is active before changing it, and update the connected systems to match.</p>
+    <p id="wh-state" role="status" aria-live="polite" tabindex="-1">{% if webhook_configured is sameas true %}Secret set{% elif webhook_configured is sameas false %}Signing secret not set{% else %}Checking the active signing secret…{% endif %}</p>
+    <p id="wh-ownership"></p>
+    <p id="wh-external" hidden>Your installation administrator must arrange any transfer of control from the external secret service or deployment settings. Lightwork cannot make that transfer here. Refresh status after the administrator completes it.</p>
+    <button type="button" class="btn" id="wh-refresh">Refresh status</button>
+    <form id="wh-form" data-settings-local="true" data-draft-recovery="off" autocomplete="off">
+      <label for="wh-action">Change to make</label>
+      <select class="input" id="wh-action" disabled><option value="set">Save a new signing secret</option><option value="remove">Remove the app's saved copy</option></select>
+      <div id="wh-secret-field"><label for="wh-secret">New signing secret</label>
+        <input class="input" id="wh-secret" type="password" autocomplete="new-password" maxlength="4096" disabled aria-describedby="wh-help"></div>
+      <p id="wh-help">Use a long, random value. Lightwork encrypts it and never displays it again.</p>
+      <p id="wh-consequence"></p>
+      <label style="display:flex;gap:var(--space-2);align-items:flex-start"><input type="checkbox" id="wh-confirm" disabled> I reviewed this change and want to apply it to this installation.</label>
+      <div style="display:flex;gap:var(--space-2);flex-wrap:wrap;margin-top:var(--space-3)"><button type="submit" class="btn" id="wh-save" disabled>Apply change</button><button type="button" class="btn" id="wh-cancel">Cancel</button></div>
+    </form>
+    <noscript>Enable browser scripting to check the active secret and review a change safely.</noscript>
+    <p style="margin-top:var(--space-3)"><a class="btn" href="/settings/webhooks/manage">Manage webhook subscriptions and deliveries</a></p>
+    <section id="webhook-change-recovery" aria-labelledby="webhook-change-title" style="margin-top:var(--space-5)">
+      <h3 id="webhook-change-title">Saved change history</h3>
+      <p>If saving was interrupted, check the original change here. Lightwork verifies its exact local setting and active owner, then adds a current-state observation to the original activity history. It does not save a secret again or contact connected systems.</p>
+      <p role="status" aria-live="polite">Checking your saved changes…</p>
+      <label>Saved signing-secret change<select class="input"><option value="">Choose a saved change</option></select></label>
+      <p data-detail></p>
+      <div style="display:flex;gap:var(--space-2);flex-wrap:wrap"><button class="btn" type="button" data-check disabled>Record verified check</button><button class="btn btn--ghost" type="button" data-refresh>Refresh saved changes</button></div>
+    </section>
+  </section>
+  <style>#webhook-settings .input{box-sizing:border-box;width:100%;max-width:100%;min-width:0}#webhook-settings label{margin-block:var(--space-2)}#webhook-settings p,#webhook-settings button{overflow-wrap:anywhere}#webhook-settings form{margin-top:var(--space-3)}</style>
+  <script src="{{ asset('lightwork-webhook-settings.js') }}" defer></script>
+  <script src="{{ asset('lightwork-webhook-recovery.js') }}" defer></script>
+
+  <div class="section-head" data-settings-group="controls" id="settings-controls"><h2>What agents can do</h2></div>
+  <div class="panel" data-settings-group="controls">
+    <p class="muted settings-lead">Powerful abilities, off until you turn them on. Changes apply to the next task.</p>
+    <form method="post" action="/settings/capabilities">
+      {% for c in capabilities %}
+      <label class="settings-toggle" data-settings-search-item>
+        <span class="settings-toggle__text">{{ c.name|capability_label }}
+          {% if c.info %}<br><span class="muted settings-toggle__help">{{ c.info }}</span>{% endif %}</span>
+        <input type="checkbox" name="{{ c.name }}"{% if c.enabled %} checked{% endif %} />
+      </label>
+      {% endfor %}
+      <p class="settings-foot"><button type="submit" class="btn">Save abilities</button></p>
+    </form>
+  </div>
+
+  <div class="section-head" data-settings-group="controls"><h2>Features</h2></div>
+  <div class="panel" data-settings-group="controls" id="settings-features">
+    <p class="muted settings-lead">Review each switch in All settings before changing it.
+      Only your selected changes are saved; other feature choices are kept.
+      Deployment and workspace policies still take precedence.</p>
+      {% for f in features %}
+      <div class="settings-toggle" data-settings-search-item id="feature-{{ f.name }}">
+        <span class="settings-toggle__text">{{ 'Live progress outside the dashboard' if f.name == 'streaming' else f.name|feature_label }}
+          <br><span class="muted settings-toggle__help">Configured choice: {{ 'on' if f.enabled else 'off' }}. Open Review choice to check its source and any server override.
+          {% if f.name == 'streaming' %}Show progress for tasks started outside the dashboard. Chat has its own live responses.
+          {% elif f.info %}{{ f.info }}{% endif %}</span></span>
+        <a class="btn" href="/settings/all?id=features.{{ f.name }}">Review choice</a>
+      </div>
+      {% endfor %}
+      <p class="settings-foot"><a class="btn" href="/settings/all?q=features">Review product features</a>
+        <a href="/settings/all#settings-original-requests">Read my original settings requests</a></p>
+  </div>
+
+  <div class="section-head" data-settings-group="access" id="settings-access"><h2 id="api-keys">Access keys for scripts and integrations</h2></div>
+  <div class="panel" data-settings-group="access">
+    <p class="muted settings-lead">
+      {% if api_keys_enabled %}
+      People create their own keys on <a href="/account/api-keys">Account &rsaquo; Access keys</a>.
+      A key only does what its scopes allow and never more than its owner's role. It stops on its expiry date, and it can be rotated or revoked at any time. Administrators see
+      every key there and can create service accounts: named identities for programs that
+      hold keys and a role but cannot sign in.
+      {% else %}
+      Access keys are turned off on this installation. Turn on "Access keys for scripts and
+      integrations" under All settings to let people create them.
+      {% endif %}
+    </p>
+    {% if can_open_page('/embed-demo') %}
+    <p class="muted">To show a live card with spending and activity on an internal page, such as a team wiki, use <a href="/embed-demo">Embedded analytics</a>.</p>
+    {% endif %}
+    {% if static_token_set %}
+    <p class="settings-lead" role="note"><strong>The shared server access token is set.</strong>
+      Anyone holding it can do everything an administrator can, it never expires and it is
+      not tied to a person. Its use is recorded in the activity record as break-glass access.
+      Prefer personal keys or service accounts for scripts, and keep the token for emergencies.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head" data-settings-group="access"><h2 id="ui-visibility">Pages each role can see</h2></div>
+  <div class="panel" data-settings-group="access">
+    <p class="muted settings-lead">
+      Choose which pages each role sees. Unticking a box removes the page from
+      that role's menu <em>and</em> stops them opening it.
+      Hiding a page does not change data permissions: information the role may
+      read can still be available through the API. A dash means that
+      role can't use the page at all; to give someone more access, change their
+      role on the <a href="/users">Users</a> page. Administrators always keep
+      Settings and Users, so you can't lock yourself out. Roles only apply when
+      people sign in; if you use Lightwork on your own, you see everything.
+    </p>
+    <form method="post" action="/settings/ui-visibility">
+      <table>
+        <thead><tr>
+          <th scope="col">Page</th>
+          {% for r in visibility_roles %}<th scope="col">{{ r|role_label }}</th>{% endfor %}
+        </tr></thead>
+        <tbody>
+          {% for grp in visibility_matrix %}
+          <tr><th colspan="{{ 1 + visibility_roles|length }}" scope="colgroup" class="settings-group-row">{{ grp.title or grp.label }}</th></tr>
+          {% for pg in grp.pages %}
+          <tr data-settings-search-item>
+            <td>{{ pg.label }}{% if not pg.in_nav %} <span class="muted settings-note">· opened from other pages, not the menu</span>{% endif %}</td>
+            {% for cell in pg.cells %}
+            <td>
+              {% if cell.locked %}
+              <input type="checkbox" checked disabled
+                     aria-label="{{ pg.label }} is always visible to administrators"
+                     title="Always available to administrators" />
+              {% elif not cell.eligible %}
+              <span class="muted" title="This role can't open this page. Change the person's role on the Users page." aria-label="{{ pg.label }} is not available to the {{ cell.role|role_label }} role">—</span>
+              {% else %}
+              <input type="checkbox" name="cell" value="{{ cell.role }}:{{ pg.path }}"
+                     {% if cell.visible %}checked{% endif %}
+                     aria-label="Show {{ pg.label }} to the {{ cell.role|role_label }} role" />
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="settings-foot">
+        <button type="submit" class="btn">Save page visibility</button>
+      </p>
+    </form>
+    <form method="post" action="/settings/ui-visibility/reset" class="settings-inline-form"
+          data-confirm="Put every role's pages back to the standard set? Your changes on this table will be lost." data-confirm-ok="Reset page access">
+      <button type="submit" class="btn">Reset to standard</button>
+    </form>
+    <p class="muted settings-foot">
+      This controls what each role <em>sees</em>; the permission checks on
+      every page still apply.
+    </p>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance" id="settings-maintenance"><h2>Ready to go live?</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="readiness">
+    <p class="muted settings-lead">Checks the switches that should be on before your whole team relies on Lightwork.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-maintenance-run="readiness">Check readiness</button></p>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="readiness"></p>
+    <ul class="maintenance-list" data-maintenance-out="readiness"></ul>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2>Installation health check</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="health">
+    <p class="muted settings-lead">Checks that Lightwork is installed correctly and can reach the services it needs. It may contact your AI provider.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-maintenance-run="health">Run health check</button></p>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="health"></p>
+    <details class="settings-details" data-maintenance-details="health" hidden><summary>Technical details (for your IT team)</summary><ul class="maintenance-list" data-maintenance-out="health"></ul></details>
+  </div>
+
+  {% if can_open_page('/settings/page-speed') %}
+  <div class="section-head" data-settings-group="maintenance"><h2>Page speed for real visitors</h2></div>
+  <div class="panel" data-settings-group="maintenance">
+    <p class="muted settings-lead">How fast pages load and respond for the people using Lightwork, on phones and computers, over the last 28 days. Measuring is optional and off until you turn it on.</p>
+    <p class="settings-row-form"><a class="btn" href="/settings/page-speed">Open page speed</a></p>
+  </div>
+  {% endif %}
+
+  <div class="section-head" data-settings-group="maintenance"><h2>Installation settings check</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="settings">
+    <p class="muted settings-lead">Looks for mistakes in the settings chosen when Lightwork was installed.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-maintenance-run="settings">Check installation settings</button></p>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="settings"></p>
+    <details class="settings-details" data-maintenance-details="settings" hidden><summary>Technical details (for your IT team)</summary><ul class="maintenance-list" data-maintenance-out="settings"></ul></details>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2>Background work</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="queue">
+    <p class="muted settings-lead">Scheduled and background work, including anything that stopped. Open a stopped schedule to review what happened and choose its next step.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-maintenance-run="queue">Show background work</button></p>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="queue"></p>
+    <div data-maintenance-out="queue"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="maintenance-encryption">Encryption</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="encryption">
+    <p class="muted settings-lead">Whether saved records are encrypted on this computer, and tools to keep them protected.</p>
+    <p class="settings-row-form"><a class="btn btn--ghost" href="/settings/security-installation">Manage sign-in and work protection</a>
+      <a class="btn btn--ghost" href="/settings/local-ai">Manage AI on this computer</a></p>
+    <p class="settings-row-form"><button type="button" class="btn" data-maintenance-run="encryption">Check encryption</button></p>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="encryption"></p>
+    <div data-maintenance-out="encryption"></div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="maintenance-service-status">Recent service status</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="diagnostics">
+    <p class="muted settings-lead">Recent requests and recorded connection pauses on this server. Checking this view does not contact a service or retry work.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-maintenance-run="diagnostics">Check services</button>
+      <a class="btn btn--ghost" href="/help">Prepare a support report</a></p>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="diagnostics"></p>
+    <div data-maintenance-out="diagnostics"></div>
+  </div>
+
+  {% if can_open_page('/perf') or can_open_page('/cache') %}
+  <div class="section-head" data-settings-group="maintenance"><h2 id="maintenance-performance">Performance and cache</h2></div>
+  <div class="panel" data-settings-group="maintenance">
+    <p class="muted settings-lead">How fast this server answers, and the temporary copies Lightwork keeps of what it has read so it can work faster.</p>
+    <p class="settings-row-form">{% if can_open_page('/perf') %}<a class="btn" href="/perf">Performance</a>{% endif %}
+      {% if can_open_page('/cache') %}<a class="btn btn--ghost" href="/cache">Cache</a>{% endif %}</p>
+  </div>
+  {% endif %}
+
+  <div class="section-head" data-settings-group="maintenance"><h2>Running code</h2></div>
+  <div class="panel" data-settings-group="maintenance">
+    <p class="muted settings-lead">A person must approve each request before Lightwork runs code or changes a project or database. The request shows what will run and where. One approval covers one run; saved approvals cannot silently authorize later runs.</p>
+    {% if can_open_page('/approvals') %}<p><a class="btn btn--ghost" href="/approvals">Review pending requests</a></p>{% endif %}
+    <details class="settings-details"><summary>What this covers</summary>
+      <p class="muted">Commands, notebooks, Python scripts, WebAssembly programs, code-analysis servers, database changes, and Git changes all require a fresh review. Reading a database or inspecting project history does not ask for a code-running approval.</p>
+    </details>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2>Safety checks for this installation</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="checks">
+    <p class="muted settings-lead">One-button checks your IT or compliance team may ask for. Each one only looks; nothing is changed.</p>
+    <ul class="maintenance-list maintenance-checks">
+      <li><span class="maintenance-label">Regulated deployment</span>
+        <span class="muted">Tries each protection a regulated business relies on and reports which ones hold.</span>
+        <button type="button" class="btn" data-maintenance-run="enterprise">Check protections</button></li>
+      <li><span class="maintenance-label">No outside connections</span>
+        <span class="muted">Checks whether any setting would let data leave this computer.</span>
+        <button type="button" class="btn" data-maintenance-run="offline">Check connections</button></li>
+      <li><span class="maintenance-label">Hardware memory protection</span>
+        <span class="muted">Checks whether this computer encrypts Lightwork's memory in hardware.</span>
+        <button type="button" class="btn" data-maintenance-run="hardware">Check hardware</button></li>
+      <li><span class="maintenance-label">Add-on versions</span>
+        <span class="muted">Compares installed add-ons with the approved versions.</span>
+        <button type="button" class="btn" data-maintenance-run="plugins">Check add-ons</button></li>
+    </ul>
+    <div class="maintenance-result">
+      <p class="muted" role="status" aria-live="polite" data-maintenance-status="enterprise"></p>
+      <ul class="maintenance-list" data-maintenance-out="enterprise"></ul>
+      <details class="settings-details" data-maintenance-details="enterprise" hidden><summary>Technical details (for your IT team)</summary><ul class="maintenance-list" data-maintenance-technical="enterprise"></ul></details>
+    </div>
+    <div class="maintenance-result">
+      <p class="muted" role="status" aria-live="polite" data-maintenance-status="offline"></p>
+      <ul class="maintenance-list" data-maintenance-out="offline"></ul>
+      <details class="settings-details" data-maintenance-details="offline" hidden><summary>Technical details (for your IT team)</summary><ul class="maintenance-list" data-maintenance-technical="offline"></ul></details>
+    </div>
+    <div class="maintenance-result">
+      <p class="muted" role="status" aria-live="polite" data-maintenance-status="hardware"></p>
+      <ul class="maintenance-list" data-maintenance-out="hardware"></ul>
+      <details class="settings-details" data-maintenance-details="hardware" hidden><summary>Technical details (for your IT team)</summary><ul class="maintenance-list" data-maintenance-technical="hardware"></ul></details>
+    </div>
+    <div class="maintenance-result">
+      <p class="muted" role="status" aria-live="polite" data-maintenance-status="plugins"></p>
+      <ul class="maintenance-list" data-maintenance-out="plugins"></ul>
+      <details class="settings-details" data-maintenance-details="plugins" hidden><summary>Technical details (for your IT team)</summary><ul class="maintenance-list" data-maintenance-technical="plugins"></ul></details>
+    </div>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2 id="maintenance-client">Your organisation's data</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="client">
+    <p class="muted settings-lead">Download everything this installation holds, for example when someone asks for a copy of their data, or erase it all when an organisation leaves.</p>
+    <p class="settings-row-form"><button type="button" class="btn" data-maintenance-run="client">Show data status</button></p>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="client"></p>
+    <div data-maintenance-out="client"></div>
+    <details class="settings-details" data-maintenance-details="client" hidden><summary>Technical details (for your IT team)</summary><ul class="maintenance-list" data-maintenance-technical="client"></ul></details>
+  </div>
+
+  <div class="section-head" data-settings-group="maintenance"><h2>Tidy up old records</h2></div>
+  <div class="panel" data-settings-group="maintenance" data-maintenance="cleanup">
+    <p class="muted settings-lead">Removes old chat conversations and the step-by-step activity of old tasks in this workspace, so they are not kept forever. Finished tasks and their results stay.</p>
+    <form class="settings-row-form" data-maintenance-cleanup>
+      <label class="settings-field"><span>Remove conversations not used for</span>
+        <select class="select" name="days">
+          <option value="30">30 days</option>
+          <option value="60">60 days</option>
+          <option value="90" selected>90 days</option>
+          <option value="180">180 days</option>
+          <option value="365">365 days</option>
+        </select></label>
+      <label class="settings-field"><span>Remove task activity older than</span>
+        <select class="select" name="activity_days">
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="60">60 days</option>
+          <option value="90">90 days</option>
+          <option value="180">180 days</option>
+          <option value="365">365 days</option>
+        </select></label>
+      <button type="submit" class="btn">See what would be removed</button>
+    </form>
+    <p class="muted" role="status" aria-live="polite" data-maintenance-status="cleanup"></p>
+    <div data-maintenance-out="cleanup"></div>
+    <div data-ops-cleanup-all>
+      <h3 id="cleanup-all-title">Every workspace at once</h3>
+      <p class="muted">Tidies up every workspace on this installation with the time periods chosen above, one workspace at a time. For installation administrators.</p>
+      <p class="settings-row-form">
+        <button type="button" class="btn" data-ops-run="cleanup-all">See what would be removed in every workspace</button>
+        <button type="button" class="btn btn--danger" data-ops-run="cleanup-all-go" hidden>Remove from every workspace</button>
+      </p>
+      <p class="muted" role="status" aria-live="polite" data-ops-status="cleanup-all"></p>
+      <div data-ops-out="cleanup-all"></div>
+    </div>
+  </div>
+  {% include "_maintenance_ops.html" %}
+  </div>
+  <style>
+    .settings-saved { border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4); }
+    .settings-lead { margin-top: 0; }
+    .settings-foot { margin-bottom: 0; margin-top: var(--space-3); display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+    .settings-submit { margin-top: var(--space-3); }
+    .settings-row-form { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+    .settings-stack-form { display: grid; gap: var(--space-2); }
+    .settings-inline-form { margin-top: var(--space-2); }
+    .settings-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .settings-grow { flex: 1 1 18rem; }
+    .settings-choice { border: 0; padding: 0; margin: 0; display: grid; gap: var(--space-2); }
+    .settings-choice legend { font-weight: var(--font-medium); margin-bottom: var(--space-2); }
+    .settings-choice > label:not(.settings-field) { display: flex; gap: var(--space-2); align-items: center; }
+    .settings-amount { max-width: 16rem; margin-left: var(--space-6, 1.5rem); }
+    .settings-amount-error { margin: 0 0 0 var(--space-6, 1.5rem); }
+    .settings-callout { border: 1px solid var(--hairline); border-radius: var(--radius-md, 8px); padding: var(--space-3); margin: var(--space-3) 0; }
+    .settings-callout p { margin: 0 0 var(--space-2); }
+    .settings-details { margin-top: var(--space-3); }
+    .maintenance-checks li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+    .maintenance-checks li .muted { flex: 1 1 16rem; }
+    .maintenance-result { margin-top: var(--space-2); }
+    .settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline); }
+    .settings-toggle__text { flex: 1; }
+    .settings-toggle__help { font-size: var(--text-sm); font-weight: normal; }
+    #settings-features .settings-toggle { flex-wrap: wrap; }
+    #settings-features .settings-toggle__text { flex: 1 1 16rem; min-width: 0; }
+    #settings-features .btn { flex: 0 1 auto; max-width: 100%; white-space: normal; }
+    .settings-toggle input, #settings-sections td input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brand); flex-shrink: 0; }
+    .settings-group-row { padding-top: var(--space-4); }
+    .settings-note { font-size: var(--text-xs); }
+    .provider-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) 0; border-top: 1px solid var(--hairline); }
+    .provider-row__about { min-width: 13rem; flex: 1 1 16rem; display: grid; gap: var(--space-2); }
+    .provider-row__name { font-weight: var(--font-medium); }
+    .provider-row__meta { font-size: var(--text-sm); }
+    .provider-row__actions { flex: 1 1 20rem; display: grid; gap: var(--space-2); }
+    .maintenance-list { list-style: none; padding: 0; margin: var(--space-2) 0 0; display: grid; gap: var(--space-2); }
+    .maintenance-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; padding-top: var(--space-2); border-top: 1px solid var(--hairline); }
+    .maintenance-list .maintenance-label { min-width: 14rem; font-weight: var(--font-medium); }
+    .voice-setup { min-width: 0; overflow-wrap: anywhere; }
+    .voice-setup > label:not(.voice-setup-confirm) { display: block; margin-bottom: var(--space-2); }
+    .voice-setup .ctl, .voice-setup progress { display: block; width: 100%; max-width: 100%; min-width: 0; }
+    .voice-setup .voice-setup-confirm { display: flex; align-items: flex-start; gap: var(--space-2); margin: var(--space-3) 0; }
+    .voice-setup-confirm input { flex: 0 0 auto; width: auto; margin-top: .25em; }
+    .voice-setup-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0; }
+    .voice-setup-actions .btn { max-width: 100%; white-space: normal; }
+    .models-overview { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; margin: var(--space-3) 0; }
+    .models-overview .stat { display: flex; flex-direction: column; min-width: 8rem; }
+    .models-overview .num { font-size: 1.5rem; font-weight: var(--font-semibold); line-height: 1.2; }
+    .models-status { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-2); }
+    .models-status li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; padding-top: var(--space-2); border-top: 1px solid var(--hairline); }
+    .models-status-label { min-width: 11rem; font-weight: var(--font-medium); }
+    .model-pick-form { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: flex-end; }
+    .model-pick { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 20rem); }
+    .model-pick-row { display: grid; gap: var(--space-2); min-width: 13rem; }
+    .model-group { border-top: 1px solid var(--hairline); padding: var(--space-2) 0; }
+    .model-group > summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: baseline; }
+    .model-group-title { font-weight: var(--font-medium); }
+    .model-group-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0; }
+    .model-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) 0; }
+    .model-row input { width: 18px; height: 18px; accent-color: var(--brand); flex-shrink: 0; }
+  </style>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var index = document.querySelector('.settings-index');
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('[data-settings-tab]'));
+    var grouped = Array.prototype.slice.call(document.querySelectorAll('[data-settings-group]'));
+    var search = document.getElementById('settings-search');
+    var filterStatus = document.getElementById('settings-filter-status');
+    var groups = ['general', 'models', 'integrations', 'controls', 'access', 'maintenance'];
+    var sectionsRoot = document.getElementById('settings-sections');
+    // The address-to-group rule is defined once, before the sections.
+    var groupFor = window.mvSettingsGroupFor || function () { return ''; };
+    var active = (index && index.dataset.initialGroup) || 'general';
+    var hashed = groupFor(window.location.hash);
+    if (hashed) active = hashed;
+
+    function sections() {
+      return grouped.filter(function (node) { return node.classList.contains('section-head'); }).map(function (head) {
+        var panel = head.nextElementSibling;
+        return {head: head, panel: panel, group: head.dataset.settingsGroup, title: head.textContent.trim()};
+      });
+    }
+    // Only a person's own switch (a tab, the arrow keys or a jump link) is
+    // written to the address, so a reload returns to it. Loading the page
+    // never writes a fragment: Chrome scrolls to it when loading finishes and
+    // starts keyboard focus there instead of at the skip link.
+    function selectGroup(group, focus, remember) {
+      active = groups.indexOf(group) === -1 ? 'general' : group;
+      // Writing a text field's value makes the browser lay the page out at
+      // once (about 40 ms on a phone), so an empty search is left alone.
+      if (search && search.value) search.value = '';
+      grouped.forEach(function (node) { node.hidden = node.dataset.settingsGroup !== active; });
+      if (sectionsRoot) sectionsRoot.setAttribute('aria-labelledby', 'settings-tab-' + active);
+      tabs.forEach(function (tab) {
+        var selected = tab.dataset.settingsTab === active;
+        tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+        tab.tabIndex = selected ? 0 : -1;
+        if (selected && focus) tab.focus();
+      });
+      document.querySelectorAll('[data-settings-search-item]').forEach(function (item) { item.hidden = false; });
+      if (filterStatus) filterStatus.textContent = sections().filter(function (section) { return section.group === active; }).length + ' sections shown.';
+      if (remember && window.history && window.history.replaceState) window.history.replaceState(null, '', '#settings-' + active);
+    }
+    function applySearch() {
+      var query = String(search.value || '').trim().toLocaleLowerCase();
+      if (!query) { selectGroup(active, false); return; }
+      var visible = 0;
+      sections().forEach(function (section) {
+        var items = Array.prototype.slice.call(section.panel.querySelectorAll('[data-settings-search-item]'));
+        var titleMatch = section.title.toLocaleLowerCase().indexOf(query) !== -1;
+        var itemMatches = 0;
+        items.forEach(function (item) {
+          var match = item.textContent.toLocaleLowerCase().indexOf(query) !== -1;
+          item.hidden = !titleMatch && !match;
+          if (match) itemMatches += 1;
+        });
+        var genericMatch = !items.length && section.panel.textContent.toLocaleLowerCase().indexOf(query) !== -1;
+        var show = titleMatch || itemMatches > 0 || genericMatch;
+        section.head.hidden = !show;
+        section.panel.hidden = !show;
+        if (show) visible += 1;
+      });
+      if (filterStatus) filterStatus.textContent = visible ? visible + ' matching sections shown.' : 'No settings match “' + search.value.trim() + '”.';
+    }
+    // The shared tab bar (lightwork-tabs.js) gives the arrow, Home and End
+    // keys; they select through a click, so both arrive here.
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () { selectGroup(tab.dataset.settingsTab, false, true); });
+    });
+    if (search) search.addEventListener('input', applySearch);
+    var requestedFocus = new URLSearchParams(window.location.search).get('focus');
+    // "Open AI provider keys" on a stopped task asks for the provider that
+    // needs attention; the server marks that one row.
+    if (requestedFocus === 'ai-provider') {
+      var aiRow = document.querySelector('[data-ai-provider-focus]');
+      requestedFocus = aiRow ? aiRow.id : 'settings-integrations';
+    }
+    // Hand what the server (and the address) painted over to the tabs: the
+    // hidden attributes selectGroup sets show exactly the same group.
+    if (sectionsRoot) sectionsRoot.removeAttribute('data-settings-active');
+    selectGroup(active, false);
+    if (requestedFocus) {
+      var focusTarget = document.getElementById(requestedFocus);
+      if (focusTarget && document.getElementById('settings-sections').contains(focusTarget)) {
+        var targetGroup = focusTarget.closest('[data-settings-group]');
+        if (targetGroup) selectGroup(targetGroup.dataset.settingsGroup, false);
+        var disclosure = focusTarget.closest('details'); if (disclosure) disclosure.open = true;
+        if (!focusTarget.matches('input,select,textarea,button,a')) focusTarget.tabIndex = -1;
+        var focusRequested = function () {
+          if (!focusTarget.isConnected) return;
+          var focused = document.activeElement;
+          if (focused && focused !== document.body && focused !== document.documentElement && focused !== focusTarget) return;
+          focusTarget.focus(); focusTarget.scrollIntoView({block:'center'});
+        };
+        if (document.readyState === 'complete') focusRequested();
+        else window.addEventListener('load', focusRequested, {once:true});
+      }
+    }
+    // A link to /settings#settings-<group> from another page, or from this
+    // page while it is already open, lands on that section.
+    window.addEventListener('hashchange', function () {
+      var next = groupFor(window.location.hash);
+      if (next && next !== active) selectGroup(next, true);
+    });
+
+    var forms = Array.prototype.slice.call(document.querySelectorAll('form[action^="/settings"]'));
+    var dirty = new Set();
+
+    function sectionName(form) {
+      var node = form.closest('.panel');
+      while (node && node.previousElementSibling) {
+        node = node.previousElementSibling;
+        var heading = node.querySelector && node.querySelector('.section-head h2, h2');
+        if (heading && heading.textContent.trim()) return heading.textContent.trim();
+      }
+      return 'another section';
+    }
+    function markDirty(event) { dirty.add(event.currentTarget); }
+    function providerStatus(form) {
+      var row = form.closest('.provider-row');
+      return row ? row.querySelector('[data-provider-status]') : null;
+    }
+    // Save, Test connection and Remove key change one provider row and the
+    // page header. Re-render both from the page the server answered with, so
+    // the new status and its plain cause show at once, without a reload.
+    function refreshProviderRow(form, documentCopy) {
+      var row = form.closest('.provider-row');
+      if (!row) return '';
+      var header = document.querySelector('.hero-statebox'), freshHeader = documentCopy.querySelector('.hero-statebox');
+      if (header && freshHeader) header.replaceWith(document.importNode(freshHeader, true));
+      var fresh = documentCopy.getElementById(row.id);
+      if (!fresh) return '';
+      ['.provider-row__about', '.provider-row__buttons'].forEach(function (selector) {
+        var current = row.querySelector(selector), next = fresh.querySelector(selector);
+        if (!current || !next) return;
+        var copy = document.importNode(next, true);
+        current.replaceWith(copy);
+        copy.querySelectorAll('form[action^="/settings"]').forEach(bindForm);
+      });
+      var badge = row.querySelector('.provider-row__readiness .badge');
+      return badge ? badge.textContent.trim() : '';
+    }
+
+    // Refresh evidence, never another section's entered model choices.
+    function refreshModelLists(documentCopy, status) {
+      var current = document.querySelector('.models-status'), next = documentCopy.querySelector('.models-status');
+      if (!current || !next) throw new Error('Could not read the refreshed model status. Your choices are kept.');
+      current.replaceWith(document.importNode(next, true));
+      var freshStats = documentCopy.querySelectorAll('.models-overview .stat');
+      document.querySelectorAll('.models-overview .stat').forEach(function (stat, position) {
+        if (freshStats[position]) stat.replaceWith(document.importNode(freshStats[position], true));
+      });
+      var changed = false, freshPickers = Array.from(documentCopy.querySelectorAll('[data-model-picker]'));
+      document.querySelectorAll('[data-model-picker]').forEach(function (select) {
+        var fresh = freshPickers.find(function (item) { return item.dataset.modelPicker === select.dataset.modelPicker; });
+        if (!fresh) return;
+        var freshOptions = new Map(Array.from(fresh.options).map(function (option) { return [option.value, option]; }));
+        if (select.options.length !== fresh.options.length) changed = true;
+        Array.from(select.options).forEach(function (option) {
+          var replacement = freshOptions.get(option.value);
+          if (replacement) option.textContent = replacement.textContent;
+          else { changed = true; option.textContent = option.textContent.replace(/ · (up to date|previous list|not in refreshed choices)$/, '') + ' · not in refreshed choices'; }
+        });
+      });
+      var freshRows = new Map(Array.from(documentCopy.querySelectorAll('.model-row')).map(function (row) {
+        return [row.querySelector('input[name="models"]').value, row];
+      }));
+      var rows = document.querySelectorAll('.model-row');
+      if (rows.length !== freshRows.size) changed = true;
+      rows.forEach(function (row) {
+        var replacement = freshRows.get(row.querySelector('input[name="models"]').value);
+        if (replacement) {
+          row.dataset.modelSource = replacement.dataset.modelSource;
+          row.firstElementChild.replaceWith(document.importNode(replacement.firstElementChild, true));
+        } else {
+          changed = true; row.dataset.modelSource = 'previous';
+          var label = row.firstElementChild, badge = label.querySelector('.badge');
+          if (!badge) { badge = document.createElement('span'); label.append(' ', badge); }
+          badge.className = 'badge'; badge.textContent = 'Not in refreshed choices';
+        }
+      });
+      status.textContent = 'Model-list check finished. Current status is shown above; your entered choices are kept.';
+      if (changed) {
+        status.append(' The available choices changed. Save other drafts before reloading, or keep working here. ');
+        var reload = document.createElement('button'); reload.type = 'button'; reload.className = 'btn btn--ghost'; reload.textContent = 'Reload updated choices';
+        reload.addEventListener('click', async function () {
+          if (dirty.size) {
+            var warning = 'Reloading replaces your unsaved choices on this page. Save them first, or cancel to keep working.';
+            var agreed = window.mvConfirm ? await window.mvConfirm(warning, {okText:'Reload choices'}) : window.confirm(warning);
+            if (!agreed) return;
+          }
+          dirty.clear(); window.location.assign('/settings#settings-models');
+        });
+        status.append(reload);
+      }
+    }
+
+    function bindForm(form) {
+      form.addEventListener('input', markDirty);
+      form.addEventListener('change', markDirty);
+      form.addEventListener('submit', async function (event) {
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        if (form.dataset.saving === 'true') return;
+        form.dataset.saving = 'true';
+        // Where the person was: saving disables the controls (which drops
+        // focus) and a provider row may be re-rendered, so focus returns here.
+        var focusedControl = form.contains(document.activeElement) ? document.activeElement : (event.submitter || null);
+        var providerRow = form.closest('.provider-row');
+        // A form that asks first (Remove key, reset visibility) confirms
+        // before anything is sent; declining sends nothing.
+        if (form.dataset.confirm) {
+          var agreed = window.mvConfirm ? await window.mvConfirm(form.dataset.confirm, {okText: form.dataset.confirmOk || 'Save this change'})
+            : window.confirm(form.dataset.confirm);
+          if (!agreed) { delete form.dataset.saving; return; }
+        }
+        var status = form.querySelector('[data-save-status]') || providerStatus(form);
+        if (!status) { status = document.createElement('p'); status.dataset.saveStatus = '1'; status.setAttribute('role', 'status'); form.append(status); }
+        status.textContent = 'Saving this section.';
+        var body = new FormData(form);
+        if (event.submitter && event.submitter.name) body.append(event.submitter.name, event.submitter.value);
+        var controls = Array.from(form.querySelectorAll('input, button, textarea, select')).map(function (control) {
+          var previous = control.disabled; control.disabled = true; return [control, previous];
+        });
+        try {
+          var method = (form.method || 'get').toUpperCase(), url = new URL(form.action);
+          if (method === 'GET' && ['theme','font','density'].some(function (key) { return body.has(key); })) {
+            var revisionMeta = document.querySelector('meta[name="lightwork-preference-revision"]');
+            var contextMeta = document.querySelector('meta[name="lightwork-preference-context"]');
+            var accountMeta = document.querySelector('meta[name="lightwork-preference-account"]');
+            var savedAppearance = [];
+            for (var key of ['theme','font','density']) {
+              var value = body.get(key); if (!value) continue;
+              var preferenceResponse = await fetch('/api/v1/preferences/display', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,value:value,context:contextMeta.content,expected_revision:revisionMeta.content,device_only:!accountMeta || accountMeta.content !== '1'})});
+              if (!preferenceResponse.ok) { status.textContent = (savedAppearance.length ? 'Saved ' + savedAppearance.join(', ') + '. ' : '') + 'This choice was not saved. Your remaining draft is kept.'; return; }
+              var preferenceResult = await preferenceResponse.json();
+              if (preferenceResult.revision) revisionMeta.content = preferenceResult.revision;
+              window.mvApplyDisplayPreference(key,value); savedAppearance.push(key);
+            }
+            dirty.delete(form); status.textContent = 'Display preferences saved. Your other section drafts are kept.'; return;
+          }
+          if (method === 'GET') new URLSearchParams(body).forEach(function (value, key) { url.searchParams.set(key, value); });
+          var response = await fetch(url, {method: method, credentials: 'same-origin',
+            headers: {Accept: 'text/html'}, ...(method === 'GET' ? {} : {body: body})});
+          if (!response.ok) throw response;
+          var documentCopy = new DOMParser().parseFromString(await response.text(), 'text/html');
+          var receipt = documentCopy.querySelector('.settings-saved, #settings-notice');
+          if (!receipt) throw new Error('The save was not confirmed. Your draft is kept; review current settings before retrying.');
+          status.textContent = receipt.textContent.trim();
+          if (response.status !== 202 && receipt.id !== "settings-notice") {
+            dirty.delete(form);
+            var providerState = refreshProviderRow(form, documentCopy);
+            if (providerState) {
+              status.textContent = (form.getAttribute('action') === '/settings/providers/test'
+                ? 'Connection test finished.' : receipt.textContent.trim()) + ' Status now: ' + providerState;
+            }
+            if (form.getAttribute('action') === '/settings/models/discover') refreshModelLists(documentCopy, status);
+            if (form.matches('form[action="/settings/models"], form[action="/settings/models/roles"]')) {
+              var currentRates = document.querySelector('[data-model-rate-status]');
+              var updatedRates = documentCopy.querySelector('[data-model-rate-status]');
+              if (currentRates && updatedRates) currentRates.replaceWith(updatedRates);
+              var currentDefault = document.getElementById('settings-current-default');
+              var updatedDefault = documentCopy.getElementById('settings-current-default');
+              if (currentDefault && updatedDefault) currentDefault.replaceWith(updatedDefault);
+              document.querySelectorAll('[data-role-effective]').forEach(function (cell) {
+                var updated = documentCopy.querySelector('[data-role-effective="' + cell.dataset.roleEffective + '"]');
+                if (updated) cell.textContent = updated.textContent;
+              });
+            }
+            form.querySelectorAll('input[type="password"]').forEach(function (input) { input.value = ''; });
+            if (method === 'GET') ['theme', 'font', 'density'].forEach(function (key) {
+              var value = body.get(key); if (value && window.mvApplyDisplayPreference) window.mvApplyDisplayPreference(key, value);
+            });
+          }
+        } catch (failure) {
+          status.textContent = failure.message || (window.mvErrorText ? window.mvErrorText(failure, 'save this section') : 'Could not save this section. Your draft is kept. Try again.');
+        } finally {
+          controls.forEach(function (item) { item[0].disabled = item[1]; });
+          delete form.dataset.saving;
+          if (focusedControl && (!document.activeElement || document.activeElement === document.body)) {
+            var back = focusedControl.isConnected ? focusedControl : providerRow && providerRow.isConnected
+              ? providerRow.querySelector('form[action="' + form.getAttribute('action') + '"] button[type="submit"]') ||
+                providerRow.querySelector('input[type="password"]:not([disabled])')
+              : null;
+            if (back) back.focus();
+          }
+        }
+      });
+    }
+    forms.filter(function (form) { return form.dataset.settingsLocal !== 'true'; }).forEach(bindForm);
+
+    document.querySelectorAll('[data-model-picker]').forEach(function (select) {
+      var custom = document.getElementById(select.dataset.modelPicker);
+      if (!custom) return;
+      var field = custom.tagName === 'INPUT' ? custom : custom.querySelector('input');
+      function sync(focus) {
+        var typed = select.value === '__custom__';
+        custom.hidden = !typed;
+        if (typed && focus && field) field.focus();
+      }
+      select.addEventListener('change', function () { sync(true); });
+      sync(false);
+    });
+    document.querySelectorAll('[data-model-select-all], [data-model-select-none]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var group = button.closest('.model-group');
+        var checked = button.hasAttribute('data-model-select-all');
+        if (!group) return;
+        group.querySelectorAll('input[type="checkbox"]').forEach(function (box) { box.checked = checked; });
+        var form = button.closest('form');
+        if (form) dirty.add(form);
+      });
+    });
+    document.querySelectorAll('[data-settings-jump]').forEach(function (link) {
+      link.addEventListener('click', function (event) {
+        event.preventDefault();
+        selectGroup(link.dataset.settingsJump, true, true);
+      });
+    });
+
+    window.addEventListener('beforeunload', function (event) {
+      if (!dirty.size) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
+  })();
+  </script>
+  <script src="/static/lightwork-model-guidance.js" defer></script>
+  <script src="/static/lightwork-model-tests.js" defer></script>
+  <script src="/static/lightwork-voice-setup.js" defer></script>
+  <script src="/static/lightwork-settings-admin.js" defer></script>
+{% endblock %}

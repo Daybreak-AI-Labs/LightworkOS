@@ -1,0 +1,37 @@
+{
+  "name": "maverick-mobile-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Lightwork companion with paired own-task previews and reviewed actions",
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit",
+    "test": "npm --prefix tests test",
+    "prebuild:android": "node build-native.cjs android --generate-only",
+    "prebuild:ios": "node build-native.cjs ios --generate-only",
+    "build:android:local": "node build-native.cjs android",
+    "build:ios:local": "node build-native.cjs ios"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "expo": "52.0.49",
+    "expo-secure-store": "14.0.1",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.9",
+    "expo-modules-core": "2.2.3",
+    "expo-system-ui": "4.0.9"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.12",
+    "typescript": "~5.3.3"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
+  }
+}

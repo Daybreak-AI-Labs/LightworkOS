@@ -1,0 +1,23 @@
+{# Suggested edits to policy documents (NOT-4): proposed by agents, colleagues
+   or the AI assistant, shown inline with exactly what changes, accepted or
+   rejected by a person. Accepting creates the document's next draft through
+   its own flow. Filled by static/lightwork-policy-suggestions.js. #}
+{% macro policy_suggestions(kind="ai-policy", next_step="The version in use stays the same until someone turns the new one on.", heading="h4") %}
+<section class="mv-suggestions" data-policy-suggestions data-kind="{{ kind }}" aria-labelledby="policy-suggestions-title-{{ kind }}">
+  <{{ heading }} id="policy-suggestions-title-{{ kind }}">Suggested changes</{{ heading }}>
+  <p class="assurance-muted muted">Agents and colleagues can suggest changes. Nothing changes until a person accepts a suggestion.
+    Accepting saves it as a new draft version. {{ next_step }}</p>
+  <div class="mv-suggestions__list" data-suggestion-list aria-live="polite"><p class="assurance-muted">Loading suggestions…</p></div>
+  {% if kind == "ai-policy" %}<form class="assurance-form mv-suggestions__ask" data-suggestion-ask hidden>
+    <p class="assurance-form__wide"><strong>Ask the AI assistant for a suggestion.</strong> It drafts new wording for one part. You then accept or reject it.</p>
+    <label>Rules<select class="select" name="id" required></select></label>
+    <label>Part<select class="select" name="field" required></select></label>
+    <label class="assurance-form__wide">What should change?<textarea class="textarea" name="instruction" maxlength="1000" rows="2" required></textarea></label>
+    <div class="assurance-form__wide assurance-actions">
+      <button class="btn" type="submit">Get a suggestion</button>
+      <span data-suggestion-status role="status" aria-live="polite"></span>
+    </div>
+  </form>{% endif %}
+</section>
+{% endmacro %}
+{% macro policy_suggestions_script() %}<script src="/static/lightwork-policy-suggestions.js" defer></script>{% endmacro %}

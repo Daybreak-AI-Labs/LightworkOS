@@ -1,0 +1,31 @@
+{
+  "control_plane": {
+    "at": 1782388795.9124005,
+    "dispatcher": "QueueDispatcher",
+    "goal_status_after_enqueue": "pending",
+    "job_kind": "run_goal",
+    "pending_jobs_after_submit": 1,
+    "submit_returned": null
+  },
+  "data_plane": {
+    "at": 1782388795.921675,
+    "claimed": true,
+    "done_jobs": 1,
+    "goal_status_after_run": "done",
+    "worker": "Worker"
+  },
+  "goal_id": 1,
+  "harness": "control_data_plane_e2e",
+  "note": "Real QueueDispatcher + SQLite JobQueue + Worker + shared WorldModel; no Redis/gRPC network. Agent execution is stubbed at the LLM boundary \u2014 this proves the dispatch plumbing, not the agent loop.",
+  "proof": {
+    "control_plane_did_not_execute": true,
+    "enqueued_exactly_one_job": true,
+    "ok": true,
+    "status_flowed_through_shared_world": true,
+    "worker_claimed_and_completed_out_of_band": true
+  },
+  "shared_stores": {
+    "job_queue_db": "jobs.db",
+    "world_db": "world.db"
+  }
+}

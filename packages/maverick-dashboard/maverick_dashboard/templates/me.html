@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}My work · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% set d = digest %}
+  {% set waiting = d.counts.approvals + d.counts.questions + d.counts.expiring_keys %}
+  {% call hero('Your day', 'My work',
+               subtitle='What is waiting for you',
+               lede='Requests waiting for your decision, questions an agent needs
+                     you to answer, your recent results and your spending this
+                     month. The daily summary sends this same list to your
+                     linked chat app or inbox.') %}
+    {{ state('Right now',
+             waiting ~ (' thing needs you' if waiting == 1 else ' things need you'),
+             badge='Action needed' if waiting else ('Waiting on others' if d.approvals else 'All clear'),
+             badge_class='warn' if waiting else ('pending' if d.approvals else 'ok'),
+             copy=d.local_date | datetime('date') ~ ' · ' ~ preferences.time_zone) }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel" role="{{ 'alert' if saved_failed else 'status' }}">
+    <strong>{{ 'Not done.' if saved_failed else 'Done.' }}</strong> {{ saved }}
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Waiting for your decision</h2></div>
+  <div class="panel">
+    {% if d.approvals %}
+    <table class="table--stacked">
+      <thead><tr><th scope="col">Request</th><th scope="col">Risk</th><th scope="col">Spending</th><th scope="col">Decide by</th><th scope="col">Waiting on</th></tr></thead>
+      <tbody>
+      {% for a in d.approvals %}
+        <tr>
+          <td data-label="Request"><a href="/approvals#approval-{{ a.id }}">#{{ a.id }} {{ a.action }}</a>{% if a.irreversible %} <span class="badge blocked">Can't be undone</span>{% endif %}</td>
+          <td data-label="Risk"><span class="badge {{ 'blocked' if a.risk in ('high', 'critical') else 'pending' }}">{{ a.risk_label }}</span></td>
+          <td data-label="Spending">{{ a.spending }}</td>
+          <td data-label="Decide by">{% if a.decide_by %}{{ a.decide_by | datetime }}{% else %}No deadline{% endif %}{% if a.status == 'expired' %} <span class="badge blocked">Expired</span>{% endif %}</td>
+          <td data-label="Waiting on">{{ {'you': 'You', 'you_own': 'You (your own request)', 'you_chat': 'You (decide in Slack or Teams)', 'requester': 'The person who asked'}.get(a.waiting_on, 'Other people') }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if can_decide %}<p class="muted">Decide on the <a href="/approvals">Approvals page</a>, or from Slack with the buttons on the card.</p>{% endif %}
+    {% if d.approvals | selectattr('waiting_on', 'equalto', 'requester') | list %}<p class="muted">“The person who asked” means the request comes from a colleague's private task, so you can't open it here; they can decide their own request.</p>{% endif %}
+    {% else %}
+    <p class="muted">Nothing is waiting for your decision. Requests appear here when an agent needs your approval.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Questions an agent is waiting on</h2></div>
+  <div class="panel">
+    {% if d.questions %}
+    <ul>
+      {% for q in d.questions %}
+      <li><a href="{{ q.href }}">{{ q.question }}</a>{% if q.goal_title %} <span class="muted">· {{ q.goal_title }}</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No agent is waiting on you for an answer. Questions appear here when a task needs something from you.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Recent results</h2></div>
+  <div class="panel">
+    {% if d.results %}
+    <table>
+      <thead><tr><th scope="col">Task</th><th scope="col">Outcome</th><th scope="col">Summary</th></tr></thead>
+      <tbody>
+      {% for r in d.results %}
+        <tr>
+          <td><a href="{{ r.href }}">{{ r.title }}</a></td>
+          <td><span class="badge {{ 'ok' if r.status == 'done' else 'pending' }}">{{ r.status_label }}</span></td>
+          <td class="muted">{{ r.summary or '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted">Results from the last 7 days. See everything on <a href="/deliverables">Deliverables</a>.</p>
+    {% else %}
+    <p class="muted">No results in the last 7 days. Start a task in Chat to get one.</p>
+    {% endif %}
+  </div>
+
+  {% if d.expiring_keys %}
+  <div class="section-head"><h2>Access keys that stop working soon</h2></div>
+  <div class="panel">
+    <ul>
+      {% for k in d.expiring_keys %}
+      <li><a href="{{ k.href }}">{{ k.label or k.prefix }}</a> <span class="muted">· stops in {{ k.days_left }} day{{ '' if k.days_left == 1 else 's' }}</span></li>
+      {% endfor %}
+    </ul>
+    <p class="muted">Make a new key before the old one stops, then switch your scripts over.</p>
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Spending this month</h2></div>
+  <div class="panel">
+    <p><strong>{{ d.spending.dollars | money }}</strong> spent in {{ d.spending.month_label }} across {{ d.spending.runs }} run{{ '' if d.spending.runs == 1 else 's' }}{% if d.spending.limit_dollars %}, of your <strong>{{ d.spending.limit_dollars | money }}</strong> monthly limit{% endif %}.
+      {% if d.spending.over_limit %}<span class="badge blocked">Over the limit</span>{% endif %}</p>
+    {% if not d.spending.limit_dollars %}<p class="muted">No monthly limit is set. An administrator can set one in Settings.</p>{% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="chat-accounts">Your chat accounts</h2></div>
+  <div class="panel">
+    {% if bridge_available %}
+    <h3>Ask Lightwork from chat</h3>
+    <p class="muted">Connect your Slack or Microsoft Teams account to your signed-in Lightwork account. Send the code from the chat account, then return here and confirm the account we found. A code works once and expires in 10 minutes.</p>
+    {% if bridge_notice %}<p role="alert">{{ bridge_notice }}</p>{% endif %}
+    {% if bridge_code %}
+    <div class="panel" role="status">
+      <p><strong>Your {{ bridge_channel | capitalize }} connection code: <code>{{ bridge_code }}</code></strong></p>
+      <p>Send <code>LIGHTWORK CONNECT {{ bridge_code }}</code> in a direct message to the Lightwork bot{% if bridge_channel == 'slack' %} in Slack{% else %} in Microsoft Teams{% endif %}. Then refresh this page and confirm the account below.</p>
+    </div>
+    {% endif %}
+    {% if bridge_pending %}
+    <h4>Confirm the account we found</h4>
+    {% for pending in bridge_pending %}
+    <div class="panel">
+      <p>{{ pending.channel | capitalize }} account <strong>{{ pending.sender_id }}</strong> in workspace <strong>{{ pending.provider_tenant }}</strong>.</p>
+      {% if bridge_can_connect %}<form method="post" action="/me/channels/oidc/confirm">
+        <input type="hidden" name="challenge_id" value="{{ pending.id }}" />
+        <button type="submit" class="btn btn--primary">Connect this account</button>
+      </form>{% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% if bridge_links %}
+    <h4>Chat connections</h4>
+    <table>
+      <thead><tr><th scope="col">Chat app</th><th scope="col">Account</th><th scope="col">Workspace</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
+      <tbody>{% for link in bridge_links %}
+      <tr><td>{{ link.channel | capitalize }}</td><td>{{ link.sender_id }}</td>
+        <td>{{ link.provider_tenant }}</td>
+        <td>{% if link.status == 'active' %}Connected{% elif link.status == 'revoked' %}Disconnected; finish removal{% else %}Confirmation needs retry{% endif %}</td><td>
+          <form method="post" action="/me/channels/oidc/unlink" class="users-inline">
+            <input type="hidden" name="link_id" value="{{ link.id }}" />
+            <button type="submit" class="btn btn--danger">{% if link.status == 'active' %}Disconnect account{% else %}Finish removal{% endif %}</button>
+          </form>
+        </td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% endif %}
+    {% if bridge_can_connect %}<form method="post" action="/me/channels/oidc/start" class="users-row-form">
+      <label class="users-field"><span>Chat app</span><select class="select" name="channel">
+        <option value="slack">Slack</option><option value="teams">Microsoft Teams</option>
+      </select></label>
+      <button type="submit" class="btn btn--primary">Get a connection code</button>
+    </form>{% else %}<p class="muted">Your current access allows you to view and remove chat connections, but not connect an account for tasks.</p>{% endif %}
+    <h3>Summaries and approval notifications</h3>
+    <p class="muted">The links below can deliver updates and approval notices. They do not sign you in for chat tasks or approval decisions. Email cannot start tasks without proof of mailbox ownership.</p>
+    {% else %}
+    <p class="muted">Link a chat app so you can approve requests and get your daily summary there. Chat task access requires a single sign-on session.</p>
+    {% endif %}
+    {% if link_code %}
+    <div class="panel" role="status">
+      <p><strong>Your {{ link_channel | capitalize }} code: <code>{{ link_code }}</code></strong></p>
+      <p>{% if link_channel == 'slack' %}In Slack, send <code>/lightwork link {{ link_code }}</code>.{% elif link_channel == 'teams' %}In Teams, message the Lightwork bot: <code>link {{ link_code }}</code>.{% else %}Reply to the Lightwork mailbox with <code>link {{ link_code }}</code>.{% endif %}</p>
+    </div>
+    {% endif %}
+    {% if links %}
+    <table>
+      <thead><tr><th scope="col">Chat app</th><th scope="col">Account</th><th scope="col">Linked</th><th scope="col">Actions</th></tr></thead>
+      <tbody>
+      {% for l in links %}
+        <tr>
+          <td>{{ l.channel | capitalize }}</td>
+          <td><code>{{ l.external_id }}</code></td>
+          <td>{{ l.linked_at | datetime }}{% if l.method == 'admin' %} <span class="muted">by an administrator</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/me/channels/unlink" class="users-inline">
+              <input type="hidden" name="channel" value="{{ l.channel }}" />
+              <input type="hidden" name="external_id" value="{{ l.external_id }}" />
+              <button type="submit" class="btn btn--danger" aria-label="Unlink account {{ l.external_id }} on {{ l.channel }}">Unlink account</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No chat accounts are linked yet. Get a link code below to link one.</p>
+    {% endif %}
+    <form method="post" action="/me/channels/link-code" class="users-row-form">
+      <label class="users-field">
+        <span>Chat app to link</span>
+        <select class="select" name="channel">
+          <option value="slack">Slack</option>
+          <option value="teams">Microsoft Teams</option>
+          <option value="email">Email</option>
+        </select>
+      </label>
+      <button type="submit" class="btn btn--primary">Get a link code</button>
+    </form>
+  </div>
+
+  <div class="section-head"><h2 id="daily-summary">Your daily summary</h2></div>
+  <div class="panel">
+    {% if not digest_scheduler_on %}
+    <p class="muted"><strong>The daily summary is turned off for this workspace.</strong> An administrator can turn it on in Settings (My work &rsaquo; Send a daily summary). Your choices below are kept for when it is on.</p>
+    {% endif %}
+    {% from "_form_field.html" import error_summary %}
+    <form method="post" data-mv-save="background" data-mv-save-what="save your choices" action="/me/preferences" class="users-row-form"
+          id="digest-form" data-mv-validate data-mv-keep="me-preferences">
+      {{ error_summary('digest-form-errors') }}
+      <label class="users-field">
+        <span>Your time zone</span>
+        <select class="select" name="time_zone">
+          {% for tz in time_zones %}<option value="{{ tz }}"{% if tz == preferences.time_zone %} selected{% endif %}>{{ tz }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="users-field">
+        <span>Send it at</span>
+        <select class="select" name="digest_hour">
+          {% for h in hours %}<option value="{{ h }}"{% if h == preferences.digest_hour %} selected{% endif %}>{{ '%02d:00' | format(h) }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="users-field">
+        <span>Email address for the summary{% if not email_on %} <span class="muted">(email sending is not set up yet)</span>{% endif %}</span>
+        <input class="input" type="email" name="email" value="{{ preferences.email }}" placeholder="you@company.com" autocomplete="email" />
+      </label>
+      <label><input type="checkbox" name="digest_enabled"{% if preferences.digest_enabled %} checked{% endif %} /> Send me a daily summary</label>
+      <label><input type="checkbox" name="send_when_empty"{% if preferences.send_when_empty %} checked{% endif %} /> Send it even when nothing is waiting</label>
+      <button type="submit" class="btn btn--primary">Save my choices</button>
+    </form>
+    <form method="post" action="/me/digest/send-now" class="users-inline">
+      <button type="submit" class="btn">Send my summary now</button>
+    </form>
+    {% include "_digest_preview.html" %}
+    <p class="muted">Each summary is noted in the audit log with who it went to and how many items it had — never the content.</p>
+  </div>
+{% endblock %}

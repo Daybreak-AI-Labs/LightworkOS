@@ -1,0 +1,14 @@
+{% extends "public_base.html" %}
+{% block title %}Sign out · Lightwork{% endblock %}
+{% block public_label %}Sign out{% endblock %}
+{% block public_footer %}Your Lightwork session{% endblock %}
+{% block content %}
+<section class="panel" style="max-width: 36rem; margin: 0 auto;" aria-labelledby="sign-out-title">
+  <h1 id="sign-out-title" class="page-title">Sign out</h1>
+  <p>{% if all_sessions %}End all your sessions?{% else %}End this browser session?{% endif %}</p>
+  <form method="post" action="logout{% if all_sessions %}?all=1{% endif %}">
+    <button class="btn btn--primary" type="submit">Sign out</button>
+    <a href="/">Cancel</a>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "Lightwork Companion",
+    "slug": "maverick-companion",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.maverick.companion"
+    },
+    "android": {
+      "package": "ai.maverick.companion"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

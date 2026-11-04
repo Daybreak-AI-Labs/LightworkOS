@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Outside agents · Lightwork{% endblock %}
+{% block content %}
+  {% from "_module_gate.html" import module_gate %}
+  {% set _LIFECYCLE = {'active': 'Active', 'suspended': 'Paused', 'revoked': 'Access blocked', 'contained': 'Blocked for rule breaks', 'expired': 'Access expired'} %}
+  <h1 class="page-title">Outside agents</h1>
+  <p class="page-subtitle">Agents built on other platforms — Salesforce Agentforce, AWS Bedrock, Copilot Studio or your own — keep running where they are. They follow your rules here: access keys, spending limits, checks before risky actions, and a record of every run.</p>
+  {% if outside_agent_tabs %}{% from "_tabs.html" import tab_bar, panel_attrs %}{{ tab_bar('Outside agents views', outside_agent_tabs, '') }}<div {{ panel_attrs('') }}>{% endif %}
+  {% if not enabled %}
+  {{ module_gate('external_agents', 'Outside agents',
+                 detail='Lets AI agents from other products (Salesforce, AWS, Microsoft and others) work under your rules and budgets.',
+                 can_activate=external_agents_can_activate) }}
+  {% endif %}
+
+  <div class="panel">
+    <p style="margin: 0;">
+      {% if enabled %}<span class="badge active">Connection open</span>
+      {% else %}<span class="badge">Connection closed</span>{% endif %}
+      <span class="badge">{{ status.enrolled }} connected</span>
+      <span class="badge">{{ status.runs }} tasks reported</span>
+      <span class="badge">{{ status.reported_dollars | money }} reported spend</span>
+      {% if status.memory_contributions %}<span class="badge">{{ status.memory_contributions }} lessons shared</span>{% endif %}
+      {% if status.over_budget %}<span class="badge failure">{{ status.over_budget }} over budget</span>{% endif %}
+      {% if status.contained %}<span class="badge failure">{{ status.contained }} blocked</span>{% endif %}
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2 style="margin-top:0">Connect your platform</h2>
+    <ol style="margin:0 0 var(--space-3); padding-left:1.2rem;">
+      <li>Add the agent below. The limits you set are what it must work within.</li>
+      <li>Create its access key with <strong>Create access key</strong> — it is shown once. Paste it into your platform’s settings (for example a Salesforce Named Credential or AWS Secrets Manager).</li>
+      {% if enabled %}
+      <li>Give your platform Lightwork’s connection file: <a class="btn btn--ghost" href="/api/v1/external/openapi.json" download="lightwork-connection.json">Download the connection file</a>. In Salesforce add it as an External Service; in AWS add it as a Bedrock action group. The agent then checks with Lightwork before risky actions and reports each finished task.</li>
+      {% else %}
+      <li>The connection file is available once the connection is open.
+        Ask an administrator to turn it on here, then come back to download it.</li>
+      {% endif %}
+    </ol>
+  </div>
+
+  <div class="panel">
+    {% if agents %}
+    <table>
+      <thead>
+        <tr><th scope="col">Agent</th><th scope="col">Platform</th><th scope="col">Owner</th><th scope="col">Department</th><th scope="col">Riskiest action allowed</th><th scope="col">Spending</th><th scope="col">Tasks</th><th scope="col">Access key</th><th scope="col">Status</th><th scope="col">Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for a in agents %}
+        {% set _name = a.description or (a.id | humanize) %}
+        <tr>
+          <td><a href="/external-agents/{{ a.id }}"><strong>{{ _name }}</strong></a>{% if a.description %}<br><span class="muted" style="font-size: var(--text-sm)">{{ a.id }}</span>{% endif %}</td>
+          <td><span class="badge">{{ a.platform_label }}</span></td>
+          <td>{{ (a.owner | identity).name if a.owner else '—' }}</td>
+          <td>{{ (a.department | humanize) if a.department else '—' }}</td>
+          <td>{{ (a.max_risk | humanize) if a.max_risk else 'No limit' }}</td>
+          <td>
+            {{ a.period_spent | money }}{% if a.max_dollars is not none %} of {{ a.max_dollars | money }}{% endif %}
+            <span class="muted" style="font-size: var(--text-sm)">{{ 'this month' if a.period == 'monthly' else 'all time' }}</span>
+            {% if a.over_budget %}<span class="badge failure">Over budget</span>{% endif %}
+          </td>
+          <td>{{ a.runs }}{% if a.wall_violations %} <span class="badge failure" title="Tasks that took longer than allowed">{{ a.wall_violations }} too long</span>{% endif %}</td>
+          <td>
+            {% if a.credentials %}<span class="badge">Active</span>{% else %}<span class="muted">None yet</span>{% endif %}
+          </td>
+          <td>
+            {% if a.contained %}<span class="badge failure">Blocked for rule breaks</span>
+            {% elif a.active %}<span class="badge active">{{ _LIFECYCLE.get(a.lifecycle, a.lifecycle | humanize) }}</span>
+            {% else %}<span class="badge failure">{{ _LIFECYCLE.get(a.lifecycle, a.lifecycle | humanize) }}</span>{% endif %}
+          </td>
+          <td class="mv-row__actions">
+            <a class="btn btn--primary" href="/external-agents/{{ a.id }}">View agent</a>
+            {% if a.contained %}
+            <button type="button" class="btn btn--ghost" data-xa-release="{{ a.id }}" data-xa-label="{{ _name }}"{% if not external_agents_can_manage %} disabled aria-disabled="true"{% endif %}>Let it work again</button>
+            {% endif %}
+            <button type="button" class="btn btn--ghost" data-xa-mint="{{ a.id }}" data-xa-label="{{ _name }}"{% if not external_agents_can_manage %} disabled aria-disabled="true"{% endif %}>Create access key</button>
+            {% if a.over_budget %}
+            <button type="button" class="btn btn--ghost" data-xa-reset-budget="{{ a.id }}" data-xa-label="{{ _name }}"{% if not external_agents_can_manage %} disabled aria-disabled="true"{% endif %}>Reset spending</button>
+            {% endif %}
+            <button type="button" class="btn btn--ghost btn--danger" data-xa-revoke="{{ a.id }}" data-xa-label="{{ _name }}"{% if not external_agents_can_manage %} disabled aria-disabled="true"{% endif %}>Block all access</button>
+            <button type="button" class="btn btn--ghost btn--danger" data-xa-remove="{{ a.id }}" data-xa-label="{{ _name }}"{% if not external_agents_can_manage %} disabled aria-disabled="true"{% endif %}>Remove agent</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="mv-empty">
+      <p class="mv-empty__title">No outside agents yet</p>
+      <p class="mv-empty__body">Bring an agent from Salesforce, AWS or another platform under your rules. Add it below and create its access key, and its work starts showing up here.</p>
+      <a class="btn btn--primary" href="#xa-add">Add an outside agent</a>
+    </div>
+    {% endif %}
+  </div>
+
+  {% include "_external_agent_actions.html" %}
+
+  <div class="section-head"><h2>Add an outside agent</h2></div>
+  <div class="panel">
+    <form id="xa-add">
+      <fieldset id="xa-add-controls" data-feature-enabled="{{ 'true' if external_agents_can_manage else 'false' }}"{% if not external_agents_can_manage %} disabled aria-disabled="true"{% endif %} style="display:grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-3); border:0; margin:0; padding:0; min-width:0;">
+      <legend class="sr-only">Add an outside agent</legend>
+      <label>Name
+        <input class="input" name="display_name" id="xa-name" required maxlength="64" placeholder="Salesforce quote bot">
+        <input type="hidden" name="id" id="xa-id">
+      </label>
+      <label>Platform
+        <select class="select" name="platform">
+          {% for key, label in platforms.items() %}
+          <option value="{{ key }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>What it does
+        <input class="input" name="description" maxlength="500" placeholder="Drafts renewal quotes in Sales Cloud">
+      </label>
+      <label>Owner <span class="muted">(who answers for it)</span>
+        <select class="select" name="owner" id="xa-owner"><option value="">Choose a person…</option></select>
+      </label>
+      <label>Department
+        <select class="select" name="department" id="xa-department"><option value="">No department</option></select>
+      </label>
+      <label>Riskiest action allowed
+        <select class="select" name="max_risk">
+          <option value="">No limit</option>
+          <option value="low" selected>Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </label>
+      <label>Spending limit ($)
+        <input class="input" name="max_dollars" type="number" min="0" step="0.01" placeholder="50.00">
+      </label>
+      <label>Spending limit applies
+        <select class="select" name="budget_period">
+          <option value="monthly" selected>Per month (starts again each month)</option>
+          <option value="total">In total</option>
+        </select>
+      </label>
+      <label>Access keys expire after
+        <select class="select" name="expires_days">
+          <option value="30">30 days</option>
+          <option value="90" selected>90 days</option>
+          <option value="180">180 days</option>
+          <option value="365">1 year</option>
+          <option value="">Never</option>
+        </select>
+      </label>
+      <div style="grid-column: 1 / -1;">
+        <div class="muted" id="xa-tools-label" style="margin-bottom: var(--space-2);">Actions it may use, and how risky you rate each one (your rating always wins over what the agent reports)</div>
+        <div id="xa-tools" aria-labelledby="xa-tools-label"></div>
+        <button type="button" class="btn btn--ghost" id="xa-tools-add">Add an action</button>
+      </div>
+      <fieldset style="grid-column: 1 / -1; border: 0; padding: 0; margin: 0;">
+        <legend class="muted">Knowledge it may use (none if nothing is ticked)</legend>
+        <div id="xa-scopes" style="display:flex; flex-wrap:wrap; gap: var(--space-2) var(--space-4);"><span class="muted">Loading departments…</span></div>
+      </fieldset>
+      <div style="align-self: end;">
+        <button type="submit" class="btn btn--primary">Add agent</button>
+      </div>
+      </fieldset>
+    </form>
+    <p class="muted" style="font-size: var(--text-sm); margin: var(--space-3) 0 0;">
+      Adding an agent with a name that already exists updates its limits and keeps its history.
+    </p>
+  </div>
+  {% if outside_agent_tabs %}</div>{% endif %}
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  function slug(text) {
+    return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+  }
+  var nameIn = document.getElementById("xa-name"), idIn = document.getElementById("xa-id");
+  if (nameIn) nameIn.addEventListener("input", function () { idIn.value = slug(nameIn.value); });
+  // People and departments for the pickers.
+  fetch("/api/v1/people/assignable").then(function (r) { return r.ok ? r.json() : { items: [] }; })
+    .then(function (j) {
+      var sel = document.getElementById("xa-owner"); if (!sel) return;
+      (j.items || []).forEach(function (p) {
+        // Store a readable owner (an email where there is one), not a fingerprint.
+        var value = /^person:/.test(p.ref) ? String(p.label || "").replace(/\s*\(.*\)$/, "") : p.ref;
+        var o = document.createElement("option"); o.value = value; o.textContent = p.label + (p.is_you ? " (you)" : ""); sel.appendChild(o);
+      });
+    }).catch(function () {});
+  fetch("/api/v1/departments").then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (list) {
+      var sel = document.getElementById("xa-department"), box = document.getElementById("xa-scopes");
+      if (box) box.textContent = "";
+      (Array.isArray(list) ? list : []).forEach(function (d) {
+        if (sel) { var o = document.createElement("option"); o.value = d.key; o.textContent = d.title || d.key; sel.appendChild(o); }
+        if (box) {
+          var lab = document.createElement("label"), cb = document.createElement("input");
+          cb.type = "checkbox"; cb.name = "data_scopes"; cb.value = d.key;
+          lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + (d.title || d.key)));
+          box.appendChild(lab);
+        }
+      });
+      if (box && !box.children.length) box.textContent = "No departments are set up yet.";
+    }).catch(function () { var box = document.getElementById("xa-scopes"); if (box) box.textContent = "Departments could not be loaded. Refresh the page and try again."; });
+  // Allowed actions: one row per action with your risk rating.
+  var toolList = null;
+  function tools() {
+    // The shell's helpers (lightwork-ui.js) load after the page content.
+    var ready = window.mvFetchJSON ? Promise.resolve() : new Promise(function (done) { document.addEventListener("DOMContentLoaded", done); });
+    if (!toolList) toolList = ready.then(function () { return window.mvFetchJSON("/api/v1/tools"); })
+      .then(function (j) { j = j || {}; return (j.tools || []).map(function (t) { return { name: t.name, label: window.mvHuman ? window.mvHuman(t.name) : t.name }; })
+        .sort(function (a, b) { return a.label.localeCompare(b.label); }); })
+      .catch(function () { return []; });
+    return toolList;
+  }
+  var rows = document.getElementById("xa-tools"), n = 0;
+  function addRow() {
+    var i = ++n, row = document.createElement("div");
+    row.className = "xa-tool-row"; row.style.cssText = "display:flex; gap: var(--space-2); margin-bottom: var(--space-2); flex-wrap: wrap;";
+    var toolSel = document.createElement("select"); toolSel.className = "select"; toolSel.setAttribute("aria-label", "Action " + i);
+    toolSel.dataset.role = "tool";
+    var first = document.createElement("option"); first.value = ""; first.textContent = "Choose an action…"; toolSel.appendChild(first);
+    tools().then(function (list) { list.forEach(function (t) { var o = document.createElement("option"); o.value = t.name; o.textContent = t.label; toolSel.appendChild(o); }); });
+    var riskSel = document.createElement("select"); riskSel.className = "select"; riskSel.setAttribute("aria-label", "Your risk rating for action " + i);
+    riskSel.dataset.role = "risk";
+    [["", "Use the agent’s own rating"], ["low", "Low risk"], ["medium", "Medium risk"], ["high", "High risk"]].forEach(function (x) {
+      var o = document.createElement("option"); o.value = x[0]; o.textContent = x[1]; riskSel.appendChild(o);
+    });
+    var rm = document.createElement("button"); rm.type = "button"; rm.className = "btn btn--ghost"; rm.textContent = "Remove";
+    rm.setAttribute("aria-label", "Remove action " + i);
+    rm.addEventListener("click", function () { row.remove(); });
+    row.appendChild(toolSel); row.appendChild(riskSel); row.appendChild(rm); rows.appendChild(row);
+  }
+  var addTool = document.getElementById("xa-tools-add");
+  if (addTool) addTool.addEventListener("click", addRow);
+  function fields(form) {
+    var f = new FormData(form);
+    var num = function (k) { var v = String(f.get(k) || "").trim(); return v === "" ? null : Number(v); };
+    var allow = [];
+    (rows ? rows.querySelectorAll(".xa-tool-row") : []).forEach(function (row) {
+      var t = row.querySelector('[data-role="tool"]').value, risk = row.querySelector('[data-role="risk"]').value;
+      if (t) allow.push(risk ? t + ":" + risk : t);
+    });
+    return {
+      id: String(f.get("id") || "").trim().toLowerCase() || slug(f.get("display_name")),
+      platform: String(f.get("platform") || "custom"),
+      description: String(f.get("description") || "").trim() || String(f.get("display_name") || "").trim(),
+      owner: String(f.get("owner") || "").trim(),
+      department: String(f.get("department") || "").trim(),
+      max_risk: String(f.get("max_risk") || "") || null,
+      allow_tools: allow,
+      data_scopes: f.getAll("data_scopes").map(String),
+      max_dollars: num("max_dollars"),
+      expires_days: num("expires_days"),
+      budget_period: String(f.get("budget_period") || "monthly"),
+    };
+  }
+  var form = document.getElementById("xa-add");
+  if (form) form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var body = fields(form);
+    if (!body.id) { window.mvToast("Give the agent a name.", { error: true }); return; }
+    window.xaCall("/api/v1/external-agents", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }, "Agent added.", true, "add the agent");
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Content access · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Governance', 'Content access', compact=true) }}
+<section class="panel"><p>Employee tasks and chats are private to their owner. Administrators govern policy and audit metadata. A specific task read, subject export or approval-card read needs a stated purpose and an expiry of at most one hour. It also needs approval by a different administrator or the content owner. This never grants changing or publishing the employee's task or opening another task in its conversation.</p>
+<p>A person with permission to operate can request an exact approval-card read. The grant only reveals that reviewed card. Voting still independently requires the current review role, claim and separation-of-duties checks; changing the card invalidates the content grant.</p>
+<p>Shared result packets keep their assigned reviewer access. Existing employee-owned work uses its recorded owner. Unowned legacy tasks require a separate review; no employee ownership is guessed.</p>
+<p id="ca-status" role="status" aria-live="polite">Loading current access…</p><button type="button" class="btn" id="ca-refresh">Refresh</button></section>
+<section class="panel" id="ca-request-panel" hidden><h2>Request a specific read</h2>
+<p id="ca-window"></p><form id="ca-request" data-draft-recovery="off">
+<label>Record <select class="select" id="ca-resource" required><option value="">Choose a record</option></select></label>
+<label>Purpose <select class="select" id="ca-purpose"><option value="employee_support">Employee support</option><option value="incident_investigation">Incident investigation</option><option value="rights_request">Rights request</option><option value="action_review">Review an approval card</option></select></label>
+<label>Access duration <select class="select" id="ca-minutes"><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">One hour</option></select></label>
+<button type="submit" class="btn btn--primary">Request independent review</button></form></section>
+<section class="panel"><h2>Requests and receipts</h2><div id="ca-records"></div></section>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  const byId = id => document.getElementById(id); let model = null, busy = false;
+  function say(text) { window.mvStatus(byId('ca-status'), text); }
+  async function call(url, body) {
+    return window.mvFetchJSON(url, {method: body ? 'POST' : 'GET', body, plainDetail: true}, body ? 'save the access change' : 'load content access');
+  }
+  function paragraph(parent, text) { const p = document.createElement('p'); p.textContent = text; parent.appendChild(p); }
+  function button(parent, text, action) { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = text; b.addEventListener('click', action); parent.appendChild(b); }
+  async function decide(row, decision) {
+    if (busy) return; busy = true;
+    try { await call('/api/v1/content-access/' + encodeURIComponent(row.id) + '/decision', {expected_revision: row.revision, decision}); await load(); }
+    catch (error) { say(error.message); } finally { busy = false; }
+  }
+  async function load() {
+    model = await call('/api/v1/content-access'); byId('ca-request-panel').hidden = !model.can_request || !model.enabled;
+    say(model.enabled ? 'Current policy loaded. Approvals with a pending activity record do not permit reads.' : 'Exceptional access requests are off. Employee content remains private. An installation administrator can enable requests in Settings.');
+    const select = byId('ca-resource'); select.replaceChildren(new Option('Choose a record', ''));
+    model.resources.forEach((row, index) => select.appendChild(new Option(row.label, String(index)))); byId('ca-window').textContent = model.resource_window;
+    const rows = byId('ca-records'); rows.replaceChildren();
+    if (!model.records.length) paragraph(rows, 'No content-access requests in this workspace. Requests appear here when someone asks to read private task content.');
+    model.records.forEach(row => {
+      const card = document.createElement('article'); card.className = 'panel';
+      paragraph(card, row.label + ' — ' + row.status + (row.expired ? ' (expired)' : '') + (row.audit_pending ? ' · activity record pending' : ''));
+      paragraph(card, 'Requested by ' + row.requester + ' for ' + row.purpose.replaceAll('_', ' ') + '; ' + row.minutes + ' minutes.');
+      if (row.expires_at) paragraph(card, 'Expires ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(row.expires_at) : new Date(row.expires_at * 1000).toLocaleString()));
+      if (row.status === 'requested' && row.can_review) { button(card, 'Approve this scope', () => decide(row, 'approve')); button(card, 'Deny', () => decide(row, 'deny')); }
+      if (row.can_revoke && ['requested', 'approved'].includes(row.status)) button(card, 'Revoke access', () => decide(row, 'revoke'));
+      if (row.can_revoke && row.audit_pending) button(card, 'Retry activity recording', () => decide(row, 'retry_audit'));
+      if (row.resource_kind === 'goal' && row.status === 'approved' && !row.expired && !row.audit_pending) { const a = document.createElement('a'); a.className = 'btn'; a.href = '/goals/' + encodeURIComponent(row.resource_id) + '/trajectory'; a.textContent = 'Open reviewed task'; card.appendChild(a); }
+      if (row.resource_kind === 'subject_data' && row.status === 'approved' && !row.expired && !row.audit_pending) { const a = document.createElement('a'); a.href = '/compliance#cmp-people'; a.textContent = 'Open the governed data-export control'; card.appendChild(a); }
+      if (row.resource_kind === 'approval' && row.status === 'approved' && !row.expired && !row.audit_pending) { const a = document.createElement('a'); a.href = '/approvals'; a.textContent = 'Open authorized approval cards'; card.appendChild(a); }
+      rows.appendChild(card);
+    });
+  }
+  byId('ca-refresh').addEventListener('click', () => load().catch(error => say(error.message)));
+  byId('ca-request').addEventListener('submit', async event => {
+    event.preventDefault(); if (busy || !model) return;
+    const selected = model.resources[Number(byId('ca-resource').value)]; if (!selected || byId('ca-resource').value === '') return;
+    busy = true;
+    try { await call('/api/v1/content-access', {resource_kind: selected.resource_kind, resource_id: selected.resource_id, purpose: byId('ca-purpose').value, minutes: Number(byId('ca-minutes').value)}); await load(); }
+    catch (error) { say(error.message); } finally { busy = false; }
+  });
+  // The shell's shared helpers (lightwork-ui.js) load after the page content.
+  const start = () => load().catch(error => say(error.message));
+  if (window.mvFetchJSON) start(); else document.addEventListener('DOMContentLoaded', start);
+})();
+</script>
+{% endblock %}

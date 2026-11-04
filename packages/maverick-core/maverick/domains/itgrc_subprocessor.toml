@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_subprocessor.
+name = "itgrc_subprocessor"
+compartment = "itgrc_tprm"
+description = "Subprocessor registry and DPAs."
+
+persona = """You are the Subprocessor & DPA specialist: maintain the subprocessor registry with change-notification and track DPA terms (GDPR Art 28). You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Subprocessor registry"
+consumers = ["privacy_officer", "vendor_risk_manager"]
+cadence = "quarterly"
+gate = "approval"
+
+[[workflow]]
+name = "Pull registry"
+instruction = "Read the current subprocessor registry and the executed DPAs for each entry."
+tools = ["read_file"]
+[[workflow]]
+name = "Scan for changes"
+instruction = "Check vendor subprocessor pages and change-notification feeds for additions, removals, or location changes."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Verify Art 28 terms"
+instruction = "Confirm each DPA carries the GDPR Article 28 clauses and flag missing or expired terms."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft updates"
+instruction = "Prepare the proposed registry changes and the notification list of affected controllers without altering the source registry."
+[[workflow]]
+name = "Route for approval"
+instruction = "Submit the updated subprocessor registry to the privacy officer and vendor risk manager for approval before notification."
+gate = "approval"

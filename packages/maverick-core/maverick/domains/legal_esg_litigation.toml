@@ -1,0 +1,39 @@
+# Legal suite — Greenwashing / ESG-Disclosure Litigation & Risk. Sealed matter compartment.
+name = "legal_esg_litigation"
+compartment = "legal_litigation"
+description = "Greenwashing and ESG-disclosure litigation and risk review."
+
+persona = """You are the ESG-litigation specialist (sealed matter compartment). You review environmental and ESG claims against the FTC Green Guides and the EU Green Claims Directive, and you assess greenwashing and securities-suit risk on the privileged matter. You clear no public statement and approve no disclosure yourself; a human attorney owns every position, and the matter stays privileged. Every authority you cite is verified or explicitly marked [UNVERIFIED] — you never fabricate a citation or a holding. This is research and analysis, not legal advice."""
+
+allow_tools = ["read_file", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file", "web_search"]
+
+knowledge_sources = ["legal_matter"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "greenwashing litigation-risk memo"
+consumers = ["litigation_counsel", "disclosure_committee"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Gather claims"
+instruction = "Read the environmental and ESG statements at issue and the matter facts from the sealed matter record."
+tools = ["read_file"]
+[[workflow]]
+name = "Apply standards"
+instruction = "Test each claim against the FTC Green Guides and the EU Green Claims Directive for greenwashing exposure."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Assess suit risk"
+instruction = "Assess securities-suit and greenwashing-litigation risk, citing only verified authority and marking anything unconfirmed [UNVERIFIED]."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Attorney review"
+instruction = "Route the risk memo to litigation counsel, who clears every public statement and owns each position."
+gate = "review"

@@ -1,0 +1,57 @@
+# Public GitHub Pages source allowlist.
+#
+# One source path per line, relative to docs/. A reviewed repository-root
+# source uses `@repo/`, and a source may be copied to a different public path
+# with `source.md|destination.md`.
+index.md
+getting-started.md
+source-install.md
+using-lightwork.md
+configuration.md
+task-limits.md
+provider-spending.md
+env-vars.md
+deployment.md
+reference-architectures.md
+operations.md
+safety.md
+governed-execution.md
+plugins.md
+connectors.md
+starter-goals.md
+api.md
+clients/examples/rest_lifecycle.py
+grpc.md
+a2a.md
+external-agents.md
+clients/external-agent-quickstart.md
+clients/examples/lightwork.ts
+clients/examples/external_agent_loop.py
+performance/streaming-parity.md
+SECURITY_GRC.md
+MODEL_RISK_ASSURANCE.md
+AI_EVIDENCE_GATEWAY.md
+audit-checkpoints.md
+@repo/benchmarks/GOVERNANCE_FRONTIER_RESULTS.md|benchmarks/governance-frontier.md
+@repo/benchmarks/results/governance-frontier-v1/measured-manifest.json|benchmarks/results/governance-frontier-v1/measured-manifest.json
+@repo/benchmarks/results/governance-frontier-v1/trusted-publisher.pub|benchmarks/results/governance-frontier-v1/trusted-publisher.pub
+@repo/benchmarks/results/governance-frontier-v1/verify_manifest.py|benchmarks/results/governance-frontier-v1/verify_manifest.py
+MODEL_IMPROVEMENT_PLATFORM.md
+pricing-governance.md
+security/threat-model.md
+security/dgm-evaluator-evidence.md
+security/capability-attenuation.md
+security/shield-benchmark.md
+encryption.md
+regulated-deployment.md
+compliance-assessments.md
+threat-hunting.md
+enterprise/security-overview.md
+enterprise/architecture.md
+integrations/observability-partners.md
+CONTRIBUTING.md
+CLA.md
+CODE_OF_CONDUCT.md
+SECURITY.md|security-policy.md
+@repo/LICENSE|license.md
+@repo/TRADEMARK.md|trademark.md

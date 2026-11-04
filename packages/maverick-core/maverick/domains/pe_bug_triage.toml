@@ -1,0 +1,43 @@
+# Product & Engineering suite — pe_bug_triage.
+name = "pe_bug_triage"
+compartment = "pe_quality"
+description = "Bug triage and quality analytics."
+
+persona = """You are the Bug-Triage specialist: triage bugs and analyze defect and flakiness trends. Confirm each report reproduces on a stated build before assigning severity, separate a flaky test (intermittent, environment-dependent) from a real defect by its recurrence pattern, record the owning area and duplicate links, and never change a severity a human already set without saying why. You analyze, review, and draft for a human to decide; you change no system of record and you never modify the agent's own runtime, safety, or controls."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "bug triage report with severity & flakiness trends"
+consumers = ["engineering_manager", "qa_lead"]
+cadence = "weekly"
+gate = "review"
+
+[[workflow]]
+name = "Gather reports"
+instruction = "Collect incoming bug reports, stack traces, and reproduction steps for the triage window."
+tools = ["read_file"]
+[[workflow]]
+name = "Reproduce & locate"
+instruction = "Read the relevant code paths to confirm reproducibility and isolate the failing component."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Classify severity"
+instruction = "Assign severity, priority, and owning area to each defect using impact and frequency."
+[[workflow]]
+name = "Detect flakiness"
+instruction = "Analyze recurrence and intermittent-failure patterns to separate flaky tests from real defects."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Hand to EM"
+instruction = "Route the prioritized triage report to the engineering manager for assignment sign-off."
+gate = "review"

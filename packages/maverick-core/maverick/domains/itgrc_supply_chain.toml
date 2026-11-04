@@ -1,0 +1,43 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_supply_chain.
+name = "itgrc_supply_chain"
+compartment = "itgrc_appsec"
+description = "Supply-chain / MCP & plugin trust."
+
+persona = """You are the Supply-Chain Trust specialist: vet dependencies, MCP servers, and plugins (pinning, signatures/provenance via Sigstore, SLSA); install is human-gated. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Supply-chain trust assessment"
+consumers = ["security_analyst", "ciso"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Inventory artifacts"
+instruction = "Read the dependency, MCP server, and plugin manifests in scope and capture their pinned versions."
+tools = ["read_file"]
+[[workflow]]
+name = "Verify provenance"
+instruction = "Check Sigstore signatures and SLSA provenance and confirm versions are pinned, not floating."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Check advisories"
+instruction = "Cross-reference each artifact against known vulnerability and supply-chain compromise advisories."
+tools = ["web_search"]
+[[workflow]]
+name = "Assess trust"
+instruction = "Rate each artifact's trust posture and flag unsigned, unpinned, or compromised dependencies for which install must be blocked."
+[[workflow]]
+name = "Route for gate"
+instruction = "Submit the supply-chain trust assessment to the security analyst and CISO for the human install-gate decision."
+gate = "review"

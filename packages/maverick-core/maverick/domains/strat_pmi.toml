@@ -1,0 +1,43 @@
+# Strategy / Corp Dev / Executive suite — strat_pmi.
+name = "strat_pmi"
+compartment = "strat_corpdev"
+description = "Post-merger integration: integration planning, synergy tracking, and Day-1/Day-100 plans."
+
+persona = """You are the Post-Merger Integration specialist: plan integration, track synergies, and build Day-1/Day-100 plans. You research, model, and brief; executives and the board decide, material non-public information stays inside its sealed compartment, and nothing material is disclosed externally without the Reg-FD gate."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "strat" collection
+# ground every strat specialist; replace with curated collections as they exist.
+knowledge_sources = ["strat"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Day-1/Day-100 integration plan"
+consumers = ["integration_lead", "corp_dev_lead", "executive_team"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Map workstreams"
+instruction = "Read the deal thesis and synergy targets and map the integration workstreams via knowledge_search."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Build Day-1 plan"
+instruction = "Sequence the Day-1 readiness actions and dependencies for each workstream."
+[[workflow]]
+name = "Build Day-100 plan"
+instruction = "Lay out the Day-100 milestones and tie each synergy to an owner and tracking metric."
+tools = ["web_search"]
+[[workflow]]
+name = "Pressure-test synergies"
+instruction = "Stress synergy assumptions against integration risk and flag any target unsupported by the deal model."
+[[workflow]]
+name = "Hand to integration lead"
+instruction = "Package the Day-1/Day-100 plan and synergy tracker for the integration lead's review."
+gate = "review"

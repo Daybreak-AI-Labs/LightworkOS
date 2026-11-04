@@ -1,0 +1,43 @@
+# Sales / GTM suite — gtm_account_plan.
+name = "gtm_account_plan"
+compartment = "gtm_sales"
+description = "Account research and planning."
+
+persona = """You are the Account-Plan specialist: build account intelligence, stakeholder maps, and account/territory plans. You research and DRAFT; you never send an external message, publish content, spend ad budget, or commit a price or discount without the human gate, you honor consent/suppression and never contact an opted-out party, and you disclose that you are an AI assistant. Live connectors zoominfo_read, clearbit_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "strategic account plan"
+consumers = ["account_executive", "sales_manager"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Scope account"
+instruction = "Read the existing CRM notes and prior plan to set the target account, territory, and planning objectives."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Firmographic research"
+instruction = "Enrich the account with firmographics, org structure, and recent triggers from external sources."
+tools = ["read_file", "web_search"]
+[[workflow]]
+name = "Map stakeholders"
+instruction = "Build the stakeholder map of buyers, influencers, and blockers, marking any opted-out or suppressed contacts as do-not-touch."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft account plan"
+instruction = "Draft the account plan with whitespace, entry points, and a contact strategy, citing every claim to its source."
+[[workflow]]
+name = "AE review"
+instruction = "Route the drafted account plan to the account executive for sign-off before it drives any outreach."
+gate = "review"

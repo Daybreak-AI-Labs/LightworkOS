@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Tool servers · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_integration_readiness.html" import integration_readiness %}
+  {% set verified = servers | selectattr('readiness.live.status', 'equalto', 'verified') | list %}
+  {% call hero('Workforce capability', 'Tool servers',
+               subtitle='Extra tools for your agents',
+               lede='Tool servers give your agents more things they can do, such as
+                     working with files or GitHub. Add one below and test it.') %}
+    {{ state('Current state', (servers | length) ~ ' added · ' ~ (verified | length) ~ ' tested and working',
+             badge='Working' if verified else 'Not tested yet',
+             badge_class='ok' if verified else 'idle',
+             copy='After adding a server, press Test to check that it answers
+                   and offers its tools.') }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel mcp-saved" role="status"><strong>Done.</strong> {{ saved }}</div>
+  {% endif %}
+
+  <div class="section-head"><h2>Your tool servers</h2></div>
+  <div class="panel">
+    {% if servers %}
+      <table>
+        <thead><tr>
+          <th scope="col">Server</th>
+          <th scope="col">Where it runs</th>
+          <th scope="col">Added By</th>
+          <th scope="col">Status</th>
+          <th scope="col">Actions</th>
+        </tr></thead>
+        <tbody>
+        {% for s in servers %}
+          {% set label = s.name | humanize %}
+          <tr>
+            <td>{{ label }}</td>
+            <td>{{ 'Online service' if s.transport == 'http' else 'On this computer' }}
+              <details class="mcp-tech"><summary>Technical details</summary>
+                <p class="muted">{{ s.url if s.transport == 'http' else (s.command or '') }} {{ s.args | join(' ') if s.args and s.transport != 'http' else '' }}</p>
+              </details></td>
+            <td>{% if s.source == 'dashboard' %}<span class="badge active">You, on this page</span>{% else %}<span class="muted">Your administrator</span>{% endif %}</td>
+            <td>{{ integration_readiness(s.readiness) }}</td>
+            <td class="mcp-actions">
+              <form method="post" action="/mcp/test">
+                <input type="hidden" name="name" value="{{ s.name }}" />
+                <button type="submit" class="btn btn--primary" aria-label="Test server {{ label }}">Test server</button>
+              </form>
+              {% if s.removable %}
+              <form method="post" action="/mcp/remove"
+                    data-mcp-confirm="Remove the {{ label }} tool server? Agents will stop using its tools.">
+                <input type="hidden" name="name" value="{{ s.name }}" />
+                <button type="submit" class="btn btn--danger" aria-label="Remove server {{ label }}">Remove server</button>
+              </form>
+              {% else %}<span class="muted">Only your administrator can remove it.</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted mcp-flush">No tool servers yet. Choose one below to add it.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Add a tool server</h2></div>
+  <div class="mcp-cards">
+    {% for key, p in presets.items() %}
+    <form method="post" action="/mcp/add-preset" class="panel mcp-card" aria-labelledby="mcp-{{ key }}-title">
+      <input type="hidden" name="preset" value="{{ key }}" />
+      <h3 id="mcp-{{ key }}-title">{{ p.title }}</h3>
+      <p class="muted">{{ p.description }} <span class="badge">{{ p.where }}</span></p>
+      {% for f in p.fields %}
+      <label class="mcp-field">
+        <span>{{ f.label }}</span>
+        <input class="input" type="{{ f.type }}" name="{{ f.key }}" {% if not f.optional %}required{% endif %}
+               {% if f.placeholder %}placeholder="{{ f.placeholder }}"{% endif %} autocomplete="off"
+               {% if f.help %}aria-describedby="mcp-{{ key }}-{{ f.key }}-help"{% endif %} />
+        {% if f.help %}<span class="muted mcp-help" id="mcp-{{ key }}-{{ f.key }}-help">{{ f.help }}
+          {% if f.link %}<a href="{{ f.link }}" target="_blank" rel="noopener noreferrer">Open that page</a>{% endif %}</span>{% endif %}
+      </label>
+      {% endfor %}
+      <label class="mcp-field">
+        <span>Name (optional)</span>
+        <input class="input" type="text" name="display_name" maxlength="60" placeholder="{{ p.title }}" />
+      </label>
+      <button type="submit" class="btn btn--primary">Add {{ p.title | lower }}</button>
+    </form>
+    {% endfor %}
+  </div>
+
+  <details class="panel mcp-advanced">
+    <summary>Advanced: add a custom tool server</summary>
+    <p class="muted">For IT teams who have a tool server's exact start command or web address.
+      After adding it, press Test to check that it works.</p>
+    <h3>Runs on this computer</h3>
+    <form method="post" action="/mcp/add" class="mcp-form">
+      <input type="hidden" name="transport" value="stdio" />
+      <label class="mcp-field"><span>Name</span>
+        <input class="input" type="text" name="name" required placeholder="e.g. files" aria-label="Custom server name" /></label>
+      <label class="mcp-field"><span>Start command</span>
+        <input class="input" type="text" name="command" required placeholder="e.g. npx" aria-label="Custom server start command" /></label>
+      <label class="mcp-field"><span>Extra words for the command (one per line)</span>
+        <textarea class="textarea" name="args" rows="3" aria-label="Custom server command words, one per line"></textarea></label>
+      <label class="mcp-field"><span>Settings it needs (NAME=value, one per line)</span>
+        <textarea class="textarea" name="env" rows="2" aria-label="Custom server settings, one per line"></textarea></label>
+      <p><button type="submit" class="btn">Add custom server</button></p>
+    </form>
+    <h3>Online service</h3>
+    <form method="post" action="/mcp/add" class="mcp-form">
+      <input type="hidden" name="transport" value="http" />
+      <label class="mcp-field"><span>Name</span>
+        <input class="input" type="text" name="name" required placeholder="e.g. crm-tools" aria-label="Custom online server name" /></label>
+      <label class="mcp-field"><span>Web address</span>
+        <input class="input" type="url" name="url" required placeholder="https://…" aria-label="Custom online server web address" /></label>
+      <label class="mcp-field"><span>Access key (optional)</span>
+        <input class="input" type="password" name="auth_token" autocomplete="off" aria-label="Custom online server access key" /></label>
+      <label class="mcp-field"><span>Extra request settings (NAME=value, one per line)</span>
+        <textarea class="textarea" name="headers" rows="2" aria-label="Custom online server extra settings, one per line"></textarea></label>
+      <p><button type="submit" class="btn">Add custom online server</button></p>
+    </form>
+  </details>
+
+  <style>
+    .mcp-saved { border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4); }
+    .mcp-flush { margin: 0; }
+    .mcp-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .mcp-actions form { margin: 0; }
+    .mcp-tech summary { font-size: var(--text-sm); cursor: pointer; }
+    .mcp-tech p { overflow-wrap: anywhere; font-size: var(--text-sm); }
+    .mcp-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: var(--space-3); margin-bottom: var(--space-4); }
+    .mcp-card { display: flex; flex-direction: column; gap: var(--space-2); }
+    .mcp-card h3 { margin: 0; }
+    .mcp-card .btn { align-self: flex-start; margin-top: auto; }
+    .mcp-field { display: flex; flex-direction: column; gap: var(--space-1); }
+    .mcp-help { font-size: var(--text-sm); }
+    .mcp-form { display: flex; flex-direction: column; gap: var(--space-3); max-width: 36rem; }
+    .mcp-advanced > summary { cursor: pointer; }
+  </style>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    document.querySelectorAll('form[data-mcp-confirm]').forEach(function (form) {
+      form.addEventListener('submit', function (event) {
+        if (form.dataset.confirmed === 'true') { delete form.dataset.confirmed; return; }
+        event.preventDefault();
+        window.mvConfirm(form.dataset.mcpConfirm, {okText: form.dataset.mcpOk || 'Remove server'}).then(function (ok) {
+          if (!ok) return;
+          form.dataset.confirmed = 'true';
+          if (form.requestSubmit) form.requestSubmit(); else form.submit();
+        });
+      });
+    });
+  })();
+  </script>
+
+  <div class="section-head"><h2 id="fa-registry-title">Find more tool servers</h2></div>
+  <section class="panel" id="fa-registry" aria-labelledby="fa-registry-title">
+    <p class="muted">Browse the tool servers published in your organisation's list. Before one is added you see
+      exactly what it starts or connects to, and you can ask it which tools it offers.</p>
+    <p class="fa-row"><button type="button" class="btn btn--primary" id="fa-registry-load">Show available tool servers</button></p>
+    <label class="fa-field fa-grow"><span class="sr-only">Search tool servers</span>
+      <input class="input" type="search" id="fa-registry-search" placeholder="Search by name or purpose" aria-label="Search tool servers" hidden></label>
+    <p class="muted" id="fa-registry-status" role="status" aria-live="polite"></p>
+    <div id="fa-registry-out"></div>
+    <div id="fa-registry-preview" aria-live="polite"></div>
+  </section>
+  <style>
+    .fa-scroll { overflow-x: auto; }
+    .fa-inline { list-style: none; padding: 0; margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .fa-list { margin: var(--space-2) 0; }
+    .fa-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+    .fa-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .fa-grow { flex: 1 1 18rem; }
+    .fa-technical { margin-top: var(--space-2); }
+  </style>
+  <script src="/static/lightwork-feature-actions.js" defer></script>
+
+{% endblock %}

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Plan teaching questions · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% call hero('Learning', 'Plan teaching questions', lede='Choose a saved taught step, review the questions needed to distinguish its possible answers, and check the resulting rule against another saved rule.') %}{% endcall %}
+<div id="oac-root" data-context="{{ context }}" data-enabled="{{ '1' if enabled else '0' }}" class="oac-stack">
+<p>No AI calls or connected actions run here. Your examples, answers and effort reports remain entered evidence. Agreement with another saved rule does not establish business truth, faster teaching or performance on unfamiliar work.</p>
+<p id="oac-message" role="status" aria-live="polite" tabindex="-1"></p>
+{% if enabled %}
+<section class="panel oac-stack" id="oac-current">
+<label>Owned saved workflow <select id="oac-flow" class="input"><option value="">Choose a workflow</option></select></label>
+<label>Earlier teaching review <select id="oac-review-select" class="input"><option value="">Enter a new source below</option></select></label>
+<button id="oac-refresh" class="btn" type="button">Refresh selected source</button>
+<details id="oac-author"><summary>Enter the complete source and use permission</summary>
+<form id="oac-create" class="oac-stack">
+<label>Saved taught step <select name="node" class="input" required></select></label>
+<p>The step must have one to three Yes/No or whole-number inputs and at most thirty-two complete possible situations. All rules that fit its saved examples remain included.</p>
+<label>Optional owned published rule used to check answers <select name="reference" class="input"><option value="">No local check rule</option></select></label>
+<label>Named answer returned by that check rule <select name="output" class="input"><option value="">Choose its answer</option></select></label>
+<label>Earlier answer reports to inform question effort <select name="prior" class="input" multiple aria-describedby="oac-prior-note"></select></label>
+<p id="oac-prior-note">Choose up to eight owned reviews in the same effort unit. Only retained answers with current purpose, permission, source and review dates can inform estimated cost. A report does not establish a saving.</p>
+<div class="oac-grid"><label>One consistent effort unit <input name="effort_unit" class="input" maxlength="100" required placeholder="For example: active review points"></label><label>Default effort for a question with no earlier report <input name="default_effort" class="input" type="number" min="1" max="1000" step="1" required></label></div>
+<label><input name="allowed" type="checkbox" required> I have current permission to use this complete source and selected effort reports for the stated purpose</label>
+<label><input name="allow_independent_artifact" type="checkbox"> This evidence may create a separately owned taught rule if I later review and explicitly accept it</label>
+<label>Exact teaching and effort-report use purpose <textarea name="purpose" class="input" minlength="10" maxlength="2000" required></textarea></label>
+<label>Review source permission again by <input name="expires_at" class="input" type="datetime-local" required></label>
+<button class="btn btn--primary" type="submit">Review complete teaching source</button>
+</form></details>
+<section id="oac-results" class="oac-stack"></section>
+<div id="oac-controls" hidden class="oac-stack">
+<div class="oac-row"><button id="oac-plan" class="btn" type="button">Review complete question plan</button><button id="oac-qualify" class="btn" type="button">Review checking every situation</button><button id="oac-draft" class="btn" type="button">Open the checked private draft in Teach</button></div>
+<form id="oac-answer" class="oac-stack">
+<h2>Answer the selected question</h2><div id="oac-question" class="oac-stack"></div>
+<label id="oac-boolean-answer">Your answer <select name="boolean_answer" class="input"><option value="">Choose your answer</option><option value="true">Yes</option><option value="false">No</option></select></label>
+<label id="oac-written-answer">Your complete answer <input name="answer" class="input" maxlength="1024" aria-describedby="oac-answer-kind"></label><p id="oac-answer-kind">Enter the exact whole number or complete text requested by this question.</p>
+<label>Reported active effort for this question in your stated unit <input name="reported_effort" class="input" type="number" min="1" max="1000" step="1" required></label>
+<label><input name="allowed" type="checkbox" required> I have current permission to retain and reuse this complete answer and effort report</label>
+<label><input name="allow_independent_artifact" type="checkbox"> This answer may create a separately owned taught rule after another complete acceptance review</label>
+<label>Exact answer and effort-report use purpose <textarea name="purpose" class="input" minlength="10" maxlength="2000" required></textarea></label>
+<label>Review this answer-use permission again by <input name="expires_at" class="input" type="datetime-local" required></label>
+<div class="oac-row"><button class="btn btn--primary" type="submit">Review my answer</button><button id="oac-test" class="btn" type="button">Review asking the saved check rule</button></div>
+</form>
+<details><summary>Review source and recorded-answer permission</summary><form id="oac-scope" class="oac-stack">
+<label><input name="allowed" type="checkbox"> Permit current source use</label>
+<label><input name="allow_independent_artifact" type="checkbox"> Permit this evidence to create a separately owned taught rule after another complete acceptance review</label>
+<label><input name="reuse_recorded_answers" type="checkbox"> Explicitly permit every complete displayed retained answer and effort report again under this new grant</label>
+<label>Complete new source and answer-use purpose <textarea name="purpose" class="input" minlength="10" maxlength="2000" required></textarea></label>
+<label>Review this new permission again by <input name="expires_at" class="input" type="datetime-local" required></label>
+<button class="btn" type="submit">Review the complete new grant</button>
+</form></details>
+<form id="oac-acknowledge" hidden class="oac-stack"><label><input name="acknowledge_unknown" type="checkbox" required> The earlier original remains unknown and its admitted allowance stays spent. Any next intent is separate.</label><button class="btn" type="submit">Review stopping this wait</button></form>
+<div class="oac-row"><button id="oac-withdraw" class="btn" type="button">Review withdrawing future use</button><button id="oac-remove" class="btn" type="button">Review removing this current review</button></div>
+</div>
+</section>
+{% else %}
+<section class="panel"><p>Teaching-question planning is off. Your protected original history remains below.</p><a class="btn" href="/settings#feature-operational_competence_acquisition">Open its control in Settings</a></section>
+{% endif %}
+<section id="oac-review" class="panel oac-stack" hidden><h2 id="oac-review-title" tabindex="-1">Review every source, answer and selected change</h2><div id="oac-review-changes" class="oac-stack"></div><div class="oac-row"><button id="oac-confirm" class="btn btn--primary" type="button">Confirm this exact reviewed change</button><button id="oac-cancel" class="btn" type="button">Keep draft and cancel</button></div></section>
+<section id="oac-history" class="panel oac-stack"><h2>Earlier requests</h2><p>Read your exact original attribution. Interrupted work never repeats from this history, and admitted allowance is never refunded.</p><label for="oac-history-select">Earlier request<select id="oac-history-select" class="input"><option value="">Choose an earlier request</option></select></label><div class="oac-row"><button id="oac-history-refresh" class="btn" type="button">Refresh original history</button><button id="oac-history-read" class="btn" type="button">Read exact original</button></div><p id="oac-history-message" role="status"></p><section id="oac-history-result"></section></section>
+<section class="panel oac-stack"><h2>Stop use of an earlier review</h2><p>These controls stop only your own retained review or unknown wait. They remain available if a workflow or source was removed. No source information or separately accepted saved rule is changed.</p><label for="oac-stop-select">Earlier teaching review<select id="oac-stop-select" class="input"><option value="">Choose an earlier teaching review</option></select></label><label><input id="oac-stop-acknowledged" type="checkbox"> The earlier original remains unknown and its allowance stays spent</label><div class="oac-row"><button id="oac-stop-withdraw" class="btn" type="button">Review stopping future use</button><button id="oac-stop-remove" class="btn" type="button">Review removing current review</button><button id="oac-stop-acknowledge" class="btn" type="button">Review stopping unknown wait</button></div></section>
+</div>
+<style>.oac-stack{display:grid;gap:1rem;min-width:0}.oac-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}.oac-row{display:flex;flex-wrap:wrap;gap:.75rem}.oac-stack label{display:grid;gap:.35rem;min-width:0}.oac-stack label:has(input[type=checkbox]){display:block}.oac-stack input,.oac-stack select,.oac-stack textarea{width:100%;min-width:0;box-sizing:border-box}.oac-stack input[type=checkbox]{width:auto}.oac-card{border:1px solid var(--border);border-radius:var(--radius,1rem);padding:1rem;min-width:0;overflow-wrap:anywhere}.oac-stack dd{margin-inline-start:0;white-space:pre-wrap;overflow-wrap:anywhere}.oac-stack summary{cursor:pointer;font-weight:600}.oac-stack pre{white-space:pre-wrap;overflow-wrap:anywhere}.oac-stack .btn{max-width:100%;white-space:normal}</style>
+{% endblock %}
+{% block scripts_extra %}<script src="{{ asset('lightwork-operator-acquisition.js') }}" defer></script>{% endblock %}

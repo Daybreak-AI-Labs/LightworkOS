@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Verification · DSAR Concierge{% endblock %}
+{% block content %}
+  {% if rec %}
+  <div class="panel">
+    <h1>Identity confirmed</h1>
+    <p>Thanks — request <b class="mono">{{ rec.id }}</b>
+      ({{ rec.kind }}) is verified and in progress. It is due by
+      <b>{{ rec.due_at | dt }}</b>; you will hear from us before then.</p>
+  </div>
+  {% else %}
+  <div class="panel">
+    <h1>Link not recognized</h1>
+    <p class="sub">This confirmation link is invalid, already used, or the
+      request has moved on. If you believe that's wrong, reply to the
+      original email or submit a <a href="/request">new request</a>.</p>
+  </div>
+  {% endif %}
+{% endblock %}

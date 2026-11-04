@@ -1,0 +1,29 @@
+{
+  "name": "maverick-mcp-ts-example",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Runnable example + CI smoke: drive Lightwork over MCP from TypeScript.",
+  "scripts": {
+    "check": "npm run test:environment && npm run typecheck && tsx client.ts",
+    "test:environment": "node --import tsx --test environment.test.ts",
+    "typecheck": "tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext client.ts environment.ts environment.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "overrides": {
+    "@hono/node-server": "2.1.3",
+    "body-parser": "2.4.0",
+    "fast-uri": "3.1.9",
+    "qs": "6.16.1",
+    "hono": "4.13.11",
+    "ip-address": "10.7.4",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}

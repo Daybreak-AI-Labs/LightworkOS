@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Private task calculations · Lightwork{% endblock %}
+{% block content %}
+<style>
+ .ptc-stack{display:grid;gap:var(--space-3)} .ptc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,17rem),1fr));gap:var(--space-3)}
+ .ptc-stack label,.ptc-grid label{display:flex;flex-direction:column;gap:var(--space-1);min-width:0} .ptc-stack input,.ptc-stack select,.ptc-stack textarea{box-sizing:border-box;width:100%;max-width:100%;min-width:0}
+ .ptc-card{padding:var(--space-3);margin-block:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-1)}
+ .ptc-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center} .ptc-actions .btn{white-space:normal;max-width:100%} .ptc-card p,.ptc-card dd{overflow-wrap:anywhere}
+ .ptc-stack label:has(input[type=checkbox]){flex-direction:row;align-items:flex-start} .ptc-stack input[type=checkbox]{width:auto;flex-shrink:0}
+ #ptc-review[hidden],#ptc-current[hidden]{display:none} .ptc-card pre{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+</style>
+{% from "_hero.html" import hero %}
+{{ hero('Your private work', 'Private task calculations', lede='Answer one fixed Yes/No question from your private task file. Review exactly what may become a result file before releasing it.', compact=true) }}
+<p style="max-width:78ch">{{ private_check_notice }}</p>
+<div id="ptc-page" data-context="{{ private_check_context }}" data-enabled="{{ 'true' if private_check_enabled else 'false' }}">
+ <p id="ptc-message" role="status" aria-live="polite" tabindex="-1"></p>
+ {% if private_check_enabled %}
+ <section class="panel ptc-stack" id="ptc-source-panel">
+  <h2>Choose your private source</h2><p>Choose a CSV file already attached to a task you own. Add a file using that task's existing attachment control. Nothing is fetched from outside storage here. CSV files must have one header, up to twelve distinct columns, up to 200 distinct data rows and be at most 128 KiB.</p>
+  <label>Owned task and complete CSV file<select id="ptc-source" class="input"><option value="">Choose a private file</option></select></label>
+  <div class="ptc-actions"><button id="ptc-source-open" class="btn" type="button">Review selected source</button><button id="ptc-source-refresh" class="btn" type="button">Refresh owned files</button><a class="btn" href="/chat">Open your tasks to attach a file</a></div>
+  <div id="ptc-source-description"></div>
+ </section>
+ <details class="panel" id="ptc-author"><summary tabindex="-1"><strong>Enter the complete fixed check</strong></summary>
+  <p>Define all possible values for each field used in your question. Other private columns stay outside the local program. Enter one to six fields and one to eight ordinary comparisons. The complete combinations must fit within 65,536 situations. This describes your assumptions; it does not verify the file's business facts.</p>
+  <form id="ptc-model" class="ptc-stack">
+   <div class="ptc-grid"><label>Only selected data row<select class="input" name="row" required><option value="">Review a source first</option></select></label><label>Fixed permitted purpose<input class="input" name="purpose" required maxlength="500"></label>
+   <label>Review source permission again by<input class="input" name="expires_at" type="datetime-local" required></label><label>The only result permitted in a downloadable file<select class="input" name="approved_result" required><option value="MEETS_ENTERED_CONDITIONS">Meets entered conditions</option><option value="DOES_NOT_MEET_ENTERED_CONDITIONS">Does not meet entered conditions</option></select></label></div>
+   <label>Basis for current permission to analyze, make a derivative and release this result<textarea class="input" name="basis" required minlength="10" maxlength="2000" rows="3"></textarea></label>
+   <h3>Possible field values</h3><p>Yes/No CSV values must be exactly true or false. An integer range includes every integer between its ends and may contain at most sixteen values. Named choices must match the file exactly.</p>
+   <div id="ptc-fields"></div><button class="btn" id="ptc-add-field" type="button">Add a field</button>
+   <h3>Your conditions</h3><div id="ptc-conditions"></div><button class="btn" id="ptc-add-condition" type="button">Add a condition</button>
+   <label>Combine conditions<select class="input" name="mode"><option value="all">Every condition must hold</option><option value="any">At least one condition must hold</option></select></label>
+   <label><input type="checkbox" name="rights" required>I have current permission for this purpose, local analysis, the derivative and the single allowed result. Entered consent cannot override the source's native restrictions.</label>
+   <label id="ptc-new-intent-label" hidden><input type="checkbox" name="acknowledge_new_intent">I intend this separate changed question or row. Earlier originals and spent allowances remain; no earlier private check is reused.</label>
+   <button class="btn" type="submit">Review complete fixed check</button>
+  </form>
+ </details>
+ <section class="panel" id="ptc-current" hidden>
+  <h2>Your current fixed check</h2><div id="ptc-result"></div>
+  <div class="ptc-actions"><button class="btn" id="ptc-run" type="button">Review one local check</button><button class="btn" id="ptc-release" type="button">Review the single result release</button><button class="btn" id="ptc-withdraw" type="button">Review withdrawal of permission</button><button class="btn" id="ptc-remove" type="button">Review removal</button><button class="btn" id="ptc-open-model" type="button">Fill form with this saved check</button><button class="btn" id="ptc-refresh" type="button">Read current state</button></div>
+  <p>Across this physical source, its versions and duplicate copies, at most four admitted local checks and one fixed release are allowed. A changed question is a separately reviewed intent. Unknown attempts and removal do not refund these allowances. Downloading the same approved fixed file is a read, not another computation.</p>
+  <button class="btn" id="ptc-download" type="button" hidden>Download approved result.csv</button>
+  <details class="ptc-card"><summary>Review source permission and when it expires</summary><form id="ptc-scope" class="ptc-stack"><label>Review permission again by<input class="input" name="expires_at" type="datetime-local" required></label><label>Current analysis, derivative and release-rights basis<textarea class="input" name="basis" required minlength="10" maxlength="2000"></textarea></label><label><input type="checkbox" name="acknowledge_source_rights" required>I reviewed current source rights. Earlier results become historical and cannot be reused.</label><button class="btn" type="submit">Review current source permission</button></form></details>
+  <form id="ptc-acknowledge" class="ptc-stack ptc-card" hidden><h3>An earlier original is still unknown</h3><label><input name="acknowledge_unknown" type="checkbox" required>I acknowledge the earlier original remains unknown. Stop waiting without repeating it or refunding its allowance. Current permission will be withdrawn until a new review.</label><button class="btn" type="submit">Review stopping this wait</button></form>
+ </section>
+ <section class="panel" id="ptc-review" hidden><h2 id="ptc-review-title" tabindex="-1">Review this complete private-check action</h2><p>Read every source, condition, assumption, permission limit and selected change. No action is confirmed until you approve this review.</p><div id="ptc-review-changes"></div><div class="ptc-actions"><button class="btn" id="ptc-confirm" type="button">Confirm this exact reviewed action</button><button class="btn" id="ptc-cancel" type="button">Keep draft and close review</button></div></section>
+ {% else %}<section class="panel"><h2>Private local checks are off</h2><p>An administrator can enable them in <a href="/settings#feature-private_task_computation">Settings</a>. Your original request history remains available below.</p></section>{% endif %}
+ <section class="panel" id="ptc-history"><h2>Earlier original results</h2><p>Read your own original attribution and outcome after permission is withdrawn, the current check is removed or this feature is turned off. This never reopens private inputs or repeats a check or release. A saved release does not prove that a browser received its download.</p><p id="ptc-history-message" role="status" aria-live="polite"></p><label>Exact earlier request<select class="input" id="ptc-history-select"><option value="">Load your originals</option></select></label><div class="ptc-actions"><button class="btn" id="ptc-history-refresh" type="button">Refresh original history</button><button class="btn" id="ptc-history-read" type="button">Read this original</button></div><div id="ptc-history-result"></div></section>
+ <details class="panel"><summary>How this check works and its limits</summary><p>Lightwork checks every combination of the possible values you entered, then checks them again in a separate way. It removes questions whose answers cannot change your fixed result. The saved check uses only the information needed to answer for your selected row. Agreement covers the fixed result file within your entered possibilities. It does not verify source accuracy or physical availability, hide the time the check takes, or prevent inference from unusual patterns or other releases.</p></details>
+</div>
+<script src="/static/lightwork-private-task-computation.js" defer></script>
+{% endblock %}

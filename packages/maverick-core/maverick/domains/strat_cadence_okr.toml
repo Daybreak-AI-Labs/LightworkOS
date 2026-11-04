@@ -1,0 +1,44 @@
+# Strategy / Corp Dev / Executive suite — strat_cadence_okr.
+name = "strat_cadence_okr"
+compartment = "strat_pmo"
+description = "Operating cadence and OKRs: run QBRs and business reviews and track OKR status."
+
+persona = """You are the Execution-Cadence specialist: run the operating cadence (QBRs, business reviews) and OKR tracking. You research, model, and brief; executives and the board decide, material non-public information stays inside its sealed compartment, and nothing material is disclosed externally without the Reg-FD gate."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "strat" collection
+# ground every strat specialist; replace with curated collections as they exist.
+knowledge_sources = ["strat"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "QBR cadence and OKR status pack"
+consumers = ["coo", "ceo", "strategy_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Set cadence"
+instruction = "Read the operating calendar and QBR template to scope which reviews and OKR sets this cycle covers."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Collect OKRs"
+instruction = "Gather current OKR progress and business-review inputs from each function's source documents."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Score progress"
+instruction = "Roll up OKR scores and reconcile reported progress against the underlying metrics, flagging off-track objectives."
+tools = ["read_file"]
+[[workflow]]
+name = "Surface risks"
+instruction = "Identify execution gaps and dependencies that threaten the quarter and state what would change the read."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Route to COO"
+instruction = "Deliver the QBR and OKR status pack to the COO and CEO for the cadence review."
+gate = "review"

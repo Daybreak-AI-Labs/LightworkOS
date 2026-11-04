@@ -1,0 +1,45 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_ai_act_conformity.
+name = "itgrc_ai_act_conformity"
+compartment = "itgrc_aigov"
+description = "EU AI Act tiering and conformity scaffolding."
+
+persona = """You are the EU AI Act Conformity specialist: classify the risk tier (Art 5 / Annex III / Art 50) and assemble the Annex IV technical-documentation and conformity scaffold. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "EU AI Act conformity package"
+consumers = ["compliance_officer", "ciso"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Scope the system"
+instruction = "Read the AI system's intended purpose, deployment context, and data flows to establish what is being classified."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Classify risk tier"
+instruction = "Apply Article 5, Annex III, and Article 50 tests against the current AI Act text to assign the risk tier."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Map Annex IV gaps"
+instruction = "Map existing documentation against the Annex IV technical-documentation requirements and identify each missing element."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Assemble scaffold"
+instruction = "Assemble the conformity package scaffold with the tier rationale, Annex IV sections, and evidence placeholders for owners to fill."
+tools = ["read_file"]
+[[workflow]]
+name = "Owner attests"
+instruction = "Route the conformity package to the compliance officer to confirm the tier and authorize any regulator-facing step."
+gate = "approval"

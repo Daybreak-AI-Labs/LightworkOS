@@ -1,0 +1,28 @@
+# Lightwork hosted demo — TLS reverse proxy (Option 2 in README.md: hosted HTTPS URL).
+#
+# Put Caddy in front of the demo container so a public domain gets automatic
+# HTTPS (Caddy provisions and renews a Let's Encrypt certificate). The
+# dashboard still requires its bearer token even behind the proxy, so the
+# tokenized link is what gates access — share it only with your demo audience.
+#
+# Steps:
+#   1. Point demo.example.com's DNS A/AAAA record at this host's public IP.
+#   2. Replace demo.example.com below with your domain.
+#   3. Start the demo container on this host (deploy/demo/docker-compose.yml).
+#   4. caddy run --config deploy/demo/Caddyfile
+#
+# Caddy forwards X-Forwarded-* headers; the dashboard treats proxied traffic as
+# non-loopback and therefore enforces MAVERICK_DASHBOARD_TOKEN (fail-closed).
+
+demo.example.com {
+	encode zstd gzip
+
+	# The demo container publishes 8765 on the host (or use the container name
+	# if Caddy runs in the same compose network).
+	reverse_proxy 127.0.0.1:8765
+
+	log {
+		output stdout
+		format console
+	}
+}

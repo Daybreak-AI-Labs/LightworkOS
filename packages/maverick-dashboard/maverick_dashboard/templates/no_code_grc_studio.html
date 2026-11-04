@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Compliance studio · Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .grcs-review-list { margin:0; display:grid; gap:var(--space-3); }
+  .grcs-review-list dt { font-weight:600; overflow-wrap:anywhere; }
+  .grcs-review-list dd { margin:0 0 var(--space-2); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .grcs-shell { display:grid; gap:var(--space-5); }
+  .grcs-shell .panel h2, .grcs-shell .panel h3 { margin:0; }
+  .grcs-fieldset { border:0; margin:0; padding:0; min-width:0; display:grid; gap:var(--space-5); }
+  .grcs-table-wrap { overflow:auto; }
+  .grcs-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center; }
+  .grcs-form-grid { display:grid; gap:var(--space-3); grid-template-columns:repeat(auto-fit,minmax(14rem,1fr)); align-items:end; }
+  .grcs-form-grid label, .grcs-shell label.grcs-label { display:grid; gap:.35rem; font-weight: var(--font-semibold); }
+  .grcs-check { display:flex !important; gap:.5rem; align-items:center; font-weight: var(--font-normal) !important; }
+  .grcs-step { border:1px solid var(--line, rgba(127,127,127,.25)); border-radius:var(--radius-md); padding:var(--space-3); }
+  .grcs-step + .grcs-step { margin-top:var(--space-3); }
+  .grcs-step > summary { cursor:pointer; font-weight: var(--font-semibold); }
+  .grcs-step-body { display:grid; gap:var(--space-3); margin-top:var(--space-3); }
+  .grcs-choices { border:0; margin:0; padding:0; display:flex; flex-wrap:wrap; gap:var(--space-2) var(--space-4); }
+  .grcs-choices legend { font-weight: var(--font-semibold); margin-bottom:.35rem; }
+  .grcs-list { list-style:none; margin:0; padding:0; display:grid; gap:var(--space-2); }
+  .grcs-list li { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center; justify-content:space-between; }
+  .grcs-tech pre { white-space:pre-wrap; word-break:break-word; max-height:24rem; overflow:auto; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_module_gate.html" import module_gate %}
+<div class="grcs-shell" id="grc-studio-shell" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}" data-module-enabled="{{ 'true' if studio_module_enabled else 'false' }}" data-can-operate="{{ 'true' if studio_can_operate else 'false' }}" data-can-audit="{{ 'true' if studio_can_audit else 'false' }}" data-can-admin="{{ 'true' if studio_can_admin else 'false' }}">
+  {{ hero('Technology risk and compliance', 'Compliance studio', lede='Build your risk, control, vendor and evidence records with guided forms, rules and reports. Each version is reviewed and approved by different people before it becomes active in this studio, and you can restore an earlier version at any time.') }}
+  {% if not studio_module_enabled %}
+  {{ module_gate('tech_risk_compliance.grc_studio', 'Compliance studio',
+                 detail='Turns on Tech Risk & Compliance and the studio together.',
+                 can_activate=studio_can_activate) }}
+  {% endif %}
+
+  <section class="panel" aria-labelledby="grcs-status-title"{% if not studio_module_enabled %} hidden{% endif %}>
+    <div class="section-head"><h2 id="grcs-status-title">Availability</h2><button class="btn btn--ghost" id="grcs-refresh-status" type="button">Refresh</button></div>
+    <p><strong id="grcs-readiness">Checking…</strong> <span class="badge idle" id="grcs-status-mark">Checking</span></p>
+    <p class="muted" id="grcs-readiness-detail" role="status" aria-live="polite">Checking whether the studio is ready in this workspace.</p>
+    <details>
+      <summary>How changes are protected</summary>
+      <ul>
+        <li>You build with the record types, fields, rules and reports offered here. Scripts, web addresses and passwords are never accepted.</li>
+        <li>The person who builds a version, the person who reviews it and the person who approves it must be three different people.</li>
+        <li>Only published versions are used. Restoring an earlier version switches back in one step and is recorded.</li>
+      </ul>
+    </details>
+  </section>
+
+  <fieldset class="grcs-fieldset" id="grcs-operations" disabled>
+    <legend class="sr-only">Studio actions</legend>
+
+    <section class="panel" aria-labelledby="grcs-register-title">
+      <div class="section-head"><h2 id="grcs-register-title">Your blueprints</h2><span class="badge idle" id="grcs-list-count">0 versions</span></div>
+      <div class="grcs-form-grid">
+        <label>Blueprint<select class="select" id="grcs-filter-studio"><option value="">All blueprints</option></select></label>
+        <label>Status<select class="select" id="grcs-filter-state">
+          <option value="">Any status</option>
+          <option value="draft">Draft</option>
+          <option value="in_review">Waiting for review</option>
+          <option value="reviewed">Reviewed</option>
+          <option value="approved">Approved</option>
+          <option value="published">Live</option>
+          <option value="superseded">Replaced by a newer version</option>
+          <option value="rejected">Sent back</option>
+        </select></label>
+        <div class="grcs-actions"><button class="btn btn--primary" id="grcs-new" type="button"{% if not studio_can_operate %} disabled{% endif %}>Start a new blueprint</button></div>
+      </div>
+      <p class="muted" id="grcs-list-status" role="status" aria-live="polite">{{ 'Loading your blueprints…' if studio_module_enabled else 'Blueprints appear here once the studio is turned on.' }}</p>
+      <div class="grcs-table-wrap"><table><caption class="sr-only">Blueprint versions and what you can do with each</caption>
+        <thead><tr><th scope="col">Blueprint</th><th scope="col">Version</th><th scope="col">Status</th><th scope="col">Last change</th><th scope="col">Actions</th></tr></thead>
+        <tbody id="grcs-version-list">{% if studio_module_enabled %}<tr><td colspan="5">Loading…</td></tr>{% endif %}</tbody></table></div>
+    </section>
+
+    <section class="panel" id="grcs-view-panel" aria-labelledby="grcs-view-title" hidden>
+      <div class="section-head"><h2 id="grcs-view-title" tabindex="-1">Blueprint</h2><button class="btn btn--ghost" id="grcs-view-close" type="button">Close</button></div>
+      <div id="grcs-view-body"></div>
+    </section>
+
+    <section class="panel" id="grcs-builder-panel" aria-labelledby="grcs-builder-title" hidden>
+      <div class="section-head"><h2 id="grcs-builder-title" tabindex="-1">New blueprint</h2><button class="btn btn--ghost" id="grcs-builder-close" type="button">Close</button></div>
+      <p class="muted" id="grcs-builder-mode" role="status"></p>
+      <form id="grcs-builder-form" autocomplete="off" novalidate>
+        <div class="grcs-form-grid">
+          <label>Name<input class="input" name="name" id="grcs-name" maxlength="100" required></label>
+          <label>Short description (optional)<input class="input" name="description" id="grcs-description" maxlength="100"></label>
+        </div>
+
+        <details class="grcs-step" open><summary>1. Record types</summary><div class="grcs-step-body">
+          <p class="muted">What will people keep records of? For example “Supplier”, “Risk” or “Control test”.</p>
+          <div class="grcs-form-grid">
+            <label>Name<input class="input" id="grcs-object-name" maxlength="100"></label>
+            <label>Kind<select class="select" id="grcs-object-kind"><option value="risk" selected>Risk</option><option value="control">Control</option><option value="asset">Asset</option><option value="vendor">Supplier</option><option value="policy">Policy</option><option value="issue">Issue</option><option value="assessment">Assessment</option><option value="evidence">Evidence</option><option value="custom">Something else</option></select></label>
+            <div class="grcs-actions"><button class="btn" id="grcs-add-object" type="button">Add record type</button></div>
+          </div>
+          <ul class="grcs-list" id="grcs-object-list"></ul>
+        </div></details>
+
+        <details class="grcs-step"><summary>2. Fields</summary><div class="grcs-step-body">
+          <div class="grcs-form-grid">
+            <label>Record type<select class="select grcs-object-select" id="grcs-field-object"></select></label>
+            <label>Field name<input class="input" id="grcs-field-name" maxlength="100"></label>
+            <label>Type of answer<select class="select" id="grcs-field-type">
+              <option value="single_choice" selected>Pick one from a list</option>
+              <option value="multi_choice">Pick several from a list</option>
+              <option value="boolean">Yes or no</option>
+              <option value="integer">Whole number</option>
+              <option value="decimal">Number with decimals</option>
+              <option value="date">Date</option>
+              <option value="timestamp">Date and time</option>
+              <option value="text_ref">Short text</option>
+              <option value="record_ref">Link to another record</option>
+              <option value="evidence_ref">Link to evidence</option>
+            </select></label>
+            <label>Who may see it<select class="select" id="grcs-field-sensitivity"><option value="public">Anyone</option><option value="internal" selected>Everyone in the organisation</option><option value="confidential">Only people who need it</option><option value="restricted">A small named group</option></select></label>
+            <label id="grcs-field-options-label">Choices (separate with commas)<input class="input" id="grcs-field-options" maxlength="2000" placeholder="Low, Medium, High"></label>
+            <label id="grcs-field-reference-label" hidden>Links to<select class="select" id="grcs-field-reference"><option value="risk">Risks</option><option value="control">Controls</option><option value="asset">Assets</option><option value="vendor">Suppliers</option><option value="policy">Policies</option><option value="issue">Issues</option><option value="assessment">Assessments</option><option value="evidence">Evidence</option></select></label>
+            <label>Starting answer (optional)<input class="input" id="grcs-field-default" maxlength="100"></label>
+            <label class="grcs-check"><input id="grcs-field-required" type="checkbox"><span>An answer is required</span></label>
+            <div class="grcs-actions"><button class="btn" id="grcs-add-field" type="button">Add field</button></div>
+          </div>
+          <ul class="grcs-list" id="grcs-field-list"></ul>
+        </div></details>
+
+        <details class="grcs-step"><summary>3. Forms</summary><div class="grcs-step-body">
+          <p class="muted">A form groups fields into sections. Use the same form name again to add another section.</p>
+          <div class="grcs-form-grid">
+            <label>Form name<input class="input" id="grcs-form-name" maxlength="100"></label>
+            <label>Record type<select class="select grcs-object-select" id="grcs-form-object"></select></label>
+            <label>Section name<input class="input" id="grcs-section-name" maxlength="100"></label>
+          </div>
+          <fieldset class="grcs-choices" id="grcs-section-fields"><legend>Fields in this section</legend></fieldset>
+          <div class="grcs-actions"><button class="btn" id="grcs-add-form" type="button">Add section</button></div>
+          <ul class="grcs-list" id="grcs-form-list"></ul>
+        </div></details>
+
+        <details class="grcs-step"><summary>4. Rules</summary><div class="grcs-step-body">
+          <p class="muted">“When [field] [is] [answer], then [do something].” Use the same rule name again to add another condition.</p>
+          <div class="grcs-form-grid">
+            <label>Rule name<input class="input" id="grcs-rule-name" maxlength="100"></label>
+            <label>Record type<select class="select grcs-object-select" id="grcs-rule-object"></select></label>
+            <label>Conditions<select class="select" id="grcs-rule-mode"><option value="all">All must be true</option><option value="any">Any one is enough</option></select></label>
+            <label>When<select class="select grcs-field-select" id="grcs-condition-field" data-object-select="grcs-rule-object"></select></label>
+            <label>Is<select class="select" id="grcs-condition-operator"><option value="equals">equal to</option><option value="not_equals">not equal to</option><option value="greater_than">more than</option><option value="greater_or_equal">at least</option><option value="less_than">less than</option><option value="less_or_equal">at most</option><option value="contains">includes</option><option value="is_set">answered</option></select></label>
+            <label>Answer<input class="input" id="grcs-condition-value" maxlength="100"></label>
+            <label>Then<select class="select" id="grcs-action-type"><option value="require" selected>Make a field required</option><option value="optional">Make a field optional</option><option value="show">Show a field</option><option value="hide">Hide a field</option><option value="default">Fill in a field</option><option value="severity">Set the severity</option><option value="task">Create a follow-up task</option></select></label>
+            <label id="grcs-action-target-label">Field<select class="select grcs-field-select" id="grcs-action-target" data-object-select="grcs-rule-object"></select></label>
+            <label id="grcs-action-value-label" hidden>Value<input class="input" id="grcs-action-value" maxlength="100"></label>
+            <div class="grcs-actions"><button class="btn" id="grcs-add-rule" type="button">Add rule</button></div>
+          </div>
+          <ul class="grcs-list" id="grcs-rule-list"></ul>
+        </div></details>
+
+        <details class="grcs-step"><summary>5. Reports</summary><div class="grcs-step-body">
+          <div class="grcs-form-grid">
+            <label>Report name<input class="input" id="grcs-view-name" maxlength="100"></label>
+            <label>Record type<select class="select grcs-object-select" id="grcs-view-object"></select></label>
+            <label>Group by<select class="select grcs-field-select" id="grcs-view-group" data-object-select="grcs-view-object" data-empty="No grouping"></select></label>
+            <label>Only show records where<select class="select grcs-field-select" id="grcs-filter-field" data-object-select="grcs-view-object" data-empty="Show all records"></select></label>
+            <label>Is<select class="select" id="grcs-filter-operator"><option value="is_set" selected>answered</option><option value="equals">equal to</option><option value="not_equals">not equal to</option><option value="greater_than">more than</option><option value="greater_or_equal">at least</option><option value="less_than">less than</option><option value="less_or_equal">at most</option><option value="contains">includes</option></select></label>
+            <label>Answer<input class="input" id="grcs-filter-value" maxlength="100"></label>
+            <label>Sort by<select class="select grcs-field-select" id="grcs-sort-field" data-object-select="grcs-view-object" data-empty="No sorting"></select></label>
+            <label>Order<select class="select" id="grcs-sort-direction"><option value="ascending">A to Z, lowest first</option><option value="descending">Z to A, highest first</option></select></label>
+          </div>
+          <fieldset class="grcs-choices" id="grcs-view-columns"><legend>Columns</legend></fieldset>
+          <div class="grcs-actions"><button class="btn" id="grcs-add-view" type="button">Add report</button></div>
+          <ul class="grcs-list" id="grcs-view-list"></ul>
+        </div></details>
+
+        <details class="grcs-step"><summary>6. Automatic evidence</summary><div class="grcs-step-body">
+          <p class="muted">Link fields to an independently approved Continuous evidence source. Choose its recorded result and the controls it supports. Saving a blueprint does not start collection or change a connected service.</p>
+          <div class="grcs-form-grid">
+            <label>Link name<input class="input" id="grcs-binding-name" maxlength="100"></label>
+            <label>Evidence source<select class="select" id="grcs-collector-choice" aria-describedby="grcs-collector-note"><option value="">{{ 'Loading evidence sources…' if studio_module_enabled else 'Choose an evidence source' }}</option></select></label>
+            <p class="muted" id="grcs-collector-note" role="status"></p>
+            <input id="grcs-collector-id" type="hidden"><input id="grcs-collector-version" type="hidden"><input id="grcs-collector-digest" type="hidden">
+            <p class="muted"><a href="/compliance/continuous-evidence" target="_blank" rel="noopener">Open evidence source setup in another tab</a>. Your current blueprint stays open while you choose its saved source.</p>
+            <label>Record type<select class="select grcs-object-select" id="grcs-binding-object"></select></label>
+            <label>Result to use<select class="select" id="grcs-source-path"><option value="">Choose a source first</option></select></label>
+            <label>Field to fill<select class="select grcs-field-select" id="grcs-mapping-target" data-object-select="grcs-binding-object"></select></label>
+            <label>When there is already a value<select class="select" id="grcs-mapping-mode"><option value="replace">Replace it</option><option value="append">Add to it</option></select></label>
+            <fieldset class="grcs-choices" id="grcs-control-refs"><legend>Controls this link supports</legend><p class="muted">Choose a source first.</p></fieldset>
+            <div class="grcs-actions"><button class="btn" id="grcs-add-binding" type="button">Add evidence link</button></div>
+          </div>
+          <ul class="grcs-list" id="grcs-binding-list"></ul>
+        </div></details>
+
+        <div class="grcs-actions">
+          <button class="btn btn--primary" type="submit" id="grcs-save">Review draft before saving</button>
+          <button class="btn" id="grcs-save-baseline" type="button" hidden>Update saved comparison</button>
+          <button class="btn" id="grcs-import-blueprint" type="button">Load from a file</button>
+          <input class="sr-only" id="grcs-import-blueprint-file" type="file" accept=".json,application/json" tabindex="-1" aria-label="Blueprint file to load">
+          <button class="btn" id="grcs-download-blueprint" type="button">Save to a file</button>
+          <button class="btn btn--ghost" id="grcs-reset-composer" type="button">Clear</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" id="grcs-save-review" aria-labelledby="grcs-save-review-title" hidden>
+      <h2 id="grcs-save-review-title" tabindex="-1">Review every saved choice</h2>
+      <p class="muted">Compare the complete current blueprint with your entered choices. This saves a draft; review, approval and publication remain separate.</p>
+      <dl class="grcs-review-list" id="grcs-save-review-body"></dl>
+      <label class="grcs-actions"><input type="checkbox" id="grcs-save-confirm">I reviewed the complete draft and want to save it.</label>
+      <div class="grcs-actions"><button class="btn btn--primary" id="grcs-save-apply" type="button" disabled>Save reviewed draft</button><button class="btn btn--ghost" id="grcs-save-cancel" type="button">Keep editing</button></div>
+    </section>
+
+    <section class="panel" id="grcs-save-original" aria-labelledby="grcs-save-original-title" hidden>
+      <h2 id="grcs-save-original-title" tabindex="-1">Original draft save</h2>
+      <p id="grcs-save-original-status" role="status" aria-live="polite"></p>
+      <p class="muted" id="grcs-save-original-current"></p>
+      <div class="grcs-actions"><button class="btn" id="grcs-save-read" type="button">Check original save</button><button class="btn btn--ghost" id="grcs-save-restore" type="button">Restore reviewed choices to the editor</button><button class="btn btn--ghost" id="grcs-save-new" type="button" hidden>Start a fresh review</button></div>
+      <p class="muted">The original lookup never saves again. Reading a result keeps your newer entered work. This browser retains the latest original review for this account and workspace; native accepted receipts can later expire under the studio's retention rules.</p>
+    </section>
+
+    <section class="panel" id="grcs-history-panel" aria-labelledby="grcs-history-title" hidden>
+      <div class="section-head"><h2 id="grcs-history-title" tabindex="-1">History</h2><button class="btn btn--ghost" id="grcs-history-close" type="button">Close</button></div>
+      <div class="grcs-table-wrap"><table><caption class="sr-only">What happened to this version</caption>
+        <thead><tr><th scope="col">When</th><th scope="col">What happened</th><th scope="col">Status after</th></tr></thead>
+        <tbody id="grcs-history-list"></tbody></table></div>
+    </section>
+
+    <section class="panel" aria-labelledby="grcs-questionnaire-title">
+      <h2 id="grcs-questionnaire-title">Create a questionnaire from a live form</h2>
+      <p>Choose an approved live form in the questionnaire builder and review its questions and any incompatibilities. Then assign business topics and your team’s framework and control rules. Save the complete version for a different administrator to review and publish. Existing assessments keep their original version.</p>
+      <p class="muted">Yes/no, whole-number and choice answers are supported. Automatic answers, other field types and studio record actions are shown before import and cannot be silently converted into scope rules. Evidence links and reports require their own supported destination.</p>
+      <a class="btn" href="/compliance/scoping#cs-questionnaire-design">Open questionnaire builder</a>
+    </section>
+    <section class="panel" id="grcs-projection-panel" aria-labelledby="grcs-projection-title" hidden>
+      <div class="section-head"><h2 id="grcs-projection-title">Put a live form or report into use</h2></div>
+      <p class="muted">Send a form, evidence link or report from a live blueprint to a connected destination. Preview first to see exactly what will change.</p>
+      <form id="grcs-projection-form" autocomplete="off" novalidate>
+        <div class="grcs-form-grid">
+          <label>Live blueprint<select class="select" name="studio_id" id="grcs-projection-studio"></select></label>
+          <label>What to send<select class="select" name="definition" id="grcs-projection-definition"></select></label>
+          <label>Destination<select class="select" id="grcs-projection-target" aria-describedby="grcs-projection-target-note"><option value="">{{ 'Loading destinations…' if studio_module_enabled else 'Choose a destination' }}</option></select></label>
+          <p class="muted" id="grcs-projection-target-note" role="status"></p>
+        </div>
+        <details class="grcs-manual"><summary>Technical details: enter a destination by hand</summary>
+          <p class="muted">Only needed when the destination is not in the list. Your administrator can give you these values.</p>
+          <div class="grcs-form-grid">
+            <label>Destination name<input class="input" name="target_id" maxlength="128"></label>
+            <label>Destination version<input class="input" name="target_revision" type="number" min="1" step="1"></label>
+          </div>
+        </details>
+        <div class="grcs-actions"><button class="btn btn--primary" name="projection_action" value="preview" type="submit">Preview changes</button><button class="btn" id="grcs-projection-apply" name="projection_action" value="apply" type="submit"{% if not studio_can_admin %} disabled{% endif %}>Put into use</button></div>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="grcs-transfer-title">
+      <div class="section-head"><h2 id="grcs-transfer-title">Bring in a copy</h2></div>
+      <p class="muted">Load a copy that was downloaded from this studio (use “Download a copy” on a version). It arrives as a new draft.</p>
+      <div class="grcs-actions">
+        <button class="btn" id="grcs-import" type="button"{% if not studio_can_admin %} disabled{% endif %}>Choose a copy to bring in</button>
+        <input class="sr-only" id="grcs-import-file" type="file" accept=".json,application/json" tabindex="-1" aria-label="Copy to bring in">
+      </div>
+    </section>
+
+    <details class="panel" id="grcs-maintenance">
+      <summary>Maintenance</summary>
+      <div class="grcs-step-body">
+        <div class="grcs-actions">
+          <button class="btn" id="grcs-integrity" type="button"{% if not studio_can_audit %} disabled{% endif %}>Check records haven't been altered</button>
+          <button class="btn" id="grcs-retention" type="button"{% if not studio_can_audit %} disabled{% endif %}>Show versions due for deletion</button>
+          <button class="btn btn--danger" id="grcs-retention-purge" type="button"{% if not studio_can_admin %} disabled{% endif %}>Delete versions that are due</button>
+        </div>
+        <ul class="grcs-list" id="grcs-retention-list"></ul>
+        <div class="section-head"><h3>Backups</h3><button class="btn" id="grcs-backup" type="button"{% if not studio_can_admin %} disabled{% endif %}>Make a backup now</button></div>
+        <p class="muted" id="grcs-backup-status">{% if not studio_can_admin %}Only administrators can see backups.{% elif studio_module_enabled %}Loading backups…{% else %}Backups appear here once the studio is turned on.{% endif %}</p>
+        <div class="grcs-table-wrap"><table><caption class="sr-only">Backups of this studio</caption>
+          <thead><tr><th scope="col">Made</th><th scope="col">Check</th></tr></thead>
+          <tbody id="grcs-backup-list"></tbody></table></div>
+      </div>
+    </details>
+
+    <section class="panel" aria-labelledby="grcs-output-title">
+      <div class="section-head"><h2 id="grcs-output-title">Last action</h2></div>
+      <p id="grcs-operation-status" role="status" aria-live="polite">Nothing has been done yet.</p>
+      <details class="grcs-tech"><summary>Technical details</summary><pre id="grcs-operation-output" tabindex="0"></pre></details>
+    </section>
+  </fieldset>
+  <noscript><p>Turn on JavaScript to use the studio.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-no-code-grc-studio.js" defer></script>{% endblock %}

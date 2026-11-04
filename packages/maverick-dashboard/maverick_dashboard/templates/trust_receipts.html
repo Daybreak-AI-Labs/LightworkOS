@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero, state %}
+{% block title %}Trust receipts - Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .rcp-grid{display:grid;gap:var(--space-4);grid-template-columns:repeat(auto-fit,minmax(min(100%,24rem),1fr))}
+  .rcp-row,.rcp-actions{align-items:center;display:flex;flex-wrap:wrap;gap:.6rem}
+  .rcp-fields{display:grid;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr))}
+  .rcp-form{display:grid;gap:.85rem}
+  .rcp-form label{display:grid;gap:.35rem}
+  .rcp-form label.rcp-inline{align-items:center;display:flex;gap:.5rem}
+  .rcp-key{font-family:var(--font-mono,ui-monospace,monospace);font-size:.78rem;overflow-wrap:anywhere}
+  .rcp-table-wrap{max-height:28rem;overflow:auto}
+  .rcp-levels{display:grid;gap:.5rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr));list-style:none;margin:.6rem 0 0;padding:0}
+  .rcp-levels li{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.6rem}
+  .rcp-verdict{font-size:1.3rem;font-weight:800;margin:0}.rcp-verdict[data-ok=true]{color:var(--success)}.rcp-verdict[data-ok=false]{color:var(--danger)}
+  .rcp-claims{list-style:none;margin:.6rem 0 0;padding:0}
+  .rcp-claims li{border-bottom:1px solid var(--border);padding:.35rem 0}
+  .rcp-report{white-space:pre-wrap;overflow-wrap:anywhere;font-size: var(--text-xs)}
+  .rcp-flush-top{margin-top:0}.rcp-flush{margin:0}.rcp-row--split{justify-content:space-between}.rcp-gap-top{margin-top:var(--space-3)}
+</style>
+{% endblock %}
+{% block content %}
+<div id="rcp-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}">
+  {% call hero('Audit', 'Trust receipts',
+               lede='A trust receipt is a file that proves a decision in your activity record has not been changed. Create one for any decision, send it to an auditor, or check one someone sent you.',
+               title_id='rcp-title') %}
+    <div class="hero-statebox" aria-live="polite">
+      <div class="hero-statebox__label">Signing</div>
+      <div class="hero-statebox__row"><strong id="rcp-health-title">Checking…</strong><span class="badge idle" id="rcp-state">Checking</span></div>
+      <p class="hero-statebox__copy" id="rcp-health-detail">Receipts can only be created for signed activity.</p>
+    </div>
+  {% endcall %}
+
+  <section class="panel" aria-labelledby="rcp-signing-title">
+    <div class="rcp-row rcp-row--split"><h2 id="rcp-signing-title" class="rcp-flush">Signing</h2><button class="btn btn--ghost" id="rcp-refresh" type="button">Refresh</button></div>
+    <div class="grid rcp-gap-top">
+      <div class="stat"><div class="num" id="rcp-key-id">—</div><div class="label">Signing key</div></div>
+      <div class="stat"><div class="num" id="rcp-custody">—</div><div class="label">Where the key is stored</div></div>
+      <div class="stat"><div class="num" id="rcp-days">—</div><div class="label">Days of activity history</div></div>
+    </div>
+    <p id="rcp-signing-action" hidden><button class="btn btn--primary" id="rcp-turn-on-signing" type="button">Turn on signed activity record</button></p>
+    <p class="muted" id="rcp-signing-msg" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="panel" aria-labelledby="rcp-proves-title">
+    <h2 id="rcp-proves-title" class="rcp-flush-top">What a receipt proves</h2>
+    <p>A verifier checks the recorded decision for consistency. It cannot prove that the underlying action really occurred. A separately retained checkpoint is needed to detect later changes to committed history.</p>
+    <ul class="rcp-levels">
+      <li><strong>Signed</strong><br>The recorded row verifies against the issuer's key.</li>
+      <li><strong>Chained</strong><br>The row is linked to a tip the issuer committed.</li>
+      <li><strong>Anchored</strong><br>That commitment matches a checkpoint supplied independently of this receipt.</li>
+    </ul>
+    <p>Keys held on this computer, including keys supplied by an external service, remain available to its signing process. External key sourcing alone cannot prevent it from re-signing history.</p>
+    <h3>Share our key</h3>
+    <p class="muted">Check this key through a separate trusted channel before relying on a receipt.</p>
+    <div class="rcp-actions">
+      <button class="btn" type="button" id="rcp-copy-key">Copy key</button>
+      <button class="btn btn--ghost" type="button" id="rcp-download-key">Download key</button>
+    </div>
+    <details><summary>Show the key</summary><p class="rcp-key" id="rcp-pubkey">—</p></details>
+  </section>
+
+  <section class="panel" aria-labelledby="rcp-create-title">
+    <h2 id="rcp-create-title" class="rcp-flush-top">Create a receipt</h2>
+    <form class="rcp-form" id="rcp-rows-form" autocomplete="off">
+      <div class="rcp-fields">
+        <label for="rcp-day">Day<select class="select" name="day" id="rcp-day"><option value="">Loading…</option></select></label>
+        <label for="rcp-kind">Decision type<select class="select" name="kind" id="rcp-kind"><option value="">All decisions</option></select></label>
+      </div>
+      <label class="rcp-inline"><input type="checkbox" id="rcp-suffix" checked> Also prove nothing was changed after this decision</label>
+      <label class="rcp-inline"><input type="checkbox" id="rcp-anchor"> Publish a checkpoint so others can confirm it</label>
+    </form>
+    <p class="muted" id="rcp-rows-note" role="status" aria-live="polite">Choose a day to see its decisions.</p>
+    <div class="rcp-table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Decision</th><th scope="col">Agent</th><th scope="col">Outcome</th><th scope="col">Receipt</th></tr></thead><tbody id="rcp-rows"><tr><td colspan="5">Choose a day to see its decisions.</td></tr></tbody></table></div>
+    <p class="muted" id="rcp-mint-msg" role="status" aria-live="polite"></p>
+  </section>
+
+  <div class="rcp-grid">
+    <section class="panel" aria-labelledby="rcp-check-title">
+      <h2 id="rcp-check-title" class="rcp-flush-top">Check a receipt</h2>
+      <form class="rcp-form" id="rcp-verify-form" autocomplete="off">
+        <label for="rcp-file">Receipt file<input type="file" id="rcp-file" accept="application/json,.json"></label>
+        <details><summary>More options</summary>
+          <label class="rcp-inline"><input type="checkbox" name="use_local_keys" id="rcp-local-keys" checked> Trust keys from this Lightwork installation</label>
+          <div class="rcp-fields">
+            <label for="rcp-extra-key">Sender's key (if they gave you one)<input class="input" id="rcp-extra-key" name="key" maxlength="64" placeholder="Paste the key"></label>
+            <label for="rcp-anchor-digest">Checkpoint code (if provided)<input class="input" id="rcp-anchor-digest" name="anchor_digest" maxlength="64" placeholder="Paste the code"></label>
+          </div>
+          <p><button class="btn btn--ghost" type="button" id="rcp-key-file">Load the sender's key from a file</button></p>
+        </details>
+        <button class="btn btn--primary" type="submit">Check receipt</button>
+      </form>
+      <div id="rcp-verdict-box" hidden role="status" aria-live="polite">
+        <p class="rcp-verdict" id="rcp-verdict">—</p>
+        <p class="muted" id="rcp-verdict-detail"></p>
+        <ul class="rcp-claims" id="rcp-claims"></ul>
+        <details><summary>Technical details</summary><pre class="rcp-report" id="rcp-report"></pre></details>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="rcp-proof-title">
+      <h2 id="rcp-proof-title" class="rcp-flush-top">Proof of how Lightwork behaved</h2>
+      <p class="muted">A signed proof file shows an outside party that agents stayed within your rules. It also shows that learning never gave itself more power and that the activity record is complete.</p>
+      <form class="rcp-form" id="rcp-proof-form" autocomplete="off">
+        <label for="rcp-proof-since">Include learning changes from (optional)<input class="input" type="date" id="rcp-proof-since"></label>
+        <button class="btn btn--primary" type="submit">Download signed proof</button>
+      </form>
+      <h3>Check a proof file</h3>
+      <form class="rcp-form" id="rcp-proof-verify-form" autocomplete="off">
+        <label for="rcp-proof-file">Proof file<input type="file" id="rcp-proof-file" accept="application/json,.json"></label>
+        <label for="rcp-proof-key">Sender's key (leave empty for this installation's own proof)<input class="input" id="rcp-proof-key" maxlength="64" placeholder="Paste the key"></label>
+        <button class="btn" type="submit">Check proof</button>
+      </form>
+      <div id="rcp-proof-box" hidden role="status" aria-live="polite">
+        <p class="rcp-verdict" id="rcp-proof-verdict">—</p>
+        <p class="muted" id="rcp-proof-detail"></p>
+        <ul class="rcp-claims" id="rcp-proof-claims"></ul>
+        <details><summary>Technical details</summary><pre class="rcp-report" id="rcp-proof-report"></pre></details>
+      </div>
+      <p class="muted" id="rcp-proof-msg" role="status" aria-live="polite"></p>
+    </section>
+  </div>
+
+  <details class="panel">
+    <summary>For your auditor's IT team</summary>
+    <p class="muted">Auditors who want to check files without Lightwork can use these small checking programs. Send our key to them separately.</p>
+    <div class="rcp-actions">
+      <button class="btn" id="rcp-download-verifier" type="button">Download receipt checker</button>
+      <button class="btn" id="rcp-download-proof-verifier" type="button">Download proof checker</button>
+    </div>
+    <p class="muted">Checker fingerprint: <span class="rcp-key" id="rcp-verifier-sha">—</span></p>
+  </details>
+  <noscript><p class="panel">Turn on JavaScript to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-trust-receipts.js" defer></script>{% endblock %}

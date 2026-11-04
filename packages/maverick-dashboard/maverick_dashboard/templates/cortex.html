@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Diagnostics · Knowledge' if tab_host else 'Cortex memory diagnostics' }} · Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .ctx { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-5); }
+  .ctx > * { min-width: 0; }
+  .ctx .section-head { flex-wrap: wrap; }
+  .ctx :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .ctx-figure { margin: 0; display: grid; gap: var(--space-3); }
+  .ctx-lattice { display: block; width: 100%; max-width: 640px; aspect-ratio: 4 / 3; height: auto; margin: 0 auto;
+                 background: #0a0d15; border: 1px solid var(--border); border-radius: var(--radius-md); color: #8e97ac; }
+  .ctx-figure figcaption { color: var(--muted); font-size: var(--text-sm); max-width: 62ch; margin: 0 auto; text-align: center; }
+  .ctx-cards { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+  .ctx-card { margin: 0; border-left: 3px solid var(--border-strong); }
+  .ctx-card[data-available="true"] { border-left-color: var(--success); }
+  .ctx-card__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .ctx-card__head h3 { margin: 0; font-size: var(--text-md); }
+  .ctx-card__blurb { font-size: var(--text-sm); margin: var(--space-2) 0 var(--space-3); }
+  .ctx-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin: 0; }
+  .ctx-counts div { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-2); min-width: 0; }
+  .ctx-counts dt { color: var(--muted); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .06em; }
+  .ctx-counts dd { margin: 0; font-size: var(--text-lg); font-weight: 650; }
+  .ctx-card__foot { font-size: var(--text-xs); margin: var(--space-2) 0 0; word-break: break-word; }
+  .ctx-card__err { color: var(--danger); font-size: var(--text-sm); margin: var(--space-2) 0 0; word-break: break-word; }
+  .ctx-posture { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin: var(--space-3) 0 0; }
+  .ctx-posture__cell { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+  .ctx-posture__cell span { color: var(--muted); font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .06em; display: block; }
+  .ctx-posture__cell strong { display: block; margin-top: var(--space-1); }
+  .ctx-posture__note { grid-column: 1 / -1; color: var(--muted); font-size: var(--text-sm); margin: 0; }
+  .ctx-form { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--space-3); }
+  .ctx-form__grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ctx-field { display: grid; gap: var(--space-1); min-width: 0; }
+  .ctx-field--wide { grid-column: 1 / -1; }
+  .ctx-field label, .ctx-sources legend { color: var(--muted); font-size: var(--text-sm); font-weight: var(--font-semibold); }
+  .ctx-field .input, .ctx-field .textarea, .ctx-field .select { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .ctx-sources { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3);
+                 display: flex; flex-wrap: wrap; gap: var(--space-3); margin: 0; min-width: 0; }
+  .ctx-sources legend { padding: 0 var(--space-1); }
+  .ctx-inline { display: inline-flex; align-items: center; gap: var(--space-1); }
+  .ctx-form__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+  .ctx-result__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+  .ctx-chip { display: inline-flex; align-items: center; gap: .35em; border: 1px solid var(--border); border-radius: var(--radius-pill);
+              padding: .1rem .55rem; font-size: var(--text-xs); color: var(--muted); }
+  .ctx-chip strong { color: var(--text); }
+  .ctx-denied { margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); border: 1px solid var(--border);
+                border-left: 3px solid var(--warn); border-radius: var(--radius-md); font-size: var(--text-sm); }
+  .ctx-denied ul { margin: var(--space-1) 0 0; padding-left: 1.2em; }
+  .ctx-group { margin-top: var(--space-4); }
+  .ctx-group h3 { margin: 0 0 var(--space-2); font-size: var(--text-md); }
+  .ctx-hits { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+  .ctx-hit { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+  .ctx-hit__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-xs); color: var(--muted); }
+  .ctx-hit__cite { font-family: var(--font-mono); color: var(--text); word-break: break-all; }
+  .ctx-hit__text { margin: var(--space-2) 0 0; white-space: pre-wrap; word-break: break-word; font-size: var(--text-sm); }
+  .ctx-table-wrap { overflow: auto; }
+  .ctx-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+  .ctx-table th, .ctx-table td { text-align: left; vertical-align: top; padding: var(--space-2); border-bottom: 1px solid var(--border); }
+  .ctx-table td { color: var(--muted); }
+  .ctx-table td code { color: var(--text); }
+  .ctx-table .ctx-chip { margin: 0 .25rem .25rem 0; }
+  @media (max-width: 720px) { .ctx-form__grid { grid-template-columns: minmax(0, 1fr); } .ctx-counts { grid-template-columns: minmax(0, 1fr); } }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero, state %}
+{% set state_copy %}
+  {%- if status.error -%}Knowledge status could not be loaded right now.
+  {%- elif status.tenant -%}Searching your current workspace.
+  {%- else -%}No workspace selected: searches use installation-level sources.
+  {%- endif %} Searches record where results came from. Unavailable sources are
+  shown so you can see what is missing.
+{% endset %}
+{% if tab_host %}{% from "_tabs.html" import host_header, panel_attrs %}{{ host_header(tab_host) }}{% endif %}
+<div class="ctx" id="ctx-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
+     data-enabled="{{ 'true' if status.enabled else 'false' }}"
+     data-source-labels='{{ source_labels | tojson }}'{% if tab_host %} {{ panel_attrs(tab_host.selected) }}{% endif %}>
+  {% if tab_host %}
+  <section aria-labelledby="ctx-diagnostics-h">
+    <h2 id="ctx-diagnostics-h">Diagnostics</h2>
+    <p class="muted">Search your connected sources: cited documents, skills, lessons and records. Source availability
+      is shown below; searches are audited.</p>
+    <p><strong>{{ 'Knowledge search on' if status.enabled else 'Knowledge search off' }}</strong>
+      <span class="badge {{ 'ok' if status.enabled and answering == total else ('warn' if status.enabled and answering else 'idle') }}">{{ answering }} of {{ total }} sources answering</span></p>
+    <p class="muted">{{ state_copy }}</p>
+  </section>
+  {% else %}
+  {% call hero('Your workspace', 'Cortex memory diagnostics',
+               subtitle='Search your connected sources',
+               lede='Find information in the knowledge sources available to your
+                     workspace, including cited documents, skills, lessons and
+                     records. Source availability is shown below; searches are audited.') %}
+    {{ state('Current state',
+             'Knowledge search on' if status.enabled else 'Knowledge search off',
+             badge=answering ~ ' of ' ~ total ~ ' sources answering',
+             badge_class='ok' if status.enabled and answering == total
+                         else ('warn' if status.enabled and answering else 'idle'),
+             copy=state_copy) }}
+  {% endcall %}
+  {% endif %}
+  {% if status.error %}
+  <p class="panel" role="alert">Lightwork could not check its knowledge sources just now. Reload the page in a minute;
+    if this keeps happening, ask your administrator.</p>
+  {% elif not status.enabled %}
+  <section class="panel" aria-labelledby="ctx-off-h">
+    <h2 id="ctx-off-h">Knowledge search is turned off</h2>
+    {% if can_switch %}
+    <p>Turn it on in Settings to let people and assistants search these sources.</p>
+    <a class="btn btn--primary" href="/settings">Open Settings</a>
+    {% else %}
+    <p class="muted">Ask an administrator to turn on knowledge search.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="panel" aria-labelledby="ctx-figure-caption">
+    <figure class="ctx-figure">
+      <canvas id="cortex-lattice" width="640" height="480" class="ctx-lattice" role="img"
+              aria-labelledby="ctx-figure-caption">The source map needs a browser with canvas support. The same sources are listed below.</canvas>
+      <figcaption id="ctx-figure-caption">A map of the available knowledge sources. Nodes light up when information is added or read. Workspace records stay within their workspace.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="ctx-holds-h">
+    <div class="section-head">
+      <h2 id="ctx-holds-h">What it holds</h2>
+      <span class="muted">{{ answering }} of {{ total }} sources answering</span>
+    </div>
+    <div class="ctx-cards">
+      {% for c in cards %}
+      <article class="panel ctx-card" data-source="{{ c.name }}" data-available="{{ 'true' if c.available else 'false' }}"
+               aria-labelledby="ctx-card-{{ c.name }}">
+        <div class="ctx-card__head">
+          <h3 id="ctx-card-{{ c.name }}">{{ c.label }}</h3>
+          <span class="badge {{ 'ok' if c.available else 'idle' }}">{{ 'Answering' if c.available else ('Not reachable' if c.error else 'Off') }}</span>
+        </div>
+        <p class="muted ctx-card__blurb">{{ c.blurb }}</p>
+        <dl class="ctx-counts">
+          {% for key, label, value in c.counts %}<div><dt>{{ label }}</dt><dd data-count="{{ key }}">{{ value }}</dd></div>{% endfor %}
+        </dl>
+        {% if c.collections %}<p class="muted ctx-card__foot">{{ c.collections | join(' · ') }}</p>{% endif %}
+        {% if c.error %}<p class="ctx-card__err">{{ c.error }}</p>{% endif %}
+        {% if not c.available and not c.error %}
+          {% if c.name == 'knowledge' %}
+          <p class="ctx-card__foot"><a class="btn btn--ghost" href="/knowledge-access">Add or connect documents</a></p>
+          {% elif c.switch and can_switch %}
+          <p class="ctx-card__foot"><button type="button" class="btn btn--ghost" data-cortex-switch="{{ c.switch }}"
+             data-label="{{ c.label }}">Turn on {{ c.label | lower }}</button></p>
+          <p class="muted ctx-card__foot" data-cortex-switch-msg="{{ c.switch }}" role="status" aria-live="polite"></p>
+          {% elif c.switch %}
+          <p class="muted ctx-card__foot">Ask an administrator to turn this on.</p>
+          {% endif %}
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    <div class="panel ctx-posture" role="group" aria-label="Encryption and isolation posture">
+      <div class="ctx-posture__cell" data-at-rest="{{ 'true' if status.encryption.at_rest else 'false' }}">
+        <span>Stored encrypted</span><strong>{{ 'On' if status.encryption.at_rest else 'Off' }}</strong></div>
+      <div class="ctx-posture__cell" data-per-tenant="{{ 'true' if status.encryption.per_tenant else 'false' }}">
+        <span>Separate lock for each workspace</span><strong>{{ 'On' if status.encryption.per_tenant else 'Off' }}</strong></div>
+      <div class="ctx-posture__cell" data-tenant-floored="{{ 'true' if status.isolation.tenant_floored else 'false' }}">
+        <span>Limited to this workspace</span><strong>{{ 'Yes' if status.isolation.tenant_floored else 'No workspace selected' }}</strong></div>
+      <div class="ctx-posture__cell" data-pooled="{{ 'true' if status.isolation.pooled_across_tenants else 'false' }}">
+        <span>Combined across workspaces</span><strong>{{ 'Yes' if status.isolation.pooled_across_tenants else 'Never' }}</strong></div>
+      {% if status.isolation %}<p class="ctx-posture__note">{{ 'Every source only looks at this workspace’s own information.'
+          if status.isolation.tenant_floored else 'No workspace is selected, so searches use the sources shared by the whole installation.' }}</p>{% endif %}
+    </div>
+  </section>
+
+  <section aria-labelledby="ctx-recall-h">
+    <div class="section-head">
+      <h2 id="ctx-recall-h">Search knowledge</h2>
+      <span class="muted">Each search is recorded in the activity log.</span>
+    </div>
+    <form class="panel ctx-form" id="ctx-recall-form" autocomplete="off">
+      <div class="ctx-form__grid">
+        <div class="ctx-field ctx-field--wide">
+          <label for="ctx-query">What would you like to find?</label>
+          <textarea class="textarea" id="ctx-query" name="query" rows="3" maxlength="{{ max_query }}" required
+                    placeholder="What does the company know about…"></textarea>
+        </div>
+        <div class="ctx-field">
+          <label for="ctx-domain">Business area</label>
+          <select class="select" id="ctx-domain" name="domain">
+            <option value="">All areas</option>
+            {% for d in departments %}<option value="{{ d.value }}">{{ d.label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="ctx-field">
+          <label for="ctx-k">Results from each source</label>
+          <select class="select" id="ctx-k" name="k" data-max="{{ max_k }}">
+            {% for n in [3, default_k, 10, 20, max_k] | unique | sort %}<option value="{{ n }}"{% if n == default_k %} selected{% endif %}>Up to {{ n }}</option>{% endfor %}
+          </select>
+        </div>
+        <fieldset class="ctx-field--wide ctx-sources">
+          <legend>Sources</legend>
+          {% for s in sources %}<label class="ctx-inline"><input type="checkbox" name="sources" value="{{ s }}" checked> {{ source_labels[s] }}</label>{% endfor %}
+        </fieldset>
+      </div>
+      <div class="ctx-form__row">
+        <button class="btn btn--primary" type="submit" id="ctx-recall-submit">Search memory</button>
+        <span class="muted" id="ctx-recall-state" role="status" aria-live="polite">No searches yet. Each search is recorded in the activity log.</span>
+      </div>
+    </form>
+    <div class="panel" id="ctx-result" hidden>
+      <div class="ctx-result__meta" id="ctx-result-meta"></div>
+      <div class="ctx-denied" id="ctx-denied" hidden></div>
+      <div id="ctx-hits"></div>
+    </div>
+  </section>
+
+  {% if status.enabled %}
+  <section aria-labelledby="fa-cortex-h" data-fa-needs="operate" hidden>
+    <div class="section-head">
+      <h2 id="fa-cortex-h">Add to knowledge</h2>
+      <span class="muted">Each addition is recorded in the activity log.</span>
+    </div>
+    <form class="panel ctx-form" id="fa-cortex-add" autocomplete="off">
+      <div class="ctx-form__grid">
+        <div class="ctx-field ctx-field--wide">
+          <label for="fa-cortex-text">What should Lightwork remember?</label>
+          <textarea class="textarea" id="fa-cortex-text" name="text" rows="4" maxlength="20000" required
+                    placeholder="For example: Our refund window is 30 days from delivery."></textarea>
+        </div>
+        <div class="ctx-field">
+          <label for="fa-cortex-file">Or use a text file</label>
+          <input class="input" type="file" id="fa-cortex-file" accept=".txt,.md,text/plain,text/markdown">
+          <p class="muted">Text files can contain up to 20,000 characters. For a longer file, paste the part you want to keep above.</p>
+        </div>
+        <div class="ctx-field">
+          <label for="fa-cortex-source">Where it came from</label>
+          <input class="input" id="fa-cortex-source" name="source" maxlength="200"
+                 placeholder="For example: Refund policy, March 2026">
+        </div>
+        <div class="ctx-field">
+          <label for="fa-cortex-kind">Keep it as</label>
+          <select class="select" id="fa-cortex-kind" name="kind">
+            <option value="knowledge">Company knowledge</option>
+            <option value="fleet">Shared memory for agents</option>
+          </select>
+        </div>
+        <div class="ctx-field">
+          <label for="fa-cortex-collection">Keep it with</label>
+          <select class="select" id="fa-cortex-collection" name="collection">
+            {% for c in deposit_collections %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="ctx-field">
+          <label for="fa-cortex-domain">Business area</label>
+          <select class="select" id="fa-cortex-domain" name="domain">
+            <option value="">All areas</option>
+            {% for d in departments %}<option value="{{ d.value }}">{{ d.label }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="ctx-form__row">
+        <button class="btn btn--primary" type="submit">Add to knowledge</button>
+        <span class="muted" id="fa-cortex-status" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+  <section aria-labelledby="ctx-recent-h">
+    <div class="section-head">
+      <h2 id="ctx-recent-h">Recent reads and writes</h2>
+      <span class="muted">Latest {{ recent_n }} recorded today</span>
+    </div>
+    <div class="panel">
+      {% if not can_audit %}
+        <p class="muted" id="ctx-recent-locked">This activity includes who searched and which sources answered, so it
+          is only shown to people who can see the activity log.</p>
+      {% elif not recent %}
+        <p class="muted" id="ctx-recent-empty">No knowledge searches or updates recorded today.
+          Search above to add a recorded activity.</p>
+      {% else %}
+        <div class="ctx-table-wrap">
+          <table class="ctx-table">
+            <thead><tr>
+              <th scope="col">When</th><th scope="col">Action</th><th scope="col">Requested by</th>
+              <th scope="col">Results by source</th><th scope="col">Not answered</th><th scope="col">Outcome</th>
+            </tr></thead>
+            <tbody>
+            {% for r in recent %}
+              <tr data-kind="{{ r.kind }}">
+                <td>{{ r.when }}</td>
+                <td><span class="badge {{ 'info' if r.verb == 'read' else 'ok' }}">{{ 'Search' if r.verb == 'read' else 'Added' }}</span></td>
+                <td><span title="{{ r.caller }}">{{ r.caller_label }}</span>{% if r.external %} <span class="badge warn">Outside assistant{% if r.vendor %} · {{ r.vendor }}{% endif %}</span>{% endif %}</td>
+                <td>
+                  {%- if r.per_source %}{% for s, n in r.per_source.items() %}<span class="ctx-chip">{{ s }}: {{ n }}</span>{% endfor %}
+                  {%- elif r.deposit_kind %}{{ r.deposit_kind }}{% else %}—{% endif -%}
+                </td>
+                <td>{% if r.denied %}{% for s, why in r.denied.items() %}<div><strong>{{ s }}</strong>: {{ why }}</div>{% endfor %}{% else %}—{% endif %}</td>
+                <td>
+                  {%- if r.verb == 'read' -%}
+                    {{ r.hits if r.hits is not none else '—' }} {{ 'result' if r.hits == 1 else 'results' }}
+                  {%- else -%}
+                    <span class="badge {{ 'ok' if r.ok else 'denied' }}">{{ 'Saved' if r.ok else 'Refused' }}</span> {{ r.reason }}
+                  {%- endif -%}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <noscript><p class="panel">Enable JavaScript to search your knowledge and view its connections.
+    You can still review the sources and recent activity above.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-cortex.js" defer></script>
+<script src="/static/lightwork-feature-actions.js" defer></script>{% endblock %}

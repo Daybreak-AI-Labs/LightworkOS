@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Threat monitoring · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .hunt-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-3); margin-bottom:var(--space-4); }
+  .hunt-row { display:flex; flex-wrap:wrap; gap:var(--space-3); align-items:end; }
+  .hunt-row > label { display:flex; flex-direction:column; gap:.25rem; }
+  .hunt-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+  .hunt-links { display:flex; gap:.5rem; flex-wrap:wrap; margin:0 0 var(--space-4); }
+  .hunt-scroll { overflow-x:auto; }
+  @media(max-width:880px){.hunt-grid{grid-template-columns:1fr}}
+</style>
+{% from "_hero.html" import hero, state %}
+{% call hero('Security', 'Threat monitoring',
+             subtitle='Your own systems',
+             lede='Looks through activity from the systems you connect (for example your cloud accounts, sign-in
+                   provider or laptops) for signs of an attack. Every finding points to the events behind it, and any
+                   response waits for a person to approve it.') %}
+  {% if enabled %}
+  {{ state('Current state', 'Watching your connected systems',
+           badge='Responses need approval' if response_execution else 'Suggestions only',
+           badge_class='warn' if response_execution else 'ok',
+           copy='Lightwork only reads from your systems. ' ~ ('An approved response can be carried out once.' if response_execution else
+                 'It suggests responses but never carries them out.')) }}
+  {% else %}
+  {{ state('Current state', 'Turned off', badge='Off', badge_class='idle',
+           copy='Nothing from your systems is being read.') }}
+  {% endif %}
+{% endcall %}
+<div class="hunt-links">
+  <a class="btn btn--ghost" href="/security">Security &amp; GRC</a>
+  <a class="btn btn--ghost" href="/security/threats">Lightwork’s own activity</a>
+  <a class="btn btn--ghost" href="/approvals">Approvals</a>
+</div>
+
+{% if not enabled %}
+<section class="panel">
+  <h2>Threat monitoring is off</h2>
+  <p>Turn it on to look through activity from the systems you connect. It only reads; it never changes anything in them.</p>
+  {% if can_global_admin %}
+  <button type="button" class="btn btn--primary" id="hunt-turn-on" data-section="env_hunt">Turn on threat monitoring</button>
+  {% else %}
+  <p class="muted">Ask an administrator to turn this on.</p>
+  {% endif %}
+  <p id="hunt-turn-on-msg" role="status" aria-live="polite" class="muted"></p>
+</section>
+{% else %}
+<div id="hunt-root" data-hunt="environment" data-api="/api/v1/security/soc">
+<div class="hunt-grid">
+  <div class="stat"><div class="num" id="hunt-open">—</div><div class="label">Findings to look at</div></div>
+  <div class="stat"><div class="num" id="hunt-investigations">—</div><div class="label">Investigations</div></div>
+  <div class="stat"><div class="num" id="hunt-safety">—</div><div class="label">Safety layer</div></div>
+</div>
+<p class="muted" id="hunt-status" role="status" aria-live="polite"></p>
+<p class="danger-text" id="hunt-error" role="alert" aria-live="assertive"></p>
+
+<section class="panel" aria-labelledby="soc-scan-title">
+  <h2 id="soc-scan-title">Look for threats</h2>
+  {% if pull_connectors %}
+  <h3>From a connected system</h3>
+  <div class="hunt-row">
+    <label for="soc-pull-connector">System
+      <select id="soc-pull-connector" class="select">
+        {% for c in pull_connectors %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
+      </select></label>
+    <label for="soc-pull-window">Time period
+      <select id="soc-pull-window" class="select">
+        <option value="3600">Last hour</option>
+        <option value="86400" selected>Last 24 hours</option>
+        <option value="604800">Last 7 days</option>
+      </select></label>
+    <button type="button" class="btn btn--primary" id="soc-pull-run">Look for threats now</button>
+  </div>
+  {% else %}
+  <p class="muted">No systems are connected for automatic reading yet. Ask your administrator to connect them during setup.</p>
+  {% endif %}
+
+  {% if push_connectors %}
+  <h3>From an exported log file</h3>
+  <p class="muted">Export activity from the system (most offer a “download” or “export” option), then choose the file here. Lightwork shows what it found in the file before looking through it. The file itself is not kept.</p>
+  <div class="hunt-row">
+    <label for="soc-file-connector">Where the file came from
+      <select id="soc-file-connector" class="select">
+        {% for c in push_connectors %}<option value="{{ c.value }}">{{ c.label }}</option>{% endfor %}
+      </select></label>
+    <label for="soc-file">Log file
+      <input type="file" id="soc-file" class="input" accept=".json,.jsonl,.ndjson,.log,.txt,application/json"></label>
+  </div>
+  <div id="soc-preview" hidden>
+    <p id="soc-preview-summary"></p>
+    <div class="hunt-scroll"><table><caption class="sr-only">First events in the file</caption>
+      <thead><tr><th scope="col">When</th><th scope="col">What happened</th><th scope="col">Who</th></tr></thead>
+      <tbody id="soc-preview-rows"></tbody></table></div>
+    <button type="button" class="btn btn--primary" id="soc-file-run">Look through these events</button>
+  </div>
+  {% elif not pull_connectors %}
+  <p class="muted">Uploading exported log files is also not allowed yet. Ask your administrator.</p>
+  {% endif %}
+</section>
+
+<section class="panel" aria-labelledby="soc-rules-title">
+  <h2 id="soc-rules-title">What Lightwork looks for</h2>
+  <div class="hunt-scroll"><table><caption>Built-in checks (always used)</caption>
+    <thead><tr><th scope="col">Check</th><th scope="col">How serious</th><th scope="col">Attack type</th></tr></thead>
+    <tbody>
+      {% for r in curated_rules %}<tr><td>{{ r.title }}</td><td>{{ r.level | humanize }}</td><td data-attack="{{ r.techniques | join(',') }}">{{ r.techniques | join(', ') }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  <h3>Your own checks</h3>
+  <p class="muted">Add a check for something specific to your company. Your checks are used every time you look for threats on this computer.</p>
+  <div class="hunt-scroll"><table><caption class="sr-only">Your own checks</caption>
+    <thead><tr><th scope="col">Check</th><th scope="col">Looks for</th><th scope="col">How serious</th><th scope="col">Actions</th></tr></thead>
+    <tbody id="soc-custom-rows"></tbody></table></div>
+  <div class="hunt-actions">
+    <button type="button" class="btn btn--ghost" id="soc-rule-add">Add a check</button>
+    <label for="soc-rule-file" class="btn btn--ghost">Load checks from a file</label>
+    <input type="file" id="soc-rule-file" class="sr-only" accept=".json,.yml,.yaml,application/json">
+  </div>
+</section>
+
+<section class="panel" aria-labelledby="hunt-heat-title">
+  <h2 id="hunt-heat-title">Kinds of attack seen</h2>
+  <div class="hunt-scroll"><table><caption class="sr-only">Attack types and how often they were seen</caption>
+    <thead><tr><th scope="col">Attack type</th><th scope="col">Findings</th><th scope="col">How serious</th></tr></thead>
+    <tbody id="hunt-heatmap"></tbody></table></div>
+</section>
+
+<section class="panel" aria-labelledby="hunt-findings-title">
+  <div class="section-head"><h2 id="hunt-findings-title">Findings</h2></div>
+  <div class="hunt-scroll"><table><caption class="sr-only">Findings, newest first</caption>
+    <thead><tr><th scope="col">How serious</th><th scope="col">What was found</th><th scope="col">Attack type</th><th scope="col">How sure</th><th scope="col">Evidence</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+    <tbody id="hunt-findings"></tbody></table></div>
+</section>
+
+<section class="panel" aria-labelledby="hunt-inv-title">
+  <h2 id="hunt-inv-title">Investigations</h2>
+  <p class="muted">A response only happens after a named person approves it in the approvals queue, and it is never retried on its own.</p>
+  <div class="hunt-scroll"><table><caption class="sr-only">Investigations</caption>
+    <thead><tr><th scope="col">Investigation</th><th scope="col">Status</th><th scope="col">Assigned to</th><th scope="col">Timeline</th><th scope="col">Response</th><th scope="col">Actions</th></tr></thead>
+    <tbody id="hunt-investigations-rows"></tbody></table></div>
+  <div id="hunt-detail" aria-live="polite"></div>
+</section>
+</div>
+<script nonce="{{ csp_script_nonce }}" type="application/json" id="hunt-people">{{ people | tojson }}</script>
+{% endif %}
+<script src="/static/lightwork-security-hunt.js" defer></script>
+{% endblock %}

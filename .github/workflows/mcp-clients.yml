@@ -1,0 +1,112 @@
+name: MCP clients
+
+# Executes the cross-language MCP client examples against a live `maverick mcp`
+# stdio server. The Python contract test (test_client_quickstart_contract.py)
+# checks the documented tool surface; this proves the clients actually connect
+# and round-trip -- it's what catches a broken `maverick mcp` entry point or an
+# SDK/protocol drift that doc checks can't.
+#
+# Only the no-LLM flow runs (initialize -> tools/list -> maverick_facts_get);
+# maverick_start needs a provider key + budget and is out of scope for CI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/maverick-core/**'
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/typescript/**'
+      - 'examples/clients/go/**'
+      - 'docs/clients/typescript-quickstart.md'
+      - 'docs/clients/go-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - '.github/workflows/mcp-clients.yml'
+  pull_request:
+    # The client-parity contract is the MCP wire protocol, which lives in
+    # maverick-mcp; a blanket 'packages/maverick-core/**' filter fired these
+    # foreign-toolchain jobs on essentially every Python PR. This is not a
+    # required check, so a core change that alters the exposed surface is still
+    # caught by the push:main run above (kept broad on purpose) without paying
+    # for a Node/Go toolchain on every unrelated core PR.
+    paths:
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/typescript/**'
+      - 'examples/clients/go/**'
+      - 'docs/clients/typescript-quickstart.md'
+      - 'docs/clients/go-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - '.github/workflows/mcp-clients.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+jobs:
+  typescript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: "22.23.1"
+      - name: Install dashboard DOM test dependencies
+        run: npm ci --prefix packages/maverick-dashboard/tests/js --ignore-scripts
+      - name: Dashboard controller and DOM regressions
+        run: node --test packages/maverick-dashboard/tests/js/*.test.js
+      - name: Install Lightwork (kernel + MCP server)
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -I -m pip install -e ./packages/maverick-core
+          python -I -m pip install --no-deps -e ./packages/maverick-mcp
+          python -I -m pip check
+          python -I scripts/verify_constraint_closure.py
+      - name: Run the TypeScript MCP client end-to-end
+        working-directory: examples/clients/typescript
+        run: |
+          npm ci
+          npm audit --audit-level=low
+          npm run check
+
+  go:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The go.mod directive is the module's compatibility floor, not a
+          # CI/security patch lock.
+          go-version: "1.26.10"
+      - name: Install Lightwork (kernel + MCP server)
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -I -m pip install -e ./packages/maverick-core
+          python -I -m pip install --no-deps -e ./packages/maverick-mcp
+          python -I -m pip check
+          python -I scripts/verify_constraint_closure.py
+      - name: Run the Go MCP client end-to-end
+        working-directory: examples/clients/go
+        run: go run -mod=readonly .

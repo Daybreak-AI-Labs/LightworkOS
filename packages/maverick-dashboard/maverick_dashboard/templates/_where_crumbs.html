@@ -1,0 +1,12 @@
+{#- Where a page kept out of the sidebar sits (classic navigation; the
+    job-named navigation has its own breadcrumb in _area_nav.html): the page
+    it sits under, then this page. ui_visibility.where decides both, from
+    pages this person may open. -#}
+{% if nav_where is defined and nav_where %}
+<nav class="where-crumbs" aria-label="{{ ut('Breadcrumb') }}" lang="{{ ul('Breadcrumb') }}">
+  <ol>
+    <li><a href="{{ nav_where.parent.href }}">{{ ui(nav_where.parent.label) }}</a></li>
+    <li>{% if nav_where.exact %}<span aria-current="page">{{ ui(nav_where.page.label) }}</span>{% else %}<a href="{{ nav_where.page.href }}">{{ ui(nav_where.page.label) }}</a>{% endif %}</li>
+  </ol>
+</nav>
+{% endif %}

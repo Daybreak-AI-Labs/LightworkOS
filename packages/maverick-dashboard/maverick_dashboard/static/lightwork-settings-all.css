@@ -1,0 +1,46 @@
+/* Settings > All settings: layout only; colours come from the design system. */
+.settings-all-index { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); }
+.settings-all-index h2 { margin: 0; }
+.settings-all-filters { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+.settings-all-field { display: grid; gap: var(--space-1); flex: 1 1 16rem; min-width: 0; }
+.settings-all-check { display: flex; gap: var(--space-2); align-items: center; }
+.settings-all-about { margin-bottom: var(--space-4); }
+.settings-all-about summary { cursor: pointer; font-weight: var(--font-medium); }
+.settings-all-lead { margin-top: 0; }
+.settings-all-row { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--hairline); }
+.settings-all-row:first-of-type { border-top: 0; }
+.settings-all-about-row { flex: 1 1 22rem; min-width: 0; }
+.settings-all-label { font-weight: var(--font-medium); display: block; }
+.settings-all-help { margin: var(--space-1) 0; font-size: var(--text-sm); }
+.settings-all-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: var(--space-1) 0 0; font-size: var(--text-sm); }
+.settings-all-warning { font-size: var(--text-sm); margin: var(--space-1) 0 0; }
+.settings-all-control { flex: 1 1 18rem; min-width: 0; display: grid; gap: var(--space-2); align-content: start; }
+.settings-all-control .input, .settings-all-control .select { max-width: 100%; }
+.settings-all-switch { display: flex; gap: var(--space-2); align-items: center; }
+.settings-all-switch input { width: 18px; height: 18px; accent-color: var(--brand); }
+.settings-all-choices { border: 0; padding: 0; margin: 0; display: grid; gap: var(--space-1); }
+.settings-all-choices label { display: flex; gap: var(--space-2); align-items: center; }
+.settings-all-number { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.settings-all-number .input { max-width: 12rem; }
+.settings-all-list-items { list-style: none; margin: 0 0 var(--space-2); padding: 0; display: grid; gap: var(--space-2); }
+.settings-all-list-items li { display: flex; gap: var(--space-2); align-items: center; }
+.settings-all-list-items .input { flex: 1 1 auto; min-width: 0; }
+.settings-all-secret { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.settings-all-actions, .settings-all-group-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.settings-all-group-actions { margin: var(--space-3) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
+.settings-all-row-status:empty { display: none; }
+.settings-all-row[hidden], .settings-all-group[hidden] { display: none; }
+.settings-all-part-pick { margin: 0 0 var(--space-3); }
+.settings-all-part-pick label { display: inline-grid; gap: var(--space-1); }
+.settings-all-subhead { margin: var(--space-4) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--hairline); font-size: var(--text-md, 1rem); }
+.settings-all-subhead + .settings-all-row { border-top: 0; }
+.settings-all-sub-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-2); }
+.settings-all-subhead[hidden], .settings-all-sub-actions[hidden] { display: none; }
+.settings-all-keys, .settings-all-table { display: grid; gap: var(--space-2); min-width: 0; }
+.settings-all-keys li strong { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.settings-all-paste summary { cursor: pointer; }
+.settings-all-rows { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.settings-all-rows th, .settings-all-rows td { text-align: left; padding: var(--space-1) var(--space-2) var(--space-1) 0; vertical-align: middle; }
+.settings-all-rows .input { max-width: 8rem; }
+.settings-all-table { overflow-x: auto; }
+.settings-all-table-add { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: flex-end; }

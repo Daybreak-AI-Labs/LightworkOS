@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{{ rec.id if rec else 'Not found' }} · DSAR Concierge{% endblock %}
+{% block content %}
+  {% if not rec %}
+  <div class="panel"><h1>No such request</h1>
+    <p class="sub"><a href="/">← back to the queue</a></p></div>
+  {% else %}
+  <h1><span class="mono">{{ rec.id }}</span> — {{ rec.kind }} for {{ rec.subject_id }}</h1>
+  <p class="sub">Opened {{ rec.opened_at | dt }} via {{ rec.channel }} ·
+    due {{ rec.due_at | dt }} ·
+    <span class="chip {{ 'ok' if rec.status in ('fulfilled', 'closed') else 'warn' if rec.status == 'awaiting_erasure' else 'info' }}">{{ rec.status | replace('_', ' ') }}</span>
+    {% if rec.verified_at %}<span class="chip ok">identity verified</span>
+    {% else %}<span class="chip warn">awaiting verification</span>{% endif %}
+  </p>
+
+  {% if rec.status == 'open' and rec.kind in ('access', 'portability') %}
+  <div class="panel">
+    <h2>Assemble the response package</h2>
+    <p class="note">One line per system: <span class="mono">System name: the extracted data</span>.
+      Only what you provide goes in — the agent never invents subject data.</p>
+    <form method="post" action="/case/{{ rec.id }}/fulfill">
+      <label for="cs-extracts">System extracts</label>
+      <textarea id="cs-extracts" name="extracts" rows="6"
+        placeholder="CRM: name, email, membership tier&#10;Billing: last 24 invoices"></textarea>
+      <p><button class="btn primary" type="submit">Assemble package &amp; notify the subject</button></p>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if rec.status == 'open' and rec.kind == 'erasure' %}
+  <div class="panel">
+    <h2>Prepare the erasure handoff</h2>
+    <p class="note">One system per line. The handoff is deliberately
+      non-destructive: a human runs each deletion in an authenticated
+      workflow and records the confirmation.</p>
+    <form method="post" action="/case/{{ rec.id }}/erasure">
+      <label for="cs-systems">Systems holding this subject's data</label>
+      <textarea id="cs-systems" name="systems" rows="4"
+        placeholder="CRM&#10;Billing&#10;Marketing platform"></textarea>
+      <p><button class="btn primary" type="submit">Prepare handoff</button></p>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if rec.package %}
+  <div class="panel">
+    <h2>Response package</h2>
+    <p>{{ rec.package.cover_note }}</p>
+    <a class="btn" href="/case/{{ rec.id }}/package.json">Download package.json</a>
+  </div>
+  {% endif %}
+
+  {% if rec.erasure %}
+  <div class="panel">
+    <h2>Erasure handoff</h2>
+    <table>
+      <thead><tr><th scope="col">system</th><th scope="col">instruction</th></tr></thead>
+      <tbody>
+        {% for row in rec.erasure.systems %}
+        <tr><td>{{ row.system }}</td><td class="note">{{ row.operator_instruction }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if rec.status != 'closed' %}
+  <div class="panel">
+    <form method="post" action="/case/{{ rec.id }}/close" style="display:flex; gap:10px; align-items:flex-end;">
+      <div style="flex:1;">
+        <label for="cs-reason">Close with a note</label>
+        <input id="cs-reason" name="reason" maxlength="300"
+               placeholder="fulfilled and confirmed / withdrawn by subject / ...">
+      </div>
+      <button class="btn" type="submit">Close request</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2>Timeline</h2>
+    {% for e in rec.events %}
+      <div class="evt"><span class="note">{{ e.at | dt }}</span> — {{ e.text }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endblock %}

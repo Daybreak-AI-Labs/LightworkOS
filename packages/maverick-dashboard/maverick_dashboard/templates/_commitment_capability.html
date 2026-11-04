@@ -1,0 +1,97 @@
+{% if capability_enabled %}
+<details id="ccl-panel" class="cmv-card" hidden>
+  <summary><strong>Which additions could support more work?</strong></summary>
+  <p>Enter additional offers and possible material, work-capacity and shared setup requirements. Lightwork checks the offers together while protecting all accepted work in this Promise review.</p>
+  <p>Quantities, availability and permission remain your team's reports. A local test checks saved rules only. Nothing is bought, reserved, promised or sent to a connected service.</p>
+  <p id="ccl-message" role="status" aria-live="polite"></p>
+  <div id="ccl-results"></div>
+  <details id="ccl-author"><summary>Enter or replace the additional-work review</summary>
+    <form id="ccl-model" class="cmv-stack">
+      <p>All additional offers in this bounded review must be due together. One review supports four offers, six possible additions, three possibilities per requirement and thirty-two complete observations.</p>
+      <label>Additional offers due by<input class="input" name="due_at" type="datetime-local" required></label>
+      <div id="ccl-offers" class="cmv-stack"></div>
+      <button class="btn" type="button" id="ccl-add-offer">Add another offer</button>
+      <fieldset><legend>Possible requirements for the additional work</legend>
+        <p>Enter up to three different possibilities in each row. Shared setup is added once when two or more offers are combined; it uses work-capacity units. This does not model production sequences or rates.</p>
+        <div id="ccl-requirements" class="cmv-stack"></div>
+      </fieldset>
+      <fieldset><legend>Possible additions to the existing reported resources</legend>
+        <p>Each addition needs its own quantity, timing, declared cost points and basis for availability and permission. Choose one consistent unit for all cost points; they compare additions and are not a charge. The calculation treats every addition as hypothetical.</p>
+        <div id="ccl-additions" class="cmv-stack"></div>
+        <button class="btn" type="button" id="ccl-add-addition">Add another possible addition</button>
+      </fieldset>
+      <div class="cmv-grid">
+        <label>Maximum declared addition cost points<input class="input" name="max_addition_cost" type="number" min="0" max="100000" value="10" required></label>
+        <label>Shared test allowance<input class="input" name="test_limit" type="number" min="0" max="8" value="4" required></label>
+        <label>Shared effort allowance<input class="input" name="test_effort" type="number" min="0" max="8000" value="4" required></label>
+        <label>Effort points per test or trial report<input class="input" name="test_cost" type="number" min="1" max="1000" value="1" required></label>
+        <label>Review source permission again by<input class="input" name="expires_at" type="datetime-local" required></label>
+      </div>
+      <p>Choose one effort-point scale for this Promise review. All its tests and trial reports share these allowances. A replacement or released wait does not refund points already used.</p>
+      <label>Exact scope and basis of the reported facts and permission<textarea class="input" name="basis" minlength="10" maxlength="2000" rows="3" required></textarea></label>
+      <label><input type="checkbox" name="consent" required> I authorize these displayed source reports for this review until the entered expiry. They are operator assertions and do not prove physical availability.</label>
+      <button class="btn btn--primary" type="submit">Review these additional offers</button>
+    </form>
+  </details>
+  <div id="ccl-current-controls" hidden>
+    <details><summary>Run one owned published local rule test</summary>
+      <p>The selected rules receive whole-number inputs named <strong>quantity</strong> (total additional work), <strong>offers</strong> (combined offer count), <strong>material</strong> and <strong>capacity</strong> (remaining units after protecting all accepted work). Choose a named Yes/No result and review all exact saved rules. Rules cannot verify stock, permission or actual fulfilment.</p>
+      <form id="ccl-test" class="cmv-stack">
+        <label>Current owned published rules<select class="input" name="flow_id" required></select></label>
+        <label>Named Yes/No result<select class="input" name="output" required></select></label>
+        <label>Exact meaning of the local test and its source permission<textarea class="input" name="meaning" minlength="10" maxlength="2000" rows="2" required></textarea></label>
+        <button class="btn" type="submit">Review one useful local test</button>
+      </form>
+    </details>
+    <details><summary>Record a completed local trial report</summary>
+      <p>Report a completed trial within this review's exact work/resource scope. This is your team's assertion, separate from a native rule execution.</p>
+      <form id="ccl-report" class="cmv-stack">
+        <div class="cmv-grid">
+          <label>Total additional work units<input class="input" name="quantity" type="number" min="1" max="4000" required></label>
+          <label>Combined offer count<input class="input" name="offers" type="number" min="1" max="4" required></label>
+          <label>Remaining material units<input class="input" name="material" type="number" min="0" max="2000000" required></label>
+          <label>Remaining work-capacity units<input class="input" name="capacity" type="number" min="0" max="2000000" required></label>
+          <label>Completed trial supported this work<select class="input" name="outcome" required><option value="">Choose</option><option value="true">Yes</option><option value="false">No</option></select></label>
+          <label>Review this observation again by<input class="input" name="expires_at" type="datetime-local" required></label>
+        </div>
+        <label>Trial outcome and source-permission basis<textarea class="input" name="basis" minlength="10" maxlength="2000" rows="2" required></textarea></label>
+        <button class="btn" type="submit">Review this completed trial report</button>
+      </form>
+    </details>
+    <details><summary>Review source permission and when it expires</summary>
+      <form id="ccl-scope" class="cmv-stack">
+        <label>Permission<select class="input" name="allowed" required><option value="true">Allow the current entered facts</option><option value="false">Withdraw their use</option></select></label>
+        <label>Review the new permission again by<input class="input" name="expires_at" type="datetime-local" required></label>
+        <label>Current exact scope and permission basis<textarea class="input" name="basis" minlength="10" maxlength="2000" rows="2" required></textarea></label>
+        <p>A new permission does not renew old trial observations. Changed parent work or source details require this complete current review; old observations remain historical.</p>
+        <button class="btn" type="submit">Review source permission</button>
+      </form>
+    </details>
+    <form id="ccl-withdraw" class="cmv-stack"><label>Observation whose future use stops<select class="input" name="observation" required></select></label><button class="btn" type="submit">Review withdrawal</button></form>
+    <form id="ccl-release" hidden class="cmv-stack"><p>The original local test has no confirmed result. Reading it never repeats it.</p><label><input type="checkbox" name="acknowledge_unknown" required> The earlier outcome remains unknown. Releasing this wait permits a separate intentional test after reviewing current sources and allowance.</label><button class="btn" type="submit">Review releasing the wait</button></form>
+    <button class="btn" type="button" id="ccl-remove">Review removing current qualification</button>
+  </div>
+  <details><summary>Exact original qualification requests</summary><div id="ccl-originals"></div><button class="btn" type="button" id="ccl-recover">Read waiting original request</button></details>
+  <section id="ccl-review" hidden class="cmv-card" aria-label="Complete additional-work review">
+    <h3 tabindex="-1" id="ccl-review-title">Review the complete source and change</h3>
+    <div id="ccl-review-changes"></div>
+    <div class="cmv-actions"><button class="btn btn--primary" type="button" id="ccl-confirm">Confirm this exact reviewed change</button><button class="btn" type="button" id="ccl-cancel">Cancel</button></div>
+  </section>
+</details>
+{% endif %}
+<section id="ccl-history" class="panel cmv-card">
+  <h2>Earlier additional-work qualification results</h2>
+  <p>Read your exact saved originals in this account and workspace, including after qualification is turned off or a Promise review is archived. This reads historical attribution and outcomes; it never repeats a test or grants current source permission.</p>
+  <p id="ccl-history-message" role="status" aria-live="polite"></p>
+  <div class="cmv-actions"><label for="ccl-history-select">Your original qualification request</label><select class="input" id="ccl-history-select"><option value="">Load your own originals</option></select><button class="btn" type="button" id="ccl-history-refresh">Refresh original requests</button><button class="btn" type="button" id="ccl-history-read">Read this original result</button></div>
+  <div id="ccl-history-result"></div>
+</section>
+<style>
+  #ccl-history .cmv-actions,#ccl-panel .cmv-actions { display:flex;flex-wrap:wrap;gap:var(--space-2); }
+  #ccl-history select { max-width:100%;min-width:0; }
+  #ccl-history .btn,#ccl-panel .btn { white-space:normal;max-width:100%;overflow-wrap:anywhere; }
+  #ccl-history p,#ccl-panel p { overflow-wrap:anywhere; }
+  #ccl-panel .cmv-stack label:has(input[type=checkbox]) { flex-direction:row;align-items:flex-start; }
+  #ccl-panel input[type=checkbox] { width:auto;flex-shrink:0; }
+</style>
+<script src="/static/lightwork-commitment-capability.js" defer></script>

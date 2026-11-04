@@ -1,0 +1,96 @@
+INHERIT: mkdocs.yml
+
+repo_url: https://github.com/Daybreak-AI-Labs/LightworkOS
+# Some pages are renamed when they are staged (security-policy.md, license.md,
+# trademark.md, benchmarks/governance-frontier.md), so per-page edit links
+# would point at paths that do not exist. The public site leaves them out.
+edit_uri: ""
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+
+# The Pages workflow copies the files listed in docs/public-docs.txt into this
+# staging tree, so a page is published only after it has been added to that
+# allowlist, not merely because it exists under docs/.
+docs_dir: .public-docs
+
+# A missing link on the published site is a release defect. mkdocs.yml keeps
+# link diagnostics informational for the full documentation set because many
+# engineering pages intentionally cite repository-relative sources outside
+# docs_dir; the reviewed public stage contains every supported target and
+# therefore fails strict builds on missing links.
+validation:
+  links:
+    not_found: warn
+
+# The verifier requires this navigation and docs/public-docs.txt to describe
+# the exact same document set.
+nav:
+  - Home:
+      - Welcome: index.md
+      - Getting started: getting-started.md
+      - Install from source: source-install.md
+      - Use Lightwork: using-lightwork.md
+  - Guides:
+      - Configuration: configuration.md
+      - Task limits and spend accounting: task-limits.md
+      - Provider spending recovery: provider-spending.md
+      - Pricing governance: pricing-governance.md
+      - Environment variables: env-vars.md
+      - Deployment: deployment.md
+      - Reference architectures: reference-architectures.md
+      - Operations: operations.md
+      - Safety: safety.md
+      - Governed execution: governed-execution.md
+      - Plugins: plugins.md
+      - Connectors: connectors.md
+      - Starter goals: starter-goals.md
+  - Reference:
+      - API: api.md
+      - gRPC API: grpc.md
+      - A2A (Agent2Agent): a2a.md
+      - External agents (BYOA): external-agents.md
+      - External agent quickstart: clients/external-agent-quickstart.md
+  - Performance:
+      - Provider streaming support: performance/streaming-parity.md
+  - Security:
+      - Security & GRC suite: SECURITY_GRC.md
+      - Model Risk & AI Assurance: MODEL_RISK_ASSURANCE.md
+      - AI Evidence-Ready Gateway: AI_EVIDENCE_GATEWAY.md
+      - Audit checkpoint operations: audit-checkpoints.md
+      - Governance Frontier benchmark: benchmarks/governance-frontier.md
+      - Governed model improvement: MODEL_IMPROVEMENT_PLATFORM.md
+      - Threat model: security/threat-model.md
+      - DGM evaluator evidence: security/dgm-evaluator-evidence.md
+      - Capability attenuation: security/capability-attenuation.md
+      - Shield benchmark: security/shield-benchmark.md
+      - Encryption at rest: encryption.md
+      - Regulated deployment: regulated-deployment.md
+      - Compliance assessments: compliance-assessments.md
+      - Agent threat hunting: threat-hunting.md
+  - Architecture:
+      - Governed agent control plane: enterprise/architecture.md
+      - Security & compliance overview: enterprise/security-overview.md
+  - Integrations:
+      - Observability integrations: integrations/observability-partners.md
+  - Community:
+      - Contributing: CONTRIBUTING.md
+      - Governance: https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/GOVERNANCE.md
+      - Contributor License Agreement: CLA.md
+      - Code of Conduct: CODE_OF_CONDUCT.md
+      - Security policy: security-policy.md
+  - Legal:
+      - License: license.md
+      - Trademark policy: trademark.md

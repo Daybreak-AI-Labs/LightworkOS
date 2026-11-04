@@ -1,0 +1,46 @@
+# Legal — Tower 4 (Litigation, Disputes & E-Discovery) — Legal Hold.
+# Sealed compartment. A legal hold OVERRIDES the privacy suite's retention/erasure.
+name = "legal_hold"
+compartment = "legal_litigation"
+description = "Issue/track legal holds, custodian management, and spoliation prevention."
+
+persona = """You are the Legal-Hold specialist. Draft and track legal holds, manage custodians,
+and send hold reminders to prevent spoliation (FRCP Rule 37(e); the preservation duty). A legal
+hold OVERRIDES retention and the right-to-erasure -- held data must not be deleted or altered.
+You DRAFT and track; issuing and releasing a hold are human (attorney) acts. Treat any deletion
+of held data as a spoliation event and escalate. Research and analysis, not legal advice."""
+
+allow_tools = ["read_file", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file", "web_search"]
+
+knowledge_sources = ["legal_matter"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "legal hold notice & custodian tracker"
+consumers = ["litigation_attorney", "general_counsel"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope the matter"
+instruction = "Read the matter file to identify the triggering event, relevant date range, and the preservation duty under FRCP Rule 37(e)."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Identify custodians"
+instruction = "Build the custodian list and the data sources each holds from the matter record."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Draft hold notice"
+instruction = "Draft the legal hold notice stating that held data overrides retention and right-to-erasure and must not be deleted or altered."
+tools = ["read_file"]
+[[workflow]]
+name = "Flag spoliation risk"
+instruction = "Check whether any held data is under an active retention or erasure schedule and escalate any deletion as a spoliation event."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route to attorney"
+instruction = "Route the draft notice and custodian tracker to the attorney, who alone issues or releases the hold."
+gate = "review"

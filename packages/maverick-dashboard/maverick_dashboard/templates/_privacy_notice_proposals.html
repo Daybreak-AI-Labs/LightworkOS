@@ -1,0 +1,34 @@
+<section class="panel" id="pnp-app" aria-labelledby="pnp-title">
+  <span id="notice-update-proposal" aria-hidden="true"></span>
+  <div class="section-head"><h2 id="pnp-title">Propose a notice update</h2><button type="button" class="btn btn--ghost" id="pnp-refresh">Refresh current choices</button></div>
+  <p class="muted">Choose a current notice, a published consent release and material from approved research sources. This saves fingerprints and references for a second administrator to accept or reject. Files are not retained here; share the originals with your reviewer through your organization’s approved channel. Acceptance does not establish that the reviewer examined those files or that a law applies.</p>
+  <p id="pnp-status" role="status" aria-live="polite">Loading current choices…</p>
+  <form id="pnp-form" autocomplete="off">
+    <div class="png-fields">
+      <label>Current notice <select class="select" id="pnp-notice" required><option value="">Choose a notice</option></select></label>
+      <label>Current consent release <select class="select" id="pnp-publication" required><option value="">Choose a release for the same website or app</option></select></label>
+      <label>Keep this proposal until <input class="input" type="date" id="pnp-keep" required></label>
+    </div>
+    <fieldset id="pnp-references" class="png-choices"><legend>Current research references</legend></fieldset>
+    <fieldset id="pnp-reasons" class="png-choices"><legend>Why this changes</legend></fieldset>
+    <div class="png-fields">
+      <label>Proposed notice file <input class="input" type="file" id="pnp-content" required></label>
+      <label>Privacy policy file <input class="input" type="file" id="pnp-policy" required></label>
+      <label>Website or app configuration file <input class="input" type="file" id="pnp-configuration" required></label>
+    </div>
+    <p class="muted">Up to 64 MB per file. Only each file’s fingerprint is recorded; this form does not keep or publish its contents.</p>
+    <button type="submit" class="btn btn--primary" id="pnp-review-button">Review proposal</button>
+  </form>
+  <section id="pnp-review" hidden aria-label="Review proposed notice changes">
+    <h3>Review your proposed update</h3><div id="pnp-preview"></div>
+    <label class="png-confirm"><input type="checkbox" id="pnp-confirm"> I reviewed these exact records and want to save this proposal for independent review.</label>
+    <div class="png-runtime__actions"><button type="button" class="btn btn--primary" id="pnp-save" disabled>Save proposal</button><button type="button" class="btn btn--ghost" id="pnp-back">Keep editing</button></div>
+  </section>
+  <button type="button" class="btn btn--ghost" id="pnp-readback" hidden>Check original save</button>
+</section>
+<style>
+  #pnp-app { min-width:0; } #pnp-app input:not([type=checkbox]),#pnp-app select { width:100%; min-width:0; max-width:100%; }
+  #pnp-app .png-fields { grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr)); }
+  #pnp-app fieldset label { min-width:0; overflow-wrap:anywhere; } #pnp-preview { overflow-wrap:anywhere; }
+  #pnp-app .png-runtime__actions { margin:1rem 0; } #pnp-preview article { margin:.75rem 0; }
+</style>

@@ -1,0 +1,522 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Consent and preferences · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-consent-workbench.css">{% endblock %}
+{% block content %}
+{% set cp_on = consent_preferences_enabled %}
+{% set cp_admin = consent_can_admin if consent_can_admin is defined else true %}
+{% set cr_on = consent_registry_enabled if consent_registry_enabled is defined else true %}
+<div class="governance-workbench" id="cp-root" data-can-admin="{{ 'true' if cp_admin else 'false' }}" data-feature-enabled="{{ 'true' if cp_on else 'false' }}" data-registry-enabled="{{ 'true' if cr_on else 'false' }}">
+  {{ hero('Consent management', 'Consent and preferences',
+          lede='Set the consent policies people agree to, record and check each person’s choices, and control which trackers may run.') }}
+  {% include "_consent_nav.html" %}
+  {% if not cp_on %}
+  {{ module_gate('consent_preferences', 'Consent preferences',
+                 detail='Consent records, people’s choices and tracker rules all depend on this. Ask your privacy owner to approve it first.') }}
+  {% endif %}
+  <p id="cp-status" class="muted" role="status" aria-live="polite"></p>
+
+  <section class="grid" aria-label="Consent summary"{% if not cp_on %} hidden{% endif %}>
+    <div class="stat"><div class="num" id="cp-profiles">—</div><div class="label">People</div></div>
+    <div class="stat"><div class="num" id="cp-receipts">—</div><div class="label">Consent records</div></div>
+    <div class="stat"><div class="num" id="cp-policies">—</div><div class="label">Policy versions</div></div>
+    <div class="stat"><div class="num" id="cp-trackers">—</div><div class="label">Trackers</div></div>
+    <div class="stat"><div class="num" id="cp-identity-links-current">—</div><div class="label">Linked accounts</div></div>
+    <div class="stat"><div class="num" id="cp-identity-links-unlinked">—</div><div class="label">Unlinked accounts</div></div>
+  </section>
+
+  <section class="panel" id="cp-posture"{% if cr_on %} hidden{% endif %} aria-labelledby="cp-posture-heading">
+    <h2 id="cp-posture-heading">Consent register</h2>
+    {% if cr_on %}
+    <p class="muted">Choices recorded in the privacy register, by use of data.</p>
+    <div id="cp-posture-table"></div>
+    {% else %}
+    {{ module_gate('consent_registry', 'Consent register',
+                   detail='Keeps a tamper-evident register of each person’s choices and of the privacy notices you publish, so you can show them to an auditor.') }}
+    {% endif %}
+  </section>
+
+  <section class="panel" aria-labelledby="cp-policy-heading">
+    <div class="section-head">
+      <h2 id="cp-policy-heading">Consent policies</h2>
+      <button class="btn btn--primary" id="cp-policy-new" type="button"{% if not cp_on or not cp_admin %} disabled{% endif %}>Create policy</button>
+    </div>
+    <p class="muted">A policy lists what you use personal data for and the legal reason for each use. Publishing creates a new version; earlier versions are kept.</p>
+    {% if not cp_admin %}<p class="muted">Only an administrator can publish policies.</p>{% endif %}
+    <div id="cp-policy-table"><p class="muted">Loading policies…</p></div>
+    <form id="cp-policy-form" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form governance-fieldset" id="cp-policy-controls" data-feature-enabled="{{ 'true' if cp_on else 'false' }}"{% if not cp_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Policy details</legend>
+        <h3 class="cw-wide" id="cp-policy-editor-title">New policy</h3>
+        <label>Policy name<input class="input" id="cp-policy-name" name="policy_name" required maxlength="100" autocomplete="off" placeholder="For example: Website visitors"></label>
+        <label>Takes effect<input class="input" name="effective_local" type="datetime-local" required></label>
+        <input type="hidden" name="policy_id">
+        <input type="hidden" name="version">
+        <input type="hidden" name="expected_current_version">
+        <p class="muted cw-wide" id="cp-policy-version-status" role="status"></p>
+        <div class="cw-wide">
+          <h4>What the data is used for</h4>
+          <p class="muted">Add each use and choose the legal reason your privacy team approved.</p>
+          <datalist id="cp-purpose-suggestions"></datalist>
+          <div id="cp-purpose-rows"></div>
+          <button class="btn" id="cp-purpose-add" type="button">Add a use</button>
+          <p id="cp-purpose-error" class="danger-text" role="alert"></p>
+          <textarea name="purposes" hidden aria-label="Uses of data">{"analytics":"consent","essential":"contract"}</textarea>
+        </div>
+        <label class="cw-wide">Privacy notice people see
+          <select class="select" id="cp-notice-select" name="notice_choice"><option value="">Choose a published privacy notice</option></select>
+        </label>
+        <label class="cw-wide">Or choose the notice document from your computer
+          <input class="input" id="cp-notice-file" type="file" accept=".pdf,.html,.htm,.txt,.md,.doc,.docx">
+        </label>
+        <input type="hidden" name="notice_sha256">
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit" id="cp-policy-publish"{% if not cp_admin %} disabled{% endif %}>Publish policy</button>
+          <button class="btn btn--ghost" type="button" data-cp-close="cp-policy-form">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="cp-profile-heading">
+    <div class="section-head">
+      <h2 id="cp-profile-heading">People</h2>
+      <button class="btn btn--primary" id="cp-profile-new" type="button"{% if not cp_on %} disabled{% endif %}>Add a person</button>
+    </div>
+    <p class="muted">Each person’s consent choices are kept as permanent records. Use the buttons on a row to record a choice, check what they agreed to, or see linked accounts.</p>
+    <div class="cw-toolbar">
+      <label>Search people<input class="input" id="cp-profile-search" type="search" autocomplete="off"></label>
+    </div>
+    <div id="cp-profile-table"><p class="muted">Loading people…</p></div>
+
+    <form id="cp-profile-form" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form governance-fieldset" id="cp-profile-controls" data-feature-enabled="{{ 'true' if cp_on else 'false' }}"{% if not cp_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Add a person</legend>
+        <h3 class="cw-wide">Add a person</h3>
+        <fieldset class="cw-wide">
+          <legend>Who is this?</legend>
+          <div class="cw-checks">
+            <label><input type="radio" name="identity_kind" value="known" checked> A known customer</label>
+            <label><input type="radio" name="identity_kind" value="anonymous"> An anonymous visitor</label>
+          </div>
+        </fieldset>
+        <label class="cw-wide" id="cp-subject-field">Customer email or customer number
+          <input class="input" name="subject" autocomplete="off" maxlength="320">
+          <span class="muted">Lightwork keeps only a scrambled fingerprint of this, never the value itself.</span>
+        </label>
+        <input type="hidden" name="profile_id">
+        <input type="hidden" data-auto-reference name="idempotency_key">
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Add person</button>
+          <button class="btn btn--ghost" type="button" data-cp-close="cp-profile-form">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+
+    <form id="cp-preference-form" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form governance-fieldset" id="cp-preference-controls" data-feature-enabled="{{ 'true' if cp_on else 'false' }}"{% if not cp_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Record a choice</legend>
+        <h3 class="cw-wide" id="cp-preference-title">Record a choice</h3>
+        <input type="hidden" name="profile_id">
+        <input type="hidden" name="expected_revision">
+        <input type="hidden" data-auto-reference name="idempotency_key">
+        <label>Policy<select class="select" name="policy_key" required></select></label>
+        <label>Use of data<select class="select" name="purpose_id" required></select></label>
+        <label>Their choice<select class="select" name="action">
+          <option value="grant">Allow</option><option value="deny">Deny</option>
+          <option value="revoke">Take back an earlier yes</option><option value="withdraw">Withdraw consent</option>
+        </select></label>
+        <label>Channel<select class="select" name="channel"></select></label>
+        <label>Partner<select class="select" name="vendor_id"></select></label>
+        <label>Region<select class="select" name="jurisdiction"></select></label>
+        <label>Country<select class="select" name="country_code"></select></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Save choice</button>
+          <button class="btn btn--ghost" type="button" data-cp-close="cp-preference-form">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+
+    <form id="cp-decision-form" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form governance-fieldset" id="cp-decision-controls" data-feature-enabled="{{ 'true' if cp_on else 'false' }}"{% if not cp_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Check consent</legend>
+        <h3 class="cw-wide" id="cp-decision-title">Check whether this person has agreed</h3>
+        <input type="hidden" name="profile_id">
+        <label>Use of data<select class="select" name="purpose_id" required></select></label>
+        <label>Channel<select class="select" name="channel"></select></label>
+        <label>Partner<select class="select" name="vendor_id"></select></label>
+        <label>Policy<select class="select" name="policy_key"></select></label>
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit">Check consent</button>
+          <button class="btn btn--ghost" type="button" data-cp-close="cp-decision-form">Close</button>
+        </div>
+        <div id="cp-decision" class="cw-wide cw-result" role="status" aria-live="polite"></div>
+      </fieldset>
+    </form>
+
+    <div id="cp-identity-panel" class="cw-editor" hidden>
+      <h3 id="cp-identity-heading">Linked accounts</h3>
+      <p class="muted">Shows whether an anonymous visitor has been linked to a known customer, and every change to that link. Links change only when the person verifies themselves on your website or app.</p>
+      <div id="cp-identity-current" role="status" aria-live="polite"></div>
+      <div id="cp-identity-history"></div>
+      <div class="cw-actions"><button class="btn btn--ghost" type="button" data-cp-close="cp-identity-panel">Close</button></div>
+    </div>
+    <form id="cp-identity-form" class="cw-toolbar" novalidate>
+      <fieldset class="governance-fieldset" id="cp-identity-controls" data-feature-enabled="{{ 'true' if cp_on else 'false' }}"{% if not cp_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Account link checks</legend>
+        <button class="btn" id="cp-identity-integrity" type="button">Check all account links</button>
+        <span id="cp-identity-integrity-result" class="muted" role="status" aria-live="polite"></span>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="cp-tracker-heading">
+    <div class="section-head">
+      <h2 id="cp-tracker-heading">Trackers</h2>
+      <button class="btn btn--primary" id="cp-tracker-new" type="button"{% if not cp_on or not cp_admin %} disabled{% endif %}>Add a tracker</button>
+    </div>
+    <p class="muted">Cookies, pixels and app kits that collect data. Blocked trackers never run; approved trackers run only for the uses a person agreed to.</p>
+    {% if not cp_admin %}<p class="muted">Only an administrator can change trackers.</p>{% endif %}
+    <div id="cp-tracker-table"><p class="muted">Loading trackers…</p></div>
+    <form id="cp-tracker-form" class="cw-editor" hidden novalidate>
+      <fieldset class="cw-form governance-fieldset" id="cp-tracker-controls" data-feature-enabled="{{ 'true' if cp_on else 'false' }}"{% if not cp_on %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Tracker details</legend>
+        <h3 class="cw-wide" id="cp-tracker-title">Add a tracker</h3>
+        <label>Tracker name<input class="input" name="tracker_name" required maxlength="100" autocomplete="off" placeholder="For example: Google Analytics"></label>
+        <label>Type<select class="select" name="kind"><option value="web_tracker">Website tracker</option><option value="mobile_sdk">Mobile app kit</option></select></label>
+        <label>Company that runs it<input class="input" name="vendor_name" required maxlength="100" list="cp-vendor-suggestions" autocomplete="off"></label>
+        <datalist id="cp-vendor-suggestions"></datalist>
+        <label>Status<select class="select" name="status"><option value="blocked">Blocked</option><option value="approved">Approved</option><option value="retired">No longer used</option></select></label>
+        <fieldset class="cw-wide">
+          <legend>What it is used for</legend>
+          <div class="cw-checks" id="cp-tracker-purposes"></div>
+        </fieldset>
+        <input type="hidden" name="tracker_id">
+        <input type="hidden" name="expected_revision" value="0">
+        <input type="hidden" data-auto-reference name="idempotency_key">
+        <div class="cw-actions">
+          <button class="btn btn--primary" type="submit"{% if not cp_admin %} disabled{% endif %}>Save tracker</button>
+          <button class="btn btn--ghost" type="button" data-cp-close="cp-tracker-form">Cancel</button>
+        </div>
+      </fieldset>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="cp-analytics-heading">
+    <div class="section-head"><h2 id="cp-analytics-heading">Consent trends</h2></div>
+    {% if not consent_analytics_enabled %}
+    {{ module_gate('consent_preferences.analytics', 'Consent analytics',
+                   detail='Shows totals of consent choices over time. Small groups are always hidden to protect privacy.') }}
+    {% endif %}
+    <form id="cp-analytics-form" novalidate>
+      <fieldset class="cw-form governance-fieldset" id="cp-analytics-controls" data-feature-enabled="{{ 'true' if cp_on and consent_analytics_enabled else 'false' }}"{% if not cp_on or not consent_analytics_enabled %} disabled aria-disabled="true"{% endif %}>
+        <legend class="sr-only">Consent trend options</legend>
+        <label>From<input class="input" name="start_date" type="date" required></label>
+        <label>To<input class="input" name="end_date" type="date" required></label>
+        <fieldset class="cw-wide">
+          <legend>Group the totals by (up to four)</legend>
+          <div class="cw-checks">
+            <label><input type="checkbox" name="dimensions" value="purpose_id" checked> Use of data</label>
+            <label><input type="checkbox" name="dimensions" value="action" checked> Choice</label>
+            <label><input type="checkbox" name="dimensions" value="channel"> Channel</label>
+            <label><input type="checkbox" name="dimensions" value="country_code"> Country</label>
+            <label><input type="checkbox" name="dimensions" value="policy_id"> Policy</label>
+            <label><input type="checkbox" name="dimensions" value="day"> Day</label>
+          </div>
+        </fieldset>
+        <details class="governance-details cw-wide">
+          <summary>Privacy threshold</summary>
+          <label>Hide groups with fewer people than<input class="input" name="min_cohort_size" type="number" min="2" max="100000" value="10" required></label>
+        </details>
+        <div class="cw-actions"><button class="btn btn--primary" type="submit">Show trends</button><span class="muted">Needs audit access. Small groups are hidden.</span></div>
+      </fieldset>
+    </form>
+    <div id="cp-analytics" class="cw-result" role="status" aria-live="polite"></div>
+  </section>
+</div>
+<script src="/static/lightwork-consent-workbench.js"></script>
+<script src="/static/lightwork-consent-policy-editor.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function(){
+  "use strict";
+  var API="/api/v1/consent";
+  var CW=window.LightworkConsentWorkbench;
+  // The shared consent JSON client (mvFetchJSON): a non-2xx or malformed response is never success.
+  async function call(path,options){
+    return window.LightworkConsentWorkbench.client(API)(path, options);
+  }
+  if(CW){if(window.mvFetchJSON)start();else document.addEventListener("DOMContentLoaded",start);}
+  function start(){
+    var $=function(id){return document.getElementById(id);};
+    var status=$("cp-status"),root=$("cp-root"),canAdmin=root.dataset.canAdmin==="true";
+    var state={policies:[],profiles:[],trackers:[],notices:[]};
+    var BASES={consent:"Consent",contract:"Needed for a contract",legal_obligation:"Required by law",vital_interests:"Protects someone’s life",public_task:"Public task",legitimate_interests:"Legitimate business interest"};
+    var REASONS={explicit_grant:"They said yes.",explicit_deny:"They said no.",explicit_revoke:"They took back an earlier yes.",explicit_withdraw:"They withdrew their consent.",unknown_profile:"This person was not found. Check the identifier and try again.",subject_deleted:"This person’s data has been deleted.",policy_context_required:"Choose a policy and try again.",no_current_policy:"There is no policy in effect for this use.",stale_policy:"Their choice was made under an older policy, so it no longer counts.",unknown_purpose:"This use is not in the policy.",external_lawful_basis_required:"This use relies on a legal reason other than consent, so it must be approved outside this check.",tracker_not_approved:"The tracker is not approved.",tracker_scope_mismatch:"The tracker is not approved for this use.",identity_linkage_unavailable:"Their linked account could not be checked. Refresh the page and try again.",linked_subject_deleted:"Their linked account has been deleted.",receipt_history_bound_exceeded:"This person has too many records to check here.",no_current_explicit_grant:"They have not said yes to this.",authority_unavailable:"Consent records could not be read, so the answer is no.",untrusted_receipt:"A consent record failed its integrity check, so the answer is no.",invalid_request:"Some details were missing."};
+    var policyEditor=null;
+    try{
+      if(!window.LightworkConsentPolicyEditor||typeof window.LightworkConsentPolicyEditor.mount!=="function")throw new Error("missing");
+      policyEditor=window.LightworkConsentPolicyEditor.mount($("cp-policy-form"),document,{suggestions:"cp-purpose-suggestions"});
+    }catch(_error){
+      $("cp-policy-controls").disabled=true;$("cp-policy-new").disabled=true;
+      $("cp-purpose-error").textContent="The policy editor could not load. Reload this page to publish a policy; the other consent tools still work.";
+    }
+    function show(node){["cp-profile-form","cp-preference-form","cp-decision-form","cp-identity-panel"].forEach(function(id){if(id!==node.id&&node.closest("section")===$(id).closest("section"))$(id).hidden=true;});CW.open(node);}
+    document.querySelectorAll("[data-cp-close]").forEach(function(button){button.addEventListener("click",function(){$(button.dataset.cpClose).hidden=true;});});
+    function policyLabel(p){return CW.human(p.policy_id)+" · version "+p.version;}
+    function latestPolicies(){var seen={},out=[];state.policies.forEach(function(p){if(!seen[p.policy_id]||seen[p.policy_id].version<p.version)seen[p.policy_id]=p;});Object.keys(seen).sort().forEach(function(k){out.push(seen[k]);});return out;}
+    function allPurposes(){var set={};state.policies.forEach(function(p){Object.keys(p.purposes||{}).forEach(function(k){set[k]=true;});});return Object.keys(set).sort();}
+    function vendors(){var set={all:true};state.trackers.forEach(function(t){set[t.vendor_id]=true;});return Object.keys(set).sort(function(a,b){return a==="all"?-1:b==="all"?1:a.localeCompare(b);}).map(function(v){return {value:v,label:v==="all"?"All partners":CW.human(v)};});}
+    function fillChoices(form,withEmptyPolicy){
+      var policies=latestPolicies();
+      CW.fill(form.elements.policy_key,policies.map(function(p){return {value:p.policy_id+"|"+p.version,label:policyLabel(p)};}),withEmptyPolicy?"Use the policy currently in effect":"");
+      CW.fill(form.elements.channel,CW.CHANNELS);CW.fill(form.elements.vendor_id,vendors());
+      if(form.elements.jurisdiction)CW.fill(form.elements.jurisdiction,CW.JURISDICTIONS);
+      if(form.elements.country_code)CW.fill(form.elements.country_code,CW.COUNTRIES);
+      fillPurposes(form);
+    }
+    function fillPurposes(form){
+      var key=form.elements.policy_key.value,purposes;
+      if(key){var parts=key.split("|");var p=state.policies.filter(function(x){return x.policy_id===parts[0]&&String(x.version)===parts[1];})[0];purposes=p?Object.keys(p.purposes||{}):[];}
+      else purposes=allPurposes();
+      CW.fill(form.elements.purpose_id,purposes.map(function(v){return {value:v,label:CW.human(v)};}));
+    }
+    ["cp-preference-form","cp-decision-form"].forEach(function(id){$(id).elements.policy_key.addEventListener("change",function(){fillPurposes($(id));});});
+
+    function renderPolicies(){
+      var host=$("cp-policy-table");
+      CW.table(host,latestPolicies(),{label:"Consent policies",name:function(p){return CW.human(p.policy_id);},
+        columns:[{label:"Policy",value:function(p){return CW.human(p.policy_id);}},{label:"Current version",value:function(p){return p.version;}},
+          {label:"Uses of data",value:function(p){return Object.keys(p.purposes||{}).map(CW.human).join(", ");}},
+          {label:"In effect since",value:function(p){return CW.when(p.effective_at);}}],
+        actions:[{label:"Publish new version",when:function(){return canAdmin;},run:function(p){editPolicy(p);}}],
+        empty:{title:"No consent policies yet.",body:"Create your first policy to list what you use personal data for.",action:canAdmin?{label:"New policy",run:function(){editPolicy(null);}}:null}});
+      var suggestions=$("cp-purpose-suggestions");suggestions.replaceChildren();allPurposes().forEach(function(v){var o=document.createElement("option");o.value=v;suggestions.appendChild(o);});
+    }
+    function renderProfiles(){
+      var term=$("cp-profile-search").value.trim().toLowerCase();
+      var rows=state.profiles.filter(function(p){return !term||String(p.profile_id).toLowerCase().indexOf(term)>=0;});
+      CW.table($("cp-profile-table"),rows,{label:"People",name:function(p){return p.profile_id;},
+        columns:[{label:"Person",value:function(p){return p.profile_id;}},{label:"Type",value:function(p){return p.identity_kind==="known"?"Known customer":"Anonymous visitor";}},{label:"Added",value:function(p){return CW.when(p.created_at);}}],
+        actions:[{label:"Record a choice",run:function(p){openPreference(p);}},{label:"Check consent",run:function(p){openDecision(p);}},{label:"Linked accounts",run:function(p){openIdentity(p);}}],
+        empty:term?{title:"No one matches that search."}:{title:"No people yet.",body:"People appear here when they make a choice on your website or app, or when you add them.",action:{label:"Add a person",run:function(){openProfileForm();}}}});
+    }
+    function renderTrackers(){
+      CW.table($("cp-tracker-table"),state.trackers,{label:"Trackers",name:function(t){return CW.human(t.tracker_id);},
+        columns:[{label:"Tracker",value:function(t){return CW.human(t.tracker_id);}},{label:"Type",value:function(t){return t.kind==="mobile_sdk"?"Mobile app kit":"Website tracker";}},{label:"Company",value:function(t){return CW.human(t.vendor_id);}},
+          {label:"Status",value:function(t){return CW.badge(t.status==="retired"?"No longer used":CW.human(t.status),t.status==="approved"?"ok":t.status==="blocked"?"warn":"idle");}},
+          {label:"Used for",value:function(t){return (t.purpose_ids||[]).map(CW.human).join(", ");}},{label:"Last changed",value:function(t){return CW.when(t.updated_at);}}],
+        actions:[{label:"Edit",when:function(){return canAdmin;},run:function(t){editTracker(t);}}],
+        empty:{title:"No trackers recorded.",body:"Add the cookies and pixels your website uses, or run a tracker scan to find them.",action:canAdmin?{label:"Add a tracker",run:function(){editTracker(null);}}:null}});
+      var list=$("cp-vendor-suggestions");list.replaceChildren();vendors().forEach(function(v){if(v.value==="all")return;var o=document.createElement("option");o.value=CW.human(v.value);list.appendChild(o);});
+    }
+    async function loadNotices(){
+      // Two optional sources: the privacy notice register and the notices used
+      // by the published banner (so the policy matches what people see).
+      var options=[];
+      if(root.dataset.registryEnabled!=="false")try{var body=await call("/notices");(Array.isArray(body.notices)?body.notices:[]).forEach(function(n){if(/^[0-9a-f]{64}$/.test(n.text_sha256||""))options.push({value:n.text_sha256,label:"Privacy notice version "+n.version+(n.published_at?" · published "+CW.when(n.published_at):"")});});}
+      catch(_error){/* register not in use */}
+      try{
+        var publishing=CW.client("/api/v1/consent/publishing"),list=await publishing("/catalog/notices?limit=50");
+        for(var i=0;i<(list.items||[]).length;i++){var item=list.items[i],detail=await publishing("/catalog/notices/"+encodeURIComponent(item.resource_id)+"/versions/"+item.version);
+          var digest=detail.payload&&detail.payload.document_sha256;if(/^[0-9a-f]{64}$/.test(digest||""))options.push({value:digest,label:"Banner notice “"+CW.human(item.resource_id)+"” · version "+item.version});}
+      }catch(_error){/* banner publishing not in use */}
+      state.notices=options;
+      CW.fill($("cp-notice-select"),options,options.length?"Choose a published privacy notice":"No published notices yet. Choose the document below instead.");
+    }
+    async function loadPosture(){
+      // The privacy register is optional; when it is off the page shows its
+      // turned-off card instead of asking for records it cannot have.
+      if(root.dataset.registryEnabled==="false")return;
+      try{
+        var posture=await call("/posture"),rows=Object.keys(posture.by_purpose||{}).map(function(k){return {purpose:k,granted:posture.by_purpose[k].granted,withdrawn:posture.by_purpose[k].withdrawn};});
+        CW.table($("cp-posture-table"),rows,{label:"Consent register",columns:[{label:"Use of data",value:function(r){return CW.human(r.purpose);}},{label:"Agreed",value:function(r){return r.granted;}},{label:"Withdrawn",value:function(r){return r.withdrawn;}}],empty:{title:"No choices in the register yet. Choices appear here as people answer your consent requests."}});
+        $("cp-posture").hidden=false;
+      }catch(_error){$("cp-posture").hidden=true;}
+    }
+    async function refresh(){
+      CW.say(status,"Loading…");
+      try{
+        var results=await Promise.all([call("/summary"),call("/profiles?limit=500"),call("/policies?limit=500"),call("/trackers?limit=500")]);
+        var s=results[0]||{};
+        ["profiles","receipts","policies","trackers"].forEach(function(key){$("cp-"+key).textContent=String(s[key]||s[key+"_total"]||0);});
+        $("cp-identity-links-current").textContent=String(s.identity_links_current||0);
+        $("cp-identity-links-unlinked").textContent=String(s.identity_links_unlinked||0);
+        state.profiles=results[1].profiles||[];state.policies=results[2].policies||[];state.trackers=results[3].trackers||[];
+        renderPolicies();renderProfiles();renderTrackers();
+        CW.say(status,results[1].truncated?"Showing the first 500 people.":"");
+      }catch(error){CW.fail(status,error,"load consent records");["cp-policy-table","cp-profile-table","cp-tracker-table"].forEach(function(id){$(id).replaceChildren();});}
+    }
+
+    // Policies
+    var policyForm=$("cp-policy-form"),policySaving=false;
+    function editPolicy(existing){
+      policyForm.reset();
+      var f=policyForm.elements;
+      f.effective_local.value=CW.toInput(Date.now()/1000);
+      if(existing){
+        f.policy_name.value=CW.human(existing.policy_id);f.policy_name.readOnly=true;f.policy_id.value=existing.policy_id;
+        f.expected_current_version.value=String(existing.version);f.version.value=String(existing.version+1);
+        $("cp-policy-editor-title").textContent="New version of "+CW.human(existing.policy_id);
+        if(policyEditor)policyEditor.set(existing.purposes||{});
+        if(existing.notice_sha256)f.notice_choice.value=existing.notice_sha256;f.notice_sha256.value=existing.notice_sha256||"";
+        $("cp-policy-version-status").textContent="This will be version "+(existing.version+1)+". Version "+existing.version+" stays on record.";
+      }else{
+        f.policy_name.readOnly=false;f.policy_id.value="";f.expected_current_version.value="";f.version.value="1";f.notice_sha256.value="";
+        $("cp-policy-editor-title").textContent="New policy";
+        if(policyEditor)policyEditor.set({essential:"contract",analytics:"consent"});
+        $("cp-policy-version-status").textContent="";
+      }
+      CW.open(policyForm,existing?"[name=effective_local]":"#cp-policy-name");
+    }
+    $("cp-policy-new").addEventListener("click",function(){editPolicy(null);});
+    $("cp-notice-select").addEventListener("change",function(){policyForm.elements.notice_sha256.value=this.value;if(this.value)$("cp-notice-file").value="";});
+    $("cp-notice-file").addEventListener("change",async function(){
+      var file=this.files&&this.files[0];if(!file)return;
+      try{policyForm.elements.notice_sha256.value=await CW.sha256File(file);$("cp-notice-select").value="";CW.say(status,"Notice document “"+file.name+"” attached.");}
+      catch(error){policyForm.elements.notice_sha256.value="";CW.fail(status,error,"read that document");}
+    });
+    policyForm.addEventListener("submit",async function(event){
+      event.preventDefault();if(policySaving)return;
+      if(!policyEditor){CW.say(status,"Reload this page to load the policy editor before publishing.",true);return;}
+      var f=policyForm.elements,name=f.policy_name.value.trim();
+      if(!name){CW.say(status,"Give the policy a name.",true);f.policy_name.focus();return;}
+      var id=f.policy_id.value||CW.slug(name,"policy");
+      if(!f.policy_id.value){var existing=latestPolicies().filter(function(p){return p.policy_id===id;})[0];if(existing){f.policy_id.value=id;f.expected_current_version.value=String(existing.version);f.version.value=String(existing.version+1);}}
+      if(!/^[0-9a-f]{64}$/.test(f.notice_sha256.value)){CW.say(status,"Choose the privacy notice people see.",true);$("cp-notice-select").focus();return;}
+      var effective=CW.toSeconds(f.effective_local.value);
+      if(!Number.isFinite(effective)||effective<=0){CW.say(status,"Choose when the policy takes effect.",true);f.effective_local.focus();return;}
+      var purposes;try{purposes=policyEditor.read();}catch(_error){return;}
+      var version=Number(f.version.value)||1,expected=f.expected_current_version.value?Number(f.expected_current_version.value):null;
+      if(!(await CW.confirm("Publish version "+version+" of “"+CW.human(id)+"”? New choices will be recorded against it. Published versions cannot be changed.","Publish")))return;
+      policySaving=true;
+      try{
+        var payload={policy_id:id,version:version,purposes:purposes,notice_sha256:f.notice_sha256.value,effective_at:effective};
+        if(expected)payload.expected_current_version=expected;
+        await call("/policies",{method:"POST",json:payload});
+        policyForm.hidden=true;await refresh();CW.say(status,"Policy “"+CW.human(id)+"” version "+version+" published.");
+      }catch(error){CW.fail(status,error,"publish the policy");}
+      finally{policySaving=false;}
+    });
+
+    // People
+    var profileForm=$("cp-profile-form");
+    function syncKind(){var known=profileForm.querySelector("[name=identity_kind]:checked").value==="known";$("cp-subject-field").hidden=!known;}
+    profileForm.querySelectorAll("[name=identity_kind]").forEach(function(r){r.addEventListener("change",syncKind);});
+    function openProfileForm(){profileForm.reset();syncKind();show(profileForm);}
+    $("cp-profile-new").addEventListener("click",openProfileForm);
+    $("cp-profile-search").addEventListener("input",renderProfiles);
+    profileForm.addEventListener("submit",async function(event){
+      event.preventDefault();var f=profileForm.elements,kind=profileForm.querySelector("[name=identity_kind]:checked").value;
+      var subject=kind==="known"?f.subject.value.trim().toLowerCase():"visitor:"+CW.reference();
+      if(!subject){CW.say(status,"Enter the customer’s email or customer number.",true);f.subject.focus();return;}
+      if(!f.idempotency_key.value)f.idempotency_key.value=CW.reference();
+      try{
+        var profileId=(kind==="known"?"customer-":"visitor-")+CW.reference().replace(/-/g,"").slice(0,16);
+        await call("/profiles",{method:"POST",json:{profile_id:profileId,identity_kind:kind,subject_sha256:await CW.sha256(subject),idempotency_key:f.idempotency_key.value}});
+        f.subject.value="";profileForm.hidden=true;await refresh();CW.say(status,"Person added.");
+      }catch(error){CW.fail(status,error,"add the person");}
+    });
+    function openPreference(p){
+      var form=$("cp-preference-form");form.reset();fillChoices(form,false);
+      form.elements.profile_id.value=p.profile_id;form.elements.expected_revision.value=String(p.revision||0);
+      $("cp-preference-title").textContent="Record a choice for "+p.profile_id;
+      if(!latestPolicies().length){CW.say(status,"Publish a consent policy first, then record choices against it.",true);return;}
+      show(form);
+    }
+    $("cp-preference-form").addEventListener("submit",async function(event){
+      event.preventDefault();var f=event.currentTarget.elements,key=f.policy_key.value.split("|");
+      if(!f.purpose_id.value){CW.say(status,"Choose the use of data.",true);return;}
+      if(!f.idempotency_key.value)f.idempotency_key.value=CW.reference();
+      try{
+        await call("/profiles/"+encodeURIComponent(f.profile_id.value)+"/preferences",{method:"POST",json:{policy_id:key[0],policy_version:Number(key[1]),context:{jurisdiction:f.jurisdiction.value,country_code:f.country_code.value,collection_point:"web",asserted_source:"operator"},choices:[{purpose_id:f.purpose_id.value,action:f.action.value,channel:f.channel.value,vendor_id:f.vendor_id.value}],expected_revision:Number(f.expected_revision.value)||0,idempotency_key:f.idempotency_key.value}});
+        $("cp-preference-form").hidden=true;await refresh();CW.say(status,"Choice saved for "+f.profile_id.value+".");
+      }catch(error){CW.fail(status,error,"save the choice");}
+    });
+    function openDecision(p){
+      var form=$("cp-decision-form");form.reset();fillChoices(form,true);form.elements.profile_id.value=p.profile_id;
+      $("cp-decision-title").textContent="Check whether "+p.profile_id+" has agreed";$("cp-decision").replaceChildren();show(form);
+    }
+    $("cp-decision-form").addEventListener("submit",async function(event){
+      event.preventDefault();var f=event.currentTarget.elements,out=$("cp-decision");
+      if(!f.purpose_id.value){CW.say(status,"Choose the use of data.",true);return;}
+      var payload={profile_id:f.profile_id.value,purpose_id:f.purpose_id.value,channel:f.channel.value,vendor_id:f.vendor_id.value};
+      if(f.policy_key.value){var key=f.policy_key.value.split("|");payload.policy_id=key[0];payload.policy_version=Number(key[1]);}
+      try{
+        var result=await call("/decisions",{method:"POST",json:payload});
+        out.replaceChildren(CW.badge(result.allowed?"Allowed":"Not allowed",result.allowed?"ok":"danger"),CW.el("p","",REASONS[result.reason]||CW.human(result.reason)));
+        if(result.policy_id)out.appendChild(CW.el("p","muted","Checked against "+CW.human(result.policy_id)+(result.policy_version?" version "+result.policy_version:"")+"."));
+      }catch(error){out.replaceChildren();CW.fail(status,error,"check consent");}
+    });
+    async function openIdentity(p){
+      var panel=$("cp-identity-panel"),current=$("cp-identity-current"),history=$("cp-identity-history");
+      $("cp-identity-heading").textContent="Linked accounts for "+p.profile_id;current.replaceChildren();history.replaceChildren();show(panel);
+      try{
+        var base="/profiles/"+encodeURIComponent(p.profile_id)+"/identity-link";
+        var results=await Promise.all([call(base),p.identity_kind==="anonymous"?call(base+"/history?limit=100"):Promise.resolve({events:[]})]);
+        var link=results[0],linked=link.linked_known_profile_id;
+        CW.facts(current,[["Type",link.identity_kind==="known"?"Known customer":"Anonymous visitor"],["Link status",CW.human(link.status||"not linked")],["Linked to",linked||(link.identity_kind==="known"?"":"No one")],["Earlier link",link.last_known_profile_id&&link.last_known_profile_id!==linked?link.last_known_profile_id:""]]);
+        CW.table(history,results[1].events||[],{label:"Account link history",columns:[{label:"When",value:function(e){return CW.when(e.created_at);}},{label:"What happened",value:function(e){return CW.human(e.action);}}],empty:{title:"No account link changes recorded."}});
+        if(results[1].truncated)history.appendChild(CW.el("p","muted","Showing the 100 most recent changes."));
+      }catch(error){CW.fail(current,error,"load linked accounts");}
+    }
+    $("cp-identity-integrity").addEventListener("click",function(){var button=this,out=$("cp-identity-integrity-result");CW.busy(button,async function(){
+      try{var result=await call("/identity-links/integrity?limit=500");
+        CW.say(out,(result.authorities_verified?"Checked "+result.authorities_verified+" account link"+(result.authorities_verified===1?"":"s")+" and their history. Everything is intact.":"There are no account links to check yet.")+(result.truncated?" Only the first 500 were checked.":""));}
+      catch(error){CW.fail(out,error,"check account links");}
+    });});
+
+    // Trackers
+    var trackerForm=$("cp-tracker-form");
+    function editTracker(t){
+      trackerForm.reset();var f=trackerForm.elements,box=$("cp-tracker-purposes"),chosen=t?t.purpose_ids||[]:[];
+      box.replaceChildren();var purposes=allPurposes();chosen.forEach(function(p){if(purposes.indexOf(p)<0)purposes.push(p);});
+      if(!purposes.length)box.appendChild(CW.el("p","muted","Publish a consent policy first to choose what trackers are used for."));
+      purposes.forEach(function(p){var label=CW.el("label"),input=document.createElement("input");input.type="checkbox";input.name="purpose_ids";input.value=p;input.checked=chosen.indexOf(p)>=0;label.append(input," "+CW.human(p));box.appendChild(label);});
+      f.tracker_name.value=t?CW.human(t.tracker_id):"";f.tracker_name.readOnly=!!t;f.tracker_id.value=t?t.tracker_id:"";
+      f.vendor_name.value=t?CW.human(t.vendor_id):"";if(t){f.kind.value=t.kind;f.status.value=t.status;}
+      f.expected_revision.value=String(t?t.revision:0);
+      $("cp-tracker-title").textContent=t?"Edit "+CW.human(t.tracker_id):"Add a tracker";
+      CW.open(trackerForm,t?"[name=status]":"[name=tracker_name]");
+    }
+    $("cp-tracker-new").addEventListener("click",function(){editTracker(null);});
+    trackerForm.addEventListener("submit",async function(event){
+      event.preventDefault();var f=trackerForm.elements;
+      var id=f.tracker_id.value||CW.slug(f.tracker_name.value,"tracker"),vendor=CW.slug(f.vendor_name.value,"vendor");
+      var purposes=Array.prototype.filter.call(trackerForm.querySelectorAll("[name=purpose_ids]"),function(c){return c.checked;}).map(function(c){return c.value;});
+      if(!f.tracker_name.value.trim()||!f.vendor_name.value.trim()){CW.say(status,"Enter the tracker name and the company that runs it.",true);return;}
+      if(!purposes.length){CW.say(status,"Choose at least one use for this tracker.",true);return;}
+      if(!f.tracker_id.value&&state.trackers.some(function(t){return t.tracker_id===id;})){CW.say(status,"A tracker with that name already exists. Use Edit on its row instead.",true);return;}
+      if(!f.idempotency_key.value)f.idempotency_key.value=CW.reference();
+      try{
+        await call("/trackers/"+encodeURIComponent(id),{method:"PUT",json:{kind:f.kind.value,vendor_id:vendor,purpose_ids:purposes,status:f.status.value,expected_revision:Number(f.expected_revision.value)||0,idempotency_key:f.idempotency_key.value}});
+        trackerForm.hidden=true;await refresh();CW.say(status,"Tracker saved.");
+      }catch(error){CW.fail(status,error,"save the tracker");}
+    });
+
+    // Trends
+    var analyticsForm=$("cp-analytics-form");
+    analyticsForm.elements.end_date.value=CW.toInput(Date.now()/1000,true);
+    analyticsForm.elements.start_date.value=CW.toInput(Date.now()/1000-30*86400,true);
+    analyticsForm.addEventListener("submit",async function(event){
+      event.preventDefault();var f=analyticsForm.elements,out=$("cp-analytics");
+      var dims=Array.prototype.filter.call(analyticsForm.querySelectorAll("[name=dimensions]"),function(c){return c.checked;}).map(function(c){return c.value;});
+      if(!dims.length||dims.length>4){CW.say(out,"Choose between one and four ways to group the totals.",true);return;}
+      var start=CW.toSeconds(f.start_date.value),end=CW.toSeconds(f.end_date.value)+86400;
+      if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start){CW.say(out,"Choose a start date before the end date.",true);return;}
+      try{
+        var result=await call("/analytics/snapshot",{method:"POST",json:{start_at:start,end_at:end,dimensions:dims,min_cohort_size:Number(f.min_cohort_size.value)||10,max_receipts:10000}});
+        out.replaceChildren();var names={purpose_id:"Use of data",action:"Choice",channel:"Channel",country_code:"Country",policy_id:"Policy",day:"Day"};
+        var tableHost=CW.el("div");out.appendChild(tableHost);
+        CW.table(tableHost,result.cells||[],{label:"Consent trends",columns:dims.map(function(d){return {label:names[d]||CW.human(d),value:function(c){var v=c.dimensions[d];return d==="country_code"?CW.labelFor(CW.COUNTRIES,v):d==="day"?v:CW.human(v);}};}).concat([{label:"People",value:function(c){return c.unique_profiles;}},{label:"Choices",value:function(c){return c.choice_events;}}]),empty:{title:"No totals to show.",body:"Either nothing was recorded in these dates or every group was too small to show."}});
+        var notes=[];if(result.suppressed_cells)notes.push(result.suppressed_cells+" small group"+(result.suppressed_cells===1?" was":"s were")+" hidden to protect privacy.");if(!result.complete)notes.push("These totals are partial because there were too many records. Choose a shorter date range.");
+        if(notes.length)out.appendChild(CW.el("p","muted",notes.join(" ")));
+      }catch(error){out.replaceChildren();CW.fail(out,error,"show consent trends");}
+    });
+
+    if(root.dataset.featureEnabled==="false"){["cp-policy-table","cp-profile-table","cp-tracker-table"].forEach(function(id){$(id).replaceChildren(CW.el("p","muted","Turn this feature on to use it."));});return;}
+    loadNotices();loadPosture();refresh();
+  }
+})();
+</script>
+{% endblock %}

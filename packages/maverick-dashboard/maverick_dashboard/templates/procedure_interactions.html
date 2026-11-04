@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Check local rules together · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Check local rules together', lede='Find where two local procedures can work together, change one another’s results or still need a decision.') }}
+<div id="joint-rules" class="stack">
+  <section class="glass-card stack" aria-labelledby="ji-author-h">
+    <h2 id="ji-author-h" tabindex="-1">Choose two local rules</h2>
+    <p class="muted">Use published taught rules and at least two retained original cases for each. We check fresh separate results and both combined orders across every displayed starting state.</p>
+    <p id="ji-disabled" class="muted" hidden>Checking local rules together is off. An administrator can enable <strong>Check local rules together</strong> in <a href="/settings#feature-procedure_interactions">Settings</a>. Original request history remains available below.</p>
+    <form id="ji-form" class="stack">
+      <label for="ji-first">First published local rule</label><select id="ji-first" class="select"><option value="">Choose a rule</option></select><div id="ji-first-cases" class="stack"></div>
+      <label for="ji-second">Second published local rule</label><select id="ji-second" class="select"><option value="">Choose another rule</option></select><div id="ji-second-cases" class="stack"></div>
+      <div class="lrn__actions"><button id="ji-review" type="button" class="btn btn--primary">Review complete joint check</button><button id="ji-refresh" type="button" class="btn btn--ghost">Refresh current choices</button></div>
+    </form>
+    <p id="ji-status" role="status" aria-live="polite" class="muted">Checking current choices…</p><p id="ji-error" class="danger-text" role="alert"></p><div id="ji-preview" class="stack" hidden></div>
+    <a href="/learning/recheck-rules" class="btn btn--ghost">Retain original case evidence</a>
+  </section>
+  <section class="glass-card stack" aria-labelledby="ji-original-h">
+    <h2 id="ji-original-h">Original checks and combined results</h2>
+    <label for="ji-history">Your original request</label><select id="ji-history" class="select"><option value="">Choose an original request</option></select>
+    <button id="ji-read" type="button" class="btn btn--ghost">Check original outcome</button><div id="ji-result" class="stack" aria-live="polite"></div>
+    <form id="ji-run" class="stack" hidden><h3>Run this checked combination</h3><p class="muted">Only starting values with one complete qualified result can run. Both rules keep separate results and current permission checks. This stays unpublished.</p><div id="ji-inputs" class="stack"></div><button id="ji-run-review" type="button" class="btn btn--primary">Review combined local work</button></form>
+    <p class="muted">A lost reply never repeats the calculation. Historical request custody stays available when learning is off or source reuse is withdrawn; private results need current permission.</p>
+  </section>
+  <details><summary>What this check covers</summary><p class="muted">The resources here are named values inside your local rules. We check changes to values another rule reads, shared updates and repeated local state. This does not certify connected services, live approvals or the safety of repeating an outside action. Different safe final values remain unresolved. Known finite input behavior does not establish future business accuracy or a performance advantage. Nothing is published or enabled automatically.</p></details>
+</div>
+<style>#joint-rules{min-width:0;overflow-wrap:anywhere}#joint-rules .glass-card{padding:var(--space-4)}#joint-rules .input,#joint-rules .select,#joint-rules .btn{width:100%;max-width:100%;min-width:0;box-sizing:border-box;white-space:normal}#joint-rules .ji-case{padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md)}#joint-rules .ji-check{display:flex;gap:var(--space-2);align-items:flex-start}#joint-rules .ji-check input{flex:none}#joint-rules dd,#joint-rules .ji-values{white-space:pre-wrap}#joint-rules dd{margin-inline-start:var(--space-3)}#joint-rules details{padding:var(--space-2)}</style>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-procedure-interactions.js" defer></script>{% endblock %}

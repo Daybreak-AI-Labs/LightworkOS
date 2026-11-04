@@ -1,0 +1,58 @@
+const {test,expect}=require('@playwright/test');
+
+test('collect, review, record an officer statement, recover through Copilot and close',async({page,request,context,baseURL})=>{
+  await context.route('**/*',route=>new URL(route.request().url()).origin===new URL(baseURL).origin?route.continue():route.abort('blockedbyclient'));
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const opened=await request.post('/api/v1/privacy/dsar',{data:{subject_id:'synthetic-handoff@example.test',kind:'access',channel:'email'}});
+  expect(opened.status(),await opened.text()).toBe(201);
+  const {id}=await opened.json(),native=`/api/v1/privacy/dsar/${id}`,handoff=native+'/package-handoff';
+  await page.goto('/privacy/dsar/'+id);
+  await page.locator('#dsar-fulfill').click();await page.locator('#mv-confirm-ok').click();
+  const panel=page.locator('#dsar-package-handoff');await expect(panel).toBeVisible();
+  await page.waitForLoadState('load');
+  await page.locator('#dsar-download').click();await page.locator('#mv-confirm-ok').click();
+  await expect(page.locator('#dsar-status')).toContainText('prepared for download');
+  await expect(page.locator('#dsar-answer')).not.toContainText('Answered on');
+  const report=await (await request.get('/api/v1/privacy/report')).json();
+  expect(report.dsar.open).toBe(1);expect(report.dsar.answered).toBe(0);expect(report.dsar.handled).toBe(0);
+  expect((await (await request.get('/api/v1/privacy/dsar/aging')).json()).open).toBe(1);
+  const before=await request.post(native+'/export');expect(before.ok(),await before.text()).toBeTruthy();
+  const original=await before.text();
+  await panel.getByRole('button',{name:'Review package and saved statements'}).click();
+  await expect(panel.locator('[data-handoff-counts]')).toContainText('Verified collected package');
+  const time=await panel.locator('[name="handed_at"]').inputValue();
+  await panel.getByLabel('Where the evidence is kept').fill('synthetic secure ticket 4521');
+  for(const name of ['reviewed','identity_checked','sent'])await panel.locator(`[name="${name}"]`).check();
+  await panel.getByRole('button',{name:'Review statement'}).click();
+  await expect(page.locator('#mv-confirm-msg')).toContainText('not proof');await page.locator('#mv-confirm-ok').click();
+  await expect(panel.locator('[data-handoff-status]')).toContainText('statement is recorded');
+  let state=await (await request.get(handoff)).json();
+  expect(state.receipts).toHaveLength(1);expect(state.receipts[0].requester_receipt_verified).toBe(false);
+  expect(await (await request.post(native+'/export')).text()).toBe(original);
+  expect((await request.get(handoff,{headers:{'X-Browser-Principal':'browser-colleague'}})).status()).toBe(403);
+  await page.setExtraHTTPHeaders({Origin:baseURL,'X-Browser-Principal':'browser-colleague'});
+  await page.goto('/privacy/dsar/'+id);await expect(panel.getByRole('button')).toHaveCount(0);
+  await expect(panel).toContainText('authorized privacy reviewer');
+  await page.setExtraHTTPHeaders({Origin:baseURL});await page.goto('/privacy/dsar/'+id);
+
+  await page.locator('#mv-copilot-fab').click();
+  await page.locator('#mv-product-operation-buttons').getByRole('button',{name:'Record a privacy package handoff',exact:true}).click();
+  const form=page.locator('#mv-product-operation-form');
+  await form.getByLabel('When you handed off this package').fill(time);
+  await form.getByLabel('Evidence reference (no personal data or access links)').fill('synthetic secure ticket 4521');
+  for(const name of ['reviewed','identity_checked','sent'])await form.locator(`[name="${name}"]`).check();
+  await form.getByRole('button',{name:'Review change',exact:true}).click();
+  await expect(form).toContainText('requester receipt will remain unverified');
+  await form.getByLabel('I reviewed these exact changes and want to apply them.').check();
+  await form.getByRole('button',{name:'Apply reviewed change'}).click();
+  await expect(form).toContainText('statement is recorded');
+  state=await (await request.get(handoff)).json();expect(state.receipts).toHaveLength(1);
+  // Close with an explicit unanswered outcome; a handoff statement is not inferred receipt.
+  expect((await request.post(native+'/close',{data:{kind:'no_response',note:'Synthetic acceptance; requester receipt not verified.'}})).ok()).toBeTruthy();
+  await page.goto('/privacy/dsar/'+id);await panel.getByRole('button',{name:'Review package and saved statements'}).click();
+  await expect(panel.locator('[data-handoff-counts]')).toContainText('historical statements remain');
+  await expect(panel.locator('[data-handoff-form]')).toBeHidden();
+  await expect(panel.locator('[data-handoff-history] li')).toHaveCount(1);
+  expect((await request.post(native+'/export')).status()).toBe(404);
+  expect(errors).toEqual([]);await context.unrouteAll({behavior:'ignoreErrors'});
+});

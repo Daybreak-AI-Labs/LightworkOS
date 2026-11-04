@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Ease-of-use results · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero %}
+  {% from "_empty_state.html" import empty_state %}
+  {% set survey_actions %}{% if not enabled and can_open_page('/settings/all') %}<a class="btn btn--primary" href="/settings/all?q=usability_survey">Turn on the survey</a>{% endif %}{% endset %}
+  {% call hero('People', 'Ease-of-use results',
+               subtitle='What people say about using Lightwork, by role and by task',
+               lede='Answers from the optional ease-of-use survey for ' ~ report.quarter ~ '. Each answer carries only the role the person chose, never their name. Answers stay on this server.',
+               actions=survey_actions) %}{% endcall %}
+
+  {% if not enabled %}
+  <div class="panel" role="status">
+    <strong>The survey is turned off.</strong> Nobody is asked. Results already collected are still shown below.
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2 id="sus-results">Ease of use by role (System Usability Scale, 0 to 100)</h2></div>
+  <div class="panel">
+    <p class="muted">The average score of 500 published studies is 68; a score above 80.3 is in the top 10% of products (MeasuringU). The range is the 95% confidence interval. A role needs at least {{ report.minimum }} answers before its score is shown.</p>
+    {% if report.sus_total.n == 0 %}
+      {{ empty_state('No answers this quarter yet', 'When the survey is on, each signed-in person is asked at most once a quarter. Their answers appear here by role.', compact=true) }}
+    {% else %}
+    <table>
+      <thead><tr><th scope="col">Role</th><th scope="col">Answers</th><th scope="col">Average score</th><th scope="col">95% range</th></tr></thead>
+      <tbody>
+      {% for row in report.sus %}
+        <tr>
+          <th scope="row">{{ row.label }}</th>
+          <td>{{ row.n }}</td>
+          {% if row.enough %}
+          <td>{{ row.mean }}</td><td>{{ row.low }} to {{ row.high }}</td>
+          {% else %}
+          <td colspan="2" class="muted">Not enough answers yet</td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="seq-results">Ease of common tasks (1 = very difficult, 7 = very easy)</h2></div>
+  <div class="panel">
+    <p class="muted">Asked once after a person finishes the task. The average across published tasks is about 5.5. A task needs at least {{ report.minimum }} answers before its score is shown.</p>
+    <table>
+      <thead><tr><th scope="col">Task</th><th scope="col">Answers</th><th scope="col">Average</th><th scope="col">95% range</th></tr></thead>
+      <tbody>
+      {% for row in report.seq %}
+        <tr>
+          <th scope="row">{{ row.label | capitalize }}</th>
+          <td>{{ row.n }}</td>
+          {% if row.enough %}
+          <td>{{ row.mean }}</td><td>{{ row.low }} to {{ row.high }}</td>
+          {% else %}
+          <td colspan="2" class="muted">Not enough answers yet</td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="section-head"><h2 id="first-session-results">First result in the first session</h2></div>
+  <div class="panel">
+    <p class="muted">For each new person: whether they saw a finished result of their own task within {{ first_session_hours }} hours of first signing in, by access role. Counted only while usage measures are on; names are never kept.</p>
+    {% if not measures_on %}<p role="status"><strong>Usage measures are turned off.</strong> Nothing is counted. {% if can_open_page('/settings/all') %}<a href="/settings/all?q=usage_measures">Turn on usage measures</a>{% endif %}</p>{% endif %}
+    {% if first_session %}
+    <table>
+      <thead><tr><th scope="col">Access role</th><th scope="col">New people</th><th scope="col">First result in first session</th><th scope="col">Share</th><th scope="col">Median time</th></tr></thead>
+      <tbody>
+      {% for row in first_session %}
+        <tr><th scope="row">{{ row.role | role_label if row.role != 'unknown' else 'Not known' }}</th><td>{{ row.people }}</td><td>{{ row.first_session }}</td>
+          <td>{{ row.share | percent }}</td><td>{{ (row.median_minutes ~ ' minutes') if row.median_minutes is not none else 'None yet' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      {{ empty_state('Nobody new has been counted yet', 'When usage measures are on, each person is counted the first time they sign in, and again when they first see a finished result of their own task.', compact=true) }}
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="suggestion-results">AI suggestions</h2></div>
+  <div class="panel">
+    <p class="muted">How often each kind of suggestion is shown, used or dismissed. A kind dismissed more than half the time is marked for review; a dismissed suggestion shown again to the same person is counted.</p>
+    {% if suggestions %}
+    <table>
+      <thead><tr><th scope="col">Suggestion</th><th scope="col">Shown</th><th scope="col">Used</th><th scope="col">Dismissed</th><th scope="col">Shown again after dismissal</th><th scope="col">Shown while typing</th><th scope="col">Review</th></tr></thead>
+      <tbody>
+      {% for row in suggestions %}
+        <tr><th scope="row">{{ {'copilot-question': 'Copilot suggested questions', 'chat-example': 'Example requests in chat'}.get(row.kind, row.kind | replace('-', ' ') | capitalize) }}</th>
+          <td>{{ row.shown }}</td><td>{{ row.accepted }}</td><td>{{ row.dismissed }} ({{ row.dismissed_share | percent }})</td>
+          <td>{{ row.reshown }}</td><td>{{ row.while_typing }}</td><td>{{ 'Review this suggestion' if row.review else 'No' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      {{ empty_state('No suggestions counted yet', 'When usage measures are on, suggestions people see in Copilot and in an empty chat are counted here.', compact=true) }}
+    {% endif %}
+  </div>
+  <p class="muted">How to run moderated sessions and score them the same way each quarter: the usability research guide in the documentation (docs/usability-research.md).</p>
+{% endblock %}

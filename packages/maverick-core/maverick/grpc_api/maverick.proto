@@ -1,0 +1,93 @@
+// Maverick gRPC API — the external contract for driving the agent runtime.
+//
+// STABILITY: package maverick.v1 is STABLE. Additive changes only (new rpcs,
+// new messages, new fields with unused numbers). Removing/renaming anything,
+// changing a field number/type, or changing an rpc shape is a breaking change
+// and fails the contract gate (maverick/grpc_api/contract.py, golden in
+// maverick_v1_contract.json). Breaking changes require a maverick.v2 package.
+//
+// Generate Python stubs with:
+//   python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. maverick.proto
+// (the server does this on demand when the [grpc] extra is installed.)
+syntax = "proto3";
+
+package maverick.v1;
+
+// Maverick drives one long-horizon goal at a time per call: start it, stream
+// its episode events, cancel it.
+service Maverick {
+  // Create a goal and dispatch it for background execution. Returns immediately
+  // with the goal id; the run proceeds asynchronously.
+  rpc StartGoal(StartGoalRequest) returns (StartGoalResponse);
+
+  // Stream the goal's events in order as they land, ending with a final
+  // status event when the goal reaches a terminal state.
+  rpc StreamEpisode(StreamEpisodeRequest) returns (stream Event);
+
+  // Mark a goal cancelled. Honoured at the next dispatch / turn boundary.
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+
+  // Point-in-time status of a goal.
+  rpc GetStatus(GetStatusRequest) returns (GoalStatus);
+
+  // Run an EXISTING goal row to completion (the cross-host Dispatcher seam:
+  // caller and worker share the world DB). Blocks until terminal.
+  rpc RunGoal(RunGoalRequest) returns (GoalStatus);
+}
+
+message StartGoalRequest {
+  string title = 1;
+  string description = 2;
+  double max_dollars = 3;       // 0 = use server/config default
+  double max_wall_seconds = 4;  // 0 = use server/config default
+  string channel = 5;
+  string user_id = 6;
+}
+
+message StartGoalResponse {
+  int64 goal_id = 1;
+}
+
+message StreamEpisodeRequest {
+  int64 goal_id = 1;
+  int64 since_id = 2;       // resume after this event id (0 = from start)
+  double max_seconds = 3;   // 0 = stream until terminal
+}
+
+message Event {
+  int64 id = 1;
+  int64 goal_id = 2;
+  string agent = 3;
+  string kind = 4;
+  string content = 5;
+  double ts = 6;
+}
+
+message CancelRequest {
+  int64 goal_id = 1;
+}
+
+message CancelResponse {
+  bool cancelled = 1;
+}
+
+message GetStatusRequest {
+  int64 goal_id = 1;
+}
+
+message RunGoalRequest {
+  int64 goal_id = 1;
+  double max_dollars = 2;       // 0 = config default
+  double max_wall_seconds = 3;  // 0 = config default
+  string channel = 4;
+  string user_id = 5;
+  int32 max_depth = 6;          // 0 = config/default dispatcher depth
+  string capability_json = 7;   // JSON-encoded explicit Capability grant
+}
+
+message GoalStatus {
+  int64 goal_id = 1;
+  string status = 2;
+  string result = 3;
+  bool found = 4;
+}

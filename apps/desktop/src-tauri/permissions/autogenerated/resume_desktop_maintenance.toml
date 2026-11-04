@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resume-desktop-maintenance"
+description = "Enables the resume_desktop_maintenance command without any pre-configured scope."
+commands.allow = ["resume_desktop_maintenance"]
+
+[[permission]]
+identifier = "deny-resume-desktop-maintenance"
+description = "Denies the resume_desktop_maintenance command without any pre-configured scope."
+commands.deny = ["resume_desktop_maintenance"]

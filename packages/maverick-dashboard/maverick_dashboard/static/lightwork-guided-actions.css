@@ -1,0 +1,17 @@
+.guided-fields { display:grid; gap:var(--space-2); min-width:0; }
+.guided-field-list { display:grid; gap:var(--space-2); }
+.guided-value-group { min-width:0; border:0; padding:0; margin:0; }
+.guided-value-group[hidden] { display:none !important; }
+.guided-known-add[hidden] { display:none !important; }
+.guided-field { min-width:0; padding:var(--space-3); border:1px solid var(--border); border-radius:var(--radius-md); margin:0; }
+.guided-field legend { max-width:100%; overflow-wrap:anywhere; font-weight:var(--font-medium); }
+.guided-field label { margin-top:var(--space-2); }
+.guided-field textarea.input { min-height:5rem; font-family:inherit; }
+.guided-field .btn { margin-top:var(--space-2); }
+.guided-add, .guided-technical { margin-block:var(--space-2); }
+.guided-add summary, .guided-technical summary { cursor:pointer; color:var(--muted); }
+.guided-result { min-width:0; overflow-wrap:anywhere; }
+.guided-result-list { padding-inline-start:var(--space-3); margin:0 0 var(--space-3); }
+.guided-result-list dt { font-weight:var(--font-medium); margin-top:var(--space-2); }
+.guided-result-list dd { margin-inline-start:var(--space-3); white-space:pre-wrap; }
+.guided-fields[hidden], .guided-technical[hidden] { display:none !important; }

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "default",
+  "description": "Local installer window: install/cancel, fixed local dashboard launch, startup diagnostics, progress events, and window operations. The remote dashboard window receives no installer capability or arbitrary filesystem, HTTP, or shell access.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-close",
+    "core:window:allow-set-title"
+  ]
+}

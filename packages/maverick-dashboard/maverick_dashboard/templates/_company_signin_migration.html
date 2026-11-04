@@ -1,0 +1,35 @@
+<section class="panel" id="company-signin-migration" data-company-migration{% if company_signin_recovery | default(false) %} data-recovery{% endif %}>
+  <h2>{% if company_signin_recovery | default(false) %}Restore the previous sign-in choice{% else %}Enable verified company sign-in{% endif %}</h2>
+  <p>Company sign-in and administrator access are separate. This form never gives anyone a role. Only this computer's original owner can use its restricted recovery, on this computer.</p>
+  {% if company_signin_recovery | default(false) %}
+  <p>Recovery changes only the previous company-sign-in choice from a retained activation. It does not change provider credentials, user roles, proxy policy, enterprise requirements or second-factor policy. If those changed, this form refuses the restoration.</p>
+  <label for="company-recovery-email">Original owner's email</label>
+  <input class="input" id="company-recovery-email" data-owner-email type="email" autocomplete="username" maxlength="320" required>
+  {% else %}
+  <details><summary>Start with a provider preset</summary>
+    <p>Prepare ordinary, unsaved provider fields. This does not enable sign-in or replace entered Settings drafts. Application passwords and the session key stay in the protected Settings controls.</p>
+    <label for="company-preset-provider">Company sign-in provider</label><select class="select" id="company-preset-provider" data-preset-provider><option value="microsoft">Microsoft Entra ID</option><option value="google">Google</option><option value="okta">Okta</option></select>
+    <label for="company-preset-directory" data-preset-directory-label>Microsoft Directory ID</label><input class="input" id="company-preset-directory" data-preset-directory maxlength="300" autocomplete="off">
+    <label for="company-preset-application">Lightwork's application name at the provider</label><input class="input" id="company-preset-application" data-preset-application maxlength="128" autocomplete="off" required>
+    <p><button class="btn btn--ghost" type="button" data-preset-prepare>Prepare provider fields</button></p>
+    <p>For a different provider or a custom authorization server, use the existing Company sign-in fields. Register the displayed return address with the provider. Review and save those details before trying a real sign-in.</p>
+  </details>
+  <p>First <a href="#settings-signin-guide">try company sign-in</a>. Then use <a href="/users#give-role-form">People</a> to explicitly give the verified company account installation administrator access. Come back here to review enabling company sign-in.</p>
+  {% endif %}
+  <label for="company-migration-password">Original owner's passphrase</label>
+  <input class="input" id="company-migration-password" data-owner-password type="password" autocomplete="current-password" minlength="14" maxlength="1024" required>
+  <p class="muted">The passphrase verifies this local owner. It is not kept in the review, request history or Copilot.</p>
+  <label for="company-migration-code">Authenticator code or recovery code</label>
+  <input class="input" id="company-migration-code" data-owner-code type="text" autocomplete="one-time-code" inputmode="text" maxlength="32" spellcheck="false" aria-describedby="company-migration-code-help">
+  <p class="muted" id="company-migration-code-help">Needed only when this owner's authenticator app is on: enter the six-digit code from the app, or one unused recovery code. After a code is accepted, this form does not ask for another for ten minutes.</p>
+  <p><button class="btn btn--ghost" type="button" data-migration-load>{% if company_signin_recovery | default(false) %}Find my retained requests{% else %}Load my current sign-in checks{% endif %}</button></p>
+  <label for="company-migration-choice">{% if company_signin_recovery | default(false) %}Original activation{% else %}Verified company account{% endif %}</label>
+  <select class="select" id="company-migration-choice" data-migration-choice disabled><option value="">Load current choices first</option></select>
+  <p><button class="btn" type="button" data-migration-review disabled>{% if company_signin_recovery | default(false) %}Review restoration{% else %}Review activation{% endif %}</button></p>
+  <div data-migration-full-review hidden></div>
+  <div data-migration-confirm hidden><label><input type="checkbox" data-migration-ack> I have read the complete sign-in change and its recovery limits.</label><p><button class="btn" type="button" data-migration-apply disabled>{% if company_signin_recovery | default(false) %}Restore this sign-in choice{% else %}Enable company sign-in{% endif %}</button> <button class="btn btn--ghost" type="button" data-migration-cancel>Cancel review</button></p></div>
+  <p role="status" aria-live="polite" data-migration-message></p>
+  <div data-migration-original-panel hidden><label for="company-migration-original">Your original request</label><select class="select" id="company-migration-original" data-migration-original></select><p><button class="btn btn--ghost" type="button" data-migration-read-original>Check original result</button></p></div>
+  <p data-migration-next hidden><a class="btn" href="{% if company_signin_recovery | default(false) %}/auth/local-login{% else %}/auth/login{% endif %}">Sign in again</a></p>
+  <p>{% if not company_signin_recovery | default(false) %}<a href="/auth/company-signin-recovery">Open this computer's restricted recovery form</a>. {% endif %}A lost reply remains unconfirmed until its original record is read; a matching current setting is not an original receipt.</p>
+</section>

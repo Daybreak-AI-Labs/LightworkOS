@@ -1,0 +1,520 @@
+name: Lightwork agent on PR (reusable)
+
+# Reusable workflow for downstream projects: invoke a Lightwork goal on
+# every pull request. Comment the agent's findings as a PR review.
+#
+# Usage in a consumer repo's `.github/workflows/code-review.yml`:
+#
+#     jobs:
+#       review:
+#         uses: Daybreak-AI-Labs/LightworkOS/.github/workflows/agent-on-pr.yml@<full-40-character-commit-sha>
+#         with:
+#           goal: "Review this PR for logic bugs and missing edge cases."
+#           # Must match the immutable SHA in `uses:` above.
+#           lightwork_ref: "<full-40-character-commit-sha>"
+#           max_dollars: 0.50
+#           # Optional: run as your customized workforce by committing a bundle
+#           # (domains/*.toml + roles.toml, e.g. via `maverick overrides export`)
+#           # and pointing at it:
+#           overrides_path: ".maverick"
+#         secrets:
+#           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+on:
+  workflow_call:
+    inputs:
+      goal:
+        description: 'Goal text for the agent.'
+        required: true
+        type: string
+      lightwork_ref:
+        description: >-
+          Full 40-character commit SHA of the trusted Lightwork source to
+          install. Use the same SHA that pins this reusable workflow.
+        required: true
+        type: string
+      max_dollars:
+        description: 'Hard cost cap for the agent run.'
+        required: false
+        default: 1.00
+        type: number
+      model:
+        description: 'Model spec (e.g. anthropic:claude-sonnet-4-6).'
+        required: false
+        default: 'anthropic:claude-sonnet-4-6'
+        type: string
+      timeout_minutes:
+        description: 'Job timeout.'
+        required: false
+        default: 15
+        type: number
+      overrides_path:
+        description: >-
+          Optional path (relative to the calling repo's trusted base revision)
+          to a Lightwork override bundle: a directory with domains/*.toml
+          and/or roles.toml, applied before the run so the review uses the
+          calling repository's already-reviewed customized agents. PR-head
+          policy is never loaded.
+        required: false
+        default: ''
+        type: string
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      LIGHTWORK_SOURCE_TOKEN:
+        description: >-
+          Optional read-only token for checking out the Lightwork source
+          repository. The caller's GITHUB_TOKEN is used when this is omitted.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    lightwork-agent-review-${{ github.repository }}-${{ github.workflow }}-${{
+    github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent-review:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Materialize an isolated PR review workspace
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          for revision in "$PR_BASE_SHA" "$PR_HEAD_SHA"; do
+            if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::agent-on-pr requires full PR base/head SHAs"
+              exit 1
+            fi
+            git cat-file -e "${revision}^{commit}"
+          done
+          review_root="$RUNNER_TEMP/lightwork-review-workspace"
+          policy_root="$RUNNER_TEMP/lightwork-review-policy-base"
+          evidence_root="$RUNNER_TEMP/lightwork-review-evidence"
+          for isolated_root in "$review_root" "$policy_root" "$evidence_root"; do
+            if [ -e "$isolated_root" ]; then
+              echo "::error::unexpected pre-existing isolated review path"
+              exit 1
+            fi
+          done
+          mkdir -m 700 "$review_root"
+          mkdir -m 700 "$policy_root"
+          mkdir -m 700 "$evidence_root"
+          git archive "$PR_HEAD_SHA" | tar -x -C "$review_root"
+          # Custom reviewer policy is authority, not content under review. Load
+          # it only from the trusted base revision so a PR cannot rewrite its
+          # own reviewer instructions.
+          git archive "$PR_BASE_SHA" | tar -x -C "$policy_root"
+          context_root="$(mktemp -d "$review_root/.lightwork-context.XXXXXXXX")"
+          merge_base="$(git merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA")"
+          if [[ ! "$merge_base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::could not resolve an immutable PR merge base"
+            exit 1
+          fi
+          # A PR is the merge-base-to-head change set. A two-dot base/head
+          # diff reverses unrelated base-only commits when the base branch has
+          # advanced, which can make the reviewer report on code the PR never
+          # changed.
+          git diff --no-ext-diff --no-textconv --binary \
+            "$merge_base" "$PR_HEAD_SHA" \
+            > "$evidence_root/PR_DIFF.patch"
+          printf 'base=%s\nhead=%s\nmerge_base=%s\n' \
+            "$PR_BASE_SHA" "$PR_HEAD_SHA" "$merge_base" \
+            > "$evidence_root/PR_REVISIONS.txt"
+          cp "$evidence_root/PR_DIFF.patch" "$context_root/PR_DIFF.patch"
+          cp "$evidence_root/PR_REVISIONS.txt" "$context_root/PR_REVISIONS.txt"
+          diff_sha256="$(sha256sum "$evidence_root/PR_DIFF.patch" | cut -d' ' -f1)"
+          [[ "$diff_sha256" =~ ^[0-9a-f]{64}$ ]]
+          # The model-driven shell receives only review_root as a container
+          # mount. Keep authoritative evidence and base policy outside it,
+          # owner-readable only, and verify the convenience copy after the run.
+          find "$policy_root" "$evidence_root" -type d -exec chmod 500 {} +
+          find "$policy_root" "$evidence_root" -type f -exec chmod 400 {} +
+          chmod 500 "$context_root"
+          chmod 400 "$context_root/PR_DIFF.patch" \
+            "$context_root/PR_REVISIONS.txt"
+          printf 'AGENT_CONTEXT_REL=%s\n' \
+            "${context_root##*/}" >> "$GITHUB_ENV"
+          printf 'AGENT_POLICY_ROOT=%s\n' "$policy_root" >> "$GITHUB_ENV"
+          printf 'AGENT_EVIDENCE_ROOT=%s\n' "$evidence_root" >> "$GITHUB_ENV"
+          printf 'AGENT_DIFF_SHA256=%s\n' "$diff_sha256" >> "$GITHUB_ENV"
+
+      - name: Validate immutable Lightwork source ref
+        shell: bash
+        env:
+          LIGHTWORK_REF: ${{ inputs.lightwork_ref }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$LIGHTWORK_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::lightwork_ref must be a lowercase, full 40-character commit SHA."
+            exit 1
+          fi
+          if [[ ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not provide an immutable reusable-workflow SHA."
+            exit 1
+          fi
+          if [ "$WORKFLOW_REPOSITORY" != "Daybreak-AI-Labs/LightworkOS" ]; then
+            echo "::error::unexpected reusable-workflow repository identity."
+            exit 1
+          fi
+          if [ "$LIGHTWORK_REF" != "$WORKFLOW_SHA" ]; then
+            echo "::error::lightwork_ref must equal the reusable workflow's immutable SHA."
+            exit 1
+          fi
+
+      - name: Checkout pinned Lightwork runtime source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: Daybreak-AI-Labs/LightworkOS
+          ref: ${{ job.workflow_sha }}
+          path: .lightwork-runtime-${{ github.run_id }}
+          fetch-depth: 1
+          persist-credentials: false
+          token: ${{ secrets.LIGHTWORK_SOURCE_TOKEN || github.token }}
+
+      - name: Install Lightwork
+        shell: bash
+        env:
+          LIGHTWORK_REF: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          source_root="$GITHUB_WORKSPACE/.lightwork-runtime-$GITHUB_RUN_ID"
+          trusted_python="$pythonLocation/bin/python"
+          actual_ref="$(git -C "$source_root" rev-parse HEAD)"
+          if [ "$actual_ref" != "$LIGHTWORK_REF" ]; then
+            echo "::error::Checked-out Lightwork commit '$actual_ref' does not match the requested ref."
+            exit 1
+          fi
+
+          # Supply all first-party distributions as local direct requirements
+          # in one resolver transaction. Never resolve an unclaimed
+          # maverick-* project name from the public package index.
+          "$trusted_python" -I -m pip install --constraint \
+            "$source_root/requirements/ci.txt" --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          "$trusted_python" -I -m pip install \
+            --constraint "$source_root/requirements/ci.txt" \
+            "$source_root/packages/maverick-core[all]" \
+            "$source_root/packages/maverick-shield" \
+            "$source_root/packages/maverick-channels" \
+            "$source_root/packages/maverick-evolve" \
+            "$source_root/packages/maverick-dashboard" \
+            "$source_root/packages/maverick-mcp" \
+            "$source_root/packages/maverick-knowledge" \
+            "$source_root/apps/installer-cli"
+          "$trusted_python" -I -m pip check
+          "$trusted_python" -I "$source_root/scripts/verify_constraint_closure.py"
+
+          # Keep the reviewed calling-repository checkout as the agent's only
+          # source tree. Installed wheels do not need this temporary checkout.
+          if [[ "$source_root" != "$GITHUB_WORKSPACE"/.lightwork-runtime-[0-9]* ]]; then
+            echo "::error::refusing to remove unexpected runtime path"
+            exit 1
+          fi
+          rm -rf -- "$source_root"
+
+      - name: Run agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MAVERICK_CONSENT_MODE: auto-deny
+          MAVERICK_REQUIRE_CONTAINER_BACKEND: '1'
+          MAVERICK_FETCH_RESPECT_ROBOTS: '1'
+          # Caller inputs reach the script ONLY via env. Expression-
+          # interpolating them into `run:` would let a goal/model string
+          # containing `$(...)`, quotes, or newlines inject shell or TOML.
+          AGENT_GOAL: ${{ inputs.goal }}
+          AGENT_MODEL: ${{ inputs.model }}
+          AGENT_MAX_DOLLARS: ${{ inputs.max_dollars }}
+          AGENT_TIMEOUT_MINUTES: ${{ inputs.timeout_minutes }}
+          AGENT_WORKDIR: ${{ runner.temp }}/lightwork-review-workspace
+          AGENT_OVERRIDES_PATH: ${{ inputs.overrides_path }}
+        run: |
+          set -e
+          trusted_python="$pythonLocation/bin/python"
+          mkdir -p ~/.maverick
+          # Build the config in Python: json.dumps emits valid TOML basic
+          # strings, and the numeric inputs are validated as numbers.
+          "$trusted_python" -I - <<'PY'
+          import json, os, pathlib
+
+          model = json.dumps(os.environ["AGENT_MODEL"])
+          workdir = json.dumps(os.environ["AGENT_WORKDIR"])
+          context_rel = os.environ["AGENT_CONTEXT_REL"]
+          if pathlib.PurePath(context_rel).name != context_rel:
+              raise SystemExit("invalid generated review context path")
+          read_only_paths = json.dumps([context_rel])
+          max_dollars = float(os.environ["AGENT_MAX_DOLLARS"])
+          max_wall_seconds = int(float(os.environ["AGENT_TIMEOUT_MINUTES"]) * 60)
+
+          # The provider API key is NOT written into this config: Lightwork reads
+          # it straight from the environment (ANTHROPIC_API_KEY / OPENAI_API_KEY,
+          # exported above from secrets) via maverick.llm. That avoids both a
+          # GitHub Actions expression in the run block (a bare name fails to
+          # compile) and ever writing the secret into the run-script text.
+          config = f"""\
+          [models]
+          orchestrator = {model}
+          coder        = {model}
+          researcher   = {model}
+
+          [budget]
+          max_dollars = {max_dollars}
+          max_wall_seconds = {max_wall_seconds}
+          max_tool_calls = 200
+
+          [safety]
+          profile = "balanced"
+          block_threshold = "high"
+          scan_input = true
+          scan_tool_calls = true
+          scan_output = true
+
+          [sandbox]
+          backend = "docker"
+          require_container = true
+          image = "python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
+          workdir = {workdir}
+          timeout = 60
+          allow_network = false
+          allow_root = false
+          reuse_container = false
+          read_only_paths = {read_only_paths}
+          """
+          path = pathlib.Path.home() / ".maverick" / "config.toml"
+          path.write_text(config, encoding="utf-8")
+          PY
+
+          # Apply the caller's customization bundle only from the trusted PR
+          # base revision. Reviewer policy is authority: PR-head code must not
+          # be able to rewrite its own roles or system addenda.
+          if [ -n "${AGENT_OVERRIDES_PATH:-}" ]; then
+            validated_overrides="$("$trusted_python" -I -S - <<'PY'
+          import os
+          from pathlib import Path
+
+          policy_root = Path(os.environ["AGENT_POLICY_ROOT"]).resolve(strict=True)
+          requested = Path(os.environ["AGENT_OVERRIDES_PATH"])
+          if requested.is_absolute():
+              raise SystemExit("overrides_path must be relative to the trusted base")
+          candidate = (policy_root / requested).resolve(strict=True)
+          if not candidate.is_relative_to(policy_root):
+              raise SystemExit("overrides_path escapes the trusted base")
+          print(candidate)
+          PY
+            )"
+            "$trusted_python" -I -m maverick.cli overrides load \
+              "$validated_overrides"
+          fi
+          # The policy has been copied into Lightwork's private state. Remove
+          # the materialized base tree before any model-driven work begins.
+          chmod -R u+w "$AGENT_POLICY_ROOT"
+          rm -rf -- "$AGENT_POLICY_ROOT"
+
+          # Never stream PR-influenced output into the Actions command parser.
+          # Capture it privately, preserve the exit status, and let the
+          # sanitizer run through always() even when the review fails.
+          review_goal="${AGENT_GOAL}"$'\n\n'"A trusted base-to-head patch copy is at ${AGENT_CONTEXT_REL}/PR_DIFF.patch (sha256:${AGENT_DIFF_SHA256}). Review that patch and the materialized head tree; do not infer changes from mutable git state. The host verifies the patch copy after this run."
+          set +e
+          "$trusted_python" -I -m maverick.cli start "$review_goal" \
+            > /tmp/agent-output.txt 2>&1
+          status=$?
+          set -e
+          exit "$status"
+
+      - name: Verify trusted review evidence was not mutated
+        if: always()
+        env:
+          AGENT_WORKDIR: ${{ runner.temp }}/lightwork-review-workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$pythonLocation/bin/python" -I -S - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          expected = os.environ["AGENT_DIFF_SHA256"]
+          authoritative = (
+              Path(os.environ["AGENT_EVIDENCE_ROOT"]) / "PR_DIFF.patch"
+          )
+          reviewed = (
+              Path(os.environ["AGENT_WORKDIR"])
+              / os.environ["AGENT_CONTEXT_REL"]
+              / "PR_DIFF.patch"
+          )
+
+          def digest(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          actual_authoritative = digest(authoritative)
+          actual_reviewed = digest(reviewed)
+          if actual_authoritative != expected or actual_reviewed != expected:
+              Path("/tmp/agent-output.txt").write_text(
+                  "Review rejected: the trusted PR evidence copy changed "
+                  "during model-driven execution.",
+                  encoding="utf-8",
+              )
+              raise SystemExit(
+                  "review evidence integrity failure: "
+                  f"expected={expected}, authoritative={actual_authoritative}, "
+                  f"reviewed={actual_reviewed}"
+              )
+          print(f"review evidence integrity OK: sha256:{expected}")
+          PY
+
+      - name: Sanitize review output before crossing the job boundary
+        if: always()
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        shell: bash
+        run: |
+          # Use setup-python's immutable absolute path; -S keeps even system
+          # sitecustomize hooks out. Container-only model-driven commands and
+          # scrubbed Actions command files keep this host step outside their
+          # mutation boundary.
+          "$pythonLocation/bin/python" -I -S - <<'PY'
+          import os
+          import re
+          import unicodedata
+          from pathlib import Path
+
+          source = Path("/tmp/agent-output.txt")
+          output = (
+              source.read_text(encoding="utf-8", errors="replace")
+              if source.exists()
+              else "(no agent output was captured)"
+          )
+          for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+              sensitive_value = os.environ.get(name, "")
+              if sensitive_value:
+                  output = output.replace(
+                      sensitive_value,
+                      f"[REDACTED_{name}]",
+                  )
+          for pattern, replacement in (
+              (r"\bsk-ant-[A-Za-z0-9_-]{12,}\b", "[REDACTED_ANTHROPIC_KEY]"),
+              (r"\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b", "[REDACTED_OPENAI_KEY]"),
+              (
+                  r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|"
+                  r"github_pat_[A-Za-z0-9_]{20,})\b",
+                  "[REDACTED_GITHUB_TOKEN]",
+              ),
+              (r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "[REDACTED_SLACK_TOKEN]"),
+              (r"\bAIza[0-9A-Za-z_-]{20,}\b", "[REDACTED_GOOGLE_KEY]"),
+              (
+                  r"(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?"
+                  r"-----END [A-Z0-9 ]*PRIVATE KEY-----",
+                  "[REDACTED_PRIVATE_KEY]",
+              ),
+              (
+                  r"(?i)(\bauthorization\s*:\s*(?:bearer|basic)\s+)\S+",
+                  r"\1[REDACTED_CREDENTIAL]",
+              ),
+          ):
+              output = re.sub(pattern, replacement, output)
+          # Normalize line endings and neutralize terminal escapes, C0 controls,
+          # surrogate code points, bidi overrides, and zero-width format
+          # characters. They have no review value and can visually spoof the
+          # write-capable comment job.
+          output = output.replace("\r\n", "\n").replace("\r", "\n")
+          output = "".join(
+              character
+              if character in {"\n", "\t"}
+              or unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+              else "\N{REPLACEMENT CHARACTER}"
+              for character in output
+          )
+          # Keep the artifact safe even if a future maintainer echoes it while
+          # GitHub command parsing is active.
+          output = re.sub(r"(?m)^::", "\N{FULLWIDTH COLON}:", output)
+          # Prevent untrusted tool output from notifying GitHub users or teams.
+          output = output.replace("@", "\N{FULLWIDTH COMMERCIAL AT}")
+          maximum = 50_000
+          if len(output) > maximum:
+              output = output[:maximum] + "\n\n[... truncated]"
+          Path("/tmp/lightwork-agent-review.txt").write_text(
+              output,
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload sanitized review
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: lightwork-agent-review
+          path: /tmp/lightwork-agent-review.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  post-review:
+    needs: agent-review
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Download sanitized review
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: lightwork-agent-review
+          path: /tmp/lightwork-agent-review
+      - name: Post review comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const fs = require('fs');
+            let body = "🤖 **Lightwork agent review**\n\n(no sanitized output artifact was available)";
+            try {
+              const output = fs.readFileSync(
+                "/tmp/lightwork-agent-review/lightwork-agent-review.txt",
+                "utf8"
+              );
+              // The write-capable job never trusts markup created by the
+              // untrusted execution job. Escape again immediately before POST.
+              const escaped = output
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/@/g, "＠");
+              const max = 50000;
+              const rendered = escaped.length > max
+                ? escaped.slice(0, max) + "\n\n[... truncated after escaping]"
+                : escaped;
+              body = "🤖 **Lightwork agent review**\n\n<pre>\n"
+                + rendered + "\n</pre>";
+            } catch (_) {}
+            await github.rest.issues.createComment({
+              issue_number: context.payload.pull_request.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });

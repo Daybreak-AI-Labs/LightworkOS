@@ -1,0 +1,1666 @@
+[
+  {
+    "id": "order_management",
+    "title": "Order Management",
+    "summary": "Reconcile approved order, inventory and fulfillment exports and prepare exception work for the order owner.",
+    "owner_role": "Order operations manager",
+    "specialists": [
+      "ops_fulfillment",
+      "ops_inventory_control",
+      "cx_order_status"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Order reconciliation",
+        "description": "One row per order line joined by the source owner from approved order, inventory and fulfillment exports; quantities use the same unit and date snapshot. Shipment updates remain drafts.",
+        "columns": [
+          "id",
+          "order_ref",
+          "allocated_qty",
+          "ordered_qty",
+          "shipped_qty",
+          "ship_by",
+          "status",
+          "update_owner",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Order management and warehouse exports",
+        "access": "read",
+        "prerequisites": [
+          "Workspace-scoped read-only order and inventory exports",
+          "Named order owner and approved retention period",
+          "Source owner verifies order-line joins, units, stock snapshot and fulfillment status"
+        ]
+      }
+    ],
+    "sample_goal": "Find the short allocation, over-shipment and open overdue order in four synthetic order lines.",
+    "deliverable": "Order exception worklist with source-linked customer-update preparation",
+    "acceptance": [
+      "Findings name the order line and source snapshot",
+      "Quantity checks compare the same units",
+      "Completed orders do not generate open-order deadline findings",
+      "Customer promises and outgoing updates require owner review"
+    ],
+    "stop_conditions": [
+      "Stop for unverified order-line joins or stock snapshots",
+      "Escalate conflicting fulfillment evidence before drafting delivery promises"
+    ],
+    "blocked_actions": [
+      "Send customer updates",
+      "Change orders or warehouse allocations",
+      "Commit delivery dates",
+      "Release shipments or refunds"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "allocation_shortfall",
+        "title": "Allocated quantity covers the order",
+        "table": "records",
+        "kind": "compare",
+        "action": "Ask the order owner to review stock availability and fulfillment options.",
+        "field": "allocated_qty",
+        "other_field": "ordered_qty",
+        "operator": "gte"
+      },
+      {
+        "id": "shipment_excess",
+        "title": "Shipped quantity does not exceed the order",
+        "table": "records",
+        "kind": "compare",
+        "action": "Reconcile shipment evidence with the order before an update or correction.",
+        "field": "shipped_qty",
+        "other_field": "ordered_qty",
+        "operator": "lte"
+      },
+      {
+        "id": "overdue_order",
+        "title": "Open order passed its ship-by date",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare a delayed-order update from verified shipment evidence for review.",
+        "field": "ship_by",
+        "within_days": 0,
+        "unless_field": "status",
+        "unless_value": "completed"
+      },
+      {
+        "id": "update_owner",
+        "title": "Customer-update owner is assigned",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign a responsible person to review the proposed customer update.",
+        "field": "update_owner"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "ord-1",
+            "order_ref": "SO-101",
+            "allocated_qty": 10,
+            "ordered_qty": 10,
+            "shipped_qty": 10,
+            "ship_by": "2026-10-30",
+            "status": "completed",
+            "update_owner": "Order desk",
+            "source": "sample://order_management/records/ord-1"
+          },
+          {
+            "id": "ord-2",
+            "order_ref": "SO-102",
+            "allocated_qty": 3,
+            "ordered_qty": 8,
+            "shipped_qty": 0,
+            "ship_by": "2026-11-10",
+            "status": "open",
+            "update_owner": "Order desk",
+            "source": "sample://order_management/records/ord-2"
+          },
+          {
+            "id": "ord-3",
+            "order_ref": "SO-103",
+            "allocated_qty": 5,
+            "ordered_qty": 5,
+            "shipped_qty": 6,
+            "ship_by": "2026-11-12",
+            "status": "open",
+            "update_owner": "Order desk",
+            "source": "sample://order_management/records/ord-3"
+          },
+          {
+            "id": "ord-4",
+            "order_ref": "SO-104",
+            "allocated_qty": 4,
+            "ordered_qty": 4,
+            "shipped_qty": 0,
+            "ship_by": "2026-11-01",
+            "status": "open",
+            "update_owner": "",
+            "source": "sample://order_management/records/ord-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "allocation_shortfall:ord-2",
+        "shipment_excess:ord-3",
+        "overdue_order:ord-4",
+        "update_owner:ord-4"
+      ]
+    }
+  },
+  {
+    "id": "inventory_planning",
+    "title": "Inventory Planning",
+    "summary": "Compare approved stock and demand assumptions with lead-time needs and maximum stock targets to prepare replenishment decisions.",
+    "owner_role": "Inventory planning manager",
+    "specialists": [
+      "ops_demand_planning",
+      "ops_inventory_optimization",
+      "ops_supply_planning"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Stock and demand planning inputs",
+        "description": "One row per SKU/location. Source owners supply available units, lead-time demand and maximum stock targets in one unit; this workflow checks these assumptions and does not forecast demand.",
+        "columns": [
+          "id",
+          "sku",
+          "location",
+          "available_units",
+          "lead_time_demand_units",
+          "maximum_stock_units",
+          "supplier_ref",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Inventory, demand and supplier planning exports",
+        "access": "read",
+        "prerequisites": [
+          "Workspace-approved inventory snapshot and demand plan",
+          "Planner verifies lead-time demand calculation and safety-stock policy",
+          "Approved supplier directory and read-only lead-time evidence"
+        ]
+      }
+    ],
+    "sample_goal": "Find one stockout risk, one excess-stock risk and one missing supplier in a synthetic inventory plan.",
+    "deliverable": "Inventory risk worklist and replenishment proposal inputs",
+    "acceptance": [
+      "Stockout findings cite available units and approved lead-time demand",
+      "Excess-stock findings cite the approved maximum target",
+      "Every exception retains source evidence and an owner action",
+      "No purchase order or supplier commitment is created"
+    ],
+    "stop_conditions": [
+      "Stop for mixed units, stale snapshots or unsupported demand assumptions",
+      "Escalate conflicting supplier lead times to the planner"
+    ],
+    "blocked_actions": [
+      "Create purchase orders",
+      "Change stock targets or balances",
+      "Place supplier orders",
+      "Commit production capacity"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "stockout_risk",
+        "title": "Stock covers approved lead-time demand",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare replenishment review using approved demand and lead-time assumptions.",
+        "field": "available_units",
+        "other_field": "lead_time_demand_units",
+        "operator": "gte"
+      },
+      {
+        "id": "excess_stock",
+        "title": "Stock remains within the approved maximum",
+        "table": "records",
+        "kind": "compare",
+        "action": "Ask the planner to review transfer, demand or replenishment adjustments.",
+        "field": "available_units",
+        "other_field": "maximum_stock_units",
+        "operator": "lte"
+      },
+      {
+        "id": "supplier_missing",
+        "title": "Replenishment supplier is identified",
+        "table": "records",
+        "kind": "required",
+        "action": "Resolve the approved supplier and lead-time evidence before purchasing review.",
+        "field": "supplier_ref"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "stock-1",
+            "sku": "SKU-A",
+            "location": "North",
+            "available_units": 120,
+            "lead_time_demand_units": 80,
+            "maximum_stock_units": 200,
+            "supplier_ref": "SUP-10",
+            "source": "sample://inventory_planning/records/stock-1"
+          },
+          {
+            "id": "stock-2",
+            "sku": "SKU-B",
+            "location": "North",
+            "available_units": 20,
+            "lead_time_demand_units": 60,
+            "maximum_stock_units": 100,
+            "supplier_ref": "SUP-20",
+            "source": "sample://inventory_planning/records/stock-2"
+          },
+          {
+            "id": "stock-3",
+            "sku": "SKU-C",
+            "location": "South",
+            "available_units": 300,
+            "lead_time_demand_units": 100,
+            "maximum_stock_units": 180,
+            "supplier_ref": "SUP-30",
+            "source": "sample://inventory_planning/records/stock-3"
+          },
+          {
+            "id": "stock-4",
+            "sku": "SKU-D",
+            "location": "South",
+            "available_units": 75,
+            "lead_time_demand_units": 50,
+            "maximum_stock_units": 100,
+            "supplier_ref": "",
+            "source": "sample://inventory_planning/records/stock-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "stockout_risk:stock-2",
+        "excess_stock:stock-3",
+        "supplier_missing:stock-4"
+      ]
+    }
+  },
+  {
+    "id": "logistics_exceptions",
+    "title": "Logistics Exceptions",
+    "summary": "Review shipment milestones, delivery quantities and proof-of-delivery evidence to prepare resolution options.",
+    "owner_role": "Logistics operations manager",
+    "specialists": [
+      "log_track_trace",
+      "log_pod_chase",
+      "log_route_exceptions"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Shipment exception evidence",
+        "description": "One row per shipment from an approved carrier/warehouse export. The POD field is an evidence reference, not a document fetched by this workflow. Quantity reconciliation is limited to supplied delivery records.",
+        "columns": [
+          "id",
+          "shipment_ref",
+          "expected_delivery",
+          "status",
+          "shipped_qty",
+          "delivered_qty",
+          "pod_ref",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Carrier and transport-management exports",
+        "access": "read",
+        "prerequisites": [
+          "Authorized read-only shipment and milestone exports",
+          "Verified shipment identifiers and quantity units",
+          "Named carrier-contact owner and separate correspondence authority"
+        ]
+      }
+    ],
+    "sample_goal": "Find an unresolved delivery deadline, missing proof and quantity discrepancy while leaving the reconciled shipment clear.",
+    "deliverable": "Shipment exception register with draft resolution actions",
+    "acceptance": [
+      "Open deadline exceptions are distinguished from completed deliveries",
+      "Proof-of-delivery gaps name the missing evidence",
+      "Quantity discrepancies retain shipped and delivered quantities with citations",
+      "A human logistics owner reviews resolution options"
+    ],
+    "stop_conditions": [
+      "Stop for conflicting carrier identifiers or unverified snapshots",
+      "Escalate suspected loss, hazardous cargo or safety incidents to qualified owners"
+    ],
+    "blocked_actions": [
+      "Contact carriers or customers",
+      "Reschedule deliveries",
+      "Change delivery addresses",
+      "Authorize claims or charges"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "shipment_late",
+        "title": "Open shipment exception passed its delivery date",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare milestone and carrier-evidence questions for the logistics owner.",
+        "field": "expected_delivery",
+        "within_days": 0,
+        "unless_field": "status",
+        "unless_value": "completed"
+      },
+      {
+        "id": "pod_missing",
+        "title": "Proof of delivery is available",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare an evidence request for the authorized carrier-contact owner.",
+        "field": "pod_ref"
+      },
+      {
+        "id": "delivery_variance",
+        "title": "Delivered quantity matches shipped quantity",
+        "table": "records",
+        "kind": "compare",
+        "action": "Assemble shipment and receipt evidence for shortage or over-delivery review.",
+        "field": "delivered_qty",
+        "other_field": "shipped_qty",
+        "operator": "eq"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "ship-1",
+            "shipment_ref": "SHP-201",
+            "expected_delivery": "2026-10-31",
+            "status": "completed",
+            "shipped_qty": 10,
+            "delivered_qty": 10,
+            "pod_ref": "POD-201",
+            "source": "sample://logistics_exceptions/records/ship-1"
+          },
+          {
+            "id": "ship-2",
+            "shipment_ref": "SHP-202",
+            "expected_delivery": "2026-11-01",
+            "status": "exception_open",
+            "shipped_qty": 8,
+            "delivered_qty": 8,
+            "pod_ref": "POD-202",
+            "source": "sample://logistics_exceptions/records/ship-2"
+          },
+          {
+            "id": "ship-3",
+            "shipment_ref": "SHP-203",
+            "expected_delivery": "2026-10-30",
+            "status": "completed",
+            "shipped_qty": 12,
+            "delivered_qty": 12,
+            "pod_ref": "",
+            "source": "sample://logistics_exceptions/records/ship-3"
+          },
+          {
+            "id": "ship-4",
+            "shipment_ref": "SHP-204",
+            "expected_delivery": "2026-10-31",
+            "status": "completed",
+            "shipped_qty": 9,
+            "delivered_qty": 7,
+            "pod_ref": "POD-204",
+            "source": "sample://logistics_exceptions/records/ship-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "shipment_late:ship-2",
+        "pod_missing:ship-3",
+        "delivery_variance:ship-4"
+      ]
+    }
+  },
+  {
+    "id": "quality_operations",
+    "title": "Quality Operations",
+    "summary": "Review defect and complaint records for missing investigation evidence, repeat identifiers and overdue corrective actions.",
+    "owner_role": "Quality manager",
+    "specialists": [
+      "ops_quality_control",
+      "ops_capa",
+      "ops_production_quality"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Defects and corrective actions",
+        "description": "Approved structured defect/complaint and corrective-action export. Human reviewers supply classifications and investigation references; this workflow checks completeness and deadlines.",
+        "columns": [
+          "id",
+          "defect_ref",
+          "classification",
+          "investigation_ref",
+          "action_due",
+          "action_status",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Quality-management records export",
+        "access": "read",
+        "prerequisites": [
+          "Workspace-scoped read-only quality or complaint export",
+          "Quality owner verifies classifications and corrective-action links",
+          "Retention rules and handling restrictions for complaints"
+        ]
+      }
+    ],
+    "sample_goal": "Find missing investigation evidence, an overdue action and a repeated defect reference in a synthetic quality review.",
+    "deliverable": "Quality evidence and corrective-action review worklist",
+    "acceptance": [
+      "Findings preserve defect and complaint references",
+      "All duplicate members are listed without deletion",
+      "Closed actions do not generate deadline findings",
+      "No product disposition or safety certification is implied"
+    ],
+    "stop_conditions": [
+      "Escalate safety-related complaints to the quality owner",
+      "Stop when defect identifiers or action ownership cannot be reconciled"
+    ],
+    "blocked_actions": [
+      "Release or quarantine products",
+      "Close corrective actions",
+      "Certify product safety",
+      "Submit regulatory reports"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "investigation_missing",
+        "title": "Investigation evidence is linked",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the quality owner to supply investigation evidence before disposition review.",
+        "field": "investigation_ref"
+      },
+      {
+        "id": "corrective_action_due",
+        "title": "Open corrective action is overdue",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare an overdue corrective-action review for the quality owner.",
+        "field": "action_due",
+        "within_days": 0,
+        "unless_field": "action_status",
+        "unless_value": "closed"
+      },
+      {
+        "id": "duplicate_defect",
+        "title": "Defect reference is unique in this review",
+        "table": "records",
+        "kind": "unique",
+        "action": "Review repeated records while preserving source history before proposing deduplication.",
+        "fields": [
+          "defect_ref"
+        ]
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "quality-1",
+            "defect_ref": "DEF-301",
+            "classification": "packaging",
+            "investigation_ref": "INV-301",
+            "action_due": "2026-10-20",
+            "action_status": "closed",
+            "source": "sample://quality_operations/records/quality-1"
+          },
+          {
+            "id": "quality-2",
+            "defect_ref": "DEF-302",
+            "classification": "labeling",
+            "investigation_ref": "",
+            "action_due": "2026-11-15",
+            "action_status": "open",
+            "source": "sample://quality_operations/records/quality-2"
+          },
+          {
+            "id": "quality-3",
+            "defect_ref": "DEF-303",
+            "classification": "fit",
+            "investigation_ref": "INV-303",
+            "action_due": "2026-11-01",
+            "action_status": "open",
+            "source": "sample://quality_operations/records/quality-3"
+          },
+          {
+            "id": "quality-4",
+            "defect_ref": "DEF-303",
+            "classification": "fit",
+            "investigation_ref": "INV-303",
+            "action_due": "2026-11-15",
+            "action_status": "open",
+            "source": "sample://quality_operations/records/quality-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "investigation_missing:quality-2",
+        "corrective_action_due:quality-3",
+        "duplicate_defect:quality-3",
+        "duplicate_defect:quality-4"
+      ]
+    }
+  },
+  {
+    "id": "maintenance_planning",
+    "title": "Maintenance Planning",
+    "summary": "Review preventive-maintenance deadlines, qualified reviewers and inspection evidence to prepare a maintenance schedule.",
+    "owner_role": "Maintenance supervisor",
+    "specialists": [
+      "ops_maintenance_pm",
+      "ops_reliability",
+      "ops_asset_mgmt"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Maintenance and inspection register",
+        "description": "Asset-level maintenance export with approved due dates, inspection references and assigned qualified reviewers. Safety decisions and physical work remain with qualified personnel.",
+        "columns": [
+          "id",
+          "asset_ref",
+          "maintenance_due",
+          "work_status",
+          "qualified_reviewer",
+          "inspection_ref",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Asset and maintenance-system exports",
+        "access": "read",
+        "prerequisites": [
+          "Read-only asset export with verified identifiers",
+          "Qualified supervisor owns prioritization and safety decisions",
+          "Approved maintenance intervals and inspection evidence retention"
+        ]
+      }
+    ],
+    "sample_goal": "Flag near-term maintenance, an unassigned qualified reviewer and missing inspection evidence across synthetic assets.",
+    "deliverable": "Preventive-maintenance preparation list with evidence gaps",
+    "acceptance": [
+      "Due-within-seven-days findings preserve asset and due-date evidence",
+      "Missing qualified reviewers are explicit exceptions",
+      "Completed work is excluded from upcoming maintenance",
+      "The schedule is a proposal without equipment-operation authority"
+    ],
+    "stop_conditions": [
+      "Escalate safety-critical findings to qualified personnel",
+      "Stop for conflicting asset identities or maintenance intervals"
+    ],
+    "blocked_actions": [
+      "Operate or isolate equipment",
+      "Issue work permits",
+      "Change safety settings",
+      "Declare equipment fit for service"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "maintenance_due",
+        "title": "Open maintenance falls within seven days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare work for supervisor scheduling and qualified safety review.",
+        "field": "maintenance_due",
+        "within_days": 7,
+        "unless_field": "work_status",
+        "unless_value": "completed"
+      },
+      {
+        "id": "qualified_review_missing",
+        "title": "Qualified reviewer is assigned",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign a qualified reviewer before prioritizing or authorizing maintenance.",
+        "field": "qualified_reviewer"
+      },
+      {
+        "id": "inspection_missing",
+        "title": "Inspection evidence is linked",
+        "table": "records",
+        "kind": "required",
+        "action": "Request the approved inspection record for supervisor review.",
+        "field": "inspection_ref"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "asset-1",
+            "asset_ref": "AS-401",
+            "maintenance_due": "2026-11-20",
+            "work_status": "open",
+            "qualified_reviewer": "Maintenance engineer",
+            "inspection_ref": "INS-401",
+            "source": "sample://maintenance_planning/records/asset-1"
+          },
+          {
+            "id": "asset-2",
+            "asset_ref": "AS-402",
+            "maintenance_due": "2026-11-07",
+            "work_status": "open",
+            "qualified_reviewer": "Maintenance engineer",
+            "inspection_ref": "INS-402",
+            "source": "sample://maintenance_planning/records/asset-2"
+          },
+          {
+            "id": "asset-3",
+            "asset_ref": "AS-403",
+            "maintenance_due": "2026-11-22",
+            "work_status": "open",
+            "qualified_reviewer": "",
+            "inspection_ref": "INS-403",
+            "source": "sample://maintenance_planning/records/asset-3"
+          },
+          {
+            "id": "asset-4",
+            "asset_ref": "AS-404",
+            "maintenance_due": "2026-10-20",
+            "work_status": "completed",
+            "qualified_reviewer": "Maintenance engineer",
+            "inspection_ref": "",
+            "source": "sample://maintenance_planning/records/asset-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "maintenance_due:asset-2",
+        "qualified_review_missing:asset-3",
+        "inspection_missing:asset-4"
+      ]
+    }
+  },
+  {
+    "id": "construction_project_controls",
+    "title": "Construction Project Controls",
+    "summary": "Review RFIs, submittals and change requests against decision dates, referenced drawings and assigned project owners.",
+    "owner_role": "Project controls manager",
+    "specialists": [
+      "con_rfi",
+      "con_submittal_log",
+      "con_change_orders"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Project decision and document register",
+        "description": "Approved RFI, submittal and change-request export with human-verified schedule dates and document references. No design adequacy or construction safety determination is made.",
+        "columns": [
+          "id",
+          "item_type",
+          "document_ref",
+          "decision_due",
+          "status",
+          "decision_owner",
+          "drawing_or_scope_ref",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Construction document-control export",
+        "access": "read",
+        "prerequisites": [
+          "Project-scoped read-only document register",
+          "Project manager verifies drawing revisions and required decision dates",
+          "Authorized technical and commercial reviewers"
+        ]
+      }
+    ],
+    "sample_goal": "Find an overdue RFI, undocumented change request and unassigned submittal while preserving a closed item.",
+    "deliverable": "Project controls exception and decision packet",
+    "acceptance": [
+      "Exceptions retain item type, identifier and source",
+      "Open decisions due within three days are surfaced",
+      "Closed items do not create deadline findings",
+      "Technical responses and commitments remain for authorized review"
+    ],
+    "stop_conditions": [
+      "Stop if drawing revisions or project scope are uncertain",
+      "Escalate engineering, safety and contractual interpretation to qualified reviewers"
+    ],
+    "blocked_actions": [
+      "Issue construction instructions",
+      "Approve designs or submittals",
+      "Sign change orders",
+      "Commit cost or schedule changes"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "decision_due",
+        "title": "Open project decision is due within three days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the pending decision and schedule-impact evidence for the project manager.",
+        "field": "decision_due",
+        "within_days": 3,
+        "unless_field": "status",
+        "unless_value": "closed"
+      },
+      {
+        "id": "scope_evidence_missing",
+        "title": "Drawing or scope evidence is referenced",
+        "table": "records",
+        "kind": "required",
+        "action": "Resolve current drawing or change-scope evidence before response review.",
+        "field": "drawing_or_scope_ref"
+      },
+      {
+        "id": "decision_owner_missing",
+        "title": "Decision owner is assigned",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign the authorized reviewer for the pending project item.",
+        "field": "decision_owner"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "control-1",
+            "item_type": "RFI",
+            "document_ref": "RFI-501",
+            "decision_due": "2026-10-20",
+            "status": "closed",
+            "decision_owner": "Project manager",
+            "drawing_or_scope_ref": "DR-A1-r3",
+            "source": "sample://construction_project_controls/records/control-1"
+          },
+          {
+            "id": "control-2",
+            "item_type": "RFI",
+            "document_ref": "RFI-502",
+            "decision_due": "2026-11-01",
+            "status": "open",
+            "decision_owner": "Design reviewer",
+            "drawing_or_scope_ref": "DR-A2-r1",
+            "source": "sample://construction_project_controls/records/control-2"
+          },
+          {
+            "id": "control-3",
+            "item_type": "change_request",
+            "document_ref": "CR-503",
+            "decision_due": "2026-11-18",
+            "status": "open",
+            "decision_owner": "Project manager",
+            "drawing_or_scope_ref": "",
+            "source": "sample://construction_project_controls/records/control-3"
+          },
+          {
+            "id": "control-4",
+            "item_type": "submittal",
+            "document_ref": "SUB-504",
+            "decision_due": "2026-11-20",
+            "status": "open",
+            "decision_owner": "",
+            "drawing_or_scope_ref": "DR-M1-r2",
+            "source": "sample://construction_project_controls/records/control-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "decision_due:control-2",
+        "scope_evidence_missing:control-3",
+        "decision_owner_missing:control-4"
+      ]
+    }
+  },
+  {
+    "id": "property_operations",
+    "title": "Property Operations",
+    "summary": "Prepare maintenance, lease-obligation and inspection follow-through from approved property operations records.",
+    "owner_role": "Property operations manager",
+    "specialists": [
+      "re_property_ops",
+      "re_maintenance_re",
+      "re_lease_compliance"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Property operations register",
+        "description": "Property-scoped work-order, inspection and lease-obligation export without tenant eligibility or screening information. Human-reviewed obligation dates and required vendor-document references are inputs.",
+        "columns": [
+          "id",
+          "property_ref",
+          "item_type",
+          "due_date",
+          "status",
+          "vendor_document_ref",
+          "responsible_owner",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Property-management records export",
+        "access": "read",
+        "prerequisites": [
+          "Read-only portfolio export restricted to authorized properties",
+          "Authorized reviewer verifies lease obligations and deadlines",
+          "Exclude screening, protected traits and adverse-decision data"
+        ]
+      }
+    ],
+    "sample_goal": "Find an overdue property obligation, missing vendor document and unassigned inspection follow-through.",
+    "deliverable": "Property follow-through worklist and evidence gaps",
+    "acceptance": [
+      "Items retain property, type and evidence reference",
+      "Completed items do not generate deadline findings",
+      "Vendor-document and inspection-ownership gaps remain explicit",
+      "No tenant eligibility or adverse decision is made"
+    ],
+    "stop_conditions": [
+      "Escalate urgent safety or habitability concerns to the property manager",
+      "Stop if inputs require tenant eligibility or adverse decisions"
+    ],
+    "blocked_actions": [
+      "Make tenant eligibility or adverse decisions",
+      "Issue tenant notices",
+      "Authorize vendor spend",
+      "Change lease terms"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "obligation_overdue",
+        "title": "Open property obligation is overdue",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the obligation and supporting record for property-manager review.",
+        "field": "due_date",
+        "within_days": 0,
+        "unless_field": "status",
+        "unless_value": "completed"
+      },
+      {
+        "id": "vendor_document_missing",
+        "title": "Required vendor paperwork is linked",
+        "table": "records",
+        "kind": "required",
+        "action": "Request required vendor evidence through the authorized property owner.",
+        "field": "vendor_document_ref"
+      },
+      {
+        "id": "followthrough_owner_missing",
+        "title": "Follow-through owner is assigned",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign an owner to track maintenance or inspection follow-through.",
+        "field": "responsible_owner"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "property-1",
+            "property_ref": "PROP-601",
+            "item_type": "maintenance",
+            "due_date": "2026-10-25",
+            "status": "completed",
+            "vendor_document_ref": "VENDOR-601",
+            "responsible_owner": "Property supervisor",
+            "source": "sample://property_operations/records/property-1"
+          },
+          {
+            "id": "property-2",
+            "property_ref": "PROP-602",
+            "item_type": "lease_obligation",
+            "due_date": "2026-11-01",
+            "status": "open",
+            "vendor_document_ref": "VENDOR-602",
+            "responsible_owner": "Property supervisor",
+            "source": "sample://property_operations/records/property-2"
+          },
+          {
+            "id": "property-3",
+            "property_ref": "PROP-603",
+            "item_type": "maintenance",
+            "due_date": "2026-11-20",
+            "status": "open",
+            "vendor_document_ref": "",
+            "responsible_owner": "Property supervisor",
+            "source": "sample://property_operations/records/property-3"
+          },
+          {
+            "id": "property-4",
+            "property_ref": "PROP-604",
+            "item_type": "inspection",
+            "due_date": "2026-11-22",
+            "status": "open",
+            "vendor_document_ref": "VENDOR-604",
+            "responsible_owner": "",
+            "source": "sample://property_operations/records/property-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "obligation_overdue:property-2",
+        "vendor_document_missing:property-3",
+        "followthrough_owner_missing:property-4"
+      ]
+    }
+  },
+  {
+    "id": "grant_operations",
+    "title": "Grant Operations",
+    "summary": "Check opportunity and reporting packets against supplied funder criteria, deadlines and required evidence.",
+    "owner_role": "Grants manager",
+    "specialists": [
+      "edu_grants_pipeline",
+      "edu_grant_writing",
+      "edu_grant_reports"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Grant opportunity and reporting requirements",
+        "description": "One row per application or report for a single funder criterion set. Source owners supply published accepted applicant categories and verify packet deadlines and evidence. This workflow does not search for opportunities or infer legal eligibility.",
+        "columns": [
+          "id",
+          "packet_type",
+          "applicant_category",
+          "deadline",
+          "packet_status",
+          "budget_evidence_ref",
+          "source"
+        ]
+      },
+      {
+        "key": "accepted_categories",
+        "label": "Published accepted applicant categories",
+        "description": "One unique category per row from one funder criterion set verified by the grants owner. A match is a category check, not full eligibility certification.",
+        "columns": [
+          "id",
+          "source",
+          "category"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Published funder and grant-management exports",
+        "access": "read",
+        "prerequisites": [
+          "Approved funder notice and read-only grant-management export",
+          "Grants owner verifies criterion transcription, applicant categories and deadline timezone",
+          "Named authorized signatory and finance reviewer"
+        ]
+      }
+    ],
+    "sample_goal": "Find a category mismatch, a near-term submission and missing budget evidence in synthetic grant packets.",
+    "deliverable": "Grant requirement and reporting readiness worklist",
+    "acceptance": [
+      "Category matching uses explicitly supplied accepted categories",
+      "Deadline findings cite the published requirement",
+      "Missing budget evidence is escalated before submission review",
+      "Applications and certifications require an authorized signatory"
+    ],
+    "stop_conditions": [
+      "Stop where eligibility requires interpretation or source dates conflict",
+      "Escalate unsupported financial or program certifications"
+    ],
+    "blocked_actions": [
+      "Submit applications or reports",
+      "Certify eligibility or statements",
+      "Commit matching funds",
+      "Contact funders"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "category_mismatch",
+        "title": "Applicant category is accepted by the supplied funder criterion",
+        "table": "records",
+        "kind": "reference",
+        "action": "Ask the grants owner to review the stated applicant category against the published criterion.",
+        "field": "applicant_category",
+        "reference_table": "accepted_categories",
+        "reference_field": "category"
+      },
+      {
+        "id": "grant_deadline",
+        "title": "Unsubmitted packet is due within fourteen days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare outstanding packet requirements and the responsible signatory for review.",
+        "field": "deadline",
+        "within_days": 14,
+        "unless_field": "packet_status",
+        "unless_value": "submitted"
+      },
+      {
+        "id": "budget_evidence_missing",
+        "title": "Budget or expenditure evidence is linked",
+        "table": "records",
+        "kind": "required",
+        "action": "Obtain finance-reviewed budget or expenditure evidence before approval.",
+        "field": "budget_evidence_ref"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "grant-1",
+            "packet_type": "application",
+            "applicant_category": "nonprofit",
+            "deadline": "2026-12-10",
+            "packet_status": "draft",
+            "budget_evidence_ref": "BUD-701",
+            "source": "sample://grant_operations/records/grant-1"
+          },
+          {
+            "id": "grant-2",
+            "packet_type": "application",
+            "applicant_category": "business",
+            "deadline": "2026-12-15",
+            "packet_status": "draft",
+            "budget_evidence_ref": "BUD-702",
+            "source": "sample://grant_operations/records/grant-2"
+          },
+          {
+            "id": "grant-3",
+            "packet_type": "report",
+            "applicant_category": "nonprofit",
+            "deadline": "2026-11-08",
+            "packet_status": "draft",
+            "budget_evidence_ref": "",
+            "source": "sample://grant_operations/records/grant-3"
+          }
+        ],
+        "accepted_categories": [
+          {
+            "id": "category-1",
+            "source": "sample://grant_operations/notice/criterion-1",
+            "category": "nonprofit"
+          }
+        ]
+      },
+      "expected_findings": [
+        "category_mismatch:grant-2",
+        "grant_deadline:grant-3",
+        "budget_evidence_missing:grant-3"
+      ]
+    }
+  },
+  {
+    "id": "training_certification_operations",
+    "title": "Training & Certification Operations",
+    "summary": "Review assigned role requirements, completion evidence and certificate expiry dates to prepare training plans.",
+    "owner_role": "Learning and compliance manager",
+    "specialists": [
+      "hr_training_track",
+      "hr_compliance_training",
+      "hr_learning_content"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Required learning and certification register",
+        "description": "Approved role-assignment and learning export using pseudonymous worker references. Owners map required modules and certificates to roles; this workflow checks completeness and expiry.",
+        "columns": [
+          "id",
+          "worker_ref",
+          "role",
+          "requirement",
+          "completion_status",
+          "valid_until",
+          "completion_evidence_ref",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Learning-management and certification exports",
+        "access": "read",
+        "prerequisites": [
+          "Authorized read-only learning and role-requirement exports",
+          "Learning owner verifies role mapping and acceptable completion evidence",
+          "Minimum necessary employee data and approved retention"
+        ]
+      }
+    ],
+    "sample_goal": "Find an incomplete course, expiring certificate and missing completion evidence in synthetic learning records.",
+    "deliverable": "Training and certification gap worklist with proposed next steps",
+    "acceptance": [
+      "Course gaps name the supplied role and requirement",
+      "Expiring credentials are identified within thirty days",
+      "Completion assertions retain source evidence",
+      "Results are not used to make employment decisions"
+    ],
+    "stop_conditions": [
+      "Stop when role requirements or certificate validity cannot be verified",
+      "Escalate regulated practice authorization to qualified compliance owners"
+    ],
+    "blocked_actions": [
+      "Enroll staff in paid training",
+      "Send reminders",
+      "Certify qualifications or authorize practice",
+      "Make employment or disciplinary decisions"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "training_incomplete",
+        "title": "Required learning is completed",
+        "table": "records",
+        "kind": "equals",
+        "action": "Prepare a completion plan for the learning owner to review.",
+        "field": "completion_status",
+        "value": "completed"
+      },
+      {
+        "id": "certificate_expiring",
+        "title": "Credential expires within thirty days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare renewal requirements for the learning or compliance owner.",
+        "field": "valid_until",
+        "within_days": 30
+      },
+      {
+        "id": "completion_evidence_missing",
+        "title": "Completion evidence is linked",
+        "table": "records",
+        "kind": "required",
+        "action": "Verify completion against the approved learning or certification record.",
+        "field": "completion_evidence_ref"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "training-1",
+            "worker_ref": "WORKER-801",
+            "role": "Technician",
+            "requirement": "Equipment induction",
+            "completion_status": "completed",
+            "valid_until": "2027-05-30",
+            "completion_evidence_ref": "CERT-801",
+            "source": "sample://training_certification_operations/records/training-1"
+          },
+          {
+            "id": "training-2",
+            "worker_ref": "WORKER-802",
+            "role": "Technician",
+            "requirement": "Safety refresher",
+            "completion_status": "incomplete",
+            "valid_until": "2027-05-30",
+            "completion_evidence_ref": "LMS-802-progress",
+            "source": "sample://training_certification_operations/records/training-2"
+          },
+          {
+            "id": "training-3",
+            "worker_ref": "WORKER-803",
+            "role": "Supervisor",
+            "requirement": "Safety credential",
+            "completion_status": "completed",
+            "valid_until": "2026-11-20",
+            "completion_evidence_ref": "CERT-803",
+            "source": "sample://training_certification_operations/records/training-3"
+          },
+          {
+            "id": "training-4",
+            "worker_ref": "WORKER-804",
+            "role": "Supervisor",
+            "requirement": "Ethics training",
+            "completion_status": "completed",
+            "valid_until": "2027-05-30",
+            "completion_evidence_ref": "",
+            "source": "sample://training_certification_operations/records/training-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "training_incomplete:training-2",
+        "certificate_expiring:training-3",
+        "completion_evidence_missing:training-4"
+      ]
+    }
+  },
+  {
+    "id": "product_feedback_operations",
+    "title": "Product Feedback Operations",
+    "summary": "Review source-linked, human-tagged feedback themes and prioritization inputs before a product owner sets priorities.",
+    "owner_role": "Product manager",
+    "specialists": [
+      "pe_feedback_synthesis",
+      "cx_ticket_insights",
+      "pe_roadmap"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Feedback theme and priority evidence",
+        "description": "Approved support, interview and request export with source-owner supplied theme tags and priority rationale. This deterministic workflow checks those inputs and duplicate evidence; it does not invent themes or score customers.",
+        "columns": [
+          "id",
+          "feedback_ref",
+          "channel",
+          "theme",
+          "priority_rationale_ref",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Support and product-research exports",
+        "access": "read",
+        "prerequisites": [
+          "Read-only support and research exports with consent and redaction checks",
+          "Product owner supplies theme tags and priority rationale",
+          "Stable originating feedback references across sources"
+        ]
+      }
+    ],
+    "sample_goal": "Find an untagged item, unsupported priority proposal and repeated source item in synthetic feedback.",
+    "deliverable": "Feedback theme evidence register and prioritization review exceptions",
+    "acceptance": [
+      "Proposed themes retain originating feedback references",
+      "Every duplicate member is flagged to prevent double counting",
+      "Missing priority rationale remains an explicit gap",
+      "No roadmap commitment or customer-level decision is made"
+    ],
+    "stop_conditions": [
+      "Stop if research consent or redaction status is unknown",
+      "Escalate conflicting tags and unsupported priority rationales"
+    ],
+    "blocked_actions": [
+      "Commit roadmap dates",
+      "Send customer promises",
+      "Alter source feedback",
+      "Make customer eligibility decisions"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "theme_missing",
+        "title": "Feedback has a reviewed theme tag",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the product owner to assign a theme using cited feedback.",
+        "field": "theme"
+      },
+      {
+        "id": "priority_evidence_missing",
+        "title": "Priority proposal has supporting rationale",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare source feedback for product-owner prioritization review.",
+        "field": "priority_rationale_ref"
+      },
+      {
+        "id": "duplicate_feedback",
+        "title": "Originating feedback reference is unique",
+        "table": "records",
+        "kind": "unique",
+        "action": "Review repeated source items before counting evidence or changing priorities.",
+        "fields": [
+          "feedback_ref"
+        ]
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "feedback-1",
+            "feedback_ref": "FB-901",
+            "channel": "support",
+            "theme": "Search relevance",
+            "priority_rationale_ref": "PRIORITY-901",
+            "source": "sample://product_feedback_operations/records/feedback-1"
+          },
+          {
+            "id": "feedback-2",
+            "feedback_ref": "FB-902",
+            "channel": "interview",
+            "theme": "",
+            "priority_rationale_ref": "PRIORITY-902",
+            "source": "sample://product_feedback_operations/records/feedback-2"
+          },
+          {
+            "id": "feedback-3",
+            "feedback_ref": "FB-903",
+            "channel": "feature_request",
+            "theme": "Offline access",
+            "priority_rationale_ref": "",
+            "source": "sample://product_feedback_operations/records/feedback-3"
+          },
+          {
+            "id": "feedback-4",
+            "feedback_ref": "FB-903",
+            "channel": "support",
+            "theme": "Offline access",
+            "priority_rationale_ref": "PRIORITY-903",
+            "source": "sample://product_feedback_operations/records/feedback-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "theme_missing:feedback-2",
+        "priority_evidence_missing:feedback-3",
+        "duplicate_feedback:feedback-3",
+        "duplicate_feedback:feedback-4"
+      ]
+    }
+  },
+  {
+    "id": "content_production_operations",
+    "title": "Content Production Operations",
+    "summary": "Review content packets against approved briefs, claim evidence and editorial review status before publication decisions.",
+    "owner_role": "Content operations manager",
+    "specialists": [
+      "mkt_content_ops",
+      "mkt_content_calendar",
+      "mkt_brand_check"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Content production and review register",
+        "description": "Approved briefs and draft-asset metadata with claim evidence references and editorial status. This workflow prepares a review worklist; source documents and draft assets are not fetched or published.",
+        "columns": [
+          "id",
+          "asset_ref",
+          "channel",
+          "approved_brief_ref",
+          "claim_evidence_ref",
+          "editorial_status",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Content and evidence-library exports",
+        "access": "read",
+        "prerequisites": [
+          "Read-only approved brief and draft-asset export",
+          "Editor verifies factual sources and permitted asset rights",
+          "Named brand/legal reviewers and separate publisher authority"
+        ]
+      }
+    ],
+    "sample_goal": "Find a draft without an approved brief, one without claim evidence and one awaiting editorial review.",
+    "deliverable": "Content review packet and publication-readiness exceptions",
+    "acceptance": [
+      "Assets are tied to approved brief references",
+      "Missing claim evidence is surfaced before publication review",
+      "Editorial status is preserved without granting publishing authority",
+      "Outbound assets remain drafts"
+    ],
+    "stop_conditions": [
+      "Stop for unsupported factual claims or unclear rights",
+      "Escalate legal or regulated claims to authorized reviewers"
+    ],
+    "blocked_actions": [
+      "Publish content",
+      "Send campaigns",
+      "Purchase media or stock assets",
+      "Approve legal claims"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "approved_brief_missing",
+        "title": "Asset is linked to an approved brief",
+        "table": "records",
+        "kind": "required",
+        "action": "Obtain an approved brief before expanding or routing the draft.",
+        "field": "approved_brief_ref"
+      },
+      {
+        "id": "claim_evidence_missing",
+        "title": "Factual claim evidence is linked",
+        "table": "records",
+        "kind": "required",
+        "action": "Route unsupported claims to the editor for source verification or removal.",
+        "field": "claim_evidence_ref"
+      },
+      {
+        "id": "editorial_review_pending",
+        "title": "Editorial review is recorded",
+        "table": "records",
+        "kind": "equals",
+        "action": "Prepare the draft and sources for editorial review; publishing needs separate authority.",
+        "field": "editorial_status",
+        "value": "reviewed"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "content-1",
+            "asset_ref": "ASSET-1001",
+            "channel": "article",
+            "approved_brief_ref": "BRIEF-1001",
+            "claim_evidence_ref": "FACT-1001",
+            "editorial_status": "reviewed",
+            "source": "sample://content_production_operations/records/content-1"
+          },
+          {
+            "id": "content-2",
+            "asset_ref": "ASSET-1002",
+            "channel": "email",
+            "approved_brief_ref": "",
+            "claim_evidence_ref": "FACT-1002",
+            "editorial_status": "reviewed",
+            "source": "sample://content_production_operations/records/content-2"
+          },
+          {
+            "id": "content-3",
+            "asset_ref": "ASSET-1003",
+            "channel": "social",
+            "approved_brief_ref": "BRIEF-1003",
+            "claim_evidence_ref": "",
+            "editorial_status": "reviewed",
+            "source": "sample://content_production_operations/records/content-3"
+          },
+          {
+            "id": "content-4",
+            "asset_ref": "ASSET-1004",
+            "channel": "article",
+            "approved_brief_ref": "BRIEF-1004",
+            "claim_evidence_ref": "FACT-1004",
+            "editorial_status": "pending",
+            "source": "sample://content_production_operations/records/content-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "approved_brief_missing:content-2",
+        "claim_evidence_missing:content-3",
+        "editorial_review_pending:content-4"
+      ]
+    }
+  },
+  {
+    "id": "business_continuity_operations",
+    "title": "Business Continuity Operations",
+    "summary": "Review recovery plans, contact ownership and exercise evidence against approved recovery objectives.",
+    "owner_role": "Business continuity manager",
+    "specialists": [
+      "risk_bcp_coordination",
+      "itgrc_backup_dr",
+      "risk_crisis_simulation"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Critical-process recovery and exercise register",
+        "description": "Approved business-impact and exercise export with verified objectives, measured exercise duration and next review dates. Checks do not certify recovery readiness or initiate failover.",
+        "columns": [
+          "id",
+          "process_ref",
+          "measured_recovery_minutes",
+          "recovery_objective_minutes",
+          "recovery_owner",
+          "plan_review_due",
+          "source"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Continuity-plan and exercise evidence exports",
+        "access": "read",
+        "prerequisites": [
+          "Read-only continuity and exercise records restricted to this workspace",
+          "Qualified owners verify recovery objectives and exercise measurements",
+          "Approved handling and retention for contacts and dependencies"
+        ]
+      }
+    ],
+    "sample_goal": "Find a recovery-objective miss, missing owner and overdue plan review across synthetic processes.",
+    "deliverable": "Continuity preparedness gap register and exercise follow-up packet",
+    "acceptance": [
+      "Recovery gaps compare exercise duration with the approved objective",
+      "Owner and plan-review gaps retain process evidence",
+      "Samples are not counted as live recovery tests",
+      "Recovery decisions remain with authorized incident leaders"
+    ],
+    "stop_conditions": [
+      "Stop for unverified recovery objectives or exercise measurements",
+      "Escalate critical dependencies and emergencies to authorized incident leaders"
+    ],
+    "blocked_actions": [
+      "Trigger failover or restore",
+      "Change backup or recovery settings",
+      "Contact emergency responders",
+      "Declare recovery readiness"
+    ],
+    "cadence": "monthly",
+    "rules": [
+      {
+        "id": "recovery_objective_miss",
+        "title": "Exercise recovery meets its approved objective",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare exercise evidence and dependency gaps for recovery-plan owner review.",
+        "field": "measured_recovery_minutes",
+        "other_field": "recovery_objective_minutes",
+        "operator": "lte"
+      },
+      {
+        "id": "recovery_owner_missing",
+        "title": "Recovery owner is assigned",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign the accountable process owner before the next exercise.",
+        "field": "recovery_owner"
+      },
+      {
+        "id": "plan_review_overdue",
+        "title": "Recovery plan review is overdue",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the plan, contact tree and unresolved exercise findings for review.",
+        "field": "plan_review_due",
+        "within_days": 0
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "continuity-1",
+            "process_ref": "PROC-1101",
+            "measured_recovery_minutes": 45,
+            "recovery_objective_minutes": 60,
+            "recovery_owner": "Process owner A",
+            "plan_review_due": "2027-01-15",
+            "source": "sample://business_continuity_operations/records/continuity-1"
+          },
+          {
+            "id": "continuity-2",
+            "process_ref": "PROC-1102",
+            "measured_recovery_minutes": 180,
+            "recovery_objective_minutes": 120,
+            "recovery_owner": "Process owner B",
+            "plan_review_due": "2027-01-15",
+            "source": "sample://business_continuity_operations/records/continuity-2"
+          },
+          {
+            "id": "continuity-3",
+            "process_ref": "PROC-1103",
+            "measured_recovery_minutes": 50,
+            "recovery_objective_minutes": 90,
+            "recovery_owner": "",
+            "plan_review_due": "2027-01-15",
+            "source": "sample://business_continuity_operations/records/continuity-3"
+          },
+          {
+            "id": "continuity-4",
+            "process_ref": "PROC-1104",
+            "measured_recovery_minutes": 30,
+            "recovery_objective_minutes": 60,
+            "recovery_owner": "Process owner D",
+            "plan_review_due": "2026-11-01",
+            "source": "sample://business_continuity_operations/records/continuity-4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "recovery_objective_miss:continuity-2",
+        "recovery_owner_missing:continuity-3",
+        "plan_review_overdue:continuity-4"
+      ]
+    }
+  }
+]

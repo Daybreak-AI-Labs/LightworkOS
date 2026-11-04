@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Learning history · Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .elv-shell{display:grid;gap:var(--space-4)}
+  .elv-head{align-items:center;display:flex;flex-wrap:wrap;gap:var(--space-3);justify-content:space-between}
+  .elv-head h2{margin:0}
+  .elv-metrics{display:grid;gap:var(--space-3);grid-template-columns:repeat(3,minmax(0,1fr))}
+  .elv-metric strong{display:block;font-size:1.5rem}.elv-metric span{color:var(--text-muted);font-size:.85rem}
+  .elv-table-wrap{max-height:32rem;overflow:auto}
+  .elv-table{border-collapse:collapse;font-size:.9rem;width:100%}
+  .elv-table th,.elv-table td{border-bottom:1px solid color-mix(in srgb,var(--text) 12%,transparent);padding:.5rem;text-align:left;vertical-align:top}
+  .elv-key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size: var(--text-xs);word-break:break-all}
+  .elv-form{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center}
+  .elv-form .input{min-width:0;max-width:100%;flex:1 1 15rem}.elv-checkpoint{display:grid;gap:var(--space-3);min-width:0}.elv-checkpoint p{margin:0;overflow-wrap:anywhere}
+  .elv-verdict{font-weight: var(--font-bold);margin:.6rem 0 .2rem}
+  @media(max-width:700px){
+    .elv-metrics{grid-template-columns:1fr}
+    .elv-table,.elv-table tbody{display:block;width:100%;min-width:0}
+    .elv-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+    .elv-table tr{display:grid;gap:var(--space-2);padding-block:var(--space-3);border-bottom:1px solid var(--border)}
+    .elv-table td{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.4fr);gap:var(--space-2);padding:0;border:0;overflow-wrap:anywhere}
+    .elv-table td::before{content:attr(data-label);color:var(--text-muted);font-size:.85rem}
+    .elv-table td>details{grid-column:2;min-width:0}
+    .elv-table td[colspan]{display:block}
+    .elv-table td[colspan]::before{content:none}
+  }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+<div class="elv-shell" id="elv-root" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}" data-read-only="true">
+  {{ hero('Learning', 'Learning history',
+          lede='Recorded learning changes that Lightwork adopted or restored in this workspace.
+                This page checks the stored history; adopting a change does not establish that it improved results.') }}
+  <div class="elv-head">
+    <p class="muted" id="elv-health-detail" role="status" aria-live="polite">Loading.</p>
+    <button class="btn btn--ghost" id="elv-refresh" type="button">Refresh</button>
+  </div>
+  <p class="danger-text" id="elv-error" role="alert" aria-live="assertive"></p>
+
+  <section class="elv-metrics" aria-label="Learning history summary">
+    <article class="panel elv-metric"><span>Adopted changes shown</span><strong id="elv-promotions">—</strong></article>
+    <article class="panel elv-metric"><span>Restorations shown</span><strong id="elv-rollbacks">—</strong></article>
+    <article class="panel elv-metric"><span>Records shown</span><strong id="elv-entry-count">—</strong></article>
+  </section>
+
+  <section class="panel" aria-labelledby="elv-table-title">
+    <div class="elv-head"><h2 id="elv-table-title">History</h2><span class="muted" id="elv-table-note"></span></div>
+    <div class="elv-table-wrap"><table class="elv-table"><caption class="sr-only">Recorded learning changes that were adopted or restored</caption>
+      <thead><tr><th scope="col">When</th><th scope="col">What happened</th><th scope="col">Stored record check</th><th scope="col">Approved by a person</th><th scope="col">Receipt</th></tr></thead>
+      <tbody id="elv-entries"><tr><td colspan="5">Loading.</td></tr></tbody></table></div>
+  </section>
+
+  <section class="panel elv-checkpoint" id="history-checkpoint" aria-labelledby="elv-checkpoint-title">
+    <h2 id="elv-checkpoint-title">Keep a history checkpoint</h2>
+    <p>Save a small reference file somewhere you trust outside this installation. Later, choose that same original file to check whether the earlier stored history still matches. Newer records can be added without breaking the check.</p>
+    <p class="muted">This covers the complete native record of learning adoption, restoration, and their related recording steps. It contains dates, counts, and fingerprints, with no learned content. It does not cover every platform action or confirm who approved a change.</p>
+    <p class="muted" id="elv-checkpoint-status" role="status" aria-live="polite">Checking whether a complete checkpoint is available.</p>
+    <div><button class="btn btn--primary" id="elv-checkpoint-download" type="button" disabled>Download history checkpoint</button></div>
+    <form class="elv-form" id="elv-checkpoint-form" autocomplete="off">
+      <label for="elv-checkpoint-file">Your saved checkpoint</label>
+      <input type="file" id="elv-checkpoint-file" name="checkpoint" class="input" accept=".json,application/json" aria-describedby="elv-checkpoint-trust">
+      <button class="btn btn--ghost" type="submit">Compare saved history</button>
+    </form>
+    <p id="elv-checkpoint-result" role="status" aria-live="polite" hidden></p>
+    <p class="danger-text" id="elv-checkpoint-error" role="alert" aria-live="assertive"></p>
+    <p class="muted" id="elv-checkpoint-trust">The comparison depends on the original file you kept independently. A newly generated or edited file cannot establish what was recorded before. This is not external custody or proof that every real activity was recorded.</p>
+    <details><summary>Supported history and limits</summary><p class="muted">Only the permanent native learning history is supported, up to 4,096 stored records and 16 MB of source history. Older-format files and temporary histories cannot be checkpointed. The entire supported history must pass its stored checks; no partial download is offered. If history is unavailable, refresh before relying on it.</p></details>
+  </section>
+
+  <section class="panel" aria-labelledby="elv-verify-title">
+    <h2 id="elv-verify-title">Check a receipt</h2>
+    <p class="muted">Choose a downloaded receipt to check its contents and look for a matching change in this workspace's current history.
+      A match does not prove who approved it or establish independent custody of the whole history. No private approval material is accepted here.</p>
+    <form class="elv-form" id="elv-verify-form" autocomplete="off">
+      <label for="elv-receipt">Receipt file</label>
+      <input type="file" id="elv-receipt" name="receipt" class="input" accept=".json,application/json">
+      <button class="btn btn--primary" type="submit">Check receipt</button>
+    </form>
+    <div id="elv-verdict-box" hidden role="status" aria-live="polite"><p class="elv-verdict" id="elv-verdict" data-valid="false">—</p><p class="muted" id="elv-verdict-detail"></p></div>
+  </section>
+
+  <details class="panel">
+    <summary>About this record</summary>
+    <ul id="elv-limitations"><li>Loading.</li></ul>
+  </details>
+  <noscript><p class="panel">This page needs JavaScript turned on.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-evolution-ledger.js"></script>{% endblock %}

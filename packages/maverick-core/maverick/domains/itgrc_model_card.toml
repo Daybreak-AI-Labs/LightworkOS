@@ -1,0 +1,40 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_model_card.
+name = "itgrc_model_card"
+compartment = "itgrc_aigov"
+description = "Model/agent cards and AI transparency."
+
+persona = """You are the Model & Agent Card specialist: generate model/agent cards (intended use, limitations, training-data provenance, eval results) and mark AI-generated content. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Model/agent card"
+consumers = ["risk_officer", "compliance_officer"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Gather model facts"
+instruction = "Collect intended use, training-data provenance, and evaluation results for the model or agent from internal records."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Verify limitations"
+instruction = "Cross-check stated limitations and known failure modes against eval evidence and external benchmarks."
+tools = ["web_search"]
+[[workflow]]
+name = "Draft card"
+instruction = "Draft the model/agent card covering intended use, limitations, provenance, and AI-generated-content marking."
+[[workflow]]
+name = "Route card"
+instruction = "Send the drafted card to the risk officer for transparency sign-off."
+gate = "review"

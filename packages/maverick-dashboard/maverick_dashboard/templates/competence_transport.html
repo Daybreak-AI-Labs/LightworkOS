@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Share and qualify local rule structures · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{{ hero('Learning', 'Share and qualify local rule structures', lede='Separate useful rule structure from private values, then check it against your own local cases.') }}
+<div id="portable-rules" class="stack">
+  <section class="glass-card stack" aria-labelledby="pc-source-h">
+    <h2 id="pc-source-h">Share or qualify a rule</h2>
+    <p class="muted">Use one published taught answer step and two to eight retained original cases. This journey runs entirely on this installation.</p>
+    <p id="pc-disabled" class="muted" hidden>Sharing and qualifying local rules is off. An administrator can enable <strong>Share and qualify local rule structures</strong> in <a href="/settings#feature-portable_competence">Settings</a>. Your original requests remain available below.</p>
+    <form id="pc-form" class="stack">
+      <label for="pc-view">What would you like to do?</label><select id="pc-view" class="select"><option value="share">Share an anonymous rule structure</option><option value="qualify">Qualify a shared structure in my setting</option></select>
+      <div id="pc-import" class="stack" hidden><label for="pc-file">Shared rule structure file</label><input id="pc-file" class="input" type="file" accept=".lightwork,application/octet-stream,application/json"><p id="pc-file-status" class="muted">Choose a structural file. Nothing is installed or executed by opening it.</p><details id="pc-structure" hidden><summary>Complete shared structure</summary><p></p></details></div>
+      <label for="pc-flow">My published local rule</label><select id="pc-flow" class="select"><option value="">Choose a rule</option></select><p id="pc-version" class="muted"></p>
+      <fieldset><legend>Original cases with current reuse permission</legend><div id="pc-cases" class="stack"></div></fieldset>
+      <div class="lrn__actions"><button id="pc-review" type="button" class="btn btn--primary">Review complete structure and local work</button><button id="pc-refresh" type="button" class="btn btn--ghost">Refresh current choices</button></div>
+    </form>
+    <p id="pc-status" class="muted" role="status" aria-live="polite">Checking current choices…</p><p id="pc-error" class="danger-text" role="alert"></p><div id="pc-preview" class="stack" hidden></div>
+    <a href="/learning/recheck-rules" class="btn btn--ghost">Retain original case evidence</a>
+  </section>
+  <section class="glass-card stack" aria-labelledby="pc-original-h">
+    <h2 id="pc-original-h">Original requests and local answers</h2>
+    <label for="pc-history">Your original request</label><select id="pc-history" class="select"><option value="">Choose an original request</option></select>
+    <button id="pc-read" type="button" class="btn btn--ghost">Check original outcome</button><div id="pc-result" class="stack" aria-live="polite"></div>
+    <form id="pc-run" class="stack" hidden><h3>Run this qualified local rule</h3><p class="muted">This unpublished rule stays bound to its exact current qualification and case permissions. No AI or connected action runs.</p><div id="pc-inputs" class="stack"></div><button id="pc-run-review" type="button" class="btn btn--primary">Review this local answer</button></form>
+    <p class="muted">A lost reply never repeats the work. Historical request custody remains available when learning is off or reuse is withdrawn; private values and structural downloads need current permission.</p>
+  </section>
+  <details><summary>What leaves this installation?</summary><p class="muted">The shared file contains the displayed operations, anonymous value types and repeated-value relationships. Private names, thresholds, bounds, case inputs and source identity are omitted. Review that structure before sharing it: a downloaded copy cannot be recalled. Downloading still requires your current source and case permissions. A recipient supplies their own permitted cases and expected answers. Different possible answers remain unresolved; a usable local rule is limited to the displayed yes/no or whole-number bounds. Matching those local cases does not promise correct answers on future business work. Nothing is published automatically.</p></details>
+</div>
+<style>#portable-rules{min-width:0;overflow-wrap:anywhere}#portable-rules .glass-card{padding:var(--space-4)}#portable-rules fieldset{min-width:0;padding:var(--space-3)}#portable-rules .input,#portable-rules .select,#portable-rules .btn{width:100%;max-width:100%;min-width:0;box-sizing:border-box;white-space:normal}#portable-rules .pc-check{display:flex;align-items:flex-start;gap:var(--space-2)}#portable-rules .pc-check input{flex:none}#portable-rules .pc-case{padding:var(--space-3);border:1px solid var(--border);border-radius:var(--radius-md)}#portable-rules dd,#portable-rules details p{white-space:pre-wrap}#portable-rules dd{margin-inline-start:var(--space-3)}#portable-rules details{padding:var(--space-2)}</style>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-competence-transport.js" defer></script>{% endblock %}

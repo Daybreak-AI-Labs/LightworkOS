@@ -1,0 +1,69 @@
+{% from "_assets.html" import asset -%}
+{#- The Copilot's scripts are named here and loaded by lightwork-ui.js after
+    the page, or when the Copilot is first opened. -#}
+<button class="{{ 'cs-item cs-item--button' if copilot_chat_shell|default(false) else 'mv-copilot__fab' }}" id="mv-copilot-fab" type="button"
+        data-operations-src="{{ asset('lightwork-product-operations.js') }}" data-copilot-src="{{ asset('lightwork-copilot.js') }}"
+        aria-expanded="false" aria-controls="mv-copilot"
+        aria-label="Open Lightwork Copilot" title="Copilot — need a hand?">
+  <svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-chat"></use></svg>
+  <span class="mv-copilot__fab-label">Copilot</span>
+</button>
+<section class="mv-copilot" id="mv-copilot" role="dialog"
+         aria-modal="false" aria-labelledby="mv-copilot-title" hidden>
+  <div class="mv-copilot__head">
+    <div>
+      <span class="mv-copilot__eyebrow">Help with this page</span>
+      <strong id="mv-copilot-title">Copilot</strong>
+    </div>
+    <button class="btn btn--ghost btn--icon" id="mv-copilot-close" type="button"
+            aria-label="Close Copilot">Close</button>
+  </div>
+  <p class="mv-copilot__hello" id="mv-copilot-hello">
+    Ask about this page, or pick a suggestion below.
+  </p>
+  <p class="mv-copilot__hello" id="mv-copilot-current" role="status" hidden></p>
+  <p class="mv-copilot__egress" id="mv-copilot-about">Copilot is an AI guide. It explains Lightwork and opens the
+    control you need. It can make mistakes, so check what it says against the page. It never changes a setting or
+    starts work by itself: you review and confirm every change.</p>
+  <p class="mv-copilot__egress" id="mv-copilot-egress">
+    If an AI service is connected, your question and recent guide questions
+    and answers may be sent to it. Do not include document text, passwords, personal details or
+    other private information. Recent chat stays in this tab and is removed
+    after an hour without a reply. You can clear it below.
+  </p>
+  <ul class="mv-copilot__tips" id="mv-copilot-tips"></ul>
+  <div class="mv-copilot__prompts" id="mv-copilot-prompts"
+       aria-label="Suggested Copilot questions"></div>
+  <section id="mv-copilot-operations" class="mv-copilot__operations" aria-labelledby="mv-copilot-operations-title" hidden>
+    <h2 id="mv-copilot-operations-title">Review this example</h2>
+    <p id="mv-copilot-operation-status" role="status"></p>
+    <div id="mv-copilot-operation-buttons" class="mv-copilot__operation-buttons"></div>
+    <div id="mv-copilot-action" data-draft-recovery="off"></div>
+  </section>
+  <section id="mv-product-operations" class="mv-copilot__operations" aria-labelledby="mv-product-operations-title" hidden>
+    <h2 id="mv-product-operations-title">Available controls</h2>
+    <p id="mv-product-operation-status" role="status"></p>
+    <label class="sr-only" for="mv-product-operation-search">Find a control on this page</label>
+    <input class="input" id="mv-product-operation-search" type="search" autocomplete="off"
+           maxlength="100" placeholder="Find a control…" aria-controls="mv-product-operation-buttons">
+    <div id="mv-product-operation-buttons" class="mv-copilot__operation-buttons"></div>
+    <p id="mv-product-operation-empty" role="status" hidden>No matching control. Try another name or ask Copilot below.</p>
+    <div id="mv-product-operation-form" data-draft-recovery="off"></div>
+  </section>
+  <div class="mv-copilot__log" id="mv-copilot-log"
+       aria-live="polite" aria-relevant="additions text"></div>
+  <button class="btn btn--ghost" id="mv-copilot-clear" type="button">Clear recent chat</button>
+  <form id="mv-copilot-form">
+    <label class="sr-only" for="mv-copilot-input">Ask Copilot about this page</label>
+    <div class="mv-copilot__row">
+      <input class="input" id="mv-copilot-input" autocomplete="off"
+             aria-describedby="mv-copilot-egress"
+             maxlength="2000" placeholder="Ask about this page…">
+      <button class="btn btn--primary" id="mv-copilot-send"
+              type="submit">Send question</button>
+    </div>
+    <p class="mv-copilot__note" id="mv-copilot-note" role="status"></p>
+    <a class="btn btn--ghost" id="mv-copilot-provider-setup"
+       href="/start" hidden>Open setup guide</a>
+  </form>
+</section>

@@ -1,0 +1,40 @@
+# DSAR Concierge — STANDALONE agent container.
+#
+# One container = one agent tenant. Persistent state (the request store)
+# lives under /data — mount a volume there. TLS/auth guidance and the
+# environment reference are in README.md.
+#
+#   docker build -f Dockerfile.standalone -t dsar-concierge:latest .
+#   # Put an HTTPS proxy in front of the loopback port for remote access.
+#   docker run -d -p 127.0.0.1:8891:8891 -v dsar-data:/data \
+#     -e DSAR_BASE_URL=https://dsar.example.com \
+#     -e DSAR_OPERATOR_TOKEN=<long-random-secret>  dsar-concierge:latest
+FROM python:3.12-slim
+
+# Never run an internet-facing agent as root.
+RUN useradd --create-home --uid 10001 dsar
+WORKDIR /opt/dsar-concierge
+
+COPY requirements-standalone.txt ./
+RUN pip install --no-cache-dir -r requirements-standalone.txt
+
+# The standalone agent: app + vendored engine + templates. No maverick.
+COPY app.py backend.py capabilities.py dsar_engine.py mailsink.py mailsink_transport.py \
+     value_ledger.py serve_standalone.py ./
+COPY templates/ templates/
+
+ENV DSAR_STANDALONE=1 \
+    DSAR_HOST=0.0.0.0 \
+    DSAR_PORT=8891 \
+    DSAR_DATA_DIR=/data \
+    EMAIL_SMTP_PORT=1026
+
+RUN mkdir -p /data && chown -R dsar:dsar /data /opt/dsar-concierge
+USER dsar
+VOLUME ["/data"]
+EXPOSE 8891
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD python -c "import urllib.request,sys;sys.exit(0 if b'ok' in urllib.request.urlopen('http://127.0.0.1:8891/health',timeout=3).read() else 1)"
+
+CMD ["python", "serve_standalone.py"]

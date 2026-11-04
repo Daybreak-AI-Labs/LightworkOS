@@ -1,0 +1,880 @@
+name: Native (Rust)
+
+# Builds and tests the native scanner core (rust/). Two outputs from one core:
+#   - the `maverick_native` Python wheel (PyO3, abi3) — accelerates the shield
+#     scanners; absent => pure-Python fallback, so this is additive.
+#   - the `mvk-scan-wasm` package (wasm-bindgen) — TypeScript / edge.
+# The whole point: CI here *exercises the native path* (the parity tests skip in
+# the main suite because the wheel isn't built there) and produces installable
+# artifacts. Publish is gated on a tag + configured registry credentials.
+
+on:
+  push:
+    branches: [main]
+    tags: ["native-v*"]
+  pull_request:
+    paths:
+      - "rust/**"
+      - "packages/maverick-core/maverick/safety/unicode_filter.py"
+      - "packages/maverick-core/maverick/safety/secret_detector.py"
+      - "packages/maverick-core/maverick/safety/pii_detector.py"
+      - "packages/maverick-core/maverick/perceptual_hash.py"
+      - "packages/maverick-core/maverick/__init__.py"
+      - "packages/maverick-core/maverick/safety/__init__.py"
+      - "packages/maverick-core/pyproject.toml"
+      # The audit verifier is a byte-exact port of verify_chain; rerun its
+      # cross-language parity job whenever the signing source of truth changes.
+      - "packages/maverick-core/maverick/audit/signing.py"
+      - "packages/maverick-core/tests/test_native_unicode_parity.py"
+      - "packages/maverick-core/tests/test_native_detect_parity.py"
+      - "packages/maverick-core/tests/test_native_phash_parity.py"
+      - "requirements/ci.txt"
+      - "scripts/verify_constraint_closure.py"
+      - "rust-toolchain.toml"
+      - ".github/workflows/native.yml"
+
+permissions:
+  contents: read
+
+# A new push to the same ref supersedes in-flight runs (tags excepted — those
+# feed publish and must each complete).
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  RUST_BACKTRACE: "1"
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+jobs:
+  core:
+    name: cargo test (core crate)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: rust
+      # Just the core crate: all behaviour + unit tests live here. The binding
+      # crates (pyo3 cdylib, wasm-bindgen) have no host-target tests and are
+      # exercised by the python/wasm parity jobs below.
+      - run: cargo test -p mvk-scan --manifest-path rust/Cargo.toml --locked
+
+  verify-audit:
+    name: maverick-verify-audit (build + cross-lang parity)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: rust
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      # Rust unit tests (canonical-JSON parity table + chain-break logic).
+      - run: >-
+          cargo test -p maverick-verify-audit
+          --manifest-path rust/Cargo.toml --locked
+      - run: >-
+          cargo build -p maverick-verify-audit --release
+          --manifest-path rust/Cargo.toml --locked
+      # Cross-language parity: drive the REAL Python AuditSigner to sign a log,
+      # run the binary on it, and assert the Rust verdict matches Python's
+      # verify_chain (intact -> exit 0; flipped byte -> break at the right row;
+      # unsigned -> UNVERIFIABLE). cryptography is required for the Python side.
+      - name: Cross-language parity (Rust binary == Python verify_chain)
+        run: |
+          set -euo pipefail
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -I -m pip install -e packages/maverick-core --no-deps
+          python -I -m pip install 'cryptography==50.0.2'
+          python -I scripts/verify_constraint_closure.py
+          MVK_VERIFY_BIN="$PWD/rust/target/release/maverick-verify-audit" \
+            python -I rust/maverick-verify-audit/tests/parity.py
+
+  python:
+    name: wheel + native parity (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, macos-15-intel, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.10"
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: rust
+      - name: Anchor native artifacts to the source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          epoch="$(git show -s --format=%ct HEAD)"
+          [[ "$epoch" =~ ^[0-9]+$ ]]
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+          echo "PYTHONHASHSEED=0" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+          # Rust's own MSVC determinism test uses /Brepro to replace PE/COFF
+          # and debug-directory timestamps with deterministic content hashes.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "RUSTFLAGS=-C link-arg=/Brepro" >> "$GITHUB_ENV"
+          fi
+      - name: Build the maverick_native wheel (first clean build)
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/maverick-native-target
+        with:
+          command: build
+          args: --release --locked -m rust/mvk-scan-py/Cargo.toml --out dist-first
+          maturin-version: v1.14.1
+      # Reuse one fixed path but remove every compiled artifact between builds:
+      # this remains a real clean-build check without adding path variance.
+      - name: Clean native target before the second build
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/maverick-native-target
+        run: cargo clean --manifest-path rust/mvk-scan-py/Cargo.toml
+      - name: Build the maverick_native wheel (second clean build)
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/maverick-native-target
+        with:
+          command: build
+          args: --release --locked -m rust/mvk-scan-py/Cargo.toml --out dist-second
+          maturin-version: v1.14.1
+      - name: Require byte-reproducible native wheels
+        id: reproducible
+        shell: bash
+        run: |
+          python -I -S - <<'PY'
+          import hashlib
+          import shutil
+          import zipfile
+          from pathlib import Path
+
+          def inventory(root):
+              return {
+                  path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                  for path in sorted(Path(root).glob("*.whl"))
+              }
+
+          first = inventory("dist-first")
+          second = inventory("dist-second")
+          if len(first) != 1 or first != second:
+              def members(root):
+                  wheels = sorted(Path(root).glob("*.whl"))
+                  if len(wheels) != 1:
+                      return {}
+                  with zipfile.ZipFile(wheels[0]) as archive:
+                      return {
+                          item.filename: hashlib.sha256(
+                              archive.read(item.filename)
+                          ).hexdigest()
+                          for item in archive.infolist()
+                      }
+
+              first_members = members("dist-first")
+              second_members = members("dist-second")
+              changed = sorted(
+                  name for name in first_members.keys() | second_members.keys()
+                  if first_members.get(name) != second_members.get(name)
+              )
+              raise SystemExit(
+                  f"native wheel builds are not byte-reproducible: "
+                  f"first={first}, second={second}, "
+                  f"changed_members={changed}"
+              )
+          Path("dist").mkdir()
+          wheel_name = next(iter(first))
+          shutil.copy2(Path("dist-first") / wheel_name, Path("dist") / wheel_name)
+          print(
+              f"native wheel reproducibility OK: {wheel_name} "
+              f"sha256:{first[wheel_name]}"
+          )
+          PY
+      # When the two clean builds differ, keep both so the varying bytes can be
+      # inspected; a reproducible run uploads nothing extra.
+      - name: Keep both native builds when they differ
+        if: failure() && steps.reproducible.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: maverick-native-unreproducible-${{ matrix.os }}
+          path: |
+            dist-first/*.whl
+            dist-second/*.whl
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Install wheel + assert native engaged + run parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -I - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"expected exactly one wheel, found {len(wheels)}")
+          wheel = wheels[0]
+          digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          checksum = Path(os.environ["RUNNER_TEMP"]) / "maverick-native-wheel.sha256"
+          checksum.write_text(
+              f"{wheel.name}\n{digest}\n",
+              encoding="utf-8",
+          )
+          print(f"captured {wheel.name}: sha256:{digest}")
+          PY
+          # setup-python's Windows image carries runner-owned pipx packages in
+          # the global environment. Verify dependency closure inside a fresh
+          # venv so image contents cannot contaminate the release gate.
+          python -I -m venv .native-parity-venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            parity_python=".native-parity-venv/Scripts/python.exe"
+          else
+            parity_python=".native-parity-venv/bin/python"
+          fi
+          "$parity_python" -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3' 'pytest==9.1.1' 'certifi==2026.10.23'
+          # Verify the same runtime without the optional extension first.
+          "$parity_python" -I -m pip install -e packages/maverick-core --no-deps
+          "$parity_python" -I - <<'PY'
+          from maverick import perceptual_hash as ph
+          from maverick.safety import unicode_filter as uf
+          assert ph._native is None and uf._native is None
+          assert ph.average_hash_from_pixels(ph.synthetic_gradient(), 64, 64) == ph.GRADIENT_HASH
+          assert uf.normalize('a\u200bb').cleaned == 'ab'
+          assert uf.has_dangerous_unicode('a\u200bb')
+          print('Python fallback paths verified without the extension')
+          PY
+          # --no-index forces the install to use the wheel we just built; if no
+          # wheel matches this OS/Python the install fails hard (not a silent skip).
+          "$parity_python" -I -m pip install \
+            --no-index --find-links dist maverick-native
+          "$parity_python" -I scripts/verify_constraint_closure.py \
+            --allow-unconstrained maverick-native
+          # HARD GATE: the parity tests self-skip when the native module is
+          # absent. After explicitly building+installing it, a skip would be a
+          # false green — so prove the extension imported and exposes every entry
+          # point before we let pytest run. The unicode scanner IS wired into the
+          # Python hot path (a real accelerator), so assert its shim swapped in;
+          # the secret/PII detectors are deliberately NOT (CPython `re` is faster
+          # — see rust/README.md), so assert the extension functions merely exist.
+          "$parity_python" -I - <<'PY'
+          import maverick_native as n
+          from maverick import perceptual_hash as ph
+          from maverick.safety import unicode_filter as uf
+          assert ph._native is not None, "image hash shim did not pick up maverick_native"
+          assert ph.average_hash_from_pixels is not ph._average_hash_from_pixels_py, (
+              "native image hash not engaged"
+          )
+          assert uf._native is not None, "shim did not pick up maverick_native"
+          assert uf.normalize is not uf._normalize_py, "native normalize not engaged"
+          assert uf.has_dangerous_unicode is not uf._has_dangerous_unicode_py, (
+              "native has_dangerous_unicode not engaged"
+          )
+          assert hasattr(n, "secret_scan_spans"), "missing native secret_scan_spans"
+          assert hasattr(n, "pii_scan_spans"), "missing native pii_scan_spans"
+          print("native present:", n.__file__)
+          PY
+          "$parity_python" -I -m pytest \
+            packages/maverick-core/tests/test_native_unicode_parity.py \
+            packages/maverick-core/tests/test_native_detect_parity.py \
+            packages/maverick-core/tests/test_native_phash_parity.py \
+            -vv
+          "$parity_python" -I - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          checksum = Path(os.environ["RUNNER_TEMP"]) / "maverick-native-wheel.sha256"
+          name, expected = checksum.read_text(encoding="utf-8").splitlines()
+          wheel = Path("dist") / name
+          actual = hashlib.sha256(wheel.read_bytes()).hexdigest()
+          if actual != expected:
+              raise SystemExit(
+                  f"wheel mutated during parity testing: {expected} != {actual}"
+              )
+          print(f"wheel unchanged after parity testing: sha256:{actual}")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: maverick-native-wheel-${{ matrix.os }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  wasm:
+    name: wasm package + node parity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.97.1"
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
+        with:
+          workspaces: rust
+      - name: Install pinned wasm-pack
+        run: cargo install wasm-pack --version 0.15.0 --locked
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: "22.23.1"
+      - name: Anchor wasm artifacts to the source commit
+        run: |
+          set -euo pipefail
+          epoch="$(git show -s --format=%ct HEAD)"
+          [[ "$epoch" =~ ^[0-9]+$ ]]
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+          echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - name: Build the wasm package (wasm-opt disabled in Cargo metadata)
+        run: |
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wasm-nodejs-target" \
+            wasm-pack build --target nodejs --out-dir pkg --release \
+            rust/mvk-scan-wasm --locked
+      - name: Node parity tests (prove WASM == pure Python)
+        run: node --test rust/mvk-scan-wasm/test/parity.test.mjs rust/mvk-scan-wasm/test/detect.parity.test.mjs
+      - name: Build and pack the exact npm publish artifact
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wasm-publish-target-first" \
+            wasm-pack build --target bundler --out-dir pkg-publish-first --release \
+            rust/mvk-scan-wasm --locked
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wasm-publish-target-second" \
+            wasm-pack build --target bundler --out-dir pkg-publish-second --release \
+            rust/mvk-scan-wasm --locked
+          mkdir -p dist-wasm-first dist-wasm-second
+          (
+            cd rust/mvk-scan-wasm/pkg-publish-first
+            npm pack --pack-destination "$GITHUB_WORKSPACE/dist-wasm-first"
+          )
+          (
+            cd rust/mvk-scan-wasm/pkg-publish-second
+            npm pack --pack-destination "$GITHUB_WORKSPACE/dist-wasm-second"
+          )
+          python -I -S - <<'PY'
+          import hashlib
+          import shutil
+          from pathlib import Path
+
+          def inventory(root):
+              return {
+                  path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                  for path in sorted(Path(root).glob("*.tgz"))
+              }
+
+          first = inventory("dist-wasm-first")
+          second = inventory("dist-wasm-second")
+          if len(first) != 1 or first != second:
+              raise SystemExit(
+                  f"wasm npm packs are not byte-reproducible: "
+                  f"first={first}, second={second}"
+              )
+          Path("dist-wasm").mkdir()
+          package_name = next(iter(first))
+          shutil.copy2(
+              Path("dist-wasm-first") / package_name,
+              Path("dist-wasm") / package_name,
+          )
+          print(
+              f"wasm npm reproducibility OK: {package_name} "
+              f"sha256:{first[package_name]}"
+          )
+          PY
+          (
+            cd dist-wasm
+            test "$(find . -maxdepth 1 -type f -name '*.tgz' | wc -l)" -eq 1
+            sha256sum ./*.tgz > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mvk-scan-wasm-nodejs
+          path: rust/mvk-scan-wasm/pkg
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mvk-scan-wasm-npm
+          path: dist-wasm
+          if-no-files-found: error
+
+  # --- Publish (tag-gated) ---------------------------------------------------
+  # Runs only on a `native-v*` tag. PyPI uses OIDC trusted publishing (no token
+  # to store) — register the `maverick-native` project + this repo as a trusted
+  # publisher first, or this job is a no-op skip. npm publication additionally
+  # requires MAVERICK_NATIVE_NPM_ENABLED=true and NPM_TOKEN; while disabled,
+  # only build + parity + immutable artifacts run.
+  validate-native-tag:
+    name: validate native release provenance
+    if: startsWith(github.ref, 'refs/tags/native-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Require a version-matched tag reachable from main
+        env:
+          NATIVE_TAG: ${{ github.ref_name }}
+          NATIVE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$NATIVE_TAG" =~ ^native-v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid native release tag: $NATIVE_TAG" >&2
+            exit 1
+          fi
+          tag_sha="$(git rev-list -n 1 "refs/tags/$NATIVE_TAG")"
+          if [ "$tag_sha" != "$NATIVE_SHA" ]; then
+            echo "Tag $NATIVE_TAG resolves to $tag_sha, not workflow SHA $NATIVE_SHA" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$tag_sha" refs/remotes/origin/main; then
+            echo "Tag $NATIVE_TAG ($tag_sha) is not reachable from origin/main" >&2
+            exit 1
+          fi
+          export TAG_VERSION="${NATIVE_TAG#native-v}"
+          python -I - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          workspace = tomllib.loads(
+              Path("rust/Cargo.toml").read_text(encoding="utf-8")
+          )
+          actual = workspace["workspace"]["package"]["version"]
+          expected = os.environ["TAG_VERSION"]
+          if actual != expected:
+              raise SystemExit(
+                  f"native tag version {expected!r} != Rust workspace {actual!r}"
+              )
+          print(f"native release provenance OK: {expected}")
+          PY
+
+  publish-pypi:
+    name: publish wheels to PyPI
+    needs: [core, verify-audit, python, wasm, validate-native-tag]
+    if: startsWith(github.ref, 'refs/tags/native-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: maverick-native-wheel-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - name: Preflight existing native PyPI bytes
+        shell: bash
+        run: |
+          "$pythonLocation/bin/python" -I -S - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          if len(wheels) != 4:
+              raise SystemExit(f"expected four platform wheels, found {len(wheels)}")
+          expected = {
+              wheel.name: hashlib.sha256(wheel.read_bytes()).hexdigest()
+              for wheel in wheels
+          }
+          versions = {wheel.name.split("-")[1] for wheel in wheels}
+          if len(versions) != 1:
+              raise SystemExit(f"native wheel versions disagree: {sorted(versions)}")
+          version = versions.pop()
+          url = (
+              "https://pypi.org/pypi/maverick-native/"
+              f"{quote(version)}/json"
+          )
+          try:
+              with urlopen(
+                  Request(url, headers={"User-Agent": "lightwork-release-verifier/1"}),
+                  timeout=30,
+              ) as response:
+                  payload = json.load(response)
+          except HTTPError as error:
+              if error.code == 404:
+                  payload = {"urls": []}
+              else:
+                  raise
+          actual = {
+              item["filename"]: item["digests"]["sha256"]
+              for item in payload.get("urls", [])
+          }
+          conflicts = {
+              filename: {"local": expected.get(filename), "pypi": digest}
+              for filename, digest in actual.items()
+              if filename not in expected or expected[filename] != digest
+          }
+          if conflicts:
+              raise SystemExit(
+                  f"PyPI maverick-native=={version} conflicts with this build: "
+                  f"{conflicts}"
+              )
+          print(
+              f"native PyPI preflight OK: {len(actual)} existing exact, "
+              f"{len(expected) - len(actual)} pending"
+          )
+          PY
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
+      - name: Verify final native PyPI bytes
+        shell: bash
+        run: |
+          "$pythonLocation/bin/python" -I -S - <<'PY'
+          import hashlib
+          import json
+          import time
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.parse import quote
+          from urllib.request import Request, urlopen
+
+          wheels = sorted(Path("dist").glob("*.whl"))
+          expected = {
+              wheel.name: hashlib.sha256(wheel.read_bytes()).hexdigest()
+              for wheel in wheels
+          }
+          versions = {wheel.name.split("-")[1] for wheel in wheels}
+          if len(wheels) != 4 or len(versions) != 1:
+              raise SystemExit("native wheel inventory changed after publish")
+          version = versions.pop()
+          url = (
+              "https://pypi.org/pypi/maverick-native/"
+              f"{quote(version)}/json"
+          )
+          for attempt in range(1, 31):
+              try:
+                  with urlopen(
+                      Request(
+                          url,
+                          headers={"User-Agent": "lightwork-release-verifier/1"},
+                      ),
+                      timeout=30,
+                  ) as response:
+                      payload = json.load(response)
+              except HTTPError as error:
+                  if error.code != 404:
+                      raise
+                  payload = {"urls": []}
+              actual = {
+                  item["filename"]: item["digests"]["sha256"]
+                  for item in payload.get("urls", [])
+              }
+              conflicts = {
+                  filename: {"local": expected.get(filename), "pypi": digest}
+                  for filename, digest in actual.items()
+                  if filename not in expected or expected[filename] != digest
+              }
+              if conflicts:
+                  raise SystemExit(
+                      f"published native bytes conflict with local build: {conflicts}"
+                  )
+              if actual == expected:
+                  print(
+                      f"final native PyPI verification OK: "
+                      f"{len(expected)} exact wheels"
+                  )
+                  break
+              if attempt == 30:
+                  missing = sorted(set(expected) - set(actual))
+                  raise SystemExit(
+                      f"native PyPI propagation incomplete after final retry: {missing}"
+                  )
+              time.sleep(10)
+          PY
+
+  publish-npm:
+    name: publish wasm package to npm
+    needs: [core, verify-audit, python, wasm, validate-native-tag]
+    if: >-
+      startsWith(github.ref, 'refs/tags/native-v') &&
+      vars.MAVERICK_NATIVE_NPM_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: mvk-scan-wasm-npm
+          path: dist-wasm
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6
+        with:
+          node-version: "22.23.1"
+          registry-url: "https://registry.npmjs.org"
+      - id: npm-preflight
+        name: Preflight existing npm bytes
+        working-directory: dist-wasm
+        env:
+          NATIVE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS
+          mapfile -t packages < <(find . -maxdepth 1 -type f -name '*.tgz' -print)
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "Expected exactly one npm package, found ${#packages[@]}" >&2
+            exit 1
+          fi
+          node - "${packages[0]}" <<'NODE'
+          const crypto = require("node:crypto");
+          const { execFileSync } = require("node:child_process");
+          const fs = require("node:fs");
+
+          const packagePath = process.argv[2];
+          const metadata = JSON.parse(
+            execFileSync(
+              "tar",
+              ["-xOf", packagePath, "package/package.json"],
+              { encoding: "utf8" },
+            ),
+          );
+          const expectedVersion = process.env.NATIVE_TAG.replace(/^native-v/, "");
+          if (
+            metadata.name !== "mvk-scan-wasm" ||
+            metadata.version !== expectedVersion
+          ) {
+            throw new Error(
+              `npm package identity mismatch: ${metadata.name}@${metadata.version} ` +
+              `for ${process.env.NATIVE_TAG}`,
+            );
+          }
+          const localBytes = fs.readFileSync(packagePath);
+          const localSha256 = crypto
+            .createHash("sha256")
+            .update(localBytes)
+            .digest("hex");
+          const registryUrl =
+            `https://registry.npmjs.org/${encodeURIComponent(metadata.name)}/` +
+            encodeURIComponent(metadata.version);
+
+          async function fetchBytes(url) {
+            const response = await fetch(url, {
+              headers: { "User-Agent": "Lightwork-native-release-preflight/1" },
+              signal: AbortSignal.timeout(30_000),
+            });
+            if (!response.ok) {
+              throw new Error(`npm tarball request failed: ${response.status}`);
+            }
+            return Buffer.from(await response.arrayBuffer());
+          }
+
+          async function main() {
+            const response = await fetch(registryUrl, {
+              headers: { "User-Agent": "Lightwork-native-release-preflight/1" },
+              signal: AbortSignal.timeout(30_000),
+            });
+            let alreadyExists = false;
+            if (response.status !== 404) {
+              if (!response.ok) {
+                throw new Error(`npm metadata request failed: ${response.status}`);
+              }
+              const published = await response.json();
+              if (
+                published.name !== metadata.name ||
+                published.version !== metadata.version
+              ) {
+                throw new Error("npm registry returned mismatched package metadata");
+              }
+              const tarballUrl = new URL(published.dist?.tarball);
+              if (
+                tarballUrl.protocol !== "https:" ||
+                tarballUrl.hostname !== "registry.npmjs.org"
+              ) {
+                throw new Error(`refusing unexpected npm tarball URL: ${tarballUrl}`);
+              }
+              const remoteSha256 = crypto
+                .createHash("sha256")
+                .update(await fetchBytes(tarballUrl))
+                .digest("hex");
+              if (remoteSha256 !== localSha256) {
+                throw new Error(
+                  `npm ${metadata.name}@${metadata.version} conflicts with this build: ` +
+                  `registry sha256:${remoteSha256}, local sha256:${localSha256}`,
+                );
+              }
+              alreadyExists = true;
+              console.log(
+                `npm preflight OK: exact ${metadata.name}@${metadata.version} ` +
+                `already exists at sha256:${localSha256}`,
+              );
+            } else {
+              console.log(
+                `npm preflight OK: ${metadata.name}@${metadata.version} is pending`,
+              );
+            }
+            fs.appendFileSync(
+              process.env.GITHUB_OUTPUT,
+              `already_exists=${alreadyExists}\n` +
+              `package=${packagePath}\n` +
+              `local_sha256=${localSha256}\n`,
+            );
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
+      - id: npm-publish
+        name: Publish exact npm artifact
+        if: steps.npm-preflight.outputs.already_exists != 'true'
+        working-directory: dist-wasm
+        env:
+          LOCAL_SHA256: ${{ steps.npm-preflight.outputs.local_sha256 }}
+          NPM_PACKAGE: ${{ steps.npm-preflight.outputs.package }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$LOCAL_SHA256" "$NPM_PACKAGE" | sha256sum -c -
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "MAVERICK_NATIVE_NPM_ENABLED is true but NPM_TOKEN is unset" >&2
+            exit 1
+          fi
+          npm publish "$NPM_PACKAGE" --access public
+          echo "published=true" >> "$GITHUB_OUTPUT"
+      - name: Verify final npm bytes
+        if: >-
+          steps.npm-preflight.outputs.already_exists == 'true' ||
+          steps.npm-publish.outputs.published == 'true'
+        working-directory: dist-wasm
+        env:
+          LOCAL_SHA256: ${{ steps.npm-preflight.outputs.local_sha256 }}
+          NATIVE_TAG: ${{ github.ref_name }}
+          NPM_PACKAGE: ${{ steps.npm-preflight.outputs.package }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const crypto = require("node:crypto");
+          const { execFileSync } = require("node:child_process");
+          const fs = require("node:fs");
+
+          const metadata = JSON.parse(
+            execFileSync(
+              "tar",
+              ["-xOf", process.env.NPM_PACKAGE, "package/package.json"],
+              { encoding: "utf8" },
+            ),
+          );
+          const expectedVersion = process.env.NATIVE_TAG.replace(/^native-v/, "");
+          const localSha256 = crypto
+            .createHash("sha256")
+            .update(fs.readFileSync(process.env.NPM_PACKAGE))
+            .digest("hex");
+          if (
+            metadata.name !== "mvk-scan-wasm" ||
+            metadata.version !== expectedVersion ||
+            localSha256 !== process.env.LOCAL_SHA256
+          ) {
+            throw new Error("npm artifact identity or bytes changed after preflight");
+          }
+          const registryUrl =
+            `https://registry.npmjs.org/${encodeURIComponent(metadata.name)}/` +
+            encodeURIComponent(metadata.version);
+          const delay = (milliseconds) =>
+            new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+          async function main() {
+            for (let attempt = 1; attempt <= 30; attempt += 1) {
+              const response = await fetch(registryUrl, {
+                headers: { "User-Agent": "Lightwork-native-release-verify/1" },
+                signal: AbortSignal.timeout(30_000),
+              });
+              if (response.status !== 404) {
+                if (!response.ok) {
+                  throw new Error(`npm metadata request failed: ${response.status}`);
+                }
+                const published = await response.json();
+                const tarballUrl = new URL(published.dist?.tarball);
+                if (
+                  published.name !== metadata.name ||
+                  published.version !== metadata.version ||
+                  tarballUrl.protocol !== "https:" ||
+                  tarballUrl.hostname !== "registry.npmjs.org"
+                ) {
+                  throw new Error("npm registry returned unexpected package metadata");
+                }
+                const tarballResponse = await fetch(tarballUrl, {
+                  headers: { "User-Agent": "Lightwork-native-release-verify/1" },
+                  signal: AbortSignal.timeout(30_000),
+                });
+                if (!tarballResponse.ok) {
+                  throw new Error(
+                    `npm tarball request failed: ${tarballResponse.status}`,
+                  );
+                }
+                const remoteSha256 = crypto
+                  .createHash("sha256")
+                  .update(Buffer.from(await tarballResponse.arrayBuffer()))
+                  .digest("hex");
+                if (remoteSha256 !== localSha256) {
+                  throw new Error(
+                    `published npm bytes conflict with local build: ` +
+                    `registry sha256:${remoteSha256}, local sha256:${localSha256}`,
+                  );
+                }
+                console.log(
+                  `final npm verification OK: ${metadata.name}@${metadata.version} ` +
+                  `sha256:${localSha256}`,
+                );
+                return;
+              }
+              if (attempt === 30) {
+                throw new Error(
+                  "npm package propagation incomplete after final retry",
+                );
+              }
+              console.log(
+                `npm propagation incomplete (attempt ${attempt}/30); retrying`,
+              );
+              await delay(10_000);
+            }
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE

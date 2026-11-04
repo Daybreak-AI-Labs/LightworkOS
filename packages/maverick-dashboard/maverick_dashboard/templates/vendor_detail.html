@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero, state %}
+{% block title %}{{ vendor.name }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+{% set status_word = {'active': 'Active', 'under_review': 'Under review', 'offboarded': 'No longer used'} %}
+{% set importance = {'low': 'Low', 'medium': 'Medium', 'high': 'High', 'critical': 'Critical'} %}
+{% set contract_kind = {'dpa': 'Data processing agreement', 'msa': 'Master services agreement', 'sla': 'Service level agreement', 'addendum': 'Addendum', 'other': 'Other contract'} %}
+{% set link_kind = {'dpa_review': 'Data processing agreement review', 'paper_review': 'Contract review', 'ai_vendor_assessment': 'AI vendor assessment', 'assessment': 'Assessment', 'contract': 'Contract', 'other': 'Other record'} %}
+  <p class="muted" style="margin-bottom: var(--space-2);">{{ back_link('/privacy', 'Privacy') }}</p>
+  {% call hero('Vendor', vendor.name,
+               lede=(vendor.category | humanize or 'No category') ~ ' · Importance: ' ~ importance.get(vendor.criticality, vendor.criticality | humanize)) %}
+    {{ state('Status', status_word.get(vendor.status, vendor.status | humanize),
+             badge=('Owner: ' ~ (vendor.owner | identity)) if vendor.owner else '',
+             badge_class='idle',
+             copy='Added ' ~ (vendor.registered_at_date or '—') ~ (' by ' ~ (vendor.registered_by | identity) if vendor.registered_by else '') ~ '.') }}
+  {% endcall %}
+
+  <section class="panel" id="vendor-profile" data-vendor-profile="{{ vendor.id }}">
+    <h2>Vendor lifecycle and risk</h2>
+    <p>One current view of this registered vendor’s assessments, screening decisions, contracts and open work. Existing identities are linked by an explicit decision.</p>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap"><button type="button" class="btn" data-vp-refresh>Refresh current vendor view</button><button type="button" class="btn" data-vp-read>Read original vendor decision</button></div>
+    <p data-vp-status role="status" aria-live="polite">Loading linked records…</p>
+    <div data-vp-content></div><div data-vp-review aria-live="polite"></div><div data-vp-original aria-live="polite"></div>
+  </section>
+  <style>
+    #vendor-profile, #vendor-profile * { min-width:0; overflow-wrap:anywhere; }
+    #vendor-profile label { display:grid; gap:.4rem; margin:.7rem 0; }
+    #vendor-profile input:not([type=checkbox]), #vendor-profile select, #vendor-profile textarea { width:100%; max-width:100%; }
+    #vendor-profile input[type=checkbox] { width:auto; }
+    #vendor-profile dd { margin-left:1rem; margin-bottom:.7rem; }
+  </style>
+  <script defer src="/static/lightwork-vendor-profile.js"></script>
+
+  <div class="panel" id="vd-root" data-vendor="{{ vendor.id }}" data-revision="{{ vendor.revision }}" data-name="{{ vendor.name }}">
+    <h2 style="margin-top:0">Status</h2>
+    <div class="vd-actions" style="display:flex;gap:.5rem;flex-wrap:wrap">
+      {% if vendor.status != 'under_review' %}<button type="button" class="btn" data-vd-status="under_review">Mark as under review</button>{% endif %}
+      {% if vendor.status != 'active' %}<a class="btn btn--primary" href="#vendor-profile">Review assessment before activation</a>{% endif %}
+      {% if vendor.status != 'offboarded' %}<button type="button" class="btn btn--danger" data-vd-status="offboarded">Stop using this vendor</button>{% endif %}
+    </div>
+    <p id="vd-msg" role="status" aria-live="polite" class="muted"></p>
+    <div id="vd-link-box" class="panel" hidden></div>
+  </div>
+
+  <div class="section-head"><h2>Contracts</h2><button type="button" class="btn" data-vd-add="contract">Add contract</button></div>
+  <div class="panel{% if not vendor.contracts %} empty{% endif %}">
+    {% if vendor.contracts %}
+      <table>
+        <thead><tr><th scope="col">Type</th><th scope="col">Where it's kept</th>
+          <th scope="col">Renews</th><th scope="col">Recorded By</th></tr></thead>
+        <tbody>
+        {% for c in vendor.contracts %}
+          <tr>
+            <td>{{ contract_kind.get(c.kind, c.kind | humanize) }}</td>
+            <td>{{ c.reference }}</td>
+            <td {% if c.overdue %}class="pw-due-warn"{% endif %}>{{ c.renews_date }}{% if c.overdue %} — overdue{% endif %}</td>
+            <td class="muted">{{ c.recorded_by | identity }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No contracts yet. Add the data processing agreement and the master services agreement so Lightwork can remind you before they renew.</p>
+      <button type="button" class="btn" data-vd-add="contract">Add contract</button>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Questionnaires</h2>{% if questionnaire_types %}<button type="button" class="btn" data-vd-add="questionnaire">Send a questionnaire</button>{% endif %}</div>
+  <div class="panel{% if not vendor.questionnaires %} empty{% endif %}">
+    {% if questionnaire_unavailable %}<p role="alert">We can't check questionnaire replies right now. Try again before following up with this vendor.</p>{% endif %}
+    {% if vendor.questionnaires %}
+      <table>
+        <thead><tr><th scope="col">Questionnaire</th><th scope="col">Status</th>
+          <th scope="col">Sent</th><th scope="col">Sent By</th><th scope="col">Link</th></tr></thead>
+        <tbody>
+        {% for q in vendor.questionnaires %}
+          <tr>
+            <td>{{ q.title }}</td>
+            <td><span class="badge {{ 'done' if q.status == 'answered' else 'warn' if q.status in ('unavailable', 'replaced') else 'info' }}">{{ 'Replies unavailable' if q.status == 'unavailable' else 'Link closed' if q.status == 'replaced' else q.status | humanize }}</span>{% if q.previous_count %}<small class="muted">{{ q.past_replies }} earlier {{ 'reply' if q.past_replies == 1 else 'replies' }} retained</small>{% endif %}</td>
+            <td>{{ q.requested_at_date }}</td>
+            <td class="muted">{{ q.requested_by | identity }}</td>
+            <td>{% if q.current_replies or q.past_replies %}<button type="button" class="btn" data-vd-replies="{{ q.request_id }}">View replies</button>{% endif %}
+              {% if q.status not in ('unavailable', 'replaced') %}<button type="button" class="btn" data-vd-copy-link="{{ q.request_id }}">Copy link</button>{% endif %}
+              {% if can_replace_questionnaire and q.status != 'unavailable' %}<button type="button" class="btn" data-vd-replace="{{ q.request_id }}">Replace link</button>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No questionnaires sent yet. Send one and Lightwork gives you a link the vendor can answer without an account.</p>
+      {% if questionnaire_types %}<button type="button" class="btn" data-vd-add="questionnaire">Send a questionnaire</button>{% endif %}
+    {% endif %}
+  </div>
+
+  <section class="panel" id="vd-replies" hidden aria-live="polite"></section>
+
+  <div class="section-head"><h2>Linked records</h2><button type="button" class="btn" data-vd-add="link">Link a record</button></div>
+  <div class="panel{% if not vendor.links %} empty{% endif %}">
+    {% if vendor.links %}
+      <table>
+        <thead><tr><th scope="col">Type</th><th scope="col">Record</th></tr></thead>
+        <tbody>
+        {% for l in vendor.links %}
+          <tr><td>{{ link_kind.get(l.kind, l.kind | humanize) }}</td><td>{{ l.label }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No reviews, assessments or other records are linked to this vendor yet. Start a review above to add the first one.</p>
+      <button type="button" class="btn" data-vd-add="link">Link a record</button>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2>Monitoring notes</h2><button type="button" class="btn" data-vd-add="note">Add a note</button></div>
+  <div class="panel{% if not vendor.monitoring_notes %} empty{% endif %}">
+    {% if vendor.monitoring_notes %}
+      <table>
+        <thead><tr><th scope="col">Importance</th><th scope="col">Note</th>
+          <th scope="col">Recorded</th><th scope="col">By</th></tr></thead>
+        <tbody>
+        {% for n in vendor.monitoring_notes %}
+          <tr>
+            <td><span class="badge {{ 'warn' if n.severity == 'warning' else 'error' if n.severity == 'critical' else 'info' }}">{{ {'info': 'For information', 'warning': 'Warning', 'critical': 'Critical'}.get(n.severity, n.severity | humanize) }}</span></td>
+            <td>{{ n.note }}</td>
+            <td>{{ n.recorded_at_date }}</td>
+            <td class="muted">{{ n.recorded_by | identity }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No monitoring notes yet. Add one when something changes, such as a security incident or a new sub-processor.</p>
+      <button type="button" class="btn" data-vd-add="note">Add a note</button>
+    {% endif %}
+  </div>
+
+  <details class="panel">
+    <summary>Technical details</summary>
+    <p class="muted">Where this vendor came from: {{ vendor.source | humanize or '—' }}. Record version {{ vendor.revision }}.</p>
+  </details>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var root = document.getElementById('vd-root');
+  var vendor = root.getAttribute('data-vendor');
+  var revision = parseInt(root.getAttribute('data-revision'), 10);
+  var name = root.getAttribute('data-name');
+  var msg = document.getElementById('vd-msg');
+  var QTYPES = {{ questionnaire_types | tojson }};
+  var ASSESSMENTS = {{ assessments | tojson }};
+  var base = '/api/v1/vendors/' + encodeURIComponent(vendor);
+
+  function post(path, body) {
+    return window.mvFetchJSON(base + path, { method: 'POST', body: body });
+  }
+  function done() { msg.textContent = 'Saved. Updating the page…'; window.location.reload(); }
+  function fail(action) { return function (f) { msg.textContent = window.mvErrorText(f, action); }; }
+  function isoIn(days) { return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10); }
+  function showLink(d, message) {
+    var box = document.getElementById('vd-link-box');
+    box.hidden = false; box.textContent = '';
+    box.appendChild(Object.assign(document.createElement('p'), { textContent: message }));
+    var link = window.location.origin + d.form_path;
+    var field = Object.assign(document.createElement('input'), { className: 'input', readOnly: true, value: link });
+    field.setAttribute('aria-label', 'Questionnaire link');
+    var copy = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: 'Copy link' });
+    copy.addEventListener('click', function () { window.mvCopy(link); });
+    box.append(field, copy);
+    revision = d.revision || revision;
+  }
+  function getQuestionnaires() {
+    return window.mvFetchJSON(base + '/questionnaires');
+  }
+  function appendReplies(box, title, group, questions) {
+    var heading = document.createElement('h3');
+    heading.textContent = title + ' · ' + group.reply_count + (group.reply_count === 1 ? ' reply' : ' replies');
+    box.appendChild(heading);
+    if (group.reply_count > group.submissions.length) {
+      box.appendChild(Object.assign(document.createElement('p'), { className: 'muted', textContent: 'Showing the latest 10 replies.' }));
+    }
+    group.submissions.slice().reverse().forEach(function (reply, index) {
+      var detail = document.createElement('details');
+      detail.appendChild(Object.assign(document.createElement('summary'), { textContent: 'Reply ' + (group.reply_count - index) }));
+      var answers = document.createElement('dl');
+      questions.forEach(function (question) {
+        var label = document.createElement('dt'); label.textContent = question.text;
+        var answer = document.createElement('dd');
+        var value = reply[question.id];
+        answer.textContent = value === 'yes' ? 'Yes' : value === 'no' ? 'No' : value || 'No answer recorded';
+        answers.append(label, answer);
+      });
+      if (reply._notes) {
+        var note = document.createElement('dt'); note.textContent = 'Additional context';
+        var value = document.createElement('dd'); value.textContent = reply._notes;
+        answers.append(note, value);
+      }
+      detail.appendChild(answers);
+      box.appendChild(detail);
+    });
+  }
+
+  document.querySelectorAll('[data-vd-replies]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      getQuestionnaires().then(function (d) {
+        var selected = (d.questionnaires || []).find(function (q) { return q.request_id === b.getAttribute('data-vd-replies'); });
+        if (!selected) { msg.textContent = 'That questionnaire changed. Refresh the page.'; return; }
+        var box = document.getElementById('vd-replies');
+        box.textContent = ''; box.hidden = false;
+        var heading = document.createElement('h2');
+        heading.textContent = 'Replies from ' + name;
+        heading.tabIndex = -1;
+        box.appendChild(heading);
+        appendReplies(box, 'Current link', selected, selected.questions || []);
+        (selected.previous_links || []).slice().reverse().forEach(function (older) {
+          appendReplies(box, 'Earlier link', older, selected.questions || []);
+        });
+        heading.focus();
+      }, fail('show questionnaire replies'));
+    });
+  });
+
+  document.querySelectorAll('[data-vd-copy-link]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      getQuestionnaires().then(function (d) {
+        var current = (d.questionnaires || []).find(function (q) { return q.request_id === b.getAttribute('data-vd-copy-link'); });
+        if (!current || current.status === 'replaced') { msg.textContent = 'That link changed. Refresh this page for the current address.'; return; }
+        window.mvCopy(window.location.origin + current.form_path);
+      }, fail('copy the questionnaire link'));
+    });
+  });
+
+  document.querySelectorAll('[data-vd-replace]').forEach(function (b) {
+    b.addEventListener('click', async function () {
+      var selected = b.getAttribute('data-vd-replace');
+      if (!(await window.mvConfirm('Replace this questionnaire link for ' + name + '? The old address will stop accepting answers. Earlier replies will remain available.', { okText: 'Replace link' }))) return;
+      b.disabled = true;
+      post('/questionnaires/' + encodeURIComponent(selected) + '/replace', { revision: revision }).then(function (d) {
+        showLink(d, 'The old link is closed. Send this new link to ' + name + '. Earlier replies remain in their record.');
+        msg.textContent = 'Questionnaire link replaced. Refresh the page to see its latest status.';
+      }, function (error) { b.disabled = false; fail('replace the questionnaire link')(error); });
+    });
+  });
+
+  document.querySelectorAll('[data-vd-status]').forEach(function (b) {
+    b.addEventListener('click', async function () {
+      var to = b.getAttribute('data-vd-status');
+      // Marking a vendor under review or active again is routine and can be
+      // changed back at once: only stopping work with them asks first.
+      if (to === 'offboarded' && !(await window.mvConfirm('Stop using ' + name + '? It will be marked as no longer working with you.',
+          { okText: 'Stop using ' + name }))) return;
+      post('/status', { status: to, revision: revision }).then(done, fail('change the status'));
+    });
+  });
+
+  var actions = {
+    contract: async function () {
+      var v = await window.mvForm('Add a contract for ' + name, [
+        { key: 'kind', label: 'Type of contract', type: 'select', required: true, default: 'dpa', options: [
+          { value: 'dpa', label: 'Data processing agreement' }, { value: 'msa', label: 'Master services agreement' },
+          { value: 'sla', label: 'Service level agreement' }, { value: 'addendum', label: 'Addendum' }, { value: 'other', label: 'Other contract' }] },
+        { key: 'reference', label: 'Where the contract is kept', required: true, placeholder: 'For example: Contracts drive, Acme DPA 2026' },
+        { key: 'renews', label: 'Renewal date', type: 'date', required: true, default: isoIn(365) }
+      ], { okText: 'Add contract' });
+      if (!v) return;
+      var when = Math.floor(new Date(v.renews + 'T00:00:00').getTime() / 1000);
+      post('/contracts', { kind: v.kind, reference: v.reference, renews_at: when, revision: revision }).then(done, fail('add the contract'));
+    },
+    questionnaire: async function () {
+      var preferred = QTYPES.some(function (t) { return t.value === 'vendor_risk'; }) ? 'vendor_risk' : (QTYPES[0] || {}).value;
+      var v = await window.mvForm('Send a questionnaire to ' + name, [
+        { key: 'type', label: 'Questionnaire', type: 'select', required: true, default: preferred, options: QTYPES }
+      ], { okText: 'Create link' });
+      if (!v) return;
+      post('/questionnaires', { assessment_type: v.type, revision: revision }).then(function (d) {
+        showLink(d, 'Send this link to ' + name + '. They can answer without an account. Reload the page to see the questionnaire in the list.');
+        msg.textContent = 'Questionnaire link created.';
+      }, fail('send the questionnaire'));
+    },
+    link: async function () {
+      var fields = [
+        { key: 'kind', label: 'Type of record', type: 'select', required: true, default: 'assessment', options: [
+          { value: 'assessment', label: 'Assessment' }, { value: 'dpa_review', label: 'Data processing agreement review' },
+          { value: 'paper_review', label: 'Contract review' }, { value: 'ai_vendor_assessment', label: 'AI vendor assessment' },
+          { value: 'contract', label: 'Contract' }, { value: 'other', label: 'Other record' }] }
+      ];
+      if (ASSESSMENTS.length) {
+        fields.push({ key: 'record', label: 'Record', type: 'select', default: ASSESSMENTS[0].value,
+                      options: [{ value: '', label: 'Something else (describe below)' }].concat(ASSESSMENTS) });
+      }
+      fields.push({ key: 'describe', label: ASSESSMENTS.length ? 'Or describe where the record is' : 'Where the record is', placeholder: 'For example: Legal drive, Acme review March 2026' });
+      var v = await window.mvForm('Link a record to ' + name, fields, { okText: 'Link' });
+      if (!v) return;
+      var reference = v.record || v.describe;
+      if (!reference) { msg.textContent = 'Choose a record or describe where it is.'; return; }
+      post('/links', { kind: v.kind, reference: reference, revision: revision }).then(done, fail('link the record'));
+    },
+    note: async function () {
+      var v = await window.mvForm('Add a monitoring note for ' + name, [
+        { key: 'severity', label: 'Importance', type: 'select', required: true, default: 'info', options: [
+          { value: 'info', label: 'For information' }, { value: 'warning', label: 'Warning' }, { value: 'critical', label: 'Critical' }] },
+        { key: 'note', label: 'Note', required: true, placeholder: 'What changed?' }
+      ], { okText: 'Add note' });
+      if (!v) return;
+      post('/notes', { note: v.note, severity: v.severity, revision: revision }).then(done, fail('add the note'));
+    }
+  };
+  document.querySelectorAll('[data-vd-add]').forEach(function (b) {
+    b.addEventListener('click', function () { actions[b.getAttribute('data-vd-add')](); });
+  });
+})();
+</script>
+{% include "_record_alerts.html" %}
+{% endblock %}

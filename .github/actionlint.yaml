@@ -1,0 +1,14 @@
+# actionlint v1.7.12 predates GitHub's reusable-job workflow identity fields.
+# Keep this exception scoped to the one reusable workflow and those two exact
+# property names. GitHub documents both as the secure way for a called workflow
+# to check out its own repository/SHA:
+# https://docs.github.com/actions/reference/workflows-and-actions/contexts#example-usage-of-job-context-workflow-identity
+self-hosted-runner:
+  labels:
+    - lightwork-clean-release-acceptance
+
+paths:
+  .github/workflows/agent-on-pr.yml:
+    ignore:
+      - 'property "workflow_repository" is not defined in object type'
+      - 'property "workflow_sha" is not defined in object type'

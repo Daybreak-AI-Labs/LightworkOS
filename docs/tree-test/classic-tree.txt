@@ -1,0 +1,178 @@
+Work
+	Shared decision reviews
+	Private task calculations
+	My data
+	Your account
+	Your preferences
+	Today
+	Code
+	My work
+	Workflow pilots
+	Promise reviews
+	Project team reviews
+	Selected deliverable bundles
+	Task handoffs
+	Action Center
+	Get started
+	Chat
+	My companion
+	Tasks
+	Business details
+	Task builder
+	Task map
+	Projects
+	Results
+	Agent Factory
+	Roles
+	Workforce
+	Workflows
+	Flow designer
+	Workflow builder
+	Automations
+	Teams
+	Starter teams
+	Help and diagnostics
+	Your notifications
+	My background work
+	My conversations
+	Human conversations
+	Your first useful result
+	Project workspaces
+	Your paired devices
+	Permission requests
+Insights
+	Recheck affected rules
+	Find missing distinctions
+	Check local rules together
+	Prepare an answer for this request
+	Checked answer regions
+	Rewrite and check local rules
+	Plan teaching questions
+	Understand a missing reply
+	Share and qualify local rule structures
+	Share preparation safely
+	Approval challenges
+	Instructions used in real work
+	Content access
+	Workflow readiness
+	Overview
+	Ekko
+	Oversight
+	Discovery
+	Branches
+	Spend
+	Work value & opportunities
+	Savings
+	Autonomous shoring
+	Billing
+	Providers
+	Flow results
+	Knowledge
+	Learning
+	Learned
+	Video walkthroughs
+	Facts
+	3D plan view
+	Your budget
+	Compare cost records
+	Provider spending
+Administration
+	AI on this computer
+	Sign-in and work protection
+	Permissions
+	Connections
+	Document vault
+	Workspace recovery
+	Settings
+	Employee companions
+	Users
+	Sessions
+	Spending limits
+	Workspaces
+	Choose a workspace
+Governance
+	Autonomous compliance
+	Approvals
+	Agent controls
+	Security & GRC
+	Lightwork threat check
+	Threat monitoring
+	Security readiness report
+	AI assurance
+	AI governance
+	Financial risk
+	Test a safety rule
+	Redaction check
+	Safety
+	Assessments
+	Compliance
+	Compliance studio
+	Policy links
+	Find which controls apply
+	Turn scope into tasks
+	Build a task mapping
+	Continuous evidence
+	Regulations and rules
+	Compartments
+	Activity log
+	Trust receipts
+	Safety monitoring
+	Learning history
+	Task replay
+	Agent trust
+Privacy
+	Privacy
+	Find personal data
+	Privacy law research
+	Privacy requests
+	Send people their data
+	Privacy notices
+	Data use rules
+	Snowflake and Databricks
+	California DROP requests
+Consent
+	Consent and preferences
+	Banner and preference center
+	Banner experiments
+	Send choices to other systems
+	Website and app keys
+	Mobile app consent
+	Preference questions
+	Find people by preference
+	Bulk consent changes
+	Website banner settings
+	Opt out everywhere
+	App tracking checks
+	Tracker scans
+	Disclosure suggestions
+	Trust center access
+AI oversight
+	Governance assistants
+	Governance inventory
+	AI evidence analysis
+	Suggested assessment answers
+	AI system tasks
+	Outside agents
+Third parties
+	AI vendor onboarding
+	Contracts and engagements
+	Executive vendor reports
+	Third-party intelligence
+	Third-party lifecycle
+	Third-party collaboration
+	Partner fleet
+Library
+	Skills
+	Skill store
+	Templates
+	Tools
+	Response styles
+	Channels
+Advanced tools
+	Benchmarks
+	Performance diagnostics
+	Cortex memory diagnostics
+	Plugins
+	Tool servers
+	Cache
+	Embedded analytics

@@ -1,0 +1,83 @@
+{#- Learned page: the rest of the self-coaching tools -- a clash check by
+    meaning, trying proven lessons on other models, the test cases (find,
+    download, add) and the one-time hold-out record. Global administrators
+    only; filled by lightwork-learned-ops.js. -#}
+{% if can_manage %}
+<div id="lpo-root" class="lpo">
+  <div class="section-head"><h2 id="lpo-title">More self-coaching tools</h2></div>
+  <div class="panel">
+    <p class="muted" id="lpo-plan" role="status" aria-live="polite">Loading…</p>
+
+    <h3 id="lpo-clash-h">Check lessons for clashes by meaning</h3>
+    <p class="muted">The wording check above uses no AI calls. Here, review the currently shareable lessons and spending
+      settings before asking the answer checker to look for possible conflicts by meaning. Its judgments may be wrong
+      or unavailable. This changes no instructions.</p>
+    <div class="lpo-row">
+      <label for="lpo-clash-model">Model</label>
+      <select id="lpo-clash-model" class="select"><option value="">Every model</option></select>
+      <button type="button" class="btn btn--ghost" id="lpo-clash-run">Review meaning check</button>
+    </div>
+    <div id="lpo-clash-review" style="overflow-wrap:anywhere"></div>
+    <div class="lpo-row">
+      <label for="lpo-clash-original">Original check</label>
+      <select id="lpo-clash-original" class="select"><option value="">Choose your original check</option></select>
+      <button type="button" class="btn btn--ghost" id="lpo-clash-recover" disabled>Read original result</button>
+      <button type="button" class="btn btn--ghost" id="lpo-clash-refresh">Refresh original checks</button>
+    </div>
+    <p class="muted" id="lpo-clash-status" role="status" aria-live="polite"></p>
+    <div id="lpo-clash-out" style="overflow-wrap:anywhere"></div>
+
+    {% include "_learning_transfers.html" %}
+
+    <h3 id="lpo-cases-h">Test cases</h3>
+    <p class="muted">Test questions help compare how Lightwork responds before and after a proposed change.</p>
+    {% include "_learning_test_cases.html" %}
+    {% include "_learning_pending_cases.html" %}
+    <div class="lpo-row">
+      <label for="lpo-harvest-mode">Find examples in legacy shared work</label>
+      <select id="lpo-harvest-mode" class="select">
+        <option value="propose" selected>Suggest them for review first</option>
+        <option value="auto">Add them straight away</option>
+      </select>
+      <button type="button" class="btn btn--ghost" id="lpo-harvest">Find shared-work examples</button>
+    </div>
+    <p class="muted">This automatic search only considers legacy work with no named owner. To teach from your own work, choose <a href="#learning-task-examples">Use one of my completed tasks</a> above and review its complete source and learning use.</p>
+    <div class="lpo-row">
+      <button type="button" class="btn btn--ghost" id="lpo-export">Download the test cases</button>
+    </div>
+    <section id="learning-case-import" aria-labelledby="lpo-import-title" style="overflow-wrap:anywhere">
+    <h3 id="lpo-import-title">Review a learning-question file</h3>
+    <p class="muted" id="lpo-import-notice">Review the complete file and current questions before importing. Importing uses no AI. Future checks can send shared questions to configured AI providers.</p>
+    <p class="muted">For a whole saved collection, <a href="/learning#learning-review">open Learning review and restoration</a> and check the saved point’s actual coverage. A large file is never shortened to fit this review.</p>
+    <div class="lpo-row">
+      <label for="lpo-import-file">Add test cases from a file</label>
+      <input type="file" id="lpo-import-file" class="input" accept=".json,application/json">
+      <label for="lpo-import-how">How</label>
+      <select id="lpo-import-how" class="select">
+        <option value="merge" selected>Add new ones, keep the rest</option>
+        <option value="replace">Replace all test cases with the file</option>
+      </select>
+      <button type="button" class="btn btn--ghost" id="lpo-import-check" disabled>Review import</button>
+    </div>
+    <p class="muted" id="lpo-cases-status" role="status" aria-live="polite"></p>
+    <p class="muted" id="lpo-import-status" role="status" aria-live="polite"></p>
+    <div id="lpo-cases-out" style="overflow-wrap:anywhere"></div>
+    <div class="lpo-row">
+      <label for="lpo-import-original">Original import</label>
+      <select id="lpo-import-original" class="select"><option value="">Choose your original import</option></select>
+      <button type="button" class="btn btn--ghost" id="lpo-import-recover" disabled>Read original result</button>
+      <button type="button" class="btn btn--ghost" id="lpo-import-refresh">Refresh import controls</button>
+    </div>
+    <div id="lpo-import-result" style="overflow-wrap:anywhere"></div>
+    </section>
+
+    {% include '_learning_holdout_setup.html' %}
+    {% include '_learning_calibration.html' %}
+  </div>
+</div>
+<style>
+  .lpo-row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0 1rem; }
+  @media (max-width: 560px) { .topbar__controls { column-gap: var(--space-0-5); } }
+</style>
+<script src="/static/lightwork-learned-ops.js" defer></script>
+{% endif %}

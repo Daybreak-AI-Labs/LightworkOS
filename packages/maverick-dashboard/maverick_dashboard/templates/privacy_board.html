@@ -1,0 +1,1286 @@
+{% extends "base.html" %}
+{% block title %}Privacy command center · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* The board is a wide surface: relax the shell's reading-width cap here. */
+  main#content { max-width: 1680px; }
+
+  .pb-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .pb-head .page-title { margin: 0; }
+  .pb-live { display: inline-flex; align-items: center; gap: 6px;
+             font-size: var(--text-xs); font-weight: var(--font-semibold);
+             letter-spacing: 0.08em; color: var(--accent);
+             border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+             background: var(--success-subtle);
+             border-radius: var(--radius-pill); padding: var(--space-0-5) 10px; }
+  .pb-live .dot { width: 7px; height: 7px; border-radius: var(--radius-round);
+                  background: var(--accent); animation: pb-pulse 2s infinite; }
+  @keyframes pb-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .pb-stamp { font-size: var(--text-sm); color: var(--muted); }
+  .pb-controls { margin-inline-start: auto; display: flex; gap: var(--space-2);
+                 align-items: center; flex-wrap: wrap; }
+  .pb-slicer { display: inline-flex; border: 1px solid var(--border);
+               border-radius: var(--radius-pill); overflow: hidden;
+               background: var(--surface-sunken); }
+  .pb-slicer button { border: 0; background: transparent; color: var(--muted);
+                      padding: 5px 13px; font-size: var(--text-sm);
+                      font-weight: var(--font-medium); cursor: pointer; }
+  .pb-slicer button.on { background: var(--brand); color: var(--brand-fg); }
+  .pb-slicer button:not(.on):hover { color: var(--text); }
+  .pb-chip { display: inline-flex; align-items: center; gap: 6px;
+             font-size: var(--text-sm); border-radius: var(--radius-pill);
+             padding: 3px 6px 3px var(--space-3); background: var(--brand-subtle);
+             border: 1px solid var(--brand-border); color: var(--text); }
+  .pb-chip button { border: 0; background: transparent; color: var(--muted);
+                    cursor: pointer; font-size: var(--text-sm); padding: 0 var(--space-1); }
+  .pb-chip button:hover { color: var(--danger); }
+
+  /* KPI band */
+  .pb-kpis { display: grid; grid-template-columns: repeat(6, 1fr);
+             gap: var(--space-3); margin: var(--space-4) 0; }
+  .pb-kpi { position: relative;
+            border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+            padding: var(--space-4); box-shadow: var(--shadow-sm);
+            overflow: hidden; min-width: 0; }
+  .pb-kpi::before { content: ""; position: absolute; inset: 0 auto 0 0;
+                    width: 3px; background: var(--pb-edge, var(--brand)); }
+  .pb-kpi .k { font-size: var(--text-xs); font-weight: var(--font-semibold);
+               text-transform: uppercase; letter-spacing: 0.07em;
+               color: var(--muted); }
+  .pb-kpi .v { font-size: var(--text-3xl); font-weight: var(--font-semibold);
+               line-height: 1.1; margin-top: var(--space-0-5);
+               font-variant-numeric: tabular-nums; }
+  .pb-kpi .s { font-size: var(--text-xs); color: var(--muted);
+               margin-top: var(--space-1); min-height: 1.1em;
+               /* Keep clear of the sparkline pinned bottom-right. */
+               max-width: calc(100% - 96px); }
+  .pb-kpi .delta { display: inline-flex; align-items: center; gap: 3px;
+                   font-size: var(--text-xs); font-weight: var(--font-semibold);
+                   border-radius: var(--radius-pill); padding: 1px var(--space-2);
+                   margin-inline-start: var(--space-2); vertical-align: 4px;
+                   font-variant-numeric: tabular-nums; }
+  .pb-kpi .delta.good { color: var(--accent); background: var(--success-subtle); }
+  .pb-kpi .delta.bad { color: var(--danger); background: var(--danger-subtle); }
+  .pb-kpi .delta.flat { color: var(--muted); background: var(--muted-subtle); }
+  .pb-kpi .spark { position: absolute; right: var(--space-3);
+                   bottom: var(--space-2); opacity: 0.9; }
+
+  /* Card grid */
+  .pb-grid { display: grid; grid-template-columns: repeat(12, 1fr);
+             gap: var(--space-4); }
+  .pb-card { grid-column: span 4;
+             border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+             padding: var(--space-4) var(--space-4) var(--space-3);
+             box-shadow: var(--shadow-sm); min-width: 0;
+             transition: box-shadow 0.2s ease, transform 0.2s ease; }
+  .pb-card:hover { box-shadow: var(--shadow-md); }
+  .pb-span8 { grid-column: span 8; }
+  .pb-span12 { grid-column: span 12; }
+  .pb-card h2 { margin: 0; font-size: var(--text-sm);
+                font-weight: var(--font-semibold); text-transform: uppercase;
+                letter-spacing: 0.07em; color: var(--muted); }
+  .pb-sub { margin: var(--space-0-5) 0 var(--space-3); font-size: var(--text-xs);
+            color: var(--muted); }
+  .pb-empty { color: var(--muted); font-size: var(--text-sm);
+              padding: var(--space-4) 0; }
+
+  /* Donut */
+  .pb-donut-wrap { display: flex; align-items: center; gap: var(--space-4);
+                   flex-wrap: wrap; }
+  .pb-donut-wrap svg { flex: 0 0 176px; }
+  .pb-donut-center { font-variant-numeric: tabular-nums; }
+  .pb-legend { display: flex; flex-direction: column; gap: var(--space-1); flex: 1;
+               min-width: 9rem; }
+  .pb-legend button { display: flex; align-items: center; gap: var(--space-2);
+                      border: 1px solid transparent; background: transparent;
+                      color: var(--text); font-size: var(--text-sm);
+                      padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
+                      cursor: pointer; text-align: start; width: 100%;
+                      font-variant-numeric: tabular-nums; }
+  .pb-legend button:hover { background: var(--row-hover); }
+  .pb-legend button.on { border-color: var(--brand-border);
+                         background: var(--brand-subtle); }
+  .pb-legend .sw { width: 10px; height: 10px; border-radius: 3px;
+                   flex: 0 0 10px; }
+  .pb-legend .n { margin-inline-start: auto; color: var(--muted); }
+  #pb-donut path { cursor: pointer; transition: opacity 0.15s ease; }
+  #pb-donut path.dim { opacity: 0.25; }
+
+  /* Burn-down */
+  .pb-burn-row { margin-bottom: var(--space-3); }
+  .pb-burn-row .lbl { display: flex; justify-content: space-between;
+                      font-size: var(--text-xs); color: var(--muted);
+                      margin-bottom: 3px; font-variant-numeric: tabular-nums; }
+  .pb-burn-bars { display: grid; gap: 3px; }
+  .pb-burn-bar { height: 9px; border-radius: var(--radius-xs); min-width: 2px;
+                 transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+  .pb-burn-bar.inh { opacity: 0.38; }
+  .pb-burn-note { font-size: var(--text-sm); margin-top: var(--space-2);
+                  color: var(--text); }
+  .pb-burn-note strong { color: var(--accent); }
+
+  /* Posture gauges */
+  .pb-gauge { margin-bottom: var(--space-3); }
+  .pb-gauge .lbl { display: flex; justify-content: space-between;
+                   font-size: var(--text-sm); margin-bottom: var(--space-1);
+                   font-variant-numeric: tabular-nums; }
+  .pb-gauge .lbl .pct { font-weight: var(--font-semibold); }
+  .pb-gauge .track { height: 8px; border-radius: var(--radius-pill);
+                     background: var(--surface-sunken); overflow: hidden; }
+  .pb-gauge .fill { height: 100%; border-radius: var(--radius-pill);
+                    transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+  .pb-gauge .note { font-size: var(--text-xs); color: var(--muted);
+                    margin-top: var(--space-0-5); }
+
+  /* Throughput */
+  #pb-flow { width: 100%; height: auto; display: block; }
+  .pb-flow-legend { display: flex; gap: var(--space-4);
+                    font-size: var(--text-xs); color: var(--muted);
+                    margin-top: var(--space-2);
+                    font-variant-numeric: tabular-nums; }
+  .pb-flow-legend .sw { display: inline-block; width: 10px; height: 10px;
+                        border-radius: 3px; margin-inline-end: 5px;
+                        vertical-align: -1px; }
+
+  /* Horizontal bar lists (frameworks, AI tiers, DSAR runway) */
+  .pb-bars .row { display: grid;
+                  grid-template-columns: 7.5rem 1fr max-content;
+                  gap: var(--space-2); align-items: center;
+                  padding: 3px 0; font-size: var(--text-sm);
+                  font-variant-numeric: tabular-nums; }
+  .pb-bars .row .name { overflow: hidden; text-overflow: ellipsis;
+                        white-space: nowrap; }
+  .pb-bars button.row { width: 100%; border: 1px solid transparent;
+                        background: transparent; color: var(--text);
+                        border-radius: var(--radius-sm); cursor: pointer;
+                        padding: var(--space-1) 6px; text-align: start; }
+  .pb-bars button.row:hover { background: var(--row-hover); }
+  .pb-bars button.row.on { border-color: var(--brand-border);
+                           background: var(--brand-subtle); }
+  .pb-bars .track { height: 10px; border-radius: var(--radius-xs);
+                    background: var(--surface-sunken); overflow: hidden;
+                    display: flex; }
+  .pb-bars .seg { height: 100%;
+                  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+  .pb-bars .num { color: var(--muted); }
+
+  /* Transfers */
+  .pb-flowrow { display: flex; align-items: center; gap: var(--space-2);
+                padding: 6px 0; border-bottom: 1px solid var(--hairline);
+                font-size: var(--text-sm); }
+  .pb-flowrow .arr { color: var(--muted); }
+  .pb-flowrow .dest { font-weight: var(--font-medium); overflow: hidden;
+                      text-overflow: ellipsis; white-space: nowrap; }
+  .pb-flowrow .src { overflow: hidden; text-overflow: ellipsis;
+                     white-space: nowrap; max-width: 40%; }
+
+  /* Registers strip */
+  .pb-registers { display: flex; gap: var(--space-2); flex-wrap: wrap;
+                  margin-top: var(--space-3); }
+  .pb-registers .pill { font-size: var(--text-xs); color: var(--muted);
+                        border: 1px solid var(--hairline);
+                        background: var(--surface-sunken);
+                        border-radius: var(--radius-pill); padding: var(--space-0-5) 10px;
+                        font-variant-numeric: tabular-nums; }
+
+  /* Drill-through */
+  #pb-drill table { width: 100%; }
+  #pb-drill .muted-sm { font-size: var(--text-xs); color: var(--muted); }
+  .pb-risk-pair { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* Tooltip */
+  #pb-tip { position: fixed; z-index: 60; pointer-events: none;
+            background: var(--surface-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: var(--radius-md);
+            box-shadow: var(--shadow-md); padding: 6px 10px;
+            font-size: var(--text-xs); max-width: 20rem;
+            font-variant-numeric: tabular-nums; }
+
+  /* Present mode: the board fills the screen, chrome steps away. */
+  body.pb-present .topbar, body.pb-present .sidebar,
+  body.pb-present footer, body.pb-present .nav-backdrop { display: none; }
+  body.pb-present main#content { max-width: none;
+                                 padding: var(--space-4) var(--space-5); }
+
+  /* Entrance */
+  @keyframes pb-in { from { opacity: 0; transform: translateY(8px); }
+                     to { opacity: 1; transform: none; } }
+  .pb-kpi, .pb-card { animation: pb-in 0.45s ease both; }
+  .pb-kpi:nth-child(2), .pb-card:nth-child(2) { animation-delay: 0.05s; }
+  .pb-kpi:nth-child(3), .pb-card:nth-child(3) { animation-delay: 0.1s; }
+  .pb-kpi:nth-child(4), .pb-card:nth-child(4) { animation-delay: 0.15s; }
+  .pb-kpi:nth-child(5), .pb-card:nth-child(5) { animation-delay: 0.2s; }
+  .pb-kpi:nth-child(6), .pb-card:nth-child(6) { animation-delay: 0.25s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pb-kpi, .pb-card { animation: none; }
+    .pb-live .dot { animation: none; }
+    .pb-burn-bar, .pb-gauge .fill, .pb-bars .seg { transition: none; }
+  }
+  @media (max-width: 1250px) {
+    .pb-kpis { grid-template-columns: repeat(3, 1fr); }
+    .pb-card, .pb-span8 { grid-column: span 6; }
+    .pb-span12 { grid-column: span 12; }
+  }
+  @media (max-width: 800px) {
+    .pb-kpis { grid-template-columns: repeat(2, 1fr); }
+    .pb-card, .pb-span8, .pb-span12 { grid-column: span 12; }
+  }
+</style>
+
+<div class="pb-head">
+  <h1 class="page-title">Privacy command center</h1>
+  <span class="pb-live"><span class="dot" aria-hidden="true"></span>Live</span>
+  <span class="pb-stamp" id="pb-stamp" role="status" aria-live="off">loading…</span>
+  <div class="pb-controls">
+    <span id="pb-filterchips"></span>
+    <div class="pb-slicer" role="group" aria-label="Time range">
+      <button type="button" data-range="30">30 days</button>
+      <button type="button" data-range="90">90 days</button>
+      <button type="button" data-range="365">12 months</button>
+      <button type="button" data-range="0" class="on">All time</button>
+    </div>
+    <a class="btn btn--ghost" href="/privacy">Privacy workspace</a>
+    <a class="btn btn--ghost" href="/privacy/report">Printable report</a>
+    <button class="btn btn--ghost" id="pb-present" type="button">Full screen</button>
+  </div>
+</div>
+<p class="page-subtitle">The whole privacy program on one live screen — every number
+  counted from your own records. Click a risk level or questionnaire
+  to show only those items.</p>
+
+<div class="pb-kpis" id="pb-kpis"></div>
+
+<div class="pb-grid">
+  <section class="pb-card" aria-labelledby="pb-t-mix">
+    <h2 id="pb-t-mix">Risk after fixes</h2>
+    <p class="pb-sub">How much risk is left once fixes are in place. Click a level to show only those items.</p>
+    <div class="pb-donut-wrap">
+      <svg id="pb-donut" viewBox="0 0 176 176" width="176" height="176"
+           role="img" aria-label="Risk after fixes"></svg>
+      <div class="pb-legend" id="pb-donut-legend" role="group"
+           aria-label="Show only one risk level"></div>
+    </div>
+  </section>
+
+  <section class="pb-card" aria-labelledby="pb-t-burn">
+    <h2 id="pb-t-burn">Risk removed</h2>
+    <p class="pb-sub">Risk before fixes (pale) and after fixes (solid).</p>
+    <div id="pb-burn"></div>
+  </section>
+
+  <section class="pb-card" aria-labelledby="pb-t-posture">
+    <h2 id="pb-t-posture">Program posture</h2>
+    <p class="pb-sub">Health measures counted from your records.</p>
+    <div id="pb-posture"></div>
+  </section>
+
+  <section class="pb-card pb-span8" aria-labelledby="pb-t-flow">
+    <h2 id="pb-t-flow">Assessments started and finished — last 12 months</h2>
+    <p class="pb-sub">Started and decided each month. A growing gap means work is piling up.</p>
+    <svg id="pb-flow" viewBox="0 0 720 230" role="img"
+         aria-label="Assessments opened and decided per month"></svg>
+    <div class="pb-flow-legend" id="pb-flow-legend"></div>
+  </section>
+
+  <section class="pb-card" aria-labelledby="pb-t-types">
+    <h2 id="pb-t-types">By questionnaire</h2>
+    <p class="pb-sub">How many assessments use each questionnaire. Click one to show only those.</p>
+    <div class="pb-bars" id="pb-types" role="group"
+         aria-label="Show only one questionnaire"></div>
+  </section>
+
+  <section class="pb-card" aria-labelledby="pb-t-dsar">
+    <h2 id="pb-t-dsar">Data-subject requests: time left</h2>
+    <p class="pb-sub">Open requests from people about their data, by time left before the legal deadline.</p>
+    <div class="pb-bars" id="pb-dsar"></div>
+  </section>
+
+  <section class="pb-card" aria-labelledby="pb-t-transfers">
+    <h2 id="pb-t-transfers">Cross-border transfers</h2>
+    <p class="pb-sub">Data sent to other countries, and whether a legal safeguard (such as standard contract clauses) is on file.</p>
+    <div id="pb-transfers"></div>
+  </section>
+
+  <section class="pb-card" aria-labelledby="pb-t-ai">
+    <h2 id="pb-t-ai">AI systems &amp; registers</h2>
+    <p class="pb-sub">Your AI systems by EU AI Act risk level, and how many records sit behind this dashboard.</p>
+    <div class="pb-bars" id="pb-ai"></div>
+    <div class="pb-registers" id="pb-registers"></div>
+  </section>
+
+  <section class="pb-card" aria-labelledby="pb-t-learn">
+    <h2 id="pb-t-learn">Drafts accepted first time</h2>
+    <p class="pb-sub">Assessments approved without follow-up questions. A rising line means the AI's drafts are getting better.</p>
+    <div id="pb-learning"></div>
+  </section>
+
+  <section class="pb-card pb-span8" aria-labelledby="pb-t-roi">
+    <h2 id="pb-t-roi">Which questions matter</h2>
+    <p class="pb-sub">For each question: does it change risk ratings, only add information, or never flag anything? Questions that never flag anything are candidates to remove.</p>
+    <div style="margin-bottom: var(--space-2);">
+      <label class="muted" style="font-size: var(--text-sm);">Questionnaire
+        <select id="pb-roi-type" class="select" style="margin-inline-start: 8px;"></select>
+      </label>
+      <span class="muted" id="pb-roi-summary" style="font-size: var(--text-sm); margin-inline-start: 12px;"></span>
+    </div>
+    <div id="pb-roi" style="overflow-x: auto;"></div>
+  </section>
+
+  <section class="pb-card pb-span12" aria-labelledby="pb-t-drill">
+    <h2 id="pb-t-drill">Drill-through</h2>
+    <p class="pb-sub">The records behind the numbers on this board, riskiest first — filtered by whatever is selected above.</p>
+    <div id="pb-drill" class="pw-scroll" style="overflow-x:auto;"></div>
+  </section>
+</div>
+<div id="pb-tip" hidden></div>
+
+{% include "_assessment_review.html" %}
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var API = '/api/v1/privacy/board';
+  var DATA = null;
+  var F = { range: 0, type: '', residual: '' };
+  var LEVELS = ['minimal', 'low', 'medium', 'high'];
+  var LCOLOR = { minimal: 'var(--accent)', low: 'var(--info)',
+                 medium: 'var(--warn)', high: 'var(--danger)' };
+  var RANK = { minimal: 0, low: 1, medium: 2, high: 3 };
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, txt) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (txt != null) e.textContent = txt;
+    return e;
+  }
+  // Empty cards use the shared compact empty state (lightwork-ui.js): what
+  // fills the card, then where to go next — the filters, or the workspace.
+  function filtered() { return !!(F.range || F.type || F.residual); }
+  function empty(box, title, body, action) {
+    box.appendChild(window.mvEmpty ? window.mvEmpty(title, body, action, { compact: true })
+      : el('p', 'pb-empty', title + '. ' + body));
+  }
+  function emptySlice(box, what) {
+    if (filtered()) empty(box, 'Nothing in this slice', what + ' Clear a filter or choose a longer time range above to see more.');
+    else empty(box, 'No assessments yet', what + ' Start one in the Privacy workspace.');
+  }
+  function svg(tag, attrs) {
+    var e = document.createElementNS(SVGNS, tag);
+    for (var k in (attrs || {})) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function fmt(n) { return (n || 0).toLocaleString(); }
+  function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+  function human(v) { return window.mvHuman ? window.mvHuman(v) : cap(String(v || '').replace(/_/g, ' ')); }
+  var roiAll = false;
+
+  // ---- tooltip ------------------------------------------------------------
+  var tip = $('pb-tip');
+  function showTip(evt, lines) {
+    tip.textContent = '';
+    lines.forEach(function (ln) { tip.appendChild(el('div', '', ln)); });
+    tip.hidden = false;
+    var x = Math.min(evt.clientX + 14, window.innerWidth - tip.offsetWidth - 12);
+    var y = Math.min(evt.clientY + 14, window.innerHeight - tip.offsetHeight - 12);
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+  function hideTip() { tip.hidden = true; }
+
+  // ---- filtering ----------------------------------------------------------
+  function rows() {
+    if (!DATA) return [];
+    var lo = F.range ? (DATA.generated_at - F.range * 86400) : 0;
+    return DATA.sessions.filter(function (s) {
+      return (!lo || (s.created_at || 0) >= lo) &&
+             (!F.type || s.type === F.type) &&
+             (!F.residual || s.residual === F.residual);
+    });
+  }
+  function setFilter(key, val) {
+    F[key] = (F[key] === val) ? '' : val;
+    renderAll();
+  }
+  function renderChips() {
+    var box = $('pb-filterchips');
+    box.textContent = '';
+    [['residual', F.residual && (cap(F.residual) + ' residual')],
+     ['type', F.type && human(F.type)]].forEach(function (pair) {
+      if (!pair[1]) return;
+      var chip = el('span', 'pb-chip', pair[1] + ' ');
+      var x = el('button', '', '✕');
+      x.type = 'button';
+      x.setAttribute('aria-label', 'Clear ' + pair[0] + ' filter');
+      x.addEventListener('click', function () { F[pair[0]] = ''; renderAll(); });
+      chip.appendChild(x);
+      box.appendChild(chip);
+    });
+  }
+
+  // ---- KPI band -----------------------------------------------------------
+  function delta30(rs, field, pred) {
+    var now = DATA.generated_at, cur = 0, prev = 0;
+    rs.forEach(function (s) {
+      var t = s[field] || 0;
+      if (!t || (pred && !pred(s))) return;
+      if (t >= now - 30 * 86400) cur += 1;
+      else if (t >= now - 60 * 86400) prev += 1;
+    });
+    return { cur: cur, prev: prev };
+  }
+  function deltaChip(d, upIsBad) {
+    var diff = d.cur - d.prev;
+    var cls = diff === 0 ? 'flat' : ((diff > 0) === !!upIsBad ? 'bad' : 'good');
+    var arrow = diff > 0 ? '▲' : diff < 0 ? '▼' : '—';
+    var chip = el('span', 'delta ' + cls,
+                  arrow + ' ' + Math.abs(diff) + ' vs prior 30d');
+    return chip;
+  }
+  function sparkline(series, color) {
+    var w = 92, h = 26, max = Math.max.apply(null, series.concat([1]));
+    var s = svg('svg', { width: w, height: h, viewBox: '0 0 ' + w + ' ' + h,
+                         'aria-hidden': 'true' });
+    var step = w / Math.max(series.length - 1, 1);
+    var pts = series.map(function (v, i) {
+      return (i * step).toFixed(1) + ',' +
+             (h - 2 - (v / max) * (h - 6)).toFixed(1);
+    }).join(' ');
+    var line = svg('polyline', { points: pts, fill: 'none',
+                                 'stroke-width': '1.6',
+                                 'stroke-linejoin': 'round',
+                                 'stroke-linecap': 'round' });
+    line.style.stroke = color;
+    s.appendChild(line);
+    s.classList.add('spark');
+    return s;
+  }
+  function weeklySeries(rs, field) {
+    var now = DATA.generated_at, out = [];
+    for (var i = 11; i >= 0; i--) {
+      var hi = now - i * 7 * 86400, lo = hi - 7 * 86400;
+      out.push(rs.reduce(function (n, s) {
+        var t = s[field] || 0;
+        return n + (t > lo && t <= hi ? 1 : 0);
+      }, 0));
+    }
+    return out;
+  }
+  function kpiTile(label, value, sub, opts) {
+    var t = el('div', 'pb-kpi');
+    if (opts && opts.edge) t.style.setProperty('--pb-edge', opts.edge);
+    t.appendChild(el('div', 'k', label));
+    var v = el('div', 'v', fmt(value));
+    if (opts && opts.chip) v.appendChild(opts.chip);
+    t.appendChild(v);
+    t.appendChild(el('div', 's', sub || ''));
+    if (opts && opts.spark) t.appendChild(opts.spark);
+    return t;
+  }
+  function renderKpis() {
+    var box = $('pb-kpis');
+    box.textContent = '';
+    var rs = rows();
+    var open = rs.filter(function (s) {
+      return s.status === 'pending_review' || s.status === 'needs_more';
+    });
+    var needsMore = rs.filter(function (s) {
+      return s.status === 'needs_more';
+    }).length;
+    var high = rs.filter(function (s) { return s.residual === 'high'; });
+    var due = rs.filter(function (s) { return s.review_due; }).length;
+    var accepted = rs.filter(function (s) { return s.risk_accepted; }).length;
+
+    box.appendChild(kpiTile('Assessments', rs.length,
+      'across ' + new Set(rs.map(function (s) { return s.type; })).size +
+      ' frameworks', {
+        chip: deltaChip(delta30(rs, 'created_at'), false),
+        spark: sparkline(weeklySeries(rs, 'created_at'), 'var(--brand)'),
+        edge: 'var(--brand)' }));
+    box.appendChild(kpiTile('Open work', open.length,
+      (open.length - needsMore) + ' pending review · ' + needsMore +
+      ' need more', { edge: 'var(--info)' }));
+    box.appendChild(kpiTile('High residual', high.length,
+      'after controls and follow-ups', {
+        chip: deltaChip(delta30(rs, 'created_at', function (s) {
+          return s.residual === 'high';
+        }), true),
+        edge: 'var(--danger)' }));
+    box.appendChild(kpiTile('Review due', due,
+      accepted + ' risk acceptance' + (accepted === 1 ? '' : 's') +
+      ' on file', { edge: 'var(--warn)' }));
+
+    var dsar = DATA.dsar || { open: 0, overdue: 0 };
+    var dsarChip = dsar.overdue
+      ? el('span', 'delta bad', '▲ ' + dsar.overdue + ' overdue')
+      : el('span', 'delta good', 'on time');
+    box.appendChild(kpiTile('DSARs on the clock', dsar.open,
+      (dsar.closing_soon || 0) + ' inside 7 days',
+      { chip: dsarChip, edge: 'var(--warn)' }));
+
+    var inc = DATA.incidents || { on_clock: 0, breached: 0 };
+    var incChip = inc.breached
+      ? el('span', 'delta bad', '▲ ' + inc.breached + ' past 72h')
+      : el('span', 'delta good', 'inside 72h');
+    box.appendChild(kpiTile('Incidents undecided', inc.on_clock,
+      'Art. 33 notification calls pending',
+      { chip: incChip, edge: 'var(--danger)' }));
+  }
+
+  // ---- donut --------------------------------------------------------------
+  function arcPath(cx, cy, r0, r1, a0, a1) {
+    function pt(r, a) {
+      return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    }
+    var large = (a1 - a0) > Math.PI ? 1 : 0;
+    var p1 = pt(r1, a0), p2 = pt(r1, a1), p3 = pt(r0, a1), p4 = pt(r0, a0);
+    return 'M' + p1.join(' ') +
+           ' A' + r1 + ' ' + r1 + ' 0 ' + large + ' 1 ' + p2.join(' ') +
+           ' L' + p3.join(' ') +
+           ' A' + r0 + ' ' + r0 + ' 0 ' + large + ' 0 ' + p4.join(' ') + ' Z';
+  }
+  function renderDonut() {
+    var s = $('pb-donut'), legend = $('pb-donut-legend');
+    s.textContent = ''; legend.textContent = '';
+    // The mix ignores the residual filter (it IS the filter control) but
+    // respects range + framework, so the slices stay clickable both ways.
+    var lo = F.range ? (DATA.generated_at - F.range * 86400) : 0;
+    var base = DATA.sessions.filter(function (x) {
+      return (!lo || (x.created_at || 0) >= lo) &&
+             (!F.type || x.type === F.type);
+    });
+    var counts = {};
+    LEVELS.forEach(function (l) { counts[l] = 0; });
+    base.forEach(function (x) {
+      if (counts[x.residual] != null) counts[x.residual] += 1;
+    });
+    var total = base.length;
+    var rated = LEVELS.reduce(function (n, l) { return n + counts[l]; }, 0);
+    s.setAttribute('aria-label', 'Residual risk distribution: ' +
+      LEVELS.map(function (l) { return counts[l] + ' ' + l; }).join(', '));
+
+    var cx = 88, cy = 88, r1 = 80, r0 = 56;
+    if (!rated) {
+      var ring = svg('circle', { cx: cx, cy: cy, r: (r0 + r1) / 2,
+                                 fill: 'none', 'stroke-width': r1 - r0 });
+      ring.style.stroke = 'var(--surface-sunken)';
+      s.appendChild(ring);
+    }
+    var a = -Math.PI / 2;
+    LEVELS.slice().reverse().forEach(function (l) {
+      if (!counts[l]) return;
+      var frac = counts[l] / rated;
+      var a1 = a + frac * 2 * Math.PI;
+      var d = frac >= 0.9999
+        ? arcPath(cx, cy, r0, r1, a, a + Math.PI) +
+          arcPath(cx, cy, r0, r1, a + Math.PI, a1)
+        : arcPath(cx, cy, r0, r1, a, a1 - 0.01);
+      var p = svg('path', { d: d });
+      p.style.fill = LCOLOR[l];
+      if (F.residual && F.residual !== l) p.classList.add('dim');
+      p.addEventListener('click', function () { setFilter('residual', l); });
+      p.addEventListener('mousemove', function (evt) {
+        showTip(evt, [cap(l) + ' residual: ' + counts[l] + ' of ' + rated +
+                      ' (' + Math.round(100 * frac) + '%)']);
+      });
+      p.addEventListener('mouseleave', hideTip);
+      s.appendChild(p);
+      a = a1;
+    });
+    var num = svg('text', { x: cx, y: cy - 2, 'text-anchor': 'middle',
+                            'font-size': '30', 'font-weight': '600' });
+    num.textContent = fmt(total);
+    num.style.fill = 'var(--text)';
+    num.classList.add('pb-donut-center');
+    var lab = svg('text', { x: cx, y: cy + 18, 'text-anchor': 'middle',
+                            'font-size': '10', 'letter-spacing': '0.08em' });
+    lab.textContent = 'ASSESSMENTS';
+    lab.style.fill = 'var(--muted)';
+    s.appendChild(num); s.appendChild(lab);
+
+    LEVELS.slice().reverse().forEach(function (l) {
+      var b = el('button', F.residual === l ? 'on' : '');
+      b.type = 'button';
+      var sw = el('span', 'sw');
+      sw.style.background = LCOLOR[l];
+      b.appendChild(sw);
+      b.appendChild(el('span', '', cap(l)));
+      b.appendChild(el('span', 'n', fmt(counts[l])));
+      b.addEventListener('click', function () { setFilter('residual', l); });
+      legend.appendChild(b);
+    });
+  }
+
+  // ---- burn-down ----------------------------------------------------------
+  function renderBurn() {
+    var box = $('pb-burn');
+    box.textContent = '';
+    var rs = rows();
+    if (!rs.length) {
+      emptySlice(box, 'Risk before and after safeguards appears here for each assessment.');
+      return;
+    }
+    var inh = {}, res = {};
+    LEVELS.forEach(function (l) { inh[l] = 0; res[l] = 0; });
+    var reduced = 0;
+    rs.forEach(function (s) {
+      if (inh[s.inherent] != null) inh[s.inherent] += 1;
+      if (res[s.residual] != null) res[s.residual] += 1;
+      if (RANK[s.residual] < RANK[s.inherent]) reduced += 1;
+    });
+    var max = Math.max.apply(null,
+      LEVELS.map(function (l) { return Math.max(inh[l], res[l]); }).concat([1]));
+    LEVELS.slice().reverse().forEach(function (l) {
+      var row = el('div', 'pb-burn-row');
+      var lbl = el('div', 'lbl');
+      lbl.appendChild(el('span', '', cap(l)));
+      var d = res[l] - inh[l];
+      lbl.appendChild(el('span', '',
+        fmt(inh[l]) + ' → ' + fmt(res[l]) +
+        (d ? ' (' + (d > 0 ? '+' : '') + d + ')' : '')));
+      row.appendChild(lbl);
+      var bars = el('div', 'pb-burn-bars');
+      [['inh', inh[l]], ['res', res[l]]].forEach(function (pair) {
+        var bar = el('div', 'pb-burn-bar ' + pair[0]);
+        bar.style.background = LCOLOR[l];
+        bar.style.width = (100 * pair[1] / max).toFixed(1) + '%';
+        bars.appendChild(bar);
+      });
+      row.appendChild(bars);
+      box.appendChild(row);
+    });
+    var note = el('p', 'pb-burn-note');
+    note.appendChild(el('strong', '', fmt(reduced)));
+    note.appendChild(document.createTextNode(
+      ' of ' + fmt(rs.length) +
+      ' assessments carry less risk after controls.'));
+    box.appendChild(note);
+  }
+
+  // ---- posture ------------------------------------------------------------
+  function renderPosture() {
+    var box = $('pb-posture');
+    box.textContent = '';
+    (DATA.posture || []).forEach(function (p) {
+      var g = el('div', 'pb-gauge');
+      var lbl = el('div', 'lbl');
+      lbl.appendChild(el('span', '', p.label));
+      lbl.appendChild(el('span', 'pct',
+        p.pct == null ? '—' : p.pct.toFixed(0) + '%'));
+      g.appendChild(lbl);
+      var track = el('div', 'track');
+      var fill = el('div', 'fill');
+      var pct = p.pct == null ? 0 : p.pct;
+      fill.style.width = pct + '%';
+      fill.style.background = p.pct == null ? 'var(--muted)'
+        : pct >= 90 ? 'var(--accent)'
+        : pct >= 70 ? 'var(--warn)' : 'var(--danger)';
+      track.appendChild(fill);
+      g.appendChild(track);
+      g.appendChild(el('div', 'note',
+        p.pct == null ? p.note + ' — nothing on record yet'
+                      : p.ok + ' of ' + p.total + ' · ' + p.note));
+      box.appendChild(g);
+    });
+  }
+
+  // ---- throughput ---------------------------------------------------------
+  function monthSeries(rs) {
+    var months = F.range ? Math.min(12, Math.ceil(F.range / 30)) : 12;
+    var out = [], d = new Date(DATA.generated_at * 1000);
+    var y = d.getUTCFullYear(), m = d.getUTCMonth() + 1;
+    for (var i = 0; i < months; i++) {
+      out.unshift({ key: y + '-' + String(m).padStart(2, '0'),
+                    opened: 0, decided: 0 });
+      m -= 1; if (m === 0) { y -= 1; m = 12; }
+    }
+    var idx = {};
+    out.forEach(function (row, i) { idx[row.key] = i; });
+    rs.forEach(function (s) {
+      [['created_at', 'opened'], ['decided_at', 'decided']]
+        .forEach(function (pair) {
+          var t = s[pair[0]];
+          if (!t) return;
+          var dd = new Date(t * 1000);
+          var k = dd.getUTCFullYear() + '-' +
+                  String(dd.getUTCMonth() + 1).padStart(2, '0');
+          if (idx[k] != null) out[idx[k]][pair[1]] += 1;
+        });
+    });
+    return out;
+  }
+  function renderFlow() {
+    var s = $('pb-flow'), legend = $('pb-flow-legend');
+    s.textContent = ''; legend.textContent = '';
+    // Throughput ignores the range slicer's row cutoff (months carry it).
+    var rs = DATA.sessions.filter(function (x) {
+      return (!F.type || x.type === F.type) &&
+             (!F.residual || x.residual === F.residual);
+    });
+    var series = monthSeries(rs);
+    var W = 720, H = 230, padL = 34, padR = 12, padT = 12, padB = 26;
+    var iw = W - padL - padR, ih = H - padT - padB;
+    var max = Math.max.apply(null, series.map(function (r) {
+      return Math.max(r.opened, r.decided);
+    }).concat([1]));
+    max = Math.max(4, Math.ceil(max / 4) * 4);
+    var step = iw / Math.max(series.length - 1, 1);
+    function X(i) { return padL + i * step; }
+    function Y(v) { return padT + ih - (v / max) * ih; }
+
+    for (var gy = 0; gy <= 4; gy++) {
+      var v = (max / 4) * gy;
+      var ln = svg('line', { x1: padL, x2: W - padR, y1: Y(v), y2: Y(v),
+                             'stroke-width': '1' });
+      ln.style.stroke = 'var(--hairline)';
+      s.appendChild(ln);
+      var t = svg('text', { x: padL - 6, y: Y(v) + 3, 'text-anchor': 'end',
+                            'font-size': '10' });
+      t.textContent = v;
+      t.style.fill = 'var(--muted)';
+      s.appendChild(t);
+    }
+    var defs = svg('defs');
+    [['pb-g-opened', 'var(--brand)'], ['pb-g-decided', 'var(--accent)']]
+      .forEach(function (pair) {
+        var g = svg('linearGradient',
+                    { id: pair[1] === 'var(--brand)' ? 'pb-g-opened'
+                                                     : 'pb-g-decided',
+                      x1: 0, y1: 0, x2: 0, y2: 1 });
+        var s0 = svg('stop', { offset: '0%', 'stop-opacity': '0.28' });
+        s0.style.stopColor = pair[1];
+        var s1 = svg('stop', { offset: '100%', 'stop-opacity': '0' });
+        s1.style.stopColor = pair[1];
+        g.appendChild(s0); g.appendChild(s1);
+        defs.appendChild(g);
+      });
+    s.appendChild(defs);
+
+    [['decided', 'var(--accent)', 'pb-g-decided'],
+     ['opened', 'var(--brand)', 'pb-g-opened']].forEach(function (cfg) {
+      var pts = series.map(function (r, i) {
+        return X(i).toFixed(1) + ',' + Y(r[cfg[0]]).toFixed(1);
+      });
+      var area = svg('path', { d: 'M' + pts.join(' L') +
+        ' L' + X(series.length - 1).toFixed(1) + ',' + (padT + ih) +
+        ' L' + padL + ',' + (padT + ih) + ' Z',
+        fill: 'url(#' + cfg[2] + ')' });
+      s.appendChild(area);
+      var line = svg('polyline', { points: pts.join(' '), fill: 'none',
+                                   'stroke-width': '2',
+                                   'stroke-linejoin': 'round',
+                                   'stroke-linecap': 'round' });
+      line.style.stroke = cfg[1];
+      s.appendChild(line);
+    });
+    series.forEach(function (r, i) {
+      if (series.length > 14 && i % 2) return;
+      var t = svg('text', { x: X(i), y: H - 8, 'text-anchor': 'middle',
+                            'font-size': '10' });
+      t.textContent = r.key.slice(2);
+      t.style.fill = 'var(--muted)';
+      s.appendChild(t);
+    });
+    var guide = svg('line', { y1: padT, y2: padT + ih, 'stroke-width': '1',
+                              visibility: 'hidden' });
+    guide.style.stroke = 'var(--border-strong)';
+    s.appendChild(guide);
+    var hover = svg('rect', { x: padL, y: padT, width: iw, height: ih,
+                              fill: 'transparent' });
+    hover.addEventListener('mousemove', function (evt) {
+      var box = s.getBoundingClientRect();
+      var px = (evt.clientX - box.left) * (W / box.width);
+      var i = Math.max(0, Math.min(series.length - 1,
+                                   Math.round((px - padL) / step)));
+      guide.setAttribute('x1', X(i));
+      guide.setAttribute('x2', X(i));
+      guide.setAttribute('visibility', 'visible');
+      showTip(evt, [series[i].key,
+                    'Started: ' + series[i].opened,
+                    'Decided: ' + series[i].decided]);
+    });
+    hover.addEventListener('mouseleave', function () {
+      guide.setAttribute('visibility', 'hidden');
+      hideTip();
+    });
+    s.appendChild(hover);
+
+    var totO = series.reduce(function (n, r) { return n + r.opened; }, 0);
+    var totD = series.reduce(function (n, r) { return n + r.decided; }, 0);
+    [['var(--brand)', 'opened · ' + fmt(totO)],
+     ['var(--accent)', 'decided · ' + fmt(totD)]].forEach(function (pair) {
+      var span = el('span');
+      var sw = el('span', 'sw');
+      sw.style.background = pair[0];
+      span.appendChild(sw);
+      span.appendChild(document.createTextNode(pair[1]));
+      legend.appendChild(span);
+    });
+    s.setAttribute('aria-label', 'Assessments per month: ' + totO +
+                   ' opened and ' + totD + ' decided across ' +
+                   series.length + ' months');
+  }
+
+  // ---- by framework -------------------------------------------------------
+  function renderTypes() {
+    var box = $('pb-types');
+    box.textContent = '';
+    // Ignores the framework filter itself (it IS the control).
+    var lo = F.range ? (DATA.generated_at - F.range * 86400) : 0;
+    var base = DATA.sessions.filter(function (x) {
+      return (!lo || (x.created_at || 0) >= lo) &&
+             (!F.residual || x.residual === F.residual);
+    });
+    var by = {};
+    base.forEach(function (s) {
+      var r = by[s.type] || (by[s.type] = { total: 0, high: 0, open: 0 });
+      r.total += 1;
+      if (s.residual === 'high') r.high += 1;
+      if (s.status === 'pending_review' || s.status === 'needs_more')
+        r.open += 1;
+    });
+    var types = Object.keys(by).sort(function (a, b) {
+      return by[b].total - by[a].total;
+    });
+    if (!types.length) {
+      emptySlice(box, 'Assessments by questionnaire appear here.');
+      return;
+    }
+    var max = by[types[0]].total;
+    types.slice(0, 10).forEach(function (t) {
+      var r = by[t];
+      var b = el('button', 'row' + (F.type === t ? ' on' : ''));
+      b.type = 'button';
+      b.appendChild(el('span', 'name', human(t)));
+      var track = el('div', 'track');
+      var segSafe = el('div', 'seg');
+      segSafe.style.background = 'var(--brand)';
+      segSafe.style.width =
+        (100 * (r.total - r.high) / max).toFixed(1) + '%';
+      var segHigh = el('div', 'seg');
+      segHigh.style.background = 'var(--danger)';
+      segHigh.style.width = (100 * r.high / max).toFixed(1) + '%';
+      track.appendChild(segSafe); track.appendChild(segHigh);
+      b.appendChild(track);
+      b.appendChild(el('span', 'num',
+        fmt(r.total) + (r.high ? ' · ' + r.high + ' high' : '')));
+      b.addEventListener('click', function () { setFilter('type', t); });
+      box.appendChild(b);
+    });
+  }
+
+  // ---- DSAR runway --------------------------------------------------------
+  var BANDS = ['overdue', 'd0_7', 'd8_14', 'd15_30', 'd30_plus'];
+  var KIND_LABEL = { access: 'Copy of data', portability: 'Move data', erasure: 'Delete data',
+                     rectification: 'Correct data', objection: 'Stop using data', restriction: 'Limit use' };
+  var BAND_LABEL = { overdue: 'overdue', d0_7: '7 days or less', d8_14: '8 to 14 days',
+                     d15_30: '15 to 30 days', d30_plus: 'more than 30 days' };
+  var BAND_COLOR = { overdue: 'var(--danger)', d0_7: 'var(--warn)',
+                     d8_14: 'var(--info)', d15_30: 'var(--brand)',
+                     d30_plus: 'var(--muted)' };
+  function renderDsar() {
+    var box = $('pb-dsar');
+    box.textContent = '';
+    var d = DATA.dsar || { open: 0, bands: {}, by_kind: {} };
+    if (!d.open) {
+      if (DATA.records_enabled) empty(box, 'No open subject requests', 'The queue is clear. Requests people make about their data appear here with the time left before each deadline.');
+      else empty(box, 'Privacy records are turned off', 'Subject requests appear here once records are on. An administrator can turn them on in the Privacy workspace.');
+      return;
+    }
+    var kinds = Object.keys(d.by_kind).sort(function (a, b) {
+      return d.by_kind[b].total - d.by_kind[a].total;
+    });
+    var max = Math.max.apply(null, kinds.map(function (k) {
+      return d.by_kind[k].total;
+    }).concat([1]));
+    kinds.forEach(function (k) {
+      var kb = d.by_kind[k];
+      var row = el('div', 'row');
+      row.appendChild(el('span', 'name', KIND_LABEL[k] || human(k)));
+      var track = el('div', 'track');
+      BANDS.forEach(function (band) {
+        if (!kb[band]) return;
+        var seg = el('div', 'seg');
+        seg.style.background = BAND_COLOR[band];
+        seg.style.width = (100 * kb[band] / max).toFixed(1) + '%';
+        seg.title = kb[band] + ' ' + BAND_LABEL[band];
+        track.appendChild(seg);
+      });
+      row.appendChild(track);
+      row.appendChild(el('span', 'num', fmt(kb.total)));
+      box.appendChild(row);
+    });
+    var legend = el('p', 'pb-sub');
+    legend.style.marginTop = 'var(--space-2)';
+    legend.textContent = BANDS.map(function (b) {
+      return (d.bands[b] || 0) + ' ' + BAND_LABEL[b];
+    }).join(' · ');
+    box.appendChild(legend);
+  }
+
+  // ---- transfers ----------------------------------------------------------
+  function renderTransfers() {
+    var box = $('pb-transfers');
+    box.textContent = '';
+    var t = DATA.transfers || { flows: [], total: 0, unsafeguarded: 0 };
+    if (!t.total) {
+      empty(box, 'No cross-border transfers recorded yet', 'Transfers appear here once your processing record or a transfer assessment names where personal data goes. Add them in the Privacy workspace.');
+      return;
+    }
+    var okN = t.total - t.unsafeguarded;
+    var g = el('div', 'pb-gauge');
+    var lbl = el('div', 'lbl');
+    lbl.appendChild(el('span', '', 'Safeguard coverage'));
+    lbl.appendChild(el('span', 'pct',
+      Math.round(100 * okN / t.total) + '%'));
+    g.appendChild(lbl);
+    var track = el('div', 'track');
+    var fill = el('div', 'fill');
+    fill.style.width = (100 * okN / t.total) + '%';
+    fill.style.background = t.unsafeguarded ? 'var(--warn)' : 'var(--accent)';
+    track.appendChild(fill);
+    g.appendChild(track);
+    g.appendChild(el('div', 'note',
+      okN + ' of ' + t.total + ' flows have a Chapter V safeguard on file'));
+    box.appendChild(g);
+    t.flows.slice(0, 6).forEach(function (f) {
+      var row = el('div', 'pb-flowrow');
+      row.appendChild(el('span', 'src', f.activity || f.source));
+      row.appendChild(el('span', 'arr', '→'));
+      row.appendChild(el('span', 'dest', f.destination));
+      var badge = el('span', 'badge ' + (f.safeguarded ? 'done' : 'blocked'),
+                     f.safeguarded ? 'safeguarded' : 'no safeguard');
+      badge.style.marginInlineStart = 'auto';
+      row.appendChild(badge);
+      box.appendChild(row);
+    });
+    if (t.total > 6) {
+      var more = el('p', 'pb-sub');
+      more.style.marginTop = 'var(--space-2)';
+      var a = el('a', '', '+' + (t.total - 6) + ' more on the workspace map');
+      a.href = '/privacy';
+      more.appendChild(a);
+      box.appendChild(more);
+    }
+  }
+
+  // ---- AI & registers -----------------------------------------------------
+  var TIERS = ['prohibited', 'high', 'limited', 'minimal'];
+  var TIER_LABEL = { prohibited: 'Banned', high: 'High risk', limited: 'Limited risk', minimal: 'Minimal risk' };
+  var TIER_COLOR = { prohibited: 'var(--danger)', high: 'var(--warn)',
+                     limited: 'var(--info)', minimal: 'var(--accent)' };
+  function renderAi() {
+    var box = $('pb-ai'), reg = $('pb-registers');
+    box.textContent = ''; reg.textContent = '';
+    var tiers = DATA.ai_tiers || {};
+    var total = TIERS.reduce(function (n, t) {
+      return n + (tiers[t] || 0);
+    }, 0);
+    if (!total) {
+      empty(box, 'No AI systems registered yet', 'AI systems appear here by EU AI Act risk level. Add them under AI systems in the Privacy workspace.');
+    } else {
+      var max = Math.max.apply(null, TIERS.map(function (t) {
+        return tiers[t] || 0;
+      }).concat([1]));
+      TIERS.forEach(function (t) {
+        var row = el('div', 'row');
+        row.appendChild(el('span', 'name', TIER_LABEL[t]));
+        var track = el('div', 'track');
+        var seg = el('div', 'seg');
+        seg.style.background = TIER_COLOR[t];
+        seg.style.width = (100 * (tiers[t] || 0) / max).toFixed(1) + '%';
+        track.appendChild(seg);
+        row.appendChild(track);
+        row.appendChild(el('span', 'num', fmt(tiers[t] || 0)));
+        box.appendChild(row);
+      });
+    }
+    var r = DATA.registers || {};
+    [['Processing activities', r.ropa], ['Vendor agreements', r.dpa],
+     ['AI systems', r.ai], ['Data requests', r.dsar],
+     ['Breaches', (DATA.incidents || {}).total]].forEach(function (pair) {
+      reg.appendChild(el('span', 'pill',
+        pair[0] + ' · ' + fmt(pair[1] || 0)));
+    });
+  }
+
+  // ---- drill-through ------------------------------------------------------
+  function badge(level) {
+    var cls = level === 'high' ? 'blocked' : level === 'medium' ? 'warn'
+      : level === 'low' || level === 'minimal' ? 'done' : 'info';
+    return el('span', 'badge ' + cls, level ? human(level) : 'Unknown');
+  }
+  function renderDrill() {
+    var box = $('pb-drill');
+    box.textContent = '';
+    var rs = rows().slice().sort(function (a, b) {
+      var d = (RANK[b.residual] || 0) - (RANK[a.residual] || 0);
+      return d || (b.created_at || 0) - (a.created_at || 0);
+    });
+    if (!rs.length) {
+      if (filtered()) empty(box, 'Nothing matches the current slice', 'Clear a filter or choose a longer time range above to see more.');
+      else empty(box, 'No assessments yet', 'Assessments appear here, highest risk first. Start one in the Privacy workspace.',
+        { label: 'Open the Privacy workspace', href: '/privacy' });
+      return;
+    }
+    var table = el('table');
+    var thead = el('thead');
+    var hr = el('tr');
+    ['Subject', 'Questionnaire', 'Status', 'Risk before → after fixes',
+     'Opened', 'Notes'].forEach(function (h) {
+      var th = el('th', '', h);
+      th.scope = 'col';
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    var tbody = el('tbody');
+    rs.slice(0, 12).forEach(function (s) {
+      var tr = el('tr');
+      var subj = el('td');
+      if (window.mvAssessmentReview && s.id) {
+        var open = el('button', 'btn btn--ghost', s.subject || 'Untitled');
+        open.type = 'button';
+        open.addEventListener('click', function () { window.mvAssessmentReview.open(s.id); });
+        subj.appendChild(open);
+      } else {
+        subj.textContent = s.subject || 'Untitled';
+      }
+      tr.appendChild(subj);
+      tr.appendChild(el('td', '', human(s.type || 'unknown')));
+      var st = el('td');
+      st.appendChild(el('span', 'badge ' +
+        (s.status === 'approved' ? 'done'
+          : s.status === 'rejected' ? 'blocked' : 'info'),
+        human(s.status || 'unknown')));
+      tr.appendChild(st);
+      var risk = el('td');
+      var pair = el('span', 'pb-risk-pair');
+      pair.appendChild(badge(s.inherent));
+      pair.appendChild(el('span', 'muted-sm', '→'));
+      pair.appendChild(badge(s.residual));
+      risk.appendChild(pair);
+      tr.appendChild(risk);
+      tr.appendChild(el('td', 'muted-sm', s.created_at
+        ? (window.mvDateAbsolute ? window.mvDateAbsolute(s.created_at) : new Date(s.created_at * 1000).toLocaleDateString()) : '—'));
+      var flags = [];
+      if (s.review_due) flags.push(s.review_due_reason ? 'Review due: ' + s.review_due_reason : 'Review due');
+      if (s.risk_accepted) flags.push('Risk accepted');
+      if (s.open_followups) flags.push(s.open_followups + ' follow-up question(s) open');
+      tr.appendChild(el('td', 'muted-sm', flags.join(' · ') || '—'));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    box.appendChild(table);
+    if (rs.length > 12) {
+      var more = el('p', 'pb-sub');
+      more.style.marginTop = 'var(--space-2)';
+      var a = el('a', '',
+        rs.length - 12 + ' more in the Privacy workspace →');
+      a.href = '/privacy';
+      more.appendChild(a);
+      box.appendChild(more);
+    }
+  }
+
+  // ---- learning (first-pass acceptance) -----------------------------------
+  function renderLearning() {
+    var box = $('pb-learning');
+    box.textContent = '';
+    var L = DATA.learning || {};
+    if (!L.decided) {
+      empty(box, 'No decided assessments yet', 'The acceptance trend appears here from the first approval. Decide an assessment in the Privacy workspace to start it.');
+      return;
+    }
+    var hero = el('div');
+    hero.style.display = 'flex';
+    hero.style.alignItems = 'baseline';
+    hero.style.gap = '10px';
+    var pct = el('span', '', (L.first_pass_rate == null ? '—'
+      : L.first_pass_rate.toFixed(0) + '%'));
+    pct.style.fontSize = 'var(--text-3xl)';
+    pct.style.fontWeight = 'var(--font-semibold)';
+    hero.appendChild(pct);
+    hero.appendChild(el('span', 'muted', 'accepted first pass'));
+    box.appendChild(hero);
+    var bars = el('div');
+    bars.style.display = 'flex';
+    bars.style.alignItems = 'flex-end';
+    bars.style.gap = '3px';
+    bars.style.height = '52px';
+    bars.style.margin = 'var(--space-2) 0';
+    bars.setAttribute('role', 'img');
+    bars.setAttribute('aria-label', 'Monthly first-pass acceptance rate');
+    (L.trend || []).forEach(function (r) {
+      var b = el('div');
+      b.style.flex = '1';
+      b.style.borderRadius = '3px 3px 0 0';
+      b.style.minHeight = '2px';
+      b.style.height = (r.rate == null ? 2 : Math.max(4, r.rate * 0.5)) + 'px';
+      b.style.background = r.rate == null ? 'var(--surface-sunken)'
+        : r.rate >= 70 ? 'var(--accent)'
+        : r.rate >= 40 ? 'var(--warn)' : 'var(--danger)';
+      b.title = r.month + ': ' + (r.rate == null ? 'no decisions'
+        : r.rate + '% first pass (' + r.first_pass + '/' + r.decided + ')');
+      bars.appendChild(b);
+    });
+    box.appendChild(bars);
+    box.appendChild(el('p', 'pb-sub',
+      fmt(L.decided) + ' decided · ' + fmt(L.qualified) +
+      ' approved after follow-ups · ' + fmt(L.rejected) + ' rejected · ' +
+      (L.median_days_to_decision == null ? '—'
+        : L.median_days_to_decision + ' days') + ' typical time to a decision'));
+  }
+
+  // ---- question ROI -------------------------------------------------------
+  var ROI_VERDICT_CLS = { 'load-bearing': 'done', informative: 'info',
+                          inert: 'blocked', unproven: 'warn' };
+  var ROI_VERDICT_LABEL = { 'load-bearing': 'Changes ratings', informative: 'Adds information',
+                            inert: 'Never flags anything', unproven: 'Not enough data yet' };
+  function renderRoiTable(d) {
+    var box = $('pb-roi');
+    box.textContent = '';
+    $('pb-roi-summary').textContent = fmt(d.assessed) + ' assessed · ' +
+      d.load_bearing + ' change ratings · ' + d.inert +
+      ' never flag anything (could be removed)';
+    if (!d.assessed) {
+      empty(box, 'No saved assessments of this framework yet', 'Which questions change ratings appears here once assessments of this framework are saved. Choose another framework above.');
+      return;
+    }
+    var table = el('table');
+    var hr = el('tr');
+    ['Question', 'Section', 'Asked', 'Flagged a risk', 'Changed a rating', 'Verdict']
+      .forEach(function (h) {
+        var th = el('th', '', h);
+        th.scope = 'col';
+        hr.appendChild(th);
+      });
+    var thead = el('thead');
+    thead.appendChild(hr);
+    table.appendChild(thead);
+    var tbody = el('tbody');
+    var roiShown = roiAll ? d.questions.length : 14;
+    d.questions.slice(0, roiShown).forEach(function (q) {
+      var tr = el('tr');
+      var qt = el('td', '', q.text);
+      qt.style.maxWidth = '26rem';
+      qt.style.overflow = 'hidden';
+      qt.style.textOverflow = 'ellipsis';
+      qt.style.whiteSpace = 'nowrap';
+      qt.title = q.text;
+      tr.appendChild(qt);
+      tr.appendChild(el('td', 'muted-sm', q.section));
+      tr.appendChild(el('td', '', fmt(q.asked)));
+      tr.appendChild(el('td', '', fmt(q.fired) +
+        (q.fire_rate == null ? '' : ' (' + q.fire_rate + '%)')));
+      tr.appendChild(el('td', '', fmt(q.rating_impact)));
+      var vd = el('td');
+      vd.appendChild(el('span',
+        'badge ' + (ROI_VERDICT_CLS[q.verdict] || 'info'), ROI_VERDICT_LABEL[q.verdict] || human(q.verdict)));
+      tr.appendChild(vd);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    box.appendChild(table);
+    if (d.questions.length > roiShown) {
+      var all = el('button', 'btn btn--ghost', 'Show all ' + d.questions.length + ' questions');
+      all.type = 'button';
+      all.addEventListener('click', function () { roiAll = true; renderRoiTable(d); });
+      box.appendChild(all);
+    }
+  }
+  function loadRoi(type) {
+    window.mvFetchJSON('/api/v1/assess/question-roi?type=' + encodeURIComponent(type))
+      .then(function (d) { roiAll = false; renderRoiTable(d); })
+      .catch(function (e) {
+        $('pb-roi').textContent = '';
+        $('pb-roi').appendChild(el('p', 'pb-empty',
+          window.mvErrorText ? window.mvErrorText(e, 'load the question results') : 'Could not load the question results. Refresh the page and try again.'));
+      });
+  }
+  var roiInit = false;
+  function renderRoi() {
+    var sel = $('pb-roi-type');
+    var types = (DATA.by_type || []).map(function (r) { return r.type; });
+    if (!types.length) {
+      $('pb-roi').textContent = '';
+      empty($('pb-roi'), 'No assessments yet', 'Which questions change ratings appears here once assessments are saved. Start one in the Privacy workspace.');
+      return;
+    }
+    if (!roiInit) {
+      roiInit = true;
+      types.forEach(function (t) {
+        var o = el('option', '', human(t));
+        o.value = t;
+        sel.appendChild(o);
+      });
+      sel.addEventListener('change', function () { loadRoi(sel.value); });
+      loadRoi(types[0]);
+    }
+  }
+
+  // ---- shell --------------------------------------------------------------
+  function renderAll() {
+    if (!DATA) return;
+    renderChips();
+    renderKpis();
+    renderDonut();
+    renderBurn();
+    renderPosture();
+    renderFlow();
+    renderTypes();
+    renderDsar();
+    renderTransfers();
+    renderAi();
+    renderLearning();
+    renderRoi();
+    renderDrill();
+  }
+  function stamp() {
+    $('pb-stamp').textContent = 'Updated ' +
+      (window.mvTimeAbsolute ? window.mvTimeAbsolute(Date.now()) : new Date().toLocaleTimeString()) + ' · updates every minute';
+  }
+  function load() {
+    window.mvFetchJSON(API).then(function (d) {
+      DATA = d;
+      stamp();
+      renderAll();
+    }).catch(function (e) {
+      $('pb-stamp').textContent = (window.mvErrorText
+        ? window.mvErrorText(e, 'load the dashboard')
+        : 'Could not load the dashboard. Refresh the page and try again.') + ' Trying again in a minute.';
+    });
+  }
+
+  document.querySelectorAll('.pb-slicer button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.pb-slicer button').forEach(function (x) {
+        x.classList.remove('on');
+      });
+      b.classList.add('on');
+      F.range = parseInt(b.dataset.range, 10) || 0;
+      renderAll();
+    });
+  });
+
+  $('pb-present').addEventListener('click', function () {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else if (document.documentElement.requestFullscreen) {
+      document.documentElement.requestFullscreen();
+    }
+  });
+  document.addEventListener('fullscreenchange', function () {
+    document.body.classList.toggle('pb-present',
+                                   !!document.fullscreenElement);
+  });
+
+  setInterval(function () {
+    if (!document.hidden) load();
+  }, 60000);
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (window.mvFetchJSON) load(); else document.addEventListener('DOMContentLoaded', load);
+})();
+</script>
+{% endblock %}

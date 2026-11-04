@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name or 'project' }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+  <p class="muted" style="margin-bottom: var(--space-2);">{{ back_link('/projects', 'Projects') }}</p>
+  <h1 class="page-title">{{ project.name or 'Untitled project' }}</h1>
+  {% if project.description %}<p class="page-subtitle">{{ project.description }}</p>{% endif %}
+  <p><a class="btn btn--ghost" href="/project-reviews#project={{ project.id }}">Ask a colleague to review a result</a> <a class="btn btn--ghost" href="/settings">Turn on team reviews in Settings</a></p>
+
+  {% if nav_mode == 'areas' %}
+  {% if project_plan_available %}{% from "_view_tabs.html" import view_tabs %}{{ view_tabs('Project views', [('tasks', 'Tasks', '/projects/' ~ project.id), ('plan', 'Plan', '/projects/' ~ project.id ~ '?tab=plan')], 'tasks') }}{% endif %}
+  {% else %}
+  <p><a class="btn btn--ghost" href="/project-workspaces/{{ project.id }}">Open project workspace</a></p>
+  {% endif %}
+  <div class="panel">
+    <p class="muted" style="margin: 0;">
+      {% if project.domain %}Department: {{ project.domain|humanize }} · {% endif %}
+      {{ goals|length }} task{{ '' if goals|length == 1 else 's' }}
+      {% if counts %} · {% for s, n in counts.items() %}{{ n }} {{ s|humanize|lower }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}
+    </p>
+  </div>
+
+  <div class="section-head"><h2>Tasks in this project</h2></div>
+  <div class="panel{% if not goals %} empty{% endif %}">
+    {% if goals %}
+      <table>
+        <thead><tr><th scope="col">Task</th><th scope="col">Status</th><th scope="col">Started</th><th scope="col"><span class="sr-only">More</span></th></tr></thead>
+        <tbody>
+        {% for g in goals %}
+          <tr>
+            <td><a href="/chat/goal/{{ g.id }}">{{ g.title }}</a></td>
+            <td><span class="badge {{ g.status }}">{{ g.status|humanize }}</span></td>
+            <td class="muted" style="white-space: nowrap;">{% if g.created_at %}{{ g.created_at|datetime }}{% endif %}</td>
+            <td class="muted" style="white-space: nowrap;"><a href="/goals/{{ g.id }}/plan" aria-label="Steps for {{ g.title }}">Steps</a> · <a href="/goals/{{ g.id }}/trajectory" aria-label="Replay {{ g.title }}">Replay</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="mv-empty"><p class="mv-empty__title">No tasks filed here yet</p>
+        <p class="mv-empty__body">Open a task and pick this project under “Project”.</p>
+        <p><a class="btn btn--primary" href="/goals">Go to your tasks</a></p></div>
+    {% endif %}
+  </div>
+{% endblock %}

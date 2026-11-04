@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Flow results · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .fa { max-width: 940px; }
+  .fa__sub { color: var(--muted); font-size: var(--text-sm); margin-bottom: var(--space-4); }
+  .fa__table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+  .fa__table th, .fa__table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  .fa__table th { color: var(--muted); font-weight: var(--font-semibold); }
+  .fa__table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .fa__rate { font-weight: var(--font-semibold); }
+  .fa__rate.good { color: var(--success, #16a34a); }
+  .fa__rate.bad { color: var(--danger, #dc2626); }
+  .fa__err { color: var(--muted); font-size: 12px; }
+  .fa__msg { color: var(--muted); font-size: var(--text-sm); }
+  .fa__bar { display: inline-block; height: 8px; background: var(--success, #16a34a); border-radius: var(--radius-xs); vertical-align: middle; }
+  .fa__bar-bg { display: inline-block; width: 60px; height: 8px; background: var(--surface-sunken); border-radius: var(--radius-xs); overflow: hidden; }
+</style>
+
+<div class="fa">
+  <h1 class="page-title" style="margin:0 0 4px;">Flow results</h1>
+  <p class="fa__sub">How often each flow finishes, how many runs it has, and how long runs take.
+    <a href="/automations">Automations</a> · <a href="/flows/designer">Flow designer</a></p>
+  <p class="fa__msg" id="fa-msg" role="status">Loading…</p>
+  <p id="fa-empty" hidden><a class="btn btn--primary" href="/flows/designer">Design a flow</a></p>
+  <div style="overflow-x:auto;">
+    <table class="fa__table" id="fa-table" hidden>
+      <thead><tr>
+        <th scope="col">Flow</th><th scope="col" class="num">Runs</th><th scope="col">Finished</th>
+        <th scope="col" class="num">Succeeded</th><th scope="col" class="num">Failed</th><th scope="col" class="num">Paused</th>
+        <th scope="col" class="num">Typical time</th><th scope="col" class="num">Slowest runs</th><th scope="col">Most common problems</th>
+      </tr></thead>
+      <tbody id="fa-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var msg = document.getElementById('fa-msg');
+  var flowsEnabled = {{ 'true' if flows_enabled else 'false' }};
+  var canManageFlows = {{ 'true' if can_manage_flows else 'false' }};
+  {% include "_dash_helpers.js" %}
+  function pct(x) { return x == null ? '—' : Math.round(x * 100) + '%'; }
+  function secs(x) {
+    if (!(x || x === 0)) return '—';
+    if (x < 1) return 'under a second';
+    if (x < 90) return Math.round(x) + ' seconds';
+    if (x < 5400) return Math.round(x / 60) + ' minutes';
+    return (x / 3600).toFixed(1) + ' hours';
+  }
+  function problem(text) {
+    var t = String(text || '');
+    if (/budget|spend|cost/i.test(t)) return 'Spending limit reached';
+    if (/timeout|timed out/i.test(t)) return 'Took too long';
+    if (/reject/i.test(t)) return 'Rejected by a person';
+    if (/permission|forbidden|denied|403/i.test(t)) return 'Not allowed';
+    if (/connect|network|unreachable|dns/i.test(t)) return 'Couldn’t reach another app';
+    return 'A step failed';
+  }
+  var names = {};
+  Promise.all([
+    api('/api/v1/flows').then(function (r) { return r.ok ? r.json() : { flows: [] }; }).catch(function () { return { flows: [] }; }),
+    api('/api/v1/flows/analytics')
+  ]).then(function (pair) {
+    (pair[0].flows || []).forEach(function (f) { names[f.id] = f.name; });
+    var r = pair[1];
+    if (r.status === 403) {
+      msg.textContent = flowsEnabled ? 'You do not have access to workflow results. Ask an administrator.'
+        : 'Workflows are turned off. Ask an administrator to turn them on.';
+      if (!flowsEnabled && canManageFlows) {
+        var on = document.createElement('a'); on.href = '/learning#lrn-flows-on'; on.textContent = ' Turn on workflows';
+        msg.appendChild(on);
+      }
+      return { off: true };
+    }
+    if (!r.ok) { msg.textContent = window.mvErrorText ? window.mvErrorText(r, 'load flow results') : 'Could not load flow results. Refresh the page and try again.'; return { off: true }; }
+    return r.json();
+  }).then(function (j) {
+    if (j && j.off) { return; }
+    if (!j) { msg.textContent = 'Could not load flow results. Refresh the page and try again.'; return; }
+    var flows = j.flows || [];
+    if (!flows.length) { msg.textContent = 'No flow runs yet. Design a flow and run it to see results here.'; document.getElementById('fa-empty').hidden = false; return; }
+    msg.textContent = flows.length + ' flow' + (flows.length === 1 ? '' : 's') + ' · based on the last ' + j.run_window + ' runs';
+    var body = document.getElementById('fa-body');
+    flows.forEach(function (f) {
+      var tr = document.createElement('tr');
+      var nameTd = el('td');
+      var a = document.createElement('a'); a.href = '/flows/designer/' + encodeURIComponent(f.flow_id);
+      a.textContent = names[f.flow_id] || (window.mvHuman ? window.mvHuman(f.flow_id) : f.flow_id);
+      nameTd.appendChild(a); tr.appendChild(nameTd);
+      tr.appendChild(el('td', 'num', String(f.runs)));
+      var rate = el('td');
+      var span = el('span', 'fa__rate ' + (f.success_rate == null ? '' : (f.success_rate >= 0.9 ? 'good' : f.success_rate < 0.5 ? 'bad' : '')), pct(f.success_rate));
+      rate.appendChild(span); tr.appendChild(rate);
+      tr.appendChild(el('td', 'num', String(f.completed)));
+      tr.appendChild(el('td', 'num', String(f.failed)));
+      tr.appendChild(el('td', 'num', String(f.paused)));
+      tr.appendChild(el('td', 'num', secs(f.p50_seconds)));
+      tr.appendChild(el('td', 'num', secs(f.p95_seconds)));
+      var errTd = el('td', 'fa__err');
+      (f.top_errors || []).forEach(function (e) {
+        var d = el('div', null, problem(e.error) + ' (' + e.count + (e.count === 1 ? ' time)' : ' times)'));
+        d.title = String(e.error || '');
+        errTd.appendChild(d);
+      });
+      tr.appendChild(errTd);
+      body.appendChild(tr);
+    });
+    document.getElementById('fa-table').hidden = false;
+  }).catch(function (e) { msg.textContent = window.mvErrorText ? window.mvErrorText(e, 'load flow results') : 'Could not load flow results. Refresh the page and try again.'; });
+})();
+</script>
+{% endblock %}

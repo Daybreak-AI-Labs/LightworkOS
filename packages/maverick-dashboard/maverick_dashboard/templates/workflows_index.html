@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Workflows · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .wfx { max-width: 880px; margin-inline: auto; }
+  .wfx :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .wfx__section { margin-bottom: var(--space-7); }
+  .wfx__section h2 { font-size: var(--text-lg); margin: 0 0 var(--space-3); }
+  .wfx__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .wfx__more { position: relative; }
+  .wfx__more summary { list-style: none; cursor: pointer; }
+  .wfx__more summary::-webkit-details-marker { display: none; }
+  .wfx__menu { position: absolute; z-index: 4; right: 0; top: 100%; min-width: 11rem;
+    padding: var(--space-2); display: grid; gap: var(--space-1); border: 1px solid var(--border);
+    border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-md); }
+</style>
+
+<div class="wfx">
+  {% from "_hero.html" import hero, state %}
+  {% from "_empty_state.html" import empty_state %}
+  {% set workflow_actions %}
+    <a class="btn btn--primary" href="/workflow-builder">Create workflow</a>
+    {% if flows_enabled %}<a class="btn" href="/flows/designer">New flow</a>{% endif %}
+    {% if flows_enabled %}<a class="btn btn--ghost" href="/learning/examples">Learning examples</a>{% endif %}
+  {% endset %}
+  {% call hero('Your AI workforce', 'Workflows',
+               subtitle='Save a process and use it again',
+               lede='Workflows, templates, and agent playbooks you\'ve built
+                     — schedule them, trigger them from events, or run them on
+                     demand. Browse the full catalog on
+                     <a href="/templates">Templates</a>.' | safe,
+               actions=workflow_actions if can_operate_workflows else '') %}
+    {{ state('Current state',
+             ((flows | length ~ ' flows · ') if flows_enabled else '')
+               ~ templates | length ~ ' templates · '
+               ~ playbooks | length ~ ' playbooks',
+             badge='ready' if (flows or templates or playbooks) else 'none yet',
+             badge_class='ok' if (flows or templates or playbooks) else 'idle',
+             copy='Templates and playbooks guide the work. Flow approval steps
+                   pause a run for a human decision; playbook review instructions
+                   do not pause it automatically.') }}
+  {% endcall %}
+  {% if not can_operate_workflows %}
+  <p class="panel">You can review saved work here. Ask someone with workflow access to create or edit it, or to review flow results.</p>
+  {% endif %}
+
+  {% if flows_enabled %}
+  <section class="wfx__section" aria-labelledby="wfx-flow-h">
+    <h2 id="wfx-flow-h">Flows <span style="font-weight:normal;color:var(--muted);font-size:var(--text-sm);">— connected steps with decisions, repetition, and approvals</span></h2>
+    {% if flows %}
+    <ul class="wfx__list" aria-label="Your flows">
+      {% for f in flows %}
+      <li class="mv-row">
+        <div class="mv-row__main">
+          <div class="mv-row__title">{{ f.name or (f.id|humanize) }}</div>
+          <div class="mv-row__sub">{{ f.nodes }} step{{ '' if f.nodes == 1 else 's' }}</div>
+          <div class="mv-row__sub" data-flow-status="{{ f.id }}">Checking flow status…</div>
+          <details hidden><summary>Technical details</summary><p class="muted">Flow reference: <code>{{ f.id }}</code></p></details>
+        </div>
+        {% if can_operate_workflows %}<div class="mv-row__actions">
+          <a class="btn btn--ghost" href="/flows/designer/{{ f.id | urlencode }}">Edit</a>
+          <a class="btn btn--ghost" href="/flows/analytics">Analytics</a>
+          <details class="wfx__more"><summary class="btn btn--ghost">More</summary>
+            <div class="wfx__menu">
+              <button class="btn btn--ghost" type="button" data-flow-retire="off" data-flow-id="{{ f.id }}" data-flow-name="{{ f.name }}">Turn off</button>
+              <button class="btn btn--ghost" type="button" data-flow-retire="delete" data-flow-id="{{ f.id }}" data-flow-name="{{ f.name }}">Delete flow</button>
+            </div>
+          </details>
+        </div>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% elif can_operate_workflows %}
+    {{ empty_state('No flows yet',
+                   'Flows you build appear here. Build your first flow in the visual designer. Copilot can explain the steps while you work.',
+                   action_label='Open the flow designer', action_href='/flows/designer') }}
+    {% else %}
+    {{ empty_state('No flows yet', 'Flows that people in your workspace build appear here.') }}
+    {% endif %}
+  </section>
+  {% else %}
+  <section class="wfx__section panel" aria-labelledby="wfx-flow-off-h">
+    <h2 id="wfx-flow-off-h">Flows are turned off</h2>
+    {% if can_manage_flows %}
+    <p>Turn them on before creating or running a flow.</p>
+    <a class="btn" href="/learning#lrn-flows-on">Turn on workflows</a>
+    {% else %}
+    <p>Ask an administrator to turn on workflows.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="wfx__section" aria-labelledby="wfx-tpl-h">
+    <h2 id="wfx-tpl-h">Templates</h2>
+    {% if templates %}
+    <ul class="wfx__list" aria-label="Your templates">
+      {% for t in templates %}
+      <li class="mv-row">
+        <div class="mv-row__main">
+          <div class="mv-row__title">{{ t.title or (t.name|humanize) }}</div>
+          <div class="mv-row__sub">{% if t.params %}You'll be asked for: {{ t.params|map('humanize')|map('lower')|join(', ') }}{% else %}Ready to use with your instructions{% endif %}</div>
+          <details hidden><summary>Technical details</summary><p class="muted">Template reference: <code>{{ t.name }}</code></p></details>
+        </div>
+        {% if can_operate_workflows %}<div class="mv-row__actions">
+          <a class="btn btn--ghost" href="/workflow-builder?edit={{ t.name | urlencode }}">Edit</a>
+          <a class="btn btn--ghost" href="/flows/designer?from_template={{ t.name | urlencode }}" title="Open this template as a one-step flow, then add branches, approvals, and loops around it">Open as flow</a>
+          {% if scheduling_enabled or triggers_enabled %}<a class="btn btn--ghost" href="/workflow-builder?template={{ t.name | urlencode }}">Automate</a>{% endif %}
+          <a class="btn btn--ghost" href="/chat?title={{ t.title | urlencode }}">Use</a>
+        </div>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% elif can_operate_workflows %}
+    {{ empty_state('No templates yet',
+                   'Reusable workflows you save appear here, ready to run, schedule or trigger. Draft the first one in the builder.',
+                   action_label='New workflow', action_href='/workflow-builder') }}
+    {% else %}
+    {{ empty_state('No templates yet', 'Reusable workflows that people in your workspace save appear here.') }}
+    {% endif %}
+  </section>
+
+  <section class="wfx__section" aria-labelledby="wfx-pb-h">
+    <h2 id="wfx-pb-h">Agent playbooks</h2>
+    {% if playbooks %}
+    <ul class="wfx__list" aria-label="Your agent playbooks">
+      {% for p in playbooks %}
+      <li class="mv-row">
+        <div class="mv-row__main">
+          <div class="mv-row__title">{{ p.name|humanize }}</div>
+          <div class="mv-row__sub">{% if p.description %}{{ p.description }}{% endif %}{% if p.suite %} · {{ p.suite|humanize }}{% endif %}</div>
+        </div>
+        <div class="mv-row__actions">
+          {% if can_operate_workflows %}<a class="btn btn--ghost" href="/workflow-builder?edit_agent={{ p.name | urlencode }}">Edit</a>{% endif %}
+          <a class="btn btn--ghost" href="/agents?name={{ p.name | urlencode }}">Open in Agents</a>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% elif can_operate_workflows %}
+    {{ empty_state('No agent playbooks yet',
+                   'Governed agents you build appear here. In the builder, choose “Agent playbook” to build the first one.',
+                   action_label='Open the builder', action_href='/workflow-builder') }}
+    {% else %}
+    {{ empty_state('No agent playbooks yet', 'Governed agents that people in your workspace build appear here.') }}
+    {% endif %}
+  </section>
+</div>
+{% if can_operate_workflows and flows_enabled %}
+<script src="{{ asset('lightwork-flow-retirement.js') }}"></script>
+<script nonce="{{ csp_script_nonce }}">
+  document.querySelectorAll('[data-flow-retire]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      window.LightworkFlowRetirement.change(button.dataset.flowId, button.dataset.flowRetire, {
+        name: button.dataset.flowName, button: button,
+        onDone: function () { window.location.reload(); }
+      });
+    });
+  });
+</script>
+{% endif %}
+{% endblock %}

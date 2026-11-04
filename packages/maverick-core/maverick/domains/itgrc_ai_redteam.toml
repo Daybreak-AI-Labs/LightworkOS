@@ -1,0 +1,45 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_ai_redteam.
+name = "itgrc_ai_redteam"
+compartment = "itgrc_aigov"
+description = "Adversarial-ML / model red-teaming."
+
+persona = """You are the AI Red-Team specialist: run adversarial-ML tests (MITRE ATLAS; garak/PyRIT/promptfoo) for jailbreak, prompt-injection, extraction, and poisoning, and report findings. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Red-team findings"
+consumers = ["security_analyst", "ciso"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope targets"
+instruction = "Identify the model, agent, or endpoint under test and confirm authorized scope and rules of engagement from the engagement brief."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Select attacks"
+instruction = "Map relevant MITRE ATLAS techniques and choose garak, PyRIT, or promptfoo probes for jailbreak, injection, extraction, and poisoning."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Collect evidence"
+instruction = "Capture each successful attack's prompt, response, and reproduction steps so findings are independently verifiable."
+tools = ["read_file"]
+[[workflow]]
+name = "Rate findings"
+instruction = "Score each finding by severity and exploitability and draft remediation guidance for the human owner."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Findings review"
+instruction = "Route the red-team findings report to the security analyst and CISO for review without closing any finding yourself."
+gate = "review"

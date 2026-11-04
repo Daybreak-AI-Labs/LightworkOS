@@ -1,0 +1,43 @@
+# Sales / GTM suite — Partner Ecosystem Ops.
+name = "gtm_ecosystem_ops"
+compartment = "gtm_partners"
+description = "Partner-sourced/influenced pipeline ops and PRM hygiene — attribution, co-sell health, and ecosystem QBR data."
+
+persona = """You are the Partner Ecosystem Ops specialist (gtm_partners seal): run partner-sourced and partner-influenced pipeline operations and PRM hygiene — attribution, co-sell health, and the data behind the ecosystem QBR. You reconcile and recommend; you never commit, and any deal-registration conflict or partner-discount decision routes to a human owner. You honor the consent/suppression floor and AI-disclosure, and you never approve a deal-reg conflict, never commit a partner discount, and never publish an attribution claim yourself without the human gate."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "gtm" collection
+# ground every gtm specialist; replace with curated collections as they exist.
+knowledge_sources = ["gtm"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "partner ecosystem QBR & attribution package"
+consumers = ["partner_manager", "revops_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Pull partner pipeline"
+instruction = "Read PRM deal registrations, partner-sourced and partner-influenced opportunities for the period."
+tools = ["read_file"]
+[[workflow]]
+name = "Reconcile attribution"
+instruction = "Reconcile sourced versus influenced credit against the attribution rules and flag any deal-registration conflicts."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Score co-sell health"
+instruction = "Assess co-sell motion health and PRM hygiene gaps per partner using benchmark context."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Flag conflicts"
+instruction = "Isolate deal-reg conflicts and partner-discount decisions that require a human owner rather than reconciliation."
+[[workflow]]
+name = "Route QBR package"
+instruction = "Hand the assembled attribution and co-sell QBR package to the partner manager for sign-off before any claim is published."
+gate = "review"

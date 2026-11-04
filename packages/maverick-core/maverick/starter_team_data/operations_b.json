@@ -1,0 +1,1841 @@
+[
+  {
+    "id": "rfp_proposal_operations",
+    "title": "RFP & Proposal Operations",
+    "summary": "Check an approved requirement matrix for owners, answer evidence, review status and submission deadlines; prepare a proposal completion worklist.",
+    "owner_role": "Proposal manager",
+    "specialists": [
+      "gtm_rfp_gtm",
+      "gtm_proposal_writer",
+      "ps_rfp_response_ps"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "RFP requirement and response matrix",
+        "description": "One row per requirement, normalized by the proposal owner from the solicitation and approved answer library. Answer text and evidence references are supplied, not invented.",
+        "columns": [
+          "id",
+          "source",
+          "requirement",
+          "answer_owner",
+          "answer_text",
+          "answer_source",
+          "review_status",
+          "submission_due",
+          "submission_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Solicitation and approved answer library",
+        "access": "read",
+        "prerequisites": [
+          "Read-scoped workspace export with requirement IDs and document versions",
+          "Answer-library owner has marked approved responses and their source references",
+          "Proposal manager confirms submission date and time zone"
+        ]
+      }
+    ],
+    "sample_goal": "Find unowned, unsupported and unreviewed answers plus an approaching submission in the synthetic RFP matrix.",
+    "deliverable": "Requirement compliance matrix and response-completion worklist",
+    "acceptance": [
+      "Preserve every supplied requirement and its source in the evidence register.",
+      "Identify missing ownership and answer citations without manufacturing responses.",
+      "Flag nonapproved responses and due submissions for the proposal manager.",
+      "Submission completeness is conditional on the owner-supplied matrix being complete."
+    ],
+    "stop_conditions": [
+      "Stop at an ambiguous requirement, missing solicitation version or unsupported pricing claim.",
+      "Escalate confidential answer disclosure and any commitment outside approved material."
+    ],
+    "blocked_actions": [
+      "Submit an RFP response",
+      "Send a proposal",
+      "Commit pricing, dates, warranties or scope",
+      "Change CRM or answer-library records"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "response_owner",
+        "title": "Requirement has an answer owner",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign a qualified owner to the requirement.",
+        "field": "answer_owner"
+      },
+      {
+        "id": "answer_evidence",
+        "title": "Answer has an evidence reference",
+        "table": "records",
+        "kind": "required",
+        "action": "Obtain a source-backed answer from the approved library.",
+        "field": "answer_source"
+      },
+      {
+        "id": "answer_review",
+        "title": "Response has completed review",
+        "table": "records",
+        "kind": "equals",
+        "action": "Route the supplied response for proposal-owner review.",
+        "field": "review_status",
+        "value": "approved"
+      },
+      {
+        "id": "submission_due",
+        "title": "Submission needs attention within two days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the remaining submission checklist for the proposal manager.",
+        "field": "submission_due",
+        "within_days": 2,
+        "unless_field": "submission_status",
+        "unless_value": "submitted"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "rfp-1",
+            "source": "sample://rfp/rfp-1",
+            "requirement": "Support coverage",
+            "answer_owner": "Support lead",
+            "answer_text": "Business-hours coverage per service schedule.",
+            "answer_source": "sample://answers/support-v2",
+            "review_status": "approved",
+            "submission_due": "2026-12-01",
+            "submission_status": "draft"
+          },
+          {
+            "id": "rfp-2",
+            "source": "sample://rfp/rfp-2",
+            "requirement": "Independent assurance report",
+            "answer_owner": "Compliance lead",
+            "answer_text": "Awaiting current report confirmation.",
+            "answer_source": "",
+            "review_status": "pending",
+            "submission_due": "2026-12-01",
+            "submission_status": "draft"
+          },
+          {
+            "id": "rfp-3",
+            "source": "sample://rfp/rfp-3",
+            "requirement": "Implementation approach",
+            "answer_owner": "",
+            "answer_text": "Phased setup per approved implementation guide.",
+            "answer_source": "sample://answers/implementation-v1",
+            "review_status": "approved",
+            "submission_due": "2026-12-01",
+            "submission_status": "draft"
+          },
+          {
+            "id": "rfp-4",
+            "source": "sample://rfp/rfp-4",
+            "requirement": "Pricing schedule",
+            "answer_owner": "Deal desk",
+            "answer_text": "Use the attached approved pricing schedule.",
+            "answer_source": "sample://answers/pricebook-v4",
+            "review_status": "approved",
+            "submission_due": "2026-11-03",
+            "submission_status": "draft"
+          }
+        ]
+      },
+      "expected_findings": [
+        "response_owner:rfp-3",
+        "answer_evidence:rfp-2",
+        "answer_review:rfp-2",
+        "submission_due:rfp-4"
+      ]
+    }
+  },
+  {
+    "id": "customer_onboarding",
+    "title": "Customer Onboarding",
+    "summary": "Review setup, document, training and handoff milestones against supplied completion evidence and prepare an activation-readiness checklist.",
+    "owner_role": "Customer onboarding lead",
+    "specialists": [
+      "cx_onboarding",
+      "gtm_onboarding"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Customer onboarding milestones",
+        "description": "Approved export for one customer implementation. Each milestone carries an accountable owner, completion status, evidence reference and agreed due date.",
+        "columns": [
+          "id",
+          "source",
+          "customer",
+          "milestone",
+          "owner",
+          "completion_status",
+          "completion_evidence",
+          "due"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Customer implementation tracker",
+        "access": "read",
+        "prerequisites": [
+          "Workspace-scoped customer export and customer identifier",
+          "Owner-approved activation criteria and milestone list",
+          "Read authorization for the referenced setup and training evidence"
+        ]
+      }
+    ],
+    "sample_goal": "Identify missing evidence, an unowned handoff and unfinished milestones in a synthetic implementation.",
+    "deliverable": "Onboarding readiness checklist and handoff exceptions",
+    "acceptance": [
+      "Keep setup, documents, training and handoff milestones separately traceable.",
+      "Treat completion status without evidence as a review exception.",
+      "Show unfinished milestones and overdue unfinished work.",
+      "Do not label an account activated or change customer systems."
+    ],
+    "stop_conditions": [
+      "Stop when customer identity or project scope is ambiguous.",
+      "Escalate missing activation criteria, unresolved security requirements or a requested access change."
+    ],
+    "blocked_actions": [
+      "Provision accounts or access",
+      "Mark a customer activated in a live service",
+      "Send customer communications",
+      "Promise delivery dates or policy exceptions"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "milestone_owner",
+        "title": "Milestone has an accountable owner",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign the milestone to the onboarding lead or responsible function.",
+        "field": "owner"
+      },
+      {
+        "id": "completion_evidence",
+        "title": "Milestone has completion evidence",
+        "table": "records",
+        "kind": "required",
+        "action": "Collect and review the milestone evidence before claiming completion.",
+        "field": "completion_evidence"
+      },
+      {
+        "id": "unfinished_milestone",
+        "title": "Activation milestone is complete",
+        "table": "records",
+        "kind": "equals",
+        "action": "Prepare the remaining task and handoff for the onboarding lead.",
+        "field": "completion_status",
+        "value": "complete"
+      },
+      {
+        "id": "milestone_due",
+        "title": "Unfinished milestone is overdue",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Review the overdue milestone and propose a recovery date.",
+        "field": "due",
+        "within_days": 0,
+        "unless_field": "completion_status",
+        "unless_value": "complete"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "onboard-1",
+            "source": "sample://customer-onboarding/onboard-1",
+            "customer": "Sample Cedar",
+            "milestone": "Workspace setup",
+            "owner": "Implementation lead",
+            "completion_status": "complete",
+            "completion_evidence": "sample://onboarding/setup-check",
+            "due": "2026-10-30"
+          },
+          {
+            "id": "onboard-2",
+            "source": "sample://customer-onboarding/onboard-2",
+            "customer": "Sample Cedar",
+            "milestone": "Documents received",
+            "owner": "Customer lead",
+            "completion_status": "complete",
+            "completion_evidence": "",
+            "due": "2026-10-30"
+          },
+          {
+            "id": "onboard-3",
+            "source": "sample://customer-onboarding/onboard-3",
+            "customer": "Sample Cedar",
+            "milestone": "Administrator training",
+            "owner": "Trainer",
+            "completion_status": "pending",
+            "completion_evidence": "sample://onboarding/training-booking",
+            "due": "2026-11-01"
+          },
+          {
+            "id": "onboard-4",
+            "source": "sample://customer-onboarding/onboard-4",
+            "customer": "Sample Cedar",
+            "milestone": "Success handoff",
+            "owner": "",
+            "completion_status": "pending",
+            "completion_evidence": "sample://onboarding/handoff-draft",
+            "due": "2026-11-10"
+          }
+        ]
+      },
+      "expected_findings": [
+        "milestone_owner:onboard-4",
+        "completion_evidence:onboard-2",
+        "unfinished_milestone:onboard-3",
+        "unfinished_milestone:onboard-4",
+        "milestone_due:onboard-3"
+      ]
+    }
+  },
+  {
+    "id": "customer_success_renewal_preparation",
+    "title": "Customer Success & Renewal Preparation",
+    "summary": "Compare approved account usage and unresolved commitments with owner-set thresholds and prepare evidence-linked renewal review actions.",
+    "owner_role": "Customer success manager",
+    "specialists": [
+      "cx_renewal_support",
+      "gtm_renewal_risk",
+      "gtm_renewal_forecast"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Account renewal review export",
+        "description": "One row per account. Usage counts, minimum engagement thresholds, support commitments and notice dates must be normalized and approved by the account owner.",
+        "columns": [
+          "id",
+          "source",
+          "account",
+          "active_users",
+          "minimum_active_users",
+          "open_commitments",
+          "allowed_open_commitments",
+          "renewal_date",
+          "renewal_status",
+          "review_evidence"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "CRM, usage and support exports",
+        "access": "read",
+        "prerequisites": [
+          "Read-scoped exports for the selected accounts only",
+          "Contract renewal dates and owner-approved usage thresholds",
+          "Support commitment counts reconciled to the cited account-review evidence"
+        ]
+      }
+    ],
+    "sample_goal": "Flag a usage shortfall, unresolved commitments and an approaching renewal in synthetic accounts.",
+    "deliverable": "Customer review brief inputs and renewal preparation worklist",
+    "acceptance": [
+      "Cite the supplied review evidence for each account.",
+      "Report threshold comparisons and open commitment gaps without inventing churn predictions.",
+      "Identify renewal dates within thirty days.",
+      "Keep commercial offers and customer follow-ups as drafts for the account owner."
+    ],
+    "stop_conditions": [
+      "Stop if account ownership, consent to usage data or renewal dates are uncertain.",
+      "Escalate commitments requiring product, legal or commercial approval."
+    ],
+    "blocked_actions": [
+      "Offer or accept renewal terms",
+      "Apply credits, refunds or discounts",
+      "Send collection or renewal messages",
+      "Change CRM stages or contracts"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "usage_threshold",
+        "title": "Usage meets the account review threshold",
+        "table": "records",
+        "kind": "compare",
+        "action": "Ask the account owner to investigate the documented adoption shortfall.",
+        "field": "active_users",
+        "other_field": "minimum_active_users",
+        "operator": "gte"
+      },
+      {
+        "id": "open_commitments",
+        "title": "Open commitments fit the agreed review threshold",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare an owner review of outstanding support or delivery commitments.",
+        "field": "open_commitments",
+        "other_field": "allowed_open_commitments",
+        "operator": "lte"
+      },
+      {
+        "id": "renewal_due",
+        "title": "Renewal is due within thirty days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the renewal meeting brief and current unresolved commitments.",
+        "field": "renewal_date",
+        "within_days": 30,
+        "unless_field": "renewal_status",
+        "unless_value": "renewed"
+      },
+      {
+        "id": "account_evidence",
+        "title": "Account review has supporting evidence",
+        "table": "records",
+        "kind": "required",
+        "action": "Obtain the source-linked account review before presenting conclusions.",
+        "field": "review_evidence"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "renewal-1",
+            "source": "sample://renewals/renewal-1",
+            "account": "Sample Cedar",
+            "active_users": 80,
+            "minimum_active_users": 60,
+            "open_commitments": 0,
+            "allowed_open_commitments": 0,
+            "renewal_date": "2027-02-01",
+            "renewal_status": "open",
+            "review_evidence": "sample://renewal-evidence/cedar"
+          },
+          {
+            "id": "renewal-2",
+            "source": "sample://renewals/renewal-2",
+            "account": "Sample Elm",
+            "active_users": 8,
+            "minimum_active_users": 20,
+            "open_commitments": 0,
+            "allowed_open_commitments": 0,
+            "renewal_date": "2027-02-01",
+            "renewal_status": "open",
+            "review_evidence": "sample://renewal-evidence/elm"
+          },
+          {
+            "id": "renewal-3",
+            "source": "sample://renewals/renewal-3",
+            "account": "Sample Fir",
+            "active_users": 30,
+            "minimum_active_users": 20,
+            "open_commitments": 2,
+            "allowed_open_commitments": 0,
+            "renewal_date": "2026-11-20",
+            "renewal_status": "open",
+            "review_evidence": "sample://renewal-evidence/fir"
+          },
+          {
+            "id": "renewal-4",
+            "source": "sample://renewals/renewal-4",
+            "account": "Sample Oak",
+            "active_users": 50,
+            "minimum_active_users": 30,
+            "open_commitments": 0,
+            "allowed_open_commitments": 0,
+            "renewal_date": "2026-11-10",
+            "renewal_status": "renewed",
+            "review_evidence": ""
+          }
+        ]
+      },
+      "expected_findings": [
+        "usage_threshold:renewal-2",
+        "open_commitments:renewal-3",
+        "renewal_due:renewal-3",
+        "account_evidence:renewal-4"
+      ]
+    }
+  },
+  {
+    "id": "insurance_certificate_desk",
+    "title": "Insurance Certificate Desk",
+    "summary": "Compare normalized certificate limits and expiry dates with supplied contractual requirements; prepare coverage-document gaps for qualified review.",
+    "owner_role": "Vendor risk manager",
+    "specialists": [
+      "proc_supplier_onboard",
+      "legal_insurance",
+      "risk_insurance_renewal"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Certificate requirement comparison",
+        "description": "One row per supplier coverage requirement, with limits normalized to the same currency and basis by a qualified reviewer. A certificate is not proof that every policy condition is satisfied.",
+        "columns": [
+          "id",
+          "source",
+          "supplier",
+          "coverage",
+          "currency",
+          "certified_limit",
+          "required_limit",
+          "expires_on",
+          "endorsement_reference"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Vendor insurance and contract repository",
+        "access": "read",
+        "prerequisites": [
+          "Approved read-scoped certificate and contract export",
+          "Qualified owner confirms comparable coverage types, currencies and limit bases",
+          "Relevant endorsement references and certificate expiration dates"
+        ]
+      }
+    ],
+    "sample_goal": "Find an insufficient limit, an approaching expiry and a missing endorsement in synthetic vendor certificates.",
+    "deliverable": "Certificate expiry register and contractual gap review packet",
+    "acceptance": [
+      "Show the supplied requirement, certified limit and document source for each comparison.",
+      "Flag limits below requirements and expirations within thirty days.",
+      "Treat missing endorsement evidence as a gap, not a coverage conclusion.",
+      "Refer interpretation and acceptance to the qualified risk or legal owner."
+    ],
+    "stop_conditions": [
+      "Stop when coverage basis, currency or contractual interpretation is unclear.",
+      "Escalate suspected falsification or conflicting policy and certificate evidence."
+    ],
+    "blocked_actions": [
+      "Accept or waive insurance requirements",
+      "Bind, renew or cancel a policy",
+      "Activate a supplier",
+      "Send a coverage representation to another party"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "coverage_limit",
+        "title": "Supplied certificate limit meets the stated requirement",
+        "table": "records",
+        "kind": "compare",
+        "action": "Ask the qualified reviewer to resolve the documented limit gap.",
+        "field": "certified_limit",
+        "other_field": "required_limit",
+        "operator": "gte"
+      },
+      {
+        "id": "certificate_expiry",
+        "title": "Certificate expires within thirty days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare a renewal-evidence request for the vendor owner.",
+        "field": "expires_on",
+        "within_days": 30
+      },
+      {
+        "id": "endorsement_evidence",
+        "title": "Required endorsement has a reference",
+        "table": "records",
+        "kind": "required",
+        "action": "Obtain the required endorsement for qualified review.",
+        "field": "endorsement_reference"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "cert-1",
+            "source": "sample://certificates/cert-1",
+            "supplier": "Sample Atlas",
+            "coverage": "General liability per occurrence",
+            "currency": "USD",
+            "certified_limit": 2000000,
+            "required_limit": 1000000,
+            "expires_on": "2027-05-01",
+            "endorsement_reference": "sample://endorsements/atlas"
+          },
+          {
+            "id": "cert-2",
+            "source": "sample://certificates/cert-2",
+            "supplier": "Sample Birch",
+            "coverage": "General liability per occurrence",
+            "currency": "USD",
+            "certified_limit": 500000,
+            "required_limit": 1000000,
+            "expires_on": "2027-05-01",
+            "endorsement_reference": "sample://endorsements/birch"
+          },
+          {
+            "id": "cert-3",
+            "source": "sample://certificates/cert-3",
+            "supplier": "Sample Clover",
+            "coverage": "Cyber aggregate",
+            "currency": "USD",
+            "certified_limit": 3000000,
+            "required_limit": 2000000,
+            "expires_on": "2026-11-20",
+            "endorsement_reference": "sample://endorsements/clover"
+          },
+          {
+            "id": "cert-4",
+            "source": "sample://certificates/cert-4",
+            "supplier": "Sample Delta",
+            "coverage": "General liability per occurrence",
+            "currency": "USD",
+            "certified_limit": 2000000,
+            "required_limit": 1000000,
+            "expires_on": "2027-05-01",
+            "endorsement_reference": ""
+          }
+        ]
+      },
+      "expected_findings": [
+        "coverage_limit:cert-2",
+        "certificate_expiry:cert-3",
+        "endorsement_evidence:cert-4"
+      ]
+    }
+  },
+  {
+    "id": "license_permit_operations",
+    "title": "License & Permit Operations",
+    "summary": "Check an owner-maintained obligation calendar for renewal deadlines, accountable owners and application evidence; prepare renewal work for authorized people.",
+    "owner_role": "License and permit coordinator",
+    "specialists": [
+      "ehs_permit_track",
+      "itgrc_reg_change"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "License and permit obligation register",
+        "description": "An approved register of applicable permits and licenses. The qualified owner determines applicability, jurisdiction and renewal dates; the workflow does not infer law from generic rules.",
+        "columns": [
+          "id",
+          "source",
+          "obligation",
+          "jurisdiction",
+          "owner",
+          "renewal_due",
+          "renewal_status",
+          "application_evidence",
+          "authority_reference"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Permit and license register",
+        "access": "read",
+        "prerequisites": [
+          "Read-scoped register with the competent authority and official requirement reference",
+          "Accountable owner verifies jurisdiction, applicability and due dates",
+          "Approved copies of current permits and renewal attachment lists"
+        ]
+      }
+    ],
+    "sample_goal": "Identify a near-term renewal, missing owner and missing application evidence in a synthetic obligation register.",
+    "deliverable": "Renewal obligation calendar and application-readiness worklist",
+    "acceptance": [
+      "Preserve the authority reference and accountable owner for every obligation.",
+      "Flag renewals within sixty days except rows explicitly recorded as renewed.",
+      "Identify missing application evidence and official requirement references.",
+      "Prepare review tasks without submitting or declaring legal compliance."
+    ],
+    "stop_conditions": [
+      "Stop if the applicable authority, date calculation or obligation scope is unresolved.",
+      "Escalate expired permission or safety-critical operating restrictions to the responsible qualified owner."
+    ],
+    "blocked_actions": [
+      "Submit, sign or pay for a permit application",
+      "Renew or cancel a license",
+      "Represent that operation is authorized",
+      "Alter official records"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "renewal_window",
+        "title": "Renewal preparation is due within sixty days",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the renewal checklist for the authorized applicant.",
+        "field": "renewal_due",
+        "within_days": 60,
+        "unless_field": "renewal_status",
+        "unless_value": "renewed"
+      },
+      {
+        "id": "permit_owner",
+        "title": "Obligation has an accountable owner",
+        "table": "records",
+        "kind": "required",
+        "action": "Assign an authorized owner for this obligation.",
+        "field": "owner"
+      },
+      {
+        "id": "application_evidence",
+        "title": "Renewal attachments have a reference",
+        "table": "records",
+        "kind": "required",
+        "action": "Collect the required application attachments for review.",
+        "field": "application_evidence"
+      },
+      {
+        "id": "official_requirement",
+        "title": "Obligation cites its official requirement",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the qualified owner to verify and cite the authority requirement.",
+        "field": "authority_reference"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "permit-1",
+            "source": "sample://licenses-permits/permit-1",
+            "obligation": "Sample facility permit",
+            "jurisdiction": "Sample district",
+            "owner": "Facilities manager",
+            "renewal_due": "2027-06-01",
+            "renewal_status": "open",
+            "application_evidence": "sample://applications/facility",
+            "authority_reference": "sample://authority/facility-rule"
+          },
+          {
+            "id": "permit-2",
+            "source": "sample://licenses-permits/permit-2",
+            "obligation": "Sample operating license",
+            "jurisdiction": "Sample municipality",
+            "owner": "Operations manager",
+            "renewal_due": "2026-12-01",
+            "renewal_status": "open",
+            "application_evidence": "sample://applications/operating",
+            "authority_reference": "sample://authority/operating-rule"
+          },
+          {
+            "id": "permit-3",
+            "source": "sample://licenses-permits/permit-3",
+            "obligation": "Sample inspection permit",
+            "jurisdiction": "Sample district",
+            "owner": "",
+            "renewal_due": "2027-06-01",
+            "renewal_status": "open",
+            "application_evidence": "",
+            "authority_reference": "sample://authority/inspection-rule"
+          },
+          {
+            "id": "permit-4",
+            "source": "sample://licenses-permits/permit-4",
+            "obligation": "Sample trade license",
+            "jurisdiction": "Sample municipality",
+            "owner": "License coordinator",
+            "renewal_due": "2026-11-10",
+            "renewal_status": "renewed",
+            "application_evidence": "sample://applications/trade",
+            "authority_reference": ""
+          }
+        ]
+      },
+      "expected_findings": [
+        "renewal_window:permit-2",
+        "permit_owner:permit-3",
+        "application_evidence:permit-3",
+        "official_requirement:permit-4"
+      ]
+    }
+  },
+  {
+    "id": "data_quality_operations",
+    "title": "Data Quality Operations",
+    "summary": "Check approved record exports for duplicate business keys, missing contact fields and inconsistent amount relationships; prepare correction proposals for data owners.",
+    "owner_role": "Data steward",
+    "specialists": [
+      "data_quality_sentinel",
+      "pe_data_quality"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Business record quality export",
+        "description": "A scoped, minimized data extract with an owner-approved business key and field rules. Export row IDs must remain unique even where business keys are duplicated.",
+        "columns": [
+          "id",
+          "source",
+          "account_id",
+          "contact_email",
+          "currency",
+          "gross_amount",
+          "net_amount"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved data-quality extract",
+        "access": "read",
+        "prerequisites": [
+          "Read-only export for the named dataset and workspace",
+          "Owner-approved unique-key definition and nullable-field policy",
+          "Documented currency, gross/net definitions and extraction time"
+        ]
+      }
+    ],
+    "sample_goal": "Detect both members of a duplicate key pair, a missing contact address and a net amount exceeding gross in synthetic records.",
+    "deliverable": "Source-linked data defect and proposed correction register",
+    "acceptance": [
+      "Report every member of a duplicate business-key group without merging records.",
+      "Separate missing values from numeric relationship exceptions.",
+      "Retain source row identifiers so owners can verify an approved correction in a later run.",
+      "Do not infer which conflicting record is authoritative."
+    ],
+    "stop_conditions": [
+      "Stop if the key definition, amount units or record ownership are ambiguous.",
+      "Escalate sensitive fields that exceed the approved data-minimization scope."
+    ],
+    "blocked_actions": [
+      "Merge or delete live records",
+      "Write to production datasets",
+      "Change data contracts or pipelines",
+      "Publish personal data"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "duplicate_business_key",
+        "title": "Business key is unique",
+        "table": "records",
+        "kind": "unique",
+        "action": "Ask the data owner to reconcile all records sharing this key.",
+        "fields": [
+          "account_id"
+        ]
+      },
+      {
+        "id": "contact_present",
+        "title": "Required contact address is present",
+        "table": "records",
+        "kind": "required",
+        "action": "Request the missing contact value from the authoritative owner.",
+        "field": "contact_email"
+      },
+      {
+        "id": "amount_consistency",
+        "title": "Net amount does not exceed gross",
+        "table": "records",
+        "kind": "compare",
+        "action": "Review the amount mapping and propose a documented correction.",
+        "field": "net_amount",
+        "other_field": "gross_amount",
+        "operator": "lte"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "dq-1",
+            "source": "sample://data-quality/dq-1",
+            "account_id": "ACCT-001",
+            "contact_email": "sample1@example.invalid",
+            "currency": "USD",
+            "gross_amount": 100,
+            "net_amount": 90
+          },
+          {
+            "id": "dq-2",
+            "source": "sample://data-quality/dq-2",
+            "account_id": "ACCT-002",
+            "contact_email": "sample2@example.invalid",
+            "currency": "USD",
+            "gross_amount": 200,
+            "net_amount": 180
+          },
+          {
+            "id": "dq-3",
+            "source": "sample://data-quality/dq-3",
+            "account_id": "ACCT-002",
+            "contact_email": "",
+            "currency": "USD",
+            "gross_amount": 200,
+            "net_amount": 170
+          },
+          {
+            "id": "dq-4",
+            "source": "sample://data-quality/dq-4",
+            "account_id": "ACCT-004",
+            "contact_email": "sample4@example.invalid",
+            "currency": "USD",
+            "gross_amount": 100,
+            "net_amount": 120
+          }
+        ]
+      },
+      "expected_findings": [
+        "duplicate_business_key:dq-2",
+        "duplicate_business_key:dq-3",
+        "contact_present:dq-3",
+        "amount_consistency:dq-4"
+      ]
+    }
+  },
+  {
+    "id": "procurement_sourcing",
+    "title": "Procurement Sourcing",
+    "summary": "Compare owner-normalized supplier quotations with budget, delivery and mandatory requirement criteria; prepare sourcing exceptions for a purchasing decision.",
+    "owner_role": "Procurement manager",
+    "specialists": [
+      "proc_sourcing",
+      "proc_rfp",
+      "ops_sourcing"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Normalized supplier quotation comparison",
+        "description": "One row per quote for the same approved specification and quantity. Delivered totals include owner-approved taxes, freight and currency assumptions; no exchange rate is fetched or invented.",
+        "columns": [
+          "id",
+          "source",
+          "supplier",
+          "specification",
+          "currency",
+          "delivered_total",
+          "comparison_ceiling",
+          "lead_days",
+          "maximum_lead_days",
+          "mandatory_spec_evidence"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved supplier quotes and requirement sheet",
+        "access": "read",
+        "prerequisites": [
+          "Read-scoped approved quote copies and specification revision",
+          "Purchasing owner verifies quantity, unit, currency and delivered-cost normalization",
+          "Named budget authority and maximum delivery lead time"
+        ]
+      }
+    ],
+    "sample_goal": "Find a quote exceeding cost and lead-time limits, a currency mismatch and missing mandatory specification evidence.",
+    "deliverable": "Quote comparison and recommendation-review packet",
+    "acceptance": [
+      "Keep supplier quote references alongside normalized values and requirements.",
+      "Flag cost and lead-time exceptions without making an award.",
+      "Do not treat a different currency as a comparable amount.",
+      "Identify missing mandatory specification evidence before a recommendation is accepted."
+    ],
+    "stop_conditions": [
+      "Stop if quote quantity, currency, price basis or specification version cannot be reconciled.",
+      "Escalate conflicts of interest or requests to bypass purchasing authority."
+    ],
+    "blocked_actions": [
+      "Place orders or issue purchase commitments",
+      "Award or reject a supplier",
+      "Negotiate or accept contractual terms",
+      "Transmit supplier communications"
+    ],
+    "cadence": "manual",
+    "rules": [
+      {
+        "id": "quote_cost",
+        "title": "Delivered quote total fits the approved comparison ceiling",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare the cost exception for the procurement manager.",
+        "field": "delivered_total",
+        "other_field": "comparison_ceiling",
+        "operator": "lte"
+      },
+      {
+        "id": "quote_lead_time",
+        "title": "Delivery lead time meets the stated need",
+        "table": "records",
+        "kind": "compare",
+        "action": "Ask the procurement owner to review the delivery gap.",
+        "field": "lead_days",
+        "other_field": "maximum_lead_days",
+        "operator": "lte"
+      },
+      {
+        "id": "quote_currency",
+        "title": "Quote uses the comparison currency",
+        "table": "records",
+        "kind": "equals",
+        "action": "Obtain an owner-approved currency-normalized comparison before ranking.",
+        "field": "currency",
+        "value": "USD"
+      },
+      {
+        "id": "mandatory_spec",
+        "title": "Mandatory specification has evidence",
+        "table": "records",
+        "kind": "required",
+        "action": "Collect evidence for the mandatory specification before recommending the quote.",
+        "field": "mandatory_spec_evidence"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "quote-1",
+            "source": "sample://sourcing/quote-1",
+            "supplier": "Sample Alder",
+            "specification": "Sample instrument v2, quantity 10",
+            "currency": "USD",
+            "delivered_total": 9500,
+            "comparison_ceiling": 10000,
+            "lead_days": 14,
+            "maximum_lead_days": 21,
+            "mandatory_spec_evidence": "sample://quotes/alder-spec"
+          },
+          {
+            "id": "quote-2",
+            "source": "sample://sourcing/quote-2",
+            "supplier": "Sample Beech",
+            "specification": "Sample instrument v2, quantity 10",
+            "currency": "USD",
+            "delivered_total": 10500,
+            "comparison_ceiling": 10000,
+            "lead_days": 30,
+            "maximum_lead_days": 21,
+            "mandatory_spec_evidence": "sample://quotes/beech-spec"
+          },
+          {
+            "id": "quote-3",
+            "source": "sample://sourcing/quote-3",
+            "supplier": "Sample Cypress",
+            "specification": "Sample instrument v2, quantity 10",
+            "currency": "EUR",
+            "delivered_total": 9000,
+            "comparison_ceiling": 10000,
+            "lead_days": 14,
+            "maximum_lead_days": 21,
+            "mandatory_spec_evidence": "sample://quotes/cypress-spec"
+          },
+          {
+            "id": "quote-4",
+            "source": "sample://sourcing/quote-4",
+            "supplier": "Sample Dogwood",
+            "specification": "Sample instrument v2, quantity 10",
+            "currency": "USD",
+            "delivered_total": 9800,
+            "comparison_ceiling": 10000,
+            "lead_days": 14,
+            "maximum_lead_days": 21,
+            "mandatory_spec_evidence": ""
+          }
+        ]
+      },
+      "expected_findings": [
+        "quote_cost:quote-2",
+        "quote_lead_time:quote-2",
+        "quote_currency:quote-3",
+        "mandatory_spec:quote-4"
+      ]
+    }
+  },
+  {
+    "id": "expense_review",
+    "title": "Expense Review",
+    "summary": "Review normalized expense claims for policy limits, duplicate receipts and missing documentation; prepare finance exceptions without approving reimbursement.",
+    "owner_role": "Expense policy owner",
+    "specialists": [
+      "finance_expense",
+      "exec_expense_exec"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Expense and policy comparison export",
+        "description": "Approved, minimized claim export with a policy owner-supplied limit for each expense category. Amounts and limits must use the same currency and period.",
+        "columns": [
+          "id",
+          "source",
+          "receipt_id",
+          "currency",
+          "claim_amount",
+          "policy_limit",
+          "business_purpose",
+          "receipt_reference"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Expense claims and policy repository",
+        "access": "read",
+        "prerequisites": [
+          "Read-only scoped expense export and receipt references",
+          "Policy version and category-specific limits verified by the policy owner",
+          "Approved handling of employee and payment-related information"
+        ]
+      }
+    ],
+    "sample_goal": "Find a duplicate receipt pair, missing purpose and receipt evidence, and a claim over its supplied limit.",
+    "deliverable": "Expense exception worklist for finance review",
+    "acceptance": [
+      "Report both entries using a duplicated receipt identifier.",
+      "Cite claim sources, supplied limits and missing supporting material.",
+      "Distinguish a possible duplicate or policy exception from fraud.",
+      "Leave approval, reimbursement and employee decisions to authorized people."
+    ],
+    "stop_conditions": [
+      "Stop when currency, policy applicability or receipt identity is uncertain.",
+      "Escalate suspected misconduct confidentially without making a disciplinary determination."
+    ],
+    "blocked_actions": [
+      "Approve, reject or reimburse a claim",
+      "Move money",
+      "Change payroll or payment details",
+      "Contact employees or banks"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "duplicate_receipt",
+        "title": "Receipt identifier is used once",
+        "table": "records",
+        "kind": "unique",
+        "action": "Review all claims sharing this receipt before deciding whether either is payable.",
+        "fields": [
+          "receipt_id"
+        ]
+      },
+      {
+        "id": "policy_limit",
+        "title": "Claim amount fits its supplied policy limit",
+        "table": "records",
+        "kind": "compare",
+        "action": "Prepare the amount exception for the expense policy owner.",
+        "field": "claim_amount",
+        "other_field": "policy_limit",
+        "operator": "lte"
+      },
+      {
+        "id": "business_purpose",
+        "title": "Claim has a business purpose",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare a request for the missing business-purpose documentation.",
+        "field": "business_purpose"
+      },
+      {
+        "id": "receipt_evidence",
+        "title": "Claim has receipt evidence",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare a request for the receipt supporting this claim.",
+        "field": "receipt_reference"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "expense-1",
+            "source": "sample://expenses/expense-1",
+            "receipt_id": "RCPT-001",
+            "currency": "USD",
+            "claim_amount": 40,
+            "policy_limit": 50,
+            "business_purpose": "Sample client visit",
+            "receipt_reference": "sample://receipts/1"
+          },
+          {
+            "id": "expense-2",
+            "source": "sample://expenses/expense-2",
+            "receipt_id": "RCPT-002",
+            "currency": "USD",
+            "claim_amount": 30,
+            "policy_limit": 50,
+            "business_purpose": "",
+            "receipt_reference": "sample://receipts/2"
+          },
+          {
+            "id": "expense-3",
+            "source": "sample://expenses/expense-3",
+            "receipt_id": "RCPT-002",
+            "currency": "USD",
+            "claim_amount": 30,
+            "policy_limit": 50,
+            "business_purpose": "Sample client visit",
+            "receipt_reference": ""
+          },
+          {
+            "id": "expense-4",
+            "source": "sample://expenses/expense-4",
+            "receipt_id": "RCPT-004",
+            "currency": "USD",
+            "claim_amount": 75,
+            "policy_limit": 50,
+            "business_purpose": "Sample team travel",
+            "receipt_reference": "sample://receipts/4"
+          }
+        ]
+      },
+      "expected_findings": [
+        "duplicate_receipt:expense-2",
+        "duplicate_receipt:expense-3",
+        "policy_limit:expense-4",
+        "business_purpose:expense-2",
+        "receipt_evidence:expense-3"
+      ]
+    }
+  },
+  {
+    "id": "it_service_desk",
+    "title": "IT Service Desk",
+    "summary": "Check service tickets for routing ownership, approved runbooks, diagnostic evidence and response deadlines; prepare safe next steps for the service owner.",
+    "owner_role": "IT service desk lead",
+    "specialists": [
+      "itgrc_itsm",
+      "itgrc_cmdb"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Service ticket triage export",
+        "description": "Read-only export of scoped tickets and their selected runbook metadata. Diagnostics are references to previously approved collection, not permission to run commands.",
+        "columns": [
+          "id",
+          "source",
+          "category",
+          "assigned_owner",
+          "runbook_id",
+          "runbook_status",
+          "diagnostic_reference",
+          "response_due",
+          "ticket_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Service desk and approved runbook library",
+        "access": "read",
+        "prerequisites": [
+          "Read-scoped ticket export and asset identifiers",
+          "Runbook versions approved for the selected ticket categories",
+          "Diagnostic references and response targets supplied by the service owner"
+        ]
+      }
+    ],
+    "sample_goal": "Find an unassigned overdue ticket, an unapproved runbook and a missing diagnostic reference.",
+    "deliverable": "Ticket triage and diagnostic-readiness worklist",
+    "acceptance": [
+      "Preserve ticket and diagnostic references for the service owner.",
+      "Flag absent routing owners and unapproved runbook selections.",
+      "Identify missing diagnostics and elapsed response deadlines.",
+      "Provide review actions without executing fixes or changing tickets."
+    ],
+    "stop_conditions": [
+      "Stop before any proposed command, credential request or access change.",
+      "Escalate suspected security incidents and unsupported runbooks to the appropriate owner."
+    ],
+    "blocked_actions": [
+      "Run remote commands",
+      "Reset credentials or change access",
+      "Install, patch or restart software",
+      "Change ticket state or send requester messages"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "ticket_owner",
+        "title": "Ticket has a routing owner",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare the ticket routing decision for the service desk lead.",
+        "field": "assigned_owner"
+      },
+      {
+        "id": "runbook_approved",
+        "title": "Selected runbook is approved",
+        "table": "records",
+        "kind": "equals",
+        "action": "Escalate the runbook selection to an authorized service owner.",
+        "field": "runbook_status",
+        "value": "approved"
+      },
+      {
+        "id": "diagnostic_evidence",
+        "title": "Ticket has diagnostic evidence",
+        "table": "records",
+        "kind": "required",
+        "action": "Prepare the minimum diagnostic request for authorized collection.",
+        "field": "diagnostic_reference"
+      },
+      {
+        "id": "response_due",
+        "title": "Unresolved ticket response is due",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the overdue response exception for the service desk lead.",
+        "field": "response_due",
+        "within_days": 0,
+        "unless_field": "ticket_status",
+        "unless_value": "resolved"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "ticket-1",
+            "source": "sample://it-service/ticket-1",
+            "category": "Printer configuration",
+            "assigned_owner": "Desktop support",
+            "runbook_id": "RB-PRINT-2",
+            "runbook_status": "approved",
+            "diagnostic_reference": "sample://diagnostics/printer",
+            "response_due": "2026-11-10",
+            "ticket_status": "open"
+          },
+          {
+            "id": "ticket-2",
+            "source": "sample://it-service/ticket-2",
+            "category": "Application error",
+            "assigned_owner": "",
+            "runbook_id": "RB-APP-3",
+            "runbook_status": "approved",
+            "diagnostic_reference": "sample://diagnostics/application",
+            "response_due": "2026-11-01",
+            "ticket_status": "open"
+          },
+          {
+            "id": "ticket-3",
+            "source": "sample://it-service/ticket-3",
+            "category": "Network access",
+            "assigned_owner": "Network team",
+            "runbook_id": "RB-NET-DRAFT",
+            "runbook_status": "pending_review",
+            "diagnostic_reference": "sample://diagnostics/network",
+            "response_due": "2026-11-10",
+            "ticket_status": "open"
+          },
+          {
+            "id": "ticket-4",
+            "source": "sample://it-service/ticket-4",
+            "category": "Device inventory",
+            "assigned_owner": "Asset team",
+            "runbook_id": "RB-ASSET-1",
+            "runbook_status": "approved",
+            "diagnostic_reference": "",
+            "response_due": "2026-10-30",
+            "ticket_status": "resolved"
+          }
+        ]
+      },
+      "expected_findings": [
+        "ticket_owner:ticket-2",
+        "runbook_approved:ticket-3",
+        "diagnostic_evidence:ticket-4",
+        "response_due:ticket-2"
+      ]
+    }
+  },
+  {
+    "id": "incident_coordination",
+    "title": "Incident Coordination",
+    "summary": "Organize owner-supplied incident events, evidence and response commitments into a coordination record with gaps requiring human follow-through.",
+    "owner_role": "Incident commander",
+    "specialists": [
+      "sec_incident_scribe",
+      "itgrc_incident_response",
+      "pe_sre_incident_commander"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Incident timeline and action register",
+        "description": "One normalized row per incident event or action. Timestamps, evidence pointers and update commitments come from the authorized response team; chronology and facts require their review.",
+        "columns": [
+          "id",
+          "source",
+          "incident",
+          "event",
+          "event_timestamp",
+          "action_owner",
+          "evidence_reference",
+          "next_update_due",
+          "action_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Incident timeline and evidence repository",
+        "access": "read",
+        "prerequisites": [
+          "Incident-scoped read authorization and designated commander",
+          "Approved evidence references with collection times and custody metadata",
+          "Response team supplies action owners and next update commitments"
+        ]
+      }
+    ],
+    "sample_goal": "Find an unowned action, a missing timestamp and evidence reference, and an overdue incident update.",
+    "deliverable": "Incident coordination timeline, evidence index and review actions",
+    "acceptance": [
+      "Preserve supplied event descriptions and source pointers without embellishing facts.",
+      "Flag missing action ownership, timestamps and evidence.",
+      "Identify overdue updates for open incident work.",
+      "Prepare post-incident review inputs without taking response or containment actions."
+    ],
+    "stop_conditions": [
+      "Stop when incident scope, commander authority or evidence custody is unclear.",
+      "Escalate immediate safety or security decisions to the qualified response lead."
+    ],
+    "blocked_actions": [
+      "Isolate hosts or block traffic",
+      "Rotate or reset credentials",
+      "Deploy or roll back services",
+      "Send public, regulatory or customer incident notifications"
+    ],
+    "cadence": "daily",
+    "rules": [
+      {
+        "id": "incident_owner",
+        "title": "Incident action has an owner",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the incident commander to assign the open action.",
+        "field": "action_owner"
+      },
+      {
+        "id": "event_time",
+        "title": "Event has a recorded timestamp",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the response team to verify and record the event time.",
+        "field": "event_timestamp"
+      },
+      {
+        "id": "incident_evidence",
+        "title": "Event has an evidence reference",
+        "table": "records",
+        "kind": "required",
+        "action": "Preserve and reference supporting evidence through the authorized process.",
+        "field": "evidence_reference"
+      },
+      {
+        "id": "incident_update_due",
+        "title": "Open incident update is overdue",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the overdue status-update request for the incident commander.",
+        "field": "next_update_due",
+        "within_days": 0,
+        "unless_field": "action_status",
+        "unless_value": "closed"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "event-1",
+            "source": "sample://incidents/event-1",
+            "incident": "Sample availability event",
+            "event": "Monitoring alert recorded",
+            "event_timestamp": "2026-11-01T09:00:00Z",
+            "action_owner": "On-call lead",
+            "evidence_reference": "sample://incident-evidence/alert",
+            "next_update_due": "2026-11-01",
+            "action_status": "closed"
+          },
+          {
+            "id": "event-2",
+            "source": "sample://incidents/event-2",
+            "incident": "Sample availability event",
+            "event": "Customer impact review assigned",
+            "event_timestamp": "2026-11-01T09:10:00Z",
+            "action_owner": "",
+            "evidence_reference": "sample://incident-evidence/impact",
+            "next_update_due": "2026-11-05",
+            "action_status": "open"
+          },
+          {
+            "id": "event-3",
+            "source": "sample://incidents/event-3",
+            "incident": "Sample availability event",
+            "event": "Mitigation reported by response team",
+            "event_timestamp": "",
+            "action_owner": "Incident commander",
+            "evidence_reference": "",
+            "next_update_due": "2026-11-05",
+            "action_status": "open"
+          },
+          {
+            "id": "event-4",
+            "source": "sample://incidents/event-4",
+            "incident": "Sample availability event",
+            "event": "Follow-up review requested",
+            "event_timestamp": "2026-11-01T10:00:00Z",
+            "action_owner": "Service owner",
+            "evidence_reference": "sample://incident-evidence/follow-up",
+            "next_update_due": "2026-11-01",
+            "action_status": "open"
+          }
+        ]
+      },
+      "expected_findings": [
+        "incident_owner:event-2",
+        "event_time:event-3",
+        "incident_evidence:event-3",
+        "incident_update_due:event-4"
+      ]
+    }
+  },
+  {
+    "id": "research_competitive_intelligence",
+    "title": "Research & Competitive Intelligence",
+    "summary": "Review selected public-source observations against supplied baselines and freshness dates; prepare evidence-linked change investigations.",
+    "owner_role": "Research lead",
+    "specialists": [
+      "strat_research",
+      "strat_competitive_intel",
+      "gtm_competitive_intel"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Dated public-source observations",
+        "description": "Approved observations from selected public sources, including comparable numeric current and baseline values. Collection is performed separately; this workflow does not browse or claim to verify source content.",
+        "columns": [
+          "id",
+          "source",
+          "subject",
+          "metric",
+          "unit",
+          "current_value",
+          "baseline_value",
+          "public_source_url",
+          "source_access",
+          "collected_on",
+          "review_due",
+          "baseline_reference"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Approved public-source observation export",
+        "access": "read",
+        "prerequisites": [
+          "Research owner selects permitted public sources and collection purpose",
+          "Each observation includes a URL, collection date, baseline and common measurement unit",
+          "Owner-approved freshness deadlines and lawful content retention"
+        ]
+      }
+    ],
+    "sample_goal": "Flag a changed reported metric, a missing public URL, a nonpublic source marker and an expired freshness review.",
+    "deliverable": "Public-source change brief inputs and verification worklist",
+    "acceptance": [
+      "Cite supplied URLs and collection metadata rather than inventing sources.",
+      "Identify numeric differences from the supplied baseline with unchanged observations retained.",
+      "Flag nonpublic sources and stale observations for exclusion or review.",
+      "Treat changes as investigation candidates; do not infer strategy or causation without review."
+    ],
+    "stop_conditions": [
+      "Stop before using restricted, private or unlawfully obtained material.",
+      "Escalate inconsistent units, unsupported claims or missing baseline provenance."
+    ],
+    "blocked_actions": [
+      "Access private accounts or bypass access restrictions",
+      "Scrape or fetch sources in this workflow",
+      "Publish competitive claims",
+      "Send external research updates"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "public_url",
+        "title": "Observation cites a public source URL",
+        "table": "records",
+        "kind": "required",
+        "action": "Obtain the exact permitted public source reference before using the observation.",
+        "field": "public_source_url"
+      },
+      {
+        "id": "reported_change",
+        "title": "Reported metric matches its supplied baseline",
+        "table": "records",
+        "kind": "compare",
+        "action": "Investigate and cite the documented change before interpreting its significance.",
+        "field": "current_value",
+        "other_field": "baseline_value",
+        "operator": "eq"
+      },
+      {
+        "id": "public_access",
+        "title": "Source is marked public",
+        "table": "records",
+        "kind": "equals",
+        "action": "Exclude the restricted observation and ask the research owner for a permitted public source.",
+        "field": "source_access",
+        "value": "public"
+      },
+      {
+        "id": "freshness_due",
+        "title": "Observation needs a freshness review",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Refresh or reverify the observation through the authorized research process.",
+        "field": "review_due",
+        "within_days": 0
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "observation-1",
+            "source": "sample://research/observation-1",
+            "subject": "Sample Supplier A",
+            "metric": "Published location count",
+            "unit": "locations",
+            "current_value": 10,
+            "baseline_value": 10,
+            "public_source_url": "https://supplier-a.example.invalid/locations",
+            "source_access": "public",
+            "collected_on": "2026-11-01",
+            "review_due": "2026-12-01",
+            "baseline_reference": "sample://research-baseline/a"
+          },
+          {
+            "id": "observation-2",
+            "source": "sample://research/observation-2",
+            "subject": "Sample Supplier B",
+            "metric": "Published list price",
+            "unit": "USD per unit",
+            "current_value": 120,
+            "baseline_value": 100,
+            "public_source_url": "",
+            "source_access": "public",
+            "collected_on": "2026-11-01",
+            "review_due": "2026-12-01",
+            "baseline_reference": "sample://research-baseline/b"
+          },
+          {
+            "id": "observation-3",
+            "source": "sample://research/observation-3",
+            "subject": "Sample Supplier C",
+            "metric": "Published office count",
+            "unit": "offices",
+            "current_value": 4,
+            "baseline_value": 4,
+            "public_source_url": "https://supplier-c.example.invalid/offices",
+            "source_access": "restricted",
+            "collected_on": "2026-11-01",
+            "review_due": "2026-12-01",
+            "baseline_reference": "sample://research-baseline/c"
+          },
+          {
+            "id": "observation-4",
+            "source": "sample://research/observation-4",
+            "subject": "Sample Supplier D",
+            "metric": "Published product count",
+            "unit": "products",
+            "current_value": 20,
+            "baseline_value": 20,
+            "public_source_url": "https://supplier-d.example.invalid/products",
+            "source_access": "public",
+            "collected_on": "2026-09-01",
+            "review_due": "2026-10-01",
+            "baseline_reference": "sample://research-baseline/d"
+          }
+        ]
+      },
+      "expected_findings": [
+        "public_url:observation-2",
+        "reported_change:observation-2",
+        "public_access:observation-3",
+        "freshness_due:observation-4"
+      ]
+    }
+  },
+  {
+    "id": "board_committee_operations",
+    "title": "Board & Committee Operations",
+    "summary": "Check agenda items, packet references, review status and decision follow-up dates; prepare a confidential board or committee readiness worklist.",
+    "owner_role": "Corporate secretary",
+    "specialists": [
+      "exec_board_pack",
+      "legal_board",
+      "strat_board_metrics"
+    ],
+    "inputs": [
+      {
+        "key": "records",
+        "label": "Agenda, packet and action register",
+        "description": "Approved register for one board or committee. Supporting materials and distribution authorization remain controlled by the corporate secretary.",
+        "columns": [
+          "id",
+          "source",
+          "meeting",
+          "agenda_item",
+          "owner",
+          "packet_reference",
+          "review_status",
+          "decision_reference",
+          "followup_due",
+          "action_status"
+        ]
+      }
+    ],
+    "connections": [
+      {
+        "name": "Restricted board materials repository",
+        "access": "read",
+        "prerequisites": [
+          "Read authorization for the specific board or committee and meeting",
+          "Corporate secretary confirms agenda, packet version and permitted audience",
+          "Owner-provided decisions, action assignments and follow-up dates"
+        ]
+      }
+    ],
+    "sample_goal": "Find an unowned agenda action, missing unapproved packet material and an overdue decision follow-up.",
+    "deliverable": "Meeting packet readiness index and decision-action register",
+    "acceptance": [
+      "Retain the meeting, agenda item, owner and evidence reference for each entry.",
+      "Flag missing materials and nonapproved packet items before distribution.",
+      "Track overdue open follow-ups without sending messages.",
+      "Preserve confidentiality and leave minutes, resolutions and decisions to authorized reviewers."
+    ],
+    "stop_conditions": [
+      "Stop if board membership, distribution authority or privileged scope is uncertain.",
+      "Escalate contradictory decisions or unsigned resolutions to the corporate secretary or counsel."
+    ],
+    "blocked_actions": [
+      "Distribute board packets or send follow-ups",
+      "Approve minutes or resolutions",
+      "Make governance decisions or sign filings",
+      "Change repository access permissions"
+    ],
+    "cadence": "weekly",
+    "rules": [
+      {
+        "id": "agenda_owner",
+        "title": "Agenda item or action has an owner",
+        "table": "records",
+        "kind": "required",
+        "action": "Ask the corporate secretary to confirm the responsible owner.",
+        "field": "owner"
+      },
+      {
+        "id": "packet_evidence",
+        "title": "Packet item has supporting material",
+        "table": "records",
+        "kind": "required",
+        "action": "Collect the approved packet material within the restricted workspace.",
+        "field": "packet_reference"
+      },
+      {
+        "id": "packet_review",
+        "title": "Packet item has completed review",
+        "table": "records",
+        "kind": "equals",
+        "action": "Route the packet item for the authorized reviewer before distribution.",
+        "field": "review_status",
+        "value": "approved"
+      },
+      {
+        "id": "decision_followup",
+        "title": "Open decision follow-up is due",
+        "table": "records",
+        "kind": "deadline",
+        "action": "Prepare the follow-up for the secretary to review and send if authorized.",
+        "field": "followup_due",
+        "within_days": 0,
+        "unless_field": "action_status",
+        "unless_value": "closed"
+      }
+    ],
+    "sample": {
+      "as_of": "2026-11-02",
+      "tables": {
+        "records": [
+          {
+            "id": "board-1",
+            "source": "sample://board/board-1",
+            "meeting": "Sample committee November",
+            "agenda_item": "Operating report",
+            "owner": "Operations director",
+            "packet_reference": "sample://board-packet/operating",
+            "review_status": "approved",
+            "decision_reference": "sample://board-actions/operating",
+            "followup_due": "2026-10-30",
+            "action_status": "closed"
+          },
+          {
+            "id": "board-2",
+            "source": "sample://board/board-2",
+            "meeting": "Sample committee November",
+            "agenda_item": "Risk action review",
+            "owner": "",
+            "packet_reference": "sample://board-packet/risk",
+            "review_status": "approved",
+            "decision_reference": "sample://board-actions/risk",
+            "followup_due": "2026-11-15",
+            "action_status": "open"
+          },
+          {
+            "id": "board-3",
+            "source": "sample://board/board-3",
+            "meeting": "Sample committee November",
+            "agenda_item": "Financial summary",
+            "owner": "Finance director",
+            "packet_reference": "",
+            "review_status": "pending",
+            "decision_reference": "sample://board-actions/finance",
+            "followup_due": "2026-11-15",
+            "action_status": "open"
+          },
+          {
+            "id": "board-4",
+            "source": "sample://board/board-4",
+            "meeting": "Sample committee November",
+            "agenda_item": "Prior meeting action",
+            "owner": "Corporate secretary",
+            "packet_reference": "sample://board-packet/prior-action",
+            "review_status": "approved",
+            "decision_reference": "sample://board-actions/prior",
+            "followup_due": "2026-11-01",
+            "action_status": "open"
+          }
+        ]
+      },
+      "expected_findings": [
+        "agenda_owner:board-2",
+        "packet_evidence:board-3",
+        "packet_review:board-3",
+        "decision_followup:board-4"
+      ]
+    }
+  }
+]

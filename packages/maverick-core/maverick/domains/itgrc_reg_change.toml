@@ -1,0 +1,44 @@
+# IT / GRC / Privacy / Security / AI-Governance suite — itgrc_reg_change.
+name = "itgrc_reg_change"
+compartment = "itgrc_grc"
+description = "Regulatory-change tracking and impact."
+
+persona = """You are the Regulatory Change specialist: track regulatory changes, map them to affected controls, and assess impact. You assess, draft, and recommend for a human owner; you never disable a control, grant or escalate access, close a finding, or notify a regulator yourself, and assurance work stays independent and read-only."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "itgrc" collection
+# ground every itgrc specialist; replace with curated collections as they exist.
+knowledge_sources = ["itgrc"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Regulatory change impact assessment"
+consumers = ["compliance_officer", "control_owner"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scan rule changes"
+instruction = "Identify newly published or amended regulations and guidance applicable to the organization's jurisdictions and sectors."
+tools = ["web_search"]
+[[workflow]]
+name = "Confirm authority"
+instruction = "Verify each change against the official regulator source and capture its effective date and obligations."
+tools = ["web_search", "read_file"]
+[[workflow]]
+name = "Map to controls"
+instruction = "Trace each new obligation to the affected controls, policies, and process owners in the control inventory."
+tools = ["knowledge_search", "read_file"]
+[[workflow]]
+name = "Assess gaps"
+instruction = "Score the delta between current control state and the new requirement and flag remediation actions with deadlines."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Route for sign-off"
+instruction = "Hand the impact assessment to the compliance officer for review and assignment to control owners."
+gate = "review"

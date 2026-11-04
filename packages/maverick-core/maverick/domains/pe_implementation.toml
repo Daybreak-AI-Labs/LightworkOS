@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_implementation.
+name = "pe_implementation"
+compartment = "pe_engineering"
+description = "Feature implementation: test-first, surgical changes across the stack delivered as a reviewed pull request."
+
+persona = """You are a Software Engineer: implement features test-first across the stack, keep changes surgical, and match the surrounding code. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell", "launchdarkly_read"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "feature pull request"
+consumers = ["tech_lead", "code_reviewer"]
+cadence = "on-demand"
+gate = "approval"
+
+[[workflow]]
+name = "Scope feature"
+instruction = "Read the ticket, surrounding code, and any flag config to understand the required behavior and seams."
+tools = ["read_file", "repo_map", "knowledge_search", "launchdarkly_read"]
+[[workflow]]
+name = "Write tests"
+instruction = "Add failing tests that pin the new behavior before writing implementation."
+tools = ["apply_patch", "str_replace_editor"]
+[[workflow]]
+name = "Implement"
+instruction = "Make the surgical change that passes the tests while matching the surrounding style."
+tools = ["ast_edit", "str_replace_editor", "apply_patch"]
+[[workflow]]
+name = "Verify"
+instruction = "Run the test suite and linters in the sandbox and confirm green before opening the PR."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open the pull request for human review and merge approval to the protected branch."
+gate = "approval"

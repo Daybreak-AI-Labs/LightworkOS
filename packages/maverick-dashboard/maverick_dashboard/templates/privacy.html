@@ -1,0 +1,2558 @@
+{% extends "base.html" %}
+{% block title %}Privacy · Lightwork{% endblock %}
+{% block content %}
+{% from "_module_gate.html" import module_gate %}
+{% from "_tabs.html" import panel_tabs, tab_panel %}
+<style>
+  .pw-links { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-4); }
+  .pw-bulk-row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: end; margin-bottom: var(--space-2); }
+  .pw-bulk-row label { display: flex; flex-direction: column; gap: var(--space-1); flex: 1; min-width: 12rem; }
+  .pw-scroll { overflow-x: auto; }
+  .pw-form { display: flex; flex-direction: column; gap: var(--space-3);
+             margin-bottom: var(--space-4); padding: var(--space-3);
+             border: 1px dashed var(--border); border-radius: var(--radius-md); }
+  .pw-form-row { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+  .pw-form label { display: flex; flex-direction: column; gap: var(--space-1);
+                   flex: 1; min-width: 12rem; }
+  .pw-form textarea { resize: vertical; }
+  .pw-form-actions { display: flex; align-items: center; gap: var(--space-3);
+                     flex-wrap: wrap; }
+  .pw-form-err { color: var(--danger); font-size: var(--text-sm); }
+  .pw-clip { max-width: 18rem; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; }
+  .pw-due-warn { color: var(--danger); font-weight: var(--font-medium); }
+  .pw-clauses td { font-size: var(--text-sm); }
+  .pw-erase-note { display: inline-block; font-size: var(--text-xs); }
+  .pw-review-required { display: inline-block; margin-top: var(--space-1);
+                        white-space: normal; }
+  .pw-evidence-panel { margin-bottom: var(--space-3); padding: var(--space-3);
+                       border: 1px solid var(--warn); border-radius: var(--radius-md);
+                       background: var(--warn-subtle); }
+  .pw-evidence-panel dl { display: grid; grid-template-columns: max-content 1fr;
+                          gap: var(--space-1) var(--space-3); margin: var(--space-2) 0 0; }
+  .pw-evidence-panel dt { font-weight: var(--font-medium); }
+  .pw-evidence-panel dd { margin: 0; overflow-wrap: anywhere; }
+  /* The static stat tiles live in the shared worklist chassis
+     (_workspace_worklist.html, also used by /security); on this page the
+     live board below the hero carries those numbers, so hide the tiles. */
+</style>
+
+  {% from "_hero.html" import hero, state %}
+  {% from "_empty_state.html" import empty_state %}
+  {% from "_form_field.html" import error_summary %}
+  {% set privacy_actions %}<a class="btn btn--primary" href="#pw-start">Start an assessment</a>{% endset %}
+  {% call hero('Governed workspaces', 'Privacy',
+               subtitle='Program of record',
+               lede='The privacy team\'s workspace: every assessment Lightwork
+                     has run — privacy impact assessments (PIAs), AI risk,
+                     vendor risk and framework readiness — with risk
+                     ratings, aging and open follow-ups. Review and send
+                     questions back without leaving this screen.',
+               actions=privacy_actions) %}
+    {{ state('Current state',
+             stats.total ~ ' assessment' ~ ('' if stats.total == 1 else 's') ~ ' on record',
+             badge=(stats.pending ~ ' to review') if stats.pending else 'clear',
+             badge_class='warn' if stats.pending else 'ok',
+             copy='High residual risk: ' ~ stats.high_residual ~ ' · due for
+                   re-review: ' ~ stats.review_due ~ ' · waiting for answers: '
+                   ~ stats.needs_more) }}
+  {% endcall %}
+
+  <nav class="pw-links" aria-label="Privacy pages">
+    <a class="btn btn--ghost" href="/privacy/board">Command center</a>
+    <a class="btn btn--ghost" href="/privacy/report">Program report</a>
+    <a class="btn btn--ghost" href="/privacy/data-discovery">Find personal data</a>
+    <a class="btn btn--ghost" href="/privacy/regulatory-intelligence">Privacy law research</a>
+    <a class="btn btn--ghost" href="/privacy/rights-orchestration">Privacy request handling</a>
+    <a class="btn btn--ghost" href="/privacy/rights-consumer-delivery">Sending people their data</a>
+    <a class="btn btn--ghost" href="/privacy/notice-governance">Privacy notice approval</a>
+    <a class="btn btn--ghost" href="/privacy/drop">California DROP requests</a>
+    <a class="btn btn--ghost" href="/compliance">Compliance controls</a>
+  </nav>
+
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">loading…</span></span>
+  </div>
+
+  {% from "_board_kpis.html" import kpi_row %}
+  {{ kpi_row(['On the record', 'Open', 'Approved', 'Due for re-review']) }}
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Assessment flow</h2>
+      <p class="viz-sub">Assessments opened vs decided, month by month over the
+        last year. Full command center: <a href="/privacy/board">the executive board</a>.</p>
+      <div id="bd-flow"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Residual risk</h2>
+      <p class="viz-sub">Every assessment on record, by residual rating.</p>
+      <div id="bd-risk"></div>
+    </div>
+    <div class="panel viz-card viz-card--wide">
+      <h2>By framework</h2>
+      <p class="viz-sub">Approved against total volume, per assessment type.</p>
+      <div id="bd-types"></div>
+    </div>
+  </div>
+
+  {% include "_workspace_worklist.html" %}
+
+  {% if records.enabled %}
+  <style>
+    .pv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+    @media (max-width: 880px) { .pv-grid { grid-template-columns: 1fr; } }
+    .pv-heat { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-1); margin-top: var(--space-2); }
+    .pv-cell { border-radius: var(--radius-sm); padding: 10px var(--space-2); text-align: center; border: 1px solid var(--border); }
+    .pv-cell .n { font-size: var(--text-lg); font-weight: var(--font-bold); }
+    .pv-cell .l { font-size: var(--text-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+    .pv-cell.hot { background: color-mix(in srgb, var(--danger) 18%, transparent); border-color: var(--danger); }
+    .pv-cell.warm { background: color-mix(in srgb, var(--warn, #b8860b) 16%, transparent); }
+    .pv-flow { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+    .pv-flow .arr { color: var(--muted); }
+    .pv-flow .dest { font-weight: var(--font-medium); }
+  </style>
+  <div class="section-head"><h2>Program insights</h2></div>
+  <div class="pv-grid">
+    <div class="panel">
+      <h3 style="margin-top:0;">Data-subject requests: time left</h3>
+      <p class="muted" style="font-size: var(--text-sm);">Open requests from people about their data, grouped by time left before the legal deadline.</p>
+      <div class="pv-heat" id="pv-dsar-heat" role="img" aria-label="Open data-subject requests by time left"></div>
+      <p class="muted" id="pv-dsar-msg" style="font-size: var(--text-sm); margin-top: var(--space-2);"></p>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0;">Cross-border transfer map</h3>
+      <p class="muted" style="font-size: var(--text-sm);">Where personal data flows out, from your processing record and transfer assessments. Each one shows whether a legal transfer safeguard, such as standard contractual clauses, is on file.</p>
+      <div id="pv-transfer" aria-live="polite"></div>
+    </div>
+  </div>
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      const RANK = ['overdue', 'd0_7', 'd8_14', 'd15_30', 'd30_plus'];
+      const LABEL = { overdue: 'Overdue', d0_7: '7 days or less', d8_14: '8 to 14 days', d15_30: '15 to 30 days', d30_plus: 'More than 30 days' };
+      function okJson(r) { if (!r.ok) throw r; return r.json(); }
+      fetch('/api/v1/privacy/dsar/aging').then(okJson).then(function (d) {
+        const heat = document.getElementById('pv-dsar-heat');
+        const bands = d.bands || {};
+        heat.innerHTML = '';
+        RANK.forEach(function (k) {
+          const cell = document.createElement('div');
+          cell.className = 'pv-cell' + (k === 'overdue' ? ' hot' : k === 'd0_7' ? ' warm' : '');
+          const n = document.createElement('div'); n.className = 'n'; n.textContent = bands[k] || 0;
+          const l = document.createElement('div'); l.className = 'l'; l.textContent = LABEL[k];
+          cell.append(n, l); heat.appendChild(cell);
+        });
+        document.getElementById('pv-dsar-msg').textContent =
+          d.open + ' open · ' + (d.closing_soon || 0) + ' closing this week' +
+          (d.overdue ? ' · ' + d.overdue + ' already overdue' : '');
+      }).catch(function (e) {
+        document.getElementById('pv-dsar-msg').textContent = window.mvErrorText ? mvErrorText(e, 'load the request deadlines') : 'Could not load the request deadlines. Refresh the page and try again.';
+      });
+      fetch('/api/v1/privacy/transfer-map').then(okJson).then(function (d) {
+        const box = document.getElementById('pv-transfer');
+        const flows = d.flows || [];
+        if (!flows.length) {
+          const title = 'No cross-border transfers recorded yet';
+          const body = 'Transfers appear here once your processing record or a transfer assessment names where personal data goes. Add them through the processing record (RoPA) or a transfer assessment.';
+          if (window.mvEmpty) box.replaceChildren(window.mvEmpty(title, body, null, { compact: true }));
+          else box.textContent = title + '. ' + body;
+          return;
+        }
+        box.innerHTML = '';
+        flows.slice(0, 12).forEach(function (f) {
+          const row = document.createElement('div'); row.className = 'pv-flow';
+          const src = document.createElement('span'); src.textContent = f.activity || f.source;
+          const arr = document.createElement('span'); arr.className = 'arr'; arr.textContent = '→';
+          const dest = document.createElement('span'); dest.className = 'dest'; dest.textContent = f.destination;
+          const badge = document.createElement('span');
+          badge.className = 'badge ' + (f.safeguarded ? 'done' : 'blocked');
+          badge.style.marginInlineStart = 'auto';
+          badge.textContent = f.safeguarded ? 'Safeguard on file' : 'No safeguard';
+          row.append(src, arr, dest, badge); box.appendChild(row);
+        });
+        if (d.unsafeguarded) {
+          const m = document.createElement('p'); m.className = 'muted'; m.style.fontSize = 'var(--text-sm)'; m.style.marginTop = 'var(--space-2)';
+          m.textContent = d.unsafeguarded + ' of ' + d.total + ' transfer(s) have no legal safeguard on file.';
+          box.appendChild(m);
+        }
+      }).catch(function (e) {
+        const box = document.getElementById('pv-transfer');
+        box.textContent = window.mvErrorText ? mvErrorText(e, 'load the transfer map') : 'Could not load the transfer map. Refresh the page and try again.';
+      });
+    })();
+  </script>
+
+  <div class="section-head"><h2>Queue assessments for many vendors</h2></div>
+  <div class="panel">
+    <p class="muted" style="font-size: var(--text-sm);">Add each vendor and choose its questionnaire, or load a spreadsheet saved as CSV (vendor name in the first column, questionnaire in the second). Each vendor becomes an assessment on the worklist above.</p>
+    <div id="pv-bulk-rows"></div>
+    <div style="display:flex; gap: var(--space-2); align-items:center; flex-wrap: wrap; margin-top: var(--space-2);">
+      <button class="btn" id="pv-bulk-add" type="button">Add a vendor</button>
+      <label class="btn" for="pv-bulk-file">Load a CSV file<input id="pv-bulk-file" type="file" accept=".csv,text/csv" hidden></label>
+      <button class="btn" id="pv-bulk-template" type="button">Download a blank CSV</button>
+      <button class="btn" id="pv-bulk-go" type="button">Queue assessments</button>
+      <span class="muted" id="pv-bulk-msg" role="status" aria-live="polite" style="font-size: var(--text-sm);"></span>
+    </div>
+  </div>
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      const TYPES = {{ templates | tojson }};
+      const rowsBox = document.getElementById('pv-bulk-rows');
+      const btn = document.getElementById('pv-bulk-go');
+      const msg = document.getElementById('pv-bulk-msg');
+      if (!btn || !rowsBox) return;
+      function titleFor(type) {
+        const t = TYPES.find(function (x) { return x.type === type; });
+        return t ? t.title : '';
+      }
+      function addRow(name, type) {
+        const row = document.createElement('div'); row.className = 'pw-bulk-row';
+        const n = rowsBox.children.length + 1;
+        const nameLabel = document.createElement('label'); nameLabel.textContent = 'Vendor ' + n;
+        const input = document.createElement('input'); input.className = 'input'; input.maxLength = 300; input.value = name || '';
+        input.setAttribute('data-bulk', 'name');
+        nameLabel.appendChild(input);
+        const typeLabel = document.createElement('label'); typeLabel.textContent = 'Questionnaire';
+        const select = document.createElement('select'); select.className = 'select'; select.setAttribute('data-bulk', 'type');
+        TYPES.forEach(function (t) {
+          const o = document.createElement('option'); o.value = t.type; o.textContent = t.title; select.appendChild(o);
+        });
+        if (type && titleFor(type)) select.value = type;
+        else if (TYPES.some(function (t) { return t.type === 'vendor_risk'; })) select.value = 'vendor_risk';
+        typeLabel.appendChild(select);
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn btn--ghost'; remove.textContent = 'Remove';
+        remove.addEventListener('click', function () { row.remove(); });
+        row.append(nameLabel, typeLabel, remove);
+        rowsBox.appendChild(row);
+      }
+      function parseLine(line) {
+        const cells = []; let cur = ''; let quoted = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (quoted) { if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') quoted = false; else cur += ch; }
+          else if (ch === '"') quoted = true;
+          else if (ch === ',') { cells.push(cur); cur = ''; }
+          else cur += ch;
+        }
+        cells.push(cur);
+        return cells.map(function (c) { return c.trim(); });
+      }
+      function typeFromCell(cell) {
+        const v = (cell || '').toLowerCase();
+        const hit = TYPES.find(function (t) { return t.type === v || t.title.toLowerCase() === v; });
+        return hit ? hit.type : '';
+      }
+      function csvCell(v) { return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+      document.getElementById('pv-bulk-add').addEventListener('click', function () { addRow('', ''); });
+      document.getElementById('pv-bulk-template').addEventListener('click', function () {
+        const text = 'Vendor,Questionnaire\nAcme Corp,' + (titleFor('vendor_risk') || (TYPES[0] ? TYPES[0].title : '')) + '\n';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+        a.download = 'vendors.csv'; document.body.appendChild(a); a.click(); a.remove();
+      });
+      document.getElementById('pv-bulk-file').addEventListener('change', async function (ev) {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        const lines = (await file.text()).split(/\r?\n/).filter(function (l) { return l.trim(); });
+        let added = 0, unknown = 0;
+        lines.forEach(function (line, i) {
+          const cells = parseLine(line);
+          if (i === 0 && /^(vendor|subject|name)$/i.test(cells[0] || '')) return;
+          if (!cells[0]) return;
+          const type = typeFromCell(cells[1]);
+          if (cells[1] && !type) unknown++;
+          addRow(cells[0], type); added++;
+        });
+        msg.textContent = added + ' vendor(s) loaded' + (unknown ? '. ' + unknown + ' had a questionnaire Lightwork did not recognise; check the choice on those rows.' : '.');
+        ev.target.value = '';
+      });
+      addRow('', '');
+      btn.addEventListener('click', async function () {
+        const lines = [];
+        rowsBox.querySelectorAll('.pw-bulk-row').forEach(function (row) {
+          const name = row.querySelector('[data-bulk="name"]').value.trim();
+          const type = row.querySelector('[data-bulk="type"]').value;
+          if (name) lines.push(csvCell(name) + ',' + type);
+        });
+        if (!lines.length) { msg.textContent = 'Enter at least one vendor name first.'; return; }
+        btn.disabled = true; msg.textContent = 'Queuing…';
+        try {
+          const r = await fetch('/api/v1/assess/bulk-import', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ csv: lines.join('\n') })
+          });
+          if (!r.ok) throw r;
+          const d = await r.json();
+          msg.textContent = d.created_count + ' assessment(s) queued' +
+            (d.error_count ? ', ' + d.error_count + ' vendor(s) skipped' : '') + '. Reloading…';
+          setTimeout(function () { location.reload(); }, 900);
+        } catch (e) {
+          msg.textContent = window.mvErrorText ? mvErrorText(e, 'queue the assessments') : 'Could not queue the assessments. Try again.';
+        } finally { btn.disabled = false; }
+      });
+    })();
+  </script>
+
+  <div class="section-head"><h2>Privacy records</h2></div>
+  <div class="panel">
+    {% set pw_incidents_label %}Incidents ({{ records.incidents | length }}){% if records.incidents_breached %} <span class="badge blocked">{{ records.incidents_breached }} past 72h</span>{% endif %}{% endset %}
+    {{ panel_tabs('Record types', [
+         ('dpa', 'Vendor data agreements (DPA) (%d)' % records.dpa | length),
+         ('ai', 'AI systems (%d)' % records.ai | length),
+         ('ropa', 'Processing record (RoPA) (%d)' % records.ropa | length),
+         ('dsar', 'Data requests (DSAR) (%d)' % records.dsar | length),
+         ('paper', 'Vendor contracts (%d)' % records.paper | length),
+         ('lineage', 'Vendor history'),
+         ('incidents', pw_incidents_label)], 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-', hash='pv-') }}
+
+    <div {{ tab_panel('lineage', 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-') }}>
+      <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-3);">
+        Answer the questions a regulator asks about a vendor: its full history and why it was approved. See what else depends on a clause or document
+        that turned out to be a problem. Every answer links to the record it
+        came from.
+      </p>
+      <div class="pw-form">
+        <div class="pw-form-row">
+          <label><span>Vendor</span>
+            <input class="input" id="pw-lin-vendor" maxlength="200" list="pw-vendor-names"
+                   placeholder="Start typing a vendor name"></label>
+          <label><span>As of (optional: see the history on an earlier date)</span>
+            <input class="input" id="pw-lin-asof" type="date"></label>
+        </div>
+        <div class="pw-form-actions">
+          <button class="btn" id="pw-lin-dossier" type="button">Show vendor history</button>
+          <button class="btn" id="pw-lin-why" type="button">Why was it approved?</button>
+          <span class="pw-form-err" id="pw-lin-err" role="alert"></span>
+        </div>
+        <div class="pw-form-row" style="margin-top:var(--space-2);">
+          <label><span>What depends on this? Name a clause, document or person that turned out to be a problem</span>
+            <input class="input" id="pw-lin-blast-name" maxlength="200" list="pw-lineage-names"
+                   placeholder="For example: the vendor's data agreement file name"></label>
+          <label><span>This is a</span>
+            <select class="select" id="pw-lin-blast-kind">
+              <option value="clause">Contract clause</option>
+              <option value="document">Document</option>
+              <option value="person">Person</option>
+              <option value="goal">Agent task that went wrong</option>
+              <option value="skill">Agent skill</option>
+            </select></label>
+        </div>
+        <div class="pw-form-actions">
+          <button class="btn" id="pw-lin-blast" type="button">Show what depends on it</button>
+        </div>
+      </div>
+      <div id="pw-lin-result"></div>
+      <div class="pw-form-actions" data-fa-needs="operate" hidden>
+        <button class="btn btn--ghost" id="fa-graph-rebuild" type="button">Refresh these connections</button>
+        <span class="muted" id="fa-graph-status" role="status" aria-live="polite" style="font-size:var(--text-sm);">If an answer looks out of date, refresh the connections from your latest records.</span>
+      </div>
+      <datalist id="pw-vendor-names">
+        {% set _names = [] %}
+        {% for r in records.dpa %}{% if r.vendor not in _names %}{% set _ = _names.append(r.vendor) %}{% endif %}{% endfor %}
+        {% for r in records.paper %}{% if r.vendor not in _names %}{% set _ = _names.append(r.vendor) %}{% endif %}{% endfor %}
+        {% for v in estate.vendors %}{% if v.name not in _names %}{% set _ = _names.append(v.name) %}{% endif %}{% endfor %}
+        {% for n in _names %}<option value="{{ n }}"></option>{% endfor %}
+      </datalist>
+      <datalist id="pw-lineage-names">
+        {% for r in records.dpa %}{% if r.document_name %}<option value="{{ r.document_name }}"></option>{% endif %}{% endfor %}
+        {% for r in records.paper %}{% if r.document_name %}<option value="{{ r.document_name }}"></option>{% endif %}{% endfor %}
+      </datalist>
+    </div>
+
+    <div {{ tab_panel('paper', 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-') }}>
+      <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-3);">
+        When the vendor insists on <strong>their</strong> paper. Upload it and
+        Lightwork works out whether it is a DPA or a privacy addendum. It compares every clause against your playbook and returns their document marked up
+        with real Word tracked changes. Which clauses fall short is decided
+        deterministically — a model only re-words <em>your</em> clause to match
+        their drafting, and never weakens it.
+      </p>
+      <form class="pw-form" id="pw-paper-form">
+        <div class="pw-form-row">
+          <label><span>Vendor</span>
+            <input class="input" id="pw-paper-vendor" maxlength="200" required list="pw-vendor-names"
+                   placeholder="Start typing a vendor name"></label>
+          <label><span>Type of agreement</span>
+            <select class="select" id="pw-paper-instrument">
+              <option value="">Work it out from the document</option>
+              <option value="dpa">Data Processing Agreement (GDPR Art. 28)</option>
+              <option value="addendum">Privacy Addendum (CCPA/CPRA)</option>
+            </select></label>
+        </div>
+        <label><span>Their document (.docx or a digital PDF)</span>
+          <input class="input" type="file" id="pw-paper-file" required
+                 accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit" id="pw-paper-go">Review their paper</button>
+          <span class="pw-form-err" id="pw-paper-err" role="alert"></span>
+        </div>
+      </form>
+      <div id="pw-paper-result"></div>
+
+      <div class="pw-form">
+        <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-2);">
+          Vendor signing <strong>your</strong> paper instead? Download your
+          template instrument as a Word document with the vendor-specific
+          values filled <span style="color:#d33;">in red</span> for counsel to
+          verify — clause language comes from your playbook, no model involved.
+          Uses the Vendor and Instrument fields above.
+        </p>
+        <button class="btn" id="pw-our-paper" type="button">Draft our paper (.docx)</button>
+      </div>
+
+      <details class="pw-form" id="pw-playbook">
+        <summary style="cursor:pointer;">Your standard clauses: the wording Lightwork asks vendors to accept</summary>
+        <p class="muted" style="font-size:var(--text-sm);margin:var(--space-2) 0;">
+          When a vendor's contract falls short, Lightwork suggests changes towards <em>these</em> clauses. The
+          shipped text is our standard language; edit any clause to your own and
+          every future review asks for yours instead. Clauses you leave alone
+          keep the shipped position. Review the wording here, then save your
+          playbook. Saving requires administrator permission.
+        </p>
+        <div id="pw-playbook-rows"></div>
+        <div class="pw-form-actions">
+          <button class="btn" id="pw-playbook-save" type="button" disabled>Save playbook</button>
+          <button class="btn" id="pw-playbook-retry" type="button" hidden>Retry loading playbook</button>
+          <span class="muted" id="pw-playbook-path" style="font-size:var(--text-xs);"></span>
+          <span class="pw-form-err" id="pw-playbook-err" role="alert"></span>
+        </div>
+      </details>
+
+      {% if records.paper %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">Vendor</th><th scope="col">Type of agreement</th>
+          <th scope="col">Version</th><th scope="col">Clauses that meet your standard</th>
+          <th scope="col">Clauses to change</th><th scope="col">Verdict</th>
+          <th scope="col">Reviewed</th><th scope="col"></th></tr></thead>
+        <tbody>
+          {% for r in records.paper %}
+          <tr>
+            <td>{{ r.vendor }}{% if r.document_name %}<br><span class="muted" style="font-size:var(--text-xs);">{{ r.document_name }}</span>{% endif %}</td>
+            <td>{{ r.instrument_label }}</td>
+            <td>{{ r.version }}</td>
+            <td>{{ r.clauses_present }}/{{ r.clauses_total }}</td>
+            <td>{{ r.gaps }}{% if r.high_severity_gaps %} <span class="muted">({{ r.high_severity_gaps }} high)</span>{% endif %}</td>
+            <td><span class="badge {{ 'blocked' if r.recommendation == 'do_not_sign_without_changes' else 'warn' if r.recommendation == 'acceptable_with_changes' else 'done' }}">
+              {{ 'Do not sign as drafted' if r.recommendation == 'do_not_sign_without_changes' else 'Acceptable with changes' if r.recommendation == 'acceptable_with_changes' else 'Acceptable' }}</span></td>
+            <td>{% if r.created_at %}{{ r.created_at | datetime('date') }}{% else %}—{% endif %}</td>
+            <td>
+              <a class="btn" href="/api/v1/privacy/paper-reviews/{{ r.id }}/memo" target="_blank" rel="noopener">Read the memo</a>
+              {% if r.redline_bytes %}<a class="btn" href="/api/v1/privacy/paper-reviews/{{ r.id }}/redline">Download marked-up copy</a>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% endif %}
+    </div>
+
+    <div {{ tab_panel('dpa', 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-') }}>
+      <form class="pw-form" data-endpoint="/api/v1/privacy/dpa-reviews">
+        <div class="pw-form-row">
+          <label><span>Vendor</span>
+            <input class="input" name="vendor" required maxlength="200" list="pw-vendor-names" placeholder="Start typing a vendor name"></label>
+          <label><span>Document name (optional)</span>
+            <input class="input" name="document_name" maxlength="300" placeholder="For example: Acme data agreement"></label>
+        </div>
+        <label><span>Load the agreement from a text file (optional)</span>
+          <input class="input" type="file" accept=".txt,.md,text/plain" data-fill="pw-dpa-text"></label>
+        <label><span>Agreement text</span>
+          <textarea class="textarea" id="pw-dpa-text" name="text" rows="5" required
+            placeholder="Paste the agreement text. Each clause the GDPR requires in a processor agreement is checked, and every verdict quotes the wording it relied on."></textarea></label>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit">Check the agreement</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      <div class="pw-form">
+        <div class="pw-form-actions">
+          <label style="flex:1;"><span>…or find the agreement where it already lives (SharePoint, Slack or Google Drive)</span>
+            <input class="input" id="pw-dpa-vendor" maxlength="200" list="pw-vendor-names"
+                   placeholder="Start typing a vendor name"></label>
+          <button class="btn" id="pw-dpa-search" type="button">Search connected sources</button>
+          <span class="pw-form-err" id="pw-dpa-search-err" role="alert"></span>
+        </div>
+        <div id="pw-dpa-hits"></div>
+      </div>
+      {% if records.dpa %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">Vendor</th><th scope="col">Clauses found</th>
+          <th scope="col">Risk (before → after safeguards)</th><th scope="col">Status</th>
+          <th scope="col">Reviewed</th><th scope="col"></th></tr></thead>
+        <tbody>
+          {% for r in records.dpa %}
+          <tr>
+            <td>{{ r.vendor }}{% if r.document_name %}<br><span class="muted" style="font-size:var(--text-xs);">{{ r.document_name }}</span>{% endif %}</td>
+            <td>{{ r.clauses_present }}/{{ r.clauses_total }}</td>
+            <td class="pw-risk">
+              <span class="badge {{ 'blocked' if r.inherent_risk == 'high' else 'warn' if r.inherent_risk == 'medium' else 'done' }}">{{ (r.inherent_risk or '') | capitalize }}</span>
+              <span aria-hidden="true" class="muted">→</span>
+              <span class="badge {{ 'blocked' if r.residual_risk == 'high' else 'warn' if r.residual_risk == 'medium' else 'done' }}">{{ (r.residual_risk or '') | capitalize }}</span>
+            </td>
+            <td><span class="badge info">{{ (r.status or '') | replace('_', ' ') | capitalize }}</span>
+              {% if r.review_required %}
+                <br><span class="badge warn pw-review-required">Read from a scanned or converted file: a person must check it{% if r.extraction_confidence %} ({{ r.extraction_confidence }} confidence){% endif %}</span>
+              {% endif %}
+            </td>
+            <td class="muted">{% if r.created_at %}{{ r.created_at | datetime('date') }}{% else %}—{% endif %}</td>
+            <td><button class="btn pw-dpa-clauses" data-review="{{ r.id }}" type="button">Show clauses</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+        {{ empty_state('No agreements checked yet',
+                       'Checked agreements appear here clause by clause, with the wording each result relied on. Paste or load a vendor\'s data processing agreement above to check the first one.',
+                       compact=true) }}
+      {% endif %}
+    </div>
+
+    <div {{ tab_panel('ai', 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-') }}>
+      <form class="pw-form" data-endpoint="/api/v1/privacy/ai-systems">
+        <div class="pw-form-row">
+          <label><span>System name</span>
+            <input class="input" name="name" required maxlength="200" placeholder="For example: CV screener"></label>
+          <label><span>Who provides it (optional)</span>
+            <input class="input" name="provider" maxlength="200" list="pw-vendor-names" placeholder="A vendor, or your own team"></label>
+          <label><span>Person responsible (optional)</span>
+            <input class="input" name="owner" maxlength="200" placeholder="Name or email"></label>
+        </div>
+        <label><span>What it does</span>
+          <textarea class="textarea" name="purpose" rows="2" required
+            placeholder="Describe what the system is used for. Lightwork sorts it into the EU AI Act's risk levels when you save."></textarea></label>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit">Add and check risk level</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      {% set aira_sessions = sessions | selectattr('type', 'equalto', 'aira') | list %}
+      <div class="pw-form">
+        <div class="pw-form-actions">
+          <label style="flex:1;"><span>…or register from a completed AI risk assessment</span>
+            <select class="select" id="pw-ai-src" {% if not aira_sessions %}disabled{% endif %}>
+              {% for s in aira_sessions[:50] %}<option value="{{ s.id }}">{{ s.subject }}{% if s.age_days is not none %} · opened {{ s.age_days }} day{{ '' if s.age_days == 1 else 's' }} ago{% endif %}</option>{% endfor %}
+              {% if not aira_sessions %}<option value="">No AI risk assessments yet</option>{% endif %}
+            </select></label>
+          <button class="btn" id="pw-ai-register" type="button" {% if not aira_sessions %}disabled{% endif %}>Register from assessment</button>
+          <span class="pw-form-err" id="pw-ai-err" role="alert"></span>
+        </div>
+        <p class="muted" style="margin:0; font-size:var(--text-xs);">Answers in the assessment can only raise the risk level. If it confirms a banned or high-risk use, that counts even when the description sounds harmless.</p>
+      </div>
+      {% if records.ai %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">System</th><th scope="col">Purpose</th>
+          <th scope="col">EU AI Act risk level</th><th scope="col">Why</th>
+          <th scope="col">Requirements</th><th scope="col">Added</th></tr></thead>
+        <tbody>
+          {% for r in records.ai %}
+          <tr>
+            <td>{{ r.name }}{% if r.provider %}<br><span class="muted" style="font-size:var(--text-xs);">{{ r.provider }}</span>{% endif %}</td>
+            <td class="pw-clip" title="{{ r.purpose }}">{{ r.purpose }}</td>
+            <td><span class="badge {{ 'blocked' if r.tier == 'prohibited' else 'warn' if r.tier == 'high' else 'info' if r.tier == 'limited' else 'done' }}">{{ (r.tier or '') | capitalize }}</span></td>
+            <td class="muted" style="font-size:var(--text-sm);">{{ r.signals | join('; ') or '—' }}</td>
+            <td><details><summary>{{ r.obligations | length }} requirement{{ 's' if r.obligations | length != 1 }}</summary>
+              <ul style="margin:var(--space-2) 0 0; padding-inline-start:1.2rem; font-size:var(--text-sm);">
+                {% for o in r.obligations %}<li>{{ o }}</li>{% endfor %}
+              </ul></details></td>
+            <td class="muted">{% if r.created_at %}{{ r.created_at | datetime('date') }}{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p class="muted" style="font-size:var(--text-xs);">Automated screening against the
+        EU AI Act's category tests — a triage aid, not legal advice.</p>
+      {% else %}
+        {{ empty_state('No AI systems added yet',
+                       'AI systems you add appear here with their EU AI Act risk level and what the law requires for it. Add the first one above.',
+                       compact=true) }}
+      {% endif %}
+    </div>
+
+    <div {{ tab_panel('ropa', 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-') }}>
+      <div class="pw-form">
+        <div class="pw-form-actions">
+          <label style="flex:1;"><span>Draft a processing record entry from a completed assessment</span>
+            <select class="select" id="pw-ropa-src" {% if not sessions %}disabled{% endif %}>
+              {% for s in sessions[:50] %}<option value="{{ s.id }}">{{ s.subject }}{% for t in templates %}{% if t.type == s.type %} · {{ t.title }}{% endif %}{% endfor %}{% if s.age_days is not none %} · {{ s.age_days }} day{{ '' if s.age_days == 1 else 's' }} old{% endif %}</option>{% endfor %}
+              {% if not sessions %}<option value="">No assessments yet</option>{% endif %}
+            </select></label>
+          <button class="btn" id="pw-ropa-draft" type="button" {% if not sessions %}disabled{% endif %}>Draft entry</button>
+          <button class="btn" id="pw-ropa-new" type="button">Add an entry</button>
+          <a class="btn" href="/api/v1/privacy/ropa/export.csv">Download as CSV</a>
+          <span class="pw-form-err" id="pw-ropa-err" role="alert"></span>
+        </div>
+      </div>
+      <form class="pw-form" data-endpoint="/api/v1/privacy/ropa/import-onetrust">
+        <label><span>Import from OneTrust: choose the processing record CSV export</span>
+          <input class="input" type="file" accept=".csv,text/csv" data-fill="pw-ropa-csv"></label>
+        <details><summary>Or paste the CSV instead</summary>
+          <textarea class="textarea" id="pw-ropa-csv" name="csv_text" rows="3" required aria-label="OneTrust processing record CSV"></textarea></details>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit">Import into the processing record</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      {% if records.ropa %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">Activity</th><th scope="col">Purpose</th>
+          <th scope="col">Data categories</th><th scope="col">Transfers</th>
+          <th scope="col">Retention</th><th scope="col">Source</th><th scope="col">Actions</th></tr></thead>
+        <tbody>
+          {% for r in records.ropa %}
+          <tr>
+            <td>{{ r.activity }}</td>
+            <td class="pw-clip" title="{{ r.purpose }}">{{ r.purpose or '—' }}</td>
+            <td class="pw-clip" title="{{ r.data_categories }}">{{ r.data_categories or '—' }}</td>
+            <td class="pw-clip" title="{{ r.transfers }}">{{ r.transfers or '—' }}</td>
+            <td class="pw-clip" title="{{ r.retention }}">{{ r.retention or '—' }}</td>
+            <td class="muted" style="font-size:var(--text-xs);">{{ (r.source or '') | replace('_', ' ') | capitalize }}</td>
+            <td><button class="btn pw-ropa-edit" type="button" data-row='{{ r | tojson }}'>Edit</button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p class="muted" style="font-size:var(--text-xs);">Drafted entries are a starting point: use Edit
+        to correct them. Each entry keeps a note of where it came from.</p>
+      {% else %}
+        <p class="muted">The processing record is empty. Draft the first entry from a completed
+          assessment, add one yourself, or import your OneTrust export.</p>
+      {% endif %}
+    </div>
+
+    <div {{ tab_panel('dsar', 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-') }}>
+      <form class="pw-form" id="pw-dsar-form" data-endpoint="/api/v1/privacy/dsar" data-mv-validate data-mv-keep="privacy-dsar">
+        {{ error_summary('pw-dsar-errors') }}
+        <div class="pw-form-row">
+          <label><span>Person making the request (email or ID)</span>
+            <input class="input" id="pw-dsar-subject" name="subject_id" required maxlength="200" placeholder="jordan@example.com"
+                   data-error-required="Enter the email address or ID of the person making the request."
+                   data-error-length="Shorten the email address or ID to 200 characters or fewer."></label>
+          <label><span>What they asked for</span>
+            <select class="select" name="kind">
+              <option value="access">A copy of their data</option>
+              <option value="portability">Their data in a portable format</option>
+              <option value="erasure">Delete their data</option>
+              <option value="correction">Correct their data</option>
+              <option value="opt_out">Opt out of sale or sharing</option>
+              <option value="limit_sensitive">Limit use of sensitive data</option>
+              <option value="objection">Stop a use they object to</option>
+              <option value="restriction">Restrict how their data is used</option>
+              <option value="withdraw_consent">Withdraw consent</option>
+            </select></label>
+          <label><span>Law that applies (sets the deadline)</span>
+            <select class="select" name="jurisdiction">
+              <option value="">Not recorded (30-day fallback)</option>
+              <option value="eu_gdpr">European Union (GDPR)</option>
+              <option value="uk_gdpr">United Kingdom (UK GDPR)</option>
+              <option value="us_ca_ccpa">California (CCPA/CPRA)</option>
+              <option value="us_va">Virginia</option>
+              <option value="us_co">Colorado</option>
+              <option value="us_ct">Connecticut</option>
+              <option value="us_ut">Utah</option>
+              <option value="us_tx">Texas</option>
+              <option value="us_or">Oregon</option>
+              <option value="br_lgpd">Brazil (LGPD)</option>
+              <option value="ca_pipeda">Canada (PIPEDA)</option>
+              <option value="au_privacy">Australia (Privacy Act)</option>
+              <option value="jp_appi">Japan (APPI)</option>
+            </select></label>
+          <label><span>How it arrived (optional)</span>
+            <select class="select" name="channel">
+              <option value="">Not recorded</option>
+              <option value="email">Email</option>
+              <option value="web_form">Web form</option>
+              <option value="phone">Phone</option>
+              <option value="letter">Letter</option>
+              <option value="slack">Slack</option>
+              <option value="teams">Microsoft Teams</option>
+              <option value="in_person">In person</option>
+            </select></label>
+        </div>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit">Open request (the deadline starts now)</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      <p class="muted" style="font-size: var(--text-sm);">People can also file requests themselves from your website:
+        <a href="/privacy/rights-form">set up the rights request form</a>. Those arrive here as
+        <em>From your website</em> and open once the person confirms their email address.</p>
+      <form class="pw-form" id="pw-dsar-message-form" data-endpoint="/api/v1/privacy/dsar/from-message" data-mv-validate data-mv-keep="privacy-dsar-message">
+        {{ error_summary('pw-dsar-message-errors') }}
+        <label><span>…or paste an inbound message</span>
+          <textarea class="textarea" id="pw-dsar-message" name="text" rows="3" required
+            data-error-required="Paste the message the person sent, so Lightwork can read what they asked for."
+            placeholder='For example: "Please delete my data. Sam, sam@example.com". Lightwork works out what was asked and who asked, and keeps the phrases it matched.'></textarea></label>
+        <div class="pw-form-actions">
+          <label style="flex:1;"><span>Sender (optional — detected from the message when present)</span>
+            <input class="input" name="sender" maxlength="200" placeholder="sam@example.com"></label>
+          <button class="btn" type="submit">Read message and open request</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      {% if records.dsar %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">Person</th>
+          <th scope="col">Asked for</th><th scope="col">Where from</th><th scope="col">Law</th>
+          <th scope="col">Status</th><th scope="col">Assigned to</th>
+          <th scope="col">Deadline</th><th scope="col">Actions</th></tr></thead>
+        <tbody id="pw-dsar-rows">
+          {% for r in records.dsar %}
+          <tr data-bulk-id="{{ r.id }}" data-bulk-label="{{ r.subject_id }} ({{ r.id }})" data-acknowledged="{{ 'yes' if r.acknowledged_at else 'no' }}" data-status="{{ r.status }}">
+            <td><a href="/privacy/dsar/{{ r.id }}">{{ r.subject_id }}</a>{% if r.intake %}<br><span class="muted" style="font-size:var(--text-xs);" title="Matched: {{ r.intake.signals | join('; ') }}">Opened from a message</span>{% endif %}</td>
+            <td>{{ {'access': 'A copy of their data', 'portability': 'Portable copy', 'erasure': 'Delete their data', 'correction': 'Correct their data', 'opt_out': 'Opt out of sale or sharing', 'limit_sensitive': 'Limit sensitive data use', 'objection': 'Stop a use', 'restriction': 'Restrict use', 'withdraw_consent': 'Withdraw consent'}.get(r.kind, (r.kind or '') | replace('_', ' ') | capitalize) }}</td>
+            <td>{{ {'public_form': 'From your website', 'message': 'From a message', 'dashboard': 'Entered here'}.get(r.source, 'Entered here') }}
+              {% if r.verification and r.verification.status == 'verified' %}<br><span class="badge done">Identity confirmed</span>{% elif r.status == 'unverified' %}<br><span class="badge warn">Awaiting email confirmation</span>{% endif %}</td>
+            <td>{{ {'eu_gdpr': 'EU GDPR', 'uk_gdpr': 'UK GDPR', 'us_ca_ccpa': 'California', 'us_va': 'Virginia', 'us_co': 'Colorado', 'us_ct': 'Connecticut', 'us_ut': 'Utah', 'us_tx': 'Texas', 'us_or': 'Oregon', 'br_lgpd': 'Brazil', 'ca_pipeda': 'Canada', 'au_privacy': 'Australia', 'jp_appi': 'Japan'}.get(r.jurisdiction, '—') }}
+              {% if r.due_basis == 'internal_target' %}<br><span class="muted" style="font-size:var(--text-xs);">No fixed legal deadline; internal target</span>{% endif %}</td>
+            <td>
+              <span class="badge {{ 'info' if r.status == 'fulfilled' and r.kind in ('access', 'portability') else 'done' if r.status == 'fulfilled' else 'warn' if r.status in ('awaiting_erasure', 'unverified') else 'info' if r.status == 'open' else '' }}">{{ 'Data collected' if r.status == 'fulfilled' and r.kind in ('access', 'portability') else {'open': 'Open', 'unverified': 'Not yet confirmed', 'awaiting_erasure': 'Waiting for deletion', 'fulfilled': 'Completed', 'closed': 'Closed'}.get(r.status, (r.status or '') | replace('_', ' ') | capitalize) }}</span>
+              {% if r.status == 'awaiting_erasure' and r.fulfillment %}
+                <br><span class="muted pw-erase-note">Open the request to delete this person&rsquo;s data.</span>
+              {% endif %}
+              {% if r.status == 'closed' and not r.answer and (r.outcome or {}).get('kind') != 'withdrawn' %}
+                <br><span class="badge warn">No answer on record</span>
+              {% endif %}
+              {% if r.status == 'closed' and r.kind in ('access', 'portability') and (not r.export_cleanup or r.export_cleanup.status != 'removed') %}
+                <br><span class="badge warn">Saved export needs cleanup</span>
+              {% endif %}
+            </td>
+            <td class="pw-dsar-assignee">{% if r.assignee %}{{ r.assignee | identity }}{% else %}<span class="muted">Not assigned</span>{% endif %}</td>
+            <td {% if r.overdue %}class="pw-due-warn"{% endif %}>
+              {% if r.response_pending %}
+                {% if r.days_left == 0 %}{{ 'Deadline passed today' if r.overdue else 'Due today' }}{% elif not r.overdue %}{{ r.days_left }} day{{ '' if r.days_left == 1 else 's' }} left{% else %}{{ r.days_left | abs }} day{{ '' if (r.days_left | abs) == 1 else 's' }} overdue{% endif %}
+                {% if r.extended_until %}<br><span class="muted" style="font-size:var(--text-xs);">Extended</span>{% endif %}
+                {% if r.acknowledge_overdue %}<br><span class="badge warn">Receipt not confirmed in time</span>{% endif %}
+              {% else %}—{% endif %}</td>
+            <td>
+              {% if r.status == 'open' %}
+                <button class="btn pw-dsar-act" data-id="{{ r.id }}" data-act="fulfill" data-kind="{{ r.kind }}" type="button">
+                  {{ 'Gather their data' if r.kind in ('access', 'portability') else 'Prepare deletion' if r.kind == 'erasure' else 'Mark answered' }}</button>
+              {% endif %}
+              {% if r.status != 'closed' %}
+                {# Closing records what happened, on the request's own page. #}
+                <a class="btn" href="/privacy/dsar/{{ r.id }}#close">Close</a>
+              {% elif r.kind in ('access', 'portability') and (not r.export_cleanup or r.export_cleanup.status != 'removed') %}
+                <button class="btn pw-dsar-act" data-id="{{ r.id }}" data-act="close" data-kind="{{ r.kind }}" data-retry="true" type="button">Retry export cleanup</button>
+              {% endif %}
+              <button class="btn" data-pe-worksheet="{{ r.id }}" type="button">Where to search</button>
+              <button class="btn pw-dsar-fulfillment" data-id="{{ r.id }}" type="button">Send response</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <script nonce="{{ csp_script_nonce }}" type="application/json" id="pw-dsar-assignees">{{ (dsar_assignees or []) | tojson }}</script>
+      <div id="pe-worksheet-result"></div>
+      <div id="pw-fulfill-out" role="status" aria-live="polite" style="font-size:var(--text-sm);"></div>
+      <p class="muted" style="font-size:var(--text-xs);">&ldquo;Gather their data&rdquo; collects
+        everything Lightwork holds about the person. Deletion is never done from this list: it is
+        prepared here and confirmed on the request&rsquo;s own page. &ldquo;Where to search&rdquo;
+        lists the systems, vendors and documents outside Lightwork that may also hold their data.</p>
+      {% else %}
+        {{ empty_state('No requests yet',
+                       'Requests from people about their data appear here with their 30-day legal deadline. Open the first one above; Lightwork helps you gather or delete the person’s data.',
+                       compact=true) }}
+      {% endif %}
+    </div>
+    <div {{ tab_panel('incidents', 'dpa', tab_prefix='pw-tabbtn-', panel_prefix='pw-tab-') }}>
+      <form class="pw-form" data-endpoint="/api/v1/privacy/incidents">
+        <div class="pw-form-row">
+          <label><span>What happened</span>
+            <input class="input" name="title" required maxlength="200" placeholder="For example: statements emailed to the wrong customers"></label>
+          <label><span>Severity</span>
+            <select class="select" name="severity">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+            </select></label>
+        </div>
+        <div class="pw-form-row">
+          <label><span>Data categories involved</span>
+            <input class="input" name="categories" maxlength="500" placeholder="For example: contact details, account balances"></label>
+          <label><span>People affected (best estimate, if known)</span>
+            <input class="input" type="number" name="affected_people" min="0" step="1" placeholder="For example: 1200"></label>
+        </div>
+        <label><span>Context for the estimate (optional)</span>
+          <input class="input" name="affected_estimate" maxlength="100" placeholder="For example: about 1.2k customers, based on access logs"></label>
+        <label><span>When did you become aware of it?</span>
+          <input class="input" type="datetime-local" name="aware_at" id="pw-inc-aware" required
+            aria-describedby="pw-inc-aware-help"></label>
+        <p class="muted" id="pw-inc-aware-help" style="font-size:var(--text-sm); margin:0;">The 72-hour deadline to tell
+          the regulator runs from when your organisation became aware of the breach, not from when you open this record.
+          It is filled in with now; change it if you found out earlier.</p>
+        <label><span>Description (optional)</span>
+          <textarea class="textarea" name="description" rows="2"
+            placeholder="What is known so far."></textarea></label>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit">Open incident</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      {% if records.incidents %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">Incident</th><th scope="col">Severity</th>
+          <th scope="col">Status</th><th scope="col">Time to tell the regulator</th>
+          <th scope="col">Decision</th><th scope="col">Actions</th></tr></thead>
+        <tbody>
+          {% for r in records.incidents %}
+          <tr>
+            <td>{{ r.title }}<br><span class="muted" style="font-size:var(--text-xs);">{% if r.categories %}{{ r.categories }} · {% endif %}{% if r.get('affected_people') is not none %}{{ r.affected_people }} people{% else %}Count not entered{% endif %}{% if r.affected_estimate %} · {{ r.affected_estimate }}{% endif %}</span></td>
+            <td><span class="badge {{ 'blocked' if r.severity == 'high' else 'warn' if r.severity == 'medium' else 'done' }}">{{ (r.severity or '') | capitalize }}</span></td>
+            <td><span class="badge {{ 'blocked' if r.status == 'notify' else 'done' if r.status in ('documented', 'closed') else 'info' }}">{{ {'open': 'Open', 'notify': 'Must notify', 'documented': 'No notification needed', 'closed': 'Closed'}.get(r.status, (r.status or '') | capitalize) }}</span></td>
+            <td {% if r.clock_breached %}class="pw-due-warn"{% endif %}>
+              {% if r.notification %}Decided{% elif r.clock_breached %}{{ (0 - r.hours_left) }} hours past the deadline{% else %}{{ r.hours_left }} hours left{% endif %}
+              <br><span class="muted" style="font-size:var(--text-xs);">{% if r.aware_at %}72 hours from when you became aware: {{ r.aware_at | datetime('absolute') }}{% else %}72 hours from when the record was opened: {{ r.created_at | datetime('absolute') }}{% endif %}</span></td>
+            <td class="pw-clip" {% if r.notification %}title="{{ r.notification.rationale }}"{% endif %}>
+              {% if r.notification %}{{ 'Tell the regulator' if r.notification.notifiable else 'No notification needed' }}: {{ r.notification.rationale }}{% else %}—{% endif %}</td>
+            <td>
+              {% if not r.notification %}
+                <button class="btn pw-inc-act" data-id="{{ r.id }}" data-notify="true" type="button">Decide: must notify</button>
+                <button class="btn pw-inc-act" data-id="{{ r.id }}" data-notify="false" type="button">Decide: no notification needed</button>
+              {% endif %}
+              {% if r.status != 'closed' %}
+                <button class="btn pw-inc-count" data-id="{{ r.id }}" data-count="{{ r.get('affected_people') if r.get('affected_people') is not none else '' }}" type="button">Update affected count</button>
+                <button class="btn pw-inc-close" data-id="{{ r.id }}" type="button">Close</button>
+              {% endif %}
+              <button class="btn pw-breach-plan" data-id="{{ r.id }}" type="button">Who must we tell?</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div id="pw-breach-out" role="status" aria-live="polite" style="font-size:var(--text-sm);"></div>
+      <p class="muted" style="font-size:var(--text-xs);">Lightwork tracks the 72-hour deadline and records
+        your decision either way, with the reason. It never contacts a regulator itself. &ldquo;Who must we tell?&rdquo;
+        lists each law&rsquo;s deadlines from checked rules: support for your lawyers, not legal advice.</p>
+      {% else %}
+        {{ empty_state('No incidents recorded',
+                       'Incidents you open appear here with their deadline to tell the regulator: 72 hours from when you became aware of the breach. Whether you must tell them stays a decision a person records, with the reason.',
+                       compact=true) }}
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="section-head"><h2>Privacy estate</h2></div>
+  <div class="panel">
+    <p class="muted" style="font-size: var(--text-sm);">The registers around the
+      records: who processes your data (vendors), what people agreed to
+      (consent), and where personal data actually lives (the data map). Each
+      one is turned on separately; turned-off registers show a button to turn them on.</p>
+    {% set pe_consent_label %}Consent{% if estate.consent_enabled %} ({{ estate.consent_posture.records }}){% endif %}{% endset %}
+    {{ panel_tabs('Estate registers', [
+         ('vendors', 'Vendors (%d)' % estate.vendors | length),
+         ('consent', pe_consent_label),
+         ('datamap', 'Data map (%d)' % estate.assets | length)], 'vendors', tab_prefix='pe-tabbtn-', panel_prefix='pe-tab-', hash='pe-') }}
+
+    <div {{ tab_panel('vendors', 'vendors', tab_prefix='pe-tabbtn-', panel_prefix='pe-tab-') }}>
+      {% if estate.vendors_enabled %}
+      <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-3);">
+        One governed row per vendor: criticality, lifecycle, questionnaires the
+        vendor answers by link (no account needed), and monitoring notes.
+        Import your OneTrust vendor export below; vendors already here are left unchanged.
+      </p>
+      <p class="muted" id="fa-vendor-posture" role="status" aria-live="polite" style="font-size:var(--text-sm);">Loading the vendor summary…</p>
+      <form class="pw-form" data-endpoint="/api/v1/vendors">
+        <div class="pw-form-row">
+          <label><span>Vendor name</span>
+            <input class="input" name="name" maxlength="256" required
+                   placeholder="For example: Acme Analytics"></label>
+          <label><span>Category</span>
+            <select class="select" name="category" required>
+              <option value="analytics">Analytics</option>
+              <option value="cloud_hosting">Cloud hosting</option>
+              <option value="software">Software (SaaS)</option>
+              <option value="payments">Payments</option>
+              <option value="marketing">Marketing</option>
+              <option value="hr_payroll">HR and payroll</option>
+              <option value="customer_support">Customer support</option>
+              <option value="security">Security</option>
+              <option value="professional_services">Professional services</option>
+              <option value="ai_provider">AI provider</option>
+              <option value="other">Other</option>
+            </select></label>
+          <label><span>How critical</span>
+            <select class="select" name="criticality">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select></label>
+          <label><span>Who owns the relationship</span>
+            <input class="input" name="owner" maxlength="256" required
+                   placeholder="Name, email or team"></label>
+        </div>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit">Register vendor</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      {% if estate.vendors %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">Vendor</th><th scope="col">Category</th>
+          <th scope="col">How critical</th><th scope="col">Status</th>
+          <th scope="col">Questionnaires</th><th scope="col">Notes</th>
+          <th scope="col">Actions</th></tr></thead>
+        <tbody>
+          {% for v in estate.vendors %}
+          <tr>
+            <td><a href="/privacy/vendors/{{ v.id }}">{{ v.name }}</a></td>
+            <td>{{ (v.category or '') | replace('_', ' ') | capitalize }}</td>
+            <td>{{ (v.criticality or '') | capitalize }}</td>
+            <td>{{ (v.status or '') | replace('_', ' ') | capitalize }}</td>
+            <td>{{ v.questionnaires | length }}</td>
+            <td>{{ v.monitoring_notes | length }}</td>
+            <td style="display:flex;gap:var(--space-1);flex-wrap:wrap;">
+              <button class="btn" type="button" data-pe-action="questionnaire"
+                      data-vendor="{{ v.id }}" data-revision="{{ v.revision }}" data-name="{{ v.name }}">Send questionnaire</button>
+              {% if v.status == 'active' %}
+              <button class="btn" type="button" data-pe-action="status"
+                      data-vendor="{{ v.id }}" data-revision="{{ v.revision }}" data-name="{{ v.name }}"
+                      data-status="under_review">Mark under review</button>
+              {% else %}
+              <button class="btn" type="button" data-pe-action="status"
+                      data-vendor="{{ v.id }}" data-revision="{{ v.revision }}" data-name="{{ v.name }}"
+                      data-status="active">Reactivate</button>
+              {% endif %}
+              <button class="btn" type="button" data-pe-action="status"
+                      data-vendor="{{ v.id }}" data-revision="{{ v.revision }}" data-name="{{ v.name }}"
+                      data-status="offboarded">Offboard</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+      {{ empty_state('No vendors yet',
+                     'Vendors you register appear here, one governed row each. Add one above or import your OneTrust export below.',
+                     compact=true) }}
+      {% endif %}
+      <div class="panel" id="pe-vendor-link" role="status" aria-live="polite" hidden></div>
+      <div class="pw-form">
+        <label><span>Import from OneTrust: choose the vendor CSV export</span>
+          <input class="input" type="file" accept=".csv,text/csv" data-fill="pe-vendor-csv"></label>
+        <details><summary>Or paste the CSV instead</summary>
+          <textarea class="textarea" id="pe-vendor-csv" rows="4" aria-label="OneTrust vendor CSV"></textarea></details>
+        <div class="pw-form-actions">
+          <button class="btn" id="pe-vendor-import" type="button">Import vendors</button>
+          <span class="muted" id="pe-vendor-import-msg" role="status" aria-live="polite" style="font-size:var(--text-sm);"></span>
+        </div>
+      </div>
+      {% if estate.vendors %}
+      <div class="pw-form">
+        <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-2);">
+          <strong>Contracts &amp; renewals.</strong> Record each vendor's
+          current paper with its renewal date — the needs-attention digest
+          then warns before anything lapses.
+          {% if estate.renewals.overdue %}<span class="badge blocked">{{ estate.renewals.overdue | length }} past renewal</span>{% endif %}
+          {% if estate.renewals.due_soon %}<span class="badge warn">{{ estate.renewals.due_soon | length }} renewing within 30 days</span>{% endif %}
+        </p>
+        {% if estate.renewals.overdue or estate.renewals.due_soon %}
+        <ul class="muted" style="font-size:var(--text-sm);margin:0 0 var(--space-2) 1.2em;">
+          {% for entry in estate.renewals.overdue %}
+          <li>Overdue: {{ entry.vendor }} ({{ entry.kind | upper }})</li>
+          {% endfor %}
+          {% for entry in estate.renewals.due_soon %}
+          <li>Due soon: {{ entry.vendor }} ({{ entry.kind | upper }})</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        <div class="pw-form-row">
+          <label><span>Vendor</span>
+            <select class="select" id="pe-contract-vendor">
+              {% for v in estate.vendors %}
+              <option value="{{ v.id }}" data-revision="{{ v.revision }}">{{ v.name }}</option>
+              {% endfor %}
+            </select></label>
+          <label><span>Contract</span>
+            <select class="select" id="pe-contract-kind">
+              {% for k in estate.contract_kinds %}
+              <option value="{{ k }}">{{ k | upper if k | length <= 3 else k | capitalize }}</option>
+              {% endfor %}
+            </select></label>
+          <label><span>Link to the signed contract, or its file name</span>
+            <input class="input" id="pe-contract-ref" maxlength="512"
+                   placeholder="For example: a SharePoint link"></label>
+          <label><span>Renews on</span>
+            <input class="input" id="pe-contract-date" type="date"></label>
+        </div>
+        <div class="pw-form-actions">
+          <button class="btn" id="pe-contract-record" type="button">Record contract</button>
+          <span class="muted" id="pe-contract-msg" role="status" aria-live="polite" style="font-size:var(--text-sm);"></span>
+        </div>
+      </div>
+      {% endif %}
+      {% else %}
+      {{ module_gate('vendor_management', 'Vendor management',
+                     detail='The vendor register tracks your processors, DPAs,
+                             contracts, and renewal dates in one place -- decide
+                             who owns vendor records before turning it on.') }}
+      {% endif %}
+    </div>
+
+    <div {{ tab_panel('consent', 'vendors', tab_prefix='pe-tabbtn-', panel_prefix='pe-tab-') }}>
+      {% if estate.consent_enabled %}
+      <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-3);">
+        A lasting record of what each person agreed to, kept behind your consent
+        forms. Look a person up, record a choice, or import your OneTrust consent export.
+      </p>
+      <form class="pw-form" data-endpoint="/api/v1/consent/records">
+        <div class="pw-form-row">
+          <label><span>Person's email or ID (stored in a protected form that cannot be read back)</span>
+            <input class="input" name="subject_ref" maxlength="512" required
+                   placeholder="alice@example.com"></label>
+          <label><span>Purpose</span>
+            <input class="input" name="purpose" maxlength="128" required list="pe-purposes"
+                   placeholder="For example: marketing emails"></label>
+          <datalist id="pe-purposes">{% for purpose in (estate.consent_posture.by_purpose or {}).keys() %}<option value="{{ purpose }}"></option>{% endfor %}</datalist>
+          <label><span>Status</span>
+            <select class="select" name="status">
+              {% for s in estate.consent_statuses %}
+              <option value="{{ s }}">{{ s | replace('_', ' ') | capitalize }}</option>
+              {% endfor %}
+            </select></label>
+          <label><span>Privacy notice version they saw</span>
+            {% if estate.notices %}
+            <select class="select" name="policy_version" required>
+              {% for notice in estate.notices %}<option value="{{ notice.version }}">{{ notice.version }}</option>{% endfor %}
+            </select>
+            {% else %}
+            <input class="input" name="policy_version" maxlength="64" required
+                   placeholder="Publish a notice version below first, or type its label">
+            {% endif %}</label>
+          <label><span>Channel</span>
+            <select class="select" name="channel">
+              {% for c in estate.consent_channels %}
+              <option value="{{ c }}">{{ c | replace('_', ' ') | capitalize }}</option>
+              {% endfor %}
+            </select></label>
+        </div>
+        <div class="pw-form-actions">
+          <button class="btn" type="submit">Record their choice</button>
+          <span class="pw-form-err" role="alert"></span>
+        </div>
+      </form>
+      <div class="pw-form">
+        <div class="pw-form-row">
+          <label><span>Look up a person's current choices</span>
+            <input class="input" id="pe-consent-subject" maxlength="512"
+                   placeholder="alice@example.com"></label>
+        </div>
+        <div class="pw-form-actions">
+          <button class="btn" id="pe-consent-lookup" type="button">Show their choices</button>
+          <a class="btn" href="/api/v1/consent/export" download>Download consent history</a>
+          <span class="pw-form-err" id="pe-consent-err" role="alert"></span>
+        </div>
+        <div id="pe-consent-result"></div>
+      </div>
+      {% if estate.consent_posture.by_purpose %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">Purpose</th><th scope="col">Agreed</th>
+          <th scope="col">Withdrawn</th></tr></thead>
+        <tbody>
+          {% for purpose, split in estate.consent_posture.by_purpose.items() %}
+          <tr><td>{{ purpose }}</td><td>{{ split.granted }}</td>
+              <td>{{ split.withdrawn }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% endif %}
+      <div class="pw-form">
+        <label><span>Import from OneTrust: choose the consent CSV export</span>
+          <input class="input" type="file" accept=".csv,text/csv" data-fill="pe-consent-csv"></label>
+        <details><summary>Or paste the CSV instead</summary>
+          <textarea class="textarea" id="pe-consent-csv" rows="4" aria-label="OneTrust consent CSV"></textarea></details>
+        <div class="pw-form-actions">
+          <button class="btn" id="pe-consent-import" type="button">Import consents</button>
+          <span class="muted" id="pe-consent-import-msg" role="status" aria-live="polite" style="font-size:var(--text-sm);"></span>
+        </div>
+      </div>
+      <div class="pw-form">
+        <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-2);">
+          <strong>Privacy notices.</strong> Publish each version of your privacy notice.
+          Published versions cannot be changed, so every recorded choice points to the exact wording the person saw.
+          {% if estate.notice_coverage and not estate.notice_coverage.covered %}
+          <span class="badge blocked">Choices recorded against unpublished versions: {{ estate.notice_coverage.uncovered_versions | join(', ') }}</span>
+          {% elif estate.notice_coverage %}
+          <span class="badge ok">Every recorded choice has its notice</span>
+          {% endif %}
+        </p>
+        {% if estate.notices %}
+        <ul class="muted" style="font-size:var(--text-sm);margin:0 0 var(--space-2) 1.2em;">
+          {% for notice in estate.notices %}
+          <li>{{ notice.version }}{% if notice.published_at %} · published {{ notice.published_at | datetime('date') }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        <div class="pw-form-row">
+          <label><span>Version label</span>
+            <input class="input" id="pe-notice-version" maxlength="64"
+                   placeholder="For example: {{ '%s' % (estate.notices[0].version if estate.notices else 'March 2026') }}"></label>
+        </div>
+        <label><span>Notice text</span>
+          <textarea class="textarea" id="pe-notice-text" rows="4"
+                    placeholder="We process your personal data to ..."></textarea></label>
+        <div class="pw-form-actions">
+          <button class="btn" id="pe-notice-publish" type="button">Publish notice version</button>
+          <span class="muted" id="pe-notice-msg" role="status" aria-live="polite" style="font-size:var(--text-sm);"></span>
+        </div>
+      </div>
+      <div class="pw-form">
+        <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-2);">
+          <strong>Check a web page.</strong> Lightwork loads one page of your own site once and lists
+          the cookies it sets, the other companies' sites it loads, and known trackers. It does not follow links.
+        </p>
+        <div class="pw-form-actions">
+          <input class="input" id="pe-scan-url" maxlength="2048" style="flex:1;min-width:16rem;"
+                 placeholder="https://www.example.com/" aria-label="Your site's https URL">
+          <button class="btn" id="pe-scan-go" type="button">Check page</button>
+          <span class="muted" id="pe-scan-msg" role="status" aria-live="polite" style="font-size:var(--text-sm);"></span>
+        </div>
+        <div id="pe-scan-result"></div>
+      </div>
+      {% else %}
+      {{ module_gate('consent_registry', 'Consent registry',
+                     detail='A lasting record of what each person agreed to, stored
+                             in a protected form. It also needs a protection
+                             secret, set on the Settings page, before you record choices.') }}
+      {% endif %}
+    </div>
+
+    <div {{ tab_panel('datamap', 'vendors', tab_prefix='pe-tabbtn-', panel_prefix='pe-tab-') }}>
+      {% if estate.data_map_enabled %}
+      <p class="muted" style="font-size:var(--text-sm);margin-bottom:var(--space-3);">
+        Where personal data actually lives. Import your database&rsquo;s column list or list your
+        SharePoint sites, and Lightwork flags columns and sites that probably hold personal data
+        by their names. This is a starting point for your team, not a scan of the data itself.
+        {% if estate.data_map_posture %}
+        <strong>{{ estate.data_map_posture.flagged_assets }}</strong> of
+        {{ estate.data_map_posture.assets }} places hold likely personal data.
+        {{ estate.data_map_posture.special_category_assets }} of them are sensitive, such as health data, and
+        {{ estate.data_map_posture.unlinked_flagged_assets }} are not yet linked to a processing record entry.
+        {% if estate.data_map_posture.by_category %}By kind of data:
+        {% for category, count in estate.data_map_posture.by_category.items() %}{{ category | humanize }} {{ count }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
+        {% endif %}
+      </p>
+      <div class="pw-form">
+        <div class="pw-form-row">
+          <label><span>Which system the columns come from</span>
+            <input class="input" id="pe-dm-system" maxlength="256" list="pe-dm-systems"
+                   placeholder="For example: Snowflake"></label>
+          <datalist id="pe-dm-systems">
+            {% set _systems = [] %}{% for a in estate.assets %}{% if a.system not in _systems %}{% set _ = _systems.append(a.system) %}<option value="{{ a.system }}"></option>{% endif %}{% endfor %}
+            <option value="Snowflake"></option><option value="BigQuery"></option><option value="Redshift"></option><option value="PostgreSQL"></option>
+          </datalist>
+          <label><span>Data steward (person or team responsible)</span>
+            <input class="input" id="pe-dm-owner" maxlength="256"
+                   placeholder="Name, email or team"></label>
+        </div>
+        <label><span>Column list (CSV file exported from the database)</span>
+          <input class="input" type="file" accept=".csv,text/csv" data-fill="pe-dm-csv"></label>
+        <details><summary>Or paste the column list instead</summary>
+          <textarea class="textarea" id="pe-dm-csv" rows="4" aria-label="Database column list CSV"></textarea></details>
+        <div class="pw-form-actions">
+          <button class="btn" id="pe-dm-import" type="button">Import columns</button>
+          <button class="btn" id="pe-dm-template" type="button">Download a blank column list</button>
+          <button class="btn" id="pe-dm-register" type="button">Add a place by hand</button>
+          <a class="btn" href="/api/v1/data-map/masking-sql" download="masking-rules.sql">Download masking rules (Snowflake)</a>
+        </div>
+        <div class="pw-form-actions">
+          <input class="input" id="pe-dm-search" maxlength="256" style="max-width:14rem;"
+                 placeholder="Site name (leave blank for all)" aria-label="SharePoint sites to list">
+          <button class="btn" id="pe-dm-sharepoint" type="button">List SharePoint sites</button>
+          <span class="muted" id="pe-dm-msg" role="status" aria-live="polite" style="font-size:var(--text-sm);"></span>
+        </div>
+      </div>
+      <div class="pw-form">
+        <label><span>Check column names without saving them (one per line or separated by commas)</span>
+          <textarea class="textarea" id="fa-dm-columns" rows="3" placeholder="email&#10;date_of_birth&#10;order_total"></textarea></label>
+        <div class="pw-form-actions">
+          <button class="btn" id="fa-dm-check" type="button">Check these names</button>
+          <span class="muted" id="fa-dm-check-status" role="status" aria-live="polite" style="font-size:var(--text-sm);"></span>
+        </div>
+        <div id="fa-dm-check-out"></div>
+      </div>
+      {% if estate.assets %}
+      <div class="pw-scroll">
+      <table>
+        <thead><tr><th scope="col">System</th><th scope="col">Place</th>
+          <th scope="col">Type</th><th scope="col">Likely personal data</th>
+          <th scope="col">Sensitive</th><th scope="col">Linked records</th><th scope="col">Actions</th></tr></thead>
+        <tbody>
+          {% for a in estate.assets %}
+          <tr>
+            <td>{{ a.system }}</td>
+            <td>{{ a.name }}</td>
+            <td>{{ {'table': 'Table', 'dataset': 'Dataset', 'file_share': 'File share', 'site': 'Site', 'bucket': 'Storage bucket', 'other': 'Other'}.get(a.kind, (a.kind or '') | capitalize) }}</td>
+            <td>{{ (a.categories | map('replace', '_', ' ') | join(', ')) or '—' }}</td>
+            <td>{% if a.special_category %}<span class="badge blocked">Sensitive</span>{% else %}—{% endif %}</td>
+            <td>{{ a.links | length }}</td>
+            <td><button class="btn pe-dm-sample" type="button" data-asset="{{ a.id }}" data-revision="{{ a.revision }}" data-name="{{ a.name }}">Check a sample</button>
+              {% if a.kind in ('site', 'bucket') %}<button class="btn btn--ghost ops-dm-scan" type="button" data-asset="{{ a.id }}" data-revision="{{ a.revision }}" data-name="{{ a.name }}" data-kind="{{ a.kind }}" aria-label="Scan the files in {{ a.name }}">Scan the files</button>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+      {{ empty_state('No places recorded yet',
+                     'Places where personal data lives appear here. Import a column list, list your SharePoint sites, or add a place by hand above.',
+                     compact=true) }}
+      {% endif %}
+      {% else %}
+      {{ module_gate('data_map', 'Data map',
+                     detail='Maps where personal data lives from database column
+                             lists and SharePoint sites, as a starting point for your team.') }}
+      {% endif %}
+    </div>
+  </div>
+
+  {% include "_ops_privacy.html" %}
+
+  <script nonce="{{ csp_script_nonce }}">
+    (function () {
+      'use strict';
+      function post(url, body) {
+        // A refusal keeps its status and the turned-off reason for errText.
+        return window.mvFetchJSON(url, { method: 'POST', body: body });
+      }
+      function errText(e, action) {
+        return window.mvErrorText ? window.mvErrorText(e, action) : 'Could not ' + action + '. Try again.';
+      }
+      var QTYPES = {{ templates | tojson }};
+
+      // A file chooser next to a CSV box fills the box with the file's text.
+      document.querySelectorAll('input[type="file"][data-fill]').forEach(function (input) {
+        input.addEventListener('change', function () {
+          var file = input.files && input.files[0];
+          var target = document.getElementById(input.dataset.fill);
+          if (!file || !target) return;
+          file.text().then(function (text) {
+            target.value = text;
+            var box = target.closest('details');
+            if (box) box.open = true;
+          });
+        });
+      });
+
+      function showLink(box, title, link, mailSubject) {
+        box.textContent = '';
+        box.hidden = false;
+        var h = document.createElement('p'); h.textContent = title; box.appendChild(h);
+        var row = document.createElement('div'); row.className = 'pw-form-actions';
+        var field = document.createElement('input'); field.className = 'input'; field.readOnly = true; field.value = link;
+        field.setAttribute('aria-label', title); field.style.flex = '1';
+        var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn'; copy.textContent = 'Copy link';
+        copy.addEventListener('click', function () { if (window.mvCopy) mvCopy(link); else { field.select(); } });
+        row.append(field, copy);
+        if (mailSubject) {
+          var mail = document.createElement('a'); mail.className = 'btn';
+          mail.href = 'mailto:?subject=' + encodeURIComponent(mailSubject) + '&body=' + encodeURIComponent(link);
+          mail.textContent = 'Email it';
+          row.appendChild(mail);
+        }
+        box.appendChild(row);
+      }
+
+      document.querySelectorAll('[data-pe-action]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var vendor = btn.dataset.vendor;
+          var revision = parseInt(btn.dataset.revision, 10);
+          var request;
+          var box = document.getElementById('pe-vendor-link');
+          if (btn.dataset.peAction === 'questionnaire') {
+            var options = QTYPES.map(function (t) { return { value: t.type, label: t.title }; });
+            var preferred = QTYPES.some(function (t) { return t.type === 'vendor_risk'; }) ? 'vendor_risk' : (options[0] || {}).value;
+            request = mvForm('Send a questionnaire to ' + btn.dataset.name, [
+              { key: 'type', label: 'Questionnaire', type: 'select', options: options, default: preferred, required: true }
+            ], { okText: 'Create link' }).then(function (values) {
+              if (!values) return null;
+              btn.disabled = true;
+              return post('/api/v1/vendors/' + vendor + '/questionnaires',
+                          { assessment_type: values.type, revision: revision })
+                .then(function (d) {
+                  btn.disabled = false;
+                  showLink(box, 'Send this link to ' + btn.dataset.name + '. They can answer without an account.',
+                           location.origin + d.form_path, 'Questionnaire from our privacy team');
+                });
+            });
+          } else {
+            var verb = { under_review: 'Mark ' + btn.dataset.name + ' as under review?',
+                         active: 'Reactivate ' + btn.dataset.name + '?',
+                         offboarded: 'Offboard ' + btn.dataset.name + '? They will be marked as no longer working with you.' }[btn.dataset.status];
+            request = mvConfirm(verb || 'Change this vendor?', { okText: { under_review: 'Mark under review', active: 'Reactivate vendor', offboarded: 'Offboard vendor' }[btn.dataset.status] || 'Change vendor status' }).then(function (ok) {
+              if (!ok) return null;
+              btn.disabled = true;
+              return post('/api/v1/vendors/' + vendor + '/status',
+                          { status: btn.dataset.status, revision: revision })
+                .then(function () { location.reload(); });
+            });
+          }
+          request.catch(function (e) {
+            btn.disabled = false;
+            box.hidden = false;
+            box.textContent = errText(e, 'update the vendor');
+          });
+        });
+      });
+
+      function wireImport(buttonId, textareaId, msgId, url) {
+        var btn = document.getElementById(buttonId);
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          var csv = (document.getElementById(textareaId).value || '').trim();
+          var msg = document.getElementById(msgId);
+          if (!csv) { msg.textContent = 'Choose the CSV file first.'; return; }
+          btn.disabled = true; msg.textContent = 'Importing…';
+          post(url, { csv_text: csv }).then(function (d) {
+            // Vendors report skipped rows structured ({row, name, reason});
+            // consents report a plain count. Summarise by reason so a
+            // truncated import never reads as a clean success.
+            var skipped = d.skipped, note = '';
+            if (Array.isArray(skipped)) {
+              if (skipped.length) {
+                var byReason = {};
+                skipped.forEach(function (s) { byReason[s.reason] = (byReason[s.reason] || 0) + 1; });
+                note = ', skipped ' + skipped.length + ' (' + Object.keys(byReason).map(function (k) {
+                  return byReason[k] + ' ' + k.replace(/_/g, ' ');
+                }).join(', ') + ')';
+              }
+            } else if (skipped) {
+              note = ', skipped ' + skipped;
+            }
+            msg.textContent = 'Imported ' + (d.imported || 0) + note + '. Reloading…';
+            setTimeout(function () { location.reload(); }, note ? 2500 : 900);
+          }).catch(function (e) {
+            btn.disabled = false; msg.textContent = errText(e, 'import the file');
+          });
+        });
+      }
+      wireImport('pe-vendor-import', 'pe-vendor-csv', 'pe-vendor-import-msg',
+                 '/api/v1/vendors/import-onetrust');
+      wireImport('pe-consent-import', 'pe-consent-csv', 'pe-consent-import-msg',
+                 '/api/v1/consent/import-onetrust');
+
+      var lookup = document.getElementById('pe-consent-lookup');
+      if (lookup) {
+        lookup.addEventListener('click', function () {
+          var subject = (document.getElementById('pe-consent-subject').value || '').trim();
+          var err = document.getElementById('pe-consent-err');
+          var box = document.getElementById('pe-consent-result');
+          if (!subject) { err.textContent = 'Enter the person\'s email or ID first.'; return; }
+          err.textContent = ''; box.textContent = 'Looking up…';
+          post('/api/v1/consent/preferences', { subject_ref: subject })
+            .then(function (d) {
+              var purposes = Object.keys(d.purposes || {});
+              if (!purposes.length) {
+                box.textContent = 'No choices recorded for this person.';
+                return;
+              }
+              box.textContent = '';
+              var list = document.createElement('ul');
+              purposes.forEach(function (p) {
+                var li = document.createElement('li');
+                var status = String(d.purposes[p].status || '').replace(/_/g, ' ');
+                li.textContent = p + ': ' + status.charAt(0).toUpperCase() + status.slice(1) +
+                  ' (notice version ' + d.purposes[p].policy_version + ')';
+                list.appendChild(li);
+              });
+              box.appendChild(list);
+            })
+            .catch(function (e) {
+              box.textContent = ''; err.textContent = errText(e, 'look up their choices');
+            });
+        });
+      }
+
+      var dmImport = document.getElementById('pe-dm-import');
+      if (dmImport) {
+        dmImport.addEventListener('click', function () {
+          var msg = document.getElementById('pe-dm-msg');
+          var csv = (document.getElementById('pe-dm-csv').value || '').trim();
+          var system = (document.getElementById('pe-dm-system').value || '').trim();
+          var owner = (document.getElementById('pe-dm-owner').value || '').trim();
+          if (!csv || !system || !owner) {
+            msg.textContent = 'Enter the system and the data steward, and choose the column list.';
+            return;
+          }
+          dmImport.disabled = true; msg.textContent = 'Importing…';
+          post('/api/v1/data-map/import-schema',
+               { csv_text: csv, system: system, owner: owner })
+            .then(function (d) {
+              msg.textContent = 'Imported ' + d.imported +
+                (d.skipped ? ', skipped ' + d.skipped : '') + '. Reloading…';
+              setTimeout(function () { location.reload(); }, 900);
+            })
+            .catch(function (e) {
+              dmImport.disabled = false;
+              msg.textContent = errText(e, 'import the columns');
+            });
+        });
+      }
+      var contractBtn = document.getElementById('pe-contract-record');
+      if (contractBtn) {
+        contractBtn.addEventListener('click', function () {
+          var msg = document.getElementById('pe-contract-msg');
+          var vendorSel = document.getElementById('pe-contract-vendor');
+          var ref = (document.getElementById('pe-contract-ref').value || '').trim();
+          var when = document.getElementById('pe-contract-date').value;
+          if (!ref || !when) { msg.textContent = 'Enter where the contract is and its renewal date.'; return; }
+          var option = vendorSel.selectedOptions[0];
+          contractBtn.disabled = true; msg.textContent = 'Recording…';
+          post('/api/v1/vendors/' + vendorSel.value + '/contracts', {
+            kind: document.getElementById('pe-contract-kind').value,
+            reference: ref,
+            renews_at: Math.floor(new Date(when + 'T00:00:00Z').getTime() / 1000),
+            revision: parseInt(option ? option.dataset.revision : '0', 10)
+          }).then(function () { location.reload(); })
+            .catch(function (e) {
+              contractBtn.disabled = false;
+              msg.textContent = errText(e, 'record the contract');
+            });
+        });
+      }
+
+      var noticeBtn = document.getElementById('pe-notice-publish');
+      if (noticeBtn) {
+        noticeBtn.addEventListener('click', async function () {
+          if (noticeBtn.dataset.inFlight === 'true') return;
+          noticeBtn.dataset.inFlight = 'true';
+          var msg = document.getElementById('pe-notice-msg');
+          var version = (document.getElementById('pe-notice-version').value || '').trim();
+          var text = (document.getElementById('pe-notice-text').value || '').trim();
+          if (!version || !text) {
+            msg.textContent = 'Enter a version label and the notice text.';
+            delete noticeBtn.dataset.inFlight;
+            return;
+          }
+          if (!(await mvConfirm(
+            'Publish privacy notice version “' + version + '”? It cannot be changed afterwards, and new consent choices can point to it.',
+            { okText: 'Publish notice' }
+          ))) { delete noticeBtn.dataset.inFlight; return; }
+          noticeBtn.disabled = true;
+          noticeBtn.setAttribute('aria-busy', 'true');
+          msg.textContent = 'Publishing…';
+          post('/api/v1/consent/notices', { version: version, text: text })
+            .then(function () { location.reload(); })
+            .catch(function (e) {
+              msg.textContent = errText(e, 'publish the notice');
+            })
+            .finally(function () {
+              delete noticeBtn.dataset.inFlight;
+              noticeBtn.removeAttribute('aria-busy');
+              noticeBtn.disabled = false;
+            });
+        });
+      }
+
+      var scanBtn = document.getElementById('pe-scan-go');
+      if (scanBtn) {
+        scanBtn.addEventListener('click', function () {
+          var msg = document.getElementById('pe-scan-msg');
+          var box = document.getElementById('pe-scan-result');
+          var url = (document.getElementById('pe-scan-url').value || '').trim();
+          if (!url) { msg.textContent = 'Enter the address of a page on your site first (starting with https://).'; return; }
+          scanBtn.disabled = true; msg.textContent = 'Checking…'; box.textContent = '';
+          post('/api/v1/consent/site-scan', { url: url })
+            .then(function (d) {
+              scanBtn.disabled = false; msg.textContent = '';
+              box.textContent =
+                d.cookies.length + ' cookie(s) · ' +
+                d.third_party_hosts.length + ' other companies\' site(s) loaded' +
+                (d.known_trackers.length
+                  ? ' · known trackers: ' + d.known_trackers.join(', ')
+                  : ' · no known trackers');
+            })
+            .catch(function (e) {
+              scanBtn.disabled = false;
+              msg.textContent = errText(e, 'check the page');
+            });
+        });
+      }
+
+      document.querySelectorAll('[data-pe-worksheet]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var box = document.getElementById('pe-worksheet-result');
+          box.textContent = 'Working out where to search…';
+          fetch('/api/v1/privacy/dsar/' + encodeURIComponent(btn.dataset.peWorksheet) + '/estate-worksheet')
+            .then(function (r) {
+              if (!r.ok) { var failure = new Error('request failed'); failure.status = r.status; failure.headers = r.headers; throw failure; }
+              return r.json();
+            })
+            .then(function (d) {
+              box.textContent = '';
+              var panel = document.createElement('div'); panel.className = 'panel';
+              var title = document.createElement('h3'); title.textContent = 'Where to search for this person\'s data';
+              panel.appendChild(title);
+              var list = document.createElement('ul');
+              function item(text) { var li = document.createElement('li'); li.textContent = text; list.appendChild(li); }
+              var holdings = d.platform_holdings || {};
+              var sections = holdings.sections;
+              var counts = sections && typeof sections === 'object' && !Array.isArray(sections) ? Object.values(sections) : [];
+              var total = counts.reduce(function (sum, count) { return sum + count; }, 0);
+              if (holdings.error || holdings.enabled !== true) {
+                item('Inside Lightwork: its records could not be checked. The count is unknown; try this checklist again before completing the search.');
+              } else if (holdings.resolved === false) {
+                item('Inside Lightwork: could not match this person to one account, so its own records are not counted here.');
+              } else if (holdings.resolved !== true || !counts.length || !counts.every(function (count) { return Number.isSafeInteger(count) && count >= 0; }) || !Number.isSafeInteger(total)) {
+                item('Inside Lightwork: the record count could not be confirmed. Try this checklist again.');
+              } else {
+                item('Inside Lightwork: ' + total + ' record(s) in ' + counts.filter(function (count) { return count > 0; }).length + ' area(s).');
+              }
+              var dmap = d.data_map || {};
+              if (dmap.error) {
+                item('Data map: could not be checked. Other systems remain unconfirmed; try again before completing the search.');
+              } else if (dmap.enabled && dmap.assets && dmap.assets.length) {
+                dmap.assets.forEach(function (a) {
+                  item(a.system + ': ' + a.name + (a.categories && a.categories.length ? ' (' + a.categories.join(', ').replace(/_/g, ' ') + ')' : ''));
+                });
+                if (dmap.assets.length === 100) item('This checklist shows up to 100 data-map locations. Review your complete data map for any others.');
+              } else if (dmap.enabled) {
+                item('Data map: no places flagged as holding personal data.');
+              } else { item('Data map: turned off, so other systems are not listed.'); }
+              var proc = d.processors || {};
+              if (proc.error) {
+                item('Vendor register: could not be checked. Vendor coverage remains unconfirmed; try again before completing the search.');
+              } else if (proc.enabled && proc.vendors && proc.vendors.length) {
+                item('Ask these vendors: ' + proc.vendors.map(function (v) { return v.name; }).join(', ') + '.');
+                if (proc.vendors.length === 100) item('This checklist shows up to 100 vendors. Review your complete vendor register for any others.');
+              } else if (!proc.enabled) { item('Vendor register: turned off, so vendors are not listed.'); }
+              var docs = d.documents || {};
+              if (docs.error) item('Connected documents: could not be searched. Document coverage remains unconfirmed; try again before completing the search.');
+              else if (!docs.enabled) item('Connected documents: search is off, so documents are not checked.');
+              else item((docs.hits && docs.hits.length ? docs.hits.length + ' matching document(s) shown.' : 'No matching documents returned.') + ' This search shows up to eight matches; it is not a complete inventory.');
+              panel.appendChild(list);
+              box.appendChild(panel);
+            })
+            .catch(function (e) { box.textContent = errText(e, 'work out where to search'); });
+        });
+      });
+
+      // Data map: add a place by hand, blank column list, check a sample.
+      var dmRegister = document.getElementById('pe-dm-register');
+      if (dmRegister) {
+        dmRegister.addEventListener('click', async function () {
+          var msg = document.getElementById('pe-dm-msg');
+          var values = await mvForm('Add a place where personal data lives', [
+            { key: 'name', label: 'Name (for example the table or folder)', type: 'text', required: true },
+            { key: 'system', label: 'System (for example Snowflake or SharePoint)', type: 'text', required: true },
+            { key: 'kind', label: 'Type', type: 'select', default: 'table', options: [
+              { value: 'table', label: 'Table' }, { value: 'dataset', label: 'Dataset' },
+              { value: 'file_share', label: 'File share' }, { value: 'site', label: 'Site' },
+              { value: 'bucket', label: 'Storage bucket' }, { value: 'other', label: 'Other' }] },
+            { key: 'owner', label: 'Data steward (person or team)', type: 'text', required: true },
+            { key: 'columns', label: 'Column or field names, separated by commas (optional)', type: 'text' }
+          ], { okText: 'Add' });
+          if (!values) return;
+          var columns = String(values.columns || '').split(',').map(function (c) { return c.trim(); }).filter(Boolean);
+          post('/api/v1/data-map/assets', { name: values.name, system: values.system, kind: values.kind,
+                                            owner: values.owner, columns: columns.slice(0, 400) })
+            .then(function () { location.reload(); })
+            .catch(function (e) { msg.textContent = errText(e, 'add the place'); });
+        });
+      }
+      var dmTemplate = document.getElementById('pe-dm-template');
+      if (dmTemplate) {
+        dmTemplate.addEventListener('click', function () {
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(new Blob(['table_schema,table_name,column_name\ncrm,contacts,email\n'], { type: 'text/csv' }));
+          a.download = 'column-list.csv'; document.body.appendChild(a); a.click(); a.remove();
+        });
+      }
+      document.querySelectorAll('.pe-dm-sample').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var msg = document.getElementById('pe-dm-msg');
+          var ok = await mvConfirm('Check a sample of ' + btn.dataset.name + '? Choose a small export of its data (a text or CSV file). Lightwork checks it for personal data and keeps only what kinds it found, not the data.', { okText: 'Choose file' });
+          if (!ok) return;
+          var input = document.createElement('input');
+          input.type = 'file'; input.accept = '.csv,.txt,.json,text/plain,text/csv'; input.hidden = true;
+          input.addEventListener('change', function () {
+            var file = input.files && input.files[0];
+            input.remove();
+            if (!file) return;
+            file.text().then(function (text) {
+              return post('/api/v1/data-map/assets/' + encodeURIComponent(btn.dataset.asset) + '/classify-content',
+                          { text_sample: text.slice(0, 200000), revision: parseInt(btn.dataset.revision, 10) });
+            }).then(function () { location.reload(); })
+              .catch(function (e) { msg.textContent = errText(e, 'check the sample'); });
+          });
+          document.body.appendChild(input);
+          input.click();
+        });
+      });
+
+      var dmSync = document.getElementById('pe-dm-sharepoint');
+      if (dmSync) {
+        dmSync.addEventListener('click', function () {
+          var msg = document.getElementById('pe-dm-msg');
+          var owner = (document.getElementById('pe-dm-owner').value || '').trim();
+          if (!owner) { msg.textContent = 'Enter the data steward first.'; return; }
+          dmSync.disabled = true; msg.textContent = 'Asking Microsoft 365 for your SharePoint sites…';
+          post('/api/v1/data-map/sync-sharepoint',
+               { owner: owner,
+                 search: (document.getElementById('pe-dm-search').value || '').trim() })
+            .then(function (d) {
+              msg.textContent = 'Added ' + d.imported + ' site(s)' +
+                (d.skipped ? ', skipped ' + d.skipped : '') + '. Reloading…';
+              setTimeout(function () { location.reload(); }, 900);
+            })
+            .catch(function (e) {
+              dmSync.disabled = false;
+              msg.textContent = e && e.status === 503
+                ? 'Microsoft 365 is not connected yet. Connect it on the Connections page first.'
+                : errText(e, 'list the SharePoint sites');
+            });
+        });
+      }
+    })();
+  </script>
+
+  {% include "_workspace_memory_catalog.html" %}
+
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  // An incident's awareness time starts as now, in the viewer's own time
+  // zone, and cannot be later than now.
+  var awareInput = document.getElementById('pw-inc-aware');
+  if (awareInput) {
+    var localNow = function () {
+      var d = new Date();
+      d.setSeconds(0, 0);
+      return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    };
+    if (!awareInput.value) awareInput.value = localNow();
+    awareInput.max = localNow();
+    awareInput.addEventListener('focus', function () { awareInput.max = localNow(); });
+  }
+
+  function failed(r) {
+    var failure = new Error('request failed');
+    failure.status = r.status;
+    failure.headers = r.headers;  // carries the turned-off reason (feature_gate.py)
+    return failure;
+  }
+  function errText(e, action) {
+    return window.mvErrorText ? window.mvErrorText(e, action) : 'Could not ' + action + '. Try again.';
+  }
+  function human(v) {
+    var t = String(v == null ? '' : v).replace(/_/g, ' ').trim();
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+  function day(ts) {
+    return ts ? (window.mvDateAbsolute ? window.mvDateAbsolute(ts) : new Date(ts * 1000).toLocaleDateString()) : '';
+  }
+  function post(url, body, beforeReload) {
+    return fetch(url, {
+      method: 'POST',
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      if (r.ok) { if (beforeReload) beforeReload(); location.reload(); return null; }
+      throw failed(r);
+    });
+  }
+
+  // Create forms (DPA review, AI system, DSAR) -> POST JSON -> reload.
+  document.querySelectorAll('.pw-form[data-endpoint]').forEach(function (form) {
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var body = {};
+      form.querySelectorAll('[name]').forEach(function (el) {
+        if (!el.value) return;
+        if (el.type === 'datetime-local') {
+          // The viewer's local date and time, sent as an exact moment.
+          var at = new Date(el.value).getTime();
+          if (!isNaN(at)) body[el.name] = Math.floor(at / 1000);
+          return;
+        }
+        body[el.name] = el.value;
+      });
+      var err = form.querySelector('.pw-form-err');
+      err.textContent = '';
+      var fields = form.hasAttribute('data-mv-validate') && window.mvFieldErrors;
+      // A saved form starts empty after the reload; a failed one keeps every value.
+      post(form.dataset.endpoint, body, fields ? function () { fields.forget(form); } : null).catch(function (e) {
+        if (fields) fields.fail(form, e, 'save this');
+        else err.textContent = errText(e, 'save this');
+      });
+    });
+  });
+
+  // Vendor paper: multipart upload -> review -> redline. Not the JSON path
+  // above, and deliberately not a page reload on submit: the reviewer needs to
+  // read the verdict and grab the redline before the table refreshes.
+  var paperForm = document.getElementById('pw-paper-form');
+  if (paperForm) {
+    paperForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var err = document.getElementById('pw-paper-err');
+      var out = document.getElementById('pw-paper-result');
+      var go = document.getElementById('pw-paper-go');
+      var fileEl = document.getElementById('pw-paper-file');
+      err.textContent = '';
+      out.innerHTML = '';
+      if (!fileEl.files || !fileEl.files[0]) {
+        err.textContent = 'Choose their document first.';
+        return;
+      }
+      var fd = new FormData();
+      fd.append('file', fileEl.files[0]);
+      fd.append('vendor', document.getElementById('pw-paper-vendor').value);
+      fd.append('instrument', document.getElementById('pw-paper-instrument').value);
+      go.disabled = true;
+      go.textContent = 'Reading and comparing…';
+      fetch('/api/v1/privacy/paper-reviews', { method: 'POST', body: fd })
+        .then(function (r) {
+          if (!r.ok) { throw failed(r); }
+          return r.json();
+        })
+        .then(function (rec) {
+          var verdict = rec.recommendation === 'do_not_sign_without_changes'
+            ? ['blocked', 'Do not sign as drafted']
+            : rec.recommendation === 'acceptable_with_changes'
+              ? ['warn', 'Acceptable with the attached changes']
+              : ['done', 'Acceptable'];
+          var esc = function (s) {
+            return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+              return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+            });
+          };
+          out.innerHTML =
+            '<div class="panel" style="margin-top:var(--space-3);">' +
+            '<p>That is a <strong>' + esc(rec.instrument_label) + '</strong> (' +
+            esc((rec.classification || {}).confidence) + ' confidence), filed as ' +
+            '<strong>version ' + rec.version + '</strong>.<br>' +
+            rec.clauses_present + ' of ' + rec.clauses_total +
+            ' clauses meet your standard position; <strong>' + rec.gaps +
+            '</strong> depart from it (<strong>' + rec.high_severity_gaps +
+            '</strong> high severity).</p>' +
+            '<p><span class="badge ' + verdict[0] + '">' + verdict[1] + '</span></p>' +
+            ((rec.redline && rec.redline.unmatched && rec.redline.unmatched.length)
+              ? '<p class="muted">' + rec.redline.unmatched.length +
+                ' change(s) need manual review before they can be applied ' +
+                'safely — the memo explains each one.</p>' : '') +
+            '<p><a class="btn" href="/api/v1/privacy/paper-reviews/' + rec.id +
+            '/memo" target="_blank">Read the memo</a> ' +
+            '<a class="btn" href="/api/v1/privacy/paper-reviews/' +
+            rec.id + '/redline">Download the tracked-changes document</a></p>' +
+            '</div>';
+        })
+        .catch(function (e) {
+          err.textContent = e && e.status === 415
+            ? 'Choose a Word document (.docx) or a PDF with selectable text.'
+            : errText(e, 'review their document');
+        })
+        .finally(function () {
+          go.disabled = false;
+          go.textContent = 'Review their paper';
+        });
+    });
+  }
+
+  // Our paper: a straight GET download of the drafted template — the values
+  // filled for this vendor come back in red for counsel to verify.
+  var ourPaperBtn = document.getElementById('pw-our-paper');
+  if (ourPaperBtn) {
+    ourPaperBtn.addEventListener('click', function () {
+      var vendor = (document.getElementById('pw-paper-vendor').value || '').trim();
+      var inst = document.getElementById('pw-paper-instrument').value || 'dpa';
+      window.location = '/api/v1/privacy/our-paper?vendor=' +
+        encodeURIComponent(vendor) + '&instrument=' + encodeURIComponent(inst);
+    });
+  }
+
+  // Lineage: the three regulator queries against the entity graph.
+  (function () {
+    var out = document.getElementById('pw-lin-result');
+    var err = document.getElementById('pw-lin-err');
+    if (!out) { return; }
+    var esc = function (s) {
+      return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    };
+    var when = function (ts) {
+      return ts ? (window.mvDateAbsolute ? window.mvDateAbsolute(ts) : new Date(ts * 1000).toLocaleDateString()) : '';
+    };
+    var RECORD_PAGES = { dsar: '/privacy/dsar/', vendor: '/privacy/vendors/' };
+    var RECORD_NAMES = { dpa_review: 'data agreement check', paper_review: 'vendor contract review',
+      ropa: 'processing record entry', dsar: 'data request', incident: 'incident', vendor: 'vendor record',
+      assessment: 'assessment', ai_system: 'AI system' };
+    var recordName = function (r) {
+      return RECORD_NAMES[r.record_type] || String(r.record_type || 'record').replace(/_/g, ' ');
+    };
+    var ref = function (r) {
+      var label = esc(recordName(r));
+      var page = RECORD_PAGES[r.record_type];
+      return ' <span class="muted" style="font-size:var(--text-xs);">(from ' +
+        (page ? '<a href="' + page + encodeURIComponent(r.record_id) + '">' + label + '</a>' : label) + ')</span>';
+    };
+    function ask(url) {
+      err.textContent = '';
+      out.innerHTML = '';
+      window.mvFetchJSON(url).then(render).catch(function (e) { err.textContent = errText(e, 'answer that question'); });
+    }
+    function render(data) {
+      if (data.found === false) {
+        out.innerHTML = '<div class="panel" style="margin-top:var(--space-3);">' +
+          '<p class="muted">Nothing on record has that name. Check the spelling, ' +
+          'or pick a name from the list as you type.</p></div>';
+        return;
+      }
+      var html = '<div class="panel" style="margin-top:var(--space-3);">';
+      if (data.chain) {                       // why()
+        if (!data.decision) {
+          html += '<p>' + esc(data.note) + '</p>';
+        } else {
+          html += '<p><strong>' + esc(data.decision.what) + '</strong> on ' +
+            when(data.decision.at) + ref(data.decision) + '</p><ul>';
+          data.chain.slice(1).forEach(function (c) {
+            html += '<li>' + esc(c.step.replace(/_/g, ' ')) + ' — ' +
+              esc(c.what) + ref(c) + '</li>';
+          });
+          html += '</ul>';
+        }
+      } else if (data.summary) {              // dossier()
+        var s = data.summary;
+        html += '<p><strong>' + esc(data.entity.name) + '</strong></p>';
+        html += '<p>Reviews: ' + (s.reviews.length ? s.reviews.map(function (r) {
+          return esc(human(recordName(r))) + (r.current ? ' (current)' : ' (replaced)') + ref(r);
+        }).join(', ') : 'none') + '</p>';
+        html += '<p>Decisions: ' + (s.decisions.length ? s.decisions.map(function (d) {
+          return esc(human(d.decision)) + ' by ' + esc(d.by) + ' on ' + when(d.at);
+        }).join('; ') : 'none') + '</p>';
+        html += '<p>Clauses still to fix: ' + (s.open_clause_gaps.length
+          ? s.open_clause_gaps.map(function (g) { return esc(human(g)); }).join(', ') : 'none') + '</p>';
+        html += '<p>Documents: ' + (s.documents.map(esc).join(', ') || 'none') +
+          '</p><p>People: ' + (s.people.map(esc).join(', ') || 'none') + '</p>';
+      } else if (data.records) {              // blast_radius()
+        html += '<p><strong>' + esc(data.entity.name) + '</strong> is relied on by ' +
+          data.records.length + ' record(s), touching ' +
+          data.vendors.length + ' vendor(s).</p>';
+        html += '<p>Records: ' + data.records.map(function (r) {
+          return esc(human(recordName(r))) + ref(r);
+        }).join(', ') + '</p>';
+        html += '<p>Vendors: ' + (data.vendors.map(esc).join(', ') || 'none') + '</p>';
+        html += '<p>Decisions that relied on it: ' + (data.decisions.length
+          ? data.decisions.map(function (d) {
+              return esc(human(d.decision)) + ' by ' + esc(d.by) + ' on ' + when(d.at) + ref(d);
+            }).join('; ') : 'none') + '</p>';
+      }
+      out.innerHTML = html + '</div>';
+    }
+    var vendorQ = function () {
+      var v = document.getElementById('pw-lin-vendor').value.trim();
+      if (!v) { err.textContent = 'Choose a vendor first.'; return null; }
+      return encodeURIComponent(v);
+    };
+    document.getElementById('pw-lin-dossier').addEventListener('click', function () {
+      var v = vendorQ(); if (!v) { return; }
+      var asof = document.getElementById('pw-lin-asof').value;
+      ask('/api/v1/graph/dossier?vendor=' + v +
+          (asof ? '&as_of=' + encodeURIComponent(asof) : ''));
+    });
+    document.getElementById('pw-lin-why').addEventListener('click', function () {
+      var v = vendorQ(); if (!v) { return; }
+      ask('/api/v1/graph/why?vendor=' + v);
+    });
+    document.getElementById('pw-lin-blast').addEventListener('click', function () {
+      var name = document.getElementById('pw-lin-blast-name').value.trim();
+      if (!name) { err.textContent = 'Enter the clause, document or person first.'; return; }
+      ask('/api/v1/graph/blast-radius?kind=' +
+          document.getElementById('pw-lin-blast-kind').value +
+          '&name=' + encodeURIComponent(name));
+    });
+  })();
+
+  // The clause playbook editor: loaded lazily the first time it is opened, so
+  // the page does not pay for it on every render.
+  var playbook = document.getElementById('pw-playbook');
+  if (playbook) {
+    // Local helpers keep this editor self-contained.
+    var pbFailed = function (r) { var f = new Error('request failed'); f.status = r.status; f.headers = r.headers; return f; };
+    var pbErrText = function (e, action) {
+      if (typeof window !== 'undefined' && window.mvErrorText) { return window.mvErrorText(e, action); }
+      return 'Could not ' + action + (e && e.status === 403 ? '. You do not have permission to do this. Ask an administrator.' : '. Try again.');
+    };
+    var pbHuman = function (v) { var t = String(v || '').replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
+    var loaded = false;
+    var loadingPlaybook = false;
+    var playbookSave = document.getElementById('pw-playbook-save');
+    var playbookRetry = document.getElementById('pw-playbook-retry');
+    function loadPlaybook() {
+      if (loaded || loadingPlaybook) { return; }
+      loadingPlaybook = true;
+      playbookSave.disabled = true;
+      playbookRetry.hidden = true;
+      document.getElementById('pw-playbook-err').textContent = '';
+      document.getElementById('pw-playbook-path').textContent = 'Loading clauses…';
+      fetch('/api/v1/privacy/clause-playbook')
+        .then(function (r) {
+          if (!r.ok) { throw new Error(pbErrText(pbFailed(r), 'load the playbook') + ' Load it again before saving.'); }
+          return r.json();
+        })
+        .then(function (pb) {
+          if (!pb || !pb.positions || typeof pb.positions !== 'object' || Array.isArray(pb.positions) ||
+              !Object.keys(pb.positions).length || !Array.isArray(pb.customised) ||
+              Object.values(pb.positions).some(function (value) { return typeof value !== 'string'; })) {
+            throw new Error('The playbook response was incomplete. Retry loading before saving.');
+          }
+          document.getElementById('pw-playbook-path').textContent =
+            pb.customised.length + ' custom clause(s). Other clauses use the standard wording.';
+          var rows = document.getElementById('pw-playbook-rows');
+          rows.replaceChildren();
+          Object.keys(pb.positions).sort().forEach(function (key) {
+            var custom = pb.customised.indexOf(key) !== -1;
+            var wrap = document.createElement('label');
+            wrap.style.display = 'block';
+            wrap.style.marginBottom = 'var(--space-2)';
+            var span = document.createElement('span');
+            span.textContent = pbHuman(key) + (custom ? ' (your wording)' : '');
+            var ta = document.createElement('textarea');
+            ta.className = 'textarea';
+            ta.rows = 2;
+            ta.dataset.clause = key;
+            ta.value = pb.positions[key];
+            wrap.appendChild(span);
+            wrap.appendChild(ta);
+            rows.appendChild(wrap);
+          });
+          loaded = true;
+          playbookSave.disabled = false;
+        })
+        .catch(function (e) {
+          loaded = false;
+          playbookRetry.hidden = false;
+          document.getElementById('pw-playbook-path').textContent = 'Playbook not loaded.';
+          document.getElementById('pw-playbook-err').textContent = e.message;
+        }).finally(function () { loadingPlaybook = false; });
+    }
+    playbook.addEventListener('toggle', function () {
+      if (playbook.open) { loadPlaybook(); }
+    });
+    playbookRetry.addEventListener('click', loadPlaybook);
+    playbookSave.addEventListener('click', function () {
+      if (!loaded || loadingPlaybook || playbookSave.disabled) { return; }
+      var err = document.getElementById('pw-playbook-err');
+      err.textContent = '';
+      var positions = {};
+      var clauseInputs = document.querySelectorAll('#pw-playbook-rows textarea[data-clause]');
+      clauseInputs.forEach(function (ta) {
+          if (ta.value.trim()) { positions[ta.dataset.clause] = ta.value.trim(); }
+          ta.disabled = true;
+      });
+      playbookSave.disabled = true;
+      document.getElementById('pw-playbook-path').textContent = 'Saving playbook…';
+      fetch('/api/v1/privacy/clause-playbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positions: positions })
+      }).then(function (r) {
+        if (r.ok) { document.getElementById('pw-playbook-path').textContent = 'Playbook saved. Future reviews will use these clauses.'; return; }
+        throw pbFailed(r);
+      }).catch(function (e) {
+        document.getElementById('pw-playbook-path').textContent = 'Save not confirmed. Your edits are still here.';
+        err.textContent = pbErrText(e, 'save the playbook');
+      }).finally(function () {
+        playbookSave.disabled = false;
+        clauseInputs.forEach(function (ta) { ta.disabled = false; });
+      });
+    });
+  }
+
+  // AI registry: register the system a completed AIRA describes.
+  var aiBtn = document.getElementById('pw-ai-register');
+  if (aiBtn) {
+    aiBtn.addEventListener('click', function () {
+      var sel = document.getElementById('pw-ai-src');
+      var err = document.getElementById('pw-ai-err');
+      if (!sel.value) return;
+      err.textContent = '';
+      post('/api/v1/privacy/ai-systems/from-assessment/' +
+           encodeURIComponent(sel.value)).catch(function (e) {
+        err.textContent = errText(e, 'add the AI system');
+      });
+    });
+  }
+
+  // DPA: find the contract in connected sources, review it in place.
+  var dpaSearch = document.getElementById('pw-dpa-search');
+  if (dpaSearch) {
+    dpaSearch.addEventListener('click', function () {
+      var vendor = document.getElementById('pw-dpa-vendor').value.trim();
+      var err = document.getElementById('pw-dpa-search-err');
+      var box = document.getElementById('pw-dpa-hits');
+      if (!vendor) { err.textContent = 'Enter a vendor name first.'; return; }
+      err.textContent = 'Searching…';
+      box.textContent = '';
+      fetch('/api/v1/privacy/dpa-documents?vendor=' +
+            encodeURIComponent(vendor))
+        .then(function (r) { if (!r.ok) { throw failed(r); } return r.json(); })
+        .then(function (data) {
+          if (!data.enabled) {
+            err.textContent = 'No document sources are connected. ';
+            var link = document.createElement('a');
+            link.className = 'btn'; link.href = '/connections'; link.textContent = 'Connect a source';
+            err.appendChild(link);
+            return;
+          }
+          err.textContent = data.hits.length ? '' : 'No matching documents found.';
+          data.hits.forEach(function (h) {
+            var row = document.createElement('div');
+            row.className = 'pw-form-actions';
+            var name = document.createElement('span');
+            name.style.flex = '1';
+            name.textContent = h.name + ' (' + human(h.source) + ')';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn';
+            btn.textContent = 'Review this document';
+            btn.addEventListener('click', function () {
+              btn.disabled = true;
+              err.textContent = 'Checking the agreement…';
+              fetch('/api/v1/privacy/dpa-reviews/from-document', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vendor: vendor, source: h.source,
+                                       doc_id: h.doc_id, ref: h.ref || null,
+                                       document_name: h.name })
+              }).then(function (r) {
+                if (r.ok) { location.reload(); return null; }
+                throw failed(r);
+              }).catch(function (e) {
+                btn.disabled = false;
+                err.textContent = errText(e, 'check this document');
+              });
+            });
+            row.appendChild(name);
+            row.appendChild(btn);
+            box.appendChild(row);
+          });
+        })
+        .catch(function (e) { err.textContent = errText(e, 'search connected sources'); });
+    });
+  }
+
+  // RoPA: draft an entry from a completed assessment.
+  var draftBtn = document.getElementById('pw-ropa-draft');
+  if (draftBtn) {
+    draftBtn.addEventListener('click', function () {
+      var sel = document.getElementById('pw-ropa-src');
+      var err = document.getElementById('pw-ropa-err');
+      if (!sel.value) return;
+      err.textContent = '';
+      post('/api/v1/privacy/ropa/from-assessment/' +
+           encodeURIComponent(sel.value)).catch(function (e) {
+        err.textContent = errText(e, 'draft the entry');
+      });
+    });
+  }
+
+  // RoPA: add or edit an entry in a form; edits carry the row's revision.
+  var ROPA_FIELDS = [
+    ['activity', 'Processing activity', true], ['purpose', 'Purpose'], ['controller', 'Controller (who decides)'],
+    ['data_categories', 'Kinds of personal data'], ['data_subjects', 'Whose data (for example customers)'],
+    ['recipients', 'Who receives it'], ['transfers', 'Transfers outside the country or region'],
+    ['retention', 'How long it is kept'], ['security_measures', 'Security measures']
+  ];
+  function editRopa(row) {
+    var fields = ROPA_FIELDS.map(function (f) {
+      return { key: f[0], label: f[1], type: 'text', required: !!f[2], default: row ? (row[f[0]] || '') : '' };
+    });
+    var err = document.getElementById('pw-ropa-err');
+    mvForm(row ? 'Edit processing record entry' : 'Add a processing record entry', fields, { okText: 'Save' })
+      .then(function (values) {
+        if (!values) return null;
+        var body = {};
+        ROPA_FIELDS.forEach(function (f) { body[f[0]] = String(values[f[0]] || ''); });
+        if (row) { body.ropa_id = row.id; body.revision = row.revision; }
+        return post('/api/v1/privacy/ropa', body);
+      })
+      .catch(function (e) { err.textContent = errText(e, 'save the entry'); });
+  }
+  var ropaNew = document.getElementById('pw-ropa-new');
+  if (ropaNew) { ropaNew.addEventListener('click', function () { editRopa(null); }); }
+  document.querySelectorAll('.pw-ropa-edit').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var row = null;
+      try { row = JSON.parse(btn.dataset.row); } catch (e) { row = null; }
+      if (row) { editRopa(row); }
+    });
+  });
+
+  // DSAR row actions: fulfill (real export / prepare erasure) and close.
+  document.querySelectorAll('.pw-dsar-act').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var out = document.getElementById('pw-fulfill-out');
+      var text = btn.dataset.act === 'close'
+        ? (btn.dataset.retry === 'true' ? 'Try removing this request’s saved export again?'
+            : 'Close this request? It leaves the open list and its deadline stops.')
+        : btn.dataset.kind === 'erasure'
+          ? 'Prepare deletion for this request? Nothing is deleted yet: you confirm the deletion on the request\'s own page.'
+          : 'Gather everything Lightwork holds about this person now?';
+      if (!(await mvConfirm(text, { okText: btn.dataset.retry === 'true' ? 'Retry cleanup' :
+          btn.dataset.act === 'close' ? 'Close request' : btn.dataset.kind === 'erasure' ? 'Prepare deletion' : 'Gather their data' }))) return;
+      btn.disabled = true;
+      fetch('/api/v1/privacy/dsar/' + encodeURIComponent(btn.dataset.id) +
+           '/' + btn.dataset.act, { method: 'POST' }).then(function (response) {
+        if (!response.ok) throw failed(response);
+        return response.json();
+      }).then(function (result) {
+        var cleanup = result.export_cleanup;
+        if (btn.dataset.act === 'close' && cleanup && cleanup.status === 'failed') {
+          out.textContent = cleanup.message;
+          btn.dataset.retry = 'true';
+          btn.textContent = 'Retry export cleanup';
+          btn.disabled = false;
+          return;
+        }
+        location.reload();
+      }).catch(function (e) {
+        btn.disabled = false;
+        out.textContent = errText(e, btn.dataset.act === 'close' ? 'close the request' : 'start this step');
+      });
+    });
+  });
+
+  // Many requests at once: filter, select all matching, then assign
+  // them to one person (undo puts each back with its earlier assignee) or
+  // record that receipt was confirmed to each requester.
+  (function wireBulk() {
+    var list = document.getElementById('pw-dsar-rows');
+    if (!list) return;
+    // The shared helpers load at the end of the page; wire the bar after them.
+    if (!window.mvBulk) { document.addEventListener('DOMContentLoaded', wireBulk, {once: true}); return; }
+    var people = [];
+    try { people = JSON.parse(document.getElementById('pw-dsar-assignees').textContent || '[]'); } catch (_) { people = []; }
+    function assigneeCell(row, principal) {
+      var cell = row.querySelector('.pw-dsar-assignee');
+      if (!cell) return;
+      var person = people.find(function (p) { return p.principal === principal; });
+      cell.textContent = principal ? (person ? person.label : principal.replace(/^user:/, '')) : 'Not assigned';
+    }
+    async function assign(item, principal) {
+      var record = await mvFetchJSON('/api/v1/privacy/dsar/' + encodeURIComponent(item.id) + '/assign',
+        {method: 'POST', body: {assignee: principal}}, 'assign the request');
+      assigneeCell(item.row, record.assignee || '');
+      return record;
+    }
+    window.mvBulk({
+      list: list, rows: 'tr[data-bulk-id]', noun: 'request', nouns: 'requests', filter: true,
+      actions: [
+        {label: 'Assign', verb: 'Assign',
+         ask: async function () {
+           if (!window.mvForm) return null;
+           var answers = await window.mvForm('Assign the selected requests', [
+             {key: 'assignee', label: 'Who works on them?', type: 'select',
+              options: [{value: '', label: 'Nobody (not assigned)'}].concat(people.map(function (p) { return {value: p.principal, label: p.label}; })),
+              help: 'Only people who may work privacy requests are listed.'}], {okText: 'Assign requests'});
+           return answers === null ? null : {assignee: String((answers && answers.assignee) || '')};
+         },
+         run: async function (item, extra) {
+           var record = await assign(item, extra.assignee);
+           var before = record.previous_assignee || '';
+           return {note: extra.assignee ? 'assigned' : 'unassigned',
+                   undo: async function () { await assign(item, before); }};
+         }},
+        {label: 'Confirm receipt', verb: 'Confirm receipt for', button: 'Confirm receipt for selected', title: 'Receipt confirmed',
+         run: async function (item) {
+           if (item.row.dataset.acknowledged === 'yes') throw {status: 409, detail: 'Receipt was already confirmed.'};
+           if (item.row.dataset.status === 'closed') throw {status: 409, detail: 'The request is closed.'};
+           await mvFetchJSON('/api/v1/privacy/dsar/' + encodeURIComponent(item.id) + '/acknowledge',
+             {method: 'POST'}, 'confirm receipt');
+           item.row.dataset.acknowledged = 'yes';
+           return {note: 'receipt confirmed'};
+         }}
+      ]
+    });
+  })();
+
+  // Incident register: record the notification decision (with its reason) / close.
+  // A transient rejection never destroys the reason: it is kept as a draft and
+  // offered again the next time the decision form opens.
+  var decisionDrafts = {};
+  document.querySelectorAll('.pw-inc-act').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      var notify = btn.dataset.notify === 'true';
+      var out = document.getElementById('pw-breach-out');
+      var values = await mvForm(notify ? 'We must tell the regulator' : 'No notification is needed', [
+        { key: 'reason', label: notify ? 'Why this must be reported' : 'Why no notification is needed (kept on record)', type: 'text', required: true,
+          default: decisionDrafts[btn.dataset.id] || '' }
+      ], { okText: 'Record decision' });
+      if (!values || !String(values.reason || '').trim()) return;
+      decisionDrafts[btn.dataset.id] = String(values.reason).trim();
+      btn.disabled = true;
+      fetch('/api/v1/privacy/incidents/' + encodeURIComponent(btn.dataset.id) + '/notification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notifiable: notify, rationale: String(values.reason).trim() })
+      }).then(function (r) {
+        if (r.ok) { location.reload(); return; }
+        throw failed(r);
+      }).catch(function (error) {
+        btn.disabled = false;
+        out.textContent = error && error.status
+          ? errText(error, 'record the decision') + ' Your reason is kept for the next try.'
+          : 'Could not record the decision. Check your connection; your reason is kept for the next try.';
+      });
+    });
+  });
+  document.querySelectorAll('.pw-inc-close').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      if (!(await mvConfirm('Close this incident?', { okText: 'Close incident' }))) return;
+      btn.disabled = true;
+      post('/api/v1/privacy/incidents/' + encodeURIComponent(btn.dataset.id) +
+           '/close').catch(function (e) {
+        btn.disabled = false;
+        document.getElementById('pw-breach-out').textContent = errText(e, 'close the incident');
+      });
+    });
+  });
+
+  document.querySelectorAll('.pw-inc-count').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var out = document.getElementById('pw-breach-out');
+      mvForm('Update the affected-person count', [{
+        key: 'affected_people', label: 'Best estimate as a whole number (blank if unknown)',
+        type: 'text', default: btn.dataset.count
+      }], { okText: 'Save count' }).then(function (values) {
+        if (!values) return;
+        var raw = values.affected_people;
+        if (raw !== undefined && !/^(0|[1-9][0-9]*)$/.test(raw)) {
+          out.textContent = 'Enter a whole number of people, or leave the count blank if it is unknown.';
+          return;
+        }
+        var count = raw === undefined ? null : Number(raw);
+        if (count !== null && !Number.isSafeInteger(count)) {
+          out.textContent = 'Enter a smaller whole number of people.';
+          return;
+        }
+        btn.disabled = true;
+        return jfetch('/api/v1/privacy/incidents/' + encodeURIComponent(btn.dataset.id) +
+                      '/affected-people', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ affected_people: count })
+        }).then(function () { location.reload(); }).catch(function (e) {
+          btn.disabled = false;
+          out.textContent = errText(e, 'save the affected-person count');
+        });
+      });
+    });
+  });
+
+  // JSON fetch that surfaces the API's detail instead of a bare status.
+  function jfetch(url, opts) {
+    return fetch(url, opts).then(function (r) {
+      return r.text().then(function (t) {
+        var d = null;
+        try { d = JSON.parse(t); } catch (e) { d = null; }
+        if (!r.ok) { throw failed(r); }
+        return d;
+      });
+    });
+  }
+
+  // Breach plan: pick the laws that apply, then list each one's deadlines.
+  var DEFAULT_REGIMES = ['eu_gdpr', 'us_ca'];
+  document.querySelectorAll('.pw-breach-plan').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var out = document.getElementById('pw-breach-out');
+      out.textContent = 'Loading the laws Lightwork has checked rules for…';
+      jfetch('/api/v1/breach/regimes')
+        .then(function (d) {
+          out.textContent = '';
+          var fields = (d.regimes || []).map(function (r) {
+            return { key: r.regime, label: r.name, type: 'bool', default: DEFAULT_REGIMES.indexOf(r.regime) !== -1 };
+          });
+          return mvForm('Which laws apply to the people affected?', fields, { okText: 'Show deadlines' });
+        })
+        .then(function (values) {
+          if (!values) return null;
+          var chosen = Object.keys(values).filter(function (k) { return values[k] === true || values[k] === 'true'; });
+          if (!chosen.length) { out.textContent = 'Choose at least one law.'; return null; }
+          out.textContent = 'Working out the deadlines…';
+          return jfetch('/api/v1/privacy/incidents/' + encodeURIComponent(btn.dataset.id) +
+                        '/notification-plan?jurisdictions=' + encodeURIComponent(chosen.join(',')));
+        })
+        .then(function (plan) {
+          if (!plan) return;
+          out.textContent = '';
+          var count = document.createElement('p');
+          count.textContent = plan.subjects_affected == null
+            ? 'Affected-person count not provided. Check count-based reporting thresholds before relying on this plan.'
+            : 'Plan uses an estimated count of ' + plan.subjects_affected.toLocaleString() + ' people.';
+          out.appendChild(count);
+          var table = document.createElement('table');
+          var head = table.createTHead().insertRow();
+          ['Law', 'Tell', 'Deadline', 'Notes'].forEach(function (h) {
+            var th = document.createElement('th'); th.scope = 'col'; th.textContent = h; head.appendChild(th);
+          });
+          var body = table.createTBody();
+          plan.obligations.forEach(function (o) {
+            var row = body.insertRow();
+            row.insertCell().textContent = o.name || human(o.regime);
+            row.insertCell().textContent = o.authority;
+            row.insertCell().textContent = o.authority_due_at ? (window.mvTimeAbsolute ? window.mvTimeAbsolute(o.authority_due_at) : new Date(o.authority_due_at * 1000).toLocaleString()) : 'As the law sets out';
+            row.insertCell().textContent = o.threshold_note || '';
+          });
+          var wrap = document.createElement('div'); wrap.className = 'pw-scroll';
+          wrap.appendChild(table);
+          out.appendChild(wrap);
+          var note = document.createElement('p'); note.className = 'muted'; note.textContent = plan.notice;
+          out.appendChild(note);
+        })
+        .catch(function (e) {
+          // Turned off is not "no permission": offer Turn on in place when allowed.
+          if (window.mvShowFeatureOff && window.mvShowFeatureOff(out, e)) return;
+          out.textContent = errText(e, 'work out the deadlines');
+        });
+    });
+  });
+
+  // DSAR fulfillment: open, check identity in a form, create the download link.
+  var IDENTITY_METHODS = [
+    { value: 'account_login', label: 'They signed in to their account' },
+    { value: 'document_check', label: 'We checked an ID document' },
+    { value: 'email_challenge', label: 'They answered an email we sent' },
+    { value: 'in_person', label: 'We met them in person' },
+    { value: 'verified_by_processor', label: 'A vendor checked it for us' },
+    { value: 'other', label: 'Another way' }
+  ];
+  function fulfilmentSummary(rec) {
+    return 'Identity: ' + (rec.identity.status === 'verified' ? 'checked' : 'not checked yet') +
+      ' · ' + (rec.sources || []).length + ' place(s) to collect from.';
+  }
+  document.querySelectorAll('.pw-dsar-fulfillment').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var out = document.getElementById('pw-fulfill-out');
+      out.textContent = 'Opening…';
+      var base = '/api/v1/privacy/dsar/';
+      jfetch(base + encodeURIComponent(btn.dataset.id) + '/fulfillment',
+             { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        .then(function (rec) {
+          out.textContent = fulfilmentSummary(rec);
+          if (rec.identity.status !== 'verified') {
+            return mvForm('Check the person\'s identity', [
+              { key: 'method', label: 'How was their identity checked?', type: 'select', options: IDENTITY_METHODS, default: 'email_challenge', required: true },
+              { key: 'reference', label: 'Where the proof is kept (for example a ticket link)', type: 'text', required: true }
+            ], { okText: 'Record check' }).then(function (values) {
+              if (!values) return null;
+              return jfetch('/api/v1/privacy/dsar/fulfillment/' + encodeURIComponent(rec.id) + '/identity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ method: values.method, reference: String(values.reference).trim(),
+                                       revision: rec.revision })
+              });
+            });
+          }
+          return rec;
+        })
+        .then(function (rec) {
+          if (!rec) { return null; }
+          out.textContent = fulfilmentSummary(rec);
+          if (rec.identity.status !== 'verified') { return null; }
+          return mvConfirm('Create a secure download link for this person? You will see it once, and it expires in 3 days.',
+                           { okText: 'Create link' }).then(function (ok) {
+            if (!ok) { return null; }
+            return jfetch('/api/v1/privacy/dsar/fulfillment/' + encodeURIComponent(rec.id) + '/response', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ revision: rec.revision })
+            }).then(function (link) {
+              var url = window.location.origin + link.response_path;
+              out.textContent = '';
+              var p = document.createElement('p');
+              p.textContent = 'Send this link to the person. Copy it now: it is shown only once.';
+              var row = document.createElement('div'); row.className = 'pw-form-actions';
+              var field = document.createElement('input'); field.className = 'input'; field.readOnly = true; field.value = url;
+              field.style.flex = '1'; field.setAttribute('aria-label', 'Download link for the person');
+              var copy = document.createElement('button'); copy.type = 'button'; copy.className = 'btn'; copy.textContent = 'Copy link';
+              copy.addEventListener('click', function () { if (window.mvCopy) { mvCopy(url); } else { field.select(); } });
+              row.append(field, copy);
+              out.append(p, row);
+              return null;
+            });
+          });
+        })
+        .catch(function (e) { out.textContent = errText(e, 'prepare the response'); });
+    });
+  });
+
+  // DPA clause detail: fetch the full review, render verdicts + evidence.
+  document.querySelectorAll('.pw-dpa-clauses').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var row = btn.closest('tr');
+      var open = row.nextElementSibling &&
+                 row.nextElementSibling.classList.contains('pw-clauses');
+      if (open) { row.nextElementSibling.remove(); return; }
+      fetch('/api/v1/privacy/dpa-reviews/' +
+            encodeURIComponent(btn.dataset.review))
+        .then(function (r) { if (!r.ok) { throw failed(r); } return r.json(); })
+        .then(function (rec) {
+          var tr = document.createElement('tr');
+          tr.className = 'pw-clauses';
+          var td = document.createElement('td');
+          td.colSpan = row.children.length;
+          if (rec.document_evidence) {
+            var ev = rec.document_evidence;
+            var provenance = document.createElement('div');
+            provenance.className = 'pw-evidence-panel';
+            var warning = document.createElement('strong');
+            warning.textContent = rec.review_required
+              ? 'Read from a scanned or converted file: a person must check it'
+              : 'How the text was read';
+            provenance.appendChild(warning);
+            function factList(items) {
+              var facts = document.createElement('dl');
+              items.forEach(function (item) {
+                if (!item[1]) { return; }
+                var term = document.createElement('dt');
+                term.textContent = item[0];
+                var value = document.createElement('dd');
+                value.textContent = item[1];
+                facts.appendChild(term); facts.appendChild(value);
+              });
+              return facts;
+            }
+            provenance.appendChild(factList([
+              ['How it was read', human(ev.method)],
+              ['What was read', human(ev.scope)],
+              ['Confidence', human(ev.confidence)]
+            ]));
+            var tech = document.createElement('details');
+            var techSummary = document.createElement('summary');
+            techSummary.textContent = 'Technical record of the file';
+            tech.appendChild(techSummary);
+            tech.appendChild(factList([
+              ['Document fingerprint', ev.document_sha256],
+              ['Text fingerprint', ev.extracted_text_sha256],
+              ['Source fingerprint', ev.source_binding_sha256],
+              ['Evidence fingerprint', ev.binding_sha256]
+            ]));
+            provenance.appendChild(tech);
+            td.appendChild(provenance);
+          }
+          var tbl = document.createElement('table');
+          var head = tbl.createTHead().insertRow();
+          ['Requirement', 'Legal reference', 'Result', 'Wording found'].forEach(function (h) {
+            var th = document.createElement('th');
+            th.scope = 'col'; th.textContent = h; head.appendChild(th);
+          });
+          var tb = tbl.createTBody();
+          (rec.clauses || []).forEach(function (c) {
+            var r2 = tb.insertRow();
+            r2.insertCell().textContent = c.requirement;
+            r2.insertCell().textContent = c.citation;
+            var vc = r2.insertCell();
+            var badge = document.createElement('span');
+            badge.className = 'badge ' + (c.status === 'present' ? 'done' :
+              c.status === 'unclear' ? 'warn' : 'blocked');
+            badge.textContent = { present: 'Found', unclear: 'Unclear', missing: 'Missing' }[c.status] || human(c.status);
+            vc.appendChild(badge);
+            var ec = r2.insertCell();
+            ec.className = 'pw-clause-excerpt muted';
+            ec.textContent = c.excerpt ? '“…' + c.excerpt + '…”'
+                                       : 'No matching wording found';
+          });
+          td.appendChild(tbl);
+          tr.appendChild(td);
+          row.after(tr);
+        })
+        .catch(function (e) {
+          var note = document.createElement('tr');
+          note.className = 'pw-clauses';
+          var cell = note.insertCell();
+          cell.colSpan = row.children.length;
+          cell.textContent = errText(e, 'load the clauses');
+          row.after(note);
+        });
+    });
+  });
+})();
+</script>
+
+<script src="/static/board.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  'use strict';
+  var B = window.LWBoard;
+  // Empty charts say what fills them and point at the worklist's start form.
+  function empty(id) {
+    B.empty(document.getElementById(id), 'No assessments yet',
+      'Assessments appear here once they are on record. Start one from the worklist below.');
+  }
+
+  function render(D) {
+    var k = document.getElementById('bd-kpis');
+    k.textContent = '';
+    k.appendChild(B.kpi({ label: 'On the record', value: D.kpis.total,
+      sub: 'assessments in this workspace' }));
+    k.appendChild(B.kpi({ label: 'Open', value: D.kpis.open,
+      sub: D.kpis.needs_more + ' awaiting answers' }));
+    k.appendChild(B.kpi({ label: 'Approved', value: D.kpis.approved,
+      sub: D.kpis.rejected + ' rejected' }));
+    k.appendChild(B.kpi({ label: 'Due for re-review', value: D.kpis.due_review,
+      sub: D.kpis.due_review ? 'cadence has come around' : 'nothing due' }));
+
+    if (D.kpis.total) {
+      B.area(document.getElementById('bd-flow'), {
+        data: D.monthly,
+        x: 'd',
+        series: [{ key: 'opened', label: 'Opened', cls: 'brand' },
+                 { key: 'decided', label: 'Decided', cls: 'ok' }],
+        aria: 'Assessments opened vs decided per month over the last year.',
+        tipHead: function (r) { return r.d; },
+        xTick: function (r, i) { return i % 2 === 0 ? r.d.slice(2) : ''; } });
+      B.donut(document.getElementById('bd-risk'), {
+        segments: [
+          { label: 'High', value: D.risk.high, cls: 'danger' },
+          { label: 'Medium', value: D.risk.medium, cls: 'warn' },
+          { label: 'Low', value: D.risk.low, cls: 'info' },
+          { label: 'Minimal', value: D.risk.minimal, cls: 'ok' },
+          { label: 'Unrated', value: D.risk.unrated, cls: 'idle' }],
+        center: D.kpis.total, centerSub: 'assessments',
+        aria: 'Residual risk: ' + D.risk.high + ' high, ' + D.risk.medium +
+              ' medium, ' + D.risk.low + ' low, ' + D.risk.minimal +
+              ' minimal, ' + D.risk.unrated + ' unrated.' });
+    } else {
+      empty('bd-flow');
+      empty('bd-risk');
+    }
+
+    var tmax = 1;
+    (D.types || []).forEach(function (r) { tmax = Math.max(tmax, r.total); });
+    if ((D.types || []).length) {
+      B.hbars(document.getElementById('bd-types'),
+        D.types.map(function (r) {
+          return { label: r.label, value_text: r.approved + ' of ' + r.total,
+                   pct: r.approved / tmax * 100, pct_bg: r.total / tmax * 100,
+                   title: r.label + ' — ' + r.approved + ' approved of ' + r.total };
+        }), 'Assessments by framework: approved against total volume.');
+    } else {
+      empty('bd-types');
+    }
+  }
+
+  B.attach({ board: 'privacy', render: render });
+})();
+</script>
+<script src="/static/lightwork-feature-actions.js" defer></script>
+{% endblock %}

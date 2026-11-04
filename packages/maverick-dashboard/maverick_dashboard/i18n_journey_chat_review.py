@@ -1,0 +1,62 @@
+"""Chat composer modes, saved viewpoints and answer review and feedback controls."""
+
+ROWS = [
+    ('Check original outcome', 'Vérifier le résultat initial', 'Ursprüngliches Ergebnis prüfen', '元の結果を確認', '查看原始结果'),
+    ('Choose an original question', 'Choisir une question initiale', 'Eine ursprüngliche Frage auswählen',
+     '元の質問を選択', '选择一个原始问题'),
+    ('Describe the steps, spending limit, and where you want updates, then start the work.',
+     'Décrivez les étapes, la limite de dépenses et où vous souhaitez recevoir les mises à jour, puis lancez le travail.',
+     'Beschreiben Sie die Schritte, das Ausgabenlimit und wohin Updates gehen sollen, und starten Sie dann die Arbeit.',
+     '手順、支出上限、更新の受け取り先を入力してから、作業を開始してください。',
+     '描述步骤、支出限额以及希望接收更新的位置，然后开始工作。'),
+    ('Original question', 'Question initiale', 'Ursprüngliche Frage', '元の質問', '原始问题'),
+    ('Read the same saved answers after leaving Chat. Checking an original request never starts AI again.',
+     'Relisez les mêmes réponses enregistrées après avoir quitté le Chat. Vérifier une demande initiale ne relance jamais l’IA.',
+     'Lesen Sie dieselben gespeicherten Antworten nach dem Verlassen des Chats. Das Prüfen einer ursprünglichen Anfrage startet die KI nie erneut.',
+     'チャットを離れた後も、同じ保存済みの回答を読めます。元のリクエストを確認しても、AIが再び動くことはありません。',
+     '离开聊天后仍可查看相同的已保存回答。查看原始请求绝不会再次启动 AI。'),
+    ('Refresh current choices', 'Actualiser les choix actuels', 'Aktuelle Auswahl aktualisieren', '現在の選択肢を更新', '刷新当前选项'),
+    ('Review AI connection', 'Vérifier la connexion IA', 'KI-Verbindung prüfen', 'AI接続を確認', '检查 AI 连接'),
+    ('Review two viewpoints', 'Examiner deux points de vue', 'Zwei Sichtweisen prüfen', '2つの視点を確認', '查看两种观点'),
+    ('Use a step-by-step form instead', 'Utiliser plutôt un formulaire étape par étape',
+     'Stattdessen ein schrittweises Formular verwenden', '代わりにステップ形式のフォームを使う', '改用分步表单'),
+    ('Write a message instead', 'Écrire plutôt un message', 'Stattdessen eine Nachricht schreiben',
+     '代わりにメッセージを書く', '改为撰写消息'),
+    ('Your original viewpoints', 'Vos points de vue initiaux', 'Ihre ursprünglichen Sichtweisen', '元の視点', '您的原始观点'),
+    ('Your retained questions are shown. Saved answers remain available after a restart. An interrupted request '
+     'may have an unknown outcome; Lightwork will never repeat it automatically.',
+     'Vos questions conservées sont affichées. Les réponses enregistrées restent disponibles après un redémarrage. '
+     'Une demande interrompue peut avoir un résultat inconnu ; Lightwork ne la répétera jamais automatiquement.',
+     'Ihre aufbewahrten Fragen werden angezeigt. Gespeicherte Antworten bleiben nach einem Neustart verfügbar. Eine '
+     'unterbrochene Anfrage kann ein unbekanntes Ergebnis haben; Lightwork wiederholt sie nie automatisch.',
+     '保持している質問を表示しています。保存済みの回答は再起動後も利用できます。中断されたリクエストは結果が不明な場合がありますが、'
+     'Lightworkが自動で繰り返すことはありません。',
+     '已显示您保留的问题。重启后仍可查看已保存的回答。中断的请求可能结果未知；Lightwork 绝不会自动重复它。'),
+    ('Agent history: {agent}', 'Historique de l’agent : {agent}', 'Verlauf des Agenten: {agent}',
+     'エージェントの履歴：{agent}', '智能体历史：{agent}'),
+    ('Specialist history: {agent}', 'Historique du spécialiste : {agent}', 'Verlauf des Spezialisten: {agent}',
+     '専門エージェントの履歴：{agent}', '专用智能体历史：{agent}'),
+    ('Last recorded change: {date}', 'Dernière modification enregistrée : {date}', 'Letzte erfasste Änderung: {date}',
+     '最後に記録された変更：{date}', '最近记录的更改：{date}'),
+    ('Check my original decision', 'Vérifier ma décision initiale', 'Meine ursprüngliche Entscheidung prüfen',
+     '自分の元の判断を確認', '查看我的原始决定'),
+    ('Check my original feedback', 'Vérifier mon avis initial', 'Mein ursprüngliches Feedback prüfen',
+     '自分の元のフィードバックを確認', '查看我的原始反馈'),
+    ('Give feedback with Copilot', 'Donner un avis avec Copilot', 'Feedback mit Copilot geben',
+     'Copilotでフィードバックする', '通过 Copilot 提供反馈'),
+    ('Review result with Copilot', 'Vérifier le résultat avec Copilot', 'Ergebnis mit Copilot prüfen',
+     'Copilotで結果を確認', '使用 Copilot 审核结果'),
+    ('Review saved feedback', 'Consulter l’avis enregistré', 'Gespeichertes Feedback prüfen',
+     '保存したフィードバックを確認', '查看已保存的反馈'),
+    ('Save feedback', 'Enregistrer l’avis', 'Feedback speichern', 'フィードバックを保存', '保存反馈'),
+    ('Up to 500 characters. Describe what would help. Feedback does not edit this answer or confirm that '
+     'training completed.',
+     'Jusqu’à 500 caractères. Décrivez ce qui aiderait. Un avis ne modifie pas cette réponse et ne confirme pas '
+     'qu’un entraînement a eu lieu.',
+     'Bis zu 500 Zeichen. Beschreiben Sie, was helfen würde. Feedback ändert diese Antwort nicht und bestätigt '
+     'kein abgeschlossenes Training.',
+     '500文字以内。何が役立つかを書いてください。フィードバックはこの回答を編集せず、学習の完了を確認するものでもありません。',
+     '最多 500 个字符。请描述什么会有帮助。反馈不会编辑此回答，也不代表训练已完成。'),
+    ('What should be better? (optional)', 'Qu’est-ce qui devrait être amélioré ? (facultatif)',
+     'Was sollte besser sein? (optional)', '何を改善すべきですか？（任意）', '哪些方面应改进？（可选）'),
+]

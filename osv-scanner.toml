@@ -1,0 +1,2 @@
+# No advisory exceptions. Reviewed local dependency fixes are checked by
+# scripts/check_vendor_patches.py and the desktop regression harness.

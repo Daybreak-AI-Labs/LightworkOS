@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% block title %}Executive vendor reports - Lightwork{% endblock %}
+{% block head_extra %}
+<style nonce="{{ csp_style_nonce }}">
+  .tper-grid { display:grid; gap:var(--space-3); grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr)); }
+  .tper-grid label { display:grid; gap:.3rem; }
+  .tper-actions { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-top:var(--space-3); }
+  .tper-fieldset { border:0; margin:0; padding:0; min-width:0; }
+  .tper-sources { display:grid; gap:var(--space-3); grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr)); }
+  .tper-group { border:1px solid var(--border); border-radius:var(--radius-sm); padding:var(--space-3); margin:0; min-width:0; }
+  .tper-group label { display:flex; gap:.45rem; align-items:flex-start; padding:.15rem 0; }
+  .tper-group-list { max-height:14rem; overflow:auto; }
+  .tper-output { max-height:20rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .tper-colors input[type="color"] { min-height:2.4rem; }
+  .tper-starting-review { overflow-wrap:anywhere; }
+  .tper-starting-review dl { display:grid; gap:.35rem; margin:1rem 0; }
+  .tper-starting-review dt { font-weight:600; }
+  .tper-starting-review dd { margin:0 0 .5rem; white-space:pre-wrap; }
+  .tper-starting-review ul { padding-left:1.25rem; max-height:20rem; overflow:auto; }
+  #tper-workbench :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) { #tper-workbench * { transition:none !important; animation:none !important; } }
+  @media (forced-colors: active) { .tper-group { border:1px solid CanvasText; } }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_module_gate.html" import module_gate %}
+<div id="tper-workbench" data-api-base="{{ api_base }}" data-copilot-page="{{ page_path }}"
+     data-module-enabled="{{ 'true' if reports_module_enabled else 'false' }}"
+     data-can-admin="{{ 'true' if reports_can_admin else 'false' }}"
+     data-can-audit="{{ 'true' if reports_can_audit else 'false' }}">
+  {% call hero('Third-party management', 'Executive vendor reports',
+               lede='Create a branded PDF that sums up the vendors, assessments, contracts and questionnaires you choose. Each report records exactly which records it used and says clearly when something could not be included.', title_id='tper-title') %}
+    <div class="hero-statebox" aria-live="polite">
+      <div class="hero-statebox__label">Availability</div>
+      <div class="hero-statebox__row"><strong id="tper-runtime-headline">Checking…</strong><span class="badge idle" id="tper-runtime-state">Checking</span></div>
+      <p class="hero-statebox__copy" id="tper-runtime-detail" role="status" aria-live="polite">Checking that reports are available…</p>
+      <p><button class="btn btn--ghost" id="tper-refresh" type="button">Refresh</button></p>
+    </div>
+  {% endcall %}
+  {% if not reports_module_enabled %}
+  {{ module_gate('third_party_management.executive_reports', 'Executive vendor reports',
+                 detail='Turns on branded PDF summaries of your vendors, assessments, contracts and vendor questionnaires.',
+                 can_activate=reports_can_activate) }}
+  {% endif %}
+  <p class="muted">Reports are plain text and your chosen colors only. Check each report against your current vendor list before sharing it.</p>
+
+  <div class="section-head"><h2>Your reports</h2>
+    <fieldset class="tper-fieldset" id="tper-create-controls" data-tper-mutation data-authorized="{{ 'true' if reports_can_create else 'false' }}" disabled aria-disabled="true">
+      <legend class="sr-only">Create a report</legend>
+      <button class="btn btn--primary" id="tper-new" type="button">Create report</button>
+    </fieldset>
+  </div>
+  <section class="panel" aria-label="Reports">
+    <fieldset class="tper-fieldset" id="tper-download-controls" data-tper-mutation data-authorized="{{ 'true' if reports_can_download else 'false' }}" disabled aria-disabled="true">
+      <legend class="sr-only">Report actions</legend>
+      <p class="muted" id="tper-count" role="status" aria-live="polite">Loading reports…</p>
+      <div id="tper-reports"></div>
+      <div id="tper-report-detail" hidden></div>
+    </fieldset>
+  </section>
+
+  <section class="panel" id="tper-editor" hidden aria-labelledby="tper-create-title">
+    <h2 id="tper-create-title">New executive report</h2>
+    <p class="muted">Use a saved report's choices from Your reports, or choose a new layout below. A new report reads the records again; earlier findings and results are not copied.</p>
+    <section class="panel tper-starting-review" id="tper-starting-review" hidden aria-labelledby="tper-starting-title">
+      <h3 id="tper-starting-title" tabindex="-1">Review saved choices</h3>
+      <p id="tper-starting-name"></p>
+      <p class="muted">Using these choices replaces the layout and selected records in your current draft. It does not create a report, copy earlier findings or schedule future reports. Check the new report before sharing it.</p>
+      <dl id="tper-starting-brand"></dl>
+      <h4>Records for the new report</h4>
+      <p id="tper-starting-source-status" role="status"></p>
+      <ul id="tper-starting-sources"></ul>
+      <div class="tper-actions">
+        <button class="btn" id="tper-starting-use" type="button">Use these choices</button>
+        <button class="btn btn--ghost" id="tper-starting-cancel" type="button">Keep current draft</button>
+      </div>
+      <p class="muted" id="tper-starting-status" role="status" aria-live="polite"></p>
+    </section>
+    <form id="tper-create-form" autocomplete="off" novalidate>
+      <div class="tper-grid">
+        <label>Organization name<input class="input" name="organization_name" maxlength="120" value="Lightwork" required></label>
+        <label>Report title<input class="input" name="report_title" maxlength="160" value="Third-party executive report" required></label>
+        <label>Footer text<input class="input" name="footer_text" maxlength="160" value="Confidential governance record" required></label>
+      </div>
+      <div class="tper-grid tper-colors">
+        <label>Main color<input class="input" name="primary_color" type="color" value="#102a43" required></label>
+        <label>Highlight color<input class="input" name="accent_color" type="color" value="#2cb1bc" required></label>
+        <label>Text color<input class="input" name="text_color" type="color" value="#243b53" required></label>
+      </div>
+      <h3>What to include</h3>
+      <p class="muted" id="tper-sources-status" role="status" aria-live="polite">Tick the records this report should sum up.</p>
+      <div class="tper-sources" id="tper-sources"></div>
+      <div class="tper-actions">
+        <button class="btn btn--primary" type="submit" id="tper-create">Create report</button>
+        <button class="btn btn--ghost" type="button" id="tper-cancel">Cancel</button>
+      </div>
+      <p class="muted" id="tper-form-status" role="status" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <details class="panel" id="tper-admin">
+    <summary><strong>Administrator and auditor tools</strong></summary>
+    <fieldset class="tper-fieldset" id="tper-revoke-controls" data-tper-mutation data-authorized="{{ 'true' if reports_can_admin else 'false' }}" disabled aria-disabled="true">
+      <legend><strong>Withdraw a report</strong></legend>
+      <form id="tper-revoke-form" autocomplete="off" novalidate>
+        <div class="tper-grid">
+          <label>Report<select class="select" name="report" required><option value="">Choose a report</option></select></label>
+          <label>Why<select class="select" name="reason_code" required>
+            <option value="no-longer-accurate">It is no longer accurate</option>
+            <option value="shared-by-mistake">It was shared by mistake</option>
+            <option value="replaced-by-newer-report">A newer report replaces it</option>
+            <option value="vendor-relationship-ended">The vendor relationship ended</option>
+            <option value="other">Another reason</option>
+          </select></label>
+        </div>
+        <div class="tper-actions"><button class="btn btn--danger" type="submit">Withdraw report</button></div>
+      </form>
+    </fieldset>
+    <div class="tper-actions">
+      <button class="btn" id="tper-integrity" type="button"{% if not reports_can_audit %} disabled aria-disabled="true"{% endif %}>Check reports haven't been altered</button>
+      <button class="btn" id="tper-audit" type="button"{% if not reports_can_audit %} disabled aria-disabled="true"{% endif %}>Show report history</button>
+      <fieldset class="tper-fieldset" id="tper-purge-controls" data-tper-mutation data-authorized="{{ 'true' if reports_can_admin else 'false' }}" disabled aria-disabled="true">
+        <legend class="sr-only">Remove expired report files</legend>
+        <form id="tper-purge-form" autocomplete="off" novalidate><button class="btn btn--danger" type="submit">Remove expired report files</button></form>
+      </fieldset>
+    </div>
+    <div id="tper-admin-list"></div>
+  </details>
+
+  {% include '_executive_report_schedules.html' %}
+  <p class="muted" id="tper-operation-status" role="status" aria-live="polite"></p>
+  <details class="panel">
+    <summary>Technical details</summary>
+    <pre class="tper-output" id="tper-output" tabindex="0"></pre>
+  </details>
+  <noscript><p class="panel">Turn on JavaScript to use this page.</p></noscript>
+</div>
+{% endblock %}
+{% block scripts_extra %}
+  <script src="/static/lightwork-record-workflows.js" defer></script>
+  <script src="/static/lightwork-third-party-executive-reports.js" defer></script>
+  <script src="/static/lightwork-executive-report-schedules.js" defer></script>
+{% endblock %}

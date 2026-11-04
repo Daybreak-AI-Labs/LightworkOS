@@ -1,0 +1,97 @@
+# Build the unsigned, engineering-only Windows bootstrap MSI on demand.
+#
+# Manual dispatch only: this artifact contains only the maverick-agent wheel,
+# requires a preinstalled Python plus live PyPI resolution on first launch, and
+# is neither an offline platform installer nor a release artifact.
+name: build-msi-engineering-bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+jobs:
+  engineering-bootstrap-msi:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Resolve the release cohort version
+        id: cohort
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('release-cohort.toml', 'rb'))['version'])"
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($version)) {
+            throw "release-cohort.toml does not declare a version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build the maverick-agent wheel
+        shell: bash
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3' 'build==1.6.1'
+          python -I scripts/verify_constraint_closure.py
+          python -I -m build --wheel packages/maverick-core
+
+      - name: Install pinned WiX v4
+        run: dotnet tool install --global wix --version 4.0.6
+
+      - name: Build the MSI
+        shell: pwsh
+        working-directory: apps/installer-msi
+        run: |
+          $wheels = @(Get-ChildItem ..\..\packages\maverick-core\dist\maverick_agent-*.whl)
+          if ($wheels.Count -ne 1) {
+            throw "Expected exactly one maverick-agent wheel, found $($wheels.Count)"
+          }
+          $wheel = $wheels[0]
+          $expectedPrefix = "maverick_agent-${{ steps.cohort.outputs.version }}-"
+          if (-not $wheel.Name.StartsWith($expectedPrefix, [System.StringComparison]::Ordinal)) {
+            throw "Wheel $($wheel.Name) does not match the release cohort"
+          }
+          .\build.ps1 -Wheel $wheel.FullName -Version "${{ steps.cohort.outputs.version }}"
+
+      - name: Generate MSI checksum
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem apps\installer-msi\dist\*.msi)
+          if ($files.Count -ne 1) {
+            throw "Expected exactly one MSI, found $($files.Count)"
+          }
+          $digest = (Get-FileHash -Algorithm SHA256 $files[0].FullName).Hash.ToLowerInvariant()
+          "$digest  $($files[0].Name)" |
+            Set-Content -Encoding ascii apps\installer-msi\dist\SHA256SUMS
+          @{
+            artifact = $files[0].Name
+            artifact_class = "engineering_bootstrap"
+            complete_release_cohort = $false
+            requires_live_pypi = $true
+            sha256 = $digest
+            source_revision = "${{ github.sha }}"
+            unsigned = $true
+            version = "${{ steps.cohort.outputs.version }}"
+          } | ConvertTo-Json | Set-Content -Encoding utf8 `
+              apps\installer-msi\dist\BUILD-METADATA.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: maverick-cli-msi-engineering-bootstrap-unsigned
+          path: |
+            apps/installer-msi/dist/*.msi
+            apps/installer-msi/dist/SHA256SUMS
+            apps/installer-msi/dist/BUILD-METADATA.json
+          if-no-files-found: error
+          retention-days: 14

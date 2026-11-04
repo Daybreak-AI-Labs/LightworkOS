@@ -1,0 +1,7 @@
+{% if journey_i18n %}<script nonce="{{ csp_script_nonce }}" type="application/json" id="lightwork-i18n-data">{{ (journey_i18n_bootstrap if journey_i18n_bootstrap is defined else journey_i18n)|tojson }}</script>{% endif %}
+{# Fetch early without making the page body wait for either script. Execution
+   remains ordered in the footer, before localized page controllers. #}
+{% from "_assets.html" import asset -%}
+{% if journey_i18n_asset %}<link rel="preload" as="script" href="{{ journey_i18n_asset }}">{% endif %}
+<link rel="preload" as="script" href="{{ asset('lightwork-i18n.js') }}">
+{#- The translation-coverage and bidirectional-text rules live in lightwork.css. -#}

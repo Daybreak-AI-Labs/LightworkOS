@@ -1,0 +1,151 @@
+{% extends "recovery_shell.html" if recovery_mode else "base.html" %}
+{% block title %}Workspace recovery · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-workspace-recovery.css">
+<style>
+  .wrec-channel{list-style:none;margin:1rem 0;padding:1rem;border:1px solid var(--border,#46516a);border-radius:12px;background:var(--panel,#202b40)}
+  .wrec-channel h3{margin:.1rem 0;font-size:1.05rem}.wrec-channel form{margin-top:1rem}.wrec-channel fieldset{min-width:0;margin:1rem 0;padding:0;border:0}.wrec-channel legend{font-weight: var(--font-semibold);padding:0}
+  .wrec-channel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:0 1rem}.wrec-channel .wrec-field-help{font-size:.9rem;margin:.25rem 0;color:var(--text-muted,#c1cadd)}
+  .wrec-channel .wrec-field-error{color:var(--danger,#ffb4a8);margin:.25rem 0}.wrec-channel [aria-invalid=true]{border-color:var(--danger,#ffb4a8)}
+  .wrec-channel .wrec-channel-result{white-space:pre-line}.wrec-channel .wrec-confirm input{margin-right:.5rem}.wrec-channel .wrec-actions button{white-space:normal}
+  #wrec-reconciliation-items:has(.wrec-channel){padding-left:0}.wrec-channel form[hidden]{display:none}
+  @media(forced-colors:active){.wrec-channel,.wrec-channel [aria-invalid=true]{border-color:CanvasText}.wrec-channel .wrec-field-error{color:CanvasText}}
+</style>{% endblock %}
+{% block content %}
+<div class="wrec" id="workspace-recovery">
+  <h1 class="page-title">Workspace recovery</h1>
+  <p class="page-subtitle">Keep a protected copy of this workspace, check it, and prove it can be restored.</p>
+  <p><a class="btn btn--ghost" href="/provider-spending">Review AI spending records</a></p>
+  {% if not feature_on %}
+  <div class="panel wrec-notice" role="status"><strong>Workspace recovery is turned off.</strong>
+    <p>Saving, checking and restoring copies of this workspace all need it. A global administrator can turn on <strong>Workspace recovery</strong> under Features in Settings.</p>
+    <p><a class="btn btn--primary" href="/settings#settings-controls">Open Features in Settings</a></p></div>
+  {% endif %}
+  {% if recovery_mode %}
+  <div class="panel wrec-notice"><strong>Recovery mode is on</strong><p>Ordinary work and background tasks are turned off. To resume after recovery, use the desktop menu: Workspace recovery mode → Close recovery and return to work.</p></div>
+  {% else %}
+  <p class="panel wrec-notice">To restore files, first switch to recovery mode: in the Lightwork desktop app, finish any running work and choose <strong>Workspace recovery mode</strong> from the app menu. Services managed by another team need their own recovery plan.</p>
+  {% endif %}
+  <p id="wrec-status" role="status" aria-live="polite">Loading workspace recovery…</p>
+  <button id="wrec-refresh" type="button" class="btn btn--ghost">Refresh</button>
+  <p id="wrec-identity"></p>
+  <p id="wrec-last-restore" role="status" aria-live="polite"></p>
+  <section class="panel"><h2>What this protects</h2><ul id="wrec-coverage"></ul><details><summary>What needs its own recovery plan</summary><ul id="wrec-excluded"></ul></details><ul id="wrec-blockers"></ul></section>
+  <section class="panel"><h2>Recovery key</h2><p>You need this key to check and restore your copies. Keep it somewhere safe, away from the copies themselves. This computer keeps a private copy, but if the computer is lost you need yours.</p>
+    <p id="wrec-key-status"></p>
+    <div class="wrec-actions"><button id="wrec-key-create" type="button" class="btn btn--primary" disabled>Create and download key</button><button id="wrec-key-download" type="button" class="btn" disabled>Download existing key</button></div>
+    <details><summary>Use a recovery key you already have</summary><label for="wrec-key-input">Recovery key</label><input id="wrec-key-input" class="input" type="password" autocomplete="off" maxlength="128"><button id="wrec-key-import" type="button" class="btn" disabled>Use this key</button><p class="muted">You can only do this before a key has been set up here.</p></details>
+  </section>
+  <section class="panel"><h2>Encryption keys</h2><p id="wrec-encryption-status"></p><details><summary>Keep a separate copy of this computer's encryption keys</summary><p>This download holds unprotected keys that may unlock several workspaces. Keep it offline or in your company's password vault, away from your copies. Keys held by an outside key service stay with whoever manages them. A workspace restore never replaces shared keys.</p><label class="wrec-confirm"><input id="wrec-encryption-confirm" type="checkbox">I understand these keys may unlock several workspaces and will keep them separately.</label><button id="wrec-encryption-download" type="button" class="btn" disabled>Download encryption keys</button></details></section>
+  <section class="panel"><h2>Saved copies</h2><p>A saved copy (snapshot) holds sensitive workspace data and may include encryption keys. Keep downloaded copies somewhere safe, off this computer.</p>
+    <button id="wrec-create" type="button" class="btn btn--primary" disabled>Create snapshot</button>
+    <label for="wrec-snapshot">Saved snapshot</label><select id="wrec-snapshot" class="select" disabled><option value="">Choose a snapshot</option></select>
+    <div class="wrec-actions"><button id="wrec-inspect" type="button" class="btn" disabled>Check snapshot</button><button id="wrec-download" type="button" class="btn" disabled>Download snapshot</button><button id="wrec-drill" type="button" class="btn" disabled>Test restore safely</button></div>
+    <p id="wrec-result" role="status" aria-live="polite"></p><p class="muted">A check confirms every file is complete and unchanged and that the workspace database opens cleanly. It does not check encrypted contents, business rules or outside services.</p>
+    <div id="wrec-excluded-keys" hidden><h3>Keys to keep separately</h3><p id="wrec-excluded-keys-status"></p><ul id="wrec-excluded-keys-list"></ul><p class="muted">These are file names, not key contents. Keep the actual keys separately in your company's approved vault. Keys managed by an outside service stay with that service.</p></div>
+    <button id="wrec-drill-report-load" type="button" class="btn btn--ghost" disabled>View last restore test</button>
+    <p id="wrec-drill-report-status" role="status" aria-live="polite"></p>
+    <div id="wrec-drill-report" hidden>
+      <p id="wrec-drill-report-summary"></p><p id="wrec-drill-report-build"></p>
+      <p class="muted">This saved test restored the snapshot into a temporary workspace. Your live workspace and outside services were not touched. It does not prove encrypted contents, business rules or that a restore today would succeed, and it does not start a real restore.</p>
+      <details><summary>Technical details</summary><p id="wrec-drill-report-identity"></p><p id="wrec-drill-report-scope"></p></details>
+      <button id="wrec-drill-report-download" type="button" class="btn" disabled>Download signed test result</button>
+    </div>
+    <details><summary>Delete a saved snapshot from this computer</summary><p>If you must keep it, download and check a copy first. Only the chosen snapshot on this computer is deleted. Snapshots needed for a current or recent restore can't be deleted.</p><label class="wrec-confirm"><input id="wrec-retire-confirm" type="checkbox">I checked how long records must be kept and want to delete this snapshot from this computer.</label><button id="wrec-retire" type="button" class="btn btn--danger" disabled>Delete selected snapshot</button></details>
+    <details><summary>Bring in a snapshot you downloaded earlier</summary><label for="wrec-file">Lightwork snapshot file</label><input id="wrec-file" class="input" type="file" accept=".tgz,.gz,application/gzip"><button id="wrec-import" type="button" class="btn" disabled>Bring in and check</button><p class="muted">Up to 256 MB (1 GB once unpacked). Only a snapshot made for this workspace with this recovery key can be brought in.</p></details>
+  </section>
+  <section class="panel"><h2>Restore onto a new computer</h2>
+    <p>Use this only in recovery mode on a fresh, empty installation. Shut down the old installation first so two copies can't act for the same workspace. Restored requests and any work that may have reached outside services stay on hold until you review them here.</p>
+    <p id="wrec-bootstrap-status" role="status" aria-live="polite"></p>
+    <label class="wrec-confirm"><input id="wrec-bootstrap-source-offline" type="checkbox">I confirmed the old installation is shut down and this workspace is empty.</label>
+    <div class="wrec-actions"><button id="wrec-bootstrap-prepare" type="button" class="btn btn--primary" disabled>Prepare this empty installation</button><button id="wrec-bootstrap-resume" type="button" class="btn" disabled>Finish an interrupted restore</button></div>
+  </section>
+  <section class="panel"><h2>Test your saved encryption keys</h2>
+    <p>Choose a snapshot above, then the encryption-key file you saved earlier. Lightwork checks, in a temporary space, that the keys open the snapshot's encrypted data. Nothing is installed, the live workspace is not changed and no restore starts.</p>
+    <label for="wrec-custody-file">Saved encryption-key file (.zip)</label><input id="wrec-custody-file" class="input" type="file" accept=".zip,application/zip" aria-describedby="wrec-custody-help" data-draft-recovery="off">
+    <p id="wrec-custody-help" class="muted">Up to 4 MB. This file holds sensitive keys that may unlock several workspaces; it is used only for this test. Keys held by an outside key service need their own procedure.</p>
+    <label class="wrec-confirm"><input id="wrec-custody-confirm" type="checkbox">I allow this sensitive key file to be used only to test the chosen snapshot in a temporary space.</label>
+    <div class="wrec-actions"><button id="wrec-custody-test" type="button" class="btn btn--primary" disabled>Test the keys safely</button><button id="wrec-custody-report-load" type="button" class="btn btn--ghost" disabled>View last key test</button></div>
+    <p id="wrec-custody-status" role="status" aria-live="polite"></p>
+    <div id="wrec-custody-report" hidden>
+      <p id="wrec-custody-summary"></p><p id="wrec-custody-build"></p>
+      <p id="wrec-custody-totals"></p>
+      <p class="muted">Only the kinds of encrypted data listed here were checked. Custom encryption, business rules and outside services were not. How long this test took is not a promise of how long a real recovery takes.</p>
+      <ul id="wrec-custody-limits"></ul>
+      <details><summary>Technical details</summary><ul id="wrec-custody-checks"></ul><p id="wrec-custody-coverage"></p><p id="wrec-custody-identity"></p></details>
+      <button id="wrec-custody-report-download" type="button" class="btn" disabled>Download signed key test result</button>
+    </div>
+    <div id="wrec-custody-install-panel" hidden>
+      <h3>Install the tested keys</h3>
+      <p>Choose the same key file you just tested. Lightwork makes sure it is exactly that file before installing any key. If installing is interrupted, it can only continue with the same file.</p>
+      <label for="wrec-custody-install-file">The key file you tested (.zip)</label><input id="wrec-custody-install-file" class="input" type="file" accept=".zip,application/zip" data-draft-recovery="off">
+      <label class="wrec-confirm"><input id="wrec-custody-install-confirm" type="checkbox">I allow installing this exact tested key file on this empty recovery installation.</label>
+      <button id="wrec-custody-install" type="button" class="btn btn--primary" disabled>Install the tested keys</button>
+    </div>
+  </section>
+  <section class="panel"><h2>See what changed</h2>
+    <p>Compare the chosen snapshot with the workspace as it is now. This shows why a restore might be refused. Nothing is changed and no restore starts.</p>
+    <button id="wrec-compare" type="button" class="btn" disabled>Compare with the current workspace</button>
+    <p id="wrec-comparison-status" role="status" aria-live="polite"></p>
+    <div id="wrec-comparison-report" hidden>
+      <p id="wrec-comparison-summary"></p>
+      <p class="muted">This is a record from the moment you compared; the workspace may have changed since. It lists which files differ, not their contents. Protected differences must be sorted out by an administrator before a restore; downloading this record does not do that.</p>
+      <div class="wrec-actions"><button id="wrec-comparison-previous" type="button" class="btn btn--ghost" disabled>Previous differences</button><button id="wrec-comparison-next" type="button" class="btn btn--ghost" disabled>Next differences</button></div>
+      <details><summary>Technical details</summary><p id="wrec-comparison-identity"></p></details>
+      <button id="wrec-comparison-download" type="button" class="btn" disabled>Download signed comparison</button>
+      <ul id="wrec-comparison-items"></ul>
+    </div>
+  </section>
+  <section class="panel"><h2>Restore this workspace</h2><p>Restoring puts the workspace back exactly as it was in the chosen snapshot and removes anything made afterwards. A checked safety copy of the current workspace is saved first. Other workspaces, shared settings and outside services are not affected. The snapshot must come from this exact version of Lightwork.</p>
+    <p class="muted">A restore is refused if spending records, budget holds, records of actions in outside services, or database files differ from the snapshot. An administrator must sort that out first. You can still download the snapshot and test it safely.</p>
+    <button id="wrec-prepare" type="button" class="btn btn--primary" disabled>Prepare restore and safety copy</button>
+    <div id="wrec-review" hidden><p id="wrec-review-text"></p><label class="wrec-confirm"><input id="wrec-confirm" type="checkbox"><span id="wrec-confirm-text">I reviewed the workspace and snapshot, and understand that newer local work will be replaced.</span></label><button id="wrec-restore" type="button" class="btn btn--danger" disabled>Restore reviewed snapshot</button></div>
+  </section>
+  <section id="wrec-reconciliation" hidden><h2>Review restored work before returning to normal use</h2>
+    <p id="wrec-reconciliation-status" role="status" aria-live="polite" tabindex="-1"></p>
+    <p>Nothing listed here runs automatically. Pending requests must be retired and recreated under current authority. Work that may have reached an external system requires an authoritative readback reference.</p>
+    <ul id="wrec-reconciliation-items"></ul>
+    <p>For each connection below, check the original service and record what you found, when you checked it, and a reference to that evidence. Your check must be no older than 15 minutes. Lightwork records your review; it does not contact the service to verify it. If you cannot establish an outcome, leave that item unresolved. Confirming a review never repeats an old action.</p>
+    <p id="wrec-reconciliation-blocked" hidden>This build cannot safely classify or rewrite at least one restored authority. Keep recovery mode active and <a href="/help">create a redacted support report in the app</a>.</p>
+    <label class="wrec-confirm"><input id="wrec-reconciliation-confirm" type="checkbox">I reviewed every restored item and authorize returning this workspace to normal use after restart.</label>
+    <button id="wrec-reconciliation-complete" type="button" disabled>Complete restored-work review</button>
+  </section>
+  <section id="wrec-assistant" hidden aria-labelledby="wrec-assistant-heading">
+    <h2 id="wrec-assistant-heading">Recovery Copilot</h2>
+    <p>Review a restored connection here using the same controls and confirmation as the recovery list. This helper stays on this computer and does not contact an AI provider.</p>
+    <label for="wrec-assistant-item">Connection to review</label><select id="wrec-assistant-item"><option value="">Choose a connection</option></select>
+    <div class="wrec-actions"><button id="wrec-assistant-open" type="button" disabled>Review with Copilot</button><button id="wrec-assistant-close" type="button" disabled>Return review to list</button></div>
+    <p id="wrec-assistant-status" role="status" aria-live="polite"></p>
+    <ul id="wrec-assistant-review" style="padding-left:0"></ul>
+  </section>
+  <section><h2>Protect an application update</h2><p>Windows installation changes affect every local workspace and shared administration. Lightwork pauses before capturing a verified pre-upgrade snapshot and retains the exact signed old installer. Rolling back a completed upgrade replaces the application and all local state with that snapshot; newer work is kept in a separate safety snapshot. External services are excluded.</p>
+    <p>A completed update can be rolled back here only when accounting, protected external-action history and database files still match its original snapshot. New spending, budget holds, action outcomes or database changes require coordinated reconciliation before returning to the old release.</p>
+    <p id="wrec-installation-native-review" role="status"></p>
+    <label class="wrec-confirm"><input id="wrec-installation-handoff" type="checkbox" checked>Use the protected desktop handoff. Keep the approval out of the clipboard. Uncheck for the manual code fallback.</label>
+    <label class="wrec-confirm"><input id="wrec-installation-confirm" type="checkbox">I am authorized to pause and recover all local workspaces and shared administration on this computer.</label>
+    <details><summary>Review a signing identity transition</summary>
+      <p>Ordinary updates keep the same signing identities. A publisher or update-key change requires the default-off Signing identity transition setting, a dual-signed exact-release bridge, and your separate approval. Save the proposed review file from Install &amp; updates, then select it here. No new identity is trusted merely by selecting a file.</p>
+      <label for="wrec-installation-transition-file">Signed bridge review file</label><input id="wrec-installation-transition-file" type="file" accept="application/json,.json">
+      <button id="wrec-installation-transition-review" type="button" disabled>Verify signing transition for review</button>
+      <p id="wrec-installation-transition-details" role="status" style="overflow-wrap:anywhere;white-space:pre-line"></p>
+      <label class="wrec-confirm"><input id="wrec-installation-transition-confirm" type="checkbox">I reviewed the exact publisher and update-key change, its admission window and retained-pair rollback limits, and authorize this change in installation trust.</label>
+    </details>
+    <button id="wrec-installation-authorize" type="button" class="btn btn--primary" disabled>Allow a protected update</button>
+    <label for="wrec-installation-point">Completed update to go back from</label><select id="wrec-installation-point" class="select"><option value="">Choose a completed upgrade</option></select>
+    <button id="wrec-installation-rollback" type="button" class="btn btn--danger" disabled>Allow going back to this version</button>
+    <p id="wrec-installation-result" role="status" aria-live="polite"></p>
+    <label for="wrec-installation-code">Private approval code</label><span style="display:flex; gap:var(--space-2); align-items:center;"><input id="wrec-installation-code" class="input" type="text" readonly autocomplete="off" spellcheck="false"><button id="wrec-installation-code-copy" type="button" class="btn">Copy code</button></span><p id="wrec-installation-code-copy-status" role="status" aria-live="polite"></p><p class="muted">Copy this short-lived code into <strong>Install &amp; updates</strong> in the desktop app menu. It only allows the action you reviewed, on this computer; don't share it. Nothing is installed or restored from this page.</p>
+    <details><summary>Delete an unused approval or an old update copy</summary>
+      <p>This permanently deletes the chosen copy's saved installers, snapshots and logs, and cancels any unused approval. Check how long you must keep records first. Unfinished work and the copy needed to go back from the current version stay protected.</p>
+      <p id="wrec-installation-retention-status" role="status"></p><ul id="wrec-installation-retention-list"></ul>
+      <div id="wrec-installation-key-custody" hidden><h3>Keys for saved update copies</h3>
+      <p class="muted">These file names were recorded when each copy was made. Keep the actual keys separately in your company's approved vault. This list does not verify your separate key copy or keys held by an outside service.</p>
+      <ul id="wrec-installation-key-custody-list"></ul></div>
+      <label for="wrec-installation-retire-point">Approval or update copy to delete</label><select id="wrec-installation-retire-point" class="select" disabled><option value="">Choose a point to retire</option></select>
+      <label class="wrec-confirm"><input id="wrec-installation-retire-confirm" type="checkbox">I checked how long records must be kept and want to permanently delete this copy.</label>
+      <button id="wrec-installation-retire" type="button" class="btn btn--danger" disabled>Delete selected copy</button>
+      <details><summary>Recent deletion receipts</summary><p class="muted">The last 100 signed deletion receipts are kept on this computer. They don't contain the deleted copies or installers.</p><ul id="wrec-installation-retirement-history"></ul></details>
+    </details>
+  </section>
+</div>
+{% endblock %}
+{% block scripts_extra %}<script src="/static/lightwork-workspace-recovery.js" defer></script><script src="/static/lightwork-recovery-copilot.js" defer></script>{% endblock %}

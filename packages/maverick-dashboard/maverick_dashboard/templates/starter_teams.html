@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Starter teams · Lightwork{% endblock %}
+{% block content %}
+{% from "_hero.html" import hero %}
+{% set hero_actions %}<a class="btn btn--primary" href="#st-catalog-title">Set up a team</a>{% endset %}
+{{ hero('Autonomous shoring', 'Starter teams', subtitle='Start with a useful, bounded piece of work',
+        lede='Choose a team, review its scope, try a sample, then check your approved records. Every result keeps its sources and the next work for a person.', actions=hero_actions) }}
+<style>
+  .st-layout { display:grid; grid-template-columns:minmax(15rem, 1fr) minmax(0, 2fr); gap:var(--space-4); }
+  .st-fields { display:grid; gap:var(--space-3); }
+  .st-field { display:flex; flex-direction:column; gap:var(--space-1); }
+  .st-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-3); }
+  .st-scroll { overflow:auto; }
+  .st-result { border-top:1px solid var(--border); padding:var(--space-3) 0; }
+  .st-result-text { white-space:pre-wrap; overflow-wrap:anywhere; }
+  .st-csv { width:100%; min-height:12rem; font-family:var(--font-mono, monospace); }
+  .st-dialog { color:var(--text); background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg); width:min(42rem, 90vw); max-height:85vh; overflow:auto; padding:var(--space-5); box-shadow:var(--shadow-lg); }
+  .st-dialog::backdrop { background:rgb(0 0 0 / .55); }
+  .st-dialog dt { margin-top:var(--space-2); font-weight:600; }
+  .st-dialog dd { margin-left:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  @media (max-width:800px) { .st-layout { grid-template-columns:1fr; } }
+</style>
+<p><a href="/workforce">Workforce</a> · <a href="/agents">Agent Factory</a> · <a href="/shoring">Autonomous shoring</a></p>
+<section class="panel" aria-labelledby="st-boundary-title">
+  <h2 id="st-boundary-title">What these teams can do today</h2>
+  <p>{{ notice }}</p>
+  <p>Samples demonstrate the included checks. Your records need their own review. Provider connections, specialist AI work and automatic operations require separate qualification.</p>
+</section>
+<p id="st-message" role="status" aria-live="polite">Loading your available teams…</p>
+<div class="st-layout">
+  <section class="panel" aria-labelledby="st-catalog-title">
+    <h2 id="st-catalog-title">Choose a team</h2>
+    <label for="st-team">Business function</label>
+    <select class="select" id="st-team"><option value="">Loading…</option></select>
+    <div id="st-details"></div>
+  </section>
+  <section class="panel" aria-labelledby="st-setup-title">
+    <h2 id="st-setup-title">Review your setup</h2>
+    <p>You own the saved setup in this workspace. Name the person responsible for reviewing the work and define the records in scope.</p>
+    <form id="st-setup-form" class="st-fields">
+      <div class="st-field"><label for="st-owner">Responsible person</label><input class="input" id="st-owner" maxlength="120" required autocomplete="name"></div>
+      <div class="st-field"><label for="st-scope">Scope of work</label><textarea class="input" id="st-scope" maxlength="1000" required rows="3"></textarea></div>
+      <div class="st-field"><label for="st-cadence">Planned review cadence</label><select class="select" id="st-cadence"><option value="manual">When requested</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><span class="muted">This records your preference. It does not schedule runs.</span></div>
+      <div class="st-field"><label for="st-limit">Maximum records per run</label><input class="input" id="st-limit" type="number" min="1" max="1000" value="250" required></div>
+      <div><button class="btn" type="submit" id="st-setup-review">Review setup</button></div>
+    </form>
+  </section>
+</div>
+<section class="panel" aria-labelledby="st-saved-title">
+  <h2 id="st-saved-title">Your saved teams</h2>
+  <label for="st-saved">Saved setup</label><select class="select" id="st-saved"><option value="">No saved teams yet</option></select>
+  <p id="st-saved-state"></p>
+  <div class="st-actions"><button type="button" class="btn" id="st-sample" disabled>Review sample run</button><button type="button" class="btn" id="st-pause" disabled>Pause</button><button type="button" class="btn" id="st-refresh">Refresh current work</button></div>
+</section>
+<section class="panel" aria-labelledby="st-inputs-title" id="st-inputs-section" hidden>
+  <h2 id="st-inputs-title">Check your records</h2>
+  <p>Paste a CSV table or choose a CSV file for each required input. Keep its column names. Include a record reference and a source reference for every row. Source references are retained as evidence; Lightwork does not open them.</p>
+  <form id="st-inputs-form" class="st-fields">
+    <div class="st-field"><label for="st-date">Review date</label><input class="input" id="st-date" type="date" required></div>
+    <div id="st-input-tables" class="st-fields"></div>
+    <div><button type="submit" class="btn" id="st-inputs-review">Review record checks</button></div>
+  </form>
+</section>
+<section class="panel" aria-labelledby="st-history-title"><h2 id="st-history-title">Saved results</h2><div id="st-history"><p>Choose a saved team to see its results.</p></div></section>
+{% include "_starter_team_schedules.html" %}
+<dialog id="st-review" class="st-dialog" aria-labelledby="st-review-title">
+  <h2 id="st-review-title">Review the planned work</h2><dl id="st-review-content"></dl>
+  <p id="st-review-message" role="status" aria-live="polite"></p>
+  <div class="st-actions"><button type="button" class="btn" id="st-confirm">Confirm reviewed work</button><button type="button" class="btn" id="st-original" hidden>Check original result</button><button type="button" class="btn" id="st-cancel">Cancel</button></div>
+</dialog>
+<script nonce="{{ csp_script_nonce }}" src="/static/lightwork-starter-teams.js" defer></script>
+<script nonce="{{ csp_script_nonce }}" src="/static/lightwork-starter-team-schedules.js" defer></script>
+{% endblock %}

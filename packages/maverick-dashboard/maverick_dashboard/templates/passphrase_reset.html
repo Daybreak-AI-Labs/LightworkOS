@@ -1,0 +1,59 @@
+{% extends "public_base.html" %}
+{% from "_passphrase_fields.html" import styles, passphrase, script with context %}
+{% block title %}{{ 'Choose a new passphrase' if state == 'form' else 'Passphrase reset' }} · Lightwork{% endblock %}
+{% block public_label %}Passphrase reset{% endblock %}
+{% block public_footer %}Passphrase reset for Lightwork{% endblock %}
+{% block head_extra %}{{ styles() }}{% endblock %}
+{% block content %}
+<div class="panel own">
+  {% if state == 'form' %}
+  {% if reset.first %}
+  <h1 class="page-title">Choose a passphrase</h1>
+  <p class="own__lede">{{ reset.reset_by | capitalize }} gave {{ reset.email }} this link
+    on {{ reset.created_at | datetime('absolute') }} so you can choose a passphrase for signing in.</p>
+  {% else %}
+  <h1 class="page-title">Choose a new passphrase</h1>
+  <p class="own__lede">Your passphrase for {{ reset.email }} was reset by {{ reset.reset_by }}
+    on {{ reset.created_at | datetime('absolute') }}. Your old passphrase no longer works and you were signed out everywhere.</p>
+  {% endif %}
+  {% if message %}<p class="own__alert" role="alert">{{ message }}</p>{% endif %}
+  <p>Choose a {{ '' if reset.first else 'new ' }}passphrase, then sign in with your email and {{ 'that passphrase' if reset.first else 'the new passphrase' }}. This link works once and
+    expires {{ reset.expires_at | datetime('absolute') }}. It does not change your access.</p>
+  <form method="post" data-draft-recovery="off" id="owner-form" novalidate>
+    <label class="own__field"><span>Email address</span>
+      <input class="input" type="email" id="reset-email" autocomplete="username" value="{{ reset.email }}" readonly aria-describedby="reset-email-help">
+      <span class="own__hint" id="reset-email-help">The account this link is for. You sign in with it.</span>
+    </label>
+    {{ passphrase(new=True) }}
+    <div class="own__actions">
+      <button type="submit" class="btn btn--primary">Save new passphrase</button>
+    </div>
+  </form>
+  <p class="own__hint">Did not expect this? Tell {{ reset.reset_by }} before using the link.</p>
+  {% elif state == 'done' %}
+  <h1 class="page-title">New passphrase saved</h1>
+  <p class="own__lede">Sign in with {{ reset.email }} and your new passphrase.</p>
+  <div class="own__actions">
+    <a class="btn" href="/auth/local-login">Sign in</a>
+  </div>
+  {% elif state == 'changed' %}
+  <h1 class="page-title">Reset link no longer works</h1>
+  <p class="own__lede">The access of this account, or of the person who reset it, changed after the reset.
+    This link was turned off and no passphrase was saved.</p>
+  <p>Ask the installation owner to reset your passphrase again.</p>
+  {% elif state == 'gone' %}
+  <h1 class="page-title">Reset link not available</h1>
+  <p class="own__lede">This reset link is invalid, expired or already used.</p>
+  <p>Ask the installation owner to reset your passphrase again. If you already chose a new one,
+    <a href="/auth/local-login">sign in with your email and passphrase</a>.</p>
+  {% elif state == 'blocked' %}
+  <h1 class="page-title">Open the reset link again</h1>
+  <p class="own__lede">For your security, a new passphrase can only be saved from the reset link's own page.
+    Open the link you were sent and try again.</p>
+  {% else %}
+  <h1 class="page-title">Not found</h1>
+  <p class="own__lede">Nothing here.</p>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts_extra %}{% if state == 'form' %}{{ script() }}{% endif %}{% endblock %}

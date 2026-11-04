@@ -1,0 +1,1525 @@
+{% extends "base.html" %}
+{% block title %}AI assurance · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .assurance-stats {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(8rem,1fr));
+    gap:var(--space-3);
+    margin:var(--space-4) 0;
+  }
+  .assurance-stat {
+    padding:var(--space-3);
+    border:1px solid var(--border);
+    border-radius: var(--radius-md);
+    background:var(--surface-2);
+  }
+  .assurance-stat strong { display:block; font-size:var(--text-xl); }
+  .assurance-grid {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:var(--space-4);
+  }
+  .assurance-table { overflow-x:auto; }
+  .assurance-table caption { text-align:left; color:var(--muted); padding:0 0 var(--space-2); }
+  .assurance-note {
+    border-left:4px solid var(--warn);
+    padding-left:var(--space-3);
+  }
+  .assurance-alert {
+    border-left:4px solid var(--danger);
+    padding:var(--space-3);
+    background:var(--surface-2);
+  }
+  .assurance-actions {
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:var(--space-2);
+    margin:var(--space-4) 0;
+  }
+  .assurance-demo {
+    display:inline-block;
+    padding:.15rem .45rem;
+    border:1px solid var(--warn);
+    border-radius: var(--radius-pill);
+    color:var(--warn);
+    font-size:var(--text-xs);
+    font-weight: var(--font-bold);
+    letter-spacing:.06em;
+  }
+  .assurance-status-current { color:var(--success); font-weight: var(--font-bold); }
+  .assurance-status-stale { color:var(--danger); font-weight: var(--font-bold); }
+  .assurance-citations { margin:0; padding-left:1rem; }
+  .assurance-muted { color:var(--muted); }
+  .assurance-overview {
+    border:1px solid var(--border);
+    border-left:4px solid var(--brand);
+    border-radius: var(--radius-md);
+    padding:var(--space-4);
+    background:var(--surface-1);
+    margin:var(--space-4) 0;
+  }
+  .assurance-overview--blocked { border-left-color:var(--danger); }
+  .assurance-overview--review,
+  .assurance-overview--waiting,
+  .assurance-overview--demo { border-left-color:var(--warn); }
+  .assurance-overview--ready { border-left-color:var(--success); }
+  .assurance-overview__head {
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-start;
+    gap:var(--space-3);
+  }
+  .assurance-overview__head h2 { margin:0 0 var(--space-1); }
+  .assurance-badge {
+    flex:none;
+    border:1px solid currentColor;
+    border-radius: var(--radius-pill);
+    padding:.2rem .55rem;
+    font-size:var(--text-xs);
+    font-weight: var(--font-bold);
+  }
+  .assurance-overview--blocked .assurance-badge { color:var(--danger); }
+  .assurance-overview--review .assurance-badge,
+  .assurance-overview--waiting .assurance-badge,
+  .assurance-overview--demo .assurance-badge { color:var(--warn); }
+  .assurance-overview--ready .assurance-badge { color:var(--success); }
+  .assurance-progress {
+    height:6px;
+    border-radius: var(--radius-pill);
+    background:var(--surface-2);
+    overflow:hidden;
+    margin:var(--space-3) 0 var(--space-2);
+  }
+  .assurance-progress > i {
+    display:block;
+    height:100%;
+    background:var(--brand);
+  }
+  .assurance-checklist {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:var(--space-2) var(--space-4);
+    list-style:none;
+    padding:0;
+  }
+  .assurance-checklist li::before { content:"○"; margin-right:.45rem; color:var(--muted); }
+  .assurance-checklist li.is-done::before { content:"✓"; color:var(--success); }
+  .assurance-next {
+    border-top:1px solid var(--border);
+    margin-top:var(--space-3);
+    padding-top:var(--space-3);
+  }
+  .assurance-next h3 { margin:0 0 var(--space-1); }
+  .assurance-next code { display:block; width:max-content; max-width:100%; overflow-wrap:anywhere; margin:var(--space-2) 0; }
+  .assurance-empty { margin:var(--space-2) 0; }
+  .assurance-empty .mv-empty__body { max-width:42rem; }
+  .assurance-form {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:var(--space-3);
+    margin:var(--space-3) 0;
+  }
+  .assurance-form label { display:grid; gap:var(--space-1); }
+  .assurance-form .assurance-form__wide { grid-column:1/-1; }
+  .assurance-sr {
+    position:absolute;
+    width:1px;
+    height:1px;
+    padding:0;
+    margin:-1px;
+    overflow:hidden;
+    clip:rect(0,0,0,0);
+    white-space:nowrap;
+    border:0;
+  }
+  @media (max-width:880px) {
+    .assurance-stats, .assurance-grid, .assurance-checklist,
+    .assurance-form { grid-template-columns:1fr; }
+    .assurance-overview__head { flex-direction:column; }
+  }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% from "_module_gate.html" import module_gate %}
+{% set MRA_NAMES = {} %}{% for a in model_risk_assets %}{% set _ = MRA_NAMES.update({a.asset_id: a.display_name or 'Unnamed AI system'}) %}{% endfor %}
+{% macro mra_name(asset_id) %}<span data-asset-id="{{ asset_id }}">{{ MRA_NAMES.get(asset_id, 'An AI system not in your inventory') }}</span>{% endmacro %}
+{% set MRA_STATUS = {'pending_review': 'Waiting for review', 'approved': 'Approved', 'needs_work': 'Needs work', 'rejected': 'Rejected', 'active': 'Active', 'revoked': 'Revoked', 'expired': 'Expired', 'used': 'Used', 'pending_import': 'Waiting to be brought in', 'imported': 'Brought in', 'declared': 'Declared — nothing filed yet', 'initial_reported': 'First report filed', 'complete_reported': 'Full report filed', 'withdrawn': 'Withdrawn', 'passed': 'No drift', 'failed': 'Drift found', 'inconclusive': 'Not enough data', 'running': 'Running', 'finalized': 'Finished', 'cancelled': 'Stopped', 'complete': 'Complete', 'partial': 'Partly complete', 'current': 'Up to date', 'stale': 'Out of date', 'unknown': 'Unknown', 'accepted': 'Accepted', 'dismissed': 'Dismissed', 'present': 'Present', 'missing': 'No longer seen', 'observed': 'Seen'} %}
+{% call hero('AI oversight', 'AI assurance',
+             subtitle='Evidence, not certification',
+             lede='Keep a verifiable record of how your AI systems are used, reviewed and monitored: supplier reviews, drift checks, what each agent can reach, regulation changes and model-risk findings.') %}
+  {% if not gateway_enabled %}
+  {{ state('Current state', 'Evidence recording is off',
+           badge='Off', badge_class='idle',
+           copy='No delivery records are being kept. Existing model-risk records remain available below.') }}
+  {% elif gateway_error %}
+  {{ state('Current state', 'Records unavailable',
+           badge='Needs attention', badge_class='warn',
+           copy='The evidence records could not be loaded safely, so no readiness conclusion is shown. Refresh the page and try again.') }}
+  {% else %}
+  {{ state('Current state', gateway_view.status.label,
+           badge=gateway_view.ingestion|humanize,
+           badge_class='ok' if gateway_view.status.key == 'ready'
+                       else ('idle' if gateway_view.status.key == 'empty' else 'warn'),
+           copy=gateway_view.done_count ~ ' of ' ~ gateway_view.total_steps
+                ~ ' setup steps complete. '
+                ~ gateway_view.status.detail) }}
+  {% endif %}
+{% endcall %}
+
+{% if work_details_available %}<p><a class="btn btn--ghost" href="/work-details">Business fields and stages</a></p>{% endif %}
+<p class="assurance-note"><strong>What this page is:</strong> a record of evidence
+  and control status. It does not certify compliance, decide legal classifications,
+  or replace a qualified human reviewer.</p>
+
+<section class="panel" id="governance-extensions-panel" aria-labelledby="extensions-title">
+  <h2 id="extensions-title">Suppliers, drift and agent reach</h2>
+  <p class="assurance-muted">Document text and raw monitoring data stay out of this page; only summaries you can review are shown.</p>
+  <div class="assurance-grid">
+    <section aria-labelledby="vendor-title">
+      <h3 id="vendor-title">AI supplier reviews</h3>
+      {% if ai_vendor_error %}<p class="assurance-alert">{{ ai_vendor_error }}</p>{% endif %}
+      {% if ai_vendor_items %}
+      <div class="assurance-table" tabindex="0" role="region" aria-label="Latest supplier reviews"><table><caption>Latest supplier reviews</caption><thead><tr><th scope="col">Supplier</th><th scope="col">Risk</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>
+      {% for row in ai_vendor_items %}<tr><th scope="row">{{ row.vendor }}</th><td>{{ row.risk_rating|humanize }}</td><td>{{ MRA_STATUS.get(row.status, row.status|humanize) }}</td><td>{% if gateway_admin and row.status == 'pending_review' %}<button class="btn btn--ghost" type="button" data-vendor-review="{{ row.id }}" data-revision="{{ row.revision }}" aria-label="Review the {{ row.vendor }} assessment">Review</button>{% elif gateway_admin and row.status == 'approved' %}<button class="btn btn--ghost" type="button" data-vendor-project="{{ row.id }}" aria-label="Attach the {{ row.vendor }} review to an AI system">Attach to an AI system</button>{% else %}<span class="assurance-muted">—</span>{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% else %}<p class="assurance-empty">No supplier reviews yet. Start one below when you take on a new AI supplier.</p>{% endif %}
+      <details>
+        <summary>Start a supplier review</summary>
+        <form id="ai-vendor-create" class="assurance-form">
+          <label class="assurance-form__wide">Supplier name<input class="input" name="vendor" required maxlength="300"></label>
+          {% for question in ai_vendor_questions %}
+          <fieldset class="assurance-form__wide" data-vendor-question="{{ question.id }}">
+            <legend>{{ question.text }}</legend>
+            <label>Answer<select class="select" name="answer:{{ question.id }}"><option value="">Not answered yet</option><option value="yes">Yes</option><option value="no">No</option><option value="unknown">Don't know</option><option value="na">Does not apply</option></select></label>
+            <label>Note (optional)<input class="input" name="note:{{ question.id }}" maxlength="500"></label>
+          </fieldset>
+          {% endfor %}
+          <div class="assurance-form__wide assurance-actions"><button class="btn btn--primary" type="submit">Create the review</button> <span id="ai-vendor-status" class="assurance-muted" role="status" aria-live="polite"></span></div>
+        </form>
+      </details>
+      {% if gateway_admin %}
+      <details>
+        <summary>Ask a supplier to answer for themselves</summary>
+        <p class="assurance-muted">Create a one-time access code for the supplier's system to send its answers. The code is shown once. Answers arrive as claims to check, and someone here must review them.</p>
+        <form id="ai-vendor-portal-invite" class="assurance-form">
+          <label>Supplier name<input class="input" name="vendor" required maxlength="300"></label>
+          <label>Code works for<select class="select" name="expires_days"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>
+          <div class="assurance-form__wide assurance-actions"><button class="btn" type="submit">Create access code</button> <span id="ai-vendor-portal-status" class="assurance-muted" role="status" aria-live="polite"></span></div>
+        </form>
+        <div id="ai-vendor-portal-credential" hidden>
+          <p><strong>Send these two values to the supplier's technical contact.</strong> They will not be shown again.</p>
+          <p>Workspace code: <span id="ai-vendor-portal-tenant"></span> <button class="btn btn--ghost" type="button" data-copy-target="ai-vendor-portal-tenant">Copy</button></p>
+          <p>Access code: <span id="ai-vendor-portal-token"></span> <button class="btn btn--ghost" type="button" data-copy-target="ai-vendor-portal-token">Copy</button></p>
+        </div>
+        <div class="assurance-table" tabindex="0" role="region" aria-label="Access codes"><table><caption>Access codes</caption><thead><tr><th scope="col">Supplier</th><th scope="col">Status</th><th scope="col">Expires</th><th scope="col">Actions</th></tr></thead><tbody id="ai-vendor-portal-invitations"><tr><td colspan="4">Loading…</td></tr></tbody></table></div>
+        <div class="assurance-table" tabindex="0" role="region" aria-label="Answers sent by suppliers"><table><caption>Answers sent by suppliers</caption><thead><tr><th scope="col">Supplier</th><th scope="col">Status</th><th scope="col">Received</th><th scope="col">Actions</th></tr></thead><tbody id="ai-vendor-portal-submissions"><tr><td colspan="4">Loading…</td></tr></tbody></table></div>
+        <button class="btn btn--ghost" id="ai-vendor-portal-refresh" type="button">Refresh</button>
+      </details>
+      {% endif %}
+    </section>
+    <section aria-labelledby="drift-title">
+      <h3 id="drift-title">Drift monitoring</h3>
+      {% if not drift_monitoring_enabled %}
+      {{ module_gate('drift_monitoring', 'Drift monitoring', detail='Compare new data with a saved normal pattern for an AI system.', can_activate=gateway_admin) }}
+      {% elif drift_monitoring_error %}<p class="assurance-alert">{{ drift_monitoring_error }}</p>{% else %}
+      <p class="assurance-muted">Upload a spreadsheet (CSV) with one column per measure and one row per record. The first row must hold the column names. Only summaries are kept.</p>
+      <form id="drift-baseline-create" class="assurance-form">
+        <label>AI system<select class="select" name="asset_id" required>
+          <option value="">Choose an AI system</option>
+          {% for a in model_risk_assets %}<option value="{{ a.asset_id }}">{{ a.display_name or 'Unnamed AI system' }}</option>{% endfor %}
+        </select></label>
+        <label>Name for this data<input class="input" name="source_id" required maxlength="100" placeholder="For example: Production, March"></label>
+        <label class="assurance-form__wide">Normal data (CSV file)<input class="input" type="file" name="samples" accept=".csv,text/csv" required></label>
+        <div class="assurance-form__wide assurance-actions"><button class="btn btn--primary" type="submit">Save as the normal pattern</button> <span id="drift-baseline-status" class="assurance-muted" role="status" aria-live="polite"></span></div>
+      </form>
+      <form id="drift-evaluate" class="assurance-form">
+        <label class="assurance-form__wide">Compare against<select class="select" name="baseline_id" required><option value="">Loading saved patterns…</option></select></label>
+        <label class="assurance-form__wide">New data (CSV file)<input class="input" type="file" name="samples" accept=".csv,text/csv" required></label>
+        <div class="assurance-form__wide assurance-actions"><button class="btn" type="submit">Check for drift</button> <span id="drift-evaluate-status" class="assurance-muted" role="status" aria-live="polite"></span></div>
+      </form>
+      {% if drift_monitoring_items %}
+      <div class="assurance-table" tabindex="0" role="region" aria-label="Recent drift checks"><table><caption>Recent drift checks</caption><thead><tr><th scope="col">AI system</th><th scope="col">Data</th><th scope="col">Result</th><th scope="col">Checked</th></tr></thead><tbody>
+      {% for row in drift_monitoring_items[:20] %}<tr><th scope="row">{{ mra_name(row.asset_id) }}</th><td>{{ row.source_id|humanize }}</td><td>{{ MRA_STATUS.get(row.result, row.result|humanize) }}</td><td>{% if row.observed_at %}{{ row.observed_at|datetime }}{% else %}—{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div>
+      {% else %}<p class="assurance-empty">No drift checks yet. Results appear here once a monitored AI system reports a check.</p>{% endif %}
+      {% endif %}
+    </section>
+  </div>
+  <section aria-labelledby="topology-title">
+    <h3 id="topology-title">What each agent can reach</h3>
+    {% if not agent_topology_enabled %}<p class="assurance-muted">{{ agent_topology_error or 'Agent reach mapping is turned off for this workspace.' }}</p>{% else %}
+    <form id="agent-topology-query" class="assurance-form">
+      <label>Agent<select class="select" name="agent_name" required><option value="">Loading agents…</option></select></label>
+      <div class="assurance-actions"><button class="btn" type="submit">Show what it can reach</button>{% if gateway_admin %} <button class="btn btn--ghost" type="button" id="agent-topology-sync">Refresh the tool-server list</button>{% endif %}</div>
+      <p class="assurance-form__wide" id="agent-topology-status" role="status" aria-live="polite"></p>
+    </form>
+    <div id="agent-topology-result" hidden></div>
+    {% endif %}
+  </section>
+  <section aria-labelledby="clock-title">
+    <h3 id="clock-title">Serious-incident deadlines <span class="assurance-muted">EU AI Act Art. 73</span></h3>
+    <p class="assurance-muted">Declare incidents and record filings in the <a href="/security/governance#serious-incidents">governance workspace</a>; this list only shows the deadlines.</p>
+    {% if not ai_incident_enabled %}<p class="assurance-muted">Serious-incident reporting is turned off for this workspace.</p>
+    {% elif ai_incident_error %}<p class="assurance-alert">{{ ai_incident_error }}</p>
+    {% elif ai_incident_declarations %}
+    {% if ai_incident_overdue %}<p class="assurance-alert">{{ ai_incident_overdue }} report{{ 's are' if ai_incident_overdue != 1 else ' is' }} past the deadline.</p>{% endif %}
+    <div class="assurance-table" tabindex="0" role="region" aria-label="Declared serious incidents, most urgent first"><table><caption>Declared serious incidents, most urgent first</caption><thead><tr><th scope="col">What happened</th><th scope="col">Country</th><th scope="col">Status</th><th scope="col">Deadline</th></tr></thead><tbody>
+    {% for row in ai_incident_declarations %}<tr data-record="{{ row.id }}"><th scope="row">{{ row.category|humanize }}</th><td>{{ row.member_state }}</td><td>{{ MRA_STATUS.get(row.status, row.status|humanize) }}</td><td>{% if row.overdue %}<span class="badge failed">Overdue</span>{% else %}{{ row.clock_label|replace('d left', ' days left') }}{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+    <p class="assurance-muted">These are records of what people did. Lightwork does not send anything to an authority.</p>
+    {% else %}<p class="assurance-empty">No serious incidents declared.</p>{% endif %}
+    <p><a class="btn" href="/security/governance#serious-incidents">Declare an incident or record a filing</a></p>
+  </section>
+</section>
+
+{% if not gateway_enabled %}
+  <section class="panel" aria-labelledby="gateway-off-title">
+    <h2 id="gateway-off-title">Evidence recording is off</h2>
+    <p>When it is on, Lightwork keeps a tamper-evident record of each AI answer your apps send through it — without storing the prompts or answers themselves. Existing model-risk records remain available below.</p>
+    {{ module_gate('evidence_gateway', 'AI evidence recording', detail='Keep a verifiable record of AI answers your apps send through Lightwork.', can_activate=gateway_admin) }}
+  </section>
+{% else %}
+  {% if gateway_error %}
+  <div class="assurance-alert" role="alert">
+    <strong>{{ gateway_error }}</strong>
+    <p>{{ gateway_error_action }}</p>
+    <p>If you contact support, the support bundle names what failed without including any evidence content.</p>
+  </div>
+  {% endif %}
+  {% if not gateway_error %}
+  <section class="assurance-overview assurance-overview--{{ gateway_view.status.key }}"
+           aria-labelledby="gateway-status-title">
+    <div class="assurance-overview__head">
+      <div>
+        <h2 id="gateway-status-title">{{ gateway_view.status.label }}</h2>
+        <p class="assurance-muted">{{ gateway_view.status.detail }}</p>
+      </div>
+      <span class="assurance-badge">{{ gateway_view.ingestion|humanize }}</span>
+    </div>
+    {% if gateway_view.synthetic %}
+      <p class="assurance-alert" role="status"><strong>Sample data:</strong>
+        this workspace holds sample records for trying things out. Nothing here is
+        real evidence.</p>
+    {% endif %}
+    <div class="assurance-progress" role="progressbar"
+         aria-label="Setup progress"
+         aria-valuenow="{{ gateway_view.done_count }}" aria-valuemin="0"
+         aria-valuemax="{{ gateway_view.total_steps }}">
+      <i style="width:{{ gateway_view.progress_percent }}%"></i>
+    </div>
+    <p class="assurance-muted">{{ gateway_view.done_count }} of
+      {{ gateway_view.total_steps }} setup steps complete
+      {% if gateway_view.last_receipt_issued_at %}
+        · last record {{ gateway_view.last_receipt_issued_at }}
+      {% endif %}
+    </p>
+    <ul class="assurance-checklist">
+      {% for step in gateway_view.progress %}
+      <li{% if step.done %} class="is-done"{% endif %}>
+        <span class="assurance-sr">
+          {{ "Complete:" if step.done else "Incomplete:" }}
+        </span>{{ step.label }}
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="assurance-next">
+      <h3>Next step: {{ gateway_view.next_action.title }}</h3>
+      <p>{{ gateway_view.next_action.detail }}</p>
+      {% if gateway_view.next_action.href %}
+        <a class="btn btn--ghost" href="{{ gateway_view.next_action.href }}">
+          {{ gateway_view.next_action.label }}
+        </a>
+      {% endif %}
+    </div>
+  </section>
+
+  <div class="assurance-stats" aria-label="AI evidence gateway totals">
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.current_policy_count|default(0, true) }}</strong>
+      <span>active rules</span>
+    </div>
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.current_interaction_receipt_count|default(0, true) }}</strong>
+      <span>up-to-date records</span>
+    </div>
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.stale_interaction_receipt_count|default(0, true) }}</strong>
+      <span>out-of-date records</span>
+    </div>
+    <div class="assurance-stat">
+      <strong>{{ gateway_summary.pending_regulatory_impact_count|default(0, true) }}</strong>
+      <span>regulation changes to review</span>
+    </div>
+  </div>
+
+  <div class="assurance-actions">
+    {% if gateway_admin %}
+    <button class="btn" id="gateway-packet-download" type="button">
+      Download audit evidence
+    </button>
+    {% endif %}
+    <a class="btn btn--ghost" href="/benchmarks">Governance benchmarks</a>
+    {% if gateway_admin and gateway_view.demo_seed_allowed %}
+    <button class="btn btn--ghost" id="gateway-demo-seed" type="button">
+      Load sample data
+    </button>
+    <span class="assurance-muted">For trying things out in an empty workspace only.</span>
+    {% elif gateway_admin %}
+    <span class="assurance-muted">Sample data can't be loaded once real records exist in this workspace.</span>
+    {% endif %}
+    {% if gateway_admin %}
+    <span id="gateway-demo-status" role="status" aria-live="polite"></span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="assurance-grid">
+    <section class="panel">
+      <h2>Rules for AI answers</h2>
+      {% if gateway_panel_errors.policies %}
+      <div class="assurance-alert" role="status">
+        {{ gateway_panel_errors.policies }} The other sections still work.
+      </div>
+      {% else %}
+      <div class="assurance-table" tabindex="0" role="region" aria-label="Active rules and whether each is tied to one exact model version"><table>
+        <caption>Active rules and whether each is tied to one exact model version</caption>
+        <thead><tr><th scope="col">Rule</th><th scope="col">Model</th><th scope="col">Linked regulation changes</th></tr></thead>
+        <tbody>{% for row in policies %}<tr data-record="{{ row.policy_id|default(row.id, true) }}">
+          <th scope="row">{{ row.settings.disclosure_text|default("Disclosure rule", true) }}</th>
+          <td>{% if row.model_sha256 %}Tied to one exact model version{% else %}<span class="badge warn">Not tied to a model version</span>{% endif %}</td>
+          <td>{{ row.regulatory_bindings|default([], true)|length or "None" }}</td>
+        </tr>{% else %}<tr><td colspan="3">
+          <div class="mv-empty assurance-empty">
+            <p class="mv-empty__title">No rules yet.</p>
+            <p class="mv-empty__body">Rules decide what your apps must tell people when an AI answer is shown. An administrator sets them up when connecting an app{% if gateway_admin and gateway_view.demo_seed_allowed %}, or you can load sample data above to see how it works{% endif %}.</p>
+          </div>
+        </td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>What's still missing</h2>
+      {% if gateway_panel_errors.summary %}
+      <div class="assurance-alert" role="status">
+        This could not be worked out safely, so no conclusion is shown.
+      </div>
+      {% else %}
+      <p><strong>Frameworks covered:</strong>
+        {{ gateway_summary.framework_sources|default([], true)|map('humanize')|join(", ") or "None yet" }}
+      </p>
+      <ul>
+        {% for gap in gateway_view.gaps %}
+          <li{% if gap.critical %} class="assurance-status-stale"{% endif %}>
+            {{ gap.label }}
+          </li>
+        {% else %}
+          <li>Nothing missing right now.</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>Records of AI answers</h2>
+    <p class="assurance-muted">Each record proves which rule and model were used for an answer. The prompts and answers themselves are not kept here.</p>
+    {% if gateway_panel_errors.receipts %}
+    <div class="assurance-alert" role="status">
+      {{ gateway_panel_errors.receipts }} The other sections still work.
+    </div>
+    {% else %}
+    <div class="assurance-table" tabindex="0" role="region" aria-label="Most recent records"><table>
+      <caption>Most recent records</caption>
+      <thead><tr><th scope="col">When</th><th scope="col">Status</th><th scope="col">Signature</th><th scope="col">Model</th></tr></thead>
+      <tbody>{% for row in receipts %}<tr data-record="{{ row.receipt_id|default(row.id, true) }}">
+        <th scope="row">{{ row.issued_display|default("—", true) }}</th>
+        <td>
+          {% set freshness = row.assurance.status|default("unknown", true) %}
+          <span class="badge {{ 'ok' if freshness == 'current' else ('failed' if freshness == 'stale' else 'idle') }}">{{ MRA_STATUS.get(freshness, freshness|humanize) }}</span>
+          {% if row.assurance.reasons %}
+            <br><span class="assurance-muted">{{ row.assurance.reasons|map('humanize')|join("; ") }}</span>
+          {% endif %}
+        </td>
+        <td>{{ "Checked" if row.signature_valid else "Could not be checked" }}</td>
+        <td>{{ "Tied to one exact model version" if row.model_sha256 else "Not tied to a model version" }}</td>
+      </tr>{% else %}<tr><td colspan="4">
+        <div class="mv-empty assurance-empty">
+          <p class="mv-empty__title">No records yet.</p>
+          <p class="mv-empty__body">Records appear here once an app connected to Lightwork sends its first AI answer through the evidence gateway.</p>
+        </div>
+      </td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Regulation changes to review</h2>
+    {% if gateway_panel_errors.impacts %}
+    <div class="assurance-alert" role="status">
+      {{ gateway_panel_errors.impacts }} The other sections still work.
+    </div>
+    {% else %}
+    <p class="assurance-muted">
+      Changes that need a decision come first. Showing
+      {{ impact_page.count|default(0, true) }} of
+      {{ impact_page.snapshot_total|default(0, true) }}.
+    </p>
+    <div class="assurance-table" tabindex="0" role="region" aria-label="Regulation changes that may affect your AI systems, waiting for a person to decide"><table>
+      <caption>Regulation changes that may affect your AI systems, waiting for a person to decide</caption>
+      <thead><tr><th scope="col">Affects</th><th scope="col">Status</th><th scope="col">Controls</th><th scope="col">Source</th><th scope="col">Actions</th></tr></thead>
+      <tbody>{% for row in regulatory_impacts %}<tr data-record="{{ row.impact_id|default(row.id, true) }}">
+        <th scope="row">
+          {% set affected = row.affected_asset_ids|default([], true) %}
+          {% for asset in affected %}{{ mra_name(asset) }}{% if not loop.last %}, {% endif %}{% else %}No AI system named{% endfor %}
+          <br><span class="assurance-muted">{{ row.affected_policy_ids|default([], true)|length }} rule(s)</span>
+        </th>
+        <td>{{ MRA_STATUS.get(row.status|default("pending_review", true), row.status|humanize) }}</td>
+        <td>{{ row.control_ids|default([], true)|join(", ") or "None linked" }}</td>
+        <td><ul class="assurance-citations">
+          {% for citation in row.citations|default([], true) %}
+            <li><a href="{{ citation.record_url|default(citation.url, true) }}"
+                   target="_blank" rel="noopener noreferrer">
+              {{ citation.official_citation|default(citation.source_name, true) }}
+            </a></li>
+          {% else %}
+            <li>No source recorded.</li>
+          {% endfor %}
+        </ul></td>
+        <td>{% if gateway_admin and row.status|default("pending_review", true) == "pending_review" %}
+          <button class="btn btn--ghost" type="button" data-impact-review="{{ row.impact_id|default(row.id, true) }}" data-impact-decision="accepted" data-revision="{{ row.revision|default(0, true) }}">Accept</button>
+          <button class="btn btn--ghost" type="button" data-impact-review="{{ row.impact_id|default(row.id, true) }}" data-impact-decision="dismissed" data-revision="{{ row.revision|default(0, true) }}">Dismiss</button>
+        {% else %}<span class="assurance-muted">—</span>{% endif %}</td>
+      </tr>{% else %}<tr><td colspan="5">
+        <div class="mv-empty assurance-empty">
+          <p class="mv-empty__title">No regulation changes to review.</p>
+          <p class="mv-empty__body">This does not mean no regulation applies.</p>
+        </div>
+      </td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  <p id="impact-review-status" role="status" aria-live="polite"></p>
+  </section>
+{% endif %}
+
+<section class="panel">
+  <h2>Model risk &amp; AI assurance officer</h2>
+  {% if not model_risk_enabled %}
+    {{ module_gate('model_risk_assurance', 'Model risk tracking',
+                   detail='Tracks your AI systems, their test results and current findings here.',
+                   can_activate=gateway_admin) }}
+  {% else %}
+    {% if model_risk_errors %}
+    <div class="assurance-alert" role="status">
+      Some model-risk records could not be loaded. What could be loaded is shown; an empty list here does not mean everything was checked.
+      <ul>
+        {% for message in model_risk_errors.values() %}
+        <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    <div class="assurance-stats" aria-label="Model risk program totals">
+      <div class="assurance-stat"><strong>{{ model_risk_totals.assets }}</strong><span>AI systems</span></div>
+      <div class="assurance-stat"><strong>{{ model_risk_totals.evidence }}</strong><span>test results</span></div>
+      <div class="assurance-stat"><strong>{{ model_risk_totals.findings }}</strong><span>current findings</span></div>
+    </div>
+    <div class="assurance-table" tabindex="0" role="region" aria-label="Current findings that need someone&#x27;s attention"><table>
+      <caption>Current findings that need someone's attention</caption>
+      <thead><tr><th scope="col">Finding</th><th scope="col">Severity</th><th scope="col">AI system</th><th scope="col">Sources</th></tr></thead>
+      <tbody>{% for row in findings %}<tr>
+        <th scope="row">{{ row.summary }}<br><span class="assurance-muted">{{ row.finding_type|humanize }}</span></th>
+        <td><span class="badge {{ 'failed' if row.severity in ('critical', 'high') else ('warn' if row.severity == 'medium' else 'idle') }}">{{ row.severity|humanize }}</span></td><td>{{ mra_name(row.asset_id) }}</td>
+        <td>{{ row.citations|length }}</td>
+      </tr>{% else %}<tr><td colspan="4">
+        <div class="mv-empty assurance-empty">
+          <p class="mv-empty__title">No current findings.</p>
+          <p class="mv-empty__body">Findings appear once AI systems and their test results are recorded. An empty list is not proof that everything was checked.</p>
+          <a class="btn btn--ghost" href="#ai-inventory-panel">See discovered AI systems</a>
+        </div>
+      </td></tr>{% endfor %}</tbody>
+    </table></div>
+  {% endif %}
+</section>
+
+<section class="panel" id="ai-inventory-panel"
+         aria-labelledby="ai-inventory-title">
+  <h2 id="ai-inventory-title">AI systems found in your cloud and software accounts</h2>
+  <p class="assurance-muted">Connected accounts are checked for AI models and agents. A check that fails or only partly finishes never marks a system as gone.</p>
+  {% if not ai_inventory_enabled %}
+    {{ module_gate('ai_inventory', 'AI system discovery',
+                   detail='Looks for AI models and agents in your connected cloud and software accounts. Nothing is checked while it is off.',
+                   can_activate=gateway_admin) }}
+  {% elif ai_inventory_error %}
+    <div class="assurance-alert" role="status">{{ ai_inventory_error }}</div>
+  {% else %}
+    <div class="assurance-stats" aria-label="External AI inventory totals">
+      <div class="assurance-stat"><strong>{{ ai_inventory_assets|length }}</strong><span>AI systems found</span></div>
+      <div class="assurance-stat"><strong>{{ ai_inventory_connectors|length }}</strong><span>connected accounts</span></div>
+      <div class="assurance-stat"><strong>{{ ai_inventory_runs|length }}</strong><span>recent checks</span></div>
+      <div class="assurance-stat"><strong>{{ ai_inventory_assets|selectattr("discovery_status", "equalto", "missing")|list|length }}</strong><span>no longer seen</span></div>
+    </div>
+
+    <h3>Connected accounts</h3>
+    <div class="assurance-table" tabindex="0" role="region" aria-label="Latest check of each connected account"><table>
+      <caption>Latest check of each connected account</caption>
+      <thead><tr><th scope="col">Account</th><th scope="col">Status</th><th scope="col">Last full check</th><th scope="col">AI systems</th></tr></thead>
+      <tbody>{% for connector in ai_inventory_connectors %}
+        {% set connector_status = ai_inventory_statuses.get(connector) %}
+        <tr>
+          <th scope="row">{{ connector|humanize }}</th>
+          {% if connector_status %}
+          <td>{{ MRA_STATUS.get(connector_status.state|default("unknown", true), connector_status.state|humanize) }}
+            {% if connector_status.last_error_type %}<br><span class="assurance-status-stale">The last check failed.</span>{% endif %}</td>
+          <td data-run="{{ connector_status.last_completed_id }}">{% if connector_status.last_completed_at %}{{ connector_status.last_completed_at|datetime }}{% else %}Never finished{% endif %}</td>
+          <td>{{ connector_status.last_asset_count|default(0, true) }}</td>
+          {% else %}
+          <td>Not checked yet</td><td>Never finished</td><td>0</td>
+          {% endif %}
+        </tr>
+      {% else %}<tr><td colspan="4">No accounts are connected yet. Connect a cloud account to find its AI systems.</td></tr>{% endfor %}</tbody>
+    </table></div>
+
+    {% if gateway_admin and ai_inventory_connectors %}
+    <div aria-labelledby="ai-inventory-admin-title">
+      <h3 id="ai-inventory-admin-title">Check an account now</h3>
+      <p class="assurance-muted">Each button runs one check of that account in this workspace. Account passwords and keys are never entered or shown here.</p>
+      <div class="assurance-actions">
+        {% for connector in ai_inventory_connectors %}
+        <button class="btn btn--ghost" type="button"
+                data-inventory-connector="{{ connector }}">
+          Check {{ connector|humanize }}
+        </button>
+        {% endfor %}
+        <span id="ai-inventory-action-status" role="status"
+              aria-live="polite"></span>
+      </div>
+    </div>
+    {% endif %}
+
+    <h3>AI systems found</h3>
+    <div class="assurance-table" tabindex="0" role="region" aria-label="AI systems seen in your connected accounts; up to 500 are shown"><table>
+      <caption>AI systems seen in your connected accounts; up to 500 are shown</caption>
+      <thead><tr><th scope="col">AI system</th><th scope="col">Where / model</th><th scope="col">Owner</th><th scope="col">Version tracking</th><th scope="col">Status</th><th scope="col">Last seen</th></tr></thead>
+      <tbody>{% for row in ai_inventory_assets %}<tr data-asset-id="{{ row.asset_id }}">
+        <th scope="row">{{ row.governed_display_name|default(row.display_name, true) }}<br>
+          <span class="assurance-muted">{{ row.asset_type|humanize }}</span></th>
+        <td>{{ row.platform|default("Unknown", true) }}<br>
+          {{ row.model|default("Unknown model", true) }}
+          {% if row.source_url is string and row.source_url.startswith("https://") %}<br><a href="{{ row.source_url }}" target="_blank"
+             rel="noopener noreferrer">Open in the provider</a>{% endif %}</td>
+        <td>{{ row.owner|default("Nobody assigned", true) }}</td>
+        <td>{% set strength = row.binding_strength|default("unknown", true) %}{{ {'immutable_provider_revision': 'Pinned to one provider version', 'mutable_alias': 'Follows a name that can change', 'unknown': 'Unknown'}.get(strength, strength|humanize) }}</td>
+        <td>{{ MRA_STATUS.get(row.discovery_status|default(row.status, true), (row.discovery_status|default(row.status, true))|humanize) }}
+          {% if row.missing_count %}<br><span class="assurance-muted">missing from {{ row.missing_count }} full check(s)</span>{% endif %}</td>
+        <td>{% if row.provider_last_seen_at %}{{ row.provider_last_seen_at|datetime }}{% else %}Unknown{% endif %}</td>
+      </tr>{% else %}<tr><td colspan="6">
+        <div class="mv-empty assurance-empty">
+          <p class="mv-empty__title">No AI systems found yet.</p>
+          <p class="mv-empty__body">Run a full check of a connected account before reading an empty list as "nothing there".</p>
+        </div>
+      </td></tr>{% endfor %}</tbody>
+    </table></div>
+
+    <details>
+      <summary>Recent checks ({{ ai_inventory_runs|length }})</summary>
+      <div class="assurance-table" tabindex="0" role="region" aria-label="Full, partial and failed checks; up to 50 are shown"><table>
+        <caption>Full, partial and failed checks; up to 50 are shown</caption>
+        <thead><tr><th scope="col">Started</th><th scope="col">Account</th><th scope="col">Result</th><th scope="col">AI systems found</th></tr></thead>
+        <tbody>{% for row in ai_inventory_runs %}<tr data-run="{{ row.id }}">
+          <th scope="row">{% if row.started_at %}{{ row.started_at|datetime }}{% else %}Unknown{% endif %}</th>
+          <td>{{ row.connector|humanize }}</td>
+          <td>{{ MRA_STATUS.get(row.status, row.status|humanize) }}{% if row.error_type %}<br><span class="assurance-status-stale">It failed.</span>{% endif %}</td>
+          <td>{{ row.asset_count|default(0, true) }}</td>
+        </tr>{% else %}<tr><td colspan="4">No checks yet. Each search of a connected account appears here.</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+  {% endif %}
+</section>
+
+<section class="panel" id="policy-packs-panel"
+         aria-labelledby="policy-packs-title">
+  <h2 id="policy-packs-title">Policy packs</h2>
+  <p class="assurance-muted">Ready-made sets of controls, each with its legal source, that you can check your evidence against. They help human review; they are not a
+    compliance certification, a legal classification or a substitute for legal advice.</p>
+  {% if not policy_packs_enabled %}
+    {{ module_gate('policy_packs', 'Policy packs', detail='Nothing is used until an administrator prepares and turns on a pack.', can_activate=gateway_admin) }}
+  {% else %}
+    {% if policy_pack_error %}
+    <div class="assurance-alert" role="status">{{ policy_pack_error }}
+      What could be loaded is shown below. Changes are paused until everything can be read safely.</div>
+    {% endif %}
+    <div class="assurance-stats" aria-label="Policy pack totals">
+      <div class="assurance-stat"><strong>{{ policy_pack_bundled|length }}</strong><span>packs available</span></div>
+      <div class="assurance-stat"><strong>{{ policy_pack_catalog.count|default(0, true) }}</strong><span>prepared</span></div>
+      <div class="assurance-stat"><strong>{{ policy_pack_channels.count|default(0, true) }}</strong><span>turned on</span></div>
+      <div class="assurance-stat"><strong>{{ policy_pack_subscriptions.count|default(0, true) }}</strong><span>used by this workspace</span></div>
+    </div>
+
+    <h3>Prepared packs</h3>
+    <div class="assurance-table" tabindex="0" role="region" aria-label="Packs prepared for use across all workspaces"><table>
+      <caption>Packs prepared for use across all workspaces</caption>
+      <thead><tr><th scope="col">Pack</th><th scope="col">Framework</th><th scope="col">Coverage</th><th scope="col">Source</th></tr></thead>
+      <tbody>{% for row in policy_pack_catalog["items"] %}<tr data-record="{{ row.id }}">
+        <th scope="row">{{ row.pack_id|humanize }}<br><span class="assurance-muted">version {{ row.pack_version }}</span></th>
+        <td>{{ row.framework.name|default("Unknown", true) }}<br>
+          <span class="assurance-muted">as of {{ row.framework.as_of|default("unknown", true) }}</span></td>
+        <td>{{ row.coverage|humanize }}<br>{{ row.control_count }} control(s)</td>
+        <td>{{ row.provenance_kind|humanize }}</td>
+      </tr>{% else %}<tr><td colspan="4">No packs are prepared yet. An administrator can prepare one.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if policy_pack_catalog.truncated %}<p class="assurance-muted">Only the first page of prepared packs is shown.</p>{% endif %}
+
+    <div class="assurance-grid">
+      <div class="assurance-table" tabindex="0" role="region" aria-label="Packs turned on for all workspaces"><table>
+        <caption>Packs turned on for all workspaces</caption>
+        <thead><tr><th scope="col">Pack</th><th scope="col">Version in use</th><th scope="col">Controls</th></tr></thead>
+        <tbody>{% for row in policy_pack_channels["items"] %}<tr>
+          <th scope="row">{{ row.pack_id|humanize }}</th><td>{{ row.pack_version }}</td>
+          <td>{{ row.control_count }}</td>
+        </tr>{% else %}<tr><td colspan="3">No packs are turned on.</td></tr>{% endfor %}</tbody>
+      </table></div>
+      <div class="assurance-table" tabindex="0" role="region" aria-label="Packs this workspace uses, and its evidence for them"><table>
+        <caption>Packs this workspace uses, and its evidence for them</caption>
+        <thead><tr><th scope="col">Pack</th><th scope="col">Version</th><th scope="col">Evidence</th></tr></thead>
+        <tbody>{% for row in policy_pack_subscriptions["items"] %}<tr>
+          <th scope="row">{{ row.pack_id|humanize }}</th>
+          <td>{{ row.pack_version }}{% if row.needs_refresh %}<br><span class="assurance-status-stale">Version {{ row.active_pack_version }} is available</span>{% else %}<br><span class="assurance-status-current">Up to date</span>{% endif %}</td>
+          <td>{{ row.current_count }} up to date, {{ row.stale_count }} out of date, {{ row.missing_count }} missing</td>
+        </tr>{% else %}<tr><td colspan="3">This workspace does not use any packs yet.</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </div>
+
+    {% if gateway_admin and not policy_pack_error
+          and not policy_pack_catalog.truncated
+          and not policy_pack_channels.truncated
+          and not policy_pack_subscriptions.truncated %}
+    <div aria-labelledby="policy-pack-admin-title">
+      <h3 id="policy-pack-admin-title">Set up a pack</h3>
+      <p class="assurance-muted">Three steps: prepare a pack (checks it, turns nothing on), turn it on for all workspaces, then use it in this workspace.</p>
+
+      <h4>1. Prepare a pack</h4>
+      <div class="assurance-actions">
+        {% for pack_id, manifest in policy_pack_bundled.items() %}
+        <button class="btn btn--ghost" type="button" data-policy-action="stage"
+                data-policy-id="{{ pack_id }}">
+          Prepare {{ manifest.framework.name|default(pack_id, true) }}
+          {{ manifest.version }}
+        </button>
+        {% else %}<span>No packs are available.</span>{% endfor %}
+      </div>
+
+      <h4>2. Turn a prepared pack on for all workspaces</h4>
+      <div class="assurance-actions">
+        {% for row in policy_pack_catalog["items"] %}
+          {% set active_channel = namespace(entry_id="", revision=0) %}
+          {% for channel in policy_pack_channels["items"] %}
+            {% if channel.pack_id == row.pack_id %}
+              {% set active_channel.entry_id = channel.catalog_entry_id %}
+              {% set active_channel.revision = channel.revision %}
+            {% endif %}
+          {% endfor %}
+          {% if active_channel.entry_id == row.id %}
+          <span>{{ row.pack_id|humanize }} {{ row.pack_version }} is on.</span>
+          {% else %}
+          <button class="btn btn--ghost" type="button"
+                  data-policy-action="activate" data-policy-id="{{ row.id }}"
+                  data-policy-revision="{{ active_channel.revision }}">
+            Turn on {{ row.pack_id|humanize }} {{ row.pack_version }}
+          </button>
+          {% endif %}
+        {% else %}<span>Prepare a pack first.</span>{% endfor %}
+      </div>
+
+      <h4>3. Use it in this workspace, or move to the newest version</h4>
+      <div class="assurance-actions">
+        {% for channel in policy_pack_channels["items"] %}
+          {% set tenant_subscription = namespace(found=false) %}
+          {% for subscription in policy_pack_subscriptions["items"] %}
+            {% if subscription.pack_id == channel.pack_id %}
+              {% set tenant_subscription.found = true %}
+            {% endif %}
+          {% endfor %}
+          {% if not tenant_subscription.found %}
+          <button class="btn btn--ghost" type="button"
+                  data-policy-action="subscribe" data-policy-id="{{ channel.pack_id }}">
+            Use {{ channel.pack_id|humanize }} {{ channel.pack_version }}
+          </button>
+          {% endif %}
+        {% endfor %}
+        {% for row in policy_pack_subscriptions["items"] %}
+          {% if row.needs_refresh %}
+          <button class="btn btn--ghost" type="button"
+                  data-policy-action="refresh" data-policy-id="{{ row.id }}"
+                  data-policy-revision="{{ row.revision }}">
+            Move {{ row.pack_id|humanize }} to version {{ row.active_pack_version }}
+          </button>
+          {% endif %}
+        {% endfor %}
+        <span id="policy-pack-action-status" role="status"
+              aria-live="polite"></span>
+      </div>
+    </div>
+    {% elif gateway_admin and (policy_pack_catalog.truncated
+          or policy_pack_channels.truncated
+          or policy_pack_subscriptions.truncated) %}
+    <p class="assurance-alert" role="status">Changes are paused because one of the lists is too long to show in full here. Contact support before making changes.</p>
+    {% endif %}
+  {% endif %}
+</section>
+
+<div class="assurance-grid">
+  <section class="panel">
+    <h2>Overall AI risk</h2>
+    <p class="assurance-muted">Adds up current findings across your AI systems and their parts. Accepting a risk can lower the score for non-critical findings; critical findings always count.</p>
+    {% if not portfolio_enabled %}
+      {{ module_gate('portfolio_risk', 'Overall AI risk scoring', detail='Add up current findings across your AI systems and their parts.', can_activate=gateway_admin) }}
+    {% elif portfolio_error %}
+      <div class="assurance-alert" role="status">{{ portfolio_error }}</div>
+    {% else %}
+      <div class="assurance-stats" aria-label="AI portfolio risk totals">
+        <div class="assurance-stat"><strong>{{ portfolio_report.portfolio_score|default(0, true) }}</strong><span>score after safeguards</span></div>
+        <div class="assurance-stat"><strong>{{ portfolio_report.portfolio_inherent_score|default(0, true) }}</strong><span>score before safeguards</span></div>
+        <div class="assurance-stat"><strong>{{ portfolio_report.risk_load|default(0, true) }}</strong><span>total risk points</span></div>
+        <div class="assurance-stat"><strong>{{ portfolio_snapshots|length }}</strong><span>quarterly reports saved</span></div>
+      </div>
+      <p><strong>Current quarter:</strong> {{ portfolio_report.period_id|default("unknown", true) }}</p>
+      <div class="assurance-table" tabindex="0" role="region" aria-label="What adds to the score"><table>
+        <caption>What adds to the score</caption>
+        <thead><tr><th scope="col">AI system</th><th scope="col">Severity</th><th scope="col">Points</th></tr></thead>
+        <tbody>{% for row in portfolio_report.contributors|default([], true) %}<tr data-record="{{ row.finding_id }}">
+          <th scope="row">{{ mra_name(row.asset_id) }}</th>
+          <td>{{ row.severity|humanize }}</td>
+          <td>{{ row.residual_points }}{% if row.accepted %} (risk accepted){% endif %}</td>
+        </tr>{% else %}<tr><td colspan="3">Nothing adds to the score right now. That is not proof every system has been checked.</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if gateway_admin %}
+      <div class="assurance-actions">
+        <button class="btn" id="portfolio-snapshot-refresh" type="button">
+          Save this quarter's report
+        </button>
+        <span id="portfolio-snapshot-status" role="status" aria-live="polite"></span>
+      </div>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Attack testing (red team)</h2>
+    <p class="assurance-muted">A registered testing agent sends made-up attack prompts to an AI system. Answers are scored and then thrown away; only the scores are kept.</p>
+    {% if not red_team_enabled %}
+      <p class="assurance-muted">Attack testing is turned off. It also needs external agents and model risk tracking.</p>
+      {% if gateway_admin %}<p><a class="btn btn--ghost" href="/settings/all?id=red_team_assurance.enable">Open attack-testing settings</a></p>
+      {% else %}<p class="assurance-muted">Ask an administrator to turn on attack testing in All settings.</p>{% endif %}
+    {% elif red_team_error %}
+      <div class="assurance-alert" role="status">{{ red_team_error }}</div>
+    {% else %}
+      <div class="assurance-table" tabindex="0" role="region" aria-label="Recent test runs"><table>
+        <caption>Recent test runs</caption>
+        <thead><tr><th scope="col">AI system tested</th><th scope="col">Status</th><th scope="col">Progress</th><th scope="col">Grade</th>
+          {% if gateway_admin %}<th scope="col">Actions</th>{% endif %}</tr></thead>
+        <tbody>{% for row in red_team_campaigns %}<tr data-record="{{ row.id }}">
+          <th scope="row">{{ mra_name(row.target_binding.asset_id) }}</th>
+          <td>{{ MRA_STATUS.get(row.status, row.status|humanize) }}</td>
+          <td>{{ row.submitted_case_count }} of {{ row.case_count }} tests</td>
+          <td>{{ row.summary.grade|default("Not graded yet", true) }}<br>
+            <span class="assurance-muted">Evidence: {{ (row.summary.evidence_status|default("not_recorded", true))|humanize }}</span></td>
+          {% if gateway_admin %}<td>
+            {% if row.status == "running" %}
+            <button class="btn" type="button" data-red-team-action="finalize"
+                    data-campaign-id="{{ row.id }}" data-revision="{{ row.revision }}">
+              Finish with the results so far
+            </button>
+            {% if row.submitted_case_count < row.case_count %}
+            <button class="btn" type="button" data-red-team-action="force-finalize"
+                    data-campaign-id="{{ row.id }}" data-revision="{{ row.revision }}">
+              Finish now, marking missing tests as unknown
+            </button>
+            {% endif %}
+            <button class="btn" type="button" data-red-team-action="cancel"
+                    data-campaign-id="{{ row.id }}" data-revision="{{ row.revision }}">
+              Stop new work
+            </button>
+            {% else %}<span class="assurance-muted">—</span>{% endif %}
+          </td>{% endif %}
+        </tr>{% else %}<tr><td colspan="{{ 5 if gateway_admin else 4 }}">No test runs yet.</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% if gateway_admin %}<p id="red-team-action-status" role="status" aria-live="polite"></p>{% endif %}
+      {% if gateway_admin %}
+      <form id="red-team-create" class="assurance-form">
+        <label>AI system to test
+          <select class="select" name="asset_id" required>
+            <option value="">Choose a model, agent or system</option>
+            {% for row in model_risk_assets %}
+              {% if row.identity.asset_type in ["model", "agent", "system", "component"] %}
+              <option value="{{ row.asset_id }}">{{ row.display_name }} ({{ row.identity.asset_type|humanize }})</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </label>
+        <label>Testing agent
+          <select class="select" name="external_agent_id" required>
+            <option value="">Choose a registered agent</option>
+            {% for row in red_team_agents %}
+              <option value="{{ row.id }}">{{ row.display_name|default(row.id, true) }} ({{ row.platform_label }})</option>
+            {% endfor %}
+          </select>
+        </label>
+        <input type="hidden" data-auto-reference name="idempotency_key">
+        <label class="assurance-form__wide">
+          <input type="checkbox" name="safe_target_environment" required>
+          I confirm the AI system being tested is a separate test copy, not the live one. Stopping a run stops new tests only; tests already sent still finish.
+        </label>
+        <div class="assurance-form__wide assurance-actions">
+          <button class="btn btn--primary" type="submit">Start a test run</button>
+          <span id="red-team-create-status" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+      {% endif %}
+      {% include "_red_team_schedules.html" %}
+    {% endif %}
+  </section>
+</div>
+
+{% include "_governance_operations.html" %}
+{% include "_ops_ai_governance.html" %}
+
+<p>{{ back_link('/security', 'Security & GRC') }}</p>
+
+<script nonce="{{ csp_script_nonce }}">
+// Shared helpers for this page: one plain sentence per failure, never a code.
+window.mraPlain = (failure, action) => (typeof window.mvErrorText === "function"
+  ? window.mvErrorText(failure, action)
+  : (failure instanceof TypeError
+    ? "Could not reach the server — check your connection and try again."
+    : "Could not " + action + ". Try again."));
+// A refusal's body is never read: release it so the request ends instead of
+// staying open (the page never went quiet).
+window.mraFailure = response => {
+  try { if (response.body) response.body.cancel().catch(() => {}); } catch (_) { /* already closed */ }
+  const error = new Error("request failed"); error.status = response.status; return error;
+};
+</script>
+{% if gateway_enabled %}
+<script nonce="{{ csp_script_nonce }}">
+(() => {
+  const button = document.getElementById("gateway-demo-seed");
+  const packetButton = document.getElementById("gateway-packet-download");
+  const status = document.getElementById("gateway-demo-status");
+  let packetRequestKey = null;
+  if (packetButton) packetButton.addEventListener("click", async () => {
+    packetButton.disabled = true;
+    packetButton.setAttribute("aria-busy", "true");
+    if (status) status.textContent = "Preparing the audit evidence…";
+    try {
+      packetRequestKey = packetRequestKey || (
+        window.crypto && window.crypto.randomUUID
+          ? window.crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      );
+      const response = await fetch(
+        "/api/v1/security/assurance/gateway/assurance-packet",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {"Idempotency-Key": packetRequestKey}
+        }
+      );
+      if (!response.ok) throw window.mraFailure(response);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "ai-audit-evidence.json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      if (status) status.textContent = "Audit evidence downloaded.";
+      packetRequestKey = null;
+    } catch (error) {
+      if (status) status.textContent = window.mraPlain(error, "download the audit evidence");
+    } finally {
+      packetButton.disabled = false;
+      packetButton.removeAttribute("aria-busy");
+    }
+  });
+  if (!button || !status) return;
+  button.addEventListener("click", async () => {
+    if (!(await mvConfirm("Load sample records into this workspace? They are clearly marked as samples.", {okText: "Load sample data"}))) return;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    status.textContent = "Loading sample data…";
+    try {
+      const response = await fetch(
+        "/api/v1/security/assurance/gateway/demo-seed",
+        {method: "POST", credentials: "same-origin"}
+      );
+      if (!response.ok) throw window.mraFailure(response);
+      status.textContent = "Sample data loaded. Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      status.textContent = window.mraPlain(error, "load the sample data");
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  });
+})();
+</script>
+<script nonce="{{ csp_script_nonce }}">
+(() => {
+  const status = document.getElementById("impact-review-status");
+  document.querySelectorAll("[data-impact-review]").forEach(button => button.addEventListener("click", async () => {
+    const accepted = button.dataset.impactDecision === "accepted";
+    const values = await mvForm(accepted ? "Accept this regulation change" : "Dismiss this regulation change", [
+      {key: "rationale", label: accepted ? "What will you do about it?" : "Why doesn't it apply?", type: "text", required: true},
+    ]);
+    if (!values || !String(values.rationale || "").trim()) return;
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/v1/security/assurance/gateway/regulatory-impacts/" + encodeURIComponent(button.dataset.impactReview) + "/review", {
+        method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({decision: accepted ? "accepted" : "dismissed", rationale: String(values.rationale).trim(), expected_revision: Number(button.dataset.revision || "0")}),
+      });
+      if (!response.ok) throw window.mraFailure(response);
+      if (status) status.textContent = (accepted ? "Accepted" : "Dismissed") + ". Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      if (status) status.textContent = window.mraPlain(error, accepted ? "accept it" : "dismiss it");
+      button.disabled = false;
+    }
+  }));
+})();
+</script>
+{% endif %}
+{% if ai_inventory_enabled and gateway_admin and not ai_inventory_error
+      and ai_inventory_connectors %}
+<script nonce="{{ csp_script_nonce }}">
+(() => {
+  const panel = document.getElementById("ai-inventory-panel");
+  const status = document.getElementById("ai-inventory-action-status");
+  if (!panel || !status) return;
+  const buttons = Array.from(
+    panel.querySelectorAll("button[data-inventory-connector]")
+  ).slice(0, 32);
+  buttons.forEach(button => button.addEventListener("click", async () => {
+    const connector = button.dataset.inventoryConnector || "";
+    if (!/^[a-z0-9_]{1,64}$/.test(connector)) {
+      status.textContent = "This account can't be checked from here. Refresh the page.";
+      return;
+    }
+    buttons.forEach(item => { item.disabled = true; });
+    button.setAttribute("aria-busy", "true");
+    status.textContent = "Checking the account…";
+    try {
+      const response = await fetch(
+        "/api/v1/security/assurance/ai-inventory/connectors/" +
+          encodeURIComponent(connector) + "/sync",
+        {method: "POST", credentials: "same-origin"}
+      );
+      if (!response.ok) throw window.mraFailure(response);
+      status.textContent = "Check finished. Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      status.textContent = window.mraPlain(error, "check the account");
+      buttons.forEach(item => { item.disabled = false; });
+      button.removeAttribute("aria-busy");
+    }
+  }));
+})();
+</script>
+{% endif %}
+{% if policy_packs_enabled and gateway_admin and not policy_pack_error
+      and not policy_pack_catalog.truncated
+      and not policy_pack_channels.truncated
+      and not policy_pack_subscriptions.truncated %}
+<script nonce="{{ csp_script_nonce }}">
+(() => {
+  const panel = document.getElementById("policy-packs-panel");
+  const status = document.getElementById("policy-pack-action-status");
+  if (!panel || !status) return;
+  const buttons = Array.from(
+    panel.querySelectorAll("button[data-policy-action]")
+  ).slice(0, 320);
+  let actionInFlight = false;
+  const DONE = {stage: "Pack prepared.", activate: "Pack turned on.", subscribe: "This workspace now uses the pack.", refresh: "Moved to the newest version."};
+  const WHAT = {stage: "prepare the pack", activate: "turn the pack on", subscribe: "use the pack", refresh: "move to the newest version"};
+  buttons.forEach(button => button.addEventListener("click", async () => {
+    if (actionInFlight) return;
+    const action = button.dataset.policyAction || "";
+    const identity = button.dataset.policyId || "";
+    const revision = Number(button.dataset.policyRevision || "0");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(identity) || !Number.isSafeInteger(revision) || revision < 0) {
+      status.textContent = "This pack changed. Refresh the page and try again.";
+      return;
+    }
+    const encoded = encodeURIComponent(identity);
+    let endpoint = "";
+    let options = {method: "POST", credentials: "same-origin"};
+    if (action === "stage") {
+      endpoint = "/api/v1/security/assurance/policy-packs/bundled/" + encoded + "/stage";
+    } else if (action === "activate") {
+      endpoint = "/api/v1/security/assurance/policy-packs/catalog/" + encoded + "/activate";
+      options = {
+        ...options,
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({expected_revision: revision})
+      };
+    } else if (action === "subscribe") {
+      endpoint = "/api/v1/security/assurance/policy-packs/" + encoded + "/subscribe";
+    } else if (action === "refresh") {
+      endpoint = "/api/v1/security/assurance/policy-packs/subscriptions/" + encoded + "/refresh";
+      options = {
+        ...options,
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({expected_revision: revision})
+      };
+    } else {
+      status.textContent = "That action is not available. Refresh the page to see the latest.";
+      return;
+    }
+    actionInFlight = true;
+    if (action === "activate") {
+      const target = button.textContent.trim().replace(/^Turn on\s+/, "");
+      if (!(await mvConfirm(
+        `Turn on policy pack “${target}” for all workspaces? Every workspace that uses this pack may move to this version.`,
+        {okText: "Turn on for all workspaces"}
+      ))) {
+        actionInFlight = false;
+        return;
+      }
+    }
+    buttons.forEach(item => { item.disabled = true; });
+    button.setAttribute("aria-busy", "true");
+    status.textContent = "Working…";
+    try {
+      const response = await fetch(endpoint, options);
+      if (!response.ok) throw window.mraFailure(response);
+      status.textContent = DONE[action] + " Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      status.textContent = window.mraPlain(error, WHAT[action]);
+      actionInFlight = false;
+      buttons.forEach(item => { item.disabled = false; });
+      button.removeAttribute("aria-busy");
+    }
+  }));
+})();
+</script>
+{% endif %}
+<script nonce="{{ csp_script_nonce }}">
+(() => {
+  const snapshotButton = document.getElementById("portfolio-snapshot-refresh");
+  const snapshotStatus = document.getElementById("portfolio-snapshot-status");
+  if (snapshotButton) snapshotButton.addEventListener("click", async () => {
+    if (snapshotButton.dataset.inFlight === "true") return;
+    snapshotButton.dataset.inFlight = "true";
+    const period = {{ portfolio_report.period_id|default("", true)|tojson }};
+    if (!(await mvConfirm(
+      `Save the overall AI risk report for ${period || "this quarter"}? If one was saved earlier this quarter, it is replaced by a new version and the old one is kept in the history.`,
+      {okText: "Save report"}
+    ))) {
+      delete snapshotButton.dataset.inFlight;
+      return;
+    }
+    snapshotButton.disabled = true;
+    snapshotButton.setAttribute("aria-busy", "true");
+    if (snapshotStatus) snapshotStatus.textContent = "Saving…";
+    try {
+      const listResponse = await fetch(
+        "/api/v1/security/assurance/portfolio-risk/snapshots",
+        {credentials: "same-origin"}
+      );
+      if (!listResponse.ok) throw window.mraFailure(listResponse);
+      const listing = await listResponse.json().catch(() => ({}));
+      const current = (listing.snapshots || []).find(
+        item => item.period_id === period
+      );
+      const response = await fetch(
+        "/api/v1/security/assurance/portfolio-risk/snapshots",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            expected_revision: current ? current.revision : 0,
+            period_id: period || null
+          })
+        }
+      );
+      if (!response.ok) throw window.mraFailure(response);
+      if (snapshotStatus) snapshotStatus.textContent = "Report saved. Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      if (snapshotStatus) snapshotStatus.textContent = window.mraPlain(error, "save the report");
+      delete snapshotButton.dataset.inFlight;
+      snapshotButton.removeAttribute("aria-busy");
+      snapshotButton.disabled = false;
+    }
+  });
+
+  const campaignForm = document.getElementById("red-team-create");
+  const campaignStatus = document.getElementById("red-team-create-status");
+  const actionStatus = document.getElementById("red-team-action-status");
+  const actionButtons = Array.from(
+    document.querySelectorAll("[data-red-team-action]")
+  );
+  actionButtons.forEach(button => button.addEventListener("click", async () => {
+    const action = button.dataset.redTeamAction || "";
+    const campaignId = button.dataset.campaignId || "";
+    const revision = Number(button.dataset.revision || "0");
+    if (!/^RTC-[0-9a-f]{24}$/.test(campaignId) || !Number.isInteger(revision) || revision < 1) {
+      if (actionStatus) actionStatus.textContent = "This test run changed. Refresh the page and try again.";
+      return;
+    }
+    let endpoint = `/api/v1/security/assurance/red-team/campaigns/${encodeURIComponent(campaignId)}/finalize`;
+    let payload = {force_incomplete: action === "force-finalize"};
+    if (action === "force-finalize" && !(await mvConfirm(
+      "Finish this run now? Tests without a result are marked as unknown. Tests already sent still finish.",
+      {okText: "Finish now"}
+    ))) return;
+    if (action === "cancel") {
+      const values = await mvForm("Stop this test run", [
+        {key: "rationale", label: "Why stop it?", type: "text", required: true},
+      ]);
+      if (!values || !String(values.rationale || "").trim()) return;
+      endpoint = `/api/v1/security/assurance/red-team/campaigns/${encodeURIComponent(campaignId)}/cancel`;
+      payload = {expected_revision: revision, rationale: String(values.rationale).trim()};
+    } else if (!['finalize', 'force-finalize'].includes(action)) {
+      if (actionStatus) actionStatus.textContent = "That action is not available. Refresh the page to see the latest.";
+      return;
+    }
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    if (actionStatus) actionStatus.textContent = "Working…";
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw window.mraFailure(response);
+      if (actionStatus) actionStatus.textContent = "Test run updated. Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      if (actionStatus) actionStatus.textContent = window.mraPlain(error, "update the test run");
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }));
+  if (!campaignForm) return;
+  campaignForm.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = campaignForm.querySelector("button[type=submit]");
+    button.disabled = true;
+    if (campaignStatus) campaignStatus.textContent = "Starting the test run…";
+    try {
+      const fields = new FormData(campaignForm);
+      const response = await fetch(
+        "/api/v1/security/assurance/red-team/campaigns",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            asset_id: fields.get("asset_id"),
+            external_agent_id: fields.get("external_agent_id"),
+            idempotency_key: fields.get("idempotency_key"),
+            safe_target_environment: fields.has("safe_target_environment")
+          })
+        }
+      );
+      if (!response.ok) throw window.mraFailure(response);
+      if (campaignStatus) campaignStatus.textContent = "Test run started. Refreshing…";
+      window.location.reload();
+    } catch (error) {
+      if (campaignStatus) campaignStatus.textContent = window.mraPlain(error, "start the test run");
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+<script nonce="{{ csp_script_nonce }}">
+(() => {
+  const prefix = "/api/v1/security/assurance";
+  const ASSETS = {{ MRA_NAMES|tojson }};
+  const human = value => (typeof window.mvHuman === "function" ? window.mvHuman(value) : String(value || "").replace(/[_-]+/g, " "));
+  const when = ts => (typeof window.mvWhen === "function" ? window.mvWhen(ts) : "");
+  const status = (id, message) => {
+    const element = document.getElementById(id);
+    if (element && window.mvStatus) window.mvStatus(element, String(message || "").slice(0, 280));
+    else if (element) element.textContent = String(message || "").slice(0, 280);
+  };
+  const call = (path, options) => window.mvFetchJSON(prefix + path, options || {});
+  const post = (path, body) => call(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const slug = text => String(text || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100);
+  const cell = (row, value) => { const td = document.createElement("td"); td.textContent = String(value ?? "—"); row.appendChild(td); return td; };
+  const emptyRow = (body, text, span) => { const row = document.createElement("tr"); const td = cell(row, text); td.colSpan = span; body.appendChild(row); };
+
+  // ---- Supplier reviews ----
+  const vendorForm = document.getElementById("ai-vendor-create");
+  if (vendorForm) vendorForm.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(vendorForm); const button = vendorForm.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const answers = {};
+      vendorForm.querySelectorAll("[data-vendor-question]").forEach(group => {
+        const id = group.dataset.vendorQuestion;
+        const answer = String(fields.get("answer:" + id) || "");
+        if (!answer) return;
+        const note = String(fields.get("note:" + id) || "").trim();
+        answers[id] = note ? {answer, note} : {answer};
+      });
+      status("ai-vendor-status", "Creating the review…");
+      await post("/ai-vendor/assessments", {vendor: fields.get("vendor"), answers, documents: []});
+      status("ai-vendor-status", "Review created. Refreshing…"); window.location.reload();
+    } catch (error) { status("ai-vendor-status", window.mraPlain(error, "create the review")); button.disabled = false; }
+  });
+  document.querySelectorAll("[data-vendor-review]").forEach(button => button.addEventListener("click", async () => {
+    const values = await mvForm("Review this supplier", [
+      {key: "decision", label: "Decision", type: "select", default: "approved", options: [
+        {value: "approved", label: "Approve"}, {value: "needs_work", label: "Needs more work"}, {value: "rejected", label: "Reject"}]},
+      {key: "rationale", label: "Why", type: "text", required: true},
+    ]);
+    if (!values || !String(values.rationale || "").trim()) return;
+    button.disabled = true;
+    try {
+      await post("/ai-vendor/assessments/" + encodeURIComponent(button.dataset.vendorReview) + "/review", {decision: values.decision, rationale: String(values.rationale).trim(), expected_revision: Number(button.dataset.revision)});
+      status("ai-vendor-status", "Review saved. Refreshing…"); window.location.reload();
+    } catch (error) { status("ai-vendor-status", window.mraPlain(error, "save the review")); button.disabled = false; }
+  }));
+  document.querySelectorAll("[data-vendor-project]").forEach(button => button.addEventListener("click", async () => {
+    const options = Object.entries(ASSETS).map(([value, label]) => ({value, label}));
+    if (!options.length) { status("ai-vendor-status", "Add an AI system first."); return; }
+    const values = await mvForm("Attach this supplier review to an AI system", [
+      {key: "asset_id", label: "AI system", type: "select", default: options[0].value, options},
+      {key: "valid_days", label: "The review stays valid for", type: "select", default: "90", options: [
+        {value: "30", label: "30 days"}, {value: "90", label: "90 days"}, {value: "180", label: "6 months"}, {value: "365", label: "1 year"}]},
+    ]);
+    if (!values || !values.asset_id) return;
+    button.disabled = true;
+    try {
+      const valid_until = Math.floor(Date.now() / 1000) + Number(values.valid_days || 90) * 86400;
+      await post("/ai-vendor/assessments/" + encodeURIComponent(button.dataset.vendorProject) + "/project", {asset_id: values.asset_id, valid_until});
+      status("ai-vendor-status", "Attached to " + (ASSETS[values.asset_id] || "the AI system") + " for model-risk review.");
+    } catch (error) { status("ai-vendor-status", window.mraPlain(error, "attach the review")); }
+    finally { button.disabled = false; }
+  }));
+
+  // ---- Supplier access codes ----
+  const portalInvitations = document.getElementById("ai-vendor-portal-invitations");
+  const portalSubmissions = document.getElementById("ai-vendor-portal-submissions");
+  const portalCredential = document.getElementById("ai-vendor-portal-credential");
+  const STATUS = {active: "Active", revoked: "Cancelled", expired: "Expired", used: "Used", pending_import: "Waiting to be brought in", imported: "Brought in"};
+  const loadVendorPortal = async () => {
+    if (!portalInvitations || !portalSubmissions) return;
+    try {
+      const [invitationPage, submissionPage] = await Promise.all([
+        call("/ai-vendor/portal/invitations?limit=50"),
+        call("/ai-vendor/portal/submissions?limit=50")
+      ]);
+      portalInvitations.replaceChildren(); portalSubmissions.replaceChildren();
+      const invitations = Array.isArray(invitationPage.items) ? invitationPage.items : [];
+      invitations.forEach(item => {
+        const row = document.createElement("tr"); cell(row, item.vendor); cell(row, STATUS[item.status] || human(item.status)); cell(row, when(item.expires_at)); const action = cell(row, "");
+        if (item.status === "active") {
+          action.textContent = "";
+          const revoke = document.createElement("button"); revoke.type = "button"; revoke.className = "btn btn--ghost"; revoke.textContent = "Cancel code";
+          revoke.setAttribute("aria-label", "Cancel the access code for " + item.vendor);
+          revoke.addEventListener("click", async () => {
+            const values = await mvForm("Cancel this access code", [{key: "reason", label: "Why cancel it?", type: "text", required: true}]);
+            if (!values || !String(values.reason || "").trim()) return;
+            revoke.disabled = true;
+            try { await post("/ai-vendor/portal/invitations/" + encodeURIComponent(item.invitation_id) + "/revoke", {reason: String(values.reason).trim(), expected_revision: Number(item.revision)}); await loadVendorPortal(); status("ai-vendor-portal-status", "Access code cancelled."); }
+            catch (error) { status("ai-vendor-portal-status", window.mraPlain(error, "cancel the code")); revoke.disabled = false; }
+          });
+          action.appendChild(revoke);
+        } else { action.textContent = "—"; }
+        portalInvitations.appendChild(row);
+      });
+      if (!invitations.length) emptyRow(portalInvitations, "No access codes yet. Create one to invite a supplier to answer.", 4);
+      const submissions = Array.isArray(submissionPage.items) ? submissionPage.items : [];
+      submissions.forEach(item => {
+        const row = document.createElement("tr"); cell(row, item.vendor); cell(row, STATUS[item.status] || human(item.status)); cell(row, when(item.submitted_at)); const action = cell(row, "");
+        if (item.status === "pending_import") {
+          action.textContent = "";
+          const importButton = document.createElement("button"); importButton.type = "button"; importButton.className = "btn btn--ghost"; importButton.textContent = "Bring in for review";
+          importButton.setAttribute("aria-label", "Bring in the answers from " + item.vendor);
+          importButton.addEventListener("click", async () => {
+            importButton.disabled = true;
+            try { await post("/ai-vendor/portal/submissions/" + encodeURIComponent(item.submission_id) + "/import", {expected_revision: Number(item.revision)}); status("ai-vendor-portal-status", "Brought in as a review waiting for a decision. Refreshing…"); window.location.reload(); }
+            catch (error) { status("ai-vendor-portal-status", window.mraPlain(error, "bring in the answers")); importButton.disabled = false; }
+          });
+          action.appendChild(importButton);
+        } else { action.textContent = "—"; }
+        portalSubmissions.appendChild(row);
+      });
+      if (!submissions.length) emptyRow(portalSubmissions, "No answers received yet. Answers appear here when a supplier sends them.", 4);
+    } catch (error) {
+      // Neither list arrived: say so in both tables instead of "Loading…"; the
+      // line above them says why and what to do.
+      portalInvitations.replaceChildren(); portalSubmissions.replaceChildren();
+      emptyRow(portalInvitations, "Access codes could not be loaded. Refresh the page and try again.", 4);
+      emptyRow(portalSubmissions, "Answers could not be loaded. Refresh the page and try again.", 4);
+      status("ai-vendor-portal-status", window.mraPlain(error, "load the access codes"));
+    }
+  };
+  const portalInvite = document.getElementById("ai-vendor-portal-invite");
+  if (portalInvite) portalInvite.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(portalInvite); const button = portalInvite.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const created = await post("/ai-vendor/portal/invitations", {vendor: fields.get("vendor"), expires_in_seconds: Number(fields.get("expires_days")) * 86400});
+      if (portalCredential) {
+        portalCredential.hidden = false;
+        document.getElementById("ai-vendor-portal-tenant").textContent = created.tenant_ref;
+        document.getElementById("ai-vendor-portal-token").textContent = created.token;
+      }
+      status("ai-vendor-portal-status", "Access code created.");
+      portalInvite.reset(); await loadVendorPortal();
+    } catch (error) { status("ai-vendor-portal-status", window.mraPlain(error, "create the access code")); } finally { button.disabled = false; }
+  });
+  document.querySelectorAll("[data-copy-target]").forEach(copyButton => copyButton.addEventListener("click", () => {
+    const source = document.getElementById(copyButton.dataset.copyTarget);
+    if (source && typeof window.mvCopy === "function") window.mvCopy(source.textContent);
+  }));
+  const portalRefresh = document.getElementById("ai-vendor-portal-refresh");
+  if (portalRefresh) { portalRefresh.addEventListener("click", loadVendorPortal); loadVendorPortal(); }
+
+  // ---- Drift ----
+  // A CSV with a header row becomes {column: [numbers]}; text cells are refused.
+  const readSamples = file => new Promise((resolve, reject) => {
+    if (!file) { reject(Object.assign(new Error("Choose a CSV file."), {plain: true})); return; }
+    if (file.size > 5 * 1024 * 1024) { reject(Object.assign(new Error("That file is too large. Use a file under 5 MB."), {plain: true})); return; }
+    const reader = new FileReader();
+    reader.onerror = () => reject(Object.assign(new Error("That file could not be read. Choose it again, or try a different file."), {plain: true}));
+    reader.onload = () => {
+      const lines = String(reader.result || "").split(/\r?\n/).filter(line => line.trim());
+      const header = (lines.shift() || "").split(",").map(name => slug(name).replace(/-/g, "_"));
+      if (!header.length || header.some(name => !name)) { reject(Object.assign(new Error("The first row must name every column."), {plain: true})); return; }
+      const columns = Object.fromEntries(header.map(name => [name, []]));
+      for (const line of lines) {
+        const cells = line.split(",");
+        for (let index = 0; index < header.length; index += 1) {
+          const value = Number(String(cells[index] ?? "").trim());
+          if (!Number.isFinite(value)) { reject(Object.assign(new Error("Every value must be a number. Check row " + (lines.indexOf(line) + 2) + "."), {plain: true})); return; }
+          columns[header[index]].push(value);
+        }
+      }
+      resolve(columns);
+    };
+    reader.readAsText(file);
+  });
+  const say = (id, error, action) => status(id, error && error.plain ? error.message : window.mraPlain(error, action));
+  const baselineSelect = document.querySelector('#drift-evaluate select[name="baseline_id"]');
+  const loadBaselines = async () => {
+    if (!baselineSelect) return;
+    try {
+      const body = await call("/drift/baselines");
+      baselineSelect.replaceChildren();
+      const items = Array.isArray(body.items) ? body.items : [];
+      if (!items.length) baselineSelect.appendChild(new Option("Save a normal pattern first", ""));
+      items.forEach(item => baselineSelect.appendChild(new Option((ASSETS[item.asset_id] || "AI system") + " — " + human(item.source_id), item.id)));
+    } catch (error) {
+      baselineSelect.replaceChildren(new Option("Saved patterns could not be loaded", ""));
+    }
+  };
+  // The shell's helpers (lightwork-ui.js) load after the page content.
+  if (window.mvFetchJSON) loadBaselines(); else document.addEventListener("DOMContentLoaded", loadBaselines);
+  const baseline = document.getElementById("drift-baseline-create");
+  if (baseline) baseline.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(baseline); const button = baseline.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      const source_id = slug(fields.get("source_id"));
+      if (!source_id) throw Object.assign(new Error("Give the data a name using letters or numbers."), {plain: true});
+      const feature_samples = await readSamples(baseline.elements.samples.files[0]);
+      status("drift-baseline-status", "Saving the normal pattern…");
+      await post("/drift/baselines", {asset_id: fields.get("asset_id"), source_id, feature_samples});
+      status("drift-baseline-status", "Saved. You can now check new data against it."); baseline.reset(); await loadBaselines();
+    } catch (error) { say("drift-baseline-status", error, "save the pattern"); } finally { button.disabled = false; }
+  });
+  const evaluate = document.getElementById("drift-evaluate");
+  if (evaluate) evaluate.addEventListener("submit", async event => {
+    event.preventDefault(); const fields = new FormData(evaluate); const button = evaluate.querySelector('button[type="submit"]'); button.disabled = true;
+    try {
+      if (!fields.get("baseline_id")) throw Object.assign(new Error("Choose a saved pattern to compare against."), {plain: true});
+      const feature_samples = await readSamples(evaluate.elements.samples.files[0]);
+      const run_id = "check-" + new Date().toISOString().slice(0, 19).replace(/[^0-9]/g, "");
+      status("drift-evaluate-status", "Checking…");
+      const result = await post("/drift/baselines/" + encodeURIComponent(String(fields.get("baseline_id"))) + "/evaluations", {run_id, feature_samples});
+      status("drift-evaluate-status", result.result === "passed" ? "No drift found." : result.result === "failed" ? "Drift found. A finding was recorded for review." : "Not enough data to decide.");
+    } catch (error) { say("drift-evaluate-status", error, "check for drift"); } finally { button.disabled = false; }
+  });
+
+  // ---- What an agent can reach ----
+  const topology = document.getElementById("agent-topology-query");
+  const topologyResult = document.getElementById("agent-topology-result");
+  const KIND = {agent: "Agent", tool: "Tool", mcp_server: "Tool server", endpoint: "Web service", data_endpoint: "Data service", data_path: "Data location", knowledge_source: "Knowledge source", model: "AI model"};
+  const BLAST_KINDS = new Set(["tool", "mcp_server", "endpoint", "data_endpoint", "data_path", "knowledge_source", "model"]);
+  if (topology) {
+    const agentSelect = topology.elements.agent_name;
+    const loadAgents = () => call("/agent-topology/agents").then(body => {
+      agentSelect.replaceChildren();
+      const names = Array.isArray(body.items) ? body.items : [];
+      if (!names.length) agentSelect.appendChild(new Option("No agents set up yet", ""));
+      names.forEach(name => agentSelect.appendChild(new Option(human(name), name)));
+    }).catch(error => { agentSelect.replaceChildren(new Option("Agents could not be loaded", "")); status("agent-topology-status", window.mraPlain(error, "load the agents")); });
+    // As above: wait for the shell's helpers, or this whole script stops here.
+    if (window.mvFetchJSON) loadAgents(); else document.addEventListener("DOMContentLoaded", loadAgents);
+    const showBlast = async node => {
+      try {
+        const blast = await call("/agent-topology/blast-radius/" + encodeURIComponent(node.kind) + "/" + encodeURIComponent(node.name));
+        const agents = (blast.affected_agents || []).map(item => human(item.agent));
+        status("agent-topology-status", agents.length
+          ? "If " + human(node.name) + " were compromised, these agents would be exposed: " + agents.join(", ") + "."
+          : "No configured agent reaches " + human(node.name) + ".");
+      } catch (error) { status("agent-topology-status", window.mraPlain(error, "work out who else can reach it")); }
+    };
+    topology.addEventListener("submit", async event => {
+      event.preventDefault();
+      const agent = agentSelect.value;
+      if (!agent) return;
+      try {
+        status("agent-topology-status", "Loading…");
+        const view = await call("/agent-topology/agents/" + encodeURIComponent(agent));
+        topologyResult.replaceChildren();
+        const nodes = (view.nodes || []).filter(node => node.kind !== "agent" || node.name !== agent);
+        if (!view.found || !nodes.length) {
+          status("agent-topology-status", view.found ? human(agent) + " cannot reach anything beyond itself." : "That agent is no longer set up.");
+          topologyResult.hidden = true; return;
+        }
+        const table = document.createElement("table");
+        const caption = document.createElement("caption"); caption.textContent = "What " + human(agent) + " can reach"; table.appendChild(caption);
+        const head = document.createElement("tr");
+        ["What", "Kind", "Actions"].forEach(text => { const th = document.createElement("th"); th.scope = "col"; th.textContent = text; head.appendChild(th); });
+        const thead = document.createElement("thead"); thead.appendChild(head); table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        nodes.forEach(node => {
+          const row = document.createElement("tr");
+          const th = document.createElement("th"); th.scope = "row"; th.textContent = human(node.name); row.appendChild(th);
+          cell(row, KIND[node.kind] || human(node.kind));
+          const actions = cell(row, "");
+          if (BLAST_KINDS.has(node.kind)) {
+            actions.textContent = "";
+            const who = document.createElement("button"); who.type = "button"; who.className = "btn btn--ghost"; who.textContent = "Who else can reach this?";
+            who.setAttribute("aria-label", "Who else can reach " + human(node.name));
+            who.addEventListener("click", () => showBlast(node));
+            actions.appendChild(who);
+          } else { actions.textContent = "—"; }
+          tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        const wrap = document.createElement("div"); wrap.className = "assurance-table";
+        wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", caption.textContent); wrap.appendChild(table);
+        topologyResult.appendChild(wrap); topologyResult.hidden = false;
+        status("agent-topology-status", human(agent) + " can reach " + nodes.length + " thing" + (nodes.length === 1 ? "" : "s") + ".");
+      } catch (error) { status("agent-topology-status", window.mraPlain(error, "load what the agent can reach")); }
+    });
+  }
+  const sync = document.getElementById("agent-topology-sync");
+  if (sync) sync.addEventListener("click", async () => { sync.disabled = true; try { const outcome = await post("/agent-topology/mcp/sync", {}); status("agent-topology-status", "Found " + outcome.count + " tool server" + (outcome.count === 1 ? "" : "s") + "."); } catch (error) { status("agent-topology-status", window.mraPlain(error, "refresh the tool-server list")); } finally { sync.disabled = false; } });
+})();
+</script>
+{% endblock %}

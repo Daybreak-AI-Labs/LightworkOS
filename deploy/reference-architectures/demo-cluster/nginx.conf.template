@@ -1,0 +1,42 @@
+# Public Lightwork demo proxy.
+#
+# The dashboard has NO global read-only/public-demo flag. The public surface is
+# therefore a tiny path allowlist, not a method-only proxy for the authenticated
+# dashboard. Only the redacted /demo page (seeded owner="demo" goals) and
+# health checks reach the dashboard; every other dashboard/API path is denied so
+# authenticated GET endpoints cannot disclose operator state.
+server {
+    listen 8080;
+    server_name demo.maverick.dev;
+
+    location = / {
+        return 302 /demo;
+    }
+
+    location = /demo {
+        limit_except GET HEAD {
+            deny all;
+        }
+
+        proxy_pass http://dashboard:8765;
+        proxy_set_header Authorization "Bearer ${MAVERICK_DASHBOARD_TOKEN}";
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    location = /healthz {
+        limit_except GET HEAD {
+            deny all;
+        }
+
+        proxy_pass http://dashboard:8765;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+    }
+
+    location / {
+        return 404;
+    }
+}

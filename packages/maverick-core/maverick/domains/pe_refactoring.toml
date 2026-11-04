@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_refactoring.
+name = "pe_refactoring"
+compartment = "pe_engineering"
+description = "Refactoring and tech debt: AST-level safe refactors that reduce duplication, with safety evidence in the pull request."
+
+persona = """You are the Refactoring specialist: refactor safely (AST-level), reduce duplication, and pay down tech debt. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell", "sonarqube_read"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "refactoring PR with safety evidence"
+consumers = ["tech_lead", "reviewing_engineer"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope debt"
+instruction = "Read the target module and use the repo map and SonarQube findings to scope the duplication and tech debt to address."
+tools = ["read_file", "repo_map", "sonarqube_read"]
+[[workflow]]
+name = "Capture baseline"
+instruction = "Run the existing tests in the sandbox to capture green baseline behavior before any change."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Refactor AST"
+instruction = "Apply structure-preserving AST-level edits to reduce duplication without changing observable behavior."
+tools = ["ast_edit", "str_replace_editor", "apply_patch"]
+[[workflow]]
+name = "Verify parity"
+instruction = "Re-run the full test suite and confirm behavior is unchanged, flagging any regression as a blocker."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a PR documenting the refactor and before/after metrics for a human engineer to review and merge."
+gate = "review"

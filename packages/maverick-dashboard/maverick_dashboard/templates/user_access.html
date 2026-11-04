@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Check access · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% from "_empty_state.html" import empty_state %}
+  {% set r = report %}
+  {% set person_name = name or (r.principal | identity).name %}
+  {% from "_back_link.html" import back_link with context %}
+  {% set access_actions %}{{ back_link('/users', 'Users') }}{% endset %}
+  {% call hero('Administration', 'Access for ' ~ person_name,
+               subtitle='What they can do, and which rule allows it',
+               lede='Read-only. Every answer comes from the same checks Lightwork applies when this person works, so it changes as soon as their role, departments or limits change.',
+               actions=access_actions) %}
+    {{ state('Role in this workspace' if r.current else 'Role',
+             (r.current.label if r.current else r.installation.label),
+             badge=('Account turned off' if r.active is false else ('Can run work' if r.approvals.can_decide else 'Cannot run work')),
+             badge_class=('blocked' if r.active is false else ('ok' if r.approvals.can_decide else 'idle')),
+             copy=(r.current.source if r.current else r.installation.source)) }}
+  {% endcall %}
+
+  {% if not auth_on %}
+  <div class="panel access-note" role="status"><strong>Sign-in is off.</strong> Right now everyone using
+    Lightwork on this computer has full access. This page shows what this person will get once
+    company sign-in is turned on.</div>
+  {% endif %}
+  {% if r.active is false %}
+  <div class="panel access-note" role="status"><strong>This account is turned off in your sign-in provider,</strong>
+    so it can't sign in. The rest of this page shows what it would get if it were turned back on.</div>
+  {% endif %}
+  {% if not known %}
+  <div class="panel access-note" role="status"><strong>This person hasn't signed in or been invited yet.</strong>
+    This page shows what they would get on their first sign-in.</div>
+  {% endif %}
+
+  <div class="section-head"><h2 id="access-roles">Roles</h2></div>
+  <div class="panel">
+    <table>
+      <caption class="sr-only">Roles {{ person_name }} holds and the rule behind each</caption>
+      <thead><tr><th scope="col">Where</th><th scope="col">Role</th><th scope="col">Rule that gives it</th><th scope="col">Who can change it</th></tr></thead>
+      <tbody>
+        <tr>
+          <th scope="row">Everywhere{% if r.workspaces %}, unless a workspace says otherwise{% endif %}</th>
+          <td><span class="badge">{{ r.installation.label }}</span></td>
+          <td>{{ r.installation.source }}</td>
+          <td>{{ r.installation.owner }}</td>
+        </tr>
+        {% for w in r.workspaces %}
+        <tr>
+          <th scope="row">{{ w.name }}{% if w.current %} <span class="muted">(this workspace)</span>{% endif %}</th>
+          <td><span class="badge">{{ w.label }}</span></td>
+          <td>{{ w.source }}</td>
+          <td>{{ w.owner }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if r.pinned_admin %}<p class="muted access-help">Set up as an administrator when Lightwork was installed. That can't be changed on the Users page, so nobody can lock every administrator out.</p>{% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="access-powers">What they can do</h2></div>
+  <div class="panel">
+    <table>
+      <caption class="sr-only">What {{ person_name }} can do in each place</caption>
+      <thead><tr><th scope="col">Can they…</th><th scope="col">Everywhere</th>
+        {% for w in r.workspaces %}<th scope="col">{{ w.name }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for atom, text in r.powers %}
+        <tr>
+          <th scope="row">{{ text }}</th>
+          <td>{% if r.installation.powers[atom] %}<span class="badge active">Yes</span>{% else %}<span class="badge idle">No</span>{% endif %}</td>
+          {% for w in r.workspaces %}
+          <td>{% if w.powers[atom] %}<span class="badge active">Yes</span>{% else %}<span class="badge idle">No</span>{% endif %}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted access-help">A role inside a workspace replaces the role they have everywhere else, for that workspace only. Settings and pages for the whole installation always use the "Everywhere" role.</p>
+  </div>
+
+  <div class="section-head"><h2 id="access-screens">Screens they can open{% if r.current %} in {{ r.current.name }}{% endif %}</h2></div>
+  <div class="panel">
+    {% if r.screens.open %}
+    <p class="access-lead">{{ r.screens.open }} screen{{ '' if r.screens.open == 1 else 's' }}, given by their
+      {{ (r.current.label if r.current else r.installation.label) }} role{% if r.current %} in this workspace{% endif %}.
+      Screens marked "whole installation" use their {{ r.installation.label }} role from everywhere.</p>
+    {% for g in r.screens.groups %}
+    <details class="access-group">
+      <summary>{{ g.title }} <span class="muted">· {{ g.pages | length }}</span></summary>
+      <ul class="access-list">
+        {% for p in g.pages %}
+        <li>{{ p.label }}{% if p.installation %} <span class="muted">· whole installation</span>{% endif %}{% if p.off %} <span class="badge idle">Turned off</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endfor %}
+    {% else %}
+    {{ empty_state('No screens', 'Their role does not open any screen here. Give them a role on the Users page to change that.', compact=true) }}
+    {% endif %}
+    {% if r.screens.hidden %}
+    <h3 class="access-subhead">Allowed by their role, but hidden</h3>
+    <p class="muted access-help">Their role's permissions reach these screens, but the screens are not shown to this role, so they can't open them.{% if can_open_page('/settings') %} Choose what each role sees in <a href="/settings#ui-visibility">Settings › Pages each role can see</a>.{% endif %}</p>
+    <ul class="access-list">{% for p in r.screens.hidden %}<li>{{ p.label }}{% if p.by_setting %} <span class="muted">· hidden in your settings</span>{% else %} <span class="muted">· not shown to this role out of the box</span>{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if r.screens.closed %}
+    <p class="muted access-help">{{ r.screens.closed }} more screen{{ '' if r.screens.closed == 1 else 's' }} need a role with more permissions.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="access-departments">Departments</h2></div>
+  <div class="panel">
+    {% if r.departments.all %}
+    <p class="access-lead"><strong>Every department.</strong> {{ r.departments.source }}.</p>
+    {% elif r.departments.names %}
+    <p class="access-lead"><strong>{{ r.departments.names | join(', ') }}.</strong> {{ r.departments.source }}.</p>
+    {% else %}
+    <p class="access-lead"><strong>No departments.</strong> {{ r.departments.source }}.</p>
+    {% endif %}
+    <p class="muted access-help">Departments decide which agents and specialists they work with. Their role still decides what they may do.</p>
+  </div>
+
+  <div class="section-head"><h2 id="access-spending">Spending limits{% if r.current %} in {{ r.current.name }}{% endif %}</h2></div>
+  <div class="panel">
+    {% set sp = r.spending %}
+    {% if sp.error %}
+    <p role="alert"><strong>That didn't work.</strong> {{ sp.error }}</p>
+    {% elif sp.limits %}
+    <table>
+      <caption class="sr-only">Spending limits that apply to {{ person_name }}</caption>
+      <thead><tr><th scope="col">Limit</th><th scope="col">Amount</th><th scope="col">Spent</th><th scope="col">Left</th><th scope="col">Rule that sets it</th></tr></thead>
+      <tbody>
+      {% set kind_label = {'person': 'Their personal limit', 'everyone': "Everyone's limit", 'workspace': 'Whole workspace'} %}
+      {% set period_label = {'task': 'per task', 'day': 'per day', 'month': 'per month'} %}
+      {% set window_label = {'day': 'today', 'month': 'this month'} %}
+      {% for row in sp.limits %}
+        <tr>
+          <th scope="row">{{ kind_label[row.kind] }}</th>
+          <td>{{ row.limit.amount | money }} {{ period_label[row.limit.period] }}</td>
+          <td>{% if row.spent is defined %}{{ row.spent | money }} {{ window_label[row.limit.period] }}{% else %}<span class="muted">Counted per task</span>{% endif %}</td>
+          <td>{% if row.remaining is defined %}<strong>{{ row.remaining | money }}</strong>{% else %}<span class="muted">Up to {{ row.limit.amount | money }} each task</span>{% endif %}</td>
+          <td>
+            {% if row.kind == 'person' %}A personal limit replaces everyone's limit for them.
+            {% elif row.kind == 'everyone' %}They have no personal limit, so everyone's limit applies.
+            {% else %}Everyone in the workspace together.{% endif %}
+            {% if row.set %}Set by {{ (row.set.by | identity).name }}, {{ row.set.at | datetime }}.
+            {% elif sp.installer_defaults %}Set when Lightwork was installed.
+            {% else %}Who set it was not recorded.{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% from "_spend_freshness.html" import spend_freshness %}
+    {{ spend_freshness(sp.spend_recorded_at, live=true, extra_class='access-help') }}
+    <p class="muted access-help">Whichever limit runs out first stops new paid work. Days and months reset at midnight UTC.</p>
+    {% else %}
+    <p class="access-lead"><strong>No spending limit applies to them.</strong> No workspace limit, no limit for everyone and no personal limit is set.</p>
+    {% endif %}
+    {% if sp.task_ceiling is not none %}
+    <p class="muted access-help">Each task also stops at {{ sp.task_ceiling | money }}, the spending limit per task for everyone.</p>
+    {% endif %}
+    {% if can_open_page('/spending-limits') %}<p><a class="btn btn--ghost" href="/spending-limits">Change spending limits</a></p>{% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="access-approvals">Approvals they can decide</h2></div>
+  <div class="panel">
+    {% set ap = r.approvals %}
+    {% if ap.can_decide %}
+    <p class="access-lead"><strong>They can decide approvals.</strong> Their {{ ap.role }} role allows running work ({{ ap.source | lower }}).</p>
+    <ul class="access-list access-list--rules">
+      <li>{% if r.departments.all %}Requests from every department.{% elif r.departments.names %}Only requests from their departments: {{ r.departments.names | join(', ') }}.{% else %}No department requests, because they have no departments.{% endif %}</li>
+      <li>Requests about their own tasks. Requests about other people's tasks stay private to that person{% if ap.content_requests %} unless a content access request for that approval is approved{% else %}; content access requests are turned off here{% endif %}.</li>
+      <li>{% if ap.self_approval %}They may approve their own requests: an installation setting allows it.{% else %}They can't approve their own request when it needs more than one approver.{% endif %}</li>
+      <li>If another reviewer has claimed a request, only that reviewer can decide it.</li>
+      <li>{% if ap.settings %}Requests to change protected settings: yes, as an administrator for the whole installation.{% else %}Requests to change protected settings: no, those need an administrator for the whole installation.{% endif %}</li>
+    </ul>
+    {% else %}
+    <p class="access-lead"><strong>They can't decide approvals.</strong> Their {{ ap.role }} role doesn't include running work ({{ ap.source | lower }}).</p>
+    {% endif %}
+  </div>
+
+  <style>
+    .access-note { border-color: color-mix(in srgb, var(--warn) 40%, transparent); margin-bottom: var(--space-4); }
+    .access-lead { margin-top: 0; }
+    .access-help { font-size: var(--text-sm); }
+    .access-subhead { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-md, 1rem); }
+    .access-group { border-top: 1px solid var(--hairline); padding: var(--space-2) 0; }
+    .access-group > summary { cursor: pointer; }
+    .access-list { margin: var(--space-2) 0 0; padding-inline-start: 1.2rem; columns: 2 16rem; }
+    .access-list--rules { columns: auto; }
+    .access-list li { margin: 0 0 var(--space-1); break-inside: avoid; }
+  </style>
+{% endblock %}

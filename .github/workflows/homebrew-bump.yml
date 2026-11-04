@@ -1,0 +1,636 @@
+name: Bump Homebrew formula
+
+# When a release is published, pin deploy/homebrew/maverick.rb to the
+# freshly published maverick-agent sdist on PyPI (url + sha256), generate
+# hash-locked dependency requirements, and open a PR.
+# Decoupled from publish.yml so a PyPI propagation lag can't fail the release.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to pin (e.g. 0.1.6)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Every run updates the same branch; serialize across versions as well as
+  # retries so two adjacent releases cannot race that branch.
+  group: homebrew-bump
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    # Undefined repository variables compare as an empty string, so the job is
+    # disabled by default. Enable it only after the maverick-agent namespace is
+    # reserved under the organization, protected with MFA, and the trusted
+    # publisher is verified. Until then, consuming that public name would let
+    # a squatter feed code into this write-token job.
+    if: >-
+      vars.MAVERICK_PUBLIC_PYPI_ENABLED == 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        github.event.release.prerelease == false
+      )
+    # Resolve markers/wheels on the same platform that will install the lock.
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Install the locked resolver toolchain
+        run: |
+          python -I -m pip install --upgrade \
+            --constraint requirements/ci.txt \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3' 'pip-tools==7.6.2'
+          python -I scripts/verify_constraint_closure.py
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - id: release-authority
+        name: Verify the signed exact-release Python authority
+        env:
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$EVENT_RELEASE_TAG" ]; then
+            tag="$EVENT_RELEASE_TAG"
+          else
+            requested="${REQUESTED_VERSION#v}"
+            tag="$(
+              python -I scripts/release_version.py --version "$requested" |
+                python -I -c 'import json,sys; print(json.load(sys.stdin)["tag"])'
+            )"
+          fi
+          version_json="$(python -I scripts/release_version.py --tag "$tag")"
+          version="$(
+            VERSION_JSON="$version_json" python -I -c \
+              'import json,os; print(json.loads(os.environ["VERSION_JSON"])["version"])'
+          )"
+          prerelease="$(
+            VERSION_JSON="$version_json" python -I -c \
+              'import json,os; print(str(json.loads(os.environ["VERSION_JSON"])["prerelease"]).lower())'
+          )"
+          git show-ref --verify --quiet "refs/tags/$tag" || {
+            echo "Homebrew authority tag is missing: $tag" >&2
+            exit 1
+          }
+          git show-ref --verify --quiet refs/remotes/origin/main || {
+            echo "origin/main is missing from the Homebrew authority checkout" >&2
+            exit 1
+          }
+          tag_sha="$(git rev-list -n 1 "refs/tags/$tag")"
+          if ! git merge-base --is-ancestor "$tag_sha" refs/remotes/origin/main; then
+            echo "Homebrew authority tag $tag is not reachable from origin/main" >&2
+            exit 1
+          fi
+
+          evidence="$RUNNER_TEMP/lightwork-homebrew-release-authority"
+          metadata="$evidence/release.json"
+          rm -rf "$evidence"
+          mkdir "$evidence"
+          gh release view "$tag" \
+            --json tagName,isDraft,isPrerelease,assets > "$metadata"
+          gh release download "$tag" \
+            --dir "$evidence" \
+            --pattern release-manifest.json \
+            --pattern release-manifest.json.cosign.bundle \
+            --pattern SHA256SUMS \
+            --pattern SHA256SUMS.cosign.bundle
+          git show "$tag_sha:release-cohort.toml" > "$evidence/release-cohort.toml"
+
+          identity='^https://github.com/[Dd]aybreak-[Aa][Ii]-[Ll]abs/[Ll]ightwork[Oo][Ss]/\.github/workflows/publish\.yml@refs/heads/main$'
+          cosign verify-blob \
+            --bundle "$evidence/release-manifest.json.cosign.bundle" \
+            --certificate-identity-regexp "$identity" \
+            --certificate-oidc-issuer \
+              "https://token.actions.githubusercontent.com" \
+            "$evidence/release-manifest.json"
+          cosign verify-blob \
+            --bundle "$evidence/SHA256SUMS.cosign.bundle" \
+            --certificate-identity-regexp "$identity" \
+            --certificate-oidc-issuer \
+              "https://token.actions.githubusercontent.com" \
+            "$evidence/SHA256SUMS"
+
+          EVIDENCE="$evidence" \
+          EXPECTED_PRERELEASE="$prerelease" \
+          EXPECTED_REVISION="$tag_sha" \
+          EXPECTED_TAG="$tag" \
+          EXPECTED_VERSION="$version" \
+          python -I - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path, PurePosixPath
+
+          from packaging.utils import (
+              canonicalize_name,
+              parse_sdist_filename,
+              parse_wheel_filename,
+          )
+
+          root = Path(os.environ["EVIDENCE"])
+          tag = os.environ["EXPECTED_TAG"]
+          version = os.environ["EXPECTED_VERSION"]
+          revision = os.environ["EXPECTED_REVISION"]
+          prerelease = os.environ["EXPECTED_PRERELEASE"] == "true"
+          metadata = json.loads((root / "release.json").read_text(encoding="utf-8"))
+          if (
+              metadata.get("tagName") != tag
+              or metadata.get("isDraft") is not False
+              or metadata.get("isPrerelease") is not prerelease
+          ):
+              raise SystemExit("Homebrew authority is not the exact published release")
+          assets = metadata.get("assets")
+          if not isinstance(assets, list):
+              raise SystemExit("Homebrew authority has no release asset inventory")
+          asset_names = [item.get("name") for item in assets if isinstance(item, dict)]
+          if (
+              len(asset_names) != len(assets)
+              or not all(isinstance(name, str) for name in asset_names)
+              or len(asset_names) != len(set(asset_names))
+          ):
+              raise SystemExit("Homebrew authority release asset inventory is malformed")
+          asset_names = set(asset_names)
+
+          manifest = json.loads(
+              (root / "release-manifest.json").read_text(encoding="utf-8")
+          )
+          if set(manifest) != {
+              "schema_version",
+              "source_revision",
+              "version",
+              "artifacts",
+          }:
+              raise SystemExit("Homebrew authority manifest schema mismatch")
+          if (
+              manifest["schema_version"] != 1
+              or manifest["source_revision"] != revision
+              or manifest["version"] != version
+          ):
+              raise SystemExit("Homebrew authority manifest provenance mismatch")
+
+          try:
+              import tomllib
+          except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+              import tomli as tomllib
+
+          cohort = tomllib.loads(
+              (root / "release-cohort.toml").read_text(encoding="utf-8")
+          )
+          packages = cohort.get("packages")
+          if (
+              set(cohort)
+              != {"schema_version", "version", "repository", "packages"}
+              or cohort.get("schema_version") != 1
+              or cohort.get("version") != version
+              or not isinstance(packages, list)
+              or len(packages) != 8
+              or any(
+                  not isinstance(package, dict)
+                  or set(package) != {"distribution", "path", "runtime_module"}
+                  for package in packages
+              )
+          ):
+              raise SystemExit("Homebrew authority release cohort mismatch")
+          expected_distributions = {
+              canonicalize_name(package["distribution"])
+              for package in packages
+          }
+          if len(expected_distributions) != 8:
+              raise SystemExit("Homebrew authority release cohort mismatch")
+
+          records = manifest["artifacts"]
+          if not isinstance(records, list) or len(records) != 16:
+              raise SystemExit("Homebrew authority must contain 16 Python artifacts")
+          expected_record_keys = {
+              "distribution",
+              "filename",
+              "kind",
+              "publish_prefix",
+              "sha256",
+              "version",
+          }
+          digests = {}
+          counts = {
+              distribution: {"wheel": 0, "sdist": 0}
+              for distribution in expected_distributions
+          }
+          agent_sdist = None
+          for record in records:
+              if not isinstance(record, dict) or set(record) != expected_record_keys:
+                  raise SystemExit("Homebrew authority artifact schema mismatch")
+              filename = record["filename"]
+              kind = record["kind"]
+              distribution = canonicalize_name(record["distribution"])
+              digest = record["sha256"]
+              if (
+                  not isinstance(filename, str)
+                  or PurePosixPath(filename).name != filename
+                  or filename in digests
+                  or distribution not in expected_distributions
+                  or kind not in {"wheel", "sdist"}
+                  or record["version"] != version
+                  or re.fullmatch(r"[0-9a-f]{64}", str(digest)) is None
+              ):
+                  raise SystemExit("Homebrew authority contains an invalid artifact")
+              if kind == "wheel":
+                  parsed_name, parsed_version, _build, _tags = parse_wheel_filename(
+                      filename
+                  )
+              else:
+                  parsed_name, parsed_version = parse_sdist_filename(filename)
+              if (
+                  canonicalize_name(parsed_name) != distribution
+                  or str(parsed_version) != version
+              ):
+                  raise SystemExit("Homebrew authority filename metadata mismatch")
+              counts[distribution][kind] += 1
+              digests[filename] = digest
+              if distribution == "maverick-agent" and kind == "sdist":
+                  agent_sdist = {"filename": filename, "sha256": digest}
+          if any(value != {"wheel": 1, "sdist": 1} for value in counts.values()):
+              raise SystemExit("Homebrew authority cohort shape mismatch")
+          if agent_sdist is None:
+              raise SystemExit("Homebrew authority omits the maverick-agent sdist")
+
+          checksum_records = {}
+          for line in (root / "SHA256SUMS").read_text(
+              encoding="ascii"
+          ).splitlines():
+              digest, separator, filename = line.partition("  ")
+              if (
+                  not separator
+                  or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                  or PurePosixPath(filename).name != filename
+                  or filename in checksum_records
+              ):
+                  raise SystemExit("Homebrew authority checksum is malformed")
+              checksum_records[filename] = digest
+          if checksum_records != digests:
+              raise SystemExit("Homebrew authority checksum and manifest disagree")
+          required_assets = {
+              "release-manifest.json",
+              "release-manifest.json.cosign.bundle",
+              "SHA256SUMS",
+              "SHA256SUMS.cosign.bundle",
+              agent_sdist["filename"],
+              f"{agent_sdist['filename']}.cosign.bundle",
+          }
+          if not required_assets <= asset_names:
+              raise SystemExit("Homebrew authority release is missing signed sdist evidence")
+          (root / "authority.json").write_text(
+              json.dumps(agent_sdist, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          sdist_filename="$(
+            EVIDENCE="$evidence" python -I -c \
+              'import json,os,pathlib; print(json.loads((pathlib.Path(os.environ["EVIDENCE"])/"authority.json").read_text())["filename"])'
+          )"
+          sdist_sha="$(
+            EVIDENCE="$evidence" python -I -c \
+              'import json,os,pathlib; print(json.loads((pathlib.Path(os.environ["EVIDENCE"])/"authority.json").read_text())["sha256"])'
+          )"
+          gh release download "$tag" \
+            --dir "$evidence" \
+            --pattern "$sdist_filename" \
+            --pattern "${sdist_filename}.cosign.bundle"
+          EVIDENCE="$evidence" \
+          SDIST_FILENAME="$sdist_filename" \
+          SDIST_SHA256="$sdist_sha" \
+          python -I - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          target = Path(os.environ["EVIDENCE"]) / os.environ["SDIST_FILENAME"]
+          actual = hashlib.sha256(target.read_bytes()).hexdigest()
+          if actual != os.environ["SDIST_SHA256"]:
+              raise SystemExit("downloaded GitHub sdist digest mismatch")
+          PY
+          cosign verify-blob \
+            --bundle "$evidence/${sdist_filename}.cosign.bundle" \
+            --certificate-identity-regexp "$identity" \
+            --certificate-oidc-issuer \
+              "https://token.actions.githubusercontent.com" \
+            "$evidence/$sdist_filename"
+
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "revision=$tag_sha"
+            echo "sdist-filename=$sdist_filename"
+            echo "sdist-sha256=$sdist_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Pin the formula to the published sdist
+        env:
+          EXPECTED_SDIST_FILENAME: ${{ steps.release-authority.outputs.sdist-filename }}
+          EXPECTED_SDIST_SHA256: ${{ steps.release-authority.outputs.sdist-sha256 }}
+          VERSION: ${{ steps.release-authority.outputs.version }}
+        run: |
+          python -I - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          import urllib.request
+
+          from packaging.utils import canonicalize_name
+
+          sys.path.insert(0, str(pathlib.Path("scripts").resolve()))
+          from verify_github_release_assets import require_matching_pypi_sdist
+
+          version = os.environ["VERSION"]
+          expected_sdist_filename = os.environ["EXPECTED_SDIST_FILENAME"]
+          expected_sdist_sha = os.environ["EXPECTED_SDIST_SHA256"]
+          subprocess.run(
+              [
+                  sys.executable,
+                  "-I",
+                  "scripts/release_version.py",
+                  "--version",
+                  version,
+              ],
+              check=True,
+          )
+          api = f"https://pypi.org/pypi/maverick-agent/{version}/json"
+
+          # PyPI's JSON API, simple index, and file CDN each propagate on
+          # their own schedule after a publish, so every PyPI-touching step
+          # retries before failing. Waiting on the JSON API alone (as before)
+          # let the later piptools resolve race ahead of the install index.
+          def wait_for_pypi(label, fetch):
+              for attempt in range(10):
+                  try:
+                      return fetch()
+                  except Exception as e:  # noqa: BLE001 -- transient index/propagation
+                      print(f"PyPI {label} not ready yet ({e}); retry {attempt + 1}/10")
+                      time.sleep(15)
+              raise SystemExit(
+                  f"maverick-agent=={version} {label} never became available on PyPI"
+              )
+
+          def fetch_metadata():
+              with urllib.request.urlopen(api, timeout=30) as r:
+                  return json.load(r)
+
+          data = wait_for_pypi("metadata", fetch_metadata)
+
+          try:
+              url, sha = require_matching_pypi_sdist(
+                  data,
+                  version=version,
+                  expected_filename=expected_sdist_filename,
+                  expected_sha256=expected_sdist_sha,
+              )
+          except ValueError as exc:
+              raise SystemExit(str(exc)) from exc
+
+          def fetch_sdist():
+              with urllib.request.urlopen(url, timeout=60) as response:
+                  payload = response.read()
+              if hashlib.sha256(payload).hexdigest() != sha:
+                  raise ValueError("downloaded sdist digest differs from PyPI metadata")
+              return payload
+
+          wait_for_pypi("sdist bytes", fetch_sdist)
+
+          with tempfile.TemporaryDirectory() as tmp:
+              tmp_path = pathlib.Path(tmp)
+              runtime_input = tmp_path / "runtime-requirements.in"
+              runtime_output = tmp_path / "runtime-requirements.txt"
+              build_input = tmp_path / "build-requirements.in"
+              build_output = tmp_path / "build-requirements.txt"
+              runtime_input.write_text(
+                  f"maverick-agent[installer]=={version}\n",
+                  encoding="utf-8",
+              )
+              # This must exactly match maverick-agent's build-system.requires.
+              # It is compiled separately because Python 3.12/Homebrew creates
+              # the target venv without pip or setuptools.
+              build_input.write_text(
+                  "setuptools==84.2.1\n",
+                  encoding="utf-8",
+              )
+
+              def compile_requirements(input_path, output_path):
+                  subprocess.run(
+                      [
+                          sys.executable,
+                          "-m",
+                          "piptools",
+                          "compile",
+                          "--generate-hashes",
+                          "--allow-unsafe",
+                          "--no-header",
+                          "--no-emit-index-url",
+                          "--no-emit-trusted-host",
+                          "--index-url",
+                          "https://pypi.org/simple",
+                          "--resolver=backtracking",
+                          "--output-file",
+                          str(output_path),
+                          str(input_path),
+                      ],
+                      check=True,
+                      # No HTTP cache: a simple-index page fetched before the
+                      # sdist propagated would otherwise be reused on every
+                      # retry, pinning the resolve to the same 404.
+                      env={**os.environ, "PIP_NO_CACHE_DIR": "1"},
+                  )
+                  return output_path.read_text()
+
+              runtime_requirements = wait_for_pypi(
+                  "dependency index",
+                  lambda: compile_requirements(runtime_input, runtime_output),
+              )
+              build_requirements = compile_requirements(
+                  build_input,
+                  build_output,
+              )
+
+          # Homebrew already downloads and verifies maverick-agent as the formula
+          # source. Keep only its resolved dependencies in the hash-locked
+          # requirements file so install does not fetch maverick-agent from PyPI.
+          blocks = re.split(
+              r"(?m)(?=^[A-Za-z0-9_.-]+[<=>!~; \[])",
+              runtime_requirements,
+          )
+          dependency_blocks = []
+          for block in blocks:
+              requirement = block.lstrip().splitlines()[0] if block.lstrip() else ""
+              name = re.split(r"[<=>!~; \[]", requirement, maxsplit=1)[0]
+              if canonicalize_name(name) == "maverick-agent":
+                  continue
+              dependency_blocks.append(block)
+          runtime_requirements = "".join(dependency_blocks).strip() + "\n"
+          if (
+              not runtime_requirements.strip()
+              or "--hash=sha256:" not in runtime_requirements
+              or "maverick-installer==" not in runtime_requirements
+          ):
+              raise SystemExit("resolved dependency lock is empty or unhashed")
+          if (
+              "setuptools==84.2.1" not in build_requirements
+              or "--hash=sha256:" not in build_requirements
+          ):
+              raise SystemExit("hashed setuptools build lock was not generated")
+          payload = (
+              "# Hash-locked build/runtime requirements generated by "
+              "homebrew-bump.yml.\n"
+              "# LIGHTWORK_BUILD_REQUIREMENTS_BEGIN\n"
+              f"{build_requirements.strip()}\n"
+              "# LIGHTWORK_BUILD_REQUIREMENTS_END\n"
+              "# LIGHTWORK_RUNTIME_REQUIREMENTS_BEGIN\n"
+              f"{runtime_requirements.strip()}\n"
+              "# LIGHTWORK_RUNTIME_REQUIREMENTS_END\n"
+          )
+
+          path = pathlib.Path("deploy/homebrew/maverick.rb")
+          text = path.read_text(encoding="utf-8")
+          text, url_count = re.subn(
+              r'url "[^"]*"',
+              f'url "{url}"',
+              text,
+              count=1,
+          )
+          text, sha_count = re.subn(
+              r'sha256 "[0-9a-f]{64}"',
+              f'sha256 "{sha}"',
+              text,
+              count=1,
+          )
+          text, lock_count = re.subn(
+              r"(?s)__END__\n.*",
+              "__END__\n" + payload,
+              text,
+              count=1,
+          )
+          if (url_count, sha_count, lock_count) != (1, 1, 1):
+              raise SystemExit(
+                  "Homebrew formula format drifted: "
+                  f"url={url_count}, sha256={sha_count}, lock={lock_count}"
+              )
+          if (
+              text.count(f'url "{url}"') != 1
+              or text.count(f'sha256 "{sha}"') != 1
+              or not text.endswith("__END__\n" + payload)
+          ):
+              raise SystemExit("Homebrew formula postcondition validation failed")
+          path.write_text(text, encoding="utf-8")
+          print(
+              f"Pinned maverick.rb to {version} with hash-locked dependencies"
+              f"\n  url={url}\n  sha256={sha}"
+          )
+          PY
+
+      - name: Stage the resolved formula without repository credentials
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: resolved-homebrew-formula
+          path: deploy/homebrew/maverick.rb
+          if-no-files-found: error
+          retention-days: 1
+
+  test-formula:
+    needs: resolve
+    if: >-
+      vars.MAVERICK_PUBLIC_PYPI_ENABLED == 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        github.event.release.prerelease == false
+      )
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: resolved-homebrew-formula
+          path: deploy/homebrew
+      - name: Install and test the exact generated formula
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_FROM_API: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          formula="$PWD/deploy/homebrew/maverick.rb"
+          brew style "$formula"
+          brew install --formula --build-from-source "$formula"
+          brew test maverick
+          "$(brew --prefix maverick)/bin/maverick" version
+
+  open-pr:
+    needs: [resolve, test-formula]
+    if: >-
+      vars.MAVERICK_PUBLIC_PYPI_ENABLED == 'true' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        github.event.release.prerelease == false
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: resolved-homebrew-formula
+          path: deploy/homebrew
+      - id: automation-token
+        name: Mint the least-privilege automation token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.LIGHTWORK_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LIGHTWORK_AUTOMATION_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          # App-created PRs trigger the normal PR checks; GITHUB_TOKEN-created
+          # PRs do not. The workflow stays disabled until this app is configured.
+          token: ${{ steps.automation-token.outputs.token }}
+          base: main
+          branch: chore/homebrew-bump
+          title: "chore: bump the Homebrew formula to the latest release"
+          commit-message: "chore: bump Homebrew formula to the published sdist"
+          body: |
+            Automated by `homebrew-bump.yml`: pins `deploy/homebrew/maverick.rb`
+            to the just-published `maverick-agent` sdist (url + sha256) and
+            refreshes the embedded hash-locked dependency requirements.
+
+            After merge, sync the formula to the `homebrew-tap` repo.
+          add-paths: deploy/homebrew/maverick.rb
+          delete-branch: true

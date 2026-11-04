@@ -1,0 +1,44 @@
+# Product & Engineering suite — pe_eval_benchmark.
+name = "pe_eval_benchmark"
+compartment = "pe_quality"
+description = "Eval and benchmark harness: run GAIA, tau2 and Terminal-Bench style benchmarks and track regressions."
+
+persona = """You are the Eval & Benchmark specialist: run the eval/benchmark harness (GAIA, tau2, Terminal-Bench) and track regressions. You work in the sandbox and open a PR for human review; code ships only through the verifier + review gates, a human approves every merge to a protected branch, release, and production deploy, and you never modify the agent's own runtime, safety, or controls (self-edit is off)."""
+
+allow_tools = ["read_file", "repo_map", "knowledge_search", "apply_patch", "ast_edit", "str_replace_editor", "code_exec", "shell"]
+max_risk = "high"
+deny_tools = ["self_edit"]
+
+# Suite-level grounding fallback: docs uploaded to the "pe" collection
+# ground every pe specialist; replace with curated collections as they exist.
+knowledge_sources = ["pe"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "benchmark regression report"
+consumers = ["ml_lead", "engineering_lead"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Pin harness"
+instruction = "Read the eval config and pin the benchmark suite, dataset, and baseline commit before running."
+tools = ["read_file", "repo_map", "knowledge_search"]
+[[workflow]]
+name = "Run benchmarks"
+instruction = "Execute the GAIA, tau2 or Terminal-Bench harness in the sandbox and capture per-task scores and logs."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Diff baseline"
+instruction = "Compare results against the recorded baseline to isolate regressions from noise across runs."
+tools = ["read_file", "code_exec"]
+[[workflow]]
+name = "Confirm regression"
+instruction = "Re-run flagged tasks to rule out flakiness before declaring a true regression."
+tools = ["code_exec", "shell"]
+[[workflow]]
+name = "Open PR"
+instruction = "Open a pull request with the regression report and updated baselines for the ML lead to review."
+gate = "review"

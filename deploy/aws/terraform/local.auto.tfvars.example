@@ -1,0 +1,20 @@
+# Operator inputs that identify people. Copy this file to local.auto.tfvars
+# (ignored by git) and fill it in before `terraform apply`; Terraform loads
+# every *.auto.tfvars in this directory. Without the required encryption-key
+# digest, Terraform cannot plan the shared-authority deployment.
+
+# Values specific to your deployment. The digest is produced by
+# `maverick shared-key-digest`; it is an identity check, not the key itself.
+domain_name = "<your-domain>"
+oidc_issuer = "https://<your-issuer>/"
+oidc_client_id = "<your-client-id>"
+encryption_key_digest = "sha256:<64-lowercase-hex-characters>"
+
+# Break-glass master admin principals, comma-separated. List every Auth0
+# identity the owner signs in with (for example the Google identity and the
+# email/password identity) so admin holds regardless of the sign-in method;
+# a principal's sub is shown after its first login. Never list demo users.
+dashboard_admins = "user:google-oauth2|<sub>,user:auth0|<sub>"
+
+# From address for platform email: an address on your verified SES domain.
+email_from = "<name>@<your-ses-domain>"

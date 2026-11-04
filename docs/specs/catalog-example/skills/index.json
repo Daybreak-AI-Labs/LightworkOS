@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "kind": "skills",
+  "entries": [
+    {
+      "name": "summarize-url",
+      "version": "1.0.0",
+      "summary": "Fetch a URL and write a 3-sentence summary.",
+      "source": "gh:cdayAI/awesome-maverick:catalog/skills/summarize-url/SKILL.md",
+      "sha256": "cc7c9eca2d03fb53ab0fb68d2107ddef0a1000698b2addf2e2d71680e304e1ba",
+      "author": "cdayAI",
+      "verified": true,
+      "install_count": 0
+    }
+  ]
+}

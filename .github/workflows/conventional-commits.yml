@@ -1,0 +1,54 @@
+name: Conventional Commits
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+  # This is a required check, so it must also REPORT on merge-queue entries or
+  # the queue never merges. There is no PR title to lint there (the title was
+  # linted before the PR could enter the queue), so the job runs with its one
+  # step skipped and reports success.
+  merge_group:
+
+# Lint PR titles against the Conventional Commits spec
+# (https://www.conventionalcommits.org). Required types: feat, fix,
+# chore, docs, test, refactor, perf, ci, build, style, revert.
+#
+# Not required for individual commit messages -- those are squash-
+# merged so only the PR title shapes the merge commit. (Commit-message
+# TRAILERS are a different matter: they are prefilled into the squash, and
+# commit-hygiene.yml refuses the AI-attribution ones.)
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: conventional-commits-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-pr-title:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            test
+            refactor
+            perf
+            ci
+            build
+            style
+            revert
+          requireScope: false
+          subjectPattern: '^[A-Z].*$|^[a-z].*$'
+          subjectPatternError: |
+            The subject "{subject}" found in the pull request title "{title}"
+            must start with a letter.

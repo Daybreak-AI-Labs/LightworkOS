@@ -1,0 +1,29 @@
+{# The one empty-state component (.mv-empty in lightwork.css). Say what will
+   appear here and how to add the first one, then offer one next step:
+
+     {% from "_empty_state.html" import empty_state %}
+     {{ empty_state('No results yet',
+                    'Finished tasks with a saved answer appear here. Start a task to get the first one.',
+                    action_label='Start a task', action_href='/chat') }}
+
+   title — what is missing, short and in sentence case ("No results yet").
+   body — "[What will appear here]. [How to add the first one]."
+   action_label + action_href — one link button to the next step. Leave them
+     out when the viewer can't use that page: check the same permission the
+     page checks before showing the action. The button is never btn--primary;
+     the page's main action lives in the header. For a next step that runs a
+     script, pass the button through a {% call %} block instead.
+   id / hidden — for an empty state a script shows or hides.
+   compact — the smaller, left-aligned version for panels, tiles and charts.
+
+   Text arguments are autoescaped. Script-rendered lists build the same markup
+   with window.mvEmpty(title, body, action, opts) from lightwork-ui.js. #}
+
+{% macro empty_state(title, body='', action_label='', action_href='', id='', hidden=false, compact=false) %}
+<div class="mv-empty{{ ' mv-empty--compact' if compact else '' }}"{% if id %} id="{{ id }}"{% endif %}{% if hidden %} hidden{% endif %}>
+  <p class="mv-empty__title">{{ title }}</p>
+  {% if body %}<p class="mv-empty__body">{{ body }}</p>{% endif %}
+  {% if action_label and action_href %}<a class="btn mv-empty__action" href="{{ action_href }}">{{ action_label }}</a>{% endif %}
+  {% if caller is defined %}{{ caller() }}{% endif %}
+</div>
+{% endmacro %}

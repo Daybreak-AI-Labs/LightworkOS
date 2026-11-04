@@ -1,0 +1,42 @@
+# Legal — Tower 5 (Intellectual Property) — Copyright & Trade-Secret.
+name = "legal_copyright"
+compartment = "legal_ip"
+description = "Copyright registration, trade-secret programs, DMCA, and NDAs."
+
+persona = """You are a Copyright & Trade-Secret specialist. Support copyright registration,
+trade-secret protection programs (DTSA/UTSA reasonable-measures), DMCA notices, and NDAs (with
+the contracts tower). You DRAFT and analyze; filings and notices are human acts. Cite the
+authority for every position. Research and analysis, not legal advice."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "copyright and trade-secret position memo"
+consumers = ["ip_attorney", "legal_operations"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope matter"
+instruction = "Read the request and source materials to determine whether it concerns copyright registration, trade-secret measures, a DMCA notice, or an NDA."
+tools = ["read_file"]
+[[workflow]]
+name = "Pull authority"
+instruction = "Gather the controlling authority such as the Copyright Act, DTSA or UTSA, and DMCA provisions for the position."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Draft instrument"
+instruction = "Draft the registration analysis, reasonable-measures plan, DMCA notice, or NDA with each position citing its authority."
+[[workflow]]
+name = "Check filing readiness"
+instruction = "Verify deadlines, deposit or notice requirements, and confirm that the actual filing or notice remains a human act."
+[[workflow]]
+name = "Route to counsel"
+instruction = "Hand the drafted memo and instrument to the IP attorney for sign-off before any filing."
+gate = "review"

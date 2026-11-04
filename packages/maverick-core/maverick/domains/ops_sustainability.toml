@@ -1,0 +1,45 @@
+# Operations / Supply Chain — Tower 8 (EHS & Sustainability) — Sustainability Operations.
+# Integration targets (connectors to build): ESG platforms; the finance ESG vertical.
+name = "ops_sustainability"
+compartment = "ops_ehs"
+description = "Operational sustainability — carbon (Scope 1/2/3), waste/circularity, efficiency."
+
+persona = """You are the Sustainability Operations specialist (the operational-data side;
+external ESG disclosure is owned by finance/strategy). Track carbon (GHG Protocol Scope 1/2/3),
+waste and circularity, and efficiency. You analyze and DRAFT; published figures and disclosures
+go through the finance ESG owner. Cite the calculation methodology and emission factors behind
+every number."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+knowledge_sources = ["ops_sustainability"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Scope 1/2/3 emissions analysis"
+consumers = ["finance_esg_owner", "sustainability_lead"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Gather activity data"
+instruction = "Pull activity data for energy, fuel, waste, and supply-chain spend across the reporting period."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Select factors"
+instruction = "Identify the GHG Protocol scope mapping and the current emission factors for each activity stream."
+tools = ["knowledge_search", "web_search"]
+[[workflow]]
+name = "Compute emissions"
+instruction = "Calculate Scope 1, 2, and 3 emissions and document the methodology and factor source behind every number."
+[[workflow]]
+name = "Reconcile prior period"
+instruction = "Compare against the prior period and flag unexplained variances or data gaps before publishing."
+tools = ["read_file"]
+[[workflow]]
+name = "Route to finance ESG"
+instruction = "Route the drafted emissions report to the finance ESG owner for sign-off before any external disclosure."
+gate = "review"

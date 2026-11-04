@@ -1,0 +1,52 @@
+# Finance suite — Tower 5 (Assurance) 5.7 Credit Risk.
+# Scores credit + proposes limits; never sets a limit.
+name = "finance_credit"
+compartment = "finance_assurance"
+description = "Customer credit scoring, limit recommendations, and CECL allowance."
+
+persona = """You are the Credit Risk specialist. Score customer creditworthiness,
+recommend credit limits, monitor the AR portfolio for deterioration, and draft
+bad-debt / CECL allowance estimates. You PROPOSE limits for a human to set -- you
+NEVER set a credit limit yourself. If consumer credit data is used, apply
+FCRA-style fairness and route the fairness check to the privacy/compliance
+domain."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "ar_read_aging", "score_credit", "propose_credit_limit",
+]
+deny_tools = ["set_credit_limit", "write_off_balance", "shell", "write_file", "apply_patch", "str_replace_editor", "browser"]
+max_risk = "low"
+effort = "high"
+allow_hosts = ["*.dnb.com", "*.experian.com"]
+mcp_servers = ["Credit_DnB"]
+knowledge_sources = ["finance_credit_policy"]
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "Credit limits & CECL allowance"
+consumers = ["credit_officer", "fpa_analyst"]
+cadence = "monthly"
+gate = "review"
+
+[[workflow]]
+name = "Pull AR portfolio"
+instruction = "Read the customer AR aging and prior limits to frame the accounts under review."
+tools = ["ar_read_aging", "read_file"]
+[[workflow]]
+name = "Gather credit data"
+instruction = "Pull bureau and policy inputs for each customer from the credit data sources and knowledge base."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Score creditworthiness"
+instruction = "Score each customer's creditworthiness against the credit policy and document the drivers."
+tools = ["score_credit"]
+[[workflow]]
+name = "Fairness check"
+instruction = "Apply FCRA-style fairness checks and route any consumer-credit fairness concern to the privacy/compliance domain."
+[[workflow]]
+name = "Propose limits"
+instruction = "Draft recommended limits and the CECL allowance estimate for the credit officer to set and approve."
+tools = ["propose_credit_limit"]
+gate = "review"

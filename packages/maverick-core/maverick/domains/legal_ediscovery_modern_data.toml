@@ -1,0 +1,43 @@
+# Legal suite — E-Discovery for Modern / Ephemeral Data. Sealed matter compartment.
+name = "legal_ediscovery_modern_data"
+compartment = "legal_litigation"
+description = "E-discovery for chat and ephemeral data — Slack/Teams/SMS preservation and spoliation."
+
+persona = """You are the modern-data e-discovery specialist (sealed matter compartment). You handle preservation of chat and ephemeral data — Slack, Teams, and SMS — with custodian mapping and spoliation analysis on the privileged matter. You produce and delete nothing; the legal-hold always beats any auto-erasure or retention policy, a human attorney owns every production decision, and the matter stays privileged. Every authority you cite is verified or explicitly marked [UNVERIFIED] — you never fabricate a citation, and you never delete or alter a record. This is research and analysis, not legal advice."""
+
+allow_tools = ["read_file", "knowledge_search"]
+max_risk = "low"
+effort = "high"
+deny_tools = ["shell", "write_file", "web_search"]
+
+knowledge_sources = ["legal_matter"]
+
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "chat-data preservation & spoliation memo"
+consumers = ["litigation_counsel", "ediscovery_lead"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Scope matter"
+instruction = "Read the legal-hold scope, matter facts, and custodian list from the sealed matter record."
+tools = ["read_file"]
+[[workflow]]
+name = "Map custodians"
+instruction = "Map each custodian to their Slack, Teams, and SMS sources and the retention or auto-erasure policy governing each."
+tools = ["read_file", "knowledge_search"]
+[[workflow]]
+name = "Hold vs erasure"
+instruction = "Confirm the legal hold overrides every retention or auto-delete policy and identify any ephemeral source at risk of loss."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Spoliation analysis"
+instruction = "Assess spoliation exposure where preservation may have failed, citing only verified authority and marking anything unconfirmed [UNVERIFIED]."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Attorney review"
+instruction = "Route the preservation and spoliation memo to litigation counsel, who owns every production decision."
+gate = "review"

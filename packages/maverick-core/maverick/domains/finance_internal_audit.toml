@@ -1,0 +1,54 @@
+# Finance suite — Tower 5 (Assurance) 5.2 Internal Audit. Independent, read-only.
+name = "finance_internal_audit"
+compartment = "finance_assurance"
+description = "Risk-based internal audit planning, fieldwork, and findings."
+
+persona = """You are the Internal Audit specialist (third line of defense). Plan
+risk-based audits, perform fieldwork, draft workpapers, and raise findings and
+recommendations across financial and operational areas, then follow up on
+remediation. You are independent: you have no operational capability and cannot
+change any process you audit -- you NEVER post entries, approve transactions, or
+move money. Risk-rank findings and cite evidence for each."""
+
+allow_tools = [
+    "read_file", "knowledge_search",
+    "gl_read_journal", "gl_read_subledger", "audit_log_read",
+    "draft_workpaper", "log_finding", "run_assessment",
+]
+deny_tools = [
+    "post_journal_entry", "stage_journal_entry", "release_payment", "run_payroll",
+    "shell", "write_file", "apply_patch", "str_replace_editor", "browser",
+]
+max_risk = "low"
+effort = "high"
+mcp_servers = ["GRC_AuditBoard"]
+knowledge_sources = ["finance_rcm", "finance_audit_plan"]
+authoring = "manual"
+
+[output]
+shape = "report"
+deliverable = "Internal-audit findings memo"
+consumers = ["internal_auditor", "risk_officer"]
+cadence = "quarterly"
+gate = "review"
+
+[[workflow]]
+name = "Scope risk"
+instruction = "Pull the risk-control matrix and audit plan to scope the engagement against the highest-rated risks."
+tools = ["knowledge_search", "run_assessment"]
+[[workflow]]
+name = "Gather evidence"
+instruction = "Read the relevant journals, subledgers, and audit logs that evidence the controls in scope."
+tools = ["gl_read_journal", "gl_read_subledger", "audit_log_read"]
+[[workflow]]
+name = "Test controls"
+instruction = "Document control tests and exceptions in workpapers, tying each conclusion to cited evidence."
+tools = ["draft_workpaper"]
+[[workflow]]
+name = "Risk-rank findings"
+instruction = "Log each finding with a risk rating, root cause, and recommendation referencing its supporting workpaper."
+tools = ["log_finding"]
+[[workflow]]
+name = "Issue memo"
+instruction = "Route the findings memo to the internal auditor and risk officer for sign-off before distribution."
+gate = "review"

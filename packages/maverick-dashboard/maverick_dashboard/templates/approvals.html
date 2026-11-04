@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Approvals · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {% call hero('Human in command', 'Approvals',
+               subtitle='Requests waiting for your decision',
+               lede='Risky actions an agent wants to take wait here. Nothing
+                     goes ahead until a person approves it, and every decision
+                     is recorded in the audit log.') %}
+    {% set open_count = (approvals | length) + (flow_approvals | length) %}
+    {% set private_count = private_count | default(0) %}
+    {# Never "All clear" while anything is waiting, even a request this person
+       can't open (it belongs to a colleague's private task). #}
+    <div id="approvals-current-state" data-flow-count="{{ flow_approvals | length }}" data-private-count="{{ private_count }}"
+         data-in-chat="{{ '1' if (private_cards | default([]) | selectattr('in_chat') | list) else '0' }}" data-coverage="{{ flow_approval_coverage }}">
+    {% macro _t(source, count='') %}{{ ut(source, count=count) if ut is defined else source | replace('{count}', count) }}{% endmacro %}
+    {{ state('Current state',
+             ((_t('1 request waiting') if open_count == 1 else _t('{count} requests waiting', count=open_count))) if open_count
+               else ((_t("1 request is waiting that you can't open here") if private_count == 1 else _t("{count} requests are waiting that you can't open here", count=private_count)) if private_count
+               else _t('0 requests waiting')),
+             badge=_t('Action needed') if open_count or (private_cards | default([]) | selectattr('in_chat') | list) else (_t('Waiting') if private_count else (_t('Check needed') if flow_approval_coverage != 'current' else _t('All clear'))),
+             badge_class='warn' if open_count or private_count or flow_approval_coverage != 'current' else 'ok',
+             copy='Approve, reject, or send a request back with a note saying what should change.' if open_count or not private_count
+               else 'The person who asked can open and decide their own request.') }}
+    </div>
+  {% endcall %}
+  {# ?view=all (the Action Center's address in the job-named navigation):
+     every kind of item waiting on you, in place of the approvals list. #}
+  {% if approvals_view == 'all' %}
+  <section aria-labelledby="all-decisions-title">
+    <h2 id="all-decisions-title">Action Center</h2>
+    {% include "_action_center_body.html" %}
+  </section>
+  {% else %}
+  {# A link to one approval (/approvals#approval-12) that is no longer waiting
+     says so instead of landing on a list without it. #}
+  <p class="panel" id="approval-missing" role="status" hidden>This approval was already decided or no longer exists.
+    <a href="#request-decision-history" id="approval-missing-history">See decisions on your requests</a>{% if can_open_page('/audit') %}
+    or <a href="/audit">find it in the Activity log</a>{% endif %}.</p>
+  {% if private_count %}<p class="panel" id="approval-private-note">
+    {% if open_count %}{{ private_count }} more {{ 'request is' if private_count == 1 else 'requests are' }} waiting that you can't open here.{% endif %}
+    {{ 'It comes' if private_count == 1 else 'They come' }} from a colleague's private task. The person who asked can open and decide their own request.
+    {% if content_access_on %}To review one yourself, <a href="/content-access">ask for access to that approval card</a>. Access lets you read the card; your role and the approval rules still decide whether your decision counts.
+    {% else %}Asking for access to a colleague's approval card is turned off. An installation administrator can turn on “Employee content access requests” in Settings.{% endif %}
+  </p>{% endif %}
+  {% if private_cards %}{% set role_text = (' (' ~ (viewer_role | role_label) ~ ')') if viewer_role else '' %}
+  <section class="panel" aria-labelledby="private-approvals-title" id="private-approvals">
+    <h2 id="private-approvals-title">Requests you can't open</h2>
+    <p class="muted">Only who asked, the action, its risk, who is doing the work and the deadline are shown. Everything else stays private to the person who asked.</p>
+    <div class="approval-list">
+    {% for p in private_cards %}<article class="approval-item approval-item--private" id="approval-{{ p.id }}" aria-labelledby="approval-title-{{ p.id }}">
+      <div class="approval-item__head"><h3 class="approval-item__title" id="approval-title-{{ p.id }}">{{ p.action }}</h3>
+        <span class="badge {{ 'blocked' if p.risk in ('high', 'critical') else 'pending' }} approval-risk">{{ p.risk_label }}</span>
+        {% if p.in_chat %}<span class="badge pending">Waiting on you</span>{% endif %}</div>
+      <dl class="approval-item__meta">
+        <div><dt>Asked by</dt><dd>{{ p.requested_by | identity if p.requested_by else 'Not recorded' }}</dd></div>
+        <div><dt>{{ p.worker.noun }}</dt><dd>{{ p.worker.name }}</dd></div>
+        <div><dt>Decide by</dt><dd>{% if p.expires_at %}{{ p.expires_at | datetime }}{% else %}Not stated{% endif %}</dd></div>
+      </dl>
+      <p class="approval-private-why"><strong>Why you see this:</strong>
+        {% if p.in_chat %}You're one of the people who can decide it. Your role{{ role_text }} lets you approve risky actions, and you're linked in Slack or Teams, where its card is posted. Decide there with the buttons on the card.
+        {% else %}Your role{{ role_text }} lets you approve risky actions in this workspace. This request comes from a colleague's private task, so you can't open or decide it here.{% endif %}</p>
+    </article>{% endfor %}
+    </div>
+  </section>{% endif %}
+
+  {% if flow_approval_coverage != 'current' %}<p class="panel" role="status">Some flow approvals could not be checked. Open your <a href="/automations">flows and runs</a> to inspect older requests, or refresh this page.</p>{% endif %}
+  {% if flow_approvals %}<section class="panel" aria-labelledby="flow-approvals-title">
+    <h2 id="flow-approvals-title">Flow approvals</h2>
+    <p class="muted">Review the current approval card and decide on the run page. The run checks your access and the exact operation again before accepting a decision.</p>
+    <div class="approval-list">
+    {% for item in flow_approvals %}<article class="approval-item" id="flow-approval-{{ item.run_id }}">
+      <div class="approval-item__head"><h3 class="approval-item__title">{{ item.title }}</h3><span class="badge {{ 'pending' if item.approval_card_status == 'current' else 'warn' }}">{{ 'Waiting for approval' if item.approval_card_status == 'current' else 'Needs fresh review' }}</span></div>
+      {% if item.approval_card %}<section class="approval-card" aria-label="What you are approving">
+        <p><strong>This is Lightwork's suggestion — the decision is yours.</strong></p>
+        <p>What it changes: {{ item.approval_card.target.label }}</p>
+        {% if item.approval_card.parameters.summary %}<div><strong>What it will do</strong><ul>{% for step in item.approval_card.parameters.summary %}<li>{{ step }}</li>{% endfor %}</ul></div>{% endif %}
+        <p>Before: {{ item.approval_card.preview.before }}</p><p>After: {{ item.approval_card.preview.after }}</p>
+        <p>Decide by: {{ item.approval_card.expires_at | datetime }}</p>
+      </section>{% else %}<p class="muted">The approval details need to be checked again before a decision can be made.</p>{% endif %}
+      <div class="approval-actions"><a class="btn" href="{{ item.href }}">Review and decide</a></div>
+    </article>{% endfor %}
+    </div>
+  </section>{% endif %}
+
+  <div class="panel">
+    {% include "_approvals_queue.html" %}
+  </div>
+  <script src="{{ static_url('lightwork-approvals-count.js') if static_url is defined else '/static/lightwork-approvals-count.js' }}" defer></script>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    var note = document.getElementById('approval-missing'), decisions = document.getElementById('request-decision-history');
+    function check() {
+      var match = /^#approval-([A-Za-z0-9_-]+)$/.exec(window.location.hash);
+      note.hidden = !match || !!document.getElementById('approval-' + match[1]);
+    }
+    document.getElementById('approval-missing-history').addEventListener('click', function () {
+      if (decisions) decisions.open = true;
+    });
+    check();
+    window.addEventListener('hashchange', check);
+  })();
+  </script>
+  {% endif %}
+{% endblock %}

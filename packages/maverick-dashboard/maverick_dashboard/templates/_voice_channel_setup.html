@@ -1,0 +1,33 @@
+<section class="panel settings-all-index" id="phone-call-setup" aria-labelledby="phone-call-title">
+  <h2 id="phone-call-title">Set up phone conversations</h2>
+  <p>Vapi or Retell can send a caller's request to Lightwork and use its answer during the call. Save the phone service, private keys, saved assistant and permitted caller numbers under <a href="/settings/all?q=Phone+calls">Phone calls</a>. Then restart the chat service using <a href="/settings#ops-services-title">the existing service controls</a>.</p>
+  <p role="status">{{ voice_setup.status }}</p>
+  {% if voice_setup.address %}
+  <label for="voice-receiver-address">Address to enter in your phone service</label>
+  <input class="input" id="voice-receiver-address" value="{{ voice_setup.address }}" readonly aria-describedby="voice-address-help">
+  <p id="voice-address-help">Select and copy this address. It uses the Lightwork website you opened. The chat service must run on this installation. An address displayed here does not prove your provider can reach it.</p>
+  {% else %}
+  <p>Open Lightwork at its public secure web address to get the address for your phone service. A local or unsecured website address cannot receive calls from Vapi or Retell.</p>
+  {% endif %}
+  <p>Calls use Lightwork's current task permissions, available capabilities and spending limits. A permitted phone number does not prove company identity. Installations requiring company sign-in still refuse callers without the required verified identity; adding a number here does not grant a company role.</p>
+  <details {% if voice_setup.supported %}open{% endif %}>
+    <summary>Enter the function in your phone service</summary>
+    <p>Use the provider's ordinary form editor for these fields. Select a value below to copy it. No program or structured document needs to be entered in Lightwork.</p>
+    <label for="voice-function-name">Function name</label>
+    <input class="input" id="voice-function-name" value="lightwork_request" readonly>
+    <label for="voice-function-description">Function description</label>
+    <textarea class="input" id="voice-function-description" readonly rows="3">Ask Lightwork to answer the caller's request using its current permissions and limits. Return its answer to the caller. Do not start the same request again when its result is unconfirmed.</textarea>
+    <label for="voice-function-field">One required text field</label>
+    <input class="input" id="voice-function-field" value="request" readonly>
+    <label for="voice-function-field-description">Text field description</label>
+    <textarea class="input" id="voice-function-field-description" readonly rows="2">The complete request the caller wants Lightwork to answer.</textarea>
+    <label for="voice-function-prompt">Instruction for the saved assistant</label>
+    <textarea class="input" id="voice-function-prompt" readonly rows="4">When the caller asks Lightwork for help, use the Lightwork request function and send their complete request as its request text. Speak its returned answer accurately. If it says work is processing or unconfirmed, explain that status; do not make another request to repeat the work.</textarea>
+    <h3>Vapi</h3>
+    <p>In the saved assistant's Tools form, add this function and its required Text field. Use the address above as its Server URL. In Integrations → Server Configuration, add a Custom Credential with Authentication Type Bearer Token, Header Name Authorization and Include Bearer Prefix on. Enter the private Call check key saved in Lightwork, then select that credential for the saved assistant's server. Make sure tool-calls are sent to this server. Ordinary transcript and status notifications do not start work.</p>
+    <h3>Retell</h3>
+    <p>In the saved agent's Functions form, add a Custom function with the values above. Choose POST and enter the address above. Add an Authorization header containing Bearer followed by a space and the same private Call check key. Keep Retell's option to send only the function's fields turned off, and keep automatic retries off. Use the full call details: a request without Retell's matching recorded function identity is refused.</p>
+    <p>Bland can place outgoing calls through the existing integration. Incoming Bland conversations are not supported here.</p>
+  </details>
+  <p class="muted">A returned answer confirms the saved Lightwork result, not that the provider spoke it or the caller heard it. If a connection is interrupted, the same provider call reads its original result; it does not repeat completed or unconfirmed work. Start a separate request only after checking any earlier changes.</p>
+</section>

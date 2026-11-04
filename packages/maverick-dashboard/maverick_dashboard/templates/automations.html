@@ -1,0 +1,1508 @@
+{% extends "base.html" %}
+{% block title %}Automations · Lightwork{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="/static/lightwork-schedule-management.css">{% endblock %}
+{% block content %}
+<style>
+  .auto { max-width: 880px; margin-inline: auto; }
+  .auto :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .auto__section { margin-bottom: var(--space-5); }
+  .auto details > summary { cursor: pointer; font-weight: var(--font-semibold); }
+  .auto details[open] > summary { margin-bottom: var(--space-3); }
+  .auto .field, .auto input, .auto select, .auto textarea { min-width: 0; max-width: 100%; }
+  .auto__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--space-3); }
+  .auto [data-source-review] { grid-column: 1 / -1; min-width: 0; padding: var(--space-3); overflow-wrap: anywhere; }
+  .auto [data-source-review] dd { margin-inline-start: 0; margin-bottom: var(--space-2); }
+  .auto__hint { color: var(--muted); font-size: var(--text-sm); margin: 0 0 var(--space-3); }
+  .auto__new { margin-top: var(--space-4); }
+  .auto__new summary { cursor: pointer; font-weight: var(--font-semibold, 600); }
+  .auto__new form { display: grid; gap: var(--space-3); margin-top: var(--space-3); max-width: 40rem; }
+  .auto__review dd { margin-inline-start: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; overflow-y: auto; }
+  .auto__original .btn, .auto__review .btn { max-width: 100%; white-space: normal; }
+  .auto__field { display: grid; gap: var(--space-1); }
+  .auto__what, .auto__days { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+  .auto__what label, .auto__days label { display: inline-flex; gap: var(--space-1); align-items: center; }
+  .auto__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+  .auto__url { font-family: ui-monospace, SFMono-Regular, Menlo, "Roboto Mono", monospace; font-size: var(--text-xs); }
+  .auto__runs { color: var(--muted); font-size: var(--text-xs); margin-top: var(--space-1); }
+  .auto__run { text-decoration: none; border-bottom: 1px dashed currentColor; }
+  .auto__run--done { color: var(--muted); }
+  .auto__run--failed, .auto__run--error { color: var(--danger); font-weight: var(--font-semibold); }
+  .auto__runs-fail { color: var(--danger); font-weight: var(--font-semibold); }
+  .auto__run:hover { border-bottom-style: solid; }
+  .auto__extra { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-2) 0; }
+  .auto__extra-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: var(--space-2); align-items: end; }
+  .auto__warn { color: var(--text); background: var(--surface-2); border: 1px solid var(--border-strong); border-left: 3px solid var(--ring); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); font-size: var(--text-sm); margin-bottom: var(--space-3); }
+</style>
+
+{% from "_hero.html" import hero, state %}
+{% from "_empty_state.html" import empty_state %}
+{% set automation_total = schedule_count + trigger_count + event_trigger_count %}
+{% set channels_on = (1 if scheduling_enabled else 0) + (1 if triggers_enabled else 0) + (1 if event_triggers_enabled else 0) %}
+{# The main action: a new schedule, or turning automations on when all are off. #}
+{% set all_off = not scheduling_enabled and not triggers_enabled and not event_triggers_enabled and not import_enabled %}
+{% set automation_actions %}{% if scheduling_enabled %}<a class="btn btn--primary" href="#auto-new-sched">Create a schedule</a>{% else %}<a class="btn btn--primary" href="/settings#settings-features">Turn on automations</a>{% endif %}{% endset %}
+{% call hero('Always-on operations', 'Automations',
+             subtitle='Schedules, triggers & flows',
+             lede='Every way your workflows run without you — on a recurring
+                   schedule, when another service sends an update, or when something new
+                   appears in a connected source. Create them in the
+                   <a href="/workflow-builder">Workflow Builder</a>.' | safe,
+             actions=automation_actions if (scheduling_enabled or (all_off and can_admin)) else '') %}
+  {{ state('Current state',
+           automation_total ~ ' automation' ~ ('' if automation_total == 1 else 's') ~ ' configured',
+           badge=(channels_on ~ ' of 3 ways to start are on') if channels_on else 'All turned off',
+           badge_class='ok' if channels_on else 'warn',
+           copy=schedule_count ~ ' schedule' ~ ('' if schedule_count == 1 else 's') ~ ' · '
+                ~ trigger_count ~ ' start' ~ ('' if trigger_count == 1 else 's') ~ ' from other services · '
+                ~ event_trigger_count ~ ' start' ~ ('' if event_trigger_count == 1 else 's') ~ ' from new items.
+                Schedules run while Lightwork is running.') }}
+{% endcall %}
+
+<div class="auto">
+  {% include "_account_inventory.html" %}
+  <section class="auto__section panel auto__original" id="auto-create-original" hidden aria-labelledby="auto-create-original-h">
+    <h2 id="auto-create-original-h">Check the original schedule creation</h2>
+    <p id="auto-create-original-message" role="status" aria-live="polite"></p>
+    <button class="btn btn--ghost" id="auto-create-original-read" type="button">Check original request</button>
+    <button class="btn btn--ghost" id="auto-create-original-next" type="button" hidden>Review a separate schedule</button>
+    <button class="btn btn--ghost" id="auto-create-original-clear" type="button">I checked current schedules</button>
+    <p class="auto__hint">This checks the exact earlier creation. It does not run work, create another schedule or prove that a scheduled task finished.</p>
+  </section>
+  {% if scheduling_enabled %}
+  <section class="auto__section panel" id="auto-sched-section" aria-labelledby="auto-sched-h">
+    <div class="section-head">
+      <h2 id="auto-sched-h" tabindex="-1">Schedules</h2>
+      <span class="muted" id="auto-sched-count"></span>
+    </div>
+    <p class="auto__hint">Run daily reports, weekly digests, and other recurring work while Lightwork’s background service is running.</p>
+    <p id="auto-sched-status" class="auto__hint" role="status" aria-live="polite">Loading schedules.</p>
+    <button class="btn btn--ghost" id="auto-sched-retry" type="button">Refresh schedules</button>
+    <a href="/login" id="auto-sched-signin" hidden>Sign in again</a>
+    <ul class="auto__list" id="auto-sched-list" aria-label="Schedules"></ul>
+    {{ empty_state('No schedules yet',
+                   'Schedules you create appear here with their next run. Create one below, or put a saved workflow on a schedule from the builder.',
+                   action_label='Create a schedule', action_href='#auto-new-sched', id='auto-sched-empty', hidden=true) }}
+    <details id="auto-new-sched" class="auto__new">
+      <summary><span role="heading" aria-level="3">Create a schedule</span></summary>
+      <form id="auto-new-form" novalidate data-mv-validate data-mv-keep="automation-schedule">
+        <fieldset class="auto__what">
+          <legend>What should run?</legend>
+          <label><input type="radio" name="what" value="workflow" checked> A saved workflow</label>
+          <label><input type="radio" name="what" value="task"> A task I describe</label>
+          <label><input type="radio" name="what" value="rerun"> An earlier task, run again</label>
+        </fieldset>
+        <div class="auto__field" id="auto-new-workflow-wrap">
+          <label for="auto-new-workflow">Workflow</label>
+          <select id="auto-new-workflow" class="select"><option value="">Loading…</option></select>
+          <div id="auto-new-params"></div>
+        </div>
+        <div class="auto__field" id="auto-new-text-wrap" hidden>
+          <label for="auto-new-text">Describe the task</label>
+          <textarea id="auto-new-text" class="textarea" rows="3" maxlength="16000"></textarea>
+        </div>
+        <div class="auto__field" id="auto-new-rerun-wrap" hidden>
+          <label for="auto-new-rerun">Task to run again</label>
+          <select id="auto-new-rerun" class="select"><option value="">Loading…</option></select>
+        </div>
+        <div class="auto__field">
+          <label for="auto-new-title">Name for this schedule (optional)</label>
+          <input id="auto-new-title" class="input" type="text" maxlength="200">
+        </div>
+        <div class="auto__field">
+          <label for="auto-new-repeat">How often</label>
+          <select id="auto-new-repeat" class="select">
+            <option value="daily">Every day</option>
+            <option value="weekdays">Every weekday (Monday to Friday)</option>
+            <option value="weekly">Every week, on chosen days</option>
+            <option value="monthly">Every month, on a chosen day</option>
+            <option value="hourly">Every few hours</option>
+          </select>
+        </div>
+        <div class="auto__field" id="auto-new-at-wrap">
+          <label for="auto-new-at">At what time</label>
+          <input id="auto-new-at" class="input" type="time" value="09:00">
+        </div>
+        <fieldset class="auto__days" id="auto-new-days" hidden>
+          <legend>On these days</legend>
+          <label><input type="checkbox" value="1" checked> Monday</label>
+          <label><input type="checkbox" value="2"> Tuesday</label>
+          <label><input type="checkbox" value="3"> Wednesday</label>
+          <label><input type="checkbox" value="4"> Thursday</label>
+          <label><input type="checkbox" value="5"> Friday</label>
+          <label><input type="checkbox" value="6"> Saturday</label>
+          <label><input type="checkbox" value="0"> Sunday</label>
+        </fieldset>
+        <div class="auto__field" id="auto-new-dom-wrap" hidden>
+          <label for="auto-new-dom">Day of the month</label>
+          <select id="auto-new-dom" class="select">
+            {% for d in range(1, 32) %}<option value="{{ d }}">{{ d }}</option>{% endfor %}
+          </select>
+          <p class="auto__hint">For the 29th, 30th or 31st, months without that date are skipped. The run is not moved to another day.</p>
+        </div>
+        <div class="auto__field" id="auto-new-every-wrap" hidden>
+          <label for="auto-new-every">Every</label>
+          <select id="auto-new-every" class="select">
+            <option value="1">1 hour</option><option value="2">2 hours</option><option value="3">3 hours</option>
+            <option value="4">4 hours</option><option value="6">6 hours</option><option value="8">8 hours</option>
+            <option value="12">12 hours</option>
+          </select>
+        </div>
+        <div class="auto__field">
+          <label for="auto-new-zone">Time zone</label>
+          <select id="auto-new-zone" class="select"><option value="UTC">UTC</option></select>
+        </div>
+        <details class="auto__advanced">
+          <summary>Technical details</summary>
+          <label for="auto-new-advanced">Custom timetable (five parts: minute, hour, day of month, month, weekday). Leave empty to use the choices above.</label>
+          <input id="auto-new-advanced" class="input" type="text" maxlength="120" autocomplete="off" spellcheck="false">
+        </details>
+        <p class="auto__hint" id="auto-new-preview" role="status" aria-live="polite"></p>
+        <button class="btn" type="submit" id="auto-new-save">Create schedule</button>
+        <section class="panel auto__review" id="auto-new-review" hidden aria-labelledby="auto-new-review-h">
+          <h3 id="auto-new-review-h">Review this schedule</h3>
+          <dl id="auto-new-review-values"></dl>
+          <p id="auto-new-review-notice"></p>
+          <button class="btn" id="auto-new-confirm" type="button">Create reviewed schedule</button>
+          <button class="btn btn--ghost" id="auto-new-cancel" type="button">Cancel review</button>
+        </section>
+      </form>
+    </details>
+  </section>
+  {% endif %}
+
+  {% if triggers_enabled %}
+  <section class="auto__section panel" id="auto-trig-section" aria-labelledby="auto-trig-h">
+    <div class="section-head">
+      <h2 id="auto-trig-h" tabindex="-1">Starts from connected services</h2>
+      <span class="muted" id="auto-trig-count"></span>
+    </div>
+    <p class="auto__hint">Start a workflow the moment another system calls in — a form submission, a new ticket, a payment event.</p>
+    <div class="auto__warn" id="auto-trig-nosecret" hidden>Incoming requests are not ready yet. Ask your administrator to finish connecting and securing this service.</div>
+    <ul class="auto__list" id="auto-trig-list" aria-label="Starts from connected services"></ul>
+    {{ empty_state('No triggers yet',
+                   'Workflows that start when another service calls in appear here. Connect a saved workflow to another service from the builder.',
+                   action_label='Open Workflows', action_href='/workflows', id='auto-trig-empty', hidden=true) }}
+  </section>
+  {% endif %}
+
+  {% if event_triggers_enabled %}
+  <section class="auto__section panel" id="auto-event-section" aria-labelledby="auto-event-h">
+    <div class="section-head">
+      <h2 id="auto-event-h" tabindex="-1">Starts when new items arrive</h2>
+      <span class="muted" id="auto-event-count"></span>
+    </div>
+    <p class="auto__hint">Lightwork checks connected sources for new items and starts the matching workflow. Each new item supplies the information the workflow needs.</p>
+    <ul class="auto__list" id="auto-event-list" aria-label="Starts when new items arrive"></ul>
+    {{ empty_state('Nothing watches for new items yet',
+                   'Automations that start when a connected source gets a new item appear here. Choose a saved workflow and a source below to add the first one.',
+                   id='auto-event-empty', hidden=true) }}
+    <button class="btn btn--ghost" type="button" id="auto-event-poll">Check now</button>
+    <p class="auto__hint" id="auto-event-msg" aria-live="polite"></p>
+    <details id="auto-event-setup" style="margin-top: var(--space-4);">
+    <summary>Add an event automation</summary>
+    <p class="auto__hint">Choose what to run and where to look for new items. The first check records existing items; later checks start work for new ones.</p>
+    <form id="auto-event-form">
+      <div class="field">
+        <label for="auto-event-target-kind">What should run?</label>
+        <select id="auto-event-target-kind"><option value="template">Saved workflow</option><option value="flow">Published flow</option></select>
+      </div>
+      <div class="field">
+        <label for="auto-event-template">Workflow or flow</label>
+        <select id="auto-event-template" required><option value="">Loading workflows…</option></select>
+        <p class="auto__hint" id="auto-event-target-hint"></p>
+        <a href="/workflow-builder">Create a workflow</a> · <a href="/flows/designer">Design and publish a flow</a>
+      </div>
+      <div id="auto-event-params" class="auto__fields"></div>
+      <div class="field">
+        <label for="auto-event-source">Source</label>
+        <select id="auto-event-source"></select>
+      </div>
+      <p class="auto__hint" id="auto-event-source-hint"></p>
+      <p class="auto__hint" id="auto-event-source-availability" role="status"></p>
+      <div id="auto-event-fields" class="auto__fields"></div>
+      <p class="auto__hint" id="auto-event-formurl" hidden></p>
+      <details id="auto-event-config-advanced">
+        <summary>More settings</summary>
+        <div id="auto-event-more" class="auto__fields"></div>
+      </details>
+      <div class="field">
+        <label for="auto-event-name">Trigger name (optional)</label>
+        <input type="text" id="auto-event-name" maxlength="48" placeholder="Defaults to the workflow name" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="auto-event-interval">How often to check</label>
+        <select id="auto-event-interval">
+          <option value="">Every 5 minutes (recommended)</option>
+          <option value="60">Every minute</option>
+          <option value="900">Every 15 minutes</option>
+          <option value="3600">Every hour</option>
+          <option value="21600">Every 6 hours</option>
+          <option value="86400">Once a day</option>
+        </select>
+      </div>
+      <div class="wf__row" style="display:flex; gap: var(--space-3); align-items:center; flex-wrap:wrap;">
+        <button class="btn" type="submit" id="auto-event-create" disabled>Create automation</button>
+        <button class="btn btn--ghost" type="button" id="auto-event-original">Read original creation result</button>
+      </div>
+      <p class="auto__hint">For SharePoint, Salesforce, ServiceNow and Teams, choose a saved account from <a href="/connections">Connections</a> and review the actual source before creating an automation.</p>
+    </form>
+    </details>
+
+    <div id="oauth-connect" style="margin-top: var(--space-5);" hidden>
+      <h3 style="margin-bottom: var(--space-2);">Connected accounts</h3>
+      <p class="auto__hint">Connect an account so Lightwork can check it for new items. Access is stored privately for your organization.</p>
+      <ul class="auto__list" id="oauth-list" aria-label="Connected accounts"></ul>
+      <div class="wf__row" style="display:flex; gap: var(--space-3); align-items:center; flex-wrap: wrap; margin-top: var(--space-3);">
+        <select id="oauth-provider" aria-label="Provider to connect"></select>
+        <button class="btn" type="button" id="oauth-get-url">Connect account</button>
+      </div>
+      <p class="auto__hint">You’ll visit the provider to approve access, then return here to finish automatically.</p>
+      <p class="auto__hint" id="oauth-msg" role="status" aria-live="polite"></p>
+      <details id="oauth-advanced-setup" style="margin-top: var(--space-3);"{% if not can_admin %} hidden{% endif %}>
+      <summary>Different return address (administrators only)</summary>
+      <p class="auto__hint">Only change this if your organization reaches Lightwork through a different web address. That address must be registered with the provider first.</p>
+      <div class="field" style="margin-top: var(--space-3);">
+        <label for="oauth-redirect">Return address</label>
+        <input type="url" id="oauth-redirect" class="input" autocomplete="off" spellcheck="false" />
+      </div>
+      <div id="oauth-finish" style="margin-top: var(--space-3);" hidden>
+        <p class="auto__hint">Approve access on the provider's page. It shows a one-time code when it finishes; copy it here.</p>
+        <a id="oauth-open" class="btn btn--ghost" href="#" rel="noreferrer">Open the provider's approval page</a>
+        <div class="field" style="margin-top: var(--space-2);">
+          <label for="oauth-code">One-time code from the provider</label>
+          <input type="text" id="oauth-code" class="input" autocomplete="off" spellcheck="false" />
+        </div>
+        <button class="btn" type="button" id="oauth-exchange">Finish connecting</button>
+      </div>
+      </details>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="auto__section panel" id="auto-flows-section" aria-labelledby="auto-flows-h" hidden>
+    <div class="section-head">
+      <h2 id="auto-flows-h" tabindex="-1">Flows</h2>
+      <a class="btn" href="/flows/designer" id="fd-new">Design a flow</a>
+    </div>
+    <p class="auto__hint">Flows connect tasks and actions into a repeatable process. Describe what should happen, review the steps, and publish when ready. Approval steps pause the run for a human decision. <span class="muted" id="auto-flows-count"></span></p>
+    <div class="auto__insights" id="flow-insights" role="status" aria-live="polite" hidden
+         style="margin: var(--space-3) 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: 8px;">
+      <strong id="flow-insights-head"></strong>
+      <ul class="auto__list" id="flow-insights-list" aria-label="Flow suggestions"></ul>
+    </div>
+    <ul class="auto__list" id="auto-flows-list" aria-label="Flows"></ul>
+    {{ empty_state('No flows yet',
+                   'Flows you publish appear here with their recent runs. Describe your first flow in the designer to get started.',
+                   action_label='Describe your first flow', action_href='/flows/designer', id='auto-flows-empty', hidden=true) }}
+    <h3 style="margin-top: var(--space-4);">Recent runs</h3>
+    <ul class="auto__list" id="auto-flow-runs" aria-label="Flow runs"></ul>
+    <span class="auto__hint" id="auto-flows-msg" aria-live="polite"></span>
+  </section>
+
+  {% include '_automation_imports.html' %}
+
+  {% if all_off %}
+  {% if can_admin %}
+  {{ empty_state('Automations are turned off',
+                 'Schedules, starts from other services and imports appear here once they are on. Turn them on in Settings to use this page.',
+                 action_label='Turn on automations', action_href='/settings#settings-features') }}
+  {% else %}
+  {{ empty_state('Automations are turned off',
+                 'Schedules, starts from other services and imports appear here once they are on. An administrator can turn them on in Settings.') }}
+  {% endif %}
+  {% endif %}
+</div>
+
+{% endblock %}
+{% block scripts_extra %}
+<script nonce="{{ csp_script_nonce }}">{% include "flow_hardening_review.js" %}</script>
+<script src="/static/lightwork-connected-event-sources.js"></script>
+<script nonce="{{ csp_script_nonce }}">
+(function () {
+  var fmtWhen = window.mvWhen, el = window.mvEl;   // shared primitives (base.html)
+  var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  function clock(h, m) {
+    var hour = Number(h), min = ('0' + m).slice(-2);
+    var suffix = hour < 12 ? 'am' : 'pm', h12 = hour % 12 || 12;
+    return h12 + (min === '00' ? '' : ':' + min) + ' ' + suffix;
+  }
+  function ordinal(n) {
+    n = Number(n); var s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+  // A saved timetable ("0 9 * * 1-5") in words ("Weekdays at 9 am").
+  function cronText(cron) {
+    var f = String(cron || '').trim().split(/\s+/);
+    if (f.length !== 5) return 'On a custom timetable';
+    var min = f[0], hour = f[1], dom = f[2], mon = f[3], dow = f[4];
+    if (/^\*\/\d+$/.test(min) && hour === '*' && dom === '*' && mon === '*' && dow === '*') return 'Every ' + min.slice(2) + ' minutes';
+    if (/^\d+$/.test(min) && hour === '*' && dom === '*' && mon === '*' && dow === '*') return 'Every hour at ' + ('0' + min).slice(-2) + ' minutes past';
+    if (/^\d+$/.test(min) && /^\*\/\d+$/.test(hour) && dom === '*' && mon === '*' && dow === '*') return 'Every ' + hour.slice(2) + ' hours';
+    if (!/^\d+$/.test(min) || !/^\d+$/.test(hour) || mon !== '*') return 'On a custom timetable';
+    var at = ' at ' + clock(hour, min);
+    if (dom === '*' && dow === '*') return 'Every day' + at;
+    if (dom === '*' && dow === '1-5') return 'Weekdays' + at;
+    if (dom === '*' && /^[0-7](,[0-7])*$/.test(dow)) {
+      return 'Every ' + dow.split(',').map(function (d) { return DAYS[Number(d) % 7]; }).join(', ') + at;
+    }
+    if (/^\d+$/.test(dom) && dow === '*') return 'Monthly on the ' + ordinal(dom) + at;
+    return 'On a custom timetable';
+  }
+  function delBtn(label, onClick) {
+    var b = el('button', 'btn btn--ghost btn--danger', 'Delete'); b.type = 'button';
+    b.setAttribute('aria-label', label);
+    b.addEventListener('click', onClick); return b;
+  }
+  function plainError(failure, what) {
+    return window.mvErrorText ? window.mvErrorText(failure, what) : 'Could not ' + what + '. Try again.';
+  }
+  function runLabel(r) {
+    var when = r.created_at ? new Date(r.created_at * 1000) : null;
+    var day = when && !isNaN(when) ? when.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : 'Run';
+    return day + (isFail(r.status) ? ' (failed)' : '');
+  }
+
+  var schedList = document.getElementById('auto-sched-list');
+  var schedEmpty = document.getElementById('auto-sched-empty');
+  var schedCount = document.getElementById('auto-sched-count');
+  var schedSerial=0, schedContext=null, schedLoadedAt=null, schedReady=false;
+  var schedStatus=document.getElementById('auto-sched-status');
+  function forgetSchedules() {
+    schedSerial++; schedReady=false; schedLoadedAt=null; schedContext=null;
+    if (schedList) schedList.replaceChildren(); if (schedEmpty) schedEmpty.hidden=true;
+    if (schedCount) schedCount.textContent='';
+  }
+  document.addEventListener('lightwork:workspace-changed',forgetSchedules);
+  document.addEventListener('lightwork:connection-access-lost',forgetSchedules);
+  document.getElementById('auto-sched-retry')?.addEventListener('click',loadSchedules);
+  // "Create a schedule" links (page header, empty state) open the form below.
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest && event.target.closest('a[href="#auto-new-sched"]');
+    var form = document.getElementById('auto-new-sched');
+    if (!link || !form) return;
+    event.preventDefault(); form.open = true;
+    form.scrollIntoView({ block: 'nearest' });
+    var first = form.querySelector('input, select, textarea'); if (first) first.focus();
+  });
+  async function loadSchedules() {
+    if (!schedList) return;
+    var serial=++schedSerial, controller=new AbortController();
+    var timer=setTimeout(function () { controller.abort(); },15000);
+    schedReady=false; schedEmpty.hidden=true; schedStatus.textContent='Checking schedules.';
+    schedList.querySelectorAll('button').forEach(function (b) { b.disabled=true; });
+    var data;
+    try {
+      var response=await fetch('/api/v1/schedules',{cache:'no-store',signal:controller.signal});
+      if (serial!==schedSerial) return;
+      if (response.status===401 || response.status===403) {
+        forgetSchedules(); schedStatus.textContent=response.status===401 ? 'Sign in again to view your schedules.' : 'Schedules are not accessible. Check workspace access and scheduling settings with an administrator.';
+        document.getElementById('auto-sched-signin').hidden=response.status!==401; return;
+      }
+      if (!response.ok) throw new Error('Schedules unavailable. Refresh the page and try again.');
+      data=await response.json();
+      if (serial!==schedSerial) return;
+      if (!Array.isArray(data.schedules) || typeof data.context!=='string' || data.schedules.some(function (item) { return !item || typeof item.id!=='number'; })) throw new Error('Unreadable schedules.');
+      if (schedContext && schedContext!==data.context) { forgetSchedules(); schedStatus.textContent='Workspace changed. Refresh this page to review current schedules.'; return; }
+      schedContext=data.context; schedReady=true; schedLoadedAt=new Date();
+      schedStatus.textContent='Schedules checked at '+(window.mvTimeAbsolute ? window.mvTimeAbsolute(schedLoadedAt.getTime()) : schedLoadedAt.toLocaleTimeString())+'.';
+      document.getElementById('auto-sched-signin').hidden=true;
+    } catch (error) {
+      if (serial!==schedSerial) return;
+      schedStatus.textContent='Schedules are unavailable. '+(schedLoadedAt ? 'Rows below were last checked at '+(window.mvTimeAbsolute ? window.mvTimeAbsolute(schedLoadedAt.getTime()) : schedLoadedAt.toLocaleString())+'. ' : '')+'Refresh to try again. No changes can be made until the current list is known.'; return;
+    } finally { clearTimeout(timer); }
+    var items=data.schedules;
+    schedList.textContent='';
+    if (schedCount) schedCount.textContent=items.length+(items.length===1 ? ' schedule' : ' schedules');
+    if (schedEmpty) schedEmpty.hidden=items.length>0;
+    items.forEach(function (s) {
+      var li = el('li', 'mv-row'); li.dataset.schedule=JSON.stringify(s); li.dataset.scheduleId=String(s.id);
+      var main = el('div', 'mv-row__main');
+      main.appendChild(el('div', 'mv-row__title', s.title || 'Untitled task'));
+      main.appendChild(el('div', 'mv-row__sub', cronText(s.cron) + (s.zone ? ' (' + String(s.zone).replace(/_/g, ' ') + ' time)' : '') + (fmtWhen(s.next_run) ? ' · next run ' + fmtWhen(s.next_run) : '')));
+      if (s.schedule_id) { var runs = el('div', 'auto__runs'); main.appendChild(runs); loadRuns('schedule', s.schedule_id, runs); }
+      li.appendChild(main);
+      main.appendChild(el('div','mv-row__sub',(s.state || 'active') + (s.running ? ' · a run is in progress' : '')));
+      if (!s.definition_id) li.appendChild(delBtn('Delete schedule ' + (s.title || s.id), function () { delSchedule(s.id); }));
+      schedList.appendChild(li);
+    });
+    document.dispatchEvent(new CustomEvent('lightwork:schedules-rendered'));
+  }
+  document.addEventListener('lightwork:schedules-changed', function () { loadSchedules(); });
+  function refocus(id) {   // re-home focus after a row is removed (it held focus)
+    var h = document.getElementById(id);
+    if (h) h.focus();
+  }
+  // A deleted row leaves the list at once and the toast offers Undo
+  // (window.mvUndo); the delete is sent when that time is up.
+  function rowWith(list, key, value) {
+    return list ? Array.prototype.find.call(list.children, function (li) { return li.dataset[key] === String(value); }) || null : null;
+  }
+  function deleteWithUndo(row, heading, message, url, action, reload, latest, values) {
+    if (row) row.hidden = true;
+    refocus(heading);
+    mvUndo(message, {
+      action: action, latest: latest, values: values,
+      run: function (keepalive) { return fetch(url, { method: 'DELETE', keepalive: keepalive }); },
+      undo: function () { if (row) { row.hidden = false; var b = row.querySelector('button'); if (b) b.focus(); } },
+      done: reload
+    });
+  }
+  async function delSchedule(id) {
+    if (!schedReady) return;
+    var row = rowWith(schedList, 'scheduleId', id), s = {};
+    try { s = JSON.parse(row ? row.dataset.schedule : '{}'); } catch (e) { s = {}; }
+    var name = s.title || 'Untitled task', url = '/api/v1/schedules/' + encodeURIComponent(id);
+    var next = Number(s.next_run) * 1000;
+    // Too close to its next run for a safe undo window: ask, then delete now.
+    if (next && next - Date.now() < 30000) {
+      if (!(await mvConfirm('Delete the schedule “' + name + '”? Its next run is due within a minute, so it is deleted now and can’t be brought back.',
+          { okText: 'Delete schedule', cancelText: 'Keep schedule', danger: true }))) return;
+      try {
+        var r = await fetch(url, { method: 'DELETE' });
+        if (r.ok) { mvToast('Schedule deleted'); loadSchedules(); refocus('auto-sched-h'); }
+        else { mvFail(r, 'delete the schedule'); }
+      } catch (e) { mvFail(e, 'delete the schedule'); }
+      return;
+    }
+    deleteWithUndo(row, 'auto-sched-h', 'Schedule “{name}” deleted.', url, 'delete the schedule', loadSchedules,
+      next ? next - 15000 : undefined, {name: name});
+  }
+
+  var trigList = document.getElementById('auto-trig-list');
+  var trigEmpty = document.getElementById('auto-trig-empty');
+  var trigCount = document.getElementById('auto-trig-count');
+  var trigNoSecret = document.getElementById('auto-trig-nosecret');
+  async function loadTriggers() {
+    if (!trigList) return;
+    var data = {};
+    try { data = await (await fetch('/api/v1/triggers')).json(); } catch (e) { return; }
+    var items = data.triggers || [];
+    if (trigNoSecret) trigNoSecret.hidden = !!data.secret_configured || items.length === 0;
+    trigList.textContent = '';
+    if (trigCount) trigCount.textContent = items.length ? (items.length + (items.length === 1 ? ' start' : ' starts')) : '';
+    if (trigEmpty) trigEmpty.hidden = items.length > 0;
+    var base = window.location.origin + (data.webhook_url || '/webhook/run');
+    items.forEach(function (t) {
+      var li = el('li', 'mv-row'); li.dataset.trigger = t.name;
+      var main = el('div', 'mv-row__main');
+      main.appendChild(el('div', 'mv-row__title', t.name));
+      var pcount = t.params ? Object.keys(t.params).length : 0;
+      var sub = el('div', 'mv-row__sub');
+      sub.appendChild(document.createTextNode('Runs ' + (t.template_title || mvHuman(t.template || '') || 'a saved workflow') + (pcount ? (' · ' + pcount + ' saved answer' + (pcount === 1 ? '' : 's')) : '')));
+      main.appendChild(sub);
+      var integration = el('details'); integration.appendChild(el('summary', '', 'Connect another app'));
+      integration.appendChild(el('p', 'auto__hint', 'In the other app, add a step that sends a web request to this address and names this start “' + t.name + '”. Your administrator can help with the security key.'));
+      var linkRow = el('div', 'mv-row__actions');
+      linkRow.appendChild(el('span', 'auto__url', base));
+      var copyLink = el('button', 'btn btn--ghost', 'Copy address'); copyLink.type = 'button';
+      copyLink.addEventListener('click', function () { mvCopy(base); });
+      var copyName = el('button', 'btn btn--ghost', 'Copy start name'); copyName.type = 'button';
+      copyName.addEventListener('click', function () { mvCopy(t.name); });
+      linkRow.appendChild(copyLink); linkRow.appendChild(copyName);
+      integration.appendChild(linkRow); main.appendChild(integration);
+      var runs = el('div', 'auto__runs'); main.appendChild(runs); loadRuns('trigger', t.name, runs);
+      li.appendChild(main);
+      li.appendChild(delBtn('Delete trigger ' + t.name, function () { delTrigger(t.name); }));
+      trigList.appendChild(li);
+    });
+  }
+  function delTrigger(name) {
+    deleteWithUndo(rowWith(trigList, 'trigger', name), 'auto-trig-h',
+      'Start “{name}” deleted. Other apps can no longer start this workflow.',
+      '/api/v1/triggers/' + encodeURIComponent(name), 'delete the start', loadTriggers, undefined, {name: name});
+  }
+
+  // Run history (provenance): "N runs · ✓X · ✗Y · #ids" with drill-down links.
+  function isFail(s) { return s === 'failed' || s === 'error'; }
+  async function loadRuns(kind, ref, into) {
+    if (!ref || !into) return;
+    into.textContent = 'Loading runs…';   // visible loading state (not a silent blank)
+    var resp, data;
+    try {
+      resp = await fetch('/api/v1/automation-runs?kind=' + encodeURIComponent(kind) + '&ref=' + encodeURIComponent(ref));
+      if (!resp.ok) throw new Error('status ' + resp.status);
+      data = await resp.json();
+    } catch (e) {
+      // Surface failure instead of leaving a blank that reads as "no runs".
+      into.textContent = 'Run history unavailable';
+      return;
+    }
+    var sum = data.summary || {}, runs = data.runs || [];
+    var total = Object.keys(sum).reduce(function (a, k) { return a + sum[k]; }, 0);
+    into.textContent = '';
+    if (!total) { into.textContent = 'No runs yet. Runs appear here after the first scheduled or connected start.'; return; }
+    var failed = (sum.failed || 0) + (sum.error || 0);
+    into.appendChild(document.createTextNode(total + (total === 1 ? ' run' : ' runs')));
+    if (sum.done) into.appendChild(document.createTextNode(' · ✓ ' + sum.done));
+    if (failed) {
+      into.appendChild(document.createTextNode(' · '));
+      into.appendChild(el('span', 'auto__runs-fail', '✗ ' + failed));   // fail count in --danger
+    }
+    into.appendChild(document.createTextNode(' · '));
+    // Recent runs as drill-down links to each task's step-by-step history.
+    runs.slice(0, 5).forEach(function (r, i) {
+      if (i) into.appendChild(document.createTextNode(', '));
+      var a = document.createElement('a');
+      a.href = '/goals/' + encodeURIComponent(r.goal_id) + '/trajectory';
+      a.className = 'auto__run auto__run--' + (r.status || 'pending');
+      // Non-color cue so failed runs are distinguishable without relying on hue.
+      a.textContent = runLabel(r);
+      a.setAttribute('aria-label', (r.title || 'Run') + ' — ' + mvHuman(r.status || 'pending') + ' — ' + fmtWhen(r.created_at));
+      a.title = (r.title || '') + ' · ' + mvHuman(r.status || '') + ' · ' + fmtWhen(r.created_at);
+      into.appendChild(a);
+    });
+  }
+
+  // ---- event triggers (polled sources) ----
+  var evForm = document.getElementById('auto-event-form');
+  if (evForm) {
+    var evList = document.getElementById('auto-event-list');
+    var evEmpty = document.getElementById('auto-event-empty');
+    var evCount = document.getElementById('auto-event-count');
+    var evSource = document.getElementById('auto-event-source');
+    var evMsg = document.getElementById('auto-event-msg');
+    var evFields = document.getElementById('auto-event-fields');
+    var evMore = document.getElementById('auto-event-more');
+    var evAdvanced = document.getElementById('auto-event-config-advanced');
+    var evAvailability = document.getElementById('auto-event-source-availability');
+    var evCreate = document.getElementById('auto-event-create');
+    var evTarget = document.getElementById('auto-event-template');
+    var evTargetKind = document.getElementById('auto-event-target-kind');
+    var sourceDrafts = Object.create(null), currentSource = '', sourceControls = [];
+    var connectedSource = window.LwConnectedEventSource.create();
+    var targetCatalog = { template: [], flow: [] }, targetErrors = {}, creatingEvent = false;
+    // Keys are the existing source contract; labels are for people setting up work.
+    // [key, label, kind, required, default, tucked under "More settings"]
+    var SOURCE_FIELDS = {
+      http_json: [['url', 'Feed address', 'url', true], ['items_path', 'Where the list of items is in the feed (if not at the top)', 'text', false, undefined, true], ['id_field', 'Field that tells items apart', 'text', false, 'id', true]],
+      rss: [['url', 'RSS or Atom feed address', 'url', true]],
+      oauth_http_json: [['provider', 'Connected account', 'provider', true], ['url', 'Feed address', 'url', true], ['items_path', 'Where the list of items is in the feed (if not at the top)', 'text', false, undefined, true], ['id_field', 'Field that tells items apart', 'text', false, 'id', true]],
+      github_issues: [['owner', 'GitHub organization or owner', 'text', true], ['repo', 'Repository name', 'text', true], ['state', 'Which issues', [['open', 'Open issues'], ['closed', 'Closed issues'], ['all', 'All issues']], false, 'open'], ['provider', 'Connected account (optional for public repositories)', 'provider']],
+      imap_email: [['host', 'Mail server', 'text', true], ['username', 'Email account', 'text', true], ['password_env', 'Password name from your administrator', 'text', true], ['trusted_authserv_id', 'Server that checks incoming mail', 'text', true], ['allowed_senders', 'People whose email may start this workflow (separate addresses with commas)', 'text', true], ['mailbox', 'Mailbox', 'text', false, 'INBOX', true], ['port', 'Server port', 'number', false, 993, true], ['include_body', 'Include the message body', 'checkbox', false, false]],
+      file_dir: [['path', 'Folder inside the approved incoming-files area', 'text', true], ['glob', 'Which files (for example *.pdf)', 'text', false, '*', true], ['recursive', 'Include subfolders', 'checkbox', false, false]],
+      form: [], sharepoint_files: [], salesforce_records: [], servicenow_tickets: [], teams_messages: []
+    };
+    var SOURCE_LABELS = { http_json: 'Web feed', rss: 'RSS or Atom feed', oauth_http_json: 'Connected account feed', github_issues: 'GitHub issues', imap_email: 'Email inbox', file_dir: 'Incoming files', form: 'Form submissions', sharepoint_files: 'New SharePoint files', salesforce_records: 'Salesforce records or closed opportunities', servicenow_tickets: 'New ServiceNow tickets', teams_messages: 'New Teams channel messages' };
+    var SOURCE_HINTS = {
+      rss: 'Paste the public address of an RSS or Atom feed. The first check remembers existing posts; later checks start your workflow for new posts.',
+      http_json: 'Use a feed that returns a list of items.',
+      oauth_http_json: 'Choose an account connected below. Lightwork uses its saved approval; never paste a password or access key.',
+      github_issues: 'Watch new issues in a repository. Connect GitHub below for private repositories.',
+      imap_email: 'Your administrator gives you the password name and the server that verifies incoming senders. Only verified mail from the addresses you list can start this workflow. The mail connection is always encrypted. Passwords are never stored in automation settings.',
+      file_dir: 'This folder is on the Lightwork server, inside your organization’s approved incoming-files area. An administrator must set this up.',
+      form: 'Lightwork gives this automation a private form link when you save. If you update an existing automation, its link stays the same.',
+      sharepoint_files: 'Choose your saved account, site, document library and folder. Check and review the actual source; existing files are remembered.',
+      salesforce_records: 'Choose your saved Salesforce account and record type. Closed opportunities start once when first observed as closed, including older opportunities.',
+      servicenow_tickets: 'Choose your saved ServiceNow account and ticket type. Check and review the actual source; existing tickets are remembered.',
+      teams_messages: 'Choose your saved Microsoft account, team and channel. New root messages can start work; replies and later edits do not create another run.'
+    };
+    var connectedProviders = [];
+    function readSourceConfig() {
+      if (connectedSource.isConnected(currentSource)) return connectedSource.config();
+      if (currentSource === 'form') return {};
+      return Object.assign({}, sourceDrafts[currentSource] || {});
+    }
+    function showFormUrl() {
+      var hint = document.getElementById('auto-event-formurl');
+      hint.hidden = evSource.value !== 'form'; hint.textContent = '';
+      if (hint.hidden) return;
+      hint.textContent = 'After saving, open or copy the private form link from the saved automation below.';
+    }
+    function fillSourceFields() {
+      evFields.textContent = ''; if (evMore) evMore.textContent = '';
+      sourceControls = [];
+      if (connectedSource.isConnected(currentSource)) {
+        connectedSource.render(currentSource, sourceDrafts[currentSource] || {}, evFields);
+        showFormUrl(); return;
+      }
+      var cfg = sourceDrafts[currentSource] || (sourceDrafts[currentSource] = {});
+      (SOURCE_FIELDS[evSource.value] || []).forEach(function (field) {
+        var key = field[0], kind = field[2], choices = Array.isArray(kind) ? kind : null;
+        var wrapper = el('div', 'field'), label = el('label', '', field[1]);
+        var input = document.createElement(choices || kind === 'provider' ? 'select' : 'input');
+        input.id = 'auto-source-' + key; label.htmlFor = input.id;
+        input.className = choices || kind === 'provider' ? 'select' : (kind === 'checkbox' ? '' : 'input');
+        if (choices) choices.forEach(function (choice) { var option = el('option', '', choice[1]); option.value = choice[0]; input.appendChild(option); });
+        else if (kind === 'provider') {
+          var empty = el('option', '', field[3] ? 'Choose a connected account' : 'Use public or administrator-configured access'); empty.value = ''; input.appendChild(empty);
+          connectedProviders.forEach(function (provider) { var option = el('option', '', provider.label); option.value = provider.name; input.appendChild(option); });
+          if (cfg[key] && !connectedProviders.some(function (p) { return p.name === cfg[key]; })) {
+            var missing = el('option', '', mvHuman(cfg[key]) + ' — not connected'); missing.value = cfg[key]; input.appendChild(missing);
+          }
+        } else input.type = kind;
+        var value = Object.prototype.hasOwnProperty.call(cfg, key) ? cfg[key] : field[4];
+        if (kind === 'checkbox') input.checked = value === true;
+        else input.value = value === undefined ? '' : String(value);
+        if (kind === 'number') { input.min = '1'; input.max = '65535'; input.step = '1'; }
+        input.required = !!field[3];
+        input.addEventListener('input', function () {
+          var next = sourceDrafts[currentSource] || (sourceDrafts[currentSource] = {});
+          if (kind === 'checkbox') next[key] = input.checked;
+          else if (!input.value.trim()) delete next[key];
+          else next[key] = kind === 'number' ? Number(input.value) : input.value.trim();
+          showFormUrl();
+        });
+        if (kind === 'checkbox') { wrapper.appendChild(input); wrapper.appendChild(label); }
+        else { wrapper.appendChild(label); wrapper.appendChild(input); }
+        (field[5] && evMore ? evMore : evFields).appendChild(wrapper);
+        sourceControls.push(input);
+      });
+      showFormUrl();
+    }
+    function changeSource() {
+      if (currentSource) sourceDrafts[currentSource] = connectedSource.isConnected(currentSource) ? connectedSource.draft() : readSourceConfig();
+      connectedSource.clear();
+      currentSource = evSource.value;
+      document.getElementById('auto-event-name').placeholder = connectedSource.isConnected(currentSource) ? 'An individual name is assigned if blank' : 'Defaults to the workflow name';
+      document.getElementById('auto-event-source-hint').textContent = SOURCE_HINTS[currentSource] || '';
+      evAdvanced.open = false;
+      evAdvanced.hidden = !(SOURCE_FIELDS[currentSource] || []).some(function (field) { return field[5]; });
+      fillSourceFields();
+    }
+    evSource.addEventListener('change', changeSource);
+    function renderTargetParams() {
+      var container = document.getElementById('auto-event-params'); container.textContent = '';
+      var target = targetCatalog[evTargetKind.value].find(function (item) { return item.name === evTarget.value; });
+      (target && target.params || []).forEach(function (name, index) {
+        var field = el('div', 'field'), input = document.createElement('input');
+        input.type = 'text'; input.id = 'auto-event-param-' + index; input.dataset.param = name;
+        input.className = 'input';
+        var label = el('label', '', mvHuman(name) + ' (used when a new item doesn’t include it)'); label.htmlFor = input.id;
+        field.appendChild(label); field.appendChild(input); container.appendChild(field);
+      });
+    }
+    function renderTargetChoices() {
+      evTarget.textContent = '';
+      var kind = evTargetKind.value, items = targetCatalog[kind];
+      var placeholder = el('option', '', items.length ? 'Choose a workflow' : 'No ' + (kind === 'flow' ? 'published flows' : 'saved workflows') + ' available'); placeholder.value = ''; evTarget.appendChild(placeholder);
+      items.forEach(function (item) { var option = el('option', '', item.title || item.name); option.value = item.name; evTarget.appendChild(option); });
+      document.getElementById('auto-event-target-hint').textContent = targetErrors[kind] || (kind === 'flow' ? 'Only published flows can start automatically. Their approval steps still apply.' : 'Each new item fills the workflow’s inputs. You can supply fallback values below.');
+      renderTargetParams();
+    }
+    evTargetKind.addEventListener('change', renderTargetChoices);
+    evTarget.addEventListener('change', renderTargetParams);
+    async function loadTargetChoices() {
+      await Promise.all(['template', 'flow'].map(async function (kind) {
+        try {
+          var data = await window.mvFetchJSON('/api/v1/' + (kind === 'template' ? 'templates' : 'flows'), {}, 'load the ' + (kind === 'template' ? 'workflows' : 'flows'));
+          var items = data && (kind === 'template' ? data.templates : data.flows);
+          if (!Array.isArray(items)) throw new Error('The workflow list could not be read. Refresh to try again.');
+          targetCatalog[kind] = kind === 'template' ? items : items.filter(function (item) { return item.published; }).map(function (item) { return { name: item.id, title: item.name || item.id }; });
+        } catch (e) { targetErrors[kind] = e.message; }
+      }));
+      renderTargetChoices();
+    }
+    loadTargetChoices();
+    fetch('/api/v1/oauth/providers').then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (data) {
+      connectedProviders = (data.providers || []).filter(function (p) { return (data.connected || []).indexOf(p.name) !== -1; });
+      if (currentSource && !connectedSource.isConnected(currentSource)) fillSourceFields();
+    }).catch(function () { /* Connection setup below retains its own feedback. */ });
+    async function loadEventTriggers(expectedForm) {
+      var data = {};
+      try {
+        var response = await fetch('/api/v1/event-triggers', {cache: 'no-store'});
+        if (!response.ok) throw new Error('Could not load sources. Refresh to try again.');
+        data = await response.json();
+        if (!data || !Array.isArray(data.triggers)) throw new Error('Could not read sources. Refresh to try again.');
+        if (expectedForm && !data.triggers.some(function (row) {
+          return row.name === expectedForm.name && row.source === 'form' &&
+            row.config && row.config.token === expectedForm.token;
+        })) return false;
+      } catch (e) {
+        if (!evSource.children.length) evAvailability.textContent = e.message || 'Could not load sources. Refresh to try again.';
+        return false;
+      }
+      if (evSource && !evSource.children.length) {
+        var order = ['rss', 'form', 'sharepoint_files', 'salesforce_records', 'servicenow_tickets', 'teams_messages', 'http_json', 'github_issues', 'oauth_http_json', 'imap_email', 'file_dir'];
+        var offered = (data.sources || []).filter(function (s) { return Object.prototype.hasOwnProperty.call(SOURCE_FIELDS, s); });
+        offered.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
+        offered.forEach(function (s) {
+          var o = document.createElement('option'); o.value = s; o.textContent = SOURCE_LABELS[s] || mvHuman(s); evSource.appendChild(o);
+        });
+        var unavailable = (data.sources || []).length - offered.length;
+        evAvailability.textContent = !offered.length ? 'No sources can be set up from this page. Ask your administrator to check this installation.' :
+          (unavailable ? unavailable + ' additional source' + (unavailable === 1 ? ' is' : 's are') + ' not yet available for setup here.' : '');
+        evCreate.disabled = !offered.length;
+        changeSource();
+      }
+      var items = data.triggers || [];
+      // One batched history fetch (owner-scoped), grouped by trigger name -- the
+      // rows are newest-first, so each group stays newest-first. Avoids an
+      // N-per-row fetch + parse of the same file for the fires/last-error hint.
+      var histByName = {};
+      try {
+        var h = await (await fetch('/api/v1/event-triggers/history?limit=500')).json();
+        (h.history || []).forEach(function (r) { (histByName[r.name] = histByName[r.name] || []).push(r); });
+      } catch (e) { /* history is best-effort */ }
+      // Per-trigger goal-outcome counts (done/failed/blocked): attributes the
+      // QUALITY of what each automation produced, which the fire history can't.
+      var outByName = {};
+      try {
+        var o = await (await fetch('/api/v1/event-triggers/outcomes')).json();
+        outByName = o.outcomes || {};
+      } catch (e) { /* outcomes are best-effort */ }
+      evList.textContent = '';
+      if (evCount) evCount.textContent = items.length ? (items.length + (items.length === 1 ? ' automation' : ' automations')) : '';
+      if (evEmpty) evEmpty.hidden = items.length > 0;
+      items.forEach(function (t) {
+        var li = el('li', 'mv-row');
+        var main = el('div', 'mv-row__main');
+        main.appendChild(el('div', 'mv-row__title', t.name));
+        main.appendChild(el('div', 'mv-row__sub', (SOURCE_LABELS[t.source] || mvHuman(t.source)) + ' · runs ' + mvHuman(t.template || t.flow)
+          + ' · ' + everyText(t.interval_seconds)
+          + (t.cursor ? '' : ' · not checked yet')));
+        if (t.source === 'form') {
+          var pending = t.pending_submissions;
+          main.appendChild(el('div', 'mv-row__sub', pending === null || pending === undefined
+            ? 'Submission status is unavailable. Changes are paused until Lightwork can check it.'
+            : pending > 0
+              ? pending + (pending === 1 ? ' submission is' : ' submissions are') + ' waiting. Review the received answers or choose Check now.'
+              : 'All received submissions have been checked. If this form is full, replace its link and share the new one.'));
+        }
+        var runs = el('div', 'auto__runs'); main.appendChild(runs); loadRuns('event', t.name, runs);
+        var hist = el('div', 'auto__runs'); main.appendChild(hist); renderEventHistory(histByName[t.name] || [], hist);
+        var outc = el('div', 'auto__runs'); main.appendChild(outc); renderEventOutcomes(outByName[t.name] || {}, outc);
+        li.appendChild(main);
+        var actions = el('div', 'mv-row__actions');
+        if (t.source === 'form') {
+          var formToken = t.config && typeof t.config.token === 'string' ? t.config.token : '';
+          if (formToken) {
+            if (pending > 0) {
+              var reviewButton = el('button', 'btn btn--ghost', 'Review waiting submissions');
+              reviewButton.type = 'button';
+              var reviewPanel = el('div', 'auto__runs');
+              reviewPanel.hidden = true;
+              main.appendChild(reviewPanel);
+              async function showWaitingSubmissions() {
+                reviewPanel.hidden = false;
+                reviewPanel.textContent = 'Loading received answers…';
+                function shareRecovery(held) {
+                  document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {detail: {
+                    selection: held ? {kind: 'form_recovery', name: t.name, sequence: held.sequence} : null
+                  }}));
+                }
+                var result;
+                try {
+                  var response = await fetch('/api/v1/event-triggers/' + encodeURIComponent(t.name) + '/form-submissions', {cache: 'no-store'});
+                  if (!response.ok) { shareRecovery(null); reviewPanel.textContent = plainError(response, 'review these submissions'); return null; }
+                  result = await response.json();
+                } catch (error) { shareRecovery(null); reviewPanel.textContent = plainError(error, 'review these submissions'); return null; }
+                if (!result || !Array.isArray(result.submissions) || result.binding_revision !== t.binding_revision) {
+                  shareRecovery(null); reviewPanel.textContent = 'This form changed. Refresh the page before making a decision.'; return null;
+                }
+                shareRecovery(result.interrupted_decision);
+                reviewPanel.textContent = '';
+                if (result.interrupted_decision) {
+                  var held = result.interrupted_decision;
+                  var heldCard = el('div', 'mv-row');
+                  heldCard.appendChild(el('strong', '', 'A recorded decision needs recovery'));
+                  heldCard.appendChild(el('p', 'muted', 'The signed decision was saved, but an interruption left its completion record unfinished. Work is held. Review the received answers and original reason before confirming; this does not run or remove the submission.'));
+                  var heldFields = document.createElement('dl');
+                  Object.entries(held.fields || {}).forEach(function (pair) {
+                    heldFields.appendChild(el('dt', '', mvHuman(pair[0])));
+                    heldFields.appendChild(el('dd', '', String(pair[1])));
+                  });
+                  heldCard.appendChild(heldFields);
+                  heldCard.appendChild(el('p', 'muted', 'Recorded reason: ' + held.reason));
+                  heldCard.appendChild(el('p', 'muted', 'Recorded by ' + held.decided_by + ' on ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(Number(held.decided_at)) : new Date(Number(held.decided_at) * 1000).toLocaleString())));
+                  var repair = el('button', 'btn btn--ghost', 'Confirm recorded decision');
+                  repair.type = 'button'; heldCard.appendChild(repair);
+                  var repairStatus = el('span', 'muted'); repairStatus.setAttribute('role', 'status');
+                  heldCard.appendChild(repairStatus);
+                  repair.addEventListener('click', async function () {
+                    if (repair.disabled || !(await mvConfirm('Confirm the signed “Do not run” decision for this exact submission? Lightwork will complete its record so Check now can continue. The received answers stay saved and no work starts.', {okText: 'Confirm decision'}))) return;
+                    repair.disabled = true; repairStatus.textContent = 'Checking the signed record…';
+                    var response = null;
+                    try {
+                      response = await fetch('/api/v1/event-triggers/' + encodeURIComponent(t.name) + '/form-submissions/' + encodeURIComponent(held.sequence) + '/recover-decision', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({expected_generation: t.binding_revision, expected_fields_sha256: held.fields_sha256, expected_decision_sha256: held.decision_sha256})
+                      });
+                    } catch (error) { /* Read the current state after an uncertain response. */ }
+                    var failure = response && !response.ok ? plainError(response, 'confirm the recorded decision') : '';
+                    var refreshed = await showWaitingSubmissions();
+                    if (!refreshed) return;
+                    var current = refreshed.submissions.find(function (row) { return row.sequence === held.sequence; });
+                    var confirmed = !refreshed.interrupted_decision && current && current.do_not_run;
+                    if (!confirmed && !refreshed.interrupted_decision) {
+                      try {
+                        var receiptResponse = await fetch('/api/v1/event-triggers/' + encodeURIComponent(t.name) + '/form-submissions/' + encodeURIComponent(held.sequence) + '/decision-receipt');
+                        if (receiptResponse.ok) {
+                          var receipt = await receiptResponse.json();
+                          confirmed = receipt.do_not_run === true && receipt.sequence === held.sequence &&
+                            receipt.binding_revision === t.binding_revision && receipt.fields_sha256 === held.fields_sha256 &&
+                            receipt.decision_sha256 === held.decision_sha256;
+                        }
+                      } catch (error) { /* A missing receipt must never claim success. */ }
+                    }
+                    evMsg.textContent = confirmed
+                      ? (current ? 'Decision confirmed. Choose Check now to continue past this submission.' : 'Decision confirmed. The form has moved past this submission.')
+                      : (failure || 'The decision remains held. Refresh and review it before trying again.');
+                  });
+                  reviewPanel.appendChild(heldCard);
+                  return result;
+                }
+                reviewPanel.appendChild(el('p', 'muted', 'These answers stay saved. If a submission cannot be used, you can record why it should not start work. This does not undo work already started.'));
+                result.submissions.forEach(function (submission) {
+                  var card = el('div', 'mv-row');
+                  var received = new Date(Number(submission.received_at) * 1000);
+                  card.appendChild(el('strong', '', 'Received ' + (isNaN(received.getTime()) ? 'earlier' : window.mvTimeAbsolute ? window.mvTimeAbsolute(received.getTime()) : received.toLocaleString())));
+                  var details = document.createElement('dl');
+                  Object.entries(submission.fields || {}).forEach(function (pair) {
+                    details.appendChild(el('dt', '', mvHuman(pair[0])));
+                    details.appendChild(el('dd', '', String(pair[1])));
+                  });
+                  card.appendChild(details);
+                  if (submission.do_not_run) {
+                    card.appendChild(el('p', 'muted', 'Will not run. Reason: ' + (submission.reason || 'Recorded by the owner.')));
+                  } else {
+                    var decide = document.createElement('form');
+                    var label = el('label', '', 'Why should this submission not run?');
+                    var reason = document.createElement('textarea');
+                    reason.className = 'input'; reason.required = true; reason.minLength = 10; reason.maxLength = 500;
+                    label.appendChild(reason); decide.appendChild(label);
+                    var stop = el('button', 'btn btn--ghost', 'Do not run this submission');
+                    stop.type = 'submit'; decide.appendChild(stop);
+                    var status = el('span', 'muted'); status.setAttribute('role', 'status');
+                    decide.appendChild(status);
+                    decide.addEventListener('submit', async function (event) {
+                      event.preventDefault();
+                      if (!decide.reportValidity() || stop.disabled) return;
+                      if (!(await mvConfirm('Keep this received submission on record without starting its workflow? This decision will be recorded and cannot be undone.', {okText: 'Do not run'}))) return;
+                      stop.disabled = true; status.textContent = 'Recording your decision…';
+                      var response = null;
+                      try {
+                        response = await fetch('/api/v1/event-triggers/' + encodeURIComponent(t.name) + '/form-submissions/' + encodeURIComponent(submission.sequence) + '/do-not-run', {
+                          method: 'POST', headers: {'Content-Type': 'application/json'},
+                          body: JSON.stringify({expected_generation: t.binding_revision, expected_fields_sha256: submission.fields_sha256, reason: reason.value.trim()})
+                        });
+                      } catch (error) { /* Read back before interpreting an uncertain response. */ }
+                      var failure = response && !response.ok ? plainError(response, 'record this decision') : '';
+                      var refreshed = await showWaitingSubmissions();
+                      if (!refreshed) return;
+                      var current = refreshed.submissions.find(function (row) { return row.sequence === submission.sequence; });
+                      if (current && current.do_not_run) {
+                        evMsg.textContent = 'Decision recorded. Choose Check now to continue past submissions that should not run.';
+                      } else {
+                        evMsg.textContent = failure || 'The decision could not be confirmed. Refresh the page before trying again.';
+                      }
+                    });
+                    card.appendChild(decide);
+                  }
+                  reviewPanel.appendChild(card);
+                });
+                if (result.waiting_total > result.submissions.length) {
+                  reviewPanel.appendChild(el('p', 'muted', 'More submissions are waiting. Choose Check now after resolving this group to see the next group.'));
+                }
+                return result;
+              }
+              reviewButton.addEventListener('click', function () {
+                if (!reviewPanel.hidden) { reviewPanel.hidden = true; return; }
+                showWaitingSubmissions();
+              });
+              actions.appendChild(reviewButton);
+            }
+            var formLink = el('a', 'btn btn--ghost', 'Open form');
+            formLink.href = '/form/' + encodeURIComponent(formToken);
+            formLink.target = '_blank'; formLink.rel = 'noopener noreferrer';
+            actions.appendChild(formLink);
+            var copyLink = el('button', 'btn btn--ghost', 'Copy link'); copyLink.type = 'button';
+            var copyStatus = el('span', 'muted'); copyStatus.setAttribute('role', 'status');
+            copyStatus.setAttribute('aria-live', 'polite');
+            copyLink.addEventListener('click', async function () {
+              if (copyLink.disabled) return;
+              if (!window.navigator || !window.navigator.clipboard || !window.navigator.clipboard.writeText) {
+                copyStatus.textContent = 'Open the form and copy its address from your browser.'; return;
+              }
+              try {
+                await window.navigator.clipboard.writeText(new URL(formLink.href, window.location.href).href);
+                copyStatus.textContent = 'Link copied.';
+              } catch (error) { copyStatus.textContent = 'Could not copy. Open the form and copy its address.'; }
+            });
+            actions.appendChild(copyLink); actions.appendChild(copyStatus);
+            var replaceLink = el('button', 'btn btn--ghost', 'Replace link');
+            replaceLink.type = 'button';
+            replaceLink.disabled = pending !== 0 || !t.binding_revision;
+            replaceLink.setAttribute('aria-label', 'Replace form link for ' + t.name);
+            replaceLink.addEventListener('click', async function () {
+              if (replaceLink.disabled) return;
+              if (!(await mvConfirm('Replace the link for “' + t.name + '”? The old link will stop working. Submissions already received stay saved. Copy and share the new link everywhere you used the old one.', {okText: 'Replace link'}))) return;
+              // The POST may commit even if its response is lost. Stop sharing
+              // the old URL until a fresh registry read confirms the link.
+              formLink.hidden = true;
+              copyLink.disabled = true;
+              replaceLink.disabled = true;
+              copyStatus.textContent = 'Checking the current link…';
+              evMsg.textContent = 'Replacing the form link…';
+              var response = null, result = null;
+              try {
+                response = await fetch('/api/v1/event-triggers/' + encodeURIComponent(t.name) + '/rotate-form-link', {
+                  method: 'POST', headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({expected_generation: t.binding_revision})
+                });
+                result = await response.json().catch(function () { return null; });
+              } catch (error) { /* A lost response does not tell us whether the POST committed. */ }
+              var newToken = response && response.ok && result && result.config &&
+                typeof result.config.token === 'string' && result.config.token !== formToken
+                  ? result.config.token : null;
+              var refreshed = false;
+              try { refreshed = await loadEventTriggers(newToken ? {name: t.name, token: newToken} : null); }
+              catch (error) { /* Keep the old controls unavailable after a failed readback. */ }
+              if (!refreshed) {
+                evMsg.textContent = 'The current form link could not be verified. Refresh this page before sharing or replacing the link.';
+              } else if (newToken) {
+                evMsg.textContent = 'Link replaced. The old link no longer works. Copy the new link and update everywhere you shared it.';
+              } else if (response && !response.ok) {
+                evMsg.textContent = response.status === 409
+                  ? 'The form has changed or still has submissions waiting. Check its current link and status before trying again.'
+                  : plainError(response, 'replace the form link');
+              } else {
+                evMsg.textContent = 'The replacement result could not be confirmed. The current link is shown below; check it before trying again.';
+              }
+            });
+            actions.appendChild(replaceLink);
+          } else {
+            main.appendChild(el('div', 'mv-row__sub', 'This form has no link. Ask an administrator to repair its setup.'));
+          }
+        }
+        actions.appendChild(delBtn('Delete ' + t.name, function () { delEventTrigger(t.name); }));
+        li.appendChild(actions);
+        li.dataset.eventTrigger = t.name;
+        evList.appendChild(li);
+      });
+      return true;
+    }
+    function everyText(seconds) {
+      seconds = Number(seconds) || 300;
+      if (seconds % 86400 === 0) return seconds === 86400 ? 'checks once a day' : 'checks every ' + (seconds / 86400) + ' days';
+      if (seconds % 3600 === 0) return seconds === 3600 ? 'checks every hour' : 'checks every ' + (seconds / 3600) + ' hours';
+      if (seconds % 60 === 0) return seconds === 60 ? 'checks every minute' : 'checks every ' + (seconds / 60) + ' minutes';
+      return 'checks every ' + seconds + ' seconds';
+    }
+    function renderEventHistory(rows, into) {
+      // Fires + no-goal outcomes (poll errors, missing template, skipped events)
+      // that the spawned-goal run list can't show.
+      if (!rows.length) return;
+      var fires = rows.filter(function (r) { return r.kind === 'fired'; }).length;
+      var err = rows.find(function (r) { return r.kind !== 'fired'; });
+      var bits = [];
+      if (fires) bits.push('started ' + fires + (fires === 1 ? ' time' : ' times'));
+      if (err) { bits.push('⚠ The last check had a problem: ' + mvHuman(err.kind || 'unknown')); if (err.note) into.title = err.note; }
+      if (bits.length) into.textContent = bits.join(' · ');
+    }
+    function renderEventOutcomes(counts, into) {
+      // Goal-outcome quality per trigger (done/failed/blocked): a rising failed
+      // count flags an automation firing bad goals -- and those same failures are
+      // grounded into the learning loop by the run itself.
+      var done = counts.done || 0;
+      var bad = (counts.failed || 0) + (counts.blocked || 0);
+      if (!done && !bad) return;
+      var bits = [];
+      if (done) bits.push('✓ ' + done + ' done');
+      if (bad) bits.push('✗ ' + bad + ' failed');
+      into.textContent = bits.join(' · ');
+    }
+    async function delEventTrigger(name) {
+      deleteWithUndo(rowWith(evList, 'eventTrigger', name), 'auto-event-h',
+        'Automation “{name}” deleted. Lightwork stops checking for new items.',
+        '/api/v1/event-triggers/' + encodeURIComponent(name), 'delete the automation', loadEventTriggers, undefined, {name: name});
+    }
+    evForm.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      if (creatingEvent) return;
+      evMsg.textContent = '';
+      if (!evTarget.value || !Object.prototype.hasOwnProperty.call(SOURCE_FIELDS, evSource.value)) {
+        evMsg.textContent = 'Choose an available workflow or flow and source before creating an automation.';
+        return;
+      }
+      var config;
+      try { config = readSourceConfig(); }
+      catch (error) { evMsg.textContent = error.message; return; }
+      if (!evForm.reportValidity()) return;
+      var intervalRaw = String(document.getElementById('auto-event-interval').value || '').trim();
+      var body = {
+        source: evSource.value, config: config,
+        name: document.getElementById('auto-event-name').value.trim() || null,
+        interval_seconds: intervalRaw ? Number(intervalRaw) : 0,
+        params: {}
+      };
+      body[evTargetKind.value] = evTarget.value;
+      document.querySelectorAll('#auto-event-params input').forEach(function (input) {
+        if (input.value.trim()) body.params[input.dataset.param] = input.value.trim();
+      });
+      creatingEvent = true;
+      var submit = evForm.querySelector('button[type="submit"]'); submit.disabled = true;
+      evMsg.textContent = 'Creating automation…';
+      try {
+        if (connectedSource.isConnected(body.source)) {
+          body.name = body.name || 'event-' + window.crypto.randomUUID().replace(/-/g, '').slice(0, 24);
+          var selectedWork = targetCatalog[evTargetKind.value].find(function (item) { return item.name === evTarget.value; });
+          var consequence = 'Create “' + body.name + '” for ' + SOURCE_LABELS[body.source] + '? ' + connectedSource.summary() +
+            '. Later new items will start “' + (selectedWork && selectedWork.title || evTarget.value) + '” ' +
+            (intervalRaw ? 'when checked every ' + intervalRaw + ' seconds' : 'when checked every 5 minutes') +
+            '. Existing source items will not start this work. Its normal approvals, account permissions and budget limits still apply. Future event delivery is unconfirmed.';
+          if (Object.keys(body.params).length) consequence += ' Fallback inputs: ' + Object.keys(body.params).map(function (key) { return mvHuman(key) + ': ' + body.params[key]; }).join('; ') + '.';
+          if (!(await mvConfirm(consequence, {okText: 'Create automation'}))) { evMsg.textContent = 'Creation cancelled. Nothing was armed.'; return; }
+          await connectedSource.retainOriginal(body);
+        }
+        var resp = await fetch('/api/v1/event-triggers', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        var data = await resp.json().catch(function () { return null; });
+        if (!resp.ok) { evMsg.textContent = connectedSource.isConnected(body.source) ? 'The original save is unconfirmed. Read the original creation result before deciding to repeat creation. ' + plainError(resp, 'read the save acknowledgement') : plainError(resp, 'create the automation'); return; }
+        if (!data || typeof data.name !== 'string') throw new Error('The automation could not be confirmed. Refresh the list before trying again.');
+        evMsg.textContent = connectedSource.isConnected(body.source) ? (await connectedSource.original()).message : 'Created “' + data.name + '”. Lightwork checks for new items while it is running. You can also choose Check now.';
+        evForm.reset(); sourceDrafts = Object.create(null); currentSource = ''; changeSource(); renderTargetChoices();
+        loadEventTriggers();
+      } catch (e) { evMsg.textContent = connectedSource.isConnected(body.source) ? 'The original save is unconfirmed. Read the original creation result before deciding to repeat creation. ' + plainError(e, 'confirm the original automation') : ((e && /confirmed/.test(e.message || '')) ? e.message : plainError(e, 'create the automation')); }
+      finally { creatingEvent = false; submit.disabled = false; if (connectedSource.isConnected(body.source) && evMsg.textContent) { evMsg.tabIndex = -1; evMsg.focus(); } }
+    });
+    document.getElementById('auto-event-original').addEventListener('click', async function () {
+      if (this.disabled) return;
+      this.disabled = true; evMsg.textContent = 'Reading the original creation result…';
+      try { var original = await connectedSource.original(); evMsg.textContent = 'Original “' + original.name + '”: ' + original.message; }
+      catch (error) { evMsg.textContent = error.message || plainError(error, 'read the original result'); }
+      finally { this.disabled = false; evMsg.tabIndex = -1; evMsg.focus(); }
+    });
+    document.getElementById('auto-event-poll').addEventListener('click', async function () {
+      if (this.disabled) return;
+      this.disabled = true; evMsg.textContent = 'Checking for new items…';
+      try {
+        var response = await fetch('/api/v1/event-triggers/poll', { method: 'POST' });
+        if (!response.ok) { evMsg.textContent = plainError(response, 'check for new items'); return; }
+        var out = await response.json().catch(function () { return null; });
+        if (!out || !Array.isArray(out.triggers) || typeof out.polled !== 'number') { evMsg.textContent = 'The check could not be confirmed. Try again.'; return; }
+        var fired = out.triggers.reduce(function (a, t) { return a + (t.fired || []).length + (t.fired_flows || []).length; }, 0);
+        var needsAttention = out.triggers.some(function (t) { return t.poll_error || ((t.notes || []).length && t.new_events > (t.fired || []).length + (t.fired_flows || []).length); });
+        evMsg.textContent = needsAttention
+          ? 'Some submissions are still waiting. Review the automation below before changing it.'
+          : 'Checked ' + out.polled + ' source' + (out.polled === 1 ? '' : 's') + ' — ' + fired + ' run' + (fired === 1 ? '' : 's') + ' started.';
+        loadEventTriggers();
+      } catch (e) { evMsg.textContent = plainError(e, 'check for new items'); }
+      finally { this.disabled = false; }
+    });
+    loadEventTriggers();
+  }
+
+  // ---- connected accounts (turnkey OAuth) ----
+  var oauthBox = document.getElementById('oauth-connect');
+  if (oauthBox) {
+    var oList = document.getElementById('oauth-list');
+    var oProv = document.getElementById('oauth-provider');
+    var oMsg = document.getElementById('oauth-msg');
+    var oFinish = document.getElementById('oauth-finish');
+    var oOpen = document.getElementById('oauth-open');
+    var oauthContext = '', oauthBusy = false, pendingConnection = null;
+    var oauthStorageName = 'lightwork.oauth.pending.v1';
+    var defaultRedirect = window.location.origin + '/automations';
+    var redirectInput = document.getElementById('oauth-redirect');
+    redirectInput.value = defaultRedirect;
+    var returnUrl = new URL(window.location.href), oauthReturn = null;
+    if (returnUrl.searchParams.has('code') || returnUrl.searchParams.has('error')) {
+      oauthReturn = { code: returnUrl.searchParams.get('code'), state: returnUrl.searchParams.get('state'), error: returnUrl.searchParams.get('error') };
+      ['code', 'state', 'error', 'error_description', 'error_uri'].forEach(function (key) { returnUrl.searchParams.delete(key); });
+      window.history.replaceState(null, '', returnUrl.pathname + returnUrl.search + returnUrl.hash);
+    }
+    function readPendingConnection() {
+      try {
+        var pending = JSON.parse(window.sessionStorage.getItem(oauthStorageName) || 'null');
+        if (!pending || typeof pending.provider !== 'string' || !pending.provider ||
+            typeof pending.verifier !== 'string' || !/^[A-Za-z0-9_~.\-]{43,128}$/.test(pending.verifier) ||
+            typeof pending.state !== 'string' || !/^[a-f0-9]{64}$/.test(pending.state) ||
+            typeof pending.redirect !== 'string' || typeof pending.context !== 'string' ||
+            !Number.isFinite(pending.created) || Date.now() - pending.created > 600000 || pending.created > Date.now()) return null;
+        return pending;
+      } catch (e) { return null; }
+    }
+    function clearPendingConnection() {
+      pendingConnection = null;
+      try { window.sessionStorage.removeItem(oauthStorageName); } catch (e) { /* unavailable storage cannot retain a connection */ }
+    }
+    async function exchangeConnection(code, pending) {
+      if (oauthBusy) return;
+      if (!pending || pending.context !== oauthContext) { oMsg.textContent = 'This connection belongs to a different session or workspace. Connect the account again.'; clearPendingConnection(); return; }
+      oauthBusy = true;
+      var connectButton = document.getElementById('oauth-get-url'), finishButton = document.getElementById('oauth-exchange');
+      connectButton.disabled = true; finishButton.disabled = true;
+      // Consume before sending: a reload or repeated click cannot replay the code.
+      clearPendingConnection(); oMsg.textContent = 'Finishing account connection…';
+      try {
+        var response = await fetch('/api/v1/oauth/' + encodeURIComponent(pending.provider) + '/exchange', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: code, redirect_uri: pending.redirect, verifier: pending.verifier })
+        });
+        var data = await response.json();
+        if (!response.ok || !data || data.connected !== true || data.provider !== pending.provider) throw new Error('Connection could not be confirmed. Check saved accounts before reconnecting.');
+        oMsg.textContent = 'Account connected.'; oFinish.hidden = true; document.getElementById('oauth-code').value = '';
+        await loadOAuth();
+      } catch (e) { oMsg.textContent = e.message || 'Connection could not be confirmed. Check saved accounts before reconnecting.'; }
+      finally { oauthBusy = false; connectButton.disabled = false; finishButton.disabled = false; }
+    }
+    function finishOAuthReturn() {
+      var returned = oauthReturn; oauthReturn = null;
+      var pending = readPendingConnection();
+      if (!pending || !returned.state || returned.state !== pending.state || pending.redirect !== defaultRedirect || pending.context !== oauthContext) {
+        clearPendingConnection(); oMsg.textContent = 'The account connection expired or does not match this session. Connect the account again.'; return;
+      }
+      if (returned.error || !returned.code) { clearPendingConnection(); oMsg.textContent = 'Access was not approved. You can connect the account again when ready.'; return; }
+      exchangeConnection(returned.code, pending);
+    }
+    async function loadOAuth() {
+      var data;
+      try { var response = await fetch('/api/v1/oauth/providers'); if (!response.ok) throw new Error(); data = await response.json(); if (!data || !Array.isArray(data.providers) || typeof data.connection_context !== 'string') throw new Error(); }
+      catch (e) { oMsg.textContent = 'Could not load account connections. Refresh to try again.'; return; }
+      if (!data.vault_enabled) { oauthBox.hidden = true; return; }
+      oauthBox.hidden = false;
+      oauthContext = data.connection_context;
+      var connected = data.connected || [];
+      if (typeof connectedProviders !== 'undefined') { connectedProviders = data.providers.filter(function (p) { return connected.indexOf(p.name) !== -1; }); if (currentSource) fillSourceFields(); }
+      oList.textContent = '';
+      if (oProv && !oProv.children.length) {
+        (data.providers || []).forEach(function (p) {
+          var o = document.createElement('option'); o.value = p.name; o.textContent = p.label; oProv.appendChild(o);
+        });
+      }
+      var status = data.status || {};
+      (data.providers || []).forEach(function (p) {
+        if (connected.indexOf(p.name) === -1) return;
+        var st = status[p.name] || {};
+        var li = el('li', 'mv-row');
+        var main = el('div', 'mv-row__main');
+        var title = p.label + (st.expired ? ' · needs reconnecting' : ' · connected');
+        main.appendChild(el('div', 'mv-row__title', title));
+        var sub = 'Account access saved';
+        if (st.expires_at) sub += ' · expires ' + fmtWhen(st.expires_at);
+        if (st.has_refresh_token) sub += ' · renews automatically';
+        main.appendChild(el('div', 'mv-row__sub', sub));
+        li.appendChild(main);
+        var actions = el('div', 'mv-row__actions');
+        var testBtn = el('button', 'btn btn--ghost', 'Test'); testBtn.type = 'button';
+        testBtn.setAttribute('aria-label', 'Test ' + p.label + ' connection');
+        testBtn.addEventListener('click', function () { testConn(p.name, p.label, testBtn); });
+        actions.appendChild(testBtn);
+        if (st.expired) {
+          var again = el('button', 'btn', 'Reconnect'); again.type = 'button';
+          again.addEventListener('click', function () { reconnect(p.name); });
+          actions.appendChild(again);
+        }
+        var off = el('button', 'btn btn--ghost btn--danger', 'Disconnect'); off.type = 'button';
+        off.setAttribute('aria-label', 'Disconnect ' + p.label);
+        off.addEventListener('click', function () { disconnect(p.name, p.label); });
+        actions.appendChild(off);
+        li.appendChild(actions);
+        oList.appendChild(li);
+      });
+    }
+    function reconnect(name) {
+      if (oProv) oProv.value = name;
+      var go = document.getElementById('oauth-get-url');
+      if (go && go.click) go.click();
+    }
+    async function testConn(name, label, btn) {
+      if (btn) { btn.disabled = true; }
+      try {
+        var body = null, refused = null;
+        try { body = (await window.mvFetchJSON('/api/v1/oauth/' + encodeURIComponent(name) + '/test', { method: 'POST' }, 'test ' + label)) || {}; }
+        catch (e) { if (!e.status) throw e; refused = e; }
+        if (body && body.ok) { mvToast(label + ' is connected and working'); loadOAuth(); }
+        else if (body || refused.status === 401) {
+          oMsg.textContent = label + ' needs to be reconnected.';
+          var again = el('button', 'btn', 'Reconnect ' + label); again.type = 'button';
+          again.addEventListener('click', function () { reconnect(name); });
+          oMsg.appendChild(document.createTextNode(' ')); oMsg.appendChild(again);
+        } else { mvFail(refused, 'test ' + label); }
+      } catch (e) { mvFail(e, 'test ' + label); }
+      finally { if (btn) { btn.disabled = false; } }
+    }
+    async function disconnect(name, label) {
+      if (!(await mvConfirm('Disconnect ' + label + '? Automations that use this account will stop working until you connect it again.', { okText: 'Disconnect' }))) return;
+      try {
+        var r = await fetch('/api/v1/oauth/' + encodeURIComponent(name), { method: 'DELETE' });
+        if (r.ok) { mvToast(label + ' disconnected'); loadOAuth(); }
+        else { mvFail(r, 'disconnect ' + label); }
+      } catch (e) { mvFail(e, 'disconnect ' + label); }
+    }
+    document.getElementById('oauth-get-url').addEventListener('click', async function () {
+      if (oauthBusy) return;
+      var redirect = redirectInput.value.trim() || defaultRedirect;
+      if (!redirectInput.reportValidity()) { document.getElementById('oauth-advanced-setup').open = true; redirectInput.focus(); return; }
+      if (!oauthContext || !oProv.value) { oMsg.textContent = 'Wait for account choices to load, then try again.'; return; }
+      oauthBusy = true; this.disabled = true; clearPendingConnection();
+      oMsg.textContent = 'Preparing secure account connection…';
+      try {
+        var provider = oProv.value, context = oauthContext;
+        var response = await fetch('/api/v1/oauth/' + encodeURIComponent(provider) + '/authorize-url', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uri: redirect })
+        });
+        if (!response.ok) throw new Error(plainError(response, 'start connecting this account'));
+        var data = await response.json();
+        var consent = new URL(data.authorize_url);
+        if (consent.protocol !== 'https:' || consent.searchParams.get('redirect_uri') !== redirect || consent.searchParams.get('code_challenge_method') !== 'S256' ||
+            typeof data.verifier !== 'string' || !/^[A-Za-z0-9_~.\-]{43,128}$/.test(data.verifier)) throw new Error('The provider returned incomplete connection details. Try again.');
+        var bytes = new Uint8Array(32); window.crypto.getRandomValues(bytes);
+        var state = Array.from(bytes, function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+        consent.searchParams.set('state', state);
+        pendingConnection = { provider: provider, redirect: redirect, context: context, state: state, verifier: data.verifier, created: Date.now() };
+        window.sessionStorage.setItem(oauthStorageName, JSON.stringify(pendingConnection));
+        oOpen.href = consent.href;
+        if (redirect === defaultRedirect) {
+          oMsg.textContent = 'Approve access with the provider. You will return here automatically.';
+          window.location.assign(consent.href);
+        } else {
+          document.getElementById('oauth-advanced-setup').open = true; oFinish.hidden = false;
+          oMsg.textContent = 'Open the provider’s approval page, then enter the one-time code it shows.';
+          oOpen.focus();
+        }
+      } catch (e) { clearPendingConnection(); oMsg.textContent = e.message || 'Could not start the connection. Check that your browser permits session storage and try again.'; }
+      finally { oauthBusy = false; this.disabled = false; }
+    });
+    document.getElementById('oauth-exchange').addEventListener('click', function () {
+      if (oauthBusy) return;
+      var code = document.getElementById('oauth-code').value.trim();
+      if (!code) { oMsg.textContent = 'Enter the one-time code from the provider first.'; return; }
+      exchangeConnection(code, pendingConnection || readPendingConnection());
+    });
+    loadOAuth().then(function () {
+      if (oauthReturn) finishOAuthReturn();
+      else {
+        pendingConnection = readPendingConnection();
+        if (pendingConnection && pendingConnection.context === oauthContext && pendingConnection.redirect !== defaultRedirect) {
+          redirectInput.value = pendingConnection.redirect;
+          document.getElementById('oauth-advanced-setup').open = true; oFinish.hidden = false;
+        }
+      }
+    });
+  }
+
+  // ---- flows (deterministic skeleton over agentic/tool steps) ----
+  var flowsSection = document.getElementById('auto-flows-section');
+  if (flowsSection) {
+    var flowsList = document.getElementById('auto-flows-list');
+    var flowRuns = document.getElementById('auto-flow-runs');
+    var flowsCount = document.getElementById('auto-flows-count');
+    var flowsEmpty = document.getElementById('auto-flows-empty');
+    var flowsMsg = document.getElementById('auto-flows-msg');
+    var flowNames = {};
+    var STATUS_WORDS = { paused_approval: 'Waiting for approval', paused_wait: 'Waiting', paused_event: 'Waiting for another app',
+      budget_limited: 'Paused — spending limit reached', indeterminate: 'Needs checking', queued: 'Waiting to start',
+      running: 'Running', completed: 'Finished', failed: 'Failed', rejected: 'Rejected', cancelled: 'Cancelled' };
+    function statusText(st) { return STATUS_WORDS[st] || mvHuman(st || 'unknown'); }
+    var ORIGIN_WORDS = { webhook: 'started by another app', schedule: 'started on schedule', event_trigger: 'started by a new item', retry: 'retry' };
+    async function loadFlows() {
+      var data;
+      try { data = await window.mvFetchJSON('/api/v1/flows'); }
+      catch (e) { if (e.status) flowsSection.hidden = true; return; }  // a refusal: the engine is off
+      flowsSection.hidden = false;
+      var flows = (data && data.flows) || [];
+      flowsCount.textContent = flows.length ? (flows.length + (flows.length === 1 ? ' flow' : ' flows')) : '';
+      flowsEmpty.hidden = flows.length > 0;
+      flowsList.textContent = '';
+      flows.forEach(function (f) {
+        var li = el('li', 'mv-row');
+        var main = el('div', 'mv-row__main');
+        var title = el('div', 'mv-row__title');
+        var a = document.createElement('a');
+        a.href = '/flows/designer/' + encodeURIComponent(f.id);
+        a.textContent = f.name || mvHuman(f.id);        // edit in the visual designer
+        flowNames[f.id] = f.name || mvHuman(f.id);
+        title.appendChild(a); main.appendChild(title);
+        main.appendChild(el('div', 'mv-row__sub', f.nodes + (f.nodes === 1 ? ' step' : ' steps')
+          + (f.single_agent ? ' · one AI step' : '')));
+        li.appendChild(main);
+        li.appendChild(mkBtn('Edit', function () { location.href = '/flows/designer/' + encodeURIComponent(f.id); }));
+        li.appendChild(mkBtn('Run', function () { runFlow(f.id, f.inputs || []); }));
+        flowsList.appendChild(li);
+      });
+      loadFlowRuns();
+      loadFlowInsights();
+    }
+    function mkBtn(label, onClick) {
+      var b = el('button', 'btn btn--ghost'); b.type = 'button'; b.textContent = label;
+      b.addEventListener('click', onClick); return b;
+    }
+    async function runFlow(id, inputs) {
+      var data = {};
+      var declared = (inputs || []).filter(function (s) { return (s.key || '').trim(); });
+      if (declared.length) {                                     // typed run form for declared inputs
+        var fields = declared.map(function (s) {
+          return { key: s.key, label: s.label || s.key, type: (s.type || 'text'),
+                   required: !!s.required, default: (s.default != null ? s.default : undefined) };
+        });
+        var vals = await window.mvForm('Run this flow', fields, { okText: 'Run' });
+        if (vals === null) { flowsMsg.textContent = 'Run cancelled.'; return; }
+        data = vals;
+      }
+      flowsMsg.textContent = 'Starting…';
+      try {
+        var j = await window.mvFetchJSON('/api/v1/flows/' + encodeURIComponent(id) + '/run', { method: 'POST', body: { data: data } }, 'start the run');
+        flowsMsg.textContent = j ? 'Run started. It appears under Recent runs.' : 'The run could not be confirmed. Check Recent runs before trying again.';
+        setTimeout(loadFlowRuns, 500);
+      } catch (e) {
+        if (e.unreadable) { flowsMsg.textContent = 'The run could not be confirmed. Check Recent runs before trying again.'; return; }
+        flowsMsg.textContent = e.message;
+        if (e.status) setTimeout(loadFlowRuns, 500);
+      }
+    }
+    async function loadFlowRuns() {
+      var r;
+      try { r = await fetch('/api/v1/flows/runs?limit=25'); } catch (e) { return; }
+      if (!r.ok) return;
+      var runs = (await r.json()).runs || [];
+      flowRuns.textContent = '';
+      runs.forEach(function (run) {
+        var li = el('li', 'mv-row');
+        var main = el('div', 'mv-row__main');
+        var title = el('div', 'mv-row__title');
+        var a = document.createElement('a');
+        a.href = '/flows/' + encodeURIComponent(run.flow_id) + '/runs/' + encodeURIComponent(run.run_id);
+        a.textContent = (flowNames[run.flow_id] || mvHuman(run.flow_id)) + ' — ' + statusText(run.status);
+        title.appendChild(a); main.appendChild(title);
+        if (run.prompt) main.appendChild(el('div', 'mv-row__sub', run.prompt));
+        var bits = [];
+        if (run.origin && run.origin !== 'manual') bits.push(
+          run.origin.indexOf('event:v2:') === 0
+            ? 'Started by ' + mvHuman(run.origin.split(':').slice(4).join(':'))
+            : (ORIGIN_WORDS[run.origin] || mvHuman(run.origin)));
+        if (run.cost_dollars) bits.push(window.mvMoney ? window.mvMoney(run.cost_dollars) : '$' + Number(run.cost_dollars).toFixed(2));
+        if (bits.length) main.appendChild(el('div', 'mv-row__sub', bits.join(' · ')));
+        if (run.status === 'paused_approval') {
+          var card = run.human && run.human.approval_card;
+          var reviewed = run.approval_card_status === 'current'
+            && typeof run.approval_binding_sha256 === 'string'
+            && run.approval_binding_sha256.length === 64 && card;
+          var review = el('div', 'mv-row__sub');
+          if (card) {
+            var effects = (card.consequences && card.consequences.known_effects) || [];
+            var assumptions = (card.consequences && card.consequences.unresolved_assumptions) || [];
+            var expires = mvWhen(card.expires_at);
+            review.textContent = 'Lightwork’s suggestion — the decision is yours. '
+              + 'What it changes: ' + ((card.target && card.target.label) || 'Not available') + '. '
+              + 'What it will do: ' + (((card.parameters || {}).summary || []).join('; ') || 'Not available') + '. '
+              + 'What happens next: ' + (effects.join('; ') || 'Nothing listed') + '. '
+              + (assumptions.length ? 'Open questions: ' + assumptions.join('; ') + '. ' : '')
+              + (expires ? 'Decide by ' + expires + '.' : '');
+          } else {
+            review.textContent = 'The details of this request could not be checked. Open it to reload them.';
+          }
+          main.appendChild(review);
+          var inspect = document.createElement('a');
+          inspect.href = '/flows/' + encodeURIComponent(run.flow_id) + '/runs/'
+            + encodeURIComponent(run.run_id);
+          inspect.textContent = 'Open the full request'; main.appendChild(inspect);
+          run._canDecide = Boolean(reviewed);
+        }
+        li.appendChild(main);
+        if (run.status === 'paused_approval' && run._canDecide) {
+          li.appendChild(mkBtn('Approve', function () {
+            resumeRun(run, 'approved');
+          }));
+          li.appendChild(mkBtn('Reject', function () {
+            resumeRun(run, 'rejected');
+          }));
+        }
+        if (run.status === 'failed' && run.cursor) {
+          li.appendChild(mkBtn('Retry from failed step', function () { retryRun(run.run_id, true); }));
+        }
+        if (['failed', 'completed', 'rejected'].indexOf(run.status) >= 0) {
+          li.appendChild(mkBtn('Retry', function () { retryRun(run.run_id, false); }));
+        }
+        flowRuns.appendChild(li);
+      });
+    }
+    async function retryRun(runId, fromFailure) {
+      try {
+        var r = await fetch('/api/v1/flows/runs/' + encodeURIComponent(runId) + '/retry'
+          + (fromFailure ? '?from_failure=1' : ''), { method: 'POST' });
+        flowsMsg.textContent = r.ok
+          ? (fromFailure ? 'Starting again from the step that failed…' : 'Running again with the same answers…')
+          : plainError(r, 'run it again');
+        setTimeout(loadFlowRuns, 500);
+      } catch (e) { flowsMsg.textContent = plainError(e, 'run it again'); }
+    }
+    async function resumeRun(run, decision) {
+      try {
+        var r = await fetch('/api/v1/flows/runs/' + encodeURIComponent(run.run_id) + '/resume', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision: decision,
+            approval_binding_sha256: run.approval_binding_sha256 || '' }),
+        });
+        flowsMsg.textContent = r.ok
+          ? (decision === 'approved' ? 'Approved — the run continues.' : 'Rejected.')
+          : (r.status === 409 ? 'This request changed or expired. Open it to review the latest version.' : plainError(r, 'record your decision'));
+        setTimeout(loadFlowRuns, 500);
+      } catch (e) { flowsMsg.textContent = plainError(e, 'record your decision'); }
+    }
+    var insightsBox = document.getElementById('flow-insights');
+    var insightsHead = document.getElementById('flow-insights-head');
+    var insightsList = document.getElementById('flow-insights-list');
+    function pct(d) { return (d >= 0 ? '+' : '') + Math.round(d * 100) + '%'; }
+    async function loadFlowInsights() {
+      if (!insightsBox) return;
+      var r;
+      try { r = await fetch('/api/v1/flows/insights'); } catch (e) { return; }
+      if (!r.ok) { insightsBox.hidden = true; return; }
+      var data = await r.json();
+      var flows = data.flows || [];
+      insightsList.textContent = '';
+      if (!flows.length) { insightsBox.hidden = true; return; }
+      insightsBox.hidden = false;
+      var count = data.proposal_count || 0;
+      insightsHead.textContent = count
+        ? ('✨ ' + count + (count === 1 ? ' suggestion' : ' suggestions') + ' to improve your flows')
+        : 'What your flows have learned';
+      flows.forEach(function (f) {
+        var li = el('li', 'mv-row');
+        var main = el('div', 'mv-row__main');
+        var title = el('div', 'mv-row__title');
+        var a = document.createElement('a');
+        a.href = '/flows/designer/' + encodeURIComponent(f.flow_id);
+        a.textContent = f.name || mvHuman(f.flow_id);
+        title.appendChild(a); main.appendChild(title);
+        (f.proposals || []).forEach(function (p) {
+          main.appendChild(el('div', 'mv-row__sub', '💡 ' + (p.reason || (p.to_kind === 'action'
+            ? 'A step could always use the same fixed action instead of asking the AI each time.'
+            : 'A step could let the AI decide instead of always using the same action.'))));
+          var action = mkBtn(p.to_kind === 'action' ? 'Review action and inputs' : 'Review this improvement',
+            function () { applyProposal(f.flow_id, p, action); });
+          main.appendChild(action);
+          if (p.to_kind === 'action') main.appendChild(el('div', 'mv-row__sub',
+            'Past runs suggest an action; choose its inputs and review the effect before saving a new draft.'));
+        });
+        (f.changes || []).forEach(function (ch) {
+          var imp = ch.impact || {}, d = imp.delta;
+          var txt = 'A step was changed to ' + (ch.to_kind === 'action' ? 'a fixed action' : 'an AI step')
+            + (ch.source === 'auto-revert' ? ' (undone automatically because results got worse)' : '');
+          if (typeof d === 'number') txt += ' · ' + pct(d) + ' vs before';
+          main.appendChild(el('div', 'mv-row__sub', txt));
+        });
+        li.appendChild(main);
+        insightsList.appendChild(li);
+      });
+    }
+    async function applyProposal(flowId, p, button) {
+      button.disabled = true;
+      insightsHead.textContent = 'Reviewing the current flow…';
+      try {
+        var result = await window.LightworkFlowRewrite.review(flowId, p);
+        if (result) {
+          insightsHead.textContent = 'New draft version saved. Open the flow to review and publish it.';
+          loadFlows();
+        } else insightsHead.textContent = 'Review cancelled. The flow was not changed.';
+      } catch (e) {
+        insightsHead.textContent = e.status === 409
+          ? 'The flow or action changed. Refresh its suggestions and review again.'
+          : (e.message || 'The result could not be confirmed. Open the flow to check its version history.');
+        loadFlowInsights();
+      } finally { button.disabled = false; }
+    }
+    loadFlows();
+  }
+
+  loadSchedules();
+  loadTriggers();
+})();
+</script>
+<script src="/static/lightwork-schedule-picker.js" defer></script>
+<script src="/static/lightwork-schedule-management.js" defer></script>
+<script src="/static/lightwork-schedule-setup.js" defer></script>
+{% endblock %}

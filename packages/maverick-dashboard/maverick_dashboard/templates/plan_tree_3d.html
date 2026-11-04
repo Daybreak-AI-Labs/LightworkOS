@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+{% block title %}{{ '3D view · Task map' if tab_host else '3D plan view' }} · Lightwork{% endblock %}
+{% block content %}
+{% from "_back_link.html" import back_link with context %}
+<style>
+  .gl-wrap { position: relative; }
+  #gl3d { width: 100%; height: 560px; display: block; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); touch-action: none; }
+  #node-info { position: absolute; top: 0.75rem; inset-inline-end: 0.75rem; max-width: 280px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; font-size: 0.85rem; display: none; }
+  #vr-btn { display: none; margin-top: 0.5rem; padding: 0.45rem 1rem; background: var(--surface-1); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+  .tree { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tree ul { list-style: none; padding-inline-start: 1.5rem; border-inline-start: 1px solid var(--border); margin: 0; }
+  .tree > ul { padding-inline-start: 0; border-inline-start: 0; }
+  .legend { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
+  .legend .live { margin-inline-start: auto; }
+</style>
+{% if tab_host %}
+<p class="muted">{{ back_link('/goals', 'Tasks') }}</p>
+{% from "_tabs.html" import host_header, panel_attrs %}{{ host_header(tab_host) }}
+{% else %}
+<p class="muted">{{ back_link('/goals', 'Tasks') }} · <a href="/graph-editor">Flat view</a></p>
+<h1 class="page-title">3D plan view</h1>
+<p class="page-subtitle">Your tasks and their smaller steps as a 3D map you can move around.</p>
+{% endif %}
+<div class="panel"{% if tab_host %} {{ panel_attrs(tab_host.selected) }}{% endif %}>
+  <div class="legend">
+    <span><span class="badge active">Running</span></span>
+    <span><span class="badge done">Done</span></span>
+    <span><span class="badge blocked">Blocked</span></span>
+    <span><span class="badge pending">Waiting</span></span>
+    <span class="live" id="gl-status" role="status" aria-live="polite">Loading…</span>
+  </div>
+  <div class="gl-wrap">
+    {# The canvas is a purely visual enhancement; the accessible
+       representation is the text tree in the <details> below (always in the
+       DOM, not just a no-WebGL fallback). #}
+    <canvas id="gl3d" aria-hidden="true"></canvas>
+    <div id="node-info"></div>
+  </div>
+  <button type="button" id="vr-btn">Enter VR</button>
+  <p class="muted" style="font-size: 0.8rem;">
+    Drag to turn, scroll to zoom, click a dot to see that task.
+    {{ node_count }} task{{ 's' if node_count != 1 }}.
+  </p>
+
+  <details id="tree-fallback">
+    <summary>Show as a list (easier to read and for screen readers)</summary>
+    <div class="tree" style="margin-top: 0.75rem;">{{ fallback_html | safe }}</div>
+  </details>
+  <noscript>
+    {# Without JS the <details> above IS the page content. #}
+    <p class="muted">The 3D view needs scripts turned on — use the list above.</p>
+  </noscript>
+</div>
+<p class="muted" style="font-size: 0.78rem;">
+  Virtual reality: the "Enter VR" button appears only when your browser and
+  headset support it. This is <strong>not yet tested with real headsets</strong>
+  — expect rough edges.
+</p>
+
+<script nonce="{{ csp_script_nonce }}">
+// 3D goal forest in vanilla WebGL (no three.js, no CDN). Nodes are drawn as
+// billboarded point sprites (circular, status-colored), edges as GL lines.
+// Layout (x, y per node) comes from the shared /api/v1/goal-tree endpoint;
+// this script only maps it onto a plane and orbits a camera around it.
+(function () {
+  const canvas = document.getElementById("gl3d");
+  const statusEl = document.getElementById("gl-status");
+  const infoEl = document.getElementById("node-info");
+  const vrBtn = document.getElementById("vr-btn");
+  const fallback = document.getElementById("tree-fallback");
+  if (!canvas) return;
+  const gl = canvas.getContext("webgl");
+  if (!gl) {
+    // Progressive enhancement: no WebGL -> the text tree IS the view.
+    canvas.style.display = "none";
+    if (fallback) fallback.open = true;
+    statusEl.textContent = "3D isn't available in this browser — showing the list";
+    return;
+  }
+
+  // ---- tiny column-major mat4 helpers ----
+  function mat4Mul(a, b) {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) {
+      for (let r = 0; r < 4; r++) {
+        o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] +
+                       a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+      }
+    }
+    return o;
+  }
+  function perspective(fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
+    return new Float32Array([
+      f / aspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) * nf, -1,
+      0, 0, 2 * far * near * nf, 0,
+    ]);
+  }
+  function lookAt(eye, c, up) {
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const norm = (v) => {
+      const l = Math.hypot(v[0], v[1], v[2]) || 1;
+      return [v[0] / l, v[1] / l, v[2] / l];
+    };
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const z = norm(sub(eye, c)), x = norm(cross(up, z)), y = cross(z, x);
+    return new Float32Array([
+      x[0], y[0], z[0], 0,
+      x[1], y[1], z[1], 0,
+      x[2], y[2], z[2], 0,
+      -dot(x, eye), -dot(y, eye), -dot(z, eye), 1,
+    ]);
+  }
+
+  function compile(vsSrc, fsSrc) {
+    const mk = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      return s;
+    };
+    const p = gl.createProgram();
+    gl.attachShader(p, mk(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(p);
+    return p;
+  }
+  const nodeProg = compile(
+    "attribute vec3 aPos; attribute vec3 aColor; uniform mat4 uMVP; uniform float uScale;" +
+    "varying vec3 vColor;" +
+    "void main() { gl_Position = uMVP * vec4(aPos, 1.0);" +
+    "  gl_PointSize = clamp(uScale / max(gl_Position.w, 0.1), 5.0, 48.0); vColor = aColor; }",
+    // Discard outside the unit circle -> a billboarded disc that always
+    // faces the camera (point sprites are screen-aligned by definition).
+    "precision mediump float; varying vec3 vColor;" +
+    "void main() { vec2 d = gl_PointCoord - vec2(0.5);" +
+    "  if (dot(d, d) > 0.25) discard; gl_FragColor = vec4(vColor, 1.0); }"
+  );
+  const edgeProg = compile(
+    "attribute vec3 aPos; uniform mat4 uMVP;" +
+    "void main() { gl_Position = uMVP * vec4(aPos, 1.0); }",
+    "precision mediump float;" +
+    "void main() { gl_FragColor = vec4(0.42, 0.46, 0.52, 1.0); }"
+  );
+
+  function colour(status) {
+    if (status === "active" || status === "done") return [0.25, 0.73, 0.31];
+    if (status === "failed") return [0.97, 0.32, 0.29];
+    if (status === "blocked") return [0.82, 0.60, 0.13];
+    return [0.55, 0.58, 0.62];
+  }
+
+  let nodes = [], world = [];   // world: [{id, p:[x,y,z], title, status}]
+  let nodeBuf = null, colorBuf = null, edgeBuf = null, edgeVerts = 0;
+  const cam = { yaw: 0.5, pitch: 0.25, dist: 6, target: [0, 0, 0] };
+  let selected = null;
+
+  function buildBuffers(data) {
+    nodes = data.nodes || [];
+    const edges = data.edges || [];
+    if (!nodes.length) { statusEl.textContent = "No tasks yet. Start a task in Chat to see its plan here."; return; }
+    // Map the server's 2D layered layout onto a vertical plane:
+    // rows spread on X, depth descends on Y, Z = 0 (orbit supplies the 3D).
+    const xs = nodes.map((n) => n.y), ds = nodes.map((n) => n.x);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cd = (Math.min(...ds) + Math.max(...ds)) / 2;
+    world = nodes.map((n) => ({
+      id: n.id, title: n.title, status: n.status, parent_id: n.parent_id,
+      p: [(n.y - cx) / 56 * 0.55, -(n.x - cd) / 220 * 0.9, 0],
+    }));
+    const byId = {};
+    world.forEach((wn) => { byId[wn.id] = wn; });
+    const pos = new Float32Array(world.length * 3);
+    const col = new Float32Array(world.length * 3);
+    world.forEach((wn, i) => {
+      pos.set(wn.p, i * 3); col.set(colour(wn.status), i * 3);
+    });
+    const ev = [];
+    edges.forEach(([a, b]) => {
+      const wa = byId[a], wb = byId[b];
+      if (wa && wb) ev.push(...wa.p, ...wb.p);
+    });
+    nodeBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+    colorBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, col, gl.STATIC_DRAW);
+    edgeBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ev), gl.STATIC_DRAW);
+    edgeVerts = ev.length / 3;
+    statusEl.textContent = world.length + (world.length === 1 ? " task" : " tasks") + " — drag to turn";
+  }
+
+  function camMatrices(w, h) {
+    const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+    const eye = [
+      cam.target[0] + cam.dist * cp * Math.sin(cam.yaw),
+      cam.target[1] + cam.dist * sp,
+      cam.target[2] + cam.dist * cp * Math.cos(cam.yaw),
+    ];
+    return mat4Mul(perspective(0.9, w / h, 0.05, 100),
+                   lookAt(eye, cam.target, [0, 1, 0]));
+  }
+
+  function drawScene(mvp, w, h) {
+    gl.clearColor(0.05, 0.07, 0.09, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    if (!world.length) return;
+    gl.useProgram(edgeProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(edgeProg, "uMVP"), false, mvp);
+    gl.bindBuffer(gl.ARRAY_BUFFER, edgeBuf);
+    const ePos = gl.getAttribLocation(edgeProg, "aPos");
+    gl.enableVertexAttribArray(ePos);
+    gl.vertexAttribPointer(ePos, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.LINES, 0, edgeVerts);
+
+    gl.useProgram(nodeProg);
+    gl.uniformMatrix4fv(gl.getUniformLocation(nodeProg, "uMVP"), false, mvp);
+    gl.uniform1f(gl.getUniformLocation(nodeProg, "uScale"), 90 * (h / 560));
+    gl.bindBuffer(gl.ARRAY_BUFFER, nodeBuf);
+    const nPos = gl.getAttribLocation(nodeProg, "aPos");
+    gl.enableVertexAttribArray(nPos);
+    gl.vertexAttribPointer(nPos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuf);
+    const nCol = gl.getAttribLocation(nodeProg, "aColor");
+    gl.enableVertexAttribArray(nCol);
+    gl.vertexAttribPointer(nCol, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, world.length);
+  }
+
+  function frame() {
+    if (!xrSession) {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w; canvas.height = h;
+      }
+      gl.viewport(0, 0, w, h);
+      drawScene(camMatrices(w, h), w, h);
+      requestAnimationFrame(frame);
+    }
+  }
+
+  // ---- picking: project nodes with the same MVP, take the nearest ----
+  function pick(px, py) {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    const mvp = camMatrices(w, h);
+    let best = null, bestD = 18 * 18;
+    world.forEach((wn) => {
+      const p = wn.p;
+      const cx = mvp[0] * p[0] + mvp[4] * p[1] + mvp[8] * p[2] + mvp[12];
+      const cy = mvp[1] * p[0] + mvp[5] * p[1] + mvp[9] * p[2] + mvp[13];
+      const cw = mvp[3] * p[0] + mvp[7] * p[1] + mvp[11] * p[2] + mvp[15];
+      if (cw <= 0) return;
+      const sx = (cx / cw + 1) / 2 * w, sy = (1 - cy / cw) / 2 * h;
+      const d = (sx - px) * (sx - px) + (sy - py) * (sy - py);
+      if (d < bestD) { bestD = d; best = wn; }
+    });
+    return best;
+  }
+
+  function showInfo(wn) {
+    selected = wn;
+    if (!wn) { infoEl.style.display = "none"; return; }
+    infoEl.replaceChildren();
+    const strong = document.createElement("strong");
+    strong.textContent = wn.title || "(untitled)";
+    const badge = document.createElement("span");
+    badge.className = "badge " + wn.status;
+    badge.textContent = String(wn.status || "").replace(/_/g, " ");
+    const link = document.createElement("a");
+    link.href = "/goals/" + encodeURIComponent(wn.id) + "/plan";
+    link.textContent = "Open its steps";
+    const parent = document.createElement("span");
+    parent.className = "muted";
+    parent.textContent = wn.parent_id != null ? "Part of a bigger task" : "Main task";
+    [strong, document.createElement("br"), badge, document.createTextNode(" "),
+     parent, document.createElement("br"), link].forEach((el) => infoEl.appendChild(el));
+    infoEl.style.display = "block";
+    cam.target = wn.p.slice(); // click-to-focus
+  }
+
+  // ---- orbit + zoom controls ----
+  let drag = null, moved = 0;
+  canvas.addEventListener("pointerdown", (ev) => {
+    drag = { x: ev.clientX, y: ev.clientY, yaw: cam.yaw, pitch: cam.pitch };
+    moved = 0;
+    canvas.setPointerCapture(ev.pointerId);
+  });
+  canvas.addEventListener("pointermove", (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+    moved += Math.abs(dx) + Math.abs(dy);
+    cam.yaw = drag.yaw + dx * 0.008;
+    cam.pitch = Math.max(-1.4, Math.min(1.4, drag.pitch + dy * 0.008));
+  });
+  canvas.addEventListener("pointerup", (ev) => {
+    if (drag && moved < 6) { // a click, not an orbit
+      const rect = canvas.getBoundingClientRect();
+      showInfo(pick(ev.clientX - rect.left, ev.clientY - rect.top));
+    }
+    drag = null;
+  });
+  canvas.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    cam.dist = Math.max(1, Math.min(40, cam.dist * (ev.deltaY > 0 ? 1.12 : 0.89)));
+  }, { passive: false });
+
+  // ---- WebXR (feature-detected; untested without headset hardware) ----
+  // Spec-conformant minimal path: an immersive-vr session re-renders the
+  // same buffers once per XR view. Shown only when the browser itself
+  // reports support; we make no claims beyond that.
+  let xrSession = null;
+  if (navigator.xr && navigator.xr.isSessionSupported) {
+    navigator.xr.isSessionSupported("immersive-vr").then((ok) => {
+      if (ok) vrBtn.style.display = "inline-block";
+    }).catch(() => {});
+  }
+  vrBtn.addEventListener("click", async () => {
+    if (xrSession) { xrSession.end(); return; }
+    try {
+      const session = await navigator.xr.requestSession("immersive-vr");
+      xrSession = session;
+      vrBtn.textContent = "Exit VR";
+      await gl.makeXRCompatible();
+      session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+      const space = await session.requestReferenceSpace("local");
+      // Park the graph ~1.8 m in front of the viewer at standing height.
+      const model = new Float32Array([
+        0.6, 0, 0, 0,  0, 0.6, 0, 0,  0, 0, 0.6, 0,  0, 1.4, -1.8, 1,
+      ]);
+      const onFrame = (t, xrFrame) => {
+        session.requestAnimationFrame(onFrame);
+        const pose = xrFrame.getViewerPose(space);
+        if (!pose) return;
+        const layer = session.renderState.baseLayer;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+        gl.clearColor(0.05, 0.07, 0.09, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        for (const view of pose.views) {
+          const vp = layer.getViewport(view);
+          gl.viewport(vp.x, vp.y, vp.width, vp.height);
+          const vm = mat4Mul(new Float32Array(view.transform.inverse.matrix), model);
+          drawScene(mat4Mul(new Float32Array(view.projectionMatrix), vm), vp.width, vp.height);
+        }
+      };
+      session.requestAnimationFrame(onFrame);
+      session.addEventListener("end", () => {
+        xrSession = null;
+        vrBtn.textContent = "Enter VR";
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        requestAnimationFrame(frame);
+      });
+    } catch (e) {
+      statusEl.textContent = "Could not start virtual reality on this device. Use the regular 3D view instead.";
+    }
+  });
+
+  fetch("/api/v1/goal-tree", { headers: { Accept: "application/json" } })
+    .then((r) => { if (!r.ok) throw new Error("load"); return r.json(); })
+    .then((data) => { buildBuffers(data); requestAnimationFrame(frame); })
+    .catch(() => { statusEl.textContent = "Could not load your tasks. Refresh the page to try again."; });
+})();
+</script>
+{% endblock %}

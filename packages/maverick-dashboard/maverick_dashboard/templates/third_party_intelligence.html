@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% from "_hero.html" import hero %}
+{% from "_module_gate.html" import module_gate %}
+{% block title %}Third-party intelligence · Lightwork{% endblock %}
+{% block content %}
+<style>
+  .tpi-actions { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .tpi-field { display:grid; gap:.3rem; }
+</style>
+{{ hero('Third-party management', 'Third-party intelligence',
+        lede='Check vendors against the risk data you subscribe to, review any possible matches, decide their risk level, and watch for changes. Enhanced due diligence is the deeper review for higher-risk vendors.') }}
+
+{% if not third_party_intelligence_enabled %}
+{{ module_gate('third_party_management.intelligence', 'Third-party intelligence',
+               detail='Screen vendors against sanctions and risk data sources you subscribe to.') }}
+{% else %}
+<div id="tpi-root" data-api="/api/v1/third-party/intelligence"
+     data-can-admin="{{ 'true' if intelligence_can_admin else 'false' }}"
+     data-can-audit="{{ 'true' if intelligence_can_audit else 'false' }}">
+  <section class="panel" aria-labelledby="tpi-status-title">
+    <h2 id="tpi-status-title" style="margin-top:0">Status</h2>
+    <div id="tpi-status-card"><p class="muted">Loading…</p></div>
+    <p class="muted" id="tpi-status" role="status" aria-live="polite"></p>
+  </section>
+
+  <details class="panel">
+    <summary><strong>Before you start</strong></summary>
+    <ul>
+      <li>Lightwork doesn't include any risk data. Add the data sources you subscribe to; another administrator approves each one.</li>
+      <li>Possible matches against sanctions, politically exposed people or negative news stay blocking until a different person reviews them.</li>
+      <li>Low-risk vendors are approved automatically only under an approved risk policy with complete, current data.</li>
+    </ul>
+  </details>
+
+  <div class="section-head"><h2>Data sources</h2><button type="button" class="btn btn--primary" id="tpi-add-source">Add a data source</button></div>
+  <section class="panel" aria-label="Data sources"><div id="tpi-sources"><p class="muted">Loading data sources…</p></div></section>
+
+  <div class="section-head"><h2>Vendors</h2><button type="button" class="btn btn--primary" id="tpi-add-vendor">Add a vendor</button></div>
+  <section class="panel" aria-label="Vendors"><div id="tpi-vendors"><p class="muted">Loading vendors…</p></div></section>
+
+  <div class="section-head"><h2>Screening</h2></div>
+  <section class="panel" aria-label="Screening">
+    <div id="tpi-runs"><p class="muted">Loading screening…</p></div>
+    <div id="tpi-findings" hidden></div>
+  </section>
+
+  <div class="section-head"><h2>Risk decisions</h2><button type="button" class="btn btn--primary" id="tpi-add-policy">Create risk policy</button></div>
+  <section class="panel" aria-label="Risk policies and decisions">
+    <h3>Risk policies</h3><div id="tpi-policies"><p class="muted">Loading policies…</p></div>
+    <h3>Decisions</h3><div id="tpi-decisions"><p class="muted">Loading decisions…</p></div>
+  </section>
+
+  <div class="section-head"><h2>Enhanced due diligence</h2></div>
+  <section class="panel" aria-label="Enhanced due diligence">
+    <div id="tpi-cases"><p class="muted">Loading reviews…</p></div>
+    <div id="tpi-case-detail" hidden></div>
+  </section>
+
+  <div class="section-head"><h2>Alert recipients</h2></div>
+  <section class="panel" aria-label="Alert recipients" id="tpi-recipient-setup">
+    <p class="muted">Choose a saved recipient when you start watching a vendor. Addresses are protected in this workspace. Withdrawing a recipient stops future sends to that saved address; it cannot recall messages already accepted by the mail service.</p>
+    <div id="tpi-recipients"><p class="muted">Loading recipients…</p></div>
+    {% if intelligence_can_admin %}
+    <form id="tpi-recipient-form">
+      <div class="tpi-actions">
+        <label class="tpi-field">Name<input id="tpi-recipient-name" maxlength="120" required autocomplete="off" placeholder="Vendor risk team"></label>
+        <label class="tpi-field">Email address<input id="tpi-recipient-address" type="email" maxlength="320" required autocomplete="off" placeholder="risk@example.com"></label>
+        <button type="submit" class="btn" id="tpi-save-recipient">Review recipient</button>
+        <button type="button" class="btn" id="tpi-recipient-original" hidden>Read saved recipient</button>
+      </div>
+      <p class="muted" id="tpi-recipient-result" role="status" aria-live="polite"></p>
+    </form>
+    {% endif %}
+    <p class="muted">Use your platform sending account. <a href="/settings/all?q=email">Set up email in Settings</a>.</p>
+  </section>
+
+  <div class="section-head"><h2>Watching for changes</h2><button type="button" class="btn" id="tpi-send-alerts">Review waiting alerts</button></div>
+  <section class="panel" aria-label="Monitoring">
+    <h3>Vendors being watched</h3><div id="tpi-monitors"><p class="muted">Loading…</p></div>
+    <h3>Change alerts</h3><div id="tpi-alerts"><p class="muted">Loading…</p></div>
+    <h3>Email outcomes</h3><div id="tpi-deliveries"><p class="muted">Loading…</p></div>
+    <p class="muted">Accepted means the mail service accepted a message, not that it reached an inbox. If a send cannot be confirmed, Lightwork keeps its outcome here and does not send it again automatically. Read up to 500 saved outcomes; each reviewed send handles up to 10 waiting alerts.</p>
+  </section>
+
+  <div class="section-head"><h2>Sharing with partners</h2><button type="button" class="btn" id="tpi-see-shared">See what partners shared</button></div>
+  <section class="panel" aria-label="Sharing with partners">
+    <div id="tpi-consents"><p class="muted">Loading…</p></div>
+    <div id="tpi-shared" hidden></div>
+  </section>
+
+  <details class="panel">
+    <summary><strong>Administrator tools</strong></summary>
+    <div class="tpi-actions" style="margin-top:var(--space-3)">
+      <button type="button" class="btn" id="tpi-integrity">Check records haven't been changed</button>
+      <button type="button" class="btn btn--danger" id="tpi-purge">Delete expired records</button>
+    </div>
+    <p class="muted" id="tpi-admin-result" role="status" aria-live="polite"></p>
+  </details>
+</div>
+<script src="/static/lightwork-record-workflows.js" defer></script>
+<script src="/static/lightwork-third-party-intelligence.js" defer></script>
+{% endif %}
+{% endblock %}

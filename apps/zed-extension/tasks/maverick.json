@@ -1,0 +1,55 @@
+// Zed tasks for the Lightwork CLI. Copy this file's entries into
+// .zed/tasks.json (per project) or ~/.config/zed/tasks.json (global), then
+// run them via `task: spawn`. Every command below is a real CLI verb
+// (packages/maverick-core/maverick/cli/); the WASI extension sandbox can't
+// exec these itself, which is why they're tasks (see README).
+[
+  {
+    "label": "maverick: status",
+    "command": "maverick",
+    "args": ["status"],
+    "reveal": "always"
+  },
+  {
+    "label": "maverick: monitor (live plan tree)",
+    "command": "maverick",
+    "args": ["monitor"],
+    "reveal": "always"
+  },
+  {
+    "label": "maverick: runs",
+    "command": "maverick",
+    "args": ["runs"],
+    "reveal": "always"
+  },
+  {
+    "label": "maverick: budget",
+    "command": "maverick",
+    "args": ["budget"],
+    "reveal": "always"
+  },
+  {
+    "label": "maverick: doctor",
+    "command": "maverick",
+    "args": ["doctor"],
+    "reveal": "always"
+  },
+  {
+    "label": "maverick: start goal from selection",
+    "command": "maverick",
+    "args": ["start", "$ZED_SELECTED_TEXT"],
+    "reveal": "always"
+  },
+  {
+    "label": "maverick: halt (arm killswitch)",
+    "command": "maverick",
+    "args": ["halt", "--reason", "halted from Zed"],
+    "reveal": "always"
+  },
+  {
+    "label": "maverick: unhalt",
+    "command": "maverick",
+    "args": ["unhalt"],
+    "reveal": "always"
+  }
+]

@@ -1,0 +1,1039 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Lightwork External Agent Gateway",
+    "version": "1",
+    "description": "Governance and run accounting for agents built on other platforms. Authenticate every call with the per-agent rest bearer minted on the Lightwork /external-agents page."
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/api/v1/external/screen": {
+      "post": {
+        "operationId": "screenAction",
+        "summary": "Ask before acting: is this action within my ceilings, budget, and approval floor?",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "tool"
+                ],
+                "properties": {
+                  "tool": {
+                    "type": "string",
+                    "description": "Action/tool name"
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "What will be done"
+                  },
+                  "risk": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "type": "boolean"
+                    },
+                    "rule": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "requires_approval": {
+                      "type": "boolean"
+                    },
+                    "approval_id": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/runs": {
+      "post": {
+        "operationId": "reportRun",
+        "summary": "Report a completed run for the Operating Record",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "outcome"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "failure"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "cost_dollars": {
+                    "type": "number"
+                  },
+                  "input_tokens": {
+                    "type": "integer"
+                  },
+                  "output_tokens": {
+                    "type": "integer"
+                  },
+                  "tool_calls": {
+                    "type": "integer"
+                  },
+                  "duration_seconds": {
+                    "type": "number"
+                  },
+                  "department": {
+                    "type": "string"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "description": "Stable key per logical run; retries return the original record instead of double-counting."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "goal_id": {
+                      "type": "integer"
+                    },
+                    "over_budget": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/runs/start": {
+      "post": {
+        "operationId": "startRun",
+        "summary": "Open a LIVE run (visible while working; heartbeat required)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "department": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "goal_id": {
+                      "type": "integer"
+                    },
+                    "heartbeat_seconds": {
+                      "type": "number",
+                      "description": "Recommended maximum interval between beats. It leaves margin before stale-run recovery."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/runs/{goal_id}/heartbeat": {
+      "post": {
+        "operationId": "heartbeatRun",
+        "summary": "Keep a live run alive; continue=false is the kill switch \u2014 stop working when you see it",
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liveness",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "continue": {
+                      "type": "boolean"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/runs/{goal_id}/finish": {
+      "post": {
+        "operationId": "finishRun",
+        "summary": "Close a live run with outcome, steps, and cost",
+        "parameters": [
+          {
+            "name": "goal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "outcome"
+                ],
+                "properties": {
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "failure"
+                    ]
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "cost_dollars": {
+                    "type": "number"
+                  },
+                  "input_tokens": {
+                    "type": "integer"
+                  },
+                  "output_tokens": {
+                    "type": "integer"
+                  },
+                  "tool_calls": {
+                    "type": "integer"
+                  },
+                  "duration_seconds": {
+                    "type": "number"
+                  },
+                  "idempotency_key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "goal_id": {
+                      "type": "integer"
+                    },
+                    "over_budget": {
+                      "type": "boolean"
+                    },
+                    "over_wall": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/memory/ingest": {
+      "post": {
+        "operationId": "memoryIngest",
+        "summary": "Deposit an experience record into the governed learning plane (fleet memory)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "goal_text"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "failure",
+                      "lesson"
+                    ]
+                  },
+                  "goal_text": {
+                    "type": "string"
+                  },
+                  "reflection": {
+                    "type": "string"
+                  },
+                  "tools_used": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "domain": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Deposited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/memory/recall": {
+      "post": {
+        "operationId": "memoryRecall",
+        "summary": "Read governed memory scoped to this agent's permitted departments",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  },
+                  "domain": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "context": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/approvals/{approval_id}": {
+      "get": {
+        "operationId": "approvalStatus",
+        "summary": "Poll a parked high-risk action",
+        "parameters": [
+          {
+            "name": "approval_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "binding_sha256",
+            "in": "query",
+            "required": false,
+            "description": "Binding returned by /screen; a stale binding is rejected.",
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approval_id": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "risk": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "approval_binding_sha256": {
+                      "type": "string"
+                    },
+                    "target_sha256": {
+                      "type": "string"
+                    },
+                    "parameters_sha256": {
+                      "type": "string"
+                    },
+                    "inputs": {
+                      "type": "object"
+                    },
+                    "credentials": {
+                      "type": "object"
+                    },
+                    "expires_at": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/execute": {
+      "post": {
+        "operationId": "executeAction",
+        "summary": "Perform one action through a governed connector (reads run now; writes park a digest-bound approval)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "connector",
+                  "op",
+                  "path"
+                ],
+                "properties": {
+                  "connector": {
+                    "type": "string",
+                    "description": "Enabled governed connector name"
+                  },
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "get",
+                      "post",
+                      "put",
+                      "patch",
+                      "delete"
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "object"
+                  },
+                  "preview": {
+                    "type": "boolean",
+                    "description": "Describe the write without performing it (no side effect)."
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "What will be done"
+                  },
+                  "goal_id": {
+                    "type": "integer",
+                    "description": "Bind the effect to one of this agent's live runs."
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$",
+                    "description": "Stable logical-operation key; an exact write-park replay returns the original execution."
+                  },
+                  "runtime_asset_id": {
+                    "type": "string",
+                    "pattern": "^MAA-[0-9a-f]{32}$",
+                    "description": "Required when the runtime guardrail plane is enabled."
+                  },
+                  "runtime_asset_revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "runtime_asset_version_digest": {
+                    "type": "string",
+                    "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "type": "boolean"
+                    },
+                    "rule": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "string"
+                    },
+                    "requires_approval": {
+                      "type": "boolean"
+                    },
+                    "approval_id": {
+                      "type": "integer"
+                    },
+                    "execution_id": {
+                      "type": "string"
+                    },
+                    "duplicate": {
+                      "type": "boolean"
+                    },
+                    "expires_at": {
+                      "type": "number"
+                    },
+                    "preview": {
+                      "type": "string"
+                    },
+                    "request_sha256": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/executions/{execution_id}": {
+      "get": {
+        "operationId": "executionStatus",
+        "summary": "Poll a parked execution; commit once its approval is granted",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "execution_id": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "approval_id": {
+                      "type": "integer"
+                    },
+                    "connector": {
+                      "type": "string"
+                    },
+                    "op": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "number"
+                    },
+                    "approval_status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/executions/{execution_id}/commit": {
+      "post": {
+        "operationId": "commitExecution",
+        "summary": "Commit an approved execution by re-sending the byte-identical request",
+        "parameters": [
+          {
+            "name": "execution_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "connector",
+                  "op",
+                  "path"
+                ],
+                "properties": {
+                  "connector": {
+                    "type": "string"
+                  },
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "get",
+                      "post",
+                      "put",
+                      "patch",
+                      "delete"
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "object"
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "Exact transient action detail used when the write was parked."
+                  },
+                  "goal_id": {
+                    "type": "integer",
+                    "description": "Exact live-run binding used when the write was parked."
+                  },
+                  "runtime_asset_id": {
+                    "type": "string",
+                    "pattern": "^MAA-[0-9a-f]{32}$",
+                    "description": "Required when runtime guardrails are enabled."
+                  },
+                  "runtime_asset_revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "runtime_asset_version_digest": {
+                    "type": "string",
+                    "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verdict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "type": "boolean"
+                    },
+                    "rule": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "result": {
+                      "type": "string"
+                    },
+                    "execution_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/runtime/evaluate": {
+      "post": {
+        "operationId": "evaluateRuntimeContent",
+        "summary": "Evaluate transient prompt, output, or action content against current governed policy and local guardrails",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "stage",
+                  "asset_id",
+                  "asset_revision",
+                  "asset_version_digest"
+                ],
+                "properties": {
+                  "stage": {
+                    "type": "string",
+                    "enum": [
+                      "prompt",
+                      "output",
+                      "action"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "asset_id": {
+                    "type": "string",
+                    "pattern": "^MAA-[0-9a-f]{32}$"
+                  },
+                  "asset_revision": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "asset_version_digest": {
+                    "type": "string",
+                    "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+                  },
+                  "action_name": {
+                    "type": "string"
+                  },
+                  "action_arguments": {
+                    "type": "object"
+                  },
+                  "known_prompt": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Guardrail decision and digest-only receipts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/red-team/{campaign_id}/cases": {
+      "get": {
+        "operationId": "pullRedTeamCases",
+        "summary": "Atomically lease synthetic assurance probes to one enrolled-agent runner",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runner_instance_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12,
+              "default": 1
+            }
+          },
+          {
+            "name": "lease_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 900,
+              "default": 120
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending probes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/external/red-team/{campaign_id}/results": {
+      "post": {
+        "operationId": "submitRedTeamResult",
+        "summary": "Submit transient target output; Lightwork keeps only a keyed commitment and bounded detector metrics",
+        "parameters": [
+          {
+            "name": "campaign_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "case_id",
+                  "target_artifact_sha256",
+                  "runner_instance_id",
+                  "lease_token"
+                ],
+                "properties": {
+                  "case_id": {
+                    "type": "string"
+                  },
+                  "target_artifact_sha256": {
+                    "type": "string",
+                    "pattern": "^(?:sha256:)?[0-9a-f]{64}$"
+                  },
+                  "runner_instance_id": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,127}$"
+                  },
+                  "lease_token": {
+                    "type": "string",
+                    "pattern": "^rtl1\\.[0-9a-f]{64}$"
+                  },
+                  "response": {
+                    "type": "string"
+                  },
+                  "tool_calls": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "tool_trace_status": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "unavailable"
+                    ],
+                    "default": "unavailable"
+                  },
+                  "transport_status": {
+                    "type": "string",
+                    "enum": [
+                      "completed",
+                      "timeout",
+                      "error",
+                      "cancelled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Committed result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

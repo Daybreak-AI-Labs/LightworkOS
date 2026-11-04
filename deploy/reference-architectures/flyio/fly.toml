@@ -1,0 +1,53 @@
+# Lightwork on Fly.io — reference architecture.
+#
+#   fly launch --copy-config --no-deploy   # then review
+#   fly volumes create maverick_state --size 10
+#   fly secrets set ANTHROPIC_API_KEY=... MAVERICK_DASHBOARD_TOKEN=...
+#   fly deploy
+#
+# Keep one dashboard/control-plane machine, including with Postgres: flow, A2A,
+# audit, learning, and policy stores are not all shared. Scale remote workers.
+app = "maverick"
+primary_region = "iad"
+
+[build]
+  dockerfile = "../../docker/Dockerfile"
+
+[env]
+  # MAVERICK_CONFIG only controls config.toml's location. The world-model DB,
+  # vector store, audit signing keys, learned skills and snapshots live under
+  # MAVERICK_HOME (default ~/.maverick), which is NOT on the mounted volume --
+  # so without this they'd be lost on every restart/redeploy. Pin it to /state.
+  MAVERICK_HOME = "/state"
+  MAVERICK_CONFIG = "/state/config.toml"
+  MAVERICK_WORKDIR = "/state/workspace"
+
+[experimental]
+  cmd = ["dashboard", "--host", "0.0.0.0", "--port", "8765"]
+
+[[mounts]]
+  source = "maverick_state"
+  destination = "/state"
+
+[http_service]
+  internal_port = 8765
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+[[http_service.checks]]
+  interval = "15s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "get"
+  path = "/readyz"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

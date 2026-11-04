@@ -1,0 +1,205 @@
+# Lightwork public read-only demo (demo.maverick.dev) — Kubernetes blueprint.
+#
+# Mirrors the compose stack in this directory: seed (init container) ->
+# dashboard (loopback-bound, token-protected) -> nginx path-allowlist proxy
+# (the only exposed surface; /demo + /healthz only).
+#
+# Apply:
+#   kubectl create secret generic maverick-demo-token \
+#     --from-literal=MAVERICK_DASHBOARD_TOKEN=$(openssl rand -hex 32)
+#   kubectl create configmap maverick-demo-seed \
+#     --from-file=seed_demo.py=deploy/reference-architectures/demo-cluster/seed_demo.py
+#   kubectl apply -f deploy/reference-architectures/demo-cluster/k8s.yaml
+#
+# Replace REGISTRY/maverick:demo with your built image (deploy/docker/
+# Dockerfile). DNS for demo.maverick.dev + TLS (Ingress/Gateway + certs) are
+# a maintainer act — see README.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: maverick-demo-state
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maverick-demo-nginx
+data:
+  # Same template as nginx.conf.template (compose); the official nginx image
+  # envsubsts ${MAVERICK_DASHBOARD_TOKEN} from the container env at startup.
+  # Upstream is 127.0.0.1: dashboard and proxy share the pod's namespace.
+  default.conf.template: |
+    server {
+        listen 8080;
+        server_name demo.maverick.dev;
+        location = / {
+            return 302 /demo;
+        }
+        location = /demo {
+            limit_except GET HEAD {
+                deny all;
+            }
+            proxy_pass http://127.0.0.1:8765;
+            proxy_set_header Authorization "Bearer ${MAVERICK_DASHBOARD_TOKEN}";
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_buffering off;
+            proxy_read_timeout 300s;
+        }
+        location = /healthz {
+            limit_except GET HEAD {
+                deny all;
+            }
+            proxy_pass http://127.0.0.1:8765;
+            proxy_set_header Host $http_host;
+            proxy_set_header X-Forwarded-For $remote_addr;
+        }
+        # Gateway-local liveness for the proxy container's readiness probe.
+        # /healthz proxies to the dashboard's deep check, which 503s without a
+        # provider key (this demo has none) -- so the proxy probes this static
+        # 200 to confirm "nginx is up and serving" without depending on the
+        # dashboard's health. Not proxied, so it doesn't widen the public surface.
+        location = /livez {
+            return 200;
+        }
+        location / {
+            return 404;
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maverick-demo
+  labels:
+    app: maverick-demo
+spec:
+  replicas: 1                  # SQLite state -> single writer
+  strategy:
+    type: Recreate             # RWO volume: tear down before re-attach
+  selector:
+    matchLabels:
+      app: maverick-demo
+  template:
+    metadata:
+      labels:
+        app: maverick-demo
+    spec:
+      # Pod hardening. The maverick image runs as the unprivileged "maverick"
+      # user (uid/gid 1000); seccomp + fsGroup are applied pod-wide and the
+      # maverick containers pin non-root + drop all caps individually (the nginx
+      # proxy keeps its own user model but also drops caps).
+      securityContext:
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: seed
+          image: REGISTRY/maverick:demo
+          command: ["python", "/seed/seed_demo.py"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: state
+              mountPath: /home/maverick/.maverick
+            - name: seed
+              mountPath: /seed
+          resources:
+            requests: {cpu: "100m", memory: "128Mi"}
+            limits: {cpu: "500m", memory: "256Mi"}
+      containers:
+        - name: dashboard
+          image: REGISTRY/maverick:demo
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          # Loopback bind: only the in-pod nginx can reach it; the pod IP
+          # exposes nothing but the proxy.
+          args: ["dashboard", "--host", "127.0.0.1", "--port", "8765"]
+          env:
+            - name: MAVERICK_DASHBOARD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: maverick-demo-token
+                  key: MAVERICK_DASHBOARD_TOKEN
+          volumeMounts:
+            - name: state
+              mountPath: /home/maverick/.maverick
+          # Exec probe: an httpGet probe targets the pod IP, which the
+          # loopback-bound dashboard deliberately does not answer.
+          # /livez (process-up liveness), NOT /healthz: this demo runs without a
+          # provider key and /healthz returns 503 by design when no key is set,
+          # so a /healthz probe would keep the pod permanently NotReady.
+          readinessProbe:
+            exec:
+              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/livez', timeout=3)"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/livez', timeout=3)"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests: {cpu: "250m", memory: "512Mi"}
+            limits: {cpu: "1", memory: "768Mi"}
+        - name: proxy
+          image: nginx:1.27-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: MAVERICK_DASHBOARD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: maverick-demo-token
+                  key: MAVERICK_DASHBOARD_TOKEN
+          volumeMounts:
+            - name: nginx-template
+              mountPath: /etc/nginx/templates
+          readinessProbe:
+            httpGet: {path: "/livez", port: 8080}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: {cpu: "50m", memory: "64Mi"}
+            limits: {cpu: "500m", memory: "128Mi"}
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: maverick-demo-state
+        - name: seed
+          configMap:
+            name: maverick-demo-seed
+        - name: nginx-template
+          configMap:
+            name: maverick-demo-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maverick-demo
+spec:
+  selector:
+    app: maverick-demo
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+  # ClusterIP: front with your Ingress/Gateway + TLS for demo.maverick.dev.
+  type: ClusterIP

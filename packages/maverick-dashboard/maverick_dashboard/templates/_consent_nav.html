@@ -1,0 +1,29 @@
+{# Plain-language sub-navigation shared by the consent pages, drawn by the
+   shared sub_nav bar (_tabs.html).
+   Usage: {% include "_consent_nav.html" %} (marks the current path). #}
+{% set _here = request.url.path if request is defined else '' %}
+{% set _consent_groups = [
+  ('Set up', [
+    ('/consent', 'Consent overview'),
+    ('/consent/publishing', 'Banner and preference center'),
+    ('/consent/publish-settings', 'Website banner settings'),
+    ('/consent/public-clients', 'Website and app keys'),
+    ('/consent/profile-data', 'Preference questions'),
+  ]),
+  ('Run', [
+    ('/consent/delivery', 'Send choices to other systems'),
+    ('/consent/experiments', 'Banner experiments'),
+    ('/consent/global-opt-out', 'Opt out everywhere'),
+    ('/consent/custom-indexes', 'Find people by preference'),
+    ('/consent/bulk-jobs', 'Bulk changes'),
+    ('/consent/native', 'Mobile app consent'),
+  ]),
+  ('Review', [
+    ('/consent/scan-inventory', 'Tracker scans'),
+    ('/consent/application-scans', 'App scans'),
+    ('/consent/scan-notice-proposals', 'Disclosure suggestions'),
+    ('/consent/trust-center-authority', 'Trust Center approvals'),
+  ]),
+] %}
+{% from "_tabs.html" import sub_nav %}
+{{ sub_nav('Consent tools', _consent_groups, _here) }}

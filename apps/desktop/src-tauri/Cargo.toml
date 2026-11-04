@@ -1,0 +1,47 @@
+[package]
+name = "maverick-desktop"
+version = "0.1.7"
+edition = "2021"
+description = "Tauri shell that embeds the local Lightwork dashboard"
+authors = ["The Lightwork Authors"]
+license = "Apache-2.0"
+repository = "https://github.com/Daybreak-AI-Labs/LightworkOS"
+
+[lib]
+name = "maverick_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# Standard Tauri v2 layout (mirrors apps/installer-desktop): logic in
+# lib.rs (run()), thin main.rs binary declared explicitly so `tauri build`
+# has a binary target.
+[[bin]]
+name = "maverick-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+lightwork-desktop-runtime = { path = "../../desktop-runtime" }
+lightwork-desktop-oauth-return = { path = "../../desktop-oauth-return" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+tauri-plugin-updater = "=2.14.1"
+tokio = { version = "1", features = ["sync", "macros"] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+customer-runtime = []
+
+# Reviewed source fixes; provenance and regression coverage live in vendor/README.md.
+[patch.crates-io]
+glib = { path = "../../../vendor/rust/glib" }
+glib-macros = { path = "../../../vendor/rust/glib-macros" }
+gtk3-macros = { path = "../../../vendor/rust/gtk3-macros" }

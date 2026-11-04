@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DSAR Concierge{% endblock %}</title>
+  <style>
+    :root { --bg:#f5f7fa; --panel:#ffffff; --line:#dbe1ea; --ink:#1a2333;
+            --dim:#5b6779; --brand:#21426f; --ok:#1f9d57; --warn:#b8860b;
+            --bad:#c0392b; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink);
+           font:14px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif; }
+    header { background:var(--brand); color:#fff; padding:10px 22px;
+             display:flex; gap:14px; align-items:baseline; flex-wrap:wrap; }
+    header b { font-size:16px; }
+    header nav { margin-inline-start:auto; }
+    header a { color:#dfe8f5; text-decoration:none; margin-inline-start:14px; }
+    main { max-width:1060px; margin:22px auto; padding:0 18px; }
+    .panel { background:var(--panel); border:1px solid var(--line);
+             border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+    h1 { font-size:20px; margin:0 0 4px; }
+    h2 { font-size:15px; margin:0 0 8px; }
+    .sub { color:var(--dim); margin:0 0 14px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line);
+             font-size:13px; }
+    th { color:var(--dim); font-weight:600; text-transform:uppercase;
+         font-size:11px; letter-spacing:0.04em; }
+    .chip { display:inline-block; border-radius:999px; padding:2px 10px;
+            font-size:11px; font-weight:600; }
+    .chip.ok { background:#e2f4e8; color:var(--ok); }
+    .chip.warn { background:#f8efd8; color:var(--warn); }
+    .chip.bad { background:#f9e2df; color:var(--bad); }
+    .chip.info { background:#e4ecf7; color:var(--brand); }
+    .btn { display:inline-block; border:1px solid var(--line); background:#fff;
+           border-radius:8px; padding:6px 14px; font-size:13px; cursor:pointer;
+           color:var(--ink); text-decoration:none; }
+    .btn.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+    label { display:block; font-size:13px; margin:10px 0 4px; color:var(--dim); }
+    input, select, textarea { width:100%; border:1px solid var(--line);
+      border-radius:8px; padding:8px 10px; font:inherit; background:#fff; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));
+            gap:12px; margin-bottom:14px; }
+    .stat { background:var(--panel); border:1px solid var(--line);
+            border-radius:10px; padding:10px 14px; }
+    .stat .v { font-size:22px; font-weight:700; }
+    .stat .l { font-size:11px; color:var(--dim); text-transform:uppercase;
+               letter-spacing:0.04em; }
+    .note { color:var(--dim); font-size:12px; }
+    .mono { font-family: ui-monospace, monospace; font-size:12px; }
+    .evt { border-inline-start:2px solid var(--line); padding:2px 0 2px 12px;
+           margin:6px 0; font-size:13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <b>DSAR Concierge</b>
+    <span style="opacity:0.75;">{{ caps_summary.mode }}</span>
+    <nav>
+      <a href="/">Queue</a>
+      <a href="/request">New request</a>
+      <a href="/about">About</a>
+    </nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

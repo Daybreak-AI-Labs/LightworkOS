@@ -1,0 +1,38 @@
+<section id="company-saml-setup" class="card" data-saml-setup>
+  <style>
+    #company-saml-setup form label,#company-saml-setup>label{display:block;margin:1rem 0}
+    #company-saml-setup input:not([type=checkbox]),#company-saml-setup select{display:block;width:100%;max-width:100%;box-sizing:border-box}
+    #company-saml-setup button{max-width:100%;white-space:normal;margin:.3rem}
+    #company-saml-setup p,#company-saml-setup dt,#company-saml-setup dd{overflow-wrap:anywhere}
+    #company-saml-setup .actions{display:flex;flex-wrap:wrap}
+  </style>
+  <h2>Set up single sign-on</h2>
+  <p>Upload the provider document your company gave you. Save it as an inactive setup, then try a real sign-in before separately enabling it. No role is granted automatically.</p>
+  <p data-saml-runtime role="status">Checking installed single sign-on support…</p>
+  <form data-saml-files>
+    <label>Provider name <input name="name" maxlength="120" required autocomplete="off"></label>
+    <label>Lightwork's registered name at the provider <input name="entity" maxlength="300" required autocomplete="off"></label>
+    <label>Provider metadata document <input name="metadata" type="file" accept=".xml,application/xml,text/xml" required></label>
+    <details><summary>Lightwork certificate and private key, if your provider needs them</summary>
+      <p>Choose both files, or leave both empty. The private key is kept encrypted and is never shown again.</p>
+      <label>Lightwork certificate <input name="certificate" type="file" accept=".pem,.crt"></label>
+      <label>Matching private key <input name="key" type="file" accept=".pem,.key"></label>
+      <label>Private key password, if needed <input name="password" type="password" maxlength="1024" autocomplete="off"></label>
+    </details>
+    <button type="submit" class="btn">Review inactive setup</button>
+  </form>
+  <div data-saml-review hidden></div>
+  <div class="actions"><button type="button" class="btn" data-saml-try>Try the saved single sign-on</button><a data-saml-provider hidden rel="noopener">Continue to your provider</a></div>
+  <p>Use HTTPS for this site. Register its return address ending in <span>/saml/acs</span> with your provider. Supply the protected <a href="/settings/all?id=auth.oidc.session_secret">sign-in session key</a> in All settings.</p>
+  <label>Your original inactive setup <select data-saml-original><option value="">Choose a dated request</option></select></label>
+  <button type="button" class="btn" data-saml-read>Read original outcome</button>
+  <p data-saml-status role="status" aria-live="polite"></p>
+  <h3>Enable the single sign-on you checked</h3>
+  <p><a href="/users">Give the verified person administrator access on People</a> first. Activation never grants a role.</p>
+  <label>Verified person and check time <select class="select" data-saml-check><option value="">Choose a verified sign-in</option></select></label>
+  <label>Owner passphrase <input class="input" type="password" data-saml-activation-phrase maxlength="1024" autocomplete="current-password"></label>
+  <label>Authenticator code or recovery code (only when the owner's app is on) <input class="input" type="text" data-saml-activation-code maxlength="32" autocomplete="one-time-code" spellcheck="false"></label>
+  <button class="btn" type="button" data-saml-activation-review>Review activation</button>
+  <div data-saml-activation-changes hidden></div>
+  <p><a href="/auth/company-saml-recovery">Read an original activation or separately restore its previous choice on this computer</a></p>
+</section>

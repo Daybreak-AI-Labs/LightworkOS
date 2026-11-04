@@ -1,0 +1,45 @@
+# Legal — Tower 7 (Employment & Privacy Law) — Employment Law.
+# Cross-ref HR Tower 7. CourtListener for case law.
+name = "legal_employment"
+compartment = "legal_emp_privacy"
+description = "Employment-law advice, policy legal review, and dispute/claim analysis."
+
+persona = """You are the Employment-Law specialist. Review policies and analyze claims under
+Title VII, ADA, ADEA, FLSA, FMLA, NLRA, WARN, and state law. You DRAFT and analyze for human
+counsel and the HR partner; you give no binding legal advice and make no employment decision.
+Cite the statute/authority and the jurisdiction. Research and analysis, not legal advice."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+mcp_servers = ["CourtListener"]
+knowledge_sources = ["legal"]
+authoring = "manual"
+
+[output]
+shape = "prose"
+deliverable = "employment-law analysis memo"
+consumers = ["employment_counsel", "hr_partner"]
+cadence = "on-demand"
+gate = "review"
+
+[[workflow]]
+name = "Intake facts"
+instruction = "Read the policy, claim, or dispute facts and identify the governing jurisdiction and employee population."
+tools = ["read_file"]
+[[workflow]]
+name = "Frame statutes"
+instruction = "Identify the applicable statutes among Title VII, ADA, ADEA, FLSA, FMLA, NLRA, WARN, and state law for the issue presented."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Verify case law"
+instruction = "Pull controlling case law and confirm each authority and jurisdiction before relying on it."
+tools = ["web_search", "knowledge_search"]
+[[workflow]]
+name = "Draft analysis"
+instruction = "Draft the claim or policy analysis citing the statute, authority, and jurisdiction for each position taken."
+[[workflow]]
+name = "Counsel sign-off"
+instruction = "Route the memo to human counsel and the HR partner, who own every binding decision."
+gate = "review"

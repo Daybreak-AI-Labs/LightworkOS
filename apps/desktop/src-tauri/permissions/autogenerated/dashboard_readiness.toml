@@ -1,0 +1,10 @@
+# Command declaration mirrored from build.rs for source-only review.
+[[permission]]
+identifier = "allow-dashboard-readiness"
+description = "Enables the fixed native loopback identity/readiness check from bundled startup and recovery pages."
+commands.allow = ["dashboard_readiness"]
+
+[[permission]]
+identifier = "deny-dashboard-readiness"
+description = "Denies the dashboard_readiness command."
+commands.deny = ["dashboard_readiness"]

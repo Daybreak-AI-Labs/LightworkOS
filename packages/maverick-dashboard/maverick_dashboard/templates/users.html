@@ -1,0 +1,894 @@
+{% extends "base.html" %}
+{% block title %}Users · Lightwork{% endblock %}
+{% block content %}
+  {% from "_hero.html" import hero, state %}
+  {# A person by name: the invite email when we know it, else a readable form of
+     their sign-in. The exact sign-in identity only travels as a form value. #}
+  {% macro who(principal) %}{% set p = principal | identity %}{% set label = people_labels.get(principal) or invite_labels.get(principal) %}<span>{% if label %}{{ label }}{% else %}{{ p.name }}{% if p.detail %} <span class="muted users-normal">· {{ p.detail }}</span>{% endif %}{% endif %}</span>{% endmacro %}
+  {% macro name_of(principal) %}{{ people_labels.get(principal) or invite_labels.get(principal) or (principal | identity).name }}{% endmacro %}
+  {# Every role picker says, in plain words, what the chosen role allows. The
+     same sentences fill "What each role can do" below. #}
+  {% set role_desc = role_descriptions | default({}) %}
+  {% macro role_options(selected='', placeholder='', choices=none) %}{% if placeholder %}<option value="" disabled{% if not selected %} selected{% endif %}>{{ placeholder }}</option>{% endif %}{% for r in (roles if choices is none else choices) %}<option value="{{ r }}" data-description="{{ role_desc.get(r, '') }}"{% if r == selected %} selected{% endif %}>{{ r | role_label }}</option>{% endfor %}{% endmacro %}
+  {% macro role_help(id, selected='') %}<span class="muted users-help users-role-help" id="{{ id }}" data-role-help aria-live="polite">{% if selected and role_desc.get(selected) %}{{ selected | role_label }}: {{ role_desc.get(selected) }}{% else %}Choose the access this person needs.{% endif %}</span>{% endmacro %}
+  {# Native forms must be bound before the shared script finishes loading.
+     This is the request-rendered workspace, never the current browser cookie. #}
+  {% macro workspace_binding() %}{% if workspace_tenant_selection %}<input type="hidden" name="_expected_tenant" value="{{ workspace_tenant_selection }}">{% endif %}{% endmacro %}
+  {% macro invite_expiry(id) %}
+    <label class="users-field" for="{{ id }}">Link expires after
+      <select id="{{ id }}" name="expiry" class="select" required>
+        <option value="1_hour">1 hour</option><option value="1_day">1 day</option>
+        <option value="7_days" selected>7 days</option><option value="30_days">30 days</option>
+      </select>
+    </label>
+  {% endmacro %}
+  {% macro person_options(selected='', only_without_role=false) %}
+    {% for person in people if not only_without_role or not person.role %}
+    <option value="{{ person.principal }}"{% if person.principal == selected %} selected{% endif %}>{{ person.label }}</option>
+    {% endfor %}
+  {% endmacro %}
+  {% macro department_boxes(prefix, chosen) %}
+    <div class="users-depts" data-departments>
+      <div class="users-depts__tools">
+        <label class="users-field users-grow"><span>Find a department</span>
+          <input class="input" type="search" placeholder="Type to filter, for example: finance" data-departments-filter autocomplete="off" aria-controls="{{ prefix }}-list" /></label>
+        <button type="button" class="btn btn--ghost" data-departments-all>Select all</button>
+        <button type="button" class="btn btn--ghost" data-departments-none>Clear all</button>
+        <span class="muted users-help" data-departments-count aria-live="polite"></span>
+      </div>
+      <div class="users-checks users-checks--columns" role="group" aria-label="Departments" id="{{ prefix }}-list">
+        {% for key, title in all_suites %}
+        <label data-department-label="{{ title | lower }}"><input type="checkbox" name="suites" value="{{ key }}"{% if key in chosen %} checked{% endif %} id="{{ prefix }}-{{ loop.index }}" /> {{ title }}</label>
+        {% endfor %}
+      </div>
+    </div>
+  {% endmacro %}
+  {% set users_lede %}
+    {% if global_admin %}
+    Who can use this workspace and what each person is allowed to do.
+    {% if workspace_roles_initialized %}
+    A person needs an installation role or a workspace membership to access work.
+    {% else %}
+    A new person who signs in starts as <strong>{{ default_role | role_label }}</strong>
+    until you change it here.
+    {% endif %}
+    {% else %}
+    Invite colleagues and manage their roles in the workspaces you administer.
+    {% endif %}
+  {% endset %}
+  {% from "_empty_state.html" import empty_state %}
+  {% from "_form_field.html" import form_field, error_summary %}
+  {% set users_actions %}<a class="btn btn--primary" href="#invite-email">Invite someone</a>{% endset %}
+  {% call hero('Administration', 'Users',
+               subtitle='Who can use Lightwork',
+               lede=users_lede,
+               actions=users_actions if (global_admin and invites_on) else '') %}
+    {{ state('Current state',
+             (users | length ~ ' ' ~ ('person has' if users | length == 1 else 'people have') ~ ' a role')
+             if global_admin else
+             (workspace_member_count ~ ' ' ~ ('member has' if workspace_member_count == 1 else 'members have') ~ ' a role in this workspace'),
+             badge='Company sign-in on' if auth_on else 'Sign-in off',
+             badge_class='ok' if auth_on else 'warn',
+             copy=(bootstrap_admins | length ~ ' administrator'
+                  ~ ('' if bootstrap_admins | length == 1 else 's') ~ ' set up during installation.')
+                  if bootstrap_admins else
+                  ('Membership changes here affect only this workspace.' if not global_admin else
+                   'Department access below limits which departments each person works with.')) }}
+  {% endcall %}
+
+  {% if saved %}
+  <div class="panel users-saved" role="status" data-mv-toast="Saved. {{ saved }}" data-mv-keep-done="users-{{ request.query_params.get('saved', '') }}"><strong>Saved.</strong> {{ saved }}</div>
+  {% endif %}
+  {# A background save of the invite form (data-mv-save-show) puts its answer here. #}
+  <div id="invite-result-slot">
+  {% if invite_link %}
+  {# The one-time invite link is the result of the action just taken: shown
+     first and given focus (script below), instead of beside the form far down
+     the page while focus stayed at the top. #}
+  <section class="panel users-saved" id="invite-result" tabindex="-1" aria-labelledby="invite-result-title" data-mv-keep-done="users-invite">
+    {% if invite_sent %}
+    <strong id="invite-result-title">Invitation emailed to {{ invite_email }}.</strong>
+    <p class="muted users-help">The same link is below if you also want to send it yourself. It works once and expires {{ invite_expires_at | datetime('absolute') }}.</p>
+    {% elif invite_send_note and 'disabled' not in invite_send_note and 'no sending account' not in invite_send_note %}
+    <strong id="invite-result-title">Invitation for {{ invite_email }} created.</strong>
+    <p class="muted users-help">We couldn't email the invite. Copy the link below and send it yourself. It works once and expires {{ invite_expires_at | datetime('absolute') }}.</p>
+    {% else %}
+    <strong id="invite-result-title">Invitation for {{ invite_email }} created.</strong>
+    <p class="muted users-help">Copy this link and send it to them. It is shown only once, works once and
+      expires {{ invite_expires_at | datetime('absolute') }}. {% if invite_sso_on %}They must sign in with the email address you invited.{% else %}Anyone who opens it can accept, so send it only to the person you invited.{% endif %}</p>
+    {% endif %}
+    <div class="users-row-form">
+      <label class="users-field users-grow"><span>Invite link</span>
+        <input class="input" id="invite-link" type="text" readonly value="{{ invite_link }}" />
+      </label>
+      <button type="button" class="btn" data-copy-target="invite-link">Copy link</button>
+    </div>
+  </section>
+  {% endif %}
+  </div>
+  {% if passphrase_reset_link %}
+  {# The one-time reset link, shown once and given focus like an invite link. #}
+  <section class="panel users-saved" id="passphrase-reset-result" tabindex="-1" aria-labelledby="passphrase-reset-title">
+    {% if passphrase_reset_first %}
+    <strong id="passphrase-reset-title">Sign-in link for {{ passphrase_reset_email }}.</strong>
+    <p class="muted users-help">They have access but no passphrase yet. Send them this link so they can choose one.
+      It is shown only once, works once and expires {{ passphrase_reset_expires_at | datetime('absolute') }}.
+      Anyone who opens it can choose the passphrase, so send it only to them.</p>
+    {% else %}
+    <strong id="passphrase-reset-title">Passphrase reset for {{ passphrase_reset_email }}.</strong>
+    <p class="muted users-help">Their old passphrase no longer works and they are signed out everywhere. Send them
+      this link so they can choose a new passphrase. It is shown only once, works once and expires
+      {{ passphrase_reset_expires_at | datetime('absolute') }}. Anyone who opens it can choose the passphrase, so
+      send it only to them.</p>
+    {% endif %}
+    <div class="users-row-form">
+      <label class="users-field users-grow"><span>Reset link</span>
+        <input class="input" id="passphrase-reset-link" type="text" readonly value="{{ passphrase_reset_link }}" />
+      </label>
+      <button type="button" class="btn" data-copy-target="passphrase-reset-link">Copy link</button>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if not auth_on %}
+  <div class="panel users-note">
+    <p class="muted"><strong>Sign-in is off.</strong> Roles only take effect once
+      company sign-in is turned on. Right now everyone using this computer is an
+      administrator. You can set roles now; they apply when sign-in is on.</p>
+  </div>
+  {% endif %}
+
+  <p class="muted">See where people are signed in, and sign a device out, on the
+    <a href="/settings/sessions">Sessions</a> page.</p>
+
+  {% if global_admin %}
+  <p><a class="btn" href="/users/departures">Review employee departure</a> Deactivation and retained-work handoffs are separate from resetting a role.</p>
+  <section class="panel"><h2>Installation first-login baseline</h2>
+    <p>Current fallback: <strong>{{ first_login.role | role_label }}</strong>, with powers {{ first_login.permissions | join(', ') }}.
+    Departments: <strong>{% if first_login.departments is none %}Every department{% else %}{{ first_login.departments | join(', ') or 'None' }}{% endif %}</strong>.
+    Explicit account assignments, verified group mappings and workspace memberships take precedence. Tool and task limits still apply.</p>
+    {% if first_login.conservative %}<p>The viewer/no-department baseline is in effect.</p>{% else %}
+    <p>Upgrades keep the existing choice. You can deliberately change the fallback to <strong>Viewer with no departments</strong>: view owned work, no new task runs and no department specialists until access is assigned.</p>
+    <form action="/users/first-login-baseline" method="post" data-users-confirm="Apply viewer with no departments to the installation fallback? This also changes existing accounts that still inherit the default. Explicit roles and workspace memberships remain." data-users-ok="Apply reviewed baseline">
+      {{ workspace_binding() }}
+      <input type="hidden" name="expected_revision" value="{{ first_login.revision }}">
+      <label><input type="checkbox" name="confirm" value="existing-unassigned" required> I reviewed that existing unassigned accounts also inherit this change.</label>
+      <button class="btn" type="submit">Apply viewer and no departments</button>
+    </form>{% endif %}
+  </section>
+  <section class="panel"><h2>Employee content is private</h2><p>Administrator roles manage access and policy. They no longer open another employee's task text, files or chat by default. Existing employee-owned records use their recorded owner; unowned legacy work requires an explicit content review. Shared result packets keep their assigned reviewer access.</p><a class="btn" href="/content-access">Review or request content access</a></section>
+  {% if viewer_global_admin and can_open_page('/users/usability-survey') %}<p class="muted"><a href="/users/usability-survey">Ease-of-use results</a>: what people say about using Lightwork, by role and by task, from the optional survey.</p>{% endif %}
+  <div class="section-head"><h2 id="people" tabindex="-1">People</h2></div>
+  {% set uf = users_filter | default({'q': '', 'role': '', 'active': false}) %}
+  {% set shown = users_shown | default(users) %}
+  {% if bulk_problem is defined %}
+  <div class="panel" role="alert" id="bulk-result" tabindex="-1"><strong>That didn't work.</strong> {{ bulk_problem }}</div>
+  {% endif %}
+  {% if bulk_confirm is defined %}
+  {% set bc = bulk_confirm %}
+  <section class="panel users-bulk-confirm" id="bulk-result" tabindex="-1" role="region" aria-labelledby="bulk-confirm-title">
+    <h3 id="bulk-confirm-title" class="users-subhead">Change the role of {{ bc.count }} {{ 'person' if bc.count == 1 else 'people' }} to {{ bc.role | role_label }}?</h3>
+    {% if bc.changed_since %}<p role="alert"><strong>The list changed since you confirmed.</strong> Review the people below again.</p>{% endif %}
+    <p class="muted users-help">{{ bc.role | role_label }}: {{ role_desc.get(bc.role, '') }} You can undo this from the report that follows.</p>
+    <ul class="users-list">
+      {% for principal in bc.people %}<li>{{ who(principal) }} <span class="muted">now {{ bc.current.get(principal, '') | role_label }}</span></li>{% endfor %}
+    </ul>
+    <form method="post" action="/users/bulk#bulk-result" class="users-row-form">
+      {{ workspace_binding() }}
+      {% for principal in bc.people %}<input type="hidden" name="principals" value="{{ principal }}" />{% endfor %}
+      <input type="hidden" name="role" value="{{ bc.role }}" />
+      <input type="hidden" name="scope" value="selected" />
+      <input type="hidden" name="confirmed" value="yes" />
+      <input type="hidden" name="expected_count" value="{{ bc.count }}" />
+      <button type="submit" class="btn">Change the role for {{ bc.count }} {{ 'person' if bc.count == 1 else 'people' }}</button>
+      <a class="btn btn--ghost" href="/users#people">Cancel</a>
+    </form>
+  </section>
+  {% endif %}
+  {% if bulk_report is defined %}
+  {% set br = bulk_report %}
+  {% set n_changed = br.rows | selectattr('outcome', 'equalto', 'changed') | list | length %}
+  {% set n_same = br.rows | selectattr('outcome', 'equalto', 'unchanged') | list | length %}
+  {% set n_refused = br.rows | selectattr('outcome', 'equalto', 'refused') | list | length %}
+  {% set n_uncertain = br.rows | selectattr('outcome', 'equalto', 'uncertain') | list | length %}
+  <section class="panel" id="bulk-result" tabindex="-1" role="status" aria-labelledby="bulk-report-title">
+    <h3 id="bulk-report-title" class="users-subhead">{{ 'Undone' if br.undone else 'Changed' }}: {{ n_changed }} {{ 'person' if n_changed == 1 else 'people' }}{% if n_same %}, {{ n_same }} already had that role{% endif %}{% if n_refused %}, {{ n_refused }} not changed{% endif %}{% if n_uncertain %}, {{ n_uncertain }} to check{% endif %}</h3>
+    <table>
+      <caption class="sr-only">What changed for each person</caption>
+      <thead><tr><th scope="col">Person</th><th scope="col">Before</th><th scope="col">Now</th><th scope="col">Result</th></tr></thead>
+      <tbody>
+      {% for row in br.rows %}
+        <tr><td>{{ who(row.principal) }}</td>
+            <td>{{ row.before | role_label if row.before else 'Standard role' }}</td>
+            <td>{{ row.after | role_label if row.after else 'Standard role' }}</td>
+            <td>{% if row.outcome == 'changed' %}Changed{% elif row.outcome == 'unchanged' %}Already had it{% elif row.outcome == 'uncertain' %}Check: {{ row.reason }}{% else %}Not changed: {{ row.reason }}{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if br.undo %}
+    <form method="post" action="/users/bulk/undo#bulk-result" class="users-row-form">
+      {{ workspace_binding() }}
+      {% for token in br.undo %}<input type="hidden" name="restore" value="{{ token }}" />{% endfor %}
+      <button type="submit" class="btn">{% if br.undo | length == 1 %}Undo this change{% else %}Undo these {{ br.undo | length }} changes{% endif %}</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endif %}
+  <div class="panel">
+    {% if users %}
+    <form method="get" action="/users#people" class="users-row-form users-filter" role="search" aria-label="Find people">
+      <label>Find people <input class="input" type="search" name="q" value="{{ uf.q }}" placeholder="Name or email" autocomplete="off" /></label>
+      <label>Role <select class="select" name="has_role"><option value="">Any role</option>{% for r in roles %}<option value="{{ r }}"{% if r == uf.role %} selected{% endif %}>{{ r | role_label }}</option>{% endfor %}</select></label>
+      <button type="submit" class="btn">Filter</button>
+      {% if uf.active %}<a class="btn btn--ghost" href="/users#people">Clear filter</a>{% endif %}
+    </form>
+    <p class="muted users-help" id="people-count">Showing {{ shown | length }} of {{ users | length }} {{ 'person' if users | length == 1 else 'people' }}{% if uf.active %} matching the filter{% endif %}.</p>
+    {% if shown %}
+    <table>
+      <thead><tr><th scope="col"><span class="sr-only">Select</span></th><th scope="col">Person</th><th scope="col">Role</th><th scope="col">Actions</th></tr></thead>
+      <tbody>
+      {% for principal, role in shown %}
+        <tr>
+          <td><input type="checkbox" name="principals" value="{{ principal }}" form="users-bulk" id="pick-{{ loop.index }}" data-bulk-pick /><label class="sr-only" for="pick-{{ loop.index }}">Select {{ name_of(principal) }}</label></td>
+          <td>{{ who(principal) }}{% if principal == you %} <span class="muted">(you)</span>{% endif %}</td>
+          <td>
+            <form method="post" data-mv-save="background" data-mv-save-what="save the role" action="/users/set" class="users-row-form" id="role-form-{{ loop.index }}" data-mv-keep="users-role-{{ principal }}">
+              {{ workspace_binding() }}
+              <input type="hidden" name="principal" value="{{ principal }}" />
+              <label class="sr-only" for="role-{{ loop.index }}">Role for {{ name_of(principal) }}</label>
+              <select class="select" name="role" id="role-{{ loop.index }}" aria-describedby="role-{{ loop.index }}-help">
+                {{ role_options(role) }}
+              </select>
+              {{ role_help('role-' ~ loop.index ~ '-help', role) }}
+            </form>
+          </td>
+          <td class="users-actions">
+            <button type="submit" form="role-form-{{ loop.index }}" class="btn" aria-label="Save role for {{ name_of(principal) }}">Save role</button>
+            <a class="btn btn--ghost" href="/users/access?person={{ principal | urlencode }}" aria-label="Check access for {{ name_of(principal) }}">Check access</a>
+            <form method="post" action="/users/remove" class="users-inline"
+                  data-users-confirm="Use {{ standard_roles[principal].label }} from {{ standard_roles[principal].source }} for {{ name_of(principal) }}? Powers: {{ standard_roles[principal].permissions | join(', ') or 'none' }}. This may add permissions and does not deactivate their account." data-users-ok="Use standard role">
+              {{ workspace_binding() }}
+              <input type="hidden" name="principal" value="{{ principal }}" />
+              <input type="hidden" name="expected_standard" value="{{ standard_roles[principal].revision }}" />
+              <button type="submit" class="btn" aria-label="Use standard role for {{ name_of(principal) }}">Use standard role</button>
+              <small>Becomes {{ standard_roles[principal].label }}; {{ standard_roles[principal].source }}. {{ standard_roles[principal].permissions | join(', ') or 'No active powers' }}.</small>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" action="/users/bulk#bulk-result" id="users-bulk" class="users-bulk">
+      {{ workspace_binding() }}
+      <input type="hidden" name="q" value="{{ uf.q }}" />
+      <input type="hidden" name="role_filter" value="{{ uf.role }}" />
+      <fieldset class="users-checks">
+        <legend>Change the role of several people</legend>
+        <label><input type="radio" name="scope" value="selected" checked /> The people I selected <span class="muted" data-bulk-count aria-live="polite"></span></label>
+        <label><input type="radio" name="scope" value="matching" /> All {{ shown | length }} {{ 'person' if shown | length == 1 else 'people' }} {{ 'matching the filter' if uf.active else 'in the list' }}</label>
+      </fieldset>
+      <label for="bulk-role">New role</label>
+      <select class="select" name="role" id="bulk-role" required aria-describedby="bulk-role-help">{{ role_options('', placeholder='Choose a role') }}</select>
+      {{ role_help('bulk-role-help') }}
+      <button type="submit" class="btn">Review change</button>
+      <p class="muted users-help">Nothing changes until you confirm the number of people on the next step.</p>
+    </form>
+    {% else %}
+    <p class="muted">No one matches this filter. <a href="/users#people">Clear the filter</a> to see everyone.</p>
+    {% endif %}
+    {% else %}
+    <p class="muted">No one has a specific installation role yet. <a href="/settings/all">Review sign-in settings</a>.
+      {% if workspace_roles_initialized %}People need an installation role or workspace membership to access work.
+      {% else %}People who sign in start as <strong>{{ default_role | role_label }}</strong>.{% endif %}
+      {% if invites_on %}<a class="btn" href="#invite-email">Invite someone</a>{% endif %}</p>
+    {% endif %}
+
+    {% if people %}
+    <h3 class="users-subhead" id="check-access">Check someone's access</h3>
+    <form method="get" action="/users/access" class="users-row-form">
+      <label class="users-field">
+        <span>Person</span>
+        <select class="select" name="person" required>
+          <option value="" disabled selected>Choose a person…</option>
+          {{ person_options() }}
+        </select>
+      </label>
+      <button type="submit" class="btn">Check access</button>
+    </form>
+    <p class="muted users-help">See what they can do, the screens they can open, their spending limits and the approvals they can decide, with the rule behind each.</p>
+    {% endif %}
+
+    {% set unassigned = people | rejectattr('role') | list %}
+    <h3 class="users-subhead">Give someone a role</h3>
+    {% if unassigned %}
+    <form method="post" data-mv-save="background" data-mv-save-what="give the role" action="/users/set" class="users-row-form" id="give-role-form" data-mv-validate data-mv-keep="users-set">
+      {{ workspace_binding() }}
+      {{ error_summary('give-role-errors') }}
+      {% set person_choices = [('', 'Choose a person…')] %}{% for person in unassigned %}{% set _ = person_choices.append((person.principal, person.label)) %}{% endfor %}
+      {{ form_field('give-role-person', 'Person', name='principal', type='select', required=true, options=person_choices,
+                    error_required='Choose the person who needs a role.') }}
+      <div class="mv-field">
+        <label class="mv-field__label" for="give-role-role">Role</label>
+        <select class="select" name="role" id="give-role-role" required aria-describedby="give-role-help"
+                data-error-required="Choose the role to give them.">
+          {{ role_options(placeholder='Choose a role') }}
+        </select>
+        {{ role_help('give-role-help') }}
+      </div>
+      <button type="submit" class="btn">Give role</button>
+    </form>
+    <p class="muted users-help">The list shows everyone who has signed in or accepted an invite.</p>
+    {% else %}
+    <p class="muted users-help">Everyone who has signed in already has a role.
+      {% if invites_on %}To add someone new, <a href="#invite-email">invite them by email</a>.{% else %}Ask the person to sign in once; they will then appear here.{% endif %}</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="chat-accounts">Chat accounts</h2></div>
+  <div class="panel">
+    <p class="muted">Tie a Slack, Teams or email account to a person so their approvals and
+      questions from that chat app count as theirs. People can also link their own account with a
+      code from their <a href="/me">My work</a> page.</p>
+    {% if channel_links %}
+    <table>
+      <thead><tr><th scope="col">Person</th><th scope="col">Chat app</th><th scope="col">Account</th><th scope="col">Actions</th></tr></thead>
+      <tbody>
+      {% for principal, links in channel_links %}
+        {% for l in links %}
+        <tr>
+          <td>{{ who(principal) }}</td>
+          <td>{{ l.channel | capitalize }}</td>
+          <td><code>{{ l.external_id }}</code></td>
+          <td>
+            <form method="post" action="/users/channels/unlink" class="users-inline"
+                  data-users-confirm="Unlink this {{ l.channel }} account from {{ name_of(principal) }}?" data-users-ok="Unlink">
+              {{ workspace_binding() }}
+              <input type="hidden" name="channel" value="{{ l.channel }}" />
+              <input type="hidden" name="external_id" value="{{ l.external_id }}" />
+              <button type="submit" class="btn btn--danger" aria-label="Unlink account {{ l.external_id }} on {{ l.channel }}">Unlink account</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    {{ empty_state('No chat accounts linked yet',
+                   'Linked Slack, Teams and email accounts appear here, so approvals and questions from chat count as that person\'s. Link the first one with the form below.',
+                   compact=true) }}
+    {% endif %}
+    <h3 class="users-subhead">Link a chat account</h3>
+    <form method="post" action="/users/channels/link" class="users-row-form">
+      {{ workspace_binding() }}
+      <label class="users-field">
+        <span>Person</span>
+        <select class="select" name="principal" required>
+          <option value="" disabled selected>Choose a person…</option>
+          {{ person_options() }}
+        </select>
+      </label>
+      <label class="users-field">
+        <span>Chat app</span>
+        <select class="select" name="channel">
+          <option value="slack">Slack</option>
+          <option value="teams">Microsoft Teams</option>
+          <option value="email">Email</option>
+        </select>
+      </label>
+      <label class="users-field">
+        <span>Account id (Slack member id such as U01ABCDEF, Teams user id, or email address)</span>
+        <input class="input" type="text" name="external_id" required placeholder="U01ABCDEF" />
+      </label>
+      <button type="submit" class="btn">Link account</button>
+    </form>
+  </div>
+
+  {% if invites_on %}
+  <div class="section-head"><h2 id="invite-email">Invite someone by email</h2></div>
+  <div class="panel">
+    <form method="post" data-mv-save="background" data-mv-save-what="create the invite link" data-mv-save-show="invite-result-slot" action="/users/invite" class="users-row-form" id="invite-form" data-mv-validate data-mv-keep="users-invite">
+      {{ workspace_binding() }}
+      <input type="hidden" name="expected_context" value="{{ workspace_people_context }}">
+      {{ error_summary('invite-errors') }}
+      <label class="users-field users-grow">
+        <span>Email address</span>
+        <input class="input" id="invite-email-input" type="email" name="email" placeholder="colleague@company.com" autocomplete="off" required />
+      </label>
+      <label class="users-field">
+        <span>Role</span>
+        <select class="select" name="role" aria-describedby="invite-role-chosen invite-role-help">
+          {{ role_options('viewer') }}
+        </select>
+        {{ role_help('invite-role-chosen', 'viewer') }}
+      </label>
+      {{ invite_expiry('invite-expiry') }}
+      <button type="submit" class="btn">Create invite link</button>
+      <p class="mv-form__err users-field-error" id="invite-email-error" role="alert" hidden></p>
+    </form>
+    <p class="muted users-help" id="invite-role-help">The invite starts as <strong>{{ 'viewer' | role_label }}</strong> (can look at dashboards and results but change nothing), the safest choice for someone new. Pick <strong>{{ 'operator' | role_label }}</strong> for people who will run work and approve actions, or <strong>{{ 'admin' | role_label }}</strong> for someone who will manage people and settings. You can change it later on this page.</p>
+    <p class="muted users-help">
+      {% if invite_sso_on %}The link asks them to sign in with a company account whose email matches the invitation before giving them the role.
+      {% else %}Opening the link signs them in with their email address.{% endif %}
+      If email sending is set up, the link is also emailed to them.</p>
+    <p class="muted users-help">If creation is interrupted, reload Users and check the waiting invitations before creating another. A lost one-time link cannot be recovered; cancel that invitation, then create a replacement.</p>
+    {% if invite_confirm is defined %}
+    {% set ic = invite_confirm %}
+    <section class="panel" id="invite-result" tabindex="-1" role="region" aria-labelledby="invite-confirm-title">
+      <h3 id="invite-confirm-title" class="users-subhead">Cancel {{ ic.invites | length }} invitation{{ '' if ic.invites | length == 1 else 's' }}?</h3>
+      {% if ic.changed_since %}<p role="alert"><strong>The list changed since you confirmed.</strong> Review the invitations below again.</p>{% endif %}
+      <p class="muted users-help">Their links stop working. This cannot be undone; you can send a new invitation instead.</p>
+      <ul class="users-list">{% for inv in ic.invites %}<li>{{ inv.email }} <span class="badge">{{ inv.role | role_label }}</span></li>{% endfor %}</ul>
+      <form method="post" action="/users/invite/bulk-revoke#invite-result" class="users-row-form">
+        {{ workspace_binding() }}
+        {% for inv in ic.invites %}<input type="hidden" name="invite_ids" value="{{ inv.id }}" />{% endfor %}
+        <input type="hidden" name="scope" value="selected" />
+        <input type="hidden" name="confirmed" value="yes" />
+        <input type="hidden" name="expected_count" value="{{ ic.invites | length }}" />
+        <button type="submit" class="btn btn--danger">Cancel {{ ic.invites | length }} invitation{{ '' if ic.invites | length == 1 else 's' }}</button>
+        <a class="btn btn--ghost" href="/users#invite-email">Keep them</a>
+      </form>
+    </section>
+    {% endif %}
+    {% if invite_report is defined %}
+    <section class="panel" id="invite-result" tabindex="-1" role="status" aria-labelledby="invite-report-title">
+      <h3 id="invite-report-title" class="users-subhead">Cancelled {{ invite_report | selectattr('cancelled') | list | length }} invitation{{ '' if (invite_report | selectattr('cancelled') | list | length) == 1 else 's' }}</h3>
+      <ul class="users-list">{% for row in invite_report %}<li>{{ row.email }}: {{ 'Cancelled; the link no longer works.' if row.cancelled else 'Already gone (accepted, expired or cancelled earlier).' }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+    {% if pending_invites %}
+    <h3 class="users-subhead">Waiting to be accepted</h3>
+    <ul class="users-list">
+      {% for inv in pending_invites %}
+      <li>
+        <input type="checkbox" name="invite_ids" value="{{ inv.id }}" form="invites-bulk" id="inv-pick-{{ loop.index }}" /><label class="sr-only" for="inv-pick-{{ loop.index }}">Select the invitation for {{ inv.email }}</label>
+        <span class="users-grow">{{ inv.email }}<br><span class="muted users-help">Expires {{ inv.expires_at | datetime('absolute') }}</span></span>
+        <span class="badge">{{ inv.role | role_label }}</span>
+        <form method="post" action="/users/invite/revoke" class="users-inline"
+              data-users-confirm="Cancel the invitation for {{ inv.email }}? The link will stop working." data-users-ok="Cancel invitation">
+          {{ workspace_binding() }}
+          <input type="hidden" name="invite_id" value="{{ inv.id }}" />
+          <button type="submit" class="btn btn--danger" aria-label="Cancel the invitation for {{ inv.email }}">Cancel invitation</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if pending_invites | length > 1 %}
+    <form method="post" action="/users/invite/bulk-revoke#invite-result" id="invites-bulk" class="users-row-form">
+      {{ workspace_binding() }}
+      <fieldset class="users-checks">
+        <legend>Cancel several invitations</legend>
+        <label><input type="radio" name="scope" value="selected" checked /> The invitations I selected</label>
+        <label><input type="radio" name="scope" value="all" /> All {{ pending_invites | length }} waiting invitations</label>
+      </fieldset>
+      <button type="submit" class="btn btn--danger">Review cancellation</button>
+    </form>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% set pr = passphrase_resets | default(none) %}
+  {% if pr is not none %}
+  <div class="section-head"><h2 id="passphrases">Passphrases</h2></div>
+  <div class="panel">
+    <p class="muted settings-lead">Colleagues sign in with their email and a passphrase. If someone has forgotten
+      theirs, reset it here. Their old passphrase stops working and they are signed out everywhere. You get a
+      one-time link to send them so they can choose a new one. People who have access but no passphrase yet
+      are listed too: create a link for them to choose one. The installation owner's passphrase is not
+      reset here.</p>
+    {% if pr.unavailable %}
+    <p role="alert">Passphrase resets are unavailable right now. Ask your administrator to check Lightwork.</p>
+    {% elif pr.accounts %}
+    <ul class="users-list">
+      {% for account in pr.accounts %}
+      <li>
+        <span class="users-grow">{{ account.email }}{% if account.waiting %}<br><span class="muted users-help">Waiting
+          to choose a passphrase. Create another link if the last one was lost or has expired.</span>{% elif account.first %}<br><span class="muted users-help">Has
+          access but no passphrase yet.</span>{% endif %}</span>
+        {% if account.has_passphrase %}
+        <form method="post" action="/users/passphrase-reset" class="users-inline"
+              data-users-confirm="Reset the passphrase for {{ account.email }}? Their current passphrase stops working and they are signed out everywhere. You get a one-time link to send them." data-users-ok="Reset passphrase">
+          {{ workspace_binding() }}
+          <input type="hidden" name="email" value="{{ account.email }}" />
+          <input type="hidden" name="confirm" value="reset" />
+          <button type="submit" class="btn" aria-label="Reset passphrase for {{ account.email }}">Reset passphrase</button>
+        </form>
+        {% else %}
+        <form method="post" action="/users/passphrase-reset" class="users-inline"
+              data-users-confirm="Create a sign-in link for {{ account.email }}? They have no passphrase now. You get a one-time link to send them so they can choose one." data-users-ok="Create link">
+          {{ workspace_binding() }}
+          <input type="hidden" name="email" value="{{ account.email }}" />
+          <input type="hidden" name="confirm" value="reset" />
+          <button type="submit" class="btn" aria-label="Create a sign-in link for {{ account.email }}">Create sign-in link</button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">No colleague signs in with a passphrase yet. Colleagues choose theirs when they accept an
+      invitation, so <a href="#invite-email">invite someone from the Invite section above</a>.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if bootstrap_admins %}
+  <div class="section-head"><h2>Installation administrators</h2></div>
+  <div class="panel">
+    <p class="muted settings-lead">Set up during installation. They are always administrators and
+      can't be removed here, so you can never lock yourself out.</p>
+    <ul class="users-list">
+      {% for a in bootstrap_admins %}<li>{{ who(a) }} <span class="badge active">{{ 'admin' | role_label }}</span></li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% endif %}
+  <div class="section-head"><h2>Workspace members</h2></div>
+  {% if not global_admin %}<p class="muted">You can invite colleagues and change roles in the workspaces listed below. Installation-wide access remains with installation administrators.</p>{% endif %}
+  {% if workspace_options and invites_on %}
+  <section id="wi-root" class="panel" aria-labelledby="wi-title">
+    <h3 id="wi-title" class="users-subhead">Invite someone to a workspace</h3>
+    <p class="muted">Their role applies only in the workspace you choose. Choose how long the one-time link remains available, then send it to the person you invite.</p>
+    <div id="workspace-invite-result-slot">
+    {% if workspace_invite_link %}
+    <div class="panel users-saved" role="status" tabindex="-1" data-mv-toast="Workspace invitation for {{ workspace_invite_email }} created. Copy the link below.">
+      <strong>Invitation for {{ workspace_invite_email }} to {{ workspace_names.get(workspace_invite_tenant, workspace_invite_tenant) }} created.</strong>
+      <p class="muted users-help">{% if workspace_invite_sent %}The invitation was emailed.{% elif workspace_invite_send_note and 'disabled' not in workspace_invite_send_note and 'no sending account' not in workspace_invite_send_note %}We couldn't email it. Send the link below yourself.{% else %}Copy the link below and send it yourself.{% endif %} The link is shown only once. {% if invite_sso_on %}They must sign in with the email address you invited.{% else %}Anyone with it can accept, so send it only to them.{% endif %}</p>
+      <p class="muted users-help">Expires {{ workspace_invite_expires_at | datetime('absolute') }}.</p>
+      <div class="users-row-form">
+        <label class="users-field users-grow" for="workspace-invite-link">Invite link
+          <input class="input" id="workspace-invite-link" type="text" readonly value="{{ workspace_invite_link }}" />
+        </label>
+        <button type="button" class="btn" data-copy-target="workspace-invite-link">Copy link</button>
+      </div>
+    </div>
+    {% endif %}
+    </div>
+    <form method="post" action="/users/workspace-invite" class="users-row-form" data-mv-save="background" data-mv-save-what="create the workspace invite" data-mv-save-show="workspace-invite-result-slot" data-mv-validate>
+      {{ workspace_binding() }}
+      <input type="hidden" name="expected_context" value="{{ workspace_people_context }}">
+      {{ error_summary('workspace-invite-errors') }}
+      <label class="users-field" for="wi-tenant">Workspace
+        <select id="wi-tenant" name="tenant" class="select" required>{% for w in workspace_options %}<option value="{{ w.id }}"{% if w.id == wm_tenant %} selected{% endif %}>{{ w.name }}</option>{% endfor %}</select>
+      </label>
+      <label class="users-field users-grow" for="wi-email">Email address
+        <input id="wi-email" class="input" type="email" name="email" placeholder="colleague@company.com" autocomplete="off" required />
+      </label>
+      <label class="users-field" for="wi-role">Role in this workspace
+        <select id="wi-role" name="role" class="select" required>{% for r in workspace_roles %}<option value="{{ r }}"{% if r == 'viewer' %} selected{% endif %}>{{ r | role_label }}</option>{% endfor %}</select>
+      </label>
+      {{ invite_expiry('wi-expiry') }}
+      <button type="submit" class="btn btn--primary">Create workspace invite</button>
+    </form>
+    <p class="muted users-help">If creation is interrupted, reload Users and check the waiting invitations before creating another. A lost one-time link cannot be recovered; cancel that invitation, then create a replacement.</p>
+    {% if workspace_pending_invites %}
+    <h3 class="users-subhead">Waiting to join a workspace</h3>
+    <ul class="users-list">
+      {% for inv in workspace_pending_invites %}
+      <li>
+        <span class="users-grow">{{ inv.email }} · {{ workspace_names.get(inv.tenant, inv.tenant) }}<br><span class="muted users-help">Expires {{ inv.expires_at | datetime('absolute') }}</span></span>
+        <span class="badge">{{ inv.role | role_label }}</span>
+        <form method="post" action="/users/workspace-invite/revoke" class="users-inline"
+              data-users-confirm="Cancel the workspace invitation for {{ inv.email }}? The link will stop working." data-users-ok="Cancel invitation">
+          {{ workspace_binding() }}
+          <input type="hidden" name="expected_context" value="{{ workspace_people_context }}">
+          <input type="hidden" name="invite_id" value="{{ inv.id }}" />
+          <button type="submit" class="btn btn--danger" aria-label="Cancel the workspace invitation for {{ inv.email }}">Cancel invitation</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    {% if workspace_recent_invites %}
+    <details><summary>Recent invitation results</summary>
+      <p class="muted users-help">These are the latest 20 saved invitation results. Current membership appears below and may have changed since acceptance. An unconfirmed result is not retried.</p>
+      <ul class="users-list">{% for inv in workspace_recent_invites %}<li>
+        <span class="users-grow">{{ inv.email }} · {{ workspace_names.get(inv.tenant, inv.tenant) }}</span>
+        <span class="badge">{{ 'Access save confirmed' if inv.grant_confirmed_at else 'Access save unconfirmed' }}</span>
+        <span class="muted">{{ (inv.grant_confirmed_at or inv.used_at) | datetime }}</span>
+      </li>{% endfor %}</ul>
+      <p class="muted users-help">For an unconfirmed result, check the colleague's current role and send a replacement invitation if needed. The original link cannot save access again.</p>
+    </details>
+    {% endif %}
+  </section>
+  {% elif workspace_options and not global_admin %}
+  <p class="muted">Invitations are turned off. Ask an installation administrator to enable them before adding a new colleague.</p>
+  {% endif %}
+  <section id="wm-root" class="panel" data-tenant="{{ wm_tenant }}" data-expected="{{ workspace_tenant_selection }}"
+           data-context="{{ workspace_people_context }}"
+           data-labels='{{ people_labels | tojson }}' data-role-labels='{{ role_labels | tojson }}'
+           data-global-admin="{{ 'true' if global_admin else 'false' }}" data-you="{{ you or '' }}"
+           data-role-permissions='{{ role_permissions | tojson }}'
+           data-role-options='{{ workspace_role_options | tojson }}'
+           data-autoload="true" aria-labelledby="wm-title">
+    <h3 id="wm-title" class="users-subhead">Roles inside one workspace</h3>
+    <p class="muted">A workspace role applies only inside the workspace you choose here. Project owners can invite these members to review results.</p>
+    {% if workspace_options %}
+    <label class="users-field" for="wm-tenant">Workspace
+      <select id="wm-tenant" class="select">{% for w in workspace_options %}<option value="{{ w.id }}"{% if w.id == wm_tenant %} selected{% endif %}>{{ w.name }}</option>{% endfor %}</select>
+    </label>
+    <p id="wm-status" class="muted" role="status" aria-live="polite">Loading members…</p>
+    <ul id="wm-list" class="users-list"></ul>
+    <form id="wm-form" class="users-row-form" data-draft-recovery="off">
+      <label class="users-field" for="wm-principal">Colleague
+        <select id="wm-principal" class="select" required>
+          <option value="" selected disabled>Choose a colleague…</option>
+          {{ person_options() }}
+        </select>
+      </label>
+      <label class="users-field" for="wm-role">Role in this workspace
+        <select id="wm-role" class="select" required aria-describedby="wm-role-help">{{ role_options(placeholder='Choose a role', choices=workspace_roles) }}</select>
+        {{ role_help('wm-role-help') }}
+      </label>
+      <button type="submit" class="btn">Save workspace role</button>
+      <button id="wm-refresh" type="button" class="btn btn--ghost">Refresh</button>
+    </form>
+    <p class="muted users-help">Clearing a workspace role removes direct membership. Installation administrators may still have access, and standard access still applies elsewhere. To keep someone here with limited access, give them the Viewer role. The last workspace administrator must keep an administrator role.</p>
+    {% else %}
+    {% if global_admin %}
+    {{ empty_state('No workspace yet',
+                   'Workspaces you create appear here, each with its own members and roles. Create the first one to give people a role inside it.',
+                   action_label='Create a workspace', action_href='/tenants', compact=true) }}
+    {% else %}
+    {{ empty_state('No workspace yet',
+                   'Workspaces you manage appear here, each with its own members and roles. An installation administrator creates them.',
+                   compact=true) }}
+    {% endif %}
+    {% endif %}
+  </section>
+
+  {% if global_admin %}
+  <div class="section-head"><h2>Department access</h2></div>
+  <div class="panel">
+    <p class="muted settings-lead">Limit a person to the departments their job needs. Someone in
+      Finance then sees and runs only the Finance specialists. People without their own
+      setting use {% if default_suites is none %}<strong>every department</strong>{% else %}only:
+      <strong>{% for key, title in all_suites if key in default_suites %}{{ title }}{{ ', ' if not loop.last }}{% else %}no departments{% endfor %}</strong>{% endif %}.
+      Installation administrators are never limited. Their role still decides <em>what</em> they may do.</p>
+
+    {% for principal, suites in suite_grants %}
+    <details class="users-grant">
+      <summary>{{ who(principal) }}{% if principal == you %} <span class="muted">(you)</span>{% endif %}
+        <span class="muted">· {{ suites | length }} department{{ '' if suites | length == 1 else 's' }}</span></summary>
+      <form method="post" action="/users/suites/set">
+        {{ workspace_binding() }}
+        <input type="hidden" name="principal" value="{{ principal }}" />
+        {{ department_boxes('grant-' ~ loop.index, suites) }}
+        <p class="users-row-form"><button type="submit" class="btn" aria-label="Save departments for {{ name_of(principal) }}">Save departments</button></p>
+      </form>
+      <form method="post" action="/users/suites/remove" class="users-inline">
+        {{ workspace_binding() }}
+        <input type="hidden" name="principal" value="{{ principal }}" />
+        {% if grant_can_use_default.get(principal) %}
+        <button type="submit" class="btn" aria-label="Use standard departments for {{ name_of(principal) }}">Use standard departments</button>
+        {% else %}
+        <button type="submit" class="btn" disabled aria-describedby="grant-help-{{ loop.index }}" aria-label="Use standard departments for {{ name_of(principal) }}">Use standard departments</button>
+        <span class="muted users-help" id="grant-help-{{ loop.index }}">Not available: the standard setting would give this person more departments. Change the ticks and save instead.</span>
+        {% endif %}
+      </form>
+    </details>
+    {% endfor %}
+
+    <h3 class="users-subhead">Limit someone's departments</h3>
+    {% if people %}
+    <form method="post" action="/users/suites/set">
+      {{ workspace_binding() }}
+      <label class="users-field">
+        <span>Person</span>
+        <select class="select" name="principal" required>
+          <option value="" disabled selected>Choose a person…</option>
+          {{ person_options() }}
+        </select>
+      </label>
+      {{ department_boxes('new-grant', []) }}
+      <p class="users-row-form"><button type="submit" class="btn">Save departments</button></p>
+    </form>
+    {% else %}
+    <p class="muted">No one has signed in yet. People appear here after they sign in or accept an invite.</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head"><h2 id="role-guide">What each role can do</h2></div>
+  <div class="panel">
+    {% set badge_for = {'admin': 'active', 'operator': 'running', 'auditor': 'pending', 'viewer': 'idle'} %}
+    <div class="users-roles">
+      {% for r in roles %}
+      <div class="users-role">
+        <p><span class="badge {{ badge_for.get(r, '') }}">{{ r | role_label }}</span></p>
+        <p class="muted">{{ role_desc.get(r) or 'No description yet.' }}</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="section-head"><h2>Custom roles</h2></div>
+  <div class="panel">
+    <p class="muted settings-lead">
+      Need something in between, say a compliance reviewer who both reviews and
+      runs work? Make your own role. Every role can view; tick what it adds.
+      Custom roles appear in every role list and in Settings. The four
+      standard roles can't be changed or deleted.
+    </p>
+    {% if custom_roles %}
+    <table>
+      <thead><tr><th scope="col">Role</th><th scope="col">Can do</th>
+        <th scope="col">Description</th><th scope="col">Actions</th></tr></thead>
+      <tbody>
+      {% for name, rec in custom_roles %}
+        <tr>
+          <td><span class="badge">{{ name | role_label }}</span></td>
+          <td class="muted">{{ rec.permissions | map('permission_label') | join(' · ') }}</td>
+          <td class="muted">{{ rec.description }}</td>
+          <td>
+            <form method="post" action="/users/roles/delete" class="users-inline"
+                  data-users-confirm="Delete the {{ name | role_label }} role? This can't be undone." data-users-ok="Delete role">
+              {{ workspace_binding() }}
+              <input type="hidden" name="name" value="{{ name }}" />
+              <button type="submit" class="btn btn--danger"
+                      aria-label="Delete role {{ name | role_label }}">Delete role</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="muted users-help">A role that someone still has (including a waiting invitation) can't be
+      deleted. Give those people another role first. Saving the same name again updates it.</p>
+    {% endif %}
+    <form method="post" action="/users/roles/save" class="users-row-form" id="custom-role-form" data-mv-validate data-mv-keep="users-role_saved">
+      {{ workspace_binding() }}
+      {{ error_summary('custom-role-errors') }}
+      <label class="users-field">
+        <span>Role name</span>
+        <input class="input" name="name" required maxlength="32" minlength="2" placeholder="e.g. Privacy officer" autocomplete="off"
+               data-error-required="Enter a name for the role, for example: Privacy officer." data-error-length="Use a role name of 2 to 32 characters." />
+      </label>
+      <fieldset class="users-checks">
+        <legend>Adds (viewing is always included)</legend>
+        <label><input type="checkbox" name="permissions" value="operate" /> Run work</label>
+        <label><input type="checkbox" name="permissions" value="audit" /> Review the history</label>
+        <label><input type="checkbox" name="permissions" value="admin" /> Administer</label>
+      </fieldset>
+      <label class="users-field users-grow">
+        <span>Description (optional)</span>
+        <input class="input" name="description" maxlength="200" />
+      </label>
+      <button type="submit" class="btn">Save role</button>
+    </form>
+  </div>
+
+  {% endif %}
+  <style>
+    .users-saved { border-color: var(--brand-border); background: var(--brand-subtle); margin-bottom: var(--space-4); }
+    .users-note { border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+    .users-note p { margin: 0; }
+    .users-normal { font-weight: normal; }
+    .users-row-form { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; margin: var(--space-2) 0; }
+    .users-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: min(100%, 14rem); }
+    .users-grow { flex: 1 1 16rem; }
+    .users-field-error { flex-basis: 100%; margin: 0; }
+    .users-inline { display: inline; }
+    .users-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+    .users-help { font-size: var(--text-sm); }
+    .users-role-help { display: block; max-width: 40rem; }
+    .users-subhead { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-md, 1rem); }
+    .users-list { list-style: none; padding: 0; margin: var(--space-2) 0; display: grid; gap: var(--space-2); }
+    .users-list li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding-top: var(--space-2); border-top: 1px solid var(--hairline); }
+    .users-checks { border: 0; padding: 0; margin: var(--space-2) 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr)); gap: var(--space-2); }
+    .users-checks legend { font-size: var(--text-sm); margin-bottom: var(--space-1); }
+    .users-depts__tools { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: flex-end; margin: var(--space-2) 0; }
+    .users-checks--columns { grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); max-height: 22rem; overflow: auto; padding-inline-end: var(--space-2); border: 1px solid var(--hairline); border-radius: var(--radius-md); padding: var(--space-2); }
+    .users-checks--columns label { display: flex; gap: var(--space-2); align-items: center; }
+    .users-checks--columns label[hidden] { display: none; }
+    .users-grant { border-top: 1px solid var(--hairline); padding: var(--space-2) 0; }
+    .users-grant > summary { cursor: pointer; }
+    .users-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: var(--space-3); }
+    .users-role { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); }
+    .users-role p { margin: 0 0 var(--space-1); font-size: var(--text-sm); }
+    .settings-lead { margin-top: 0; }
+  </style>
+  <script src="/static/lightwork-access-state.js" defer></script>
+  <script src="/static/lightwork-workspace-members.js" defer></script>
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    // Each role picker keeps its plain description of the chosen role current.
+    document.querySelectorAll('select[name="role"], #wm-role').forEach(function (select) {
+      var help = select.parentNode.querySelector('[data-role-help]');
+      if (!help) return;
+      function update() {
+        var option = select.options[select.selectedIndex];
+        var about = option && option.value ? option.getAttribute('data-description') : '';
+        help.textContent = about ? option.textContent.trim() + ': ' + about : 'Choose the access this person needs.';
+      }
+      select.addEventListener('change', update);
+    });
+    document.querySelectorAll('form[data-users-confirm]').forEach(function (form) {
+      form.addEventListener('submit', function (event) {
+        if (form.dataset.confirmed === 'true') { delete form.dataset.confirmed; return; }
+        event.preventDefault();
+        window.mvConfirm(form.dataset.usersConfirm, {okText: form.dataset.usersOk || 'Save this change'}).then(function (ok) {
+          if (!ok) return;
+          form.dataset.confirmed = 'true';
+          if (form.requestSubmit) form.requestSubmit(); else form.submit();
+        });
+      });
+    });
+    // Department boxes: filter as you type, select or clear all, and a live count.
+    document.querySelectorAll('[data-departments]').forEach(function (root) {
+      var boxes = Array.prototype.slice.call(root.querySelectorAll('input[type="checkbox"]'));
+      var filter = root.querySelector('[data-departments-filter]');
+      var count = root.querySelector('[data-departments-count]');
+      function visible() { return boxes.filter(function (b) { return !b.closest('label').hidden; }); }
+      function sync() {
+        var chosen = boxes.filter(function (b) { return b.checked; }).length;
+        count.textContent = chosen + ' of ' + boxes.length + ' departments chosen';
+      }
+      filter.addEventListener('input', function () {
+        var q = filter.value.trim().toLowerCase();
+        boxes.forEach(function (b) {
+          var label = b.closest('label');
+          label.hidden = !!q && label.getAttribute('data-department-label').indexOf(q) === -1;
+        });
+      });
+      root.querySelector('[data-departments-all]').addEventListener('click', function () { visible().forEach(function (b) { b.checked = true; }); sync(); });
+      root.querySelector('[data-departments-none]').addEventListener('click', function () { visible().forEach(function (b) { b.checked = false; }); sync(); });
+      boxes.forEach(function (b) { b.addEventListener('change', sync); });
+      sync();
+    });
+    // Bulk changes: say how many are selected, and bring a confirmation or
+    // change report into view and focus so keyboard users land on it.
+    var bulkCount = document.querySelector('[data-bulk-count]');
+    var picks = Array.prototype.slice.call(document.querySelectorAll('[data-bulk-pick]'));
+    function syncPicks() {
+      if (!bulkCount) return;
+      var n = picks.filter(function (b) { return b.checked; }).length;
+      bulkCount.textContent = '(' + n + ' selected)';
+    }
+    picks.forEach(function (b) { b.addEventListener('change', syncPicks); });
+    syncPicks();
+    var bulkResult = document.getElementById('bulk-result') || document.getElementById('invite-result');
+    if (bulkResult) bulkResult.focus();
+    // Delegated: an invite link shown after a background save copies too.
+    document.addEventListener('click', function (event) {
+      var button = event.target.closest && event.target.closest('[data-copy-target]');
+      if (!button) return;
+      var field = document.getElementById(button.dataset.copyTarget);
+      if (field) window.mvCopy(field.value);
+    });
+    var inviteForm = document.getElementById('invite-form');
+    if (inviteForm) inviteForm.addEventListener('mv:saved', function () {
+      if (inviteError) { inviteError.hidden = true; inviteError.textContent = ''; }
+      if (window.mvAskEase) window.mvAskEase('invite_person');
+    });
+    // A wrong invite address gets a written error tied to the field, in
+    // place of the browser's bubble, and focus stays on the field.
+    var inviteEmail = document.getElementById('invite-email-input');
+    var inviteError = document.getElementById('invite-email-error');
+    if (inviteEmail && inviteError) {
+      inviteEmail.addEventListener('invalid', function (event) {
+        event.preventDefault();
+        inviteError.textContent = inviteEmail.validity.valueMissing
+          ? 'Enter the email address of the person you are inviting.'
+          : 'Enter a full email address. For example: name@company.com.';
+        inviteError.hidden = false;
+        inviteEmail.setAttribute('aria-invalid', 'true');
+        inviteEmail.setAttribute('aria-describedby', inviteError.id);
+        inviteEmail.focus();
+      });
+      inviteEmail.addEventListener('input', function () {
+        if (inviteError.hidden) return;
+        inviteError.hidden = true;
+        inviteError.textContent = '';
+        inviteEmail.removeAttribute('aria-invalid');
+        inviteEmail.removeAttribute('aria-describedby');
+      });
+    }
+    // Land on the one-time link just created (rendered first on the page).
+    var inviteResult = document.getElementById('invite-result') || document.getElementById('passphrase-reset-result');
+    if (inviteResult) inviteResult.focus();
+  })();
+  </script>
+{% endblock %}

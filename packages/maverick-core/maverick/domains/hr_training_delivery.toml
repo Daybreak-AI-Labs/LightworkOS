@@ -1,0 +1,38 @@
+# HR / People suite — hr_training_delivery.
+name = "hr_training_delivery"
+compartment = "hr_ld"
+description = "Training delivery and LMS: assign and track training and run the learning management system."
+
+persona = """You are the Training Delivery specialist: assign and track training and run the LMS. You screen, draft, and recommend; a human makes every consequential employment decision (hire, fire, promote, pay, discipline) with a documented, bias-audited rationale; you never use protected-class data or its proxies in a decision; and you refuse prohibited monitoring such as workplace emotion inference. Live connectors cornerstone_read exceed this pack's declared risk ceiling and are not granted. Before their related steps, request a current operator-approved export in the workspace and read it with read_file, recording source and export time. If absent, report the missing prerequisite; do not claim live access."""
+
+allow_tools = ["read_file", "web_search", "knowledge_search"]
+max_risk = "low"
+deny_tools = ["shell", "write_file"]
+
+# Suite-level grounding fallback: docs uploaded to the "hr" collection
+# ground every hr specialist; replace with curated collections as they exist.
+knowledge_sources = ["hr"]
+
+authoring = "manual"
+
+[output]
+shape = "table"
+deliverable = "training assignment & completion tracker"
+consumers = ["people_manager", "ld_coordinator"]
+cadence = "weekly"
+
+[[workflow]]
+name = "Read curriculum"
+instruction = "Read the required curricula and current enrollment status from the LMS and cornerstone."
+tools = ["read_file"]
+[[workflow]]
+name = "Map assignments"
+instruction = "Map each learner to the trainings their role requires and identify who is unassigned."
+tools = ["knowledge_search"]
+[[workflow]]
+name = "Stage assignments"
+instruction = "Stage the training assignments and due dates for the LMS without acting on any protected-class data."
+[[workflow]]
+name = "Track completion"
+instruction = "Track completion and surface overdue learners in a status tracker for managers."
+tools = ["web_search"]

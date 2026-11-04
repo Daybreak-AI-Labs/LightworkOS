@@ -1,0 +1,76 @@
+name: MCP client (Rust)
+
+# Executes the runnable Rust MCP client example against a live `maverick mcp`
+# stdio server. Companion to mcp-clients.yml (TypeScript + Go): the Python
+# contract test (test_client_quickstart_contract.py) checks the documented tool
+# surface; this proves the Rust client actually connects and round-trips -- it's
+# what catches a broken `maverick mcp` entry point or an rmcp/protocol drift that
+# doc checks can't.
+#
+# Only the no-LLM flow runs (initialize -> tools/list -> maverick_facts_get);
+# maverick_start needs a provider key + budget and is out of scope for CI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/maverick-core/**'
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/rust/**'
+      - 'docs/clients/rust-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/mcp-client-rust.yml'
+  pull_request:
+    # The client-parity contract is the MCP wire protocol, which lives in
+    # maverick-mcp; a blanket 'packages/maverick-core/**' filter fired this
+    # Rust-toolchain job (a full cargo build) on essentially every Python PR.
+    # This is not a required check, so a core change that alters the exposed
+    # surface is still caught by the push:main run above without paying for a
+    # cargo build on every unrelated core PR.
+    paths:
+      - 'packages/maverick-mcp/**'
+      - 'examples/clients/rust/**'
+      - 'docs/clients/rust-quickstart.md'
+      - 'requirements/ci.txt'
+      - 'scripts/verify_constraint_closure.py'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/mcp-client-rust.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/requirements/ci.txt
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.13"
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.97.1"
+      - name: Install Lightwork (kernel + MCP server)
+        run: |
+          python -I -m pip install --upgrade \
+            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'packaging==26.3'
+          python -I -m pip install -e ./packages/maverick-core
+          python -I -m pip install --no-deps -e ./packages/maverick-mcp
+          python -I -m pip check
+          python -I scripts/verify_constraint_closure.py
+      - name: Run the Rust MCP client end-to-end
+        working-directory: examples/clients/rust
+        run: cargo run --locked

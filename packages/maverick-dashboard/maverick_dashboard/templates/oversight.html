@@ -1,0 +1,476 @@
+{% extends "base.html" %}
+{% block title %}Oversight · Lightwork{% endblock %}
+{% block content %}
+<style>
+  /* By-guardrail breakdown — horizontal bars scaled to the busiest guardrail. */
+  .gbars { display: flex; flex-direction: column; gap: var(--space-3); }
+  .gbar { display: grid; grid-template-columns: 96px 1fr 2.5rem; align-items: center; gap: var(--space-3); }
+  .gbar__label { color: var(--muted); font-size: var(--text-sm); }
+  .gbar__track { height: 10px; border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
+  .gbar__fill { display: block; height: 100%; border-radius: var(--radius-pill); min-width: 2px; background: linear-gradient(90deg, var(--brand), var(--brand-hi)); }
+  .gbar__count { text-align: end; font-variant-numeric: tabular-nums; font-weight: var(--font-semibold); }
+  .gbar { grid-template-columns: minmax(9rem, 14rem) 1fr 2.5rem; }
+  .ov-links { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }
+  .ov-stop { margin-bottom: var(--space-4); }
+  .ov-stop[data-halted="true"] { border-color: var(--danger); }
+  .ov-why { border-color: var(--brand); margin-top: var(--space-3); }
+  .ov-why__head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+  .ov-why ol { margin: .3rem 0; padding-left: 1.2rem; }
+  .ov-why li { margin-bottom: .25rem; }
+  .ov-row-actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .ov-filter { display: flex; gap: var(--space-3); align-items: end; flex-wrap: wrap; margin-top: var(--space-3); }
+  .ov-filter label { display: flex; flex-direction: column; gap: .25rem; }
+  .ov-section { margin-top: var(--space-5); }
+</style>
+  {% from "_hero.html" import hero, state %}
+  {% set guard_labels = {
+    'governance_denied': 'Held by a company rule',
+    'shield_block': 'Stopped by the safety filter',
+    'capability_denied': 'Tool not allowed',
+    'egress_blocked': 'Data not allowed to leave',
+    'consent_result': 'Consent refused',
+    'halt': 'Emergency stop',
+  } %}
+  {% call hero('Human oversight', 'Oversight',
+               subtitle='Mission control',
+               lede='Every time a safety rule stepped in, next to what your assistants are doing right now.
+                     That covers company rules that hold work for approval, the safety filter, tools or
+                     data transfers that are not allowed, refused consent and emergency stops.') %}
+    {{ state('Current state',
+             'Current state unavailable' if halted is none or active is none else ('Stopped: all work is paused' if halted else (active ~ ' assistant' ~ ('' if active == 1 else 's') ~ ' working now')),
+             badge='Approval state unknown' if pending is none else ((pending ~ ' waiting for approval') if pending else 'Nothing waiting'),
+             badge_class='warn' if (source_errors or halted or pending) else 'ok',
+             copy=('Activity state unavailable' if total is none else total) ~ ' intervention' ~ ('' if total == 1 else 's') ~ ' in
+                   this window. Each one is kept in the activity log.') }}
+    <div class="ov-links">
+      <a class="btn btn--ghost" href="/approvals">Approvals</a>
+      <a class="btn btn--ghost" href="/safety">Safety</a>
+      <a class="btn btn--ghost" href="/fleets">Teams of assistants</a>
+      <a class="btn btn--ghost" href="/audit">Activity log</a>
+    </div>
+  {% endcall %}
+
+  {% for error in source_errors %}<p role="alert">{{ error }} <a href="/audit">Review activity</a> or <a href="/help">get help</a>.</p>{% endfor %}
+  <section class="panel ov-stop" aria-labelledby="ov-stop-title" data-halted="{{ 'true' if halted else 'false' }}">
+    <h2 id="ov-stop-title">Emergency stop</h2>
+    {% if halted is none %}<p role="alert">Emergency-stop state is unknown. Refresh this page before attempting to resume work.</p>
+    {% elif halted %}
+    <p><strong>All work is stopped.</strong> No assistant starts or continues work until someone resumes it.</p>
+    {% else %}
+    <p>The emergency stop is not active. Use the emergency stop if assistants are doing something they should not.</p>
+    {% endif %}
+    {% if can_halt %}
+      {% if halted %}
+      <button type="button" class="btn btn--primary" id="ov-resume">Resume all work</button>
+      {% else %}
+      <button type="button" class="btn btn--danger" id="ov-stop">Stop all work now</button>
+      {% endif %}
+    {% else %}
+      <p class="muted">Ask an administrator if work needs to be stopped or resumed.</p>
+    {% endif %}
+    <p id="ov-stop-msg" role="status" aria-live="polite" class="muted"></p>
+  </section>
+
+  <div class="bd-toolbar">
+    <span class="bd-live"><span class="dot" aria-hidden="true"></span>Live
+      <span class="bd-stamp" id="bd-stamp" role="status" aria-live="off">Loading…</span></span>
+    {% from "_tabs.html" import panel_tabs %}
+    {{ panel_tabs('Time range', [('30', '30 days'), ('90', '90 days'), ('180', '6 months'), ('365', '1 year')], '90', id='bd-range', data='days', controls=false, activation='manual', hash='range-') }}
+  </div>
+
+  <div class="bd-kpis" id="bd-kpis"></div>
+  <script src="/static/board.js"></script>
+
+  <div class="viz-grid">
+    <div class="panel viz-card viz-card--wide">
+      <h2>Interventions over time</h2>
+      <p class="viz-sub">How often a safety rule stepped in (by week for longer ranges). Point at a bar for the count.</p>
+      <div id="bd-interventions"></div>
+    </div>
+    <div class="panel viz-card">
+      <h2>Which rules stepped in</h2>
+      <p class="viz-sub">Busiest first.</p>
+      <div id="bd-fired"></div>
+    </div>
+  </div>
+
+  <div class="section-head ov-section"><h2>Working now</h2></div>
+  <div class="panel">
+    <div id="active-now" aria-live="polite"><p class="muted">Loading…</p></div>
+    <div id="why-panel" aria-live="polite"></div>
+  </div>
+
+  <div class="section-head ov-section"><h2>Waiting for approval</h2></div>
+  <div class="panel">
+    <p class="muted">Actions a company rule held for a person to approve (the EU AI Act’s human-oversight requirement). Approve or reject each one here.</p>
+    {% include "_approvals_queue.html" %}
+  </div>
+
+  <div class="section-head ov-section"><h2>By safety rule</h2></div>
+  <div class="panel">
+    {% set _gk = [
+      ('governance_denied', by_kind.get('governance_denied', 0)),
+      ('shield_block', by_kind.get('shield_block', 0)),
+      ('capability_denied', by_kind.get('capability_denied', 0)),
+      ('egress_blocked', by_kind.get('egress_blocked', 0)),
+      ('consent_result', by_kind.get('consent_result', 0)),
+      ('halt', by_kind.get('halt', 0)),
+    ] %}
+    {% set _gmax = ([by_kind.get('governance_denied', 0), by_kind.get('shield_block', 0), by_kind.get('capability_denied', 0), by_kind.get('egress_blocked', 0), by_kind.get('consent_result', 0), by_kind.get('halt', 0)] | max) or 1 %}
+    {% if total %}
+    <div class="gbars">
+      {% for _kind, _count in _gk %}
+      <div class="gbar">
+        <span class="gbar__label">{{ guard_labels[_kind] }}</span>
+        <span class="gbar__track"><span class="gbar__fill" style="width: {{ (_count / _gmax * 100) | round(1) }}%;"></span></span>
+        <span class="gbar__count">{{ _count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">{{ 'Activity is unavailable or partial; see the source notices.' if source_errors else 'No recorded interventions in this window. Stops, holds and approvals appear here when a person or rule steps in.' }}</p>
+    {% endif %}
+  </div>
+
+  <div class="section-head ov-section"><h2>Recent interventions</h2></div>
+  <div class="grid">
+    <div class="stat" data-halted="{{ 'true' if halted else 'false' }}">
+      <div class="num">{% if halted is none %}Unknown{% elif halted %}<strong class="danger-text">Stopped</strong>{% else %}Stop not active{% endif %}</div>
+      <div class="label">Emergency stop</div>
+    </div>
+    <div class="stat">
+      <div class="num">{{ total }}</div>
+      <div class="label">Interventions {% if ranged %}({{ since or 'start' }} to {{ until or 'today' }}){% elif day %}({{ day }}){% else %}(today){% endif %}</div>
+    </div>
+  </div>
+  <details class="panel"{% if ranged or day %} open{% endif %}>
+    <summary>Choose the days to show{% if ranged %}: {{ since or 'start' }} to {{ until or 'today' }}{% elif day %}: {{ day }}{% else %}: today{% endif %}</summary>
+    <form method="get" action="/oversight" class="ov-filter" id="ov-filter">
+      <label for="ov-when">Show
+        <select id="ov-when" class="select">
+          <option value="today"{% if not ranged and not day %} selected{% endif %}>Today</option>
+          <option value="day"{% if day and not ranged %} selected{% endif %}>One day</option>
+          <option value="range"{% if ranged %} selected{% endif %}>A range of days</option>
+        </select>
+      </label>
+      <label for="ov-day" data-ov-when="day">Day
+        <input type="date" id="ov-day" name="day" value="{{ day or '' }}" class="input" />
+      </label>
+      <label for="ov-since" data-ov-when="range">From
+        <input type="date" id="ov-since" name="since" value="{{ since or '' }}" class="input" />
+      </label>
+      <label for="ov-until" data-ov-when="range">To
+        <input type="date" id="ov-until" name="until" value="{{ until or '' }}" class="input" />
+      </label>
+      <button type="submit" class="btn btn--primary">Show these days</button>
+    </form>
+  </details>
+  <div class="panel">
+    {% if events %}
+      <table>
+        <thead>
+          <tr><th scope="col">Time</th><th scope="col">Safety rule</th><th scope="col">Assistant</th><th scope="col">Task</th><th scope="col">What happened</th></tr>
+        </thead>
+        <tbody>
+        {% for ev in events %}
+          <tr>
+            <td class="muted">{{ ev.ts | datetime }}</td>
+            <td>{{ guard_labels.get(ev.kind) or (ev.kind | humanize) }}</td>
+            <td>{{ (ev.agent | humanize) if ev.agent else '—' }}</td>
+            <td>{% if ev.goal_id is not none %}<a href="/chat/goal/{{ ev.goal_id }}">{{ ev.goal_title or ('Task ' ~ ev.goal_id) }}</a>{% else %}—{% endif %}</td>
+            <td>{{ ev.detail }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">{{ 'Activity is unavailable or partial; see the source notices.' if source_errors else 'No recorded interventions on this day. Choose another day above to compare.' }}</p>
+      <p><button type="button" class="btn btn--ghost" id="ov-pick-day">Pick another day</button></p>
+    {% endif %}
+  </div>
+
+  <script nonce="{{ csp_script_nonce }}">
+  (function () {
+    'use strict';
+    var GUARD = {{ guard_labels | tojson }};
+    var STEP = { tool_call: 'Used a tool', tool_result: 'Tool answered', llm_response: 'Thought',
+      llm_call: 'Thought', plan: 'Planned', decision: 'Decided', message: 'Wrote a message',
+      error: 'Hit a problem', status: 'Status changed', subgoal: 'Started a sub-task',
+      approval: 'Asked for approval', result: 'Finished' };
+    function human(v) { return window.mvHuman ? window.mvHuman(v) : String(v || ''); }
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = String(text);
+      return e;
+    }
+    function stepLabel(kind) { return STEP[kind] || human(kind); }
+    function ago(ts) {
+      if (!ts) return '';
+      if (window.mvTimeRelative) return window.mvTimeRelative(ts);
+      var s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+      if (s < 60) return 'Just now';
+      if (s < 3600) { var m = Math.floor(s / 60); return m + (m === 1 ? ' minute ago' : ' minutes ago'); }
+      var h = Math.floor(s / 3600); return h + (h === 1 ? ' hour ago' : ' hours ago');
+    }
+    function activityText(a) {
+      if (!a) return '—';
+      var i = a.indexOf(': ');
+      if (i > 0 && /^[a-z_]+$/.test(a.slice(0, i))) return stepLabel(a.slice(0, i)) + ': ' + a.slice(i + 2);
+      return /^[a-z_]+$/.test(a) ? stepLabel(a) : a;
+    }
+
+    // Emergency stop and resume (the same controls as the stop button in the header).
+    var msg = document.getElementById('ov-stop-msg');
+    async function haltCall(method, body, doneText, action) {
+      try {
+        var r = await fetch('/api/v1/halt', { method: method, credentials: 'same-origin',
+          headers: body ? { 'Content-Type': 'application/json' } : {},
+          body: body ? JSON.stringify(body) : undefined });
+        if (!r.ok) { msg.textContent = window.mvErrorText(r, action); return; }
+        msg.textContent = doneText;
+        setTimeout(function () { location.reload(); }, 600);
+      } catch (e) { msg.textContent = window.mvErrorText(e, action); }
+    }
+    var stopBtn = document.getElementById('ov-stop');
+    if (stopBtn) stopBtn.addEventListener('click', async function () {
+      var ok = await window.mvConfirm('Stop all work now? Every assistant stops, and nothing new starts until someone resumes work.', { okText: 'Stop all work' });
+      if (ok) haltCall('POST', { reason: 'Stopped from the oversight page' }, 'All work is stopped.', 'stop all work');
+    });
+    var resumeBtn = document.getElementById('ov-resume');
+    if (resumeBtn) resumeBtn.addEventListener('click', async function () {
+      var ok = await window.mvConfirm('Resume all work? Assistants can start and continue work again.', { okText: 'Resume work' });
+      if (ok) haltCall('DELETE', null, 'Work has resumed.', 'resume work');
+    });
+
+    // Date filter: only show the date fields for the chosen option.
+    var when = document.getElementById('ov-when');
+    var filter = document.getElementById('ov-filter');
+    function syncWhen() {
+      if (!when) return;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-ov-when]'), function (lab) {
+        var show = lab.getAttribute('data-ov-when') === when.value;
+        lab.hidden = !show;
+        var input = lab.querySelector('input');
+        if (input) input.disabled = !show;
+      });
+    }
+    if (when) { when.addEventListener('change', syncWhen); syncWhen(); }
+    var pick = document.getElementById('ov-pick-day');
+    if (pick) pick.addEventListener('click', function () {
+      var d = filter && filter.closest('details');
+      if (d) d.open = true;
+      if (when) { when.value = 'day'; syncWhen(); }
+      var day = document.getElementById('ov-day');
+      if (day) day.focus();
+    });
+
+    // Working now: poll the owner-scoped list and update rows in place, so a
+    // keyboard user is never dropped mid-table. "Why is it doing this?" opens
+    // the step-by-step drill-down; "Stop this task" cancels one task.
+    var box = document.getElementById('active-now');
+    var why = document.getElementById('why-panel');
+    if (!box) return;
+    async function showWhy(id, title) {
+      if (!why) return;
+      why.textContent = '';
+      why.appendChild(el('p', 'muted', 'Loading…'));
+      try {
+        var r = await fetch('/api/v1/oversight/why/' + encodeURIComponent(id), { credentials: 'same-origin' });
+        why.textContent = '';
+        if (!r.ok) { why.appendChild(el('p', 'muted', window.mvErrorText(r, 'load the steps for this task'))); return; }
+        var d = await r.json();
+        var panel = el('div', 'panel ov-why');
+        var head = el('div', 'ov-why__head');
+        head.appendChild(el('strong', null, 'Why: ' + (d.title || title || 'this task')));
+        var close = el('button', 'btn btn--ghost', 'Close');
+        close.type = 'button';
+        close.addEventListener('click', function () { why.textContent = ''; });
+        head.appendChild(close);
+        panel.appendChild(head);
+        var counts = Object.keys(d.summary || {}).map(function (k) { return stepLabel(k) + ': ' + d.summary[k]; }).join(' · ');
+        panel.appendChild(el('p', 'muted', 'Status: ' + human(d.status) + ' · Cost so far: ' +
+          (window.mvMoney ? window.mvMoney(Number(d.cost_dollars || 0)) : '$' + Number(d.cost_dollars || 0).toFixed(2)) + (counts ? ' · ' + counts : '')));
+        var evs = d.events || [];
+        if (!evs.length) {
+          panel.appendChild(el('p', 'muted', 'No steps recorded yet. Steps appear here as the task runs.'));
+        } else {
+          var ol = el('ol');
+          evs.forEach(function (e) {
+            var li = el('li');
+            li.appendChild(el('strong', null, stepLabel(e.kind)));
+            if (e.agent) li.appendChild(el('span', 'muted', ' by ' + human(e.agent)));
+            if (e.content) li.appendChild(document.createTextNode(': ' + e.content));
+            ol.appendChild(li);
+          });
+          panel.appendChild(ol);
+        }
+        why.appendChild(panel);
+      } catch (e) {
+        why.textContent = '';
+        why.appendChild(el('p', 'muted', window.mvErrorText(e, 'load the steps for this task')));
+      }
+    }
+    async function stopTask(id, title, btn) {
+      var ok = await window.mvConfirm('Stop “' + (title || 'this task') + '”? Anything it already did stays done.', { okText: 'Stop task' });
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        var r = await fetch('/api/v1/goals/' + encodeURIComponent(id) + '/cancel', { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) { window.mvFail(r, 'stop the task'); btn.disabled = false; return; }
+        window.mvToast('Task stopped.');
+        tick();
+      } catch (e) { window.mvFail(e, 'stop the task'); btn.disabled = false; }
+    }
+    function buildRow(g) {
+      var tr = el('tr');
+      tr.dataset.goal = String(g.id);
+      var title = el('td');
+      var link = el('a', null, g.title || ('Task ' + g.id));
+      link.href = '/chat/goal/' + encodeURIComponent(g.id);
+      title.appendChild(link);
+      var act = el('td');
+      var upd = el('td', 'muted');
+      var actions = el('td');
+      var wrap = el('div', 'ov-row-actions');
+      var whyBtn = el('button', 'btn btn--ghost', 'Why is it doing this?');
+      whyBtn.type = 'button';
+      whyBtn.addEventListener('click', function () { showWhy(g.id, g.title); });
+      var stop = el('button', 'btn btn--danger', 'Stop this task');
+      stop.type = 'button';
+      stop.addEventListener('click', function () { stopTask(g.id, g.title, stop); });
+      wrap.append(whyBtn, stop);
+      actions.appendChild(wrap);
+      tr.append(title, act, upd, actions);
+      updateRow(tr, g);
+      return tr;
+    }
+    function updateRow(tr, g) {
+      var cells = tr.children;
+      var link = cells[0].firstChild;
+      var t = g.title || ('Task ' + g.id);
+      if (link.textContent !== t) link.textContent = t;
+      var a = activityText(g.activity);
+      if (cells[1].textContent !== a) cells[1].textContent = a;
+      var w = ago(g.updated_at);
+      if (cells[2].textContent !== w) cells[2].textContent = w;
+    }
+    function render(goals) {
+      if (!goals.length) {
+        if (!box.querySelector('[data-empty]')) {
+          box.textContent = '';
+          var p = el('p', 'muted', 'No assistants are working right now. ');
+          p.setAttribute('data-empty', '1');
+          var start = el('a', 'btn btn--ghost', 'Start a task');
+          start.href = '/goals';
+          p.appendChild(start);
+          box.appendChild(p);
+        }
+        return;
+      }
+      var tbody = box.querySelector('tbody');
+      if (!tbody) {
+        box.textContent = '';
+        var table = el('table');
+        var thead = el('thead'); var hr = el('tr');
+        ['Task', 'Latest step', 'Updated', 'Actions'].forEach(function (label) {
+          var th = el('th', null, label); th.scope = 'col'; hr.appendChild(th);
+        });
+        thead.appendChild(hr); table.appendChild(thead);
+        tbody = el('tbody'); table.appendChild(tbody);
+        box.appendChild(table);
+      }
+      var seen = new Set();
+      var cursor = tbody.firstElementChild;
+      goals.forEach(function (g) {
+        var key = String(g.id);
+        seen.add(key);
+        var row = tbody.querySelector('tr[data-goal="' + key.replace(/"/g, '') + '"]');
+        if (row) {
+          updateRow(row, g);
+          if (row !== cursor) tbody.insertBefore(row, cursor);
+        } else {
+          row = buildRow(g);
+          tbody.insertBefore(row, cursor);
+        }
+        cursor = row.nextElementSibling;
+      });
+      Array.prototype.slice.call(tbody.children).forEach(function (tr) {
+        if (!seen.has(tr.dataset.goal)) tr.remove();
+      });
+    }
+    async function tick() {
+      if (document.hidden) return;
+      if (box.contains(document.activeElement) && document.activeElement !== box) return;
+      box.setAttribute('aria-busy', 'true');
+      try {
+        var data = await window.mvFetchJSON('/api/v1/oversight/active');
+        render((data && data.goals) || []);
+      } catch (e) { /* keep the last list after a refusal or a passing network error */ }
+      finally { box.removeAttribute('aria-busy'); }
+    }
+    // The shell's helpers (lightwork-ui.js) load after the page content.
+    if (window.mvFetchJSON) tick(); else document.addEventListener('DOMContentLoaded', tick);
+    setInterval(tick, 5000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) tick(); });
+
+    // Charts.
+    var B = window.LWBoard;
+    var lastKnown = {};
+    function renderBoard(D) {
+      var k = document.getElementById('bd-kpis');
+      k.textContent = '';
+      var sourceState = D.sources || {};
+      ['audit', 'approvals', 'halt'].forEach(function (name) {
+        var source = sourceState[name] || {state: 'unavailable'};
+        if (source.state === 'available') {
+          lastKnown[name] = {at: source.checked_at, value: name === 'audit' ? D.interventions : (name === 'approvals' ? D.pending_approvals : D.halted)};
+        } else {
+          var notice = document.createElement('p'); notice.setAttribute('role', 'status');
+          notice.textContent = name + ': ' + source.state + '. Current state is not known. ';
+          if (lastKnown[name]) notice.textContent += 'Last known: ' + lastKnown[name].value + ' at ' + (window.mvTimeAbsolute ? window.mvTimeAbsolute(lastKnown[name].at) : new Date(lastKnown[name].at * 1000).toLocaleString()) + '. ';
+          var repair = document.createElement('a'); repair.href = source.repair_href || '/help'; repair.textContent = 'Review this source'; notice.appendChild(repair); k.appendChild(notice);
+        }
+      });
+      k.appendChild(B.kpi({ label: 'Interventions', value: D.interventions,
+        format: function (v) { return v === null ? 'Unknown' : B.fmt(v); },
+        spark: D.daily.map(function (r) { return r.n; }),
+        sub: 'times a safety rule stepped in, last ' + D.days + ' days' }));
+      k.appendChild(B.kpi({ label: 'Waiting for approval', value: D.pending_approvals,
+        format: function (v) { return v === null ? 'Unknown' : B.fmt(v); },
+        sub: D.pending_approvals === null ? 'approval records unavailable' : (D.pending_approvals ? 'waiting for a person' : 'nothing waiting') }));
+      k.appendChild(B.kpi({ label: 'Emergency stop', value: D.halted ? 1 : 0,
+        format: function () { return D.halted === null ? 'Unknown' : (D.halted ? 'Stopped' : 'Off'); },
+        sub: D.halted === null ? 'stop state unavailable — check before relying on it' : (D.halted ? 'all work is stopped' : 'stop is not currently active') }));
+      k.appendChild(B.kpi({ label: 'Kinds of safety rule', value: D.by_kind.length,
+        format: function (v) { return sourceState.audit && sourceState.audit.state === 'available' ? B.fmt(v) : 'Unknown'; },
+        sub: 'different rules that stepped in' }));
+      if (D.interventions) {
+        var weekly = D.days > 60;
+        B.area(document.getElementById('bd-interventions'), {
+          data: weekly ? B.bucketWeekly(D.daily, ['n']) : D.daily,
+          x: 'd',
+          series: [{ key: 'n', label: 'Interventions', cls: 'brand' }],
+          aria: 'Interventions per ' + (weekly ? 'week' : 'day') + ' over the last ' + D.days + ' days.',
+          tipHead: function (r) { return (weekly ? 'Week of ' : '') + r.d; },
+          xTick: function (r, i, n) { return i % Math.ceil(n / 8) === 0 ? r.d.slice(5) : ''; } });
+      } else {
+        B.empty(document.getElementById('bd-interventions'), D.degraded ? 'This view is incomplete. Review the source warnings above.' : 'No recorded interventions in this window.');
+      }
+      if (D.by_kind.length) {
+        var kmax = 1;
+        D.by_kind.forEach(function (r) { kmax = Math.max(kmax, r.n); });
+        B.hbars(document.getElementById('bd-fired'),
+          D.by_kind.map(function (r) {
+            var label = GUARD[r.kind] || human(r.kind);
+            return { label: label, value_text: B.fmt(r.n), pct: r.n / kmax * 100,
+                     title: label + ': ' + B.fmt(r.n) };
+          }), 'Interventions by safety rule in this window.');
+      } else {
+        B.empty(document.getElementById('bd-fired'), D.degraded ? 'This view is incomplete. Review the source warnings above.' : 'No recorded interventions in this window.');
+      }
+    }
+    if (B) B.attach({ board: 'oversight', render: renderBoard });
+  })();
+  </script>
+{% endblock %}
