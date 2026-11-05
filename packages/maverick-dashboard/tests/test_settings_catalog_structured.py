@@ -21,6 +21,7 @@ from maverick_dashboard import settings_catalog_structured as structured
 from maverick_dashboard.app import app
 
 from test_support.settings_pages import every_group, save_catalog
+from test_support.starlette_state import patch_state
 
 client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
 API = "/api/v1/settings/catalog"
@@ -455,8 +456,8 @@ def test_the_trial_measure_comes_from_the_release_setup(audit_rows, monkeypatch)
         def canary_metrics():
             return ("p95_latency_ms",)
 
-    monkeypatch.setattr(app.state, "candidate_promotion_deployment_adapter", Adapter(),
-                        raising=False)
+    patch_state(monkeypatch, app.state, "candidate_promotion_deployment_adapter", Adapter(),
+                raising=False)
     assert _choices("candidate_promotion.canary_metric") == ["error_rate", "p95_latency_ms"]
     change = [{"id": "candidate_promotion.canary_metric", "value": "p95_latency_ms"}]
     assert _save(change).status_code == 409

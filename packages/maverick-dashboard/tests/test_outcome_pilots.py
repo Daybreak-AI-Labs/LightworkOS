@@ -22,6 +22,8 @@ from maverick_dashboard import outcome_pilots as pilots
 from maverick_dashboard import outcome_pilots_api as api
 from maverick_dashboard.app import app
 
+from test_support.starlette_state import patch_state
+
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
@@ -161,7 +163,8 @@ def test_release_choices_need_named_account_and_explain_empty_ready_state(monkey
 
 
 def test_release_readiness_route_explains_missing_setup_without_exposing_candidates(monkeypatch):
-    monkeypatch.setattr(app.state, "candidate_promotion_deployment_adapter", None, raising=False)
+    patch_state(monkeypatch, app.state, "candidate_promotion_deployment_adapter", None,
+                raising=False)
     monkeypatch.setattr(releases, "_identity", lambda _request: ("tenant-one", "user:alice"))
     monkeypatch.setattr(releases, "_service", lambda _request, required=False: None)
     monkeypatch.setattr(api, "context_for", lambda _request: "alice")
@@ -278,7 +281,8 @@ def test_improvement_routes_bind_server_observed_release_and_scope_status(record
     adapter = SimpleNamespace(observe=lambda tenant, target: _deployment())
     service = SimpleNamespace(inspect=lambda tenant, actor, candidate: value,
         list=lambda tenant, actor, limit: [value])
-    monkeypatch.setattr(app.state, "candidate_promotion_deployment_adapter", adapter, raising=False)
+    patch_state(monkeypatch, app.state, "candidate_promotion_deployment_adapter", adapter,
+                raising=False)
     monkeypatch.setattr(releases, "_identity", lambda request: ("tenant-one", "user:alice"))
     monkeypatch.setattr(releases, "_service", lambda request, required=True: service)
     monkeypatch.setattr(api, "context_for", lambda request: "alice")

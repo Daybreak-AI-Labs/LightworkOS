@@ -15,6 +15,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from test_support.starlette_state import patch_state
+
 ORIGIN = {"Origin": "http://127.0.0.1"}
 ANA = "user:ana@corp.com"
 DANA = "user:dana@corp.com"
@@ -203,7 +205,7 @@ def notices(client, monkeypatch):
             signing_key_resolver=lambda _t, _r: b"notice-signing-secret-never-persisted-123456789",
             regulatory_reference_resolver=lambda *_a: False)
 
-    monkeypatch.setattr(app.state, "privacy_notice_governance_store_factory", factory, raising=False)
+    patch_state(monkeypatch, app.state, "privacy_notice_governance_store_factory", factory, raising=False)
     _as(monkeypatch, DANA)
     policy = http.put(f"{NOTICES}/approval-policies/notice-policy", json={
         "required_roles": ["privacy", "legal"], "quorum": 2, "approval_ttl_seconds": 3600,

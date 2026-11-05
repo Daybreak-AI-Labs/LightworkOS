@@ -19,6 +19,8 @@ from maverick.vendor_onboarding_adapters import (
 from maverick_dashboard.app import app
 from maverick_dashboard.vendor_onboarding_composition import WorkflowBinding
 
+from test_support.starlette_state import patch_state
+
 BASE = "/api/v1/vendor-onboarding/cases"
 NOW = 1_800_000_000.0
 
@@ -46,8 +48,8 @@ def web(tmp_path, monkeypatch):
     tickets = FakeJiraTickets()
     service = VendorOnboardingService(docs, tickets, lambda c, cap, res: c.binding() == ctx.binding(),
                                       clock=lambda: NOW)
-    monkeypatch.setattr(app.state, "vendor_onboarding_binding_factory",
-                        lambda request: WorkflowBinding(service, ctx))
+    patch_state(monkeypatch, app.state, "vendor_onboarding_binding_factory",
+                lambda request: WorkflowBinding(service, ctx))
     client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
     yield client, service, ctx, tickets
     config.reset_config_cache()
@@ -906,7 +908,8 @@ def test_http_returns_reapproval_recovery_for_changed_budget_binding(web, monkey
 
     changed = replace(ctx, budget_authority="tenant-budget-v2")
     service.authorize = lambda _context, _capability, _resource: True
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         app.state,
         "vendor_onboarding_binding_factory",
         lambda _request: WorkflowBinding(service, changed),
@@ -965,7 +968,8 @@ def test_http_role_loss_retires_approval_before_permission_denial_and_restore(
         candidate.authorization_role != "read_only"
     )
     monkeypatch.setattr(api, "require_permission", require_current_permission)
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         app.state,
         "vendor_onboarding_binding_factory",
         lambda _request: WorkflowBinding(service, current_context[0]),
@@ -1021,7 +1025,8 @@ def test_http_cross_tenant_worker_and_export_return_no_foreign_content(web, monk
     row = _step(client, row, "approve-action", confirm=True)
     service.authorize = lambda _context, _capability, _resource: True
     other = replace(ctx, tenant="synthetic-b", workspace_authority="workspace-b")
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         app.state,
         "vendor_onboarding_binding_factory",
         lambda _request: WorkflowBinding(service, other),
@@ -1059,7 +1064,7 @@ def test_stock_composition_rejects_anonymous_or_static_identity(web, monkeypatch
     from maverick_dashboard.vendor_onboarding_composition import bind_request
 
     client, *_ = web
-    monkeypatch.setattr(app.state, "vendor_onboarding_binding_factory", bind_request)
+    patch_state(monkeypatch, app.state, "vendor_onboarding_binding_factory", bind_request)
     response = client.get(BASE)
     assert response.status_code == 403
     assert "named authenticated" in response.text
@@ -1176,7 +1181,7 @@ def test_distinct_authorized_reviewer_can_approve_and_preparer_can_execute(
         result.service.clock = service.clock
         return result
 
-    monkeypatch.setattr(app.state, "vendor_onboarding_binding_factory", binding)
+    patch_state(monkeypatch, app.state, "vendor_onboarding_binding_factory", binding)
     row = _step(client, _step(client, _intake(client), "collect-evidence"), "assess")
     row = _step(client, row, "review", decision="approved", rationale="Reviewed evidence")
     row = _step(client, row, "prepare-action")
@@ -1408,8 +1413,8 @@ def test_model_context_cannot_review(web, monkeypatch):
     row = _step(client, _step(client, _intake(client), "collect-evidence"), "assess")
     machine = replace(ctx, human=False)
     service.authorize = lambda c, cap, res: c.actor == ctx.actor
-    monkeypatch.setattr(app.state, "vendor_onboarding_binding_factory",
-                        lambda request: WorkflowBinding(service, machine))
+    patch_state(monkeypatch, app.state, "vendor_onboarding_binding_factory",
+                lambda request: WorkflowBinding(service, machine))
     response = client.post(f"{BASE}/{row['id']}/review", json={
         "expected_revision": row["revision"], "decision": "approved", "rationale": "Model says so"})
     assert response.status_code == 403
@@ -1440,7 +1445,7 @@ def test_existing_dashboard_page_and_asset_are_usable(web):
 def test_offline_demonstration_page_renders_its_request_form(web, monkeypatch):
     """The demonstration hides setup, but the request form still has its error summary."""
     client, *_ = web
-    monkeypatch.setattr(client.app.state, "vendor_onboarding_demo", True, raising=False)
+    patch_state(monkeypatch, client.app.state, "vendor_onboarding_demo", True, raising=False)
     response = client.get("/third-party/vendor-onboarding")
     assert response.status_code == 200, response.text[:500]
     assert "Offline simulation." in response.text

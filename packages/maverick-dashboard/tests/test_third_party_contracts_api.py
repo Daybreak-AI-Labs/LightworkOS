@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from maverick import third_party_contracts as contracts
 from maverick_dashboard import third_party_contracts_api as api
 
+from test_support.starlette_state import patch_state
+
 BASE = "/api/v1/third-party/contracts"
 NOW = 2_000_000_000.0
 
@@ -293,7 +295,8 @@ def test_disabled_unready_and_malformed_store_fail_before_use(environment, monke
     assert state.factory_calls == []
 
     state.enabled = True
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         client.app.state,
         "third_party_contracts_store_factory",
         lambda **_kwargs: SimpleNamespace(tenant_id="tenant-a"),
