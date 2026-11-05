@@ -249,7 +249,10 @@ jobs:
             echo "::error::Tauri bundle directory is empty."
             exit 1
           fi
-          mkdir -m 700 provenance
+          mkdir provenance
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            chmod 700 provenance
+          fi
           tar -czf "provenance/$BUNDLE_TARGET.tar.gz" \
             -C "$bundle_root" .
 

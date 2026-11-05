@@ -13,6 +13,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from textwrap import dedent
@@ -475,6 +476,35 @@ def test_desktop_source_verifier_canonicalizes_checkout_bytes(tmp_path):
     assert bootstrap.read_bytes() == committed
     assert _git(repository, "config", "--local", "core.autocrlf") == "false"
     assert _git(repository, "config", "--local", "core.eol") == "lf"
+
+
+def test_desktop_source_verifier_canonicalizes_a_crlf_checkout(tmp_path):
+    # A Windows runner checks out with core.autocrlf=true, so every text file
+    # is written with CRLF and the index records those bytes as clean. A plain
+    # `git reset --hard` after turning autocrlf off rewrites none of them.
+    repository, revision = _desktop_verifier_fixture(tmp_path)
+    _git(repository, "config", "core.autocrlf", "true")
+    _git(repository, "rm", "-r", "-q", "--cached", ".")
+    _git(repository, "reset", "-q", "--hard", revision)
+    # Age the files and refresh the index so git trusts its stat data, as it
+    # does on a runner where seconds pass between checkout and verification
+    # (a file written in the same second as the index is re-read instead).
+    stale = time.time() - 3600
+    for tracked in _git(repository, "ls-files").splitlines():
+        os.utime(repository / tracked, (stale, stale))
+    _git(repository, "update-index", "-q", "--refresh")
+    launcher = repository / "deploy/desktop/install.sh"
+    assert launcher.read_bytes() == b"#!/bin/sh\r\nprintf verified\r\n"
+    assert _git(repository, "status", "--porcelain") == ""
+
+    result = _run_desktop_verifier(
+        repository,
+        revision,
+        canonicalize_checkout=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert launcher.read_bytes() == b"#!/bin/sh\nprintf verified\n"
 
 
 def test_desktop_source_verifier_rejects_raw_and_ignored_changes(tmp_path):

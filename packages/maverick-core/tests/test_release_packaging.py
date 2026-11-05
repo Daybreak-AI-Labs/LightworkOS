@@ -1105,6 +1105,22 @@ def test_desktop_source_verification_runs_under_bash_on_every_runner():
         start = end
 
 
+def test_desktop_bundle_packaging_restricts_modes_only_where_supported():
+    # Git Bash on the Windows runner cannot set POSIX modes on NTFS, so
+    # `mkdir -m 700` fails there after the bundle has already been built.
+    desktop = (
+        REPO_ROOT / ".github" / "workflows" / "desktop.yml"
+    ).read_text(encoding="utf-8")
+    step = _workflow_step(desktop, "Package bundle with executable modes")
+    assert "mkdir -m" not in step
+    assert "          mkdir provenance\n" in step
+    assert (
+        '          if [ "$RUNNER_OS" != "Windows" ]; then\n'
+        "            chmod 700 provenance\n"
+        "          fi\n"
+    ) in step
+
+
 def test_public_site_contains_the_commit_bound_governance_benchmark():
     manifest = (REPO_ROOT / "docs" / "public-docs.txt").read_text(
         encoding="utf-8"
