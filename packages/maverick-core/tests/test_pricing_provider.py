@@ -162,6 +162,47 @@ def test_promo_rates_stop_billing_after_captured_guarantee(monkeypatch, day, exp
     assert quote.metadata()["valid_until"] == "2026-11-21"
 
 
+def test_sol_promo_evidence_records_the_vendor_stated_end_and_context_tiers():
+    raw = json.loads(resources.files("maverick").joinpath(
+        "data/pricing-rate-card-2026-07-29.json").read_text(encoding="utf-8"))
+    evidence = next(
+        row for row in raw["entries"]
+        if row["evidence_id"] == "openai-sol-promo-ceiling-2026-11-05"
+    )
+
+    assert evidence["source_url"] == "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+    assert evidence["as_of"] == "2026-11-05"
+    assert evidence["retrieved_at"].startswith("2026-11-05T")
+    # The model page states the promotional pricing is available until
+    # November 30, 2026; billing must not outlive that statement.
+    assert evidence["valid_until"] == "2026-11-30"
+    assert evidence["source_observations"] == {
+        "short": [4.0, 20.0], "long": [8.0, 30.0], "long_cache_write_input": 10.0,
+    }
+    assert evidence["rates"] == {"gpt-5.6-sol": [11.0, 33.0], "gpt-5.6": [11.0, 33.0]}
+
+
+@pytest.mark.parametrize("model_id", ["gpt-5.6-sol", "gpt-5.6"])
+@pytest.mark.parametrize("today,billable", [((2026, 11, 30), True), ((2026, 12, 1), False)])
+def test_sol_promo_quote_bills_through_the_vendor_stated_end(monkeypatch, model_id, today, billable):
+    import maverick.pricing as pricing
+
+    class Today(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(*today, tzinfo=tz or timezone.utc)
+
+    monkeypatch.setattr(pricing, "datetime", Today)
+    budget = Budget(max_dollars=1000)
+    if billable:
+        budget.record_tokens(1000, 2000, model=model_id)
+        assert budget.dollars == pytest.approx(11.0 / 1000 + 33.0 / 500)
+    else:
+        with pytest.raises(UnpricedModelError, match="expired on 2026-11-30"):
+            budget.record_tokens(1000, 2000, model=model_id)
+        assert budget.dollars == 0
+
+
 @pytest.mark.parametrize("expiry", ["", "tomorrow", "2026-02-30", "2025-01-01", 123])
 def test_invalid_expiry_is_rejected_in_quotes_and_evidence(expiry):
     from maverick.pricing import _parse_evidence_entry
@@ -421,7 +462,7 @@ def test_budget_retains_exact_rate_provenance_and_absorb_merges_it():
     assert evidence["verified"] is True
     assert evidence["currency"] == "USD"
     assert evidence["source"].startswith("https://")
-    assert evidence["rate_card_version"] == "2026-09-13.1"
+    assert evidence["rate_card_version"] == "2026-11-05.1"
     assert evidence["evidence_id"] == "anthropic-direct-2026-07-29"
 
     parent = Budget(max_dollars=100.0)
