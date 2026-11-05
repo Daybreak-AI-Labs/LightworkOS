@@ -44,7 +44,9 @@ def sent(monkeypatch, tmp_path):
     monkeypatch.delenv("MAVERICK_DASHBOARD_TOKEN", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CONSENT_MODE", "dashboard")
-    monkeypatch.setenv("MAVERICK_CONSENT_DASHBOARD_TIMEOUT", "30")
+    # Generous: the request must still be waiting when the (slow to import)
+    # dashboard decides on a busy machine.
+    monkeypatch.setenv("MAVERICK_CONSENT_DASHBOARD_TIMEOUT", "300")
     monkeypatch.setenv("MAVERICK_APPROVAL_UNDO_GRACE_SECONDS", "0")
     monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")  # offline: no DNS
     monkeypatch.setenv("MAVERICK_FETCH_NO_SCAN", "1")
@@ -106,9 +108,9 @@ def _wait_for_pending(tmp_path):
 
 
 def test_post_waits_on_the_approvals_page_and_runs_once_approved(sent, tmp_path):
+    client = _client()
     thread, result = _start_post()
     row = _wait_for_pending(tmp_path)
-    client = _client()
 
     page = client.get("/approvals")
     assert page.status_code == 200
@@ -131,7 +133,7 @@ def test_post_waits_on_the_approvals_page_and_runs_once_approved(sent, tmp_path)
         headers={"X-Lightwork-Approval-Binding": binding},
     )
     assert approved.status_code == 204
-    thread.join(timeout=30)
+    thread.join(timeout=300)
 
     assert "HTTP 200 OK" in result["out"]
     assert len(sent) == 1
@@ -140,12 +142,13 @@ def test_post_waits_on_the_approvals_page_and_runs_once_approved(sent, tmp_path)
 
 
 def test_rejecting_on_the_approvals_page_sends_nothing(sent, tmp_path):
+    client = _client()
     thread, result = _start_post()
     row = _wait_for_pending(tmp_path)
 
-    denied = _client().post(f"/api/v1/approvals/{row.id}/deny", json={})
+    denied = client.post(f"/api/v1/approvals/{row.id}/deny", json={})
     assert denied.status_code in (200, 204)
-    thread.join(timeout=30)
+    thread.join(timeout=300)
 
     assert "not approved" in result["out"]
     assert sent == []
