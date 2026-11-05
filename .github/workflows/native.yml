@@ -9,8 +9,9 @@ name: Native (Rust)
 # artifacts. Publish is gated on a tag + configured registry credentials.
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, exp/native-repro]
     tags: ["native-v*"]
   pull_request:
     paths:
