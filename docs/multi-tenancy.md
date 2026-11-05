@@ -78,6 +78,11 @@ Enforcement is fail-open at the edges: single-tenant and unprovisioned per-user
 tenants are never gated — only a tenant an operator explicitly put on a limited
 plan is denied.
 
+The installation's own first workspace (`local`, "My workspace"), which the
+dashboard creates for the first owner, is on the built-in `self-hosted` plan:
+every feature a plan can gate, including the departments add-on, and no plan
+limits. Assign `free`, `pro` or `enterprise` to the tenants you bill.
+
 ## Provisioning
 
 ```bash

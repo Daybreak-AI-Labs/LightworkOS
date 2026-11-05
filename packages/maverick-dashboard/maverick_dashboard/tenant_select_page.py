@@ -16,12 +16,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from maverick.billing import SELF_HOSTED_PLAN
 
 PAGE_PATH = "/workspace/tenant"
 
 # The workspace the picker's one-click action creates; the same record is
 # provisioned automatically for the first signed-in administrator (below).
-FIRST_WORKSPACE = {"id": "local", "display_name": "My workspace", "plan": "free"}
+# It is the installation's own workspace, so no billing plan gates it.
+FIRST_WORKSPACE = {"id": "local", "display_name": "My workspace", "plan": SELF_HOSTED_PLAN}
 
 
 def _safe_return_path(value: str | None) -> str:
