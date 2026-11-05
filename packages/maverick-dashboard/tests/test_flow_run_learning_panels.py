@@ -47,3 +47,10 @@ def test_signed_in_viewer_sees_only_enabled_learning_controls(page):
         assert 'id="le-card"' in html and 'id="lx-card"' in html
         assert '<div id="lx-enroll" hidden>' in html
         assert "Checking whether this run can be an example" in html
+
+
+def test_keep_as_example_panel_knows_when_example_collection_is_off(page):
+    # With collection off the panel explains that, instead of probing the
+    # example APIs and reporting their refusal as missing account access.
+    assert 'id="lx-card" aria-labelledby="lx-title" data-capture="off"' in page(signed_in=True, capture=False)
+    assert 'id="lx-card" aria-labelledby="lx-title" data-capture="on"' in page(signed_in=True, capture=True)

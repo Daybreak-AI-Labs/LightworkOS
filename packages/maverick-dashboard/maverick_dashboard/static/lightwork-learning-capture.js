@@ -219,6 +219,11 @@
   }
   async function load() {
     const started = epoch, oldReason = $('review-reason').value, oldGrant = $('grant-reason').value;
+    if (card.dataset.capture === 'off') {
+      clearCurrentState();
+      say('Keeping runs as learning examples is turned off. To keep runs like this one, turn on Keep workflow examples for learning in Settings, then reload this page.');
+      return;
+    }
     clearCurrentState(); say('Checking this run’s learning status…');
     try {
       const history = await decisionApi('/history'); if (started !== epoch) return;

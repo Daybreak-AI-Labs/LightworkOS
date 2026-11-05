@@ -15153,11 +15153,20 @@ async def flow_run_page(request: Request, flow_id: str, run_id: str) -> HTMLResp
     failed step). Data comes from /api/v1/flows/runs/{run_id} client-side, so
     owner-scoping and the flow-engine gate are enforced by the API."""
 
+    from maverick.config import get_flows
+
     signed_in = bool(caller_principal(request))
+    try:
+        capture_on = get_flows().get("action_episode_capture") is True
+    except Exception:  # an unreadable setting leaves the panel's own checks to explain
+        capture_on = True
     return templates.TemplateResponse(request, "flow_run.html", {
         "flow_id": flow_id, "run_id": run_id,
         "learning_example_panel": signed_in,
         "learning_capture_panel": signed_in,
+        # With example collection off the keep-as-example panel says so
+        # instead of probing APIs that refuse while it is off.
+        "learning_capture_on": capture_on,
     })
 
 

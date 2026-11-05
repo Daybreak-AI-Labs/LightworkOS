@@ -382,6 +382,20 @@ test('learning capture distinguishes an unavailable check from an ineligible run
   assert.match(ui.$('lx-status').textContent, /waiting at its first approval/);
 });
 
+test('learning capture says when example collection is off and asks nothing', async t => {
+  const markup = slice('flow_run.html', '<section class="panel fr__example" id="lx-card"', '</section>')
+    .replace(/data-capture="[^"]*"/, 'data-capture="off"');
+  assert.match(markup, /data-capture="off"/);
+  const ui = await page(markup, 'lightwork-learning-capture.js', () => { throw new Error('unexpected request'); });
+  t.after(() => ui.w.close());
+
+  assert.equal(ui.calls.length, 0, 'no example lookup while collection is off');
+  assert.match(ui.$('lx-status').textContent, /Keep workflow examples for learning/);
+  assert.doesNotMatch(ui.$('lx-status').textContent, /not available to your account/);
+  assert.equal(ui.$('lx-enroll').hidden, true);
+  assert.equal(ui.$('lx-review').hidden, true);
+});
+
 test('learning capture does not mistake denied status for a missing example', async t => {
   const markup = slice('flow_run.html', '<section class="panel fr__example" id="lx-card"', '</section>');
   const ui = await page(markup, 'lightwork-learning-capture.js', () => new Response('{}', { status: 403 }));
