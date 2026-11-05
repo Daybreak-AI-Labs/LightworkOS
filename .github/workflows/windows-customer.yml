@@ -77,7 +77,7 @@ jobs:
       - name: Install reviewed build dependencies without signing credentials
         shell: pwsh
         run: |
-          & $env:CUSTOMER_BUILD_PYTHON -I -m pip install --upgrade 'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3' 'pyinstaller==6.22.3' 'pytest==9.1.1' 'pyyaml==6.0.3'
+          & $env:CUSTOMER_BUILD_PYTHON -I -m pip install --upgrade 'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3' 'pyinstaller==6.22.3' 'pytest==9.2.0' 'pyyaml==6.0.3'
           if ($LASTEXITCODE -ne 0) { throw 'Build dependency installation failed.' }
           # Omit --target-python: the helper preserves this exact sys.executable.
           # A bare child "python" can escape a Windows venv despite its PATH.
