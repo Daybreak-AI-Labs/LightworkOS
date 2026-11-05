@@ -255,6 +255,12 @@ def _claim(row) -> None:
     invites.local_session_secret()
     row["status"] = "ready"
     _write(row)
+    # The owner starts in a real workspace: left in the unbound root, every
+    # workspace-scoped panel refuses, and a workspace created later at a
+    # tenant gate hides what was made before it. Best effort: the claim stands
+    # without it and the tenant picker remains the way to choose one.
+    from .tenant_select_page import provision_first_workspace
+    provision_first_workspace(principal)
 
 
 def _finish(row, request=None, *, mfa_at=None):

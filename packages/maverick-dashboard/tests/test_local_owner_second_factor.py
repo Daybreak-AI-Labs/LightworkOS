@@ -386,8 +386,10 @@ def test_the_account_page_turns_the_app_on_and_shows_codes_once(clock):
     from maverick_dashboard.app import app
     enroll_owner()
     local_passphrases.reset_attempt_limit()
+    # The owner starts in the first workspace; the browser client sends its guard.
     with TestClient(app, base_url=ORIGIN, client=("127.0.0.1", 53211),
-                    headers={"Origin": ORIGIN}, follow_redirects=False) as client:
+                    headers={"Origin": ORIGIN, "X-Lightwork-Expected-Tenant": "local"},
+                    follow_redirects=False) as client:
         response = client.post("/auth/local-login", data={"email": EMAIL, "password": PASSPHRASE})
         assert response.status_code == 303 and "mvk_session=" in response.headers["set-cookie"]
         local_passphrases.reset_attempt_limit()
@@ -427,8 +429,10 @@ def test_a_form_with_extra_fields_is_refused(clock):
     from maverick_dashboard.app import app
     enroll_owner()
     local_passphrases.reset_attempt_limit()
+    # The owner starts in the first workspace; the browser client sends its guard.
     with TestClient(app, base_url=ORIGIN, client=("127.0.0.1", 53213),
-                    headers={"Origin": ORIGIN}, follow_redirects=False) as client:
+                    headers={"Origin": ORIGIN, "X-Lightwork-Expected-Tenant": "local"},
+                    follow_redirects=False) as client:
         client.post("/auth/local-login", data={"email": EMAIL, "password": PASSPHRASE})
         local_passphrases.reset_attempt_limit()
         bad = client.post("/auth/owner-second-factor", data={"code": "000000", "extra": "x"})
