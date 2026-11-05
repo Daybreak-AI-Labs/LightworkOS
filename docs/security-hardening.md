@@ -1343,8 +1343,12 @@ the default operation is omitted.
 Teams destinations must be configured by the operator in `TEAMS_WEBHOOK_URL`;
 the tool refuses caller-supplied webhook URLs.
 WebSocket message sending is unavailable until its asynchronous effect can be
-bound to a human decision. HTTP requests and WebSocket handshakes can transmit
-information to destinations; direct calls to raw tool functions do not pass
+bound to a human decision. `http_fetch` sends a request other than a plain
+`GET` or `HEAD` (any other method, or any request with a body) only after a
+fresh human decision on that exact request; see
+[what asks a person first](safety.md#what-asks-a-person-first). `GET` and
+`HEAD` requests and WebSocket handshakes can still transmit information to
+destinations in their address; direct calls to raw tool functions do not pass
 through the registry's connector wrapper. Use destination controls and process
 isolation where untrusted content can influence outgoing requests.
 

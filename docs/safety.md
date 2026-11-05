@@ -65,6 +65,37 @@ ruleset; treat them as a coverage target, not as shipped coverage:
 > (ROT13, leetspeak, the wider pattern set); the *decoding* layer is always
 > present.
 
+## What asks a person first
+
+Some steps always wait for a person's decision, whatever
+`MAVERICK_CONSENT_MODE` says. The automatic mode and earlier "remember this"
+grants never approve them. The request appears on the dashboard's Approvals
+page (or at the terminal in `ask` mode) with exactly what will run or be sent,
+and an approval covers that one request, once. A run that nobody can answer
+for, such as a headless run outside a chat task, is refused.
+
+- **Commands and code:** every `shell` command, every `code_exec`,
+  `notebook_exec`, `wasm_run`, `container_build` and `lsp_bridge` run, the
+  `git_advanced` operations that change the repository, and `sql_query` with
+  `read_only = false`.
+- **The clipboard:** every `clipboard` read and write.
+- **Web requests:** every `http_fetch` request other than a plain `GET` or
+  `HEAD`: `POST`, `PUT`, `PATCH`, `DELETE`, and any request with a body. The
+  card names the website and shows the method, the address, every header and
+  the body. Values that look like passwords, keys or tokens are hidden on the
+  card but sent as written; a long body is shown as its beginning plus a
+  fingerprint of the whole. The approval is bound to the exact request, so a
+  changed request is not sent.
+- **Connector changes:** every change a connector makes in another system
+  (sending email or chat messages, creating issues, updating records) is
+  previewed, waits for a fresh human decision and is recorded with receipts
+  before and after it runs.
+
+`GET` and `HEAD` requests run without asking. Their address can still carry
+data in its query string, so a deployment that handles sensitive data also
+needs [information-flow control](ifc.md) in `approve` or `block` mode and an
+egress allow-list (`[egress]`, or enterprise mode).
+
 ## Checking your posture
 
 `maverick safety` prints the live safety posture — shield status (installed +

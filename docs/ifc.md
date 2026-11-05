@@ -59,6 +59,13 @@ back to that server. What happens depends on the mode:
 | `approve` | A human approves through the consent path, shown the destination (URL query strings elided); auto-approve modes count as denial. A grant covers that sink, that destination and those labels for the rest of the run. A new destination (including any added `cc`/`bcc` recipient), a new label, or a literal copy the approver was not told about asks again, and so does every call whose destination cannot be identified from its arguments (search queries are data, not a destination) or has more parts than can be shown. |
 | `block` | Refuse. The agent is told not to route the data through another external tool. |
 
+These modes add to the approval each tool already asks for. Whatever the mode,
+`http_fetch` waits for a person before any request other than a plain `GET` or
+`HEAD`, and connector changes and `shell` commands always do (see
+[what asks a person first](safety.md#what-asks-a-person-first)). In `approve`
+mode such a call can therefore ask twice: once because the data is labelled,
+once for the request itself.
+
 `scope = "explicit"` acts only when the labelled data appears literally in the
 outgoing arguments. The default `context` scope acts on anything the agent has
 seen, because a model can paraphrase. Either way, each decision carries a
