@@ -8,17 +8,25 @@ Respects:
   - http(s) only (refuses file://, ftp://, etc.)
   - robots.txt when ``MAVERICK_FETCH_RESPECT_ROBOTS=1``
   - private IP ranges blocked unless ``MAVERICK_FETCH_ALLOW_PRIVATE=1``
+  - a person's approval for every request that can carry data or change
+    something at the destination: any method other than GET/HEAD, and any
+    request with a body. Like ``shell``, the decision is fresh, exact and
+    one-use; silent auto-approval and standing grants never authorize it, and
+    a run nobody can answer for is refused.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import http.client
 import ipaddress
+import json
 import logging
 import re
 import socket
 import urllib.request
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse, urlsplit, urlunsplit
 
 from ..env_setting import env_or_config as _env_or_config
 from . import Tool
@@ -28,6 +36,7 @@ log = logging.getLogger(__name__)
 
 # Match the adjacent remote-image tool ceiling; ordinary page reads stay 64KB.
 _MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+_FETCH_TIMEOUT_SECONDS = 30.0
 
 
 _FETCH_INPUT_SCHEMA: dict[str, Any] = {
@@ -37,7 +46,10 @@ _FETCH_INPUT_SCHEMA: dict[str, Any] = {
         "method": {
             "type": "string",
             "enum": ["GET", "POST", "HEAD"],
-            "description": "HTTP method (default GET).",
+            "description": (
+                "HTTP method (default GET). Anything but GET/HEAD waits for a "
+                "person's approval."
+            ),
         },
         "headers": {
             "type": "object",
@@ -45,7 +57,10 @@ _FETCH_INPUT_SCHEMA: dict[str, Any] = {
         },
         "body": {
             "type": "string",
-            "description": "Request body for POST (raw string).",
+            "description": (
+                "Request body for POST (raw string). A request with a body waits "
+                "for a person's approval."
+            ),
         },
         "render": {
             "type": "string",
@@ -440,7 +455,7 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
 
     from ._ssrf import BlockedHost, safe_client
     try:
-        with safe_client(url, timeout=30.0) as client:
+        with safe_client(url, timeout=_FETCH_TIMEOUT_SECONDS) as client:
             with client.stream(method, url, headers=headers, content=body) as resp:
                 status_code = resp.status_code
                 reason_phrase = resp.reason_phrase
@@ -462,6 +477,182 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
         return f"ERROR: {type(e).__name__}: {e}"
     return (status_code, reason_phrase, resp_url, encoding, content_type,
             bytes(buf[:max_bytes]), truncated)
+
+
+# A plain read: no body and a method that only asks for a resource. Anything
+# else can carry data to the destination or change something there.
+_READ_METHODS = frozenset({"GET", "HEAD"})
+_METHOD_TOKEN = re.compile(r"[A-Z]{1,16}")
+# How much of a request body the reviewer reads in full (JSON-encoded
+# characters). A longer body is shown as a preview plus its fingerprint; the
+# decision is bound to the exact body either way.
+_REVIEW_BODY_CHARS = 3000
+
+
+def _sends_data(method: str, body: Any) -> bool:
+    return method not in _READ_METHODS or body not in (None, "", b"")
+
+
+def _reviewed_url(url: str) -> str:
+    """The address as the reviewer reads it: credentials in the user-info part
+    and query values under sensitive names are hidden, everything else is
+    shown as written."""
+    from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
+
+    parts = urlsplit(url)
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = f"{_REDACTED_REQUEST_VALUE}@{netloc.rpartition('@')[2]}"
+    query = "&".join(
+        f"{name}={_REDACTED_REQUEST_VALUE}"
+        if sep and _sensitive_request_key(unquote(name)) else f"{name}{sep}{value}"
+        for name, sep, value in (pair.partition("=") for pair in parts.query.split("&"))
+    ) if parts.query else ""
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def _bounded_preview(text: str, limit: int) -> str:
+    """The longest prefix of ``text`` whose JSON encoding fits ``limit``."""
+    low, high = 0, min(len(text), limit)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if len(json.dumps(text[:mid])) <= limit:
+            low = mid
+        else:
+            high = mid - 1
+    return text[:low]
+
+
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _value in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("repeated JSON key")
+    return dict(pairs)
+
+
+def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[dict, list[str]]:
+    """What the person reads: method, address, every header that will be sent
+    and the body (or a bounded preview plus fingerprint), with sensitive
+    values hidden exactly as governed connector requests hide them."""
+    shown: dict[str, Any] = {"method": method, "url": _reviewed_url(url), "headers": headers}
+    notes: list[str] = []
+    if body not in (None, "", b""):
+        text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
+        try:
+            # Shown as structure only when that reads the same as the text: a
+            # repeated key would show one value while a server may read another.
+            structured = json.loads(text, object_pairs_hook=_unique_keys)
+        except ValueError:
+            structured = None
+        if isinstance(structured, (dict, list)) and len(json.dumps(structured)) <= _REVIEW_BODY_CHARS:
+            shown["body"] = structured  # keyed values get the same redaction
+        elif len(json.dumps(text)) <= _REVIEW_BODY_CHARS:
+            shown["body"] = text
+        else:
+            preview = _bounded_preview(text, _REVIEW_BODY_CHARS)
+            shown["body_preview"] = preview
+            shown["body_characters"] = len(text)
+            shown["body_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            notes.append(
+                f"The body has {len(text):,} characters; only the first "
+                f"{len(preview):,} are shown. Its fingerprint (body_sha256) fixes "
+                "the exact body that will be sent."
+            )
+    return shown, notes
+
+
+def _request_permit(request: dict[str, Any], parsed: Any, max_bytes: int):
+    """Ask a person to approve this exact request once (see ``shell``).
+
+    Raises ``ConsentDenied`` when nobody approves and ``ApprovalCardError``
+    when the request cannot be shown in full or changed before it was sent.
+    """
+    from ..approval_cards import ApprovalCardError
+    from ..governed_tools import _approval_request_parts
+    from ..safety import require_operation_consent
+
+    method = request["method"]
+    host = parsed.hostname or "the website"
+    origin = f"{parsed.scheme}://{parsed.netloc.rpartition('@')[2]}"
+    summary = f"Send a {method} request to {host}"
+    if len(summary) > 80:
+        summary = f"Send a {method} request to a website"
+    shown, notes = _reviewed_request(
+        method, request["url"], request["headers"], request["body"],
+    )
+    try:
+        request_parts = _approval_request_parts(shown)
+    except ApprovalCardError as exc:
+        raise ApprovalCardError(
+            "the address and headers are too long to show a person in full"
+        ) from exc
+    parameter_summary = [
+        f"Sends one {method} request to {origin}. Redirects are not followed, "
+        "so no other website receives it.",
+        *notes,
+        "Values that look like passwords, keys or tokens are hidden here; "
+        "they are sent exactly as written.",
+        *request_parts,
+    ]
+    frozen = copy.deepcopy(request)
+    return require_operation_consent(
+        "http_fetch",
+        risk="high",
+        scope=origin,
+        detail=summary,
+        provenance="http_fetch",
+        target={"tool": "http_fetch", "origin": origin},
+        parameters=copy.deepcopy(frozen),
+        parameter_summary=parameter_summary,
+        known_effects=[
+            f"{host} receives the method, address, headers and body shown, once.",
+            f"Up to {max_bytes:,} bytes of the reply are returned to the task.",
+        ],
+        unresolved_assumptions=[
+            f"What {host} does with the request (store it, act on it or pass it "
+            "on) is outside Lightwork's control."
+        ],
+        before=f"Nothing from this request has been sent to {host}.",
+        after=f"{host} has received the request once; Lightwork cannot take it back.",
+        irreversible=True,
+        parameters_provider=lambda: copy.deepcopy(frozen),
+        credential_versions_provider=lambda: {
+            "state": "not_applicable",
+            "reason": "Lightwork adds no saved credentials to this request",
+        },
+        budget_provider=lambda: {
+            "timeout_seconds": _FETCH_TIMEOUT_SECONDS,
+            "max_response_bytes": max_bytes,
+        },
+        allow_auto_approve=False,
+        consult_ledger=False,
+    )
+
+
+def _send_reviewed(request: dict[str, Any], parsed: Any, max_bytes: int) -> Any:
+    """Send ``request``; one that can carry data waits for a person first."""
+    method, body = request["method"], request["body"]
+    if not _sends_data(method, body):
+        return _stream_fetch(method, request["url"], request["headers"], body, max_bytes)
+    if not _METHOD_TOKEN.fullmatch(method):
+        return f"ERROR: unsupported HTTP method {method[:20]!r}"
+    from ..approval_cards import ApprovalCardError
+    from ..safety import ConsentDenied, consume_operation_consent
+
+    try:
+        permit = _request_permit(request, parsed, max_bytes)
+    except ConsentDenied:
+        return f"ERROR: the {method} request was not approved; nothing was sent"
+    except ApprovalCardError as exc:
+        return (f"ERROR: the {method} request could not be reviewed ({exc}); "
+                "nothing was sent")
+    try:
+        with consume_operation_consent(permit):
+            return _stream_fetch(method, request["url"],
+                                 copy.deepcopy(request["headers"]), body, max_bytes)
+    except ApprovalCardError:
+        return (f"ERROR: the {method} request or its approval changed after "
+                "review; nothing was sent. Review it again")
 
 
 def _run_fetch(args: dict[str, Any]) -> str:
@@ -490,10 +681,12 @@ def _run_fetch(args: dict[str, Any]) -> str:
         return "ERROR: httpx not installed. Run: python -m pip install -e './packages/maverick-core[session]'"
 
     method = (args.get("method") or "GET").upper()
-    headers = dict(args.get("headers") or {})
+    # Copies, so the request a person approves is the request that is sent even
+    # if the caller's arguments change while the decision is pending.
+    headers = copy.deepcopy(dict(args.get("headers") or {}))
     headers.setdefault("User-Agent", "Mozilla/5.0 (compatible; Lightwork/1.0)")
     headers.setdefault("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
-    body = args.get("body")
+    body = copy.deepcopy(args.get("body"))
     # 64 KB default: a page render trims to markdown anyway, and the old
     # 200 KB default guaranteed one fetch filled the whole per-tool-result
     # context budget. Callers can request more within the native 10MiB ceiling.
@@ -510,7 +703,8 @@ def _run_fetch(args: dict[str, Any]) -> str:
     # (max_bytes bounded only the returned text, not the download). Read
     # a bounded decoded chunk at a time and retain at most max_bytes + 1;
     # the extra byte proves whether content was actually omitted.
-    streamed = _stream_fetch(method, url, headers, body, max_bytes)
+    request = {"method": method, "url": url, "headers": headers, "body": body}
+    streamed = _send_reviewed(request, parsed, max_bytes)
     if isinstance(streamed, str):
         return streamed
     (status_code, reason_phrase, resp_url, encoding, content_type,
@@ -594,7 +788,9 @@ def http_fetch() -> Tool:
             "set render='text' for plain text, 'html' for raw HTML, 'raw' "
             "for non-HTML bytes. Refuses private/loopback addresses unless "
             "MAVERICK_FETCH_ALLOW_PRIVATE=1; respects robots.txt when "
-            "MAVERICK_FETCH_RESPECT_ROBOTS=1."
+            "MAVERICK_FETCH_RESPECT_ROBOTS=1. GET and HEAD run directly; any "
+            "other method, or any request with a body, waits for a person to "
+            "approve that exact request and is refused if nobody can."
         ),
         input_schema=_FETCH_INPUT_SCHEMA,
         fn=_run_fetch,
