@@ -59,6 +59,7 @@ from maverick.runtime_overrides import RuntimeOverridesSecurityError
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import __version__ as _dashboard_version
 from . import auth_metrics as _auth_metrics
 from . import (
     capability_assessment_controls_api,
@@ -1445,7 +1446,8 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
     description="Local browser UI plus REST API for programmatic access.",
-    version="0.1.0",
+    # The installed maverick-dashboard release (see maverick_dashboard.__version__).
+    version=_dashboard_version,
     # Global authentication dependency, applied to every route. It composes
     # proxy/OIDC/SAML/invite sessions and the static dashboard bearer, while
     # preserving same-origin loopback mode only when authentication is genuinely

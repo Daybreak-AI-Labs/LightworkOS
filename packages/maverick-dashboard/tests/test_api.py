@@ -648,6 +648,13 @@ class TestOpenAPI:
         ):
             assert required in paths, f"missing {required}"
 
+    def test_openapi_reports_the_installed_dashboard_version(self):
+        # The schema said "0.1.0" while the packages were released as 0.1.7.
+        import maverick_dashboard
+        resp = client.get("/openapi.json")
+        assert resp.status_code == 200
+        assert resp.json()["info"]["version"] == maverick_dashboard.__version__
+
     def test_docs_served(self):
         resp = client.get("/docs")
         assert resp.status_code == 200
