@@ -1,2 +1,3 @@
 # No advisory exceptions. Reviewed local dependency fixes are checked by
-# scripts/check_vendor_patches.py and the desktop regression harness.
+# scripts/check_vendor_patches.py and the desktop regression harness; dated,
+# per-lockfile accepted risks live in scripts/check_osv_results.py.
