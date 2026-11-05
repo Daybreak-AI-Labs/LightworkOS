@@ -22,7 +22,7 @@ Lightwork is a recursive multi-agent swarm with a safety layer at every chokepoi
                      └────────────┴────────────┘
             shared state via SwarmContext:
               • Blackboard (per run, in-memory)
-              • WorldModel (SQLite + FTS5, persistent)
+              • WorldModel (SQLite, persistent)
               • Budget (global token/$/wall/tool caps)
               • Sandbox (local / docker / ssh / ...)
               • Shield (input / tool / output scans)
@@ -42,7 +42,7 @@ The agent kernel.
 | `orchestrator.py` | Entry point `run_goal()` — wires SwarmContext, spawns external MCP clients, runs the root agent, distills the trajectory into a skill. |
 | `swarm.py` | `SwarmContext` shared by all agents in a run. |
 | `blackboard.py` | Append-only shared workspace for one run. Mirrors entries into `world.goal_events` when `attach_world()` is called so the dashboard can stream live progress. |
-| `world_model.py` | SQLite + FTS5: goals, episodes, facts, questions, messages, goal_events. WAL mode + `busy_timeout=5000` for safe concurrent dashboard+agent access. Forward-only, checksum-locked schema migrations (`world_model.MIGRATIONS`). |
+| `world_model.py` | SQLite: goals, episodes, facts, questions, messages, goal_events. WAL mode + `busy_timeout=5000` for safe concurrent dashboard+agent access. Forward-only, checksum-locked schema migrations (`world_model.MIGRATIONS`). |
 | `budget.py` | Hard caps on tokens, $, wall-clock, tool calls. Raises `BudgetExceeded`. |
 | `llm.py` | Multi-provider adapter: Anthropic, OpenAI, Azure, Bedrock, Vertex AI, Gemini, xAI, DeepSeek, Moonshot, OpenRouter, Ollama, TGI, vLLM, any OpenAI-compatible endpoint and the Codex CLI (`providers.KNOWN_PROVIDERS`). Per-role model routing via config. |
 | `providers/` | One adapter file per provider; OpenAI ↔ Anthropic message translation lives in `openai_provider.py`. |
@@ -55,7 +55,7 @@ The agent kernel.
 | `health.py` | `maverick doctor` — every red/yellow row carries an actionable `fix=...` remediation. |
 | `cli/` | The `maverick` / `lightwork` command tree (`cli/__init__.py` plus `_*_groups.py` modules); `lightwork --help` lists the commands. |
 | `sandbox/` | Execution backends: `local.py` (subprocess), `docker.py` (`--network=none` default), gVisor (`runsc` runtime), `podman.py`, `devcontainer.py`, `kubernetes.py`, `firecracker.py`, `ssh.py` (uses user's `ssh` binary + keys), `modal_backend.py` — nine selectable. |
-| `tools/` | `read_file`, `write_file`, `list_dir`, `shell`, `ask_user`, `spawn_subagent`, `spawn_swarm`. |
+| `tools/` | The built-in tools, including `read_file`, `write_file`, `list_dir`, `shell`, `ask_user`, `spawn_subagent` and `spawn_swarm`. |
 
 ### `packages/maverick-shield/`
 
@@ -83,9 +83,10 @@ Lightwork exposed as an MCP server. Hand-rolled JSON-RPC 2.0 (no SDK dep) over b
 
 One adapter per messaging surface, all normalizing to the same `IncomingMessage` shape:
 
-- `cli` (stdin/stdout — default)
-- `telegram`, `discord`, `slack`, `matrix`, `signal`, `email`
+- `telegram`, `discord`, `slack`, `matrix`, `signal`, `email`, `mattermost`, `teams`, `irc`
+- `bluesky`, `mastodon`, `threads`, `rcs`, `voice`
 - `whatsapp`, `sms` (both via Twilio with **X-Twilio-Signature** verification)
+- `whatsapp_cloud` (WhatsApp via the Meta Cloud API)
 - `imessage` (macOS; sends via parameterized AppleScript to defeat injection)
 
 This is how phone-companion mode works: the swarm lives on Desktop or VPS, the user talks to it from their phone via Telegram/iMessage/etc.
@@ -109,7 +110,7 @@ unchanged with them off). See `docs/FEATURES.md` for depth.
 
 | Subsystem | Modules | Role |
 |---|---|---|
-| **Governed Actions** | `governed_actions.py`, `governed_connectors.py`, `governed_rest.py`, `governed_tools.py` | A consequential operation is a typed `ActionSpec`: **simulated** before commit, **gated** on risk/approval (`[actions] require_approval_at`), and **lineage-tracked** (tamper-evident hash chain). `governed_rest` adapts the LIVE enterprise REST connectors into this surface; `governed_tools` wraps them in the **live tool path** when `[governed_connectors] enable` — a connector write is previewed and approval-gated against a standing operator approver (the agent can't self-approve), instead of a bare confirm-gated call. |
+| **Governed Actions** | `governed_actions.py`, `governed_connectors.py`, `governed_rest.py`, `governed_tools.py` | A consequential operation is a typed `ActionSpec`: **simulated** before commit, **gated** on risk/approval (`[actions] require_approval_at`), and **lineage-tracked** (tamper-evident hash chain). `governed_rest` adapts the LIVE enterprise REST connectors into this surface; `governed_tools` always wraps them in the **live tool path** — a connector write is previewed and approval-gated against a standing operator approver (the agent can't self-approve), instead of a bare confirm-gated call. |
 | **Closed learning loop** | `dreaming.py`, `hindsight.py`, `reflexion.py`, `self_learning.py`, `skills.py` | Offline consolidation (dream), regression detection (hindsight), snapshot + rollback with a per-cycle signed audit row. |
 | **Training flywheel** | `training/ingest.py`, `training/rlaif.py`, `training/reward_model.py` | Verifier rewards → DPO preference pairs (`rlaif`, GPU/torch for the policy update) and a CPU-trainable Bradley-Terry **reward model** (`reward_model`) that learns real weights over structural trajectory features to rank attempts — and, via `rlaif --reward-model`, cross-checks the verifier's preference labels, downweighting DPO pairs the two signals don't corroborate (label-noise mitigation). |
 | **Multi-tenancy** | `tenant/registry.py`, `tenant/kms.py`, `paths.py`, `world_model_backends/` | Per-tenant data isolation (`~/.maverick/tenants/<t>/`), per-tenant envelope encryption (DEK wrapped by a KEK), Postgres RLS. |

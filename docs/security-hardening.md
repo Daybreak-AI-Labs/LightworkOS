@@ -1156,7 +1156,7 @@ disabled with the reason.
 
 | Command | Purpose |
 | --- | --- |
-| `maverick soc2` | Print a SOC 2 technical-posture snapshot as JSON (which controls are ON + whether the audit log verifies). Add `--json` for compact single-line output. Fail-soft: always emits JSON, exits 0. |
+| `maverick soc2` | Print a SOC 2 technical-posture snapshot as JSON (which controls are ON + whether the audit log verifies). Add `--json` for compact single-line output. Fail-soft: always emits JSON, but exits 1 unless the required controls are on, the audit log verifies and a signing key is present. |
 | `maverick audit verify` | Verify the Ed25519 hash-chain (+ cross-file tip-ledger) of a signed audit log. Exits non-zero if the chain is not intact, so it can gate CI/cron. |
 | `maverick dsar export --user <id>` | GDPR Art. 15/20 (access / portability): export everything Lightwork holds for a subject as a JSON bundle. |
 | `maverick erase --channel <c> --user <id>` | GDPR Art. 17 (right to erasure): erase everything Lightwork knows about a `(channel, user_id)` pair. |

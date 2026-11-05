@@ -80,8 +80,7 @@ missing provider key.
 `lightwork dashboard` serves the dashboard and its REST API at
 <http://127.0.0.1:8765>. The dashboard guides first-owner sign-in and provider
 setup. To bind any address other than loopback, set a bearer token first
-(`--token` or `MAVERICK_DASHBOARD_TOKEN`); the command refuses to start without
-one.
+(`MAVERICK_DASHBOARD_TOKEN`); the command refuses to start without one.
 
 The command-line tool is installed under two names, `lightwork` and
 `maverick`, which run the same program. `lightwork init` runs the setup wizard
