@@ -196,7 +196,7 @@ def test_request_names_the_destination_and_binds_the_exact_request(sent, monkeyp
     # credential hidden.
     shown = "\n".join(call["parameter_summary"])
     assert "POST" in shown
-    assert "https://api.example.test/v1/items?page=2" in shown
+    assert "https://api.example.test/v1/items ? page=2" in shown
     assert "Content-Type" in shown and "application/json" in shown
     assert "quarterly numbers" in shown
     assert "[REDACTED:sensitive field]" in shown
@@ -277,14 +277,15 @@ def test_a_long_body_keeps_its_size_and_fingerprint_when_hiding_shortens_it(sent
 
 
 def test_compact_json_that_fits_is_shown_in_full(sent, monkeypatch):
+    # The card spaces each boundary, so the body must fit as the card shows it.
     calls = _deny_and_capture(monkeypatch)
-    body = "[" + ",".join(["1"] * 1400) + "]"
+    body = "[" + ",".join(["1"] * 900) + "]"
     _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body})
 
     (call,) = calls
     shown = "\n".join(call["parameter_summary"])
     assert "body_sha256" not in shown and "body_preview" not in shown
-    assert shown.count("1,1,") > 0
+    assert shown.count("1, 1, ") > 0
 
 
 def test_a_preview_of_non_ascii_text_is_cut_between_characters(sent, monkeypatch):
@@ -374,7 +375,7 @@ def test_sensitive_values_in_any_json_body_are_hidden(sent, monkeypatch, body):
 def test_the_address_fragment_is_not_shown_because_it_is_never_sent(sent, monkeypatch):
     shown = _card(monkeypatch, "x", url="https://api.example.test/cb?page=2#access_token=hunter2&type=bearer")
     assert "hunter2" not in shown and "#" not in shown.split("Request part")[1]
-    assert "https://api.example.test/cb?page=2" in shown
+    assert "https://api.example.test/cb ? page=2" in shown
 
 
 def test_a_body_that_cannot_be_encoded_is_refused_cleanly(sent):
@@ -450,7 +451,7 @@ def test_a_connection_string_in_the_body_does_not_hide_the_rest_of_the_request(s
     shown = _card(monkeypatch, body, {"X-Mirror": "https://other.example/in"},
                   url="https://api.example.test/v1/import?carry=data")
     assert "u:p@" not in shown
-    assert "customer_list" in shown and "X-Mirror" in shown and "/v1/import?carry=data" in shown
+    assert "customer_list" in shown and "X-Mirror" in shown and "/v1/import ? carry=data" in shown
 
 
 @pytest.mark.parametrize("args", [
@@ -544,7 +545,7 @@ def test_any_content_type_naming_a_form_makes_the_body_a_form(sent, monkeypatch,
 
 
 @pytest.mark.parametrize("body", [
-    "[" + ",".join(["1e15"] * 595) + "]",
+    "[" + ",".join(["1e15"] * 400) + "]",
     '{"amount": 1E400, "small": 1e-400, "exact": 9007199254740993.0, "zero": -0}',
 ], ids=["exponents", "unusual-numbers"])
 def test_json_numbers_are_shown_as_written(sent, monkeypatch, body):
@@ -687,6 +688,79 @@ _GITHUB_EXAMPLE = "ghp_" + "Ab3" * 12  # pragma: allowlist secret
 ], ids=["query-name", "form-name", "decoded-next-to-another"])
 def test_secrets_in_pair_names_and_decoded_values_are_hidden(sent, monkeypatch, url, headers, body):
     assert _GITHUB_EXAMPLE not in _card(monkeypatch, body, headers, url=url)
+
+
+_FORM = {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+@pytest.mark.parametrize("url,headers,body,hidden,kept", [
+    ("https://api.example.test/v1/login?user=dana&password=Tr0ub4dor;horse-battery-staple", {}, "x",  # pragma: allowlist secret
+     "horse-battery-staple", "user=dana"),
+    ("https://api.example.test/v1/token", _FORM,
+     "client_secret=k9;Zq8vT3pLmN0xR7wK2yB5&grant_type=client_credentials",  # pragma: allowlist secret
+     "Zq8vT3pLmN0xR7wK2yB5", "grant_type=client_credentials"),
+], ids=["query", "form"])
+def test_a_sensitive_value_is_hidden_through_to_the_next_ampersand(sent, monkeypatch, url, headers, body, hidden, kept):
+    shown = _real_card(monkeypatch, body, headers, url=url)
+    assert hidden not in shown and kept in shown
+
+
+@pytest.mark.parametrize("url,headers,body", [
+    ("https://api.example.test/v1/import", _FORM,
+     "replica=redis://cache:6379&notify=drop@evil.example&dump=customer_list"),
+    ("https://api.example.test/v1/import?db=postgres://db.internal:5432&to=drop@evil.example&what=customer_list",
+     {}, "x"),
+    ("https://api.example.test/v1/import/redis://u:p?to=drop@evil.example&dump=customer_list", {}, "x"),
+    ("https://api.example.test/v1/import", _FORM, "DB_PASS=hunter2&to=drop@evil.example&dump=customer_list"),
+    ("https://api.example.test/v1/import", _FORM, "MONKEY=banana&to=drop@evil.example&dump=customer_list"),
+    ("https://api.example.test/v1/import", {},
+     json.dumps({"mirror": ["redis://cache:6379", "ops@corp.example", "drop@evil.example"],
+                 "dataset": "customer_list"}, indent="\t")),
+    ("https://api.example.test/v1/import", {},
+     json.dumps({"mirror": ["redis://cache:6379", "ops@corp.example", "drop@evil.example"],
+                 "dataset": "customer_list"}, indent=0)),
+    ("https://api.example.test/v1/import", {},
+     '{"a":"redis:\\/\\/cache:6379","b":"ops@corp.example","c":"drop@evil.example","d":"customer_list"}'),
+], ids=["form-uri", "query-uri", "path-into-query", "env-like-first-pair", "env-like-name",
+        "tab-indented-json", "indent-zero-json", "escaped-scheme"])
+def test_no_pattern_on_the_card_runs_across_pairs_lines_or_values(sent, monkeypatch, url, headers, body):
+    shown = _real_card(monkeypatch, body, headers, url=url)
+    assert "drop@evil.example" in shown and "customer_list" in shown
+
+
+@pytest.mark.parametrize("body", [
+    '{"password' + "x" * 7000 + '": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '{"index": {}}\n{"password": "hunter2-correct-horse"}\n',  # pragma: allowlist secret
+], ids=["key-too-long-to-read", "ndjson"])
+def test_more_json_shapes_still_hide_sensitive_values(sent, monkeypatch, body):
+    assert "hunter2-correct-horse" not in _card(monkeypatch, body)
+
+
+def test_a_long_address_with_a_short_body_is_still_shown(sent, monkeypatch):
+    _card(monkeypatch, "x", url="https://api.example.test/" + "segment/" * 600)
+
+
+def test_connector_requests_with_many_small_fields_still_fit_the_card(sent):
+    from maverick.governed_tools import _approval_request_parts
+
+    parts = _approval_request_parts({f"k{index}": 1 for index in range(800)})
+    assert 0 < len(parts) <= 20 and all(len(part) <= 500 for part in parts)
+
+
+def test_a_long_line_is_read_only_as_far_as_the_preview_needs(sent, monkeypatch):
+    import maverick.safety.secret_detector as detector
+
+    real, scanned = detector.redact, []
+    monkeypatch.setattr(detector, "redact", lambda text: scanned.append(len(text)) or real(text))
+    _card(monkeypatch, "A" * 200_000)
+    assert sum(scanned) < 50_000
+
+
+@pytest.mark.parametrize("args", [{"url": 5}, {"url": "https://api.example.test/x", "render": 5}],
+                         ids=["url", "render"])
+def test_arguments_that_are_not_text_are_refused(sent, args):
+    out = _fetch({"method": "POST", "body": "x", **args})
+    assert out.startswith("ERROR:") and sent == []
 
 
 def test_connector_cards_hide_secrets_within_each_value(sent):

@@ -589,7 +589,10 @@ def _approval_request_parts(args: dict) -> list[str]:
             _redact_secret_leaves(_redact_request_fields(args)), sort_keys=True,
             separators=(", ", ": "), default=str,
         )
-        if len(request) > size * 20:
+        # The spaces add length the size check above does not count: longer
+        # parts (a card line holds up to 500 characters) keep it to 20 parts.
+        size = max(size, -(-len(request) // 20))
+        if size > 480:
             raise ApprovalCardError("the full connector request is too long to review")
     except ApprovalCardError:
         raise
