@@ -81,10 +81,10 @@ published as RUSTSEC-2024-0429) and the unmaintained build-time
 `proc-macro-error` (RUSTSEC-2024-0370) that the gtk/glib 0.18 macros pull in.
 They have no compatible lockfile-only resolution: Wry 0.57 pins webkit2gtk
 2.0.2, which requires GTK/GLib 0.18, and the `glib` fix begins at 0.20. Both
-findings are Linux-only. `osv-scanner.toml` carries narrow exceptions for
-exactly these two that expire on 2027-01-31; keep Linux bundles
-engineering-only and re-evaluate when webkit2gtk-rs and Wry move to gtk 0.19 /
-glib 0.20 or later.
+findings are Linux-only. The build resolves reviewed local patches for both
+instead; see [`vendor/README.md`](../../vendor/README.md). `osv-scanner.toml`
+carries no advisory exceptions. Keep Linux bundles engineering-only and
+re-evaluate when webkit2gtk-rs and Wry move to gtk 0.19 / glib 0.20 or later.
 
 ## Local development
 
