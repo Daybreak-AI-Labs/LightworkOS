@@ -876,6 +876,66 @@ def test_a_body_that_fits_with_long_headers_is_still_shown(sent, monkeypatch):
     _card(monkeypatch, body, {"Content-Type": "application/json", "Cookie": "session=" + "c" * 4700})
 
 
+@pytest.mark.parametrize("url,headers,body,kept", [
+    ("https://api.example.test/v1/sms", _FORM,
+     "To=%2B15551234567&From=%2B15557654321&Body=Meeting+moved+to+3pm.%0AReply+YES+to+confirm.",
+     "Body=Meeting+moved+to+3pm.%0AReply+YES+to+confirm."),
+    ("https://api.example.test/v1/c", _FORM, "comment=Great++work&city=New+York+&note=a%09b&p=Prix%C2%A0%3A+10",
+     "comment=Great++work"),
+    ("https://api.example.test/v1/c", _FORM, "first++name=Alice", "first++name=Alice"),
+    ("https://api.example.test/v1/s?q=line1%0Aline2&page=2", {}, "x", "q=line1%0Aline2"),
+], ids=["encoded-newline", "spacing", "spaced-name", "query-newline"])
+def test_ordinary_encoded_spacing_is_shown_as_written(sent, monkeypatch, url, headers, body, kept):
+    shown = _real_card(monkeypatch, body, headers, url=url)
+    assert kept in shown and "[REDACTED:secret]" not in shown
+
+
+@pytest.mark.parametrize("headers,body,start", [
+    (_FORM, "subject=Quarterly+report&message=" + "We+are+sending+the+report+" * 600, "message=We+are+sending"),
+    ({}, "Report: " + "A" * 12_000, "Report: AAAA"),
+    ({}, json.dumps({"message": "Report: " + "A" * 12_000}), "message"),
+], ids=["form", "text", "json-string"])
+def test_a_long_value_still_fills_the_preview(sent, monkeypatch, headers, body, start):
+    shown = _card(monkeypatch, body, headers)
+    assert start in shown
+    preview = shown.split('"body_preview":', 1)[1]
+    assert len(preview) > 2_000
+
+
+def test_a_long_escaped_string_costs_little_memory(sent, monkeypatch):
+    import tracemalloc
+
+    body = '"' + "\\n" * 2_000_000 + '"'
+    tracemalloc.start()
+    try:
+        _card(monkeypatch, body)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 60_000_000, peak
+
+
+def test_a_token_cut_by_the_read_never_shows_in_part(sent, monkeypatch):
+    body = "sk-" + "A" * 8970 + "." + "ghp_" + "Q7xR" * 9 + "." + "C" * 20_000
+    assert "ghp_Q7xR" not in _card(monkeypatch, body)
+
+
+def test_a_body_with_escaped_json_and_a_long_address_is_still_shown(sent, monkeypatch):
+    url = "https://api.example.test/v1/import?" + "&".join(f"f{index}=v{index}" for index in range(520))
+    inner = json.dumps({f"field{index}": f"value {index}" for index in range(60)})
+    _card(monkeypatch, json.dumps({"payload": inner}), url=url)
+
+
+def test_many_strings_that_hide_down_to_markers_are_read_within_a_bound(sent, monkeypatch):
+    import maverick.safety.secret_detector as detector
+
+    real, scanned = detector.redact, []
+    monkeypatch.setattr(detector, "redact", lambda text: scanned.append(len(text)) or real(text))
+    body = json.dumps(["-----BEGIN PRIVATE KEY-----\nA" + "KEY" * 2985] * 200)
+    _card(monkeypatch, body)
+    assert sum(scanned) < 300_000, sum(scanned)
+
+
 def test_connector_cards_hide_secrets_within_each_value(sent):
     """Governed connector approval cards share the per-value rule."""
     from maverick.governed_tools import _approval_request_parts

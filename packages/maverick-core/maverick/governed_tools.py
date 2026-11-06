@@ -553,13 +553,23 @@ _CONNECTION_SCHEME = re.compile(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|red
 
 def _hidden_secret_text(text: str) -> str:
     """``text`` with anything in it that looks like a key or token hidden: as
-    written (line starts count), then with its spacing made single spaces, as
-    the card shows it, so a marker that only forms once spacing is collapsed
-    is hidden too."""
+    written (line starts count), and, only where that finds more, with its
+    spacing made single spaces as the card shows it, so a marker that forms
+    only once spacing is collapsed is hidden too."""
     from .safety.secret_detector import redact
 
-    shown = " ".join(redact(text)[0].split())
-    return _AZURE_ACCOUNT_KEY.sub("[REDACTED:azure_storage]", redact(shown)[0])
+    shown = redact(text)[0]
+    collapsed, found = redact(" ".join(shown.split()))
+    if found:
+        shown = collapsed
+    return _AZURE_ACCOUNT_KEY.sub("[REDACTED:azure_storage]", shown)
+
+
+def _has_secret_text(text: str) -> bool:
+    """Whether ``_hidden_secret_text`` would hide anything in ``text``."""
+    from .safety.secret_detector import scan
+
+    return bool(scan(text) or scan(" ".join(text.split())) or _AZURE_ACCOUNT_KEY.search(text))
 
 
 def _redact_secret_leaves(value: object) -> object:

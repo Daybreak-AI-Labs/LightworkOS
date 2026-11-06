@@ -537,20 +537,40 @@ def _hidden_secrets(text: str) -> str:
     return _hidden_secret_text(text)
 
 
+def _has_secret(text: str) -> bool:
+    """Whether ``_hidden_secrets`` would hide anything in ``text``."""
+    from ..governed_tools import _has_secret_text
+
+    return _has_secret_text(text)
+
+
 # How much of one long value is read: the preview, plus as much again that is
 # dropped after hiding, so a secret the read cut in two never reaches the card.
 _VALUE_WINDOW = 3 * _REVIEW_BODY_CHARS
 
 
+# Where a read may end without splitting a key or token: at a space, or else
+# at a character no token holds (a token is letters, digits and "_-+/="; a
+# connection string also holds ":@" and stops only at a space).
 _LAST_SPACE = re.compile(r"\s\S*\Z")
+_LAST_STOP = re.compile(r"""[\s%&;,'"<>()\[\]{}\\.][^\s%&;,'"<>()\[\]{}\\.]*\Z""")
 
 
-def _cut_at_space(text: str) -> str:
-    """The first ``_VALUE_WINDOW`` characters of ``text``, ending at its last
-    space: a key or token holds none, so the cut never splits one."""
+def _cut_at_space(text: str, *, cut: bool = False) -> str:
+    """The first ``_VALUE_WINDOW`` characters of ``text`` (or all of a shorter
+    text the caller has already ``cut``), ending where no key or token can be
+    split: at the last space in its final 1,000 characters, or else at the
+    last character no token holds, or else 200 characters early (no token
+    pattern needs that many characters to match)."""
     window = text[:_VALUE_WINDOW]
-    space = _LAST_SPACE.search(window)
-    return window[:space.start()] if space and space.start() > 0 else window
+    if len(window) == len(text) and not cut:
+        return window
+    tail_start = max(0, len(window) - 1000)
+    for pattern in (_LAST_SPACE, _LAST_STOP):
+        found = pattern.search(window, tail_start)
+        if found and found.start() > 0:
+            return window[:found.start()]
+    return window[:-200]
 
 
 def _hidden_beginning(text: str) -> tuple[str, bool]:
@@ -573,10 +593,11 @@ def _reviewed_part(part: str) -> str:
     name, sep, value = part.partition("=")
     if sep and _sensitive_request_key(unquote_plus(name)):
         return f"{_hidden_secrets(name)}={_REDACTED_REQUEST_VALUE}"
-    decoded_name, decoded_value = unquote_plus(name), unquote_plus(value)
-    if decoded_name != name and _hidden_secrets(decoded_name) != decoded_name:
+    # A secret that only appears once decoded: one still there after the text
+    # as written is hidden and then decoded.
+    if unquote_plus(name) != name and _has_secret(unquote_plus(_hidden_secrets(name))):
         return "[REDACTED:secret]"
-    if sep and decoded_value != value and _hidden_secrets(decoded_value) != decoded_value:
+    if sep and unquote_plus(value) != value and _has_secret(unquote_plus(_hidden_secrets(value))):
         return f"{_hidden_secrets(name)}=[REDACTED:secret]"
     return _hidden_secrets(part)
 
@@ -602,11 +623,7 @@ def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) 
     end of what was read after hiding is dropped; reading also stops once more
     than ``limit`` characters are written. Returns the text and whether all of
     it was read."""
-    window = text if len(text) <= _VALUE_WINDOW else text[:_VALUE_WINDOW]
-    if len(window) < len(text):
-        # Drop the pair the read cut; one pair longer than the read is cut at
-        # its last space, as a long text is.
-        window = window[:window.rindex("&")] if "&" in window else _cut_at_space(window + " ")
+    window = _cut_at_space(text)
     written, size, whole = [], 0, len(window) == len(text)
     for index, piece in enumerate(window.split("&")):
         parts = _reviewed_pair(piece)
@@ -638,9 +655,30 @@ def _bounded_preview(text: str, limit: int) -> str:
 _REVIEW_WINDOW = 2 * _REVIEW_BODY_CHARS
 _REVIEW_TOKENS = 200_000
 _JSON_TOKEN = re.compile(
-    r'\s+|"[^"\\]*(?:\\.[^"\\]*)*"|[{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?'
-    r'|true|false|null|NaN|-?Infinity'
+    r'\s+|[{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null|NaN|-?Infinity'
 )
+# At most how many characters of a body are read through the secret patterns
+# for one card, so many strings that hide down to markers cannot hold it.
+_REVIEW_SCANNED = 4 * _VALUE_WINDOW
+
+
+def _string_end(text: str, start: int) -> int:
+    """Where the JSON string starting at ``start`` (its opening quote) ends,
+    just past its closing quote, found without a pattern so a long string
+    costs no memory per character. Raises ``_NotJson`` if it never closes, or
+    has more escaped quotes than a card reads."""
+    position = start + 1
+    for _ in range(_REVIEW_TOKENS):
+        quote = text.find('"', position)
+        if quote < 0:
+            raise _NotJson
+        backslash = quote - 1
+        while text[backslash] == "\\":
+            backslash -= 1
+        if (quote - 1 - backslash) % 2 == 0:
+            return quote + 1
+        position = quote + 1
+    raise _NotJson
 
 
 class _NotJson(ValueError):
@@ -677,11 +715,10 @@ def _reviewed_string(token: str) -> tuple[str, bool]:
     hidden within that string, and whether all of it was read; unchanged text
     is kept exactly as written. Of a long string, as with ``_hidden_beginning``,
     the end of what was read is dropped after hiding."""
-    decoded, whole = _decoded_string(token, _VALUE_WINDOW)
+    decoded, whole = _decoded_string(token, _VALUE_WINDOW + 1000)
     if whole:
-        shown = _hidden_secrets(decoded)
-        return (token if shown == decoded else json.dumps(shown, ensure_ascii=False)), True
-    return json.dumps(_hidden_secrets(_cut_at_space(decoded)), ensure_ascii=False)[:-1], False
+        return (json.dumps(_hidden_secrets(decoded), ensure_ascii=False) if _has_secret(decoded) else token), True
+    return json.dumps(_hidden_secrets(_cut_at_space(decoded, cut=True)), ensure_ascii=False)[:-1], False
 
 
 def _key_is_sensitive(token: str) -> bool:
@@ -708,16 +745,23 @@ def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
     written, size = [], 0
     stack: list[str] = []
     expect_key = sensitive_key = hide_next = ended = spaced = False
+    scanned = 0
     skip_to: int | None = None  # while a hidden container is read: its depth
     for _ in range(_REVIEW_TOKENS):
         if position >= len(text):
             if not ended:
                 raise _NotJson
             return "".join(written).strip(), True
-        match = _JSON_TOKEN.match(text, position)
-        if match is None:
-            raise _NotJson
-        token, position = match.group(), match.end()
+        if text[position] == '"':
+            end = _string_end(text, position)
+            # Of a long string only the beginning a card can show is copied.
+            token = text[position:min(end, position + _VALUE_WINDOW + 1000)] + ('"' * (end - position > _VALUE_WINDOW + 1000))
+            position = end
+        else:
+            match = _JSON_TOKEN.match(text, position)
+            if match is None:
+                raise _NotJson
+            token, position = match.group(), match.end()
         if token.isspace():
             spaced = True
             if skip_to is None and written and not written[-1].endswith(" "):
@@ -741,8 +785,9 @@ def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
         elif token[0] == '"':
             if expect_key:
                 sensitive_key, expect_key = _key_is_sensitive(token), False
+            scanned += len(token)
             piece, whole = _reviewed_string(token)
-            if not whole:  # a string too long to show: nothing after it is shown
+            if not whole or scanned > _REVIEW_SCANNED:  # nothing after it is shown
                 written.append(piece)
                 return "".join(written), False
         else:
@@ -797,9 +842,10 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
     if body not in (None, "", b""):
         text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
     # Measured as it will be sent, before anything is hidden: hiding a long
-    # part of the address or a header never makes a request look short.
-    sent = len(json.dumps({"method": method, "url": url, "headers": headers}))
-    if sent + min(len(json.dumps(text)) if text else 0, _REVIEW_BODY_CHARS + 200) > 7600:
+    # part of the address or a header never makes a request look short. The
+    # body counts only as far as a card shows it.
+    sent = len(method) + len(url) + sum(len(name) + len(value) + 6 for name, value in headers.items())
+    if sent + min(len(text) if text else 0, _REVIEW_BODY_CHARS) + 100 > 7600:
         raise ApprovalCardError("the address and headers are too long to show a person in full")
     shown: dict[str, Any] = {"method": method, "url": _reviewed_url(url), "headers": headers}
     notes: list[str] = []
