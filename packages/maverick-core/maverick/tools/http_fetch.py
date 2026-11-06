@@ -497,18 +497,26 @@ def _reviewed_url(url: str) -> str:
     """The address as the reviewer reads it: credentials in the user-info part
     and query values under sensitive names are hidden, everything else is
     shown as written."""
-    from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
+    from ..governed_tools import _REDACTED_REQUEST_VALUE
 
     parts = urlsplit(url)
     netloc = parts.netloc
     if "@" in netloc:
         netloc = f"{_REDACTED_REQUEST_VALUE}@{netloc.rpartition('@')[2]}"
-    query = "&".join(
+    query = _reviewed_pairs(parts.query) if parts.query else ""
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
+def _reviewed_pairs(text: str) -> str:
+    """``name=value&...`` (a query string or form body) with the values of
+    sensitive names hidden."""
+    from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
+
+    return "&".join(
         f"{name}={_REDACTED_REQUEST_VALUE}"
         if sep and _sensitive_request_key(unquote(name)) else f"{name}{sep}{value}"
-        for name, sep, value in (pair.partition("=") for pair in parts.query.split("&"))
-    ) if parts.query else ""
-    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+        for name, sep, value in (pair.partition("=") for pair in text.split("&"))
+    )
 
 
 def _bounded_preview(text: str, limit: int) -> str:
@@ -544,21 +552,38 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
             structured = json.loads(text, object_pairs_hook=_unique_keys)
         except ValueError:
             structured = None
+        if isinstance(structured, (dict, list)):
+            # A preview is a plain string, so hide keyed values before cutting it.
+            from ..governed_tools import _redact_request_fields
+
+            readable = json.dumps(_redact_request_fields(structured))
+        elif _is_form_body(headers):
+            readable = _reviewed_pairs(text)
+        else:
+            readable = text
         if isinstance(structured, (dict, list)) and len(json.dumps(structured)) <= _REVIEW_BODY_CHARS:
             shown["body"] = structured  # keyed values get the same redaction
-        elif len(json.dumps(text)) <= _REVIEW_BODY_CHARS:
-            shown["body"] = text
+        elif len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
+            shown["body"] = readable
         else:
-            preview = _bounded_preview(text, _REVIEW_BODY_CHARS)
+            preview = _bounded_preview(readable, _REVIEW_BODY_CHARS)
             shown["body_preview"] = preview
             shown["body_characters"] = len(text)
             shown["body_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
             notes.append(
-                f"The body has {len(text):,} characters; only the first "
-                f"{len(preview):,} are shown. Its fingerprint (body_sha256) fixes "
-                "the exact body that will be sent."
+                f"The body has {len(text):,} characters; only a preview of its "
+                f"start ({len(preview):,} characters) is shown. Its fingerprint "
+                "(body_sha256) fixes the exact body that will be sent."
             )
     return shown, notes
+
+
+def _is_form_body(headers: dict) -> bool:
+    content_type = next(
+        (str(value) for name, value in headers.items()
+         if str(name).lower() == "content-type"), "",
+    )
+    return content_type.split(";")[0].strip().lower() == "application/x-www-form-urlencoded"
 
 
 def _request_permit(request: dict[str, Any], parsed: Any, max_bytes: int):

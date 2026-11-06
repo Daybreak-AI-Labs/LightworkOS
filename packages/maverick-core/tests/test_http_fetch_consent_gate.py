@@ -228,6 +228,37 @@ def test_keyed_secrets_in_a_json_body_are_hidden_like_connector_requests(sent, m
     assert call["parameters"]["body"] == body
 
 
+def test_keyed_secrets_in_a_large_json_body_are_hidden_from_its_preview(sent, monkeypatch):
+    """A body too long to show in full is previewed after the same field
+    redaction, while its fingerprint still fixes the exact body sent."""
+    calls = _deny_and_capture(monkeypatch)
+    body = json.dumps({"password": "hunter2-correct-horse", "payload": "x" * 5000})  # pragma: allowlist secret
+    _fetch({"url": "https://api.example.test/login", "method": "POST", "body": body})
+
+    (call,) = calls
+    shown = "\n".join(call["parameter_summary"])
+    assert "hunter2-correct-horse" not in shown
+    assert "[REDACTED:sensitive field]" in shown
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert f"{len(body):,}" in shown
+    assert call["parameters"]["body"] == body
+
+
+@pytest.mark.parametrize("filler", ["", "&note=" + "x" * 5000], ids=["short", "long"])
+def test_keyed_secrets_in_a_form_body_are_hidden(sent, monkeypatch, filler):
+    calls = _deny_and_capture(monkeypatch)
+    body = "user=dana&password=hunter2-correct-horse" + filler  # pragma: allowlist secret
+    _fetch({"url": "https://api.example.test/login", "method": "POST",
+            "headers": {"Content-Type": "application/x-www-form-urlencoded"},
+            "body": body})
+
+    (call,) = calls
+    shown = "\n".join(call["parameter_summary"])
+    assert "user=dana" in shown
+    assert "hunter2-correct-horse" not in shown
+    assert call["parameters"]["body"] == body
+
+
 def test_a_json_body_with_a_repeated_key_is_shown_as_written(sent, monkeypatch):
     """Parsed JSON keeps only the last of two equal keys; the reviewer must see
     both values, because the receiving server may read either."""
