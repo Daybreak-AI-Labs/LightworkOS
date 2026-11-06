@@ -371,12 +371,6 @@ def test_sensitive_values_in_any_json_body_are_hidden(sent, monkeypatch, body):
     assert "hunter2-correct-horse" not in shown
 
 
-def test_a_form_body_is_read_as_a_form_even_when_it_parses_as_json(sent, monkeypatch):
-    body = '{"note":"x&password=hunter2-correct-horse&y=1"}'  # pragma: allowlist secret
-    shown = _card(monkeypatch, body, {"Content-Type": "application/x-www-form-urlencoded"})
-    assert "hunter2-correct-horse" not in shown
-
-
 def test_the_address_fragment_is_not_shown_because_it_is_never_sent(sent, monkeypatch):
     shown = _card(monkeypatch, "x", url="https://api.example.test/cb?page=2#access_token=hunter2&type=bearer")
     assert "hunter2" not in shown and "#" not in shown.split("Request part")[1]
@@ -407,10 +401,19 @@ def test_a_long_json_body_is_read_only_as_far_as_the_preview_needs(sent, monkeyp
     '{"user": "dana", "password": "hunter2-correct-horse"}',  # pragma: allowlist secret
     '[{"token": "hunter2-correct-horse"}]',  # pragma: allowlist secret
     json.dumps({"password": "hunter2-correct-horse", "pad": "p" * 5000}),  # pragma: allowlist secret
-], ids=["object", "array", "long"])
-def test_a_json_body_sent_as_a_form_has_both_readings_hidden(sent, monkeypatch, body):
-    shown = _card(monkeypatch, body, {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"})
-    assert "hunter2-correct-horse" not in shown
+    '{"note":"x&password=hunter2-correct-horse&y=1"}',  # pragma: allowlist secret
+], ids=["object", "array", "long", "pairs-inside"])
+def test_a_json_body_declared_as_a_form_is_refused_before_anyone_is_asked(sent, monkeypatch, body):
+    """A server may read such a body as JSON or as a form, and the two readings
+    hide different values, so it is refused with the fix to make."""
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body,
+                  "headers": {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"}})
+    assert out.startswith("ERROR:") and "application/json" in out and "nothing was sent" in out
+    assert asked == [] and sent == []
 
 
 def test_a_large_numeric_body_is_read_only_as_far_as_the_preview_needs(sent, monkeypatch):
@@ -458,8 +461,15 @@ def test_a_connection_string_in_the_body_does_not_hide_the_rest_of_the_request(s
     {"body": "x", "headers": {"X-Note": "caf\u00e9"}},
     {"body": "x", "headers": {"Content-Type": ["application/x-www-form-urlencoded"]}},
     {"body": "x", "headers": ["X-Note: hello"]},
+    {"body": "x", "headers": {"X-A": "b\r\nX-Evil: c"}},
+    {"body": "x", "headers": {"X-A": "b\x00c"}},
+    {"body": "x", "headers": {"Bad Name": "v"}},
+    {"body": "x", "headers": {"": "v"}},
+    {"body": "x", "headers": {"X:Y": "v"}},
+    {"body": "x", "method": 5},
 ], ids=["object-body", "array-body", "number-body", "number-header", "non-ascii-header",
-        "list-header", "header-list"])
+        "list-header", "header-list", "line-break-header", "nul-header", "spaced-name",
+        "empty-name", "colon-name", "number-method"])
 def test_a_request_that_cannot_be_sent_is_refused_before_anyone_is_asked(sent, monkeypatch, args):
     import maverick.safety as safety
 
@@ -479,7 +489,7 @@ _AZURE_KEY = ";AccountKey=" + "A" * 40
 
 
 @pytest.mark.parametrize("url,headers,body", [
-    ("https://api.example.test/v1/" + _AZURE_KEY + "/import", {"X-Mirror": "https://other.example/in"},
+    ("https://api.example.test/v1/import/" + _AZURE_KEY, {"X-Mirror": "https://other.example/in"},
      _AZURE_START + "x"),
     ("https://api.example.test/v1/import", {"X-Mirror": "https://other.example/in", "X-Z": "-----END PRIVATE KEY-----"},
      "note: -----BEGIN PRIVATE KEY----- x"),
@@ -546,11 +556,13 @@ def test_json_numbers_are_shown_as_written(sent, monkeypatch, body):
 
 
 @pytest.mark.parametrize("url", [
+    "https://[::1/x",
+    "https://a.test]/x",
     "https://api.example.test/x?pass\tword=1",
     "https://api.example.test:abc/x",
     "https://api.example.test:99999/x",
     "https://api.example.test/a b",
-], ids=["tab", "port-word", "port-range", "space"])
+], ids=["open-bracket", "stray-bracket", "tab", "port-word", "port-range", "space"])
 def test_an_address_that_cannot_be_sent_is_refused_before_anyone_is_asked(sent, monkeypatch, url):
     import maverick.safety as safety
 
@@ -576,7 +588,105 @@ def test_nothing_after_a_string_too_long_to_show_appears_as_if_it_followed(sent,
     body = json.dumps({"text": "\u00e9" * 3000, "to": "drop@evil.example"})
     shown = _card(monkeypatch, body)
     assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
-    assert "drop@evil.example" not in shown and "\\\\u00e9" not in shown
+    assert "drop@evil.example" not in shown
+
+
+def _real_card(monkeypatch, body, headers=None, url="https://api.example.test/v1/import"):
+    """The card a person sees, after the card builder's own checks, and
+    checked again as a stored card is."""
+    from maverick.approval_cards import validate_approval_card
+
+    cards: list[dict] = []
+    _approve_as_human(monkeypatch, cards)
+    _fetch({"url": url, "method": "POST", "headers": headers or {}, "body": body})
+    (kwargs,) = cards
+    validate_approval_card(kwargs["approval_card"])
+    summary = kwargs["approval_card"]["parameters"]["summary"]
+    # The request is shown in numbered parts; rejoin them to read it whole.
+    request = "".join(line.split(": ", 1)[1] for line in summary if line.startswith("Request part "))
+    return "\n".join(summary) + "\n" + request
+
+
+@pytest.mark.parametrize("headers,body", [
+    ({"Accept": "*", "User-Agent": "agent", "X-Mirror": "a@b", "X-To": "drop@evil.example"}, "redis://a"),
+    ({"X-Mirror": "drop@evil.example"},
+     json.dumps({"conn": _AZURE_START, "to": "drop@evil.example", "data": "customer_list", "z": _AZURE_KEY})),
+    ({"X-Mirror": "drop@evil.example"},
+     '{"cache":"redis://localhost","owner":"ops@corp.example","to":"drop@evil.example","data":"customer_list"}'),
+    ({"X-Mirror": "drop@evil.example"}, '["redis://u:p", "q@h", "drop@evil.example", "customer_list"]'),
+], ids=["uri-body-to-headers", "azure-across-fields", "uri-across-fields", "uri-across-items"])
+def test_the_card_a_person_sees_keeps_every_value(sent, monkeypatch, headers, body):
+    shown = _real_card(monkeypatch, body, headers)
+    assert "X-Mirror" in shown and "drop@evil.example" in shown and "/v1/import" in shown
+    if "customer_list" in body:
+        assert "customer_list" in shown
+
+
+def test_two_header_names_hidden_alike_stay_two_headers(sent, monkeypatch):
+    headers = {"AKIAIOSFODNN7EXAMPLE": "forward-to=drop@evil.example",  # pragma: allowlist secret
+               "AKIAI44QH8DHBEXAMPLE": "second"}  # pragma: allowlist secret
+    shown = _real_card(monkeypatch, "hello", headers)
+    assert "drop@evil.example" in shown and "second" in shown
+    assert "AKIAIOSFODNN7EXAMPLE" not in shown
+
+
+@pytest.mark.parametrize("body", [
+    '{"password":"hunter2-correct-horse","x":NaN}',  # pragma: allowlist secret
+    '{"x":Infinity,"password":"hunter2-correct-horse"}',  # pragma: allowlist secret
+    '{"password":"hunter2-correct-horse","x":-Infinity}',  # pragma: allowlist secret
+], ids=["nan", "infinity", "negative-infinity"])
+def test_json_with_nan_or_infinity_is_still_read_as_json(sent, monkeypatch, body):
+    assert "hunter2-correct-horse" not in _card(monkeypatch, body)
+
+
+_AWS_EXAMPLE_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize("body", [
+    "redis://a:b@" + "x" * 5926 + " aws_secret_access_key=" + _AWS_EXAMPLE_SECRET + " and more " + "y" * 3000,
+    json.dumps({"note": "redis://a:b@" + "x" * 5926 + " aws_secret_access_key=" + _AWS_EXAMPLE_SECRET
+                + " and more " + "y" * 3000}),
+], ids=["text", "json-string"])
+def test_a_secret_cut_by_the_read_never_reaches_the_card(sent, monkeypatch, body):
+    assert _AWS_EXAMPLE_SECRET[:20] not in _card(monkeypatch, body)
+
+
+@pytest.mark.parametrize("url", [
+    "https://api.example.test/upload/redis://a:b@" + "customer_list_" * 40_000,
+    "https://api.example.test/upload?q=redis://a:b@" + "customer_list_" * 40_000,
+], ids=["path", "query"])
+def test_an_address_too_long_to_show_is_refused_by_its_sent_length(sent, monkeypatch, url):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": url, "method": "POST", "body": "x"})
+    assert out.startswith("ERROR:") and "too long" in out and asked == []
+
+
+def test_a_long_form_value_is_read_only_as_far_as_the_preview_needs(sent, monkeypatch):
+    import maverick.safety.secret_detector as detector
+
+    real, scanned = detector.redact, []
+    monkeypatch.setattr(detector, "redact", lambda text: scanned.append(len(text)) or real(text))
+    body = "a=" + "-----BEGIN PRIVATE KEY-----" * 40_000
+    shown = _card(monkeypatch, body, {"Content-Type": "application/x-www-form-urlencoded"})
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert sum(scanned) < 200_000
+
+
+_GITHUB_EXAMPLE = "ghp_" + "Ab3" * 12  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize("url,headers,body", [
+    ("https://api.example.test/u?" + _GITHUB_EXAMPLE + "-token=1", {}, "x"),
+    ("https://api.example.test/u", {"Content-Type": "application/x-www-form-urlencoded"},
+     _GITHUB_EXAMPLE + "-token=1&a=2"),
+    ("https://api.example.test/u", {"Content-Type": "application/x-www-form-urlencoded"},
+     "note=AKIAIOSFODNN7EXAMPLE%20" + _GITHUB_EXAMPLE),  # pragma: allowlist secret
+], ids=["query-name", "form-name", "decoded-next-to-another"])
+def test_secrets_in_pair_names_and_decoded_values_are_hidden(sent, monkeypatch, url, headers, body):
+    assert _GITHUB_EXAMPLE not in _card(monkeypatch, body, headers, url=url)
 
 
 def test_connector_cards_hide_secrets_within_each_value(sent):

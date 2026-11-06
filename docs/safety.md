@@ -86,8 +86,10 @@ for, such as a headless run outside a chat task, is refused.
   address, the headers, and JSON and form bodies), and anything that looks
   like a key or token, are hidden on the card but sent as written; any other
   body is shown as written. A long body is shown as its beginning plus its
-  size and a fingerprint of the whole. The approval is bound to the exact
-  request, so a changed request is not sent.
+  size and a fingerprint of the whole. A request the HTTP client could not
+  send, or a JSON body whose Content-Type names a form, is refused before
+  anyone is asked. The approval is bound to the exact request, so a changed
+  request is not sent.
 - **Connector changes:** every change a connector makes in another system
   (sending email or chat messages, creating issues, updating records) is
   previewed, waits for a fresh human decision and is recorded with receipts

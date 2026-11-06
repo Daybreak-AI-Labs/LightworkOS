@@ -542,30 +542,37 @@ def _redact_request_fields(value: object, *, sensitive: bool = False) -> object:
     return _REDACTED_REQUEST_VALUE if sensitive else value
 
 
-class ReviewedText(str):
-    """Text whose secrets a caller already hid piece by piece (each JSON value,
-    each form pair). It is shown as is: scanning it again as one text could
-    match across two pieces and hide the text between them."""
+# An Azure storage key on its own. The connection-string pattern joins an
+# account name to a key written any distance later, so a value holding only
+# the key is hidden too: it is key material, and the pattern then cannot run
+# from one value into another.
+_AZURE_ACCOUNT_KEY = re.compile(r"AccountKey=[A-Za-z0-9+/=]{40,}")
+
+
+def _hidden_secret_text(text: str) -> str:
+    """``text`` with anything in it that looks like a key or token hidden."""
+    from .safety.secret_detector import redact
+
+    return _AZURE_ACCOUNT_KEY.sub("[REDACTED:azure_storage]", redact(text)[0])
 
 
 def _redact_secret_leaves(value: object) -> object:
     """Hide anything that looks like a key or token inside each value on its
     own. Scanning the whole request as one text let a match run from one value
     into the next and hide the fields and headers between them."""
-    from .safety.secret_detector import redact
-
-    if isinstance(value, ReviewedText):
-        return str(value)
     if isinstance(value, dict):
-        return {
-            (redact(key)[0] if isinstance(key, str) else key): _redact_secret_leaves(item)
-            for key, item in value.items()
-        }
+        shown: dict = {}
+        for key, item in value.items():
+            name = _hidden_secret_text(key) if isinstance(key, str) else key
+            while name in shown:  # two names hidden alike stay two entries
+                name = f"{name} (another)"
+            shown[name] = _redact_secret_leaves(item)
+        return shown
     if isinstance(value, (list, tuple)):
         return [_redact_secret_leaves(item) for item in value]
     if value is None or isinstance(value, (bool, int, float)):
         return value
-    return redact(value if isinstance(value, str) else str(value))[0]
+    return _hidden_secret_text(value if isinstance(value, str) else str(value))
 
 
 def _approval_request_parts(args: dict) -> list[str]:
@@ -575,9 +582,12 @@ def _approval_request_parts(args: dict) -> list[str]:
         raw_request = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
         if not raw_request or len(raw_request) > size * 20:
             raise ApprovalCardError("the full connector request is too long to review")
+        # Values are separated by a space, which every secret pattern but two
+        # stops at; _hidden_secret_text leaves those two nothing to join, so
+        # the card's own secret check cannot hide text between two values.
         request = json.dumps(
             _redact_secret_leaves(_redact_request_fields(args)), sort_keys=True,
-            separators=(",", ":"), default=str,
+            separators=(", ", ": "), default=str,
         )
         if len(request) > size * 20:
             raise ApprovalCardError("the full connector request is too long to review")
