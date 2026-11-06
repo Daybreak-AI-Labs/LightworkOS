@@ -12,6 +12,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from test_support.starlette_state import patch_state
+
 ORIGIN = {"Origin": "http://127.0.0.1"}
 BASE = "/api/v1/admin/services"
 _REAL_COMMAND = __import__("maverick_dashboard.service_supervisor", fromlist=["command"]).command  # before any stand-in
@@ -195,7 +197,7 @@ def restartable(monkeypatch):
     from maverick_dashboard import dashboard_restart
     from maverick_dashboard.app import app
     server = SimpleNamespace(should_exit=False)
-    monkeypatch.setattr(app.state, "dashboard_server", server, raising=False)
+    patch_state(monkeypatch, app.state, "dashboard_server", server, raising=False)
     monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
     dashboard_restart._reset_for_tests()
     yield server
@@ -206,7 +208,7 @@ def test_an_unsupervised_dashboard_says_plainly_it_cannot_restart_itself(client,
     from maverick_dashboard.app import app
     for name in ("KUBERNETES_SERVICE_HOST", "INVOCATION_ID", "MAVERICK_DESKTOP_CONTROL"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(app.state, "dashboard_server", None, raising=False)
+    patch_state(monkeypatch, app.state, "dashboard_server", None, raising=False)
     from maverick_dashboard import dashboard_restart
     monkeypatch.setattr(dashboard_restart.os.path, "exists", lambda path: False)
     row = client.get(BASE).json()["dashboard"]

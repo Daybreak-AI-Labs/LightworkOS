@@ -258,7 +258,7 @@ jobs:
           fi
           "$parity_python" -I -m pip install --upgrade \
             'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
-            'packaging==26.3' 'pytest==9.1.1' 'certifi==2026.10.23'
+            'packaging==26.3' 'pytest==9.2.0' 'certifi==2026.10.23'
           # Verify the same runtime without the optional extension first.
           "$parity_python" -I -m pip install -e packages/maverick-core --no-deps
           "$parity_python" -I - <<'PY'

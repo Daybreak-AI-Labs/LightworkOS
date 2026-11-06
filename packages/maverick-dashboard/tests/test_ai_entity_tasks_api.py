@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from maverick import ai_entity_tasks as tasks
 from maverick_dashboard import ai_entity_tasks_api as api
 
+from test_support.starlette_state import patch_state
+
 BASE = "/api/v1/ai-entity-tasks"
 NOW = 1_900_000_000.0
 
@@ -221,7 +223,8 @@ def test_malformed_readiness_and_store_contract_fail_closed(
     assert response.json()["detail"] == "AI-entity task readiness is unavailable"
 
     state.ready = True
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         client.app.state,
         "ai_entity_tasks_store_factory",
         lambda **_kwargs: SimpleNamespace(tenant_id="tenant-a"),

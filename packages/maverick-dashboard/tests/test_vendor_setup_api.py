@@ -12,6 +12,8 @@ from maverick.paths import tenant_scope
 from maverick_dashboard import rbac
 from maverick_dashboard import vendor_setup_api as api
 
+from test_support.starlette_state import patch_state
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
@@ -91,7 +93,7 @@ def test_unsupported_profile_shows_recovery_action_without_entering_records(clie
     monkeypatch.setattr(setup, "current", forbidden)
     monkeypatch.setattr(setup, "owner_policy", forbidden)
     monkeypatch.setattr(connections, "list_connections", forbidden)
-    monkeypatch.setattr(client.app.state, "vendor_onboarding_binding_factory", forbidden)
+    patch_state(monkeypatch, client.app.state, "vendor_onboarding_binding_factory", forbidden)
     before = client.get("/api/v1/vendor-setup")
     assert before.status_code == 200, before.text
     state = before.json()
