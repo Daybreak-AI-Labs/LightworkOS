@@ -41,6 +41,13 @@ def test_detects_db_connection_uri():
     assert m and "s3cr3t" not in red
 
 
+def test_a_quoted_connection_uri_is_hidden_without_the_text_after_it():
+    # Inside JSON or quotes the URI ends at its closing quote; a match running
+    # to the next whitespace hid every field and header written after it.
+    red, m = redact('{"replica":"redis://u:s3cr3t@cache/0","dump":"rows"}')
+    assert m and "s3cr3t" not in red and '"dump":"rows"' in red
+
+
 def test_detects_bearer_header():
     red, m = redact(f"Authorization: Bearer {_FAKE_BEARER_TOK}")
     assert m and _FAKE_BEARER_TOK not in red

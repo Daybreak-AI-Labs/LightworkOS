@@ -403,6 +403,72 @@ def test_a_long_json_body_is_read_only_as_far_as_the_preview_needs(sent, monkeyp
     assert 0 < len(checked) < 2_000
 
 
+@pytest.mark.parametrize("body", [
+    '{"user": "dana", "password": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '[{"token": "hunter2-correct-horse"}]',  # pragma: allowlist secret
+    json.dumps({"password": "hunter2-correct-horse", "pad": "p" * 5000}),  # pragma: allowlist secret
+], ids=["object", "array", "long"])
+def test_a_json_body_sent_as_a_form_has_both_readings_hidden(sent, monkeypatch, body):
+    shown = _card(monkeypatch, body, {"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"})
+    assert "hunter2-correct-horse" not in shown
+
+
+def test_ordinary_json_numbers_are_read_without_a_per_number_copy(sent, monkeypatch):
+    """Exact number text is kept only for an integer too long to convert;
+    ordinary numbers are read natively, so a large numeric body costs what
+    reading it as JSON costs."""
+    import maverick.tools.http_fetch as http_fetch_module
+
+    made = []
+
+    class Counted(str):
+        def __new__(cls, value):
+            made.append(1)
+            return str.__new__(cls, value)
+
+    monkeypatch.setattr(http_fetch_module, "_Number", Counted)
+    shown = _card(monkeypatch, json.dumps(list(range(200_000))))
+    assert "body_sha256" in shown and made == []
+
+
+@pytest.mark.parametrize("url,headers,body", [
+    ("https://api.example.test/x?a=1;password=hunter2-correct-horse", {}, "x"),  # pragma: allowlist secret
+    ("https://api.example.test/x", {"Content-Type": "application/x-www-form-urlencoded"},
+     "a=1;password=hunter2-correct-horse"),  # pragma: allowlist secret
+], ids=["query", "form"])
+def test_pairs_separated_by_semicolons_are_hidden_too(sent, monkeypatch, url, headers, body):
+    shown = _card(monkeypatch, body, headers, url=url)
+    assert "hunter2-correct-horse" not in shown and "a=1" in shown
+
+
+def test_a_connection_string_in_the_body_does_not_hide_the_rest_of_the_request(sent, monkeypatch):
+    body = '{"replica":"redis://u:p@cache","dump":"customer_list"}'  # pragma: allowlist secret
+    shown = _card(monkeypatch, body, {"X-Mirror": "https://other.example/in"},
+                  url="https://api.example.test/v1/import?carry=data")
+    assert "u:p@" not in shown
+    assert "customer_list" in shown and "X-Mirror" in shown and "/v1/import?carry=data" in shown
+
+
+@pytest.mark.parametrize("args", [
+    {"body": {"a": 1}},
+    {"body": [1, 2]},
+    {"body": 5},
+    {"body": "x", "headers": {"X-Count": 5}},
+    {"body": "x", "headers": {"X-Note": "caf\u00e9"}},
+    {"body": "x", "headers": {"Content-Type": ["application/x-www-form-urlencoded"]}},
+    {"body": "x", "headers": ["X-Note: hello"]},
+], ids=["object-body", "array-body", "number-body", "number-header", "non-ascii-header",
+        "list-header", "header-list"])
+def test_a_request_that_cannot_be_sent_is_refused_before_anyone_is_asked(sent, monkeypatch, args):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", **args})
+    assert out.startswith("ERROR:") and "nothing was sent" in out
+    assert asked == [] and sent == []
+
+
 def test_a_json_body_with_a_repeated_key_is_shown_as_written(sent, monkeypatch):
     """Parsed JSON keeps only the last of two equal keys; the reviewer must see
     both values, because the receiving server may read either."""

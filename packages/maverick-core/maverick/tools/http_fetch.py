@@ -510,14 +510,16 @@ def _reviewed_url(url: str) -> str:
 
 def _reviewed_pairs(text: str) -> str:
     """``name=value&...`` (a query string or form body) with the values of
-    sensitive names hidden."""
+    sensitive names hidden. Some servers also split pairs on ``;``, so a
+    pair after either separator is read."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
 
-    return "&".join(
-        f"{name}={_REDACTED_REQUEST_VALUE}"
-        if sep and _sensitive_request_key(unquote(name)) else f"{name}{sep}{value}"
-        for name, sep, value in (pair.partition("=") for pair in text.split("&"))
-    )
+    def reviewed(piece: str) -> str:
+        name, sep, _value = piece.partition("=")
+        return f"{name}={_REDACTED_REQUEST_VALUE}" if sep and _sensitive_request_key(unquote(name)) else piece
+
+    return "".join(piece if piece in ("&", ";") else reviewed(piece)
+                   for piece in re.split(r"([&;])", text))
 
 
 def _bounded_preview(text: str, limit: int) -> str:
@@ -537,7 +539,7 @@ class _Pairs(list):
 
 
 class _Number(str):
-    """A JSON number exactly as written: no rounding and no digit limit."""
+    """An integer too long for Python to convert, kept exactly as written."""
 
 
 def _readable_json(value: Any, limit: int) -> str:
@@ -578,20 +580,32 @@ def _readable_json(value: Any, limit: int) -> str:
     return "".join(written)
 
 
+def _parsed_json(text: str) -> Any:
+    """The body read as JSON (a leading byte-order mark ignored), or None."""
+    candidate = text.removeprefix("\ufeff")
+    try:
+        return json.loads(candidate, object_pairs_hook=_Pairs)
+    except ValueError as exc:
+        if "integer string conversion" not in str(exc):
+            return None
+    try:  # an integer too long to convert: keep its digits as text
+        return json.loads(candidate, object_pairs_hook=_Pairs, parse_int=_Number)
+    except ValueError:
+        return None
+
+
 def _readable_body(text: str, headers: dict) -> str:
-    """The body as the reviewer reads it: a form body with the values of
-    sensitive names hidden, a JSON object or array as compact JSON with the
-    values of sensitive keys hidden, anything else as written."""
+    """The body as the reviewer reads it: a JSON object or array as compact
+    JSON with the values of sensitive keys hidden, anything else as written;
+    a form body then also has the values of sensitive names hidden, so a
+    server reading it either way finds nothing the card showed."""
+    parsed = _parsed_json(text)
+    readable = _readable_json(parsed, _REVIEW_BODY_CHARS) if isinstance(parsed, list) else text
     if _is_form_body(headers):
         # Only a body that fits is shown whole; of a longer one only the
         # beginning can appear, so the rest is not read.
-        return _reviewed_pairs(text[:2 * _REVIEW_BODY_CHARS])
-    try:
-        parsed = json.loads(text.removeprefix("\ufeff"),
-                            object_pairs_hook=_Pairs, parse_int=_Number, parse_float=_Number)
-    except ValueError:
-        return text
-    return _readable_json(parsed, _REVIEW_BODY_CHARS) if isinstance(parsed, list) else text
+        readable = _reviewed_pairs(readable[:2 * _REVIEW_BODY_CHARS])
+    return readable
 
 
 def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[dict, list[str]]:
@@ -614,7 +628,7 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
         raise ApprovalCardError("the body is not valid text") from exc
     except RecursionError as exc:
         raise ApprovalCardError("the body is nested too deeply to show a person") from exc
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise ApprovalCardError("the body could not be shown to a person") from exc
     # Shown in full only when both the body that is sent and what the person
     # reads fit: hiding a long value never makes a large upload look small, and
@@ -748,6 +762,15 @@ def _run_fetch(args: dict[str, Any]) -> str:
     url = (args.get("url") or "").strip()
     if not url:
         return "ERROR: url is required"
+    # Refused before anything else: a person must never approve a request the
+    # HTTP client cannot send.
+    raw_headers, body = args.get("headers") or {}, args.get("body")
+    if not isinstance(raw_headers, dict) or not all(
+            isinstance(name, str) and isinstance(value, str) and name.isascii() and value.isascii()
+            for name, value in raw_headers.items()):
+        return "ERROR: headers must map names to plain ASCII text; nothing was sent"
+    if body is not None and not isinstance(body, str):
+        return "ERROR: the body must be text; nothing was sent"
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return f"ERROR: only http/https supported; got scheme={parsed.scheme!r}"
@@ -766,10 +789,10 @@ def _run_fetch(args: dict[str, Any]) -> str:
     method = (args.get("method") or "GET").upper()
     # Copies, so the request a person approves is the request that is sent even
     # if the caller's arguments change while the decision is pending.
-    headers = copy.deepcopy(dict(args.get("headers") or {}))
+    headers = copy.deepcopy(dict(raw_headers))
     headers.setdefault("User-Agent", "Mozilla/5.0 (compatible; Lightwork/1.0)")
     headers.setdefault("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
-    body = copy.deepcopy(args.get("body"))
+    body = copy.deepcopy(body)
     # 64 KB default: a page render trims to markdown anyway, and the old
     # 200 KB default guaranteed one fetch filled the whole per-tool-result
     # context budget. Callers can request more within the native 10MiB ceiling.

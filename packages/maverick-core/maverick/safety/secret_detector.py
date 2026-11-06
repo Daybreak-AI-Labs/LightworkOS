@@ -104,9 +104,12 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     ("twilio_api_key",     re.compile(r"\bSK[0-9a-fA-F]{32}\b")),
     ("slack_webhook",      re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+")),
     # Connection strings carrying inline creds (postgres/mysql/mongodb/redis).
+    # The match ends at whitespace or at a character a URI cannot hold
+    # unencoded (a quote, backslash, angle bracket or backtick), so inside
+    # JSON or quotes it hides the URI and not every field written after it.
     ("db_connection_uri",  re.compile(
         r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://"
-        r"[^:@/\s]+:[^@/\s]+@[^\s]+"
+        r"[^:@/\s]+:[^@/\s]+@[^\s\"'\\<>`]+"
     )),
     # Authorization: Bearer <token> headers (require a token-ish length to
     # avoid flagging the literal word "Bearer").
