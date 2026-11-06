@@ -44,9 +44,11 @@ ACCEPTED_RISKS = (
         "review_by": "2027-02-05",
         "reason": "Only tar 7 is fixed, and Expo CLI 0.22 (Expo SDK 52) reads tar's default export, "
                   "which tar 7 removed: with tar 7 `expo prebuild` cannot unpack its template. Expo CLI "
-                  "unpacks only the template archive that build-native.cjs first checks against the "
-                  "sha512 pinned in native-template.json, so no untrusted archive reaches tar. Remove "
-                  "this entry when the companion moves to Expo SDK 53 or later (tar 7).",
+                  "extracts only Expo-published template and app archives fetched over TLS from npm or "
+                  "Expo, and the documented build path (build-native.cjs) first checks the template "
+                  "against the sha512 pinned in native-template.json. Running `expo prebuild` or "
+                  "`expo run:*` directly fetches the default template without that pin. Remove this "
+                  "entry when the companion moves to Expo SDK 53 or later (tar 7).",
     },
     {
         "lockfile": _MOBILE_LOCK,
@@ -56,8 +58,8 @@ ACCEPTED_RISKS = (
         "review_by": "2027-02-05",
         "reason": "Only image-size 2 is fixed, and Metro 0.81 (React Native 0.76) calls the package as a "
                   "function, which image-size 2 no longer exports, so image assets would stop bundling. "
-                  "Metro measures only image files committed to this app (none today); the infinite loop "
-                  "needs a crafted JXL, HEIF or ICNS file in the source tree. Remove this entry with the "
+                  "Metro measures the app's images and those shipped in its locked npm packages; the "
+                  "infinite loop needs a crafted JXL, HEIF or ICNS file among them. Remove this entry with the "
                   "React Native and Expo SDK upgrade.",
     },
 )

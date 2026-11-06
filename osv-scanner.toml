@@ -1,3 +1,5 @@
-# No advisory exceptions. Reviewed local dependency fixes are checked by
-# scripts/check_vendor_patches.py and the desktop regression harness; dated,
-# per-lockfile accepted risks live in scripts/check_osv_results.py.
+# This file holds no IgnoredVulns: an entry here would hide an advisory in
+# every scanned lockfile. Reviewed local dependency fixes are checked by
+# scripts/check_vendor_patches.py and the desktop regression harness; the
+# scoped, dated accepted risks (one lockfile, one exact package version and
+# the listed advisories) are ACCEPTED_RISKS in scripts/check_osv_results.py.

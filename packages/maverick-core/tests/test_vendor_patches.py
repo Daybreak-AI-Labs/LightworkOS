@@ -150,6 +150,24 @@ def test_accepted_risks_are_dated_reasoned_and_short_lived():
         assert risk["advisories"] and (ROOT / risk["lockfile"]).is_file()
 
 
+def test_accepted_risks_still_describe_a_locked_package():
+    # An upgrade that removes the affected version must also remove its
+    # record, or the record keeps describing a risk that no longer exists.
+    import json
+
+    from scripts.check_osv_results import ACCEPTED_RISKS
+    for risk in ACCEPTED_RISKS:
+        package = risk["package"]
+        assert package["ecosystem"] == "npm", "extend this check for a new ecosystem"
+        lock = json.loads((ROOT / risk["lockfile"]).read_text(encoding="utf-8"))
+        locked = {
+            (path.rpartition("node_modules/")[2], entry.get("version"))
+            for path, entry in lock.get("packages", {}).items()
+            if "node_modules/" in path
+        }
+        assert (package["name"], package["version"]) in locked, (risk["lockfile"], package)
+
+
 def test_osv_backport_is_recognized_after_an_unrelated_finding():
     from scripts.check_osv_results import evaluate
     report = _npm_report(ROOT, name="left-pad", version="1.0.0", advisory="GHSA-0000-0000-0000")

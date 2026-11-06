@@ -747,6 +747,9 @@ DEPENDENCY_LOCKFILE_NAMES = frozenset(
         "mix.lock", "npm-shrinkwrap.json", "package-lock.json", "packages.lock.json",
         "pdm.lock", "pnpm-lock.yaml", "poetry.lock", "pom.xml", "pubspec.lock",
         "renv.lock", "uv.lock", "verification-metadata.xml", "yarn.lock",
+        # Formats OSV-Scalibr also reads; none is tracked today.
+        "cabal.project.freeze", "deno.lock", "gems.locked", "packages.config",
+        "pylock.toml", "stack.yaml.lock",
     }
 )
 
