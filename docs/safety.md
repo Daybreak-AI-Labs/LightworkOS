@@ -93,7 +93,7 @@ for, such as a headless run outside a chat task, is refused.
 
 `GET` and `HEAD` requests run without asking. Their address can still carry
 data in its query string, so a deployment that handles sensitive data also
-needs [information-flow control](ifc.md) in `approve` or `block` mode and an
+needs [information-flow control](https://github.com/Daybreak-AI-Labs/LightworkOS/blob/main/docs/ifc.md) in `approve` or `block` mode and an
 egress allow-list (`[egress]`, or enterprise mode).
 
 ## Checking your posture
