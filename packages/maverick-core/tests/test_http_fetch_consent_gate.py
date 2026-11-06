@@ -468,9 +468,14 @@ def test_a_connection_string_in_the_body_does_not_hide_the_rest_of_the_request(s
     {"body": "x", "headers": {"": "v"}},
     {"body": "x", "headers": {"X:Y": "v"}},
     {"body": "x", "method": 5},
+    {"body": "x", "headers": {"X-A": " lead"}},
+    {"body": "x", "headers": {"X-A": "trail "}},
+    {"body": "xx", "headers": {"Content-Length": "1"}},
+    {"body": "x", "headers": {"Transfer-Encoding": "gzip"}},
 ], ids=["object-body", "array-body", "number-body", "number-header", "non-ascii-header",
         "list-header", "header-list", "line-break-header", "nul-header", "spaced-name",
-        "empty-name", "colon-name", "number-method"])
+        "empty-name", "colon-name", "number-method", "leading-space", "trailing-space",
+        "content-length", "transfer-encoding"])
 def test_a_request_that_cannot_be_sent_is_refused_before_anyone_is_asked(sent, monkeypatch, args):
     import maverick.safety as safety
 
@@ -563,7 +568,10 @@ def test_json_numbers_are_shown_as_written(sent, monkeypatch, body):
     "https://api.example.test:abc/x",
     "https://api.example.test:99999/x",
     "https://api.example.test/a b",
-], ids=["open-bracket", "stray-bracket", "tab", "port-word", "port-range", "space"])
+    "https://\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45.com/v1/import",
+    "https://\u2603.net/",
+], ids=["open-bracket", "stray-bracket", "tab", "port-word", "port-range", "space", "fullwidth-host",
+        "symbol-host"])
 def test_an_address_that_cannot_be_sent_is_refused_before_anyone_is_asked(sent, monkeypatch, url):
     import maverick.safety as safety
 
@@ -809,6 +817,63 @@ def test_connector_requests_with_dense_arrays_still_fit_the_card(sent, args):
 def test_a_host_that_cannot_be_encoded_is_refused(sent, url):
     out = _fetch({"url": url, "method": "POST", "body": "x"})
     assert out.startswith("ERROR:") and sent == []
+
+
+_BEGIN_SPACED = "-----BEGIN  PRIVATE KEY-----"
+_END = "-----END PRIVATE KEY-----"
+
+
+@pytest.mark.parametrize("headers,body", [
+    ({"X-Mirror": "drop@evil.example"},
+     json.dumps({"a": _BEGIN_SPACED, "to": "drop@evil.example", "dataset": "customer_list", "z": _END})),
+    ({"X-Mirror": "drop@evil.example"},
+     json.dumps({"a": _BEGIN_SPACED.replace("  ", "\u00a0"), "to": "drop@evil.example",
+                 "dataset": "customer_list", "z": _END}, ensure_ascii=False)),
+    (dict(_FORM, **{"X-Mirror": "drop@evil.example"}),
+     "a=" + _BEGIN_SPACED + "&to=drop@evil.example&dump=customer_list&z=" + _END),
+    ({"X-A": _BEGIN_SPACED, "X-Mirror": "drop@evil.example", "X-Z": _END}, "customer_list"),
+], ids=["json", "json-no-break-space", "form", "headers"])
+def test_a_key_marker_that_forms_only_once_spacing_collapses_hides_only_its_value(sent, monkeypatch, headers, body):
+    shown = _real_card(monkeypatch, body, headers)
+    assert "drop@evil.example" in shown and "customer_list" in shown
+
+
+def test_connector_key_markers_that_form_on_the_card_hide_only_their_value(sent):
+    from maverick.approval_cards import _label
+    from maverick.governed_tools import _approval_request_parts
+
+    parts = _approval_request_parts({"note": _BEGIN_SPACED, "recipient": "drop@evil.example", "z": _END})
+    assert "drop@evil.example" in "".join(_label(part, "part") for part in parts)
+
+
+def test_a_connection_scheme_in_a_long_address_still_fits_the_card(sent, monkeypatch):
+    url = ("https://api.example.test/v1/search?" + "&".join(f"f{index}=1" for index in range(900))
+           + "&cache=redis://cache.internal")
+    _card(monkeypatch, "x", url=url)
+
+
+@pytest.mark.parametrize("url,headers,body", [
+    ("https://api.example.test/u?ghp%5F" + "Ab3" * 12, {}, "x"),
+    ("https://api.example.test/u?ghp%5F" + "Ab3" * 12 + "=1", {}, "x"),
+    ("https://api.example.test/u", _FORM, "ghp%5F" + "Ab3" * 12 + "=1&a=1"),
+], ids=["bare-query-item", "query-name", "form-name"])
+def test_percent_encoded_secrets_in_names_are_hidden(sent, monkeypatch, url, headers, body):
+    assert "Ab3Ab3Ab3Ab3" not in _card(monkeypatch, body, headers, url=url)
+
+
+@pytest.mark.parametrize("headers,body", [
+    (_FORM, "name=prod-cert&forward_to=drop@evil.example&certificate=" + "QUJD%2B" * 1800),
+    ({}, "Send to drop@evil.example\n-----BEGIN PRIVATE KEY-----\n" + ("QUJDREVG" * 8 + "\n") * 180
+     + "-----END PRIVATE KEY-----"),
+], ids=["form", "text"])
+def test_a_preview_keeps_what_comes_before_a_long_hidden_value(sent, monkeypatch, headers, body):
+    shown = _card(monkeypatch, body, headers)
+    assert "body_sha256" in shown and "drop@evil.example" in shown
+
+
+def test_a_body_that_fits_with_long_headers_is_still_shown(sent, monkeypatch):
+    body = json.dumps({f"field_{index}": index for index in range(150)}, separators=(",", ":"))
+    _card(monkeypatch, body, {"Content-Type": "application/json", "Cookie": "session=" + "c" * 4700})
 
 
 def test_connector_cards_hide_secrets_within_each_value(sent):

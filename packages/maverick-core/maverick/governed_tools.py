@@ -552,10 +552,14 @@ _CONNECTION_SCHEME = re.compile(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|red
 
 
 def _hidden_secret_text(text: str) -> str:
-    """``text`` with anything in it that looks like a key or token hidden."""
+    """``text`` with anything in it that looks like a key or token hidden: as
+    written (line starts count), then with its spacing made single spaces, as
+    the card shows it, so a marker that only forms once spacing is collapsed
+    is hidden too."""
     from .safety.secret_detector import redact
 
-    return _AZURE_ACCOUNT_KEY.sub("[REDACTED:azure_storage]", redact(text)[0])
+    shown = " ".join(redact(text)[0].split())
+    return _AZURE_ACCOUNT_KEY.sub("[REDACTED:azure_storage]", redact(shown)[0])
 
 
 def _redact_secret_leaves(value: object) -> object:
@@ -577,12 +581,14 @@ def _redact_secret_leaves(value: object) -> object:
     return _hidden_secret_text(value if isinstance(value, str) else str(value))
 
 
-def _approval_request_parts(args: dict) -> list[str]:
-    """Show the frozen request shape with sensitive values redacted."""
+def _approval_request_parts(args: dict, *, sized: bool = False) -> list[str]:
+    """Show the frozen request shape with sensitive values redacted. A caller
+    that already checked the request's size as it will be sent passes
+    ``sized``; what it shows may be longer than what is sent."""
     size = 380
     try:
         raw_request = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
-        if not raw_request or len(raw_request) > size * 20:
+        if not raw_request or (not sized and len(raw_request) > size * 20):
             raise ApprovalCardError("the full connector request is too long to review")
         # Where the request holds a connection-string scheme, values are
         # separated by a space, where that pattern stops; every other pattern

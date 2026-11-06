@@ -486,7 +486,9 @@ _METHOD_TOKEN = re.compile(r"[A-Z]{1,16}")
 # What an HTTP header may hold (RFC 9110): a token name, and a value of
 # printable ASCII and tabs, so no header can break the request in two.
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
-_HEADER_VALUE = re.compile(r"[\t\x20-\x7e]*")
+_HEADER_VALUE = re.compile(r"(?:[\x21-\x7e](?:[\t\x20-\x7e]*[\x21-\x7e])?)?")
+# Headers the HTTP client sets from the body itself; a different one is refused.
+_FRAMING_HEADERS = frozenset({"content-length", "transfer-encoding", "host"})
 # How much of a request body the reviewer reads in full (JSON-encoded
 # characters). A longer body is shown as a preview plus its fingerprint; the
 # decision is bound to the exact body either way.
@@ -540,30 +542,43 @@ def _hidden_secrets(text: str) -> str:
 _VALUE_WINDOW = 3 * _REVIEW_BODY_CHARS
 
 
+_LAST_SPACE = re.compile(r"\s\S*\Z")
+
+
+def _cut_at_space(text: str) -> str:
+    """The first ``_VALUE_WINDOW`` characters of ``text``, ending at its last
+    space: a key or token holds none, so the cut never splits one."""
+    window = text[:_VALUE_WINDOW]
+    space = _LAST_SPACE.search(window)
+    return window[:space.start()] if space and space.start() > 0 else window
+
+
 def _hidden_beginning(text: str) -> tuple[str, bool]:
     """``text`` with anything that looks like a key or token hidden, and
-    whether all of it was read. Of a long text only the first
-    ``_VALUE_WINDOW`` characters are read, and the last ``_REVIEW_BODY_CHARS``
-    characters of what is left after hiding are dropped."""
+    whether all of it was read. Of a long text only the beginning is read
+    (see ``_cut_at_space``)."""
     if len(text) <= _VALUE_WINDOW:
         return _hidden_secrets(text), True
-    return _hidden_secrets(text[:_VALUE_WINDOW])[:-_REVIEW_BODY_CHARS], False
+    return _hidden_secrets(_cut_at_space(text)), False
 
 
 def _reviewed_part(part: str) -> str:
     """One ``name=value`` part as a server reads it: the whole value hidden
     under a sensitive name; otherwise anything that looks like a key or token
-    hidden within the part, read as written and percent-decoded."""
+    hidden within the part, read as written and percent-decoded (a secret
+    found only once decoded hides its whole value, or the whole part when it
+    is in the name)."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
 
     name, sep, value = part.partition("=")
     if sep and _sensitive_request_key(unquote_plus(name)):
         return f"{_hidden_secrets(name)}={_REDACTED_REQUEST_VALUE}"
-    shown = _hidden_secrets(part)
-    decoded = unquote_plus(value)
-    if sep and decoded != value and _hidden_secrets(decoded) != decoded:
+    decoded_name, decoded_value = unquote_plus(name), unquote_plus(value)
+    if decoded_name != name and _hidden_secrets(decoded_name) != decoded_name:
+        return "[REDACTED:secret]"
+    if sep and decoded_value != value and _hidden_secrets(decoded_value) != decoded_value:
         return f"{_hidden_secrets(name)}=[REDACTED:secret]"
-    return shown
+    return _hidden_secrets(part)
 
 
 def _reviewed_pair(piece: str) -> list[str]:
@@ -588,6 +603,10 @@ def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) 
     than ``limit`` characters are written. Returns the text and whether all of
     it was read."""
     window = text if len(text) <= _VALUE_WINDOW else text[:_VALUE_WINDOW]
+    if len(window) < len(text):
+        # Drop the pair the read cut; one pair longer than the read is cut at
+        # its last space, as a long text is.
+        window = window[:window.rindex("&")] if "&" in window else _cut_at_space(window + " ")
     written, size, whole = [], 0, len(window) == len(text)
     for index, piece in enumerate(window.split("&")):
         parts = _reviewed_pair(piece)
@@ -598,10 +617,7 @@ def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) 
             break
     spaced = form or any(_CONNECTION_SCHEME.search(part) for parts in written for part in parts)
     pair_joiner, part_joiner = (" & ", " ; ") if spaced else ("&", ";")
-    readable = pair_joiner.join(part_joiner.join(parts) for parts in written)
-    if len(window) < len(text):
-        readable = readable[:-_REVIEW_BODY_CHARS]
-    return readable, whole
+    return pair_joiner.join(part_joiner.join(parts) for parts in written), whole
 
 
 def _bounded_preview(text: str, limit: int) -> str:
@@ -662,10 +678,10 @@ def _reviewed_string(token: str) -> tuple[str, bool]:
     is kept exactly as written. Of a long string, as with ``_hidden_beginning``,
     the end of what was read is dropped after hiding."""
     decoded, whole = _decoded_string(token, _VALUE_WINDOW)
-    shown = _hidden_secrets(decoded)
     if whole:
+        shown = _hidden_secrets(decoded)
         return (token if shown == decoded else json.dumps(shown, ensure_ascii=False)), True
-    return json.dumps(shown[:-_REVIEW_BODY_CHARS], ensure_ascii=False)[:-1], False
+    return json.dumps(_hidden_secrets(_cut_at_space(decoded)), ensure_ascii=False)[:-1], False
 
 
 def _key_is_sensitive(token: str) -> bool:
@@ -839,7 +855,7 @@ def _request_permit(request: dict[str, Any], parsed: Any, max_bytes: int):
         method, request["url"], request["headers"], request["body"],
     )
     try:
-        request_parts = _approval_request_parts(shown)
+        request_parts = _approval_request_parts(shown, sized=True)
     except ApprovalCardError as exc:
         raise ApprovalCardError(
             "the address and headers are too long to show a person in full"
@@ -922,17 +938,29 @@ def _unsendable(args: dict[str, Any]) -> str | None:
         return "ERROR: the url and render arguments must be text"
     if not (args.get("url") or "").strip():
         return "ERROR: url is required"
+    if len(args["url"].strip()) > 7600:
+        return "ERROR: the address is too long to show a person in full; nothing was sent"
     headers = args.get("headers") or {}
     if not isinstance(headers, dict) or not all(
             isinstance(name, str) and isinstance(value, str)
             and _HEADER_NAME.fullmatch(name) and _HEADER_VALUE.fullmatch(value)
+            and name.lower() not in _FRAMING_HEADERS
             for name, value in headers.items()):
         return ("ERROR: each header needs a plain name and a value of printable "
-                "ASCII text; nothing was sent")
+                "ASCII text with no space at either end, and Content-Length, "
+                "Transfer-Encoding and Host are set by the client; nothing was sent")
     if args.get("body") is not None and not isinstance(args.get("body"), str):
         return "ERROR: the body must be text; nothing was sent"
     if not isinstance(args.get("method") or "GET", str):
         return "ERROR: the method must be text; nothing was sent"
+    try:
+        import httpx
+
+        httpx.URL(args["url"].strip())
+    except ImportError:
+        pass  # reported where the request would be sent
+    except Exception:
+        return "ERROR: the address cannot be sent as written; nothing was sent"
     return None
 
 
