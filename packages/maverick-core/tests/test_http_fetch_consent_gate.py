@@ -196,7 +196,7 @@ def test_request_names_the_destination_and_binds_the_exact_request(sent, monkeyp
     # credential hidden.
     shown = "\n".join(call["parameter_summary"])
     assert "POST" in shown
-    assert "https://api.example.test/v1/items ? page=2" in shown
+    assert "https://api.example.test/v1/items?page=2" in shown
     assert "Content-Type" in shown and "application/json" in shown
     assert "quarterly numbers" in shown
     assert "[REDACTED:sensitive field]" in shown
@@ -375,7 +375,7 @@ def test_sensitive_values_in_any_json_body_are_hidden(sent, monkeypatch, body):
 def test_the_address_fragment_is_not_shown_because_it_is_never_sent(sent, monkeypatch):
     shown = _card(monkeypatch, "x", url="https://api.example.test/cb?page=2#access_token=hunter2&type=bearer")
     assert "hunter2" not in shown and "#" not in shown.split("Request part")[1]
-    assert "https://api.example.test/cb ? page=2" in shown
+    assert "https://api.example.test/cb?page=2" in shown
 
 
 def test_a_body_that_cannot_be_encoded_is_refused_cleanly(sent):
@@ -451,7 +451,7 @@ def test_a_connection_string_in_the_body_does_not_hide_the_rest_of_the_request(s
     shown = _card(monkeypatch, body, {"X-Mirror": "https://other.example/in"},
                   url="https://api.example.test/v1/import?carry=data")
     assert "u:p@" not in shown
-    assert "customer_list" in shown and "X-Mirror" in shown and "/v1/import ? carry=data" in shown
+    assert "customer_list" in shown and "X-Mirror" in shown and "/v1/import?carry=data" in shown
 
 
 @pytest.mark.parametrize("args", [
@@ -760,6 +760,54 @@ def test_a_long_line_is_read_only_as_far_as_the_preview_needs(sent, monkeypatch)
                          ids=["url", "render"])
 def test_arguments_that_are_not_text_are_refused(sent, args):
     out = _fetch({"method": "POST", "body": "x", **args})
+    assert out.startswith("ERROR:") and sent == []
+
+
+@pytest.mark.parametrize("body", [
+    "MONKEY='&to=drop@evil.example&dump=customer_list&note='",
+    'MONKEY="&to=drop@evil.example&dump=customer_list&note="',
+    "MONKEY=';to=drop@evil.example&dump=customer_list&note='",
+], ids=["single-quote", "double-quote", "semicolon"])
+def test_a_quoted_env_style_first_pair_hides_only_itself(sent, monkeypatch, body):
+    shown = _real_card(monkeypatch, body, _FORM)
+    assert "drop@evil.example" in shown and "customer_list" in shown
+
+
+@pytest.mark.parametrize("url,headers,body", [
+    ("https://api.example.test/v1/import", _FORM, "a=" + "b=1;" * 1500),
+    ("https://api.example.test/v1/items?f=" + "a=1;" * 1100, {}, "x"),
+    ("https://api.example.test/v1/search?" + "&".join(f"f{index}=1" for index in range(800)), {}, "x"),
+], ids=["semicolon-form", "semicolon-query", "many-query-pairs"])
+def test_many_pairs_or_parts_are_still_shown(sent, monkeypatch, url, headers, body):
+    _card(monkeypatch, body, headers, url=url)
+
+
+def test_a_long_form_body_of_semicolon_parts_stays_small_in_memory(sent, monkeypatch):
+    import tracemalloc
+
+    body = "a=" + ";".join(["b=c"] * 400) + ";z=" + "x" * 1_000_000
+    tracemalloc.start()
+    try:
+        shown = _card(monkeypatch, body, _FORM)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert peak < 60_000_000, peak
+
+
+@pytest.mark.parametrize("args", [{"ids": [7] * 3300}, {"rows": [[1, 2]] * 1200}], ids=["integers", "pairs"])
+def test_connector_requests_with_dense_arrays_still_fit_the_card(sent, args):
+    from maverick.governed_tools import _approval_request_parts
+
+    parts = _approval_request_parts(args)
+    assert 0 < len(parts) <= 20 and all(len(part) <= 500 for part in parts)
+
+
+@pytest.mark.parametrize("url", ["https://a..example/v1", "https://" + "a" * 64 + ".example/v1"],
+                         ids=["empty-label", "long-label"])
+def test_a_host_that_cannot_be_encoded_is_refused(sent, url):
+    out = _fetch({"url": url, "method": "POST", "body": "x"})
     assert out.startswith("ERROR:") and sent == []
 
 

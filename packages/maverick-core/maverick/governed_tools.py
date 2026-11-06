@@ -547,6 +547,8 @@ def _redact_request_fields(value: object, *, sensitive: bool = False) -> object:
 # the key is hidden too: it is key material, and the pattern then cannot run
 # from one value into another.
 _AZURE_ACCOUNT_KEY = re.compile(r"AccountKey=[A-Za-z0-9+/=]{40,}")
+# The scheme of a connection string: that pattern stops only at a space.
+_CONNECTION_SCHEME = re.compile(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://", re.IGNORECASE)
 
 
 def _hidden_secret_text(text: str) -> str:
@@ -582,13 +584,15 @@ def _approval_request_parts(args: dict) -> list[str]:
         raw_request = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
         if not raw_request or len(raw_request) > size * 20:
             raise ApprovalCardError("the full connector request is too long to review")
-        # Values are separated by a space, which every secret pattern but two
-        # stops at; _hidden_secret_text leaves those two nothing to join, so
-        # the card's own secret check cannot hide text between two values.
-        request = json.dumps(
-            _redact_secret_leaves(_redact_request_fields(args)), sort_keys=True,
-            separators=(", ", ": "), default=str,
-        )
+        # Where the request holds a connection-string scheme, values are
+        # separated by a space, where that pattern stops; every other pattern
+        # but two stops at a quote or comma, and _hidden_secret_text leaves
+        # those two nothing to join, so the card's own secret check cannot
+        # hide text between two values.
+        shown = _redact_secret_leaves(_redact_request_fields(args))
+        request = json.dumps(shown, sort_keys=True, separators=(",", ":"), default=str)
+        if _CONNECTION_SCHEME.search(request):
+            request = json.dumps(shown, sort_keys=True, separators=(", ", ": "), default=str)
         # The spaces add length the size check above does not count: longer
         # parts (a card line holds up to 500 characters) keep it to 20 parts.
         size = max(size, -(-len(request) // 20))

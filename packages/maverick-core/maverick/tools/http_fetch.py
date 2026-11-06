@@ -497,20 +497,23 @@ def _sends_data(method: str, body: Any) -> bool:
     return method not in _READ_METHODS or body not in (None, "", b"")
 
 
-# Every boundary inside a value the card shows (between JSON tokens, between
-# form or query pairs, inside plain text) is a plain space. The card builder
-# checks each line for secrets as one text, and every secret pattern but two
-# stops at a space; governed_tools._hidden_secret_text leaves those two
-# nothing to join. So a match there never hides text beyond its own value.
+# Every boundary inside a value the card shows can be made a plain space. The
+# card builder checks each line, and each value from its start, for secrets as
+# one text; every secret pattern but three stops at a space: an Azure string
+# and a private key (governed_tools._hidden_secret_text leaves those nothing
+# to join) and an env-style NAME=value, which only matches at the start of a
+# value and so is hidden within each pair. JSON is always spaced; pairs and
+# the address only where they hold a connection-string scheme, the pattern
+# the spaces are for, so a long address costs no more room than it used to.
 _SPACES = re.compile(r"\s+")
+_CONNECTION_SCHEME = re.compile(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://", re.IGNORECASE)
 
 
 def _reviewed_url(url: str) -> str:
     """The address as the reviewer reads it: credentials in the user-info part
     and query values under sensitive names are hidden, and anything that looks
-    like a key or token is hidden within its own part; the query is shown
-    after " ? " with its pairs spaced. A fragment is never sent, so it is not
-    shown."""
+    like a key or token is hidden within its own part. A fragment is never
+    sent, so it is not shown."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE
 
     parts = urlsplit(url)
@@ -518,7 +521,11 @@ def _reviewed_url(url: str) -> str:
     if "@" in netloc:
         netloc = f"{_REDACTED_REQUEST_VALUE}@{netloc.rpartition('@')[2]}"
     shown = urlunsplit((parts.scheme, netloc, _hidden_secrets(parts.path), "", ""))
-    return f"{shown} ? {_reviewed_pairs(parts.query)[0]}" if parts.query else shown
+    if not parts.query:
+        return shown
+    query = _reviewed_pairs(parts.query)[0]
+    spaced = _CONNECTION_SCHEME.search(shown + query) is not None
+    return f"{shown} ? {query}" if spaced else f"{shown}?{query}"
 
 
 def _hidden_secrets(text: str) -> str:
@@ -543,62 +550,58 @@ def _hidden_beginning(text: str) -> tuple[str, bool]:
     return _hidden_secrets(text[:_VALUE_WINDOW])[:-_REVIEW_BODY_CHARS], False
 
 
-def _reviewed_value(value: str) -> tuple[str, bool]:
-    """A pair's value with anything that looks like a key or token hidden, read
-    as written and percent-decoded (as a server reads it), and whether all of
-    it was read."""
-    shown, whole = _hidden_beginning(value)
-    decoded = unquote_plus(value[:_VALUE_WINDOW])
-    if decoded != value[:_VALUE_WINDOW] and _hidden_secrets(decoded) != decoded:
-        return "[REDACTED:secret]", whole
-    return shown, whole
-
-
-def _reviewed_pair(piece: str, separator: str) -> tuple[str, bool]:
-    """One ``name=value`` pair: the whole value hidden under a sensitive name,
-    otherwise each ``separator``-split part of it read again as a pair (a
-    server that splits there reads a name in it), and anything that looks like
-    a key or token hidden within its own name or value."""
+def _reviewed_part(part: str) -> str:
+    """One ``name=value`` part as a server reads it: the whole value hidden
+    under a sensitive name; otherwise anything that looks like a key or token
+    hidden within the part, read as written and percent-decoded."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
 
-    name, sep, value = piece.partition("=")
-    shown_name, whole = _hidden_beginning(name)
-    if not sep or not whole:
-        return shown_name, whole
-    if _sensitive_request_key(unquote_plus(name)):
-        return f"{shown_name}={_REDACTED_REQUEST_VALUE}", True
-    if separator and separator in value:
-        first, _, rest = value.partition(separator)
-        shown_first, whole = _reviewed_value(first)
-        if not whole:
-            return f"{shown_name}={shown_first}", False
-        shown_rest, whole = _reviewed_pair(rest, separator)
-        return f"{shown_name}={shown_first} {separator} {shown_rest}", whole
-    shown_value, whole = _reviewed_value(value)
-    return f"{shown_name}={shown_value}", whole
+    name, sep, value = part.partition("=")
+    if sep and _sensitive_request_key(unquote_plus(name)):
+        return f"{_hidden_secrets(name)}={_REDACTED_REQUEST_VALUE}"
+    shown = _hidden_secrets(part)
+    decoded = unquote_plus(value)
+    if sep and decoded != value and _hidden_secrets(decoded) != decoded:
+        return f"{_hidden_secrets(name)}=[REDACTED:secret]"
+    return shown
 
 
-def _reviewed_pairs(text: str, limit: int | None = None) -> tuple[str, bool]:
-    """``name=value`` pairs (a query string or form body), spaced " & ", with
-    the value of each sensitive name hidden up to the next "&" (where most
-    servers end it), any ";"-separated part named as sensitive hidden up to the
-    next ";" (where some servers end it), and anything else that looks like a
-    key or token hidden within its own name or value. Reading stops once more
-    than ``limit`` characters are written, or at a value too long to show;
-    returns the text and whether all of it was read."""
-    written, size, position = [], 0, 0
-    while position <= len(text):
-        end = text.find("&", position)
-        end = len(text) if end < 0 else end
-        piece, whole = _reviewed_pair(text[position:end], ";")
-        written.append(piece)
-        size += len(piece) + 3
-        position = end + 1
-        if not whole:
-            return " & ".join(written), False
-        if limit is not None and size > limit and position <= len(text):
-            return " & ".join(written), False
-    return " & ".join(written), True
+def _reviewed_pair(piece: str) -> list[str]:
+    """One "&"-separated pair, as its ";"-separated parts: under a sensitive
+    name the whole value up to the next "&" is hidden (where most servers end
+    it); otherwise each part is read as a pair of its own (some servers split
+    there), each hidden within itself."""
+    from ..governed_tools import _sensitive_request_key
+
+    name, sep, _value = piece.partition("=")
+    if sep and _sensitive_request_key(unquote_plus(name)):
+        return [_reviewed_part(piece)]
+    return [_reviewed_part(part) for part in piece.split(";")]
+
+
+def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) -> tuple[str, bool]:
+    """``name=value`` pairs (a query string or form body) as ``_reviewed_pair``
+    reads each, joined by "&", or by " & " in a form body (the card checks a
+    body from its start, where an env-style first pair would run on to the
+    next space) or where they hold a connection-string scheme. Of a long text only ``_VALUE_WINDOW`` characters are read, and the
+    end of what was read after hiding is dropped; reading also stops once more
+    than ``limit`` characters are written. Returns the text and whether all of
+    it was read."""
+    window = text if len(text) <= _VALUE_WINDOW else text[:_VALUE_WINDOW]
+    written, size, whole = [], 0, len(window) == len(text)
+    for index, piece in enumerate(window.split("&")):
+        parts = _reviewed_pair(piece)
+        written.append(parts)
+        size += sum(len(part) + 1 for part in parts)
+        if limit is not None and size > limit and index < window.count("&"):
+            whole = False
+            break
+    spaced = form or any(_CONNECTION_SCHEME.search(part) for parts in written for part in parts)
+    pair_joiner, part_joiner = (" & ", " ; ") if spaced else ("&", ";")
+    readable = pair_joiner.join(part_joiner.join(parts) for parts in written)
+    if len(window) < len(text):
+        readable = readable[:-_REVIEW_BODY_CHARS]
+    return readable, whole
 
 
 def _bounded_preview(text: str, limit: int) -> str:
@@ -760,7 +763,7 @@ def _readable_body(text: str, headers: dict) -> tuple[str, bool]:
                 "the body is JSON but its Content-Type names a form; send it as "
                 "application/json"
             )
-        readable, complete = _reviewed_pairs(text, _REVIEW_WINDOW)
+        readable, complete = _reviewed_pairs(text, _REVIEW_WINDOW, form=True)
     elif readable is None:
         readable, complete = _hidden_beginning(text)
     return _SPACES.sub(" ", readable), complete
@@ -947,7 +950,8 @@ def _run_fetch(args: dict[str, Any]) -> str:
     raw_headers, body = args.get("headers") or {}, args.get("body")
     try:
         parsed = urlparse(url)
-    except ValueError:
+        (parsed.hostname or "").encode("idna")
+    except (UnicodeError, ValueError):
         return "ERROR: the address cannot be read; nothing was sent"
     if parsed.scheme not in ("http", "https"):
         return f"ERROR: only http/https supported; got scheme={parsed.scheme!r}"

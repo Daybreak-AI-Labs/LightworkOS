@@ -806,7 +806,7 @@ class TestEnterpriseBoundary:
         assert consent_calls[0][1]["consult_ledger"] is False
         assert consent_calls[0][1]["scope"].startswith("/accounts#sha256=")
         assert "request_sha256=" in consent_calls[0][1]["detail"]
-        assert '"body": {"n": 1}' in " ".join(
+        assert '"body":{"n":1}' in " ".join(
             consent_calls[0][1]["approval_card"]["parameters"]["summary"]
         )
         assert [entry[1]["phase"] for entry in receipts] == ["PREPARE", "COMMIT"]
