@@ -888,6 +888,40 @@ def test_a_conversation_waits_behind_a_receipt_that_stays_unreadable_until_the_h
     asyncio.run(run())
 
 
+def test_a_turn_check_reads_only_its_own_conversation():
+    # With many replies waiting in other conversations (a channel refusing
+    # every send), finding what one message waits behind, and releasing the
+    # ones behind a finished message, read only that conversation's waiting
+    # receipts. Walking every waiting receipt for each message made a retry
+    # round grow with the square of the backlog.
+    import time
+
+    class NoFullWalk(dict):
+        def _walk(self, *args):
+            raise AssertionError("walked every waiting receipt")
+        __iter__ = keys = values = items = _walk
+
+    worker = TransportWorker(Adapter(AsyncMock()), account="account", authorize=lambda msg: True,
+                             send=AsyncMock())
+    later = time.monotonic() + 3600
+    retry = NoFullWalk()
+    for index in range(1000):
+        worker._conversations[f"other-{index}"] = (float(index), f"conversation-{index}")
+        dict.__setitem__(retry, f"other-{index}", later)
+    worker._conversations["x"] = (5000.0, "c")
+    worker._conversations["y"] = (5001.0, "c")
+    dict.__setitem__(retry, "x", later)
+    dict.__setitem__(retry, "y", later)
+    worker._retry_after = retry
+
+    assert worker._waiting_ahead("y", 5001.0, "c") == ("x", None)
+    assert worker._waiting_ahead("x", 5000.0, "c") == (None, None)
+    worker._release_after("x")
+    assert dict.__getitem__(retry, "y") <= time.monotonic()
+    assert dict.__getitem__(retry, "other-0") == later
+    assert worker._waiting_ahead("y", 5001.0, "c") == (None, None)
+
+
 def test_a_conversation_continues_once_its_blocking_receipt_is_gone(monkeypatch):
     # X's send is refused, so Y waits behind X; X is then removed (erased or
     # settled elsewhere). Nothing will ever retry X, so Y is delivered.

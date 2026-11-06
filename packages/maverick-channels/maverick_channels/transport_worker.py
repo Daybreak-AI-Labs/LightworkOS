@@ -30,6 +30,47 @@ def _conversation(message):
     return _digest([message.get("user_id"), message.get("sender_id")])
 
 
+class _Conversations:
+    """Waiting id -> (created_at, conversation), also indexed by conversation,
+    so a turn check reads only its own conversation's waiting receipts."""
+
+    def __init__(self):
+        self._rows, self._by_conversation = {}, {}
+
+    def __getitem__(self, record_id):
+        return self._rows[record_id]
+
+    def get(self, record_id, default=None):
+        return self._rows.get(record_id, default)
+
+    def __setitem__(self, record_id, value):
+        self.pop(record_id)
+        self._rows[record_id] = value
+        self._by_conversation.setdefault(value[1], set()).add(record_id)
+
+    def setdefault(self, record_id, value):
+        if record_id not in self._rows:
+            self[record_id] = value
+        return self._rows[record_id]
+
+    def pop(self, record_id, default=None):
+        if record_id not in self._rows:
+            return default
+        value = self._rows.pop(record_id)
+        ids = self._by_conversation[value[1]]
+        ids.discard(record_id)
+        if not ids:
+            del self._by_conversation[value[1]]
+        return value
+
+    def keep(self, wanted):
+        for record_id in [key for key in self._rows if not wanted(key)]:
+            self.pop(record_id)
+
+    def in_conversation(self, conversation):
+        return tuple(self._by_conversation.get(conversation, ()))
+
+
 class TransportWorker:
     """Persist before queueing; overflow stays durable instead of disappearing.
 
@@ -61,7 +102,7 @@ class TransportWorker:
         self._scan_seen = None  # what the last scan read: see _remember_scan
         self._unreadable = frozenset()  # ids the last scans could not read (see _report_unreadable)
         self._unreadable_since = {}  # id -> wall-clock time it was first found unreadable
-        self._conversations = {}  # waiting id -> (created_at, conversation), from its last read
+        self._conversations = _Conversations()  # waiting id -> (created_at, conversation), from its last read
         self._learned = set()  # ids learned while the current scan runs
         self.task = None
         self._scan_task = None
@@ -267,17 +308,21 @@ class TransportWorker:
         # A conversation is remembered only for a receipt still waiting, one
         # that cannot be read (it keeps holding its conversation), or one
         # admitted while the scan ran.
-        self._conversations = {key: value for key, value in self._conversations.items()
-                               if waiting.get(key) or key in self._unreadable or key in self._learned}
+        self._conversations.keep(lambda key: bool(waiting.get(key)) or key in self._unreadable
+                                 or key in self._learned)
 
-    def _holds(self):
+    def _holds(self, conversation=None):
         """(created_at, id, conversation, expired) for each receipt that newer
         messages of its conversation wait behind: one waiting for another
         attempt (a refused send, a failure, or itself waiting its turn), or one
         that cannot be read. An unreadable one has expired once it has been
-        unreadable for UNREADABLE_HOLD_SECONDS: its key is taken not to return."""
+        unreadable for UNREADABLE_HOLD_SECONDS: its key is taken not to return.
+        Given a conversation, only that conversation's receipts are read."""
         now = _wall_clock()
-        for other in set(self._retry_after) | self._unreadable:
+        others = (set(self._retry_after) | self._unreadable if conversation is None else
+                  [other for other in self._conversations.in_conversation(conversation)
+                   if other in self._retry_after or other in self._unreadable])
+        for other in others:
             known = self._conversations.get(other)
             if known is not None:
                 since = self._unreadable_since.get(other)
@@ -298,7 +343,7 @@ class TransportWorker:
         """The oldest earlier receipt of this conversation it must wait behind,
         and the oldest it goes ahead of because that one has expired."""
         ahead, passed = [], []
-        for other_created_at, other, other_conversation, expired in self._holds():
+        for other_created_at, other, other_conversation, expired in self._holds(conversation):
             if (other != record_id and other_conversation == conversation
                     and (other_created_at, other) < (created_at, record_id)):
                 (passed if expired else ahead).append((other_created_at, other))
@@ -354,9 +399,9 @@ class TransportWorker:
         if known is None:
             return
         now = time.monotonic()
-        for other, due in list(self._retry_after.items()):
-            waited = self._conversations.get(other)
-            if due > now and waited and waited[1] == known[1] and (waited[0], other) > (known[0], record_id):
+        for other in self._conversations.in_conversation(known[1]):
+            waited = self._conversations[other]
+            if self._retry_after.get(other, 0) > now and (waited[0], other) > (known[0], record_id):
                 self._retry_after[other] = now
                 self._overflow = True
 
