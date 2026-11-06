@@ -538,43 +538,79 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return dict(pairs)
 
 
+class _Pairs(list):
+    """A JSON object kept as its (key, value) pairs, a repeated key included."""
+
+
+def _redacted_json(value: Any) -> str:
+    """Compact JSON text of a parsed body with each value under a sensitive
+    key hidden. Objects keep every pair, so a repeated key shows each value a
+    server might read."""
+    from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
+
+    if isinstance(value, _Pairs):
+        return "{" + ",".join(
+            json.dumps(key, ensure_ascii=False) + ":" + (
+                json.dumps(_REDACTED_REQUEST_VALUE) if _sensitive_request_key(key)
+                else _redacted_json(item))
+            for key, item in value
+        ) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_redacted_json(item) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[dict, list[str]]:
     """What the person reads: method, address, every header that will be sent
     and the body (or a bounded preview plus fingerprint), with sensitive
-    values hidden exactly as governed connector requests hide them."""
+    values hidden exactly as governed connector requests hide them.
+
+    Raises ``ApprovalCardError`` for a body nested too deeply to show."""
+    from ..approval_cards import ApprovalCardError
+
     shown: dict[str, Any] = {"method": method, "url": _reviewed_url(url), "headers": headers}
     notes: list[str] = []
-    if body not in (None, "", b""):
+    if body in (None, "", b""):
+        return shown, notes
+    try:
         text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
+        try:
+            parsed = json.loads(text, object_pairs_hook=_Pairs)
+        except ValueError:
+            parsed = None
         try:
             # Shown as structure only when that reads the same as the text: a
             # repeated key would show one value while a server may read another.
-            structured = json.loads(text, object_pairs_hook=_unique_keys)
+            structured = None if parsed is None else json.loads(text, object_pairs_hook=_unique_keys)
         except ValueError:
             structured = None
-        if isinstance(structured, (dict, list)):
-            # A preview is a plain string, so hide keyed values before cutting it.
-            from ..governed_tools import _redact_request_fields
-
-            readable = json.dumps(_redact_request_fields(structured))
+        if isinstance(parsed, list):  # a JSON object or array
+            readable = _redacted_json(parsed)
         elif _is_form_body(headers):
             readable = _reviewed_pairs(text)
         else:
             readable = text
-        if isinstance(structured, (dict, list)) and len(json.dumps(structured)) <= _REVIEW_BODY_CHARS:
+        # Whether the body is shown in full is decided on the body that will be
+        # sent, so hiding a long value never makes a large upload look small.
+        fits = len(json.dumps(text)) <= _REVIEW_BODY_CHARS
+        if isinstance(structured, (dict, list)) and (
+                fits or len(json.dumps(structured, separators=(",", ":"))) <= _REVIEW_BODY_CHARS):
             shown["body"] = structured  # keyed values get the same redaction
-        elif len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
-            shown["body"] = readable
-        else:
-            preview = _bounded_preview(readable, _REVIEW_BODY_CHARS)
-            shown["body_preview"] = preview
-            shown["body_characters"] = len(text)
-            shown["body_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            notes.append(
-                f"The body has {len(text):,} characters; only a preview of its "
-                f"start ({len(preview):,} characters) is shown. Its fingerprint "
-                "(body_sha256) fixes the exact body that will be sent."
-            )
+            return shown, notes
+    except RecursionError as exc:
+        raise ApprovalCardError("the body is nested too deeply to show a person") from exc
+    if fits:
+        shown["body"] = readable
+        return shown, notes
+    shown["body_preview"] = _bounded_preview(readable, _REVIEW_BODY_CHARS)
+    shown["body_characters"] = len(text)
+    shown["body_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    hidden = ", with sensitive values hidden" if readable is not text else ""
+    notes.append(
+        f"The body has {len(text):,} characters, more than can be shown here, so only "
+        f"its beginning is shown{hidden}. Its fingerprint (body_sha256) fixes the "
+        "exact body that will be sent."
+    )
     return shown, notes
 
 
@@ -615,8 +651,10 @@ def _request_permit(request: dict[str, Any], parsed: Any, max_bytes: int):
         f"Sends one {method} request to {origin}. Redirects are not followed, "
         "so no other website receives it.",
         *notes,
-        "Values that look like passwords, keys or tokens are hidden here; "
-        "they are sent exactly as written.",
+        "Hidden here, but sent exactly as written: values under names such as "
+        "password, key or token in the address, the headers, and JSON and form "
+        "bodies, and anything that looks like a key or token. Any other body is "
+        "shown as written.",
         *request_parts,
     ]
     frozen = copy.deepcopy(request)

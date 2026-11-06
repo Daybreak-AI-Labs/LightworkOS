@@ -82,10 +82,12 @@ for, such as a headless run outside a chat task, is refused.
 - **Web requests:** every `http_fetch` request other than a plain `GET` or
   `HEAD`: `POST`, `PUT`, `PATCH`, `DELETE`, and any request with a body. The
   card names the website and shows the method, the address, every header and
-  the body. Values that look like passwords, keys or tokens are hidden on the
-  card but sent as written; a long body is shown as its beginning plus a
-  fingerprint of the whole. The approval is bound to the exact request, so a
-  changed request is not sent.
+  the body. Values under names such as password, key or token (in the
+  address, the headers, and JSON and form bodies), and anything that looks
+  like a key or token, are hidden on the card but sent as written; any other
+  body is shown as written. A long body is shown as its beginning plus its
+  size and a fingerprint of the whole. The approval is bound to the exact
+  request, so a changed request is not sent.
 - **Connector changes:** every change a connector makes in another system
   (sending email or chat messages, creating issues, updating records) is
   previewed, waits for a fresh human decision and is recorded with receipts

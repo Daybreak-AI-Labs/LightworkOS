@@ -259,6 +259,82 @@ def test_keyed_secrets_in_a_form_body_are_hidden(sent, monkeypatch, filler):
     assert call["parameters"]["body"] == body
 
 
+@pytest.mark.parametrize("headers,body", [
+    ({}, json.dumps({"token": "Z" * 100_000, "to": "x"})),  # pragma: allowlist secret
+    ({"Content-Type": "application/x-www-form-urlencoded"}, "password=" + "Z" * 100_000 + "&to=x"),  # pragma: allowlist secret
+], ids=["json", "form"])
+def test_a_long_body_keeps_its_size_and_fingerprint_when_hiding_shortens_it(sent, monkeypatch, headers, body):
+    """Whether a body is shown in full is decided on the body that will be
+    sent: hiding a long value must not make a large upload look small."""
+    calls = _deny_and_capture(monkeypatch)
+    _fetch({"url": "https://api.example.test/upload", "method": "POST", "headers": headers, "body": body})
+
+    (call,) = calls
+    shown = "\n".join(call["parameter_summary"])
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert f"{len(body):,} characters" in shown
+    assert "ZZZZ" not in shown
+
+
+def test_compact_json_that_fits_is_shown_in_full(sent, monkeypatch):
+    calls = _deny_and_capture(monkeypatch)
+    body = "[" + ",".join(["1"] * 1400) + "]"
+    _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body})
+
+    (call,) = calls
+    shown = "\n".join(call["parameter_summary"])
+    assert "body_sha256" not in shown and "body_preview" not in shown
+    assert shown.count("1,1,") > 0
+
+
+def test_a_preview_of_non_ascii_text_is_cut_between_characters(sent, monkeypatch):
+    """The preview is cut from readable text, not from an escaped copy of it,
+    and the note does not compare lengths of two different strings."""
+    calls = _deny_and_capture(monkeypatch)
+    body = json.dumps({"text": "\u00e9" * 1000}, ensure_ascii=False)
+    _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body})
+
+    (call,) = calls
+    shown = "\n".join(call["parameter_summary"])
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert f"The body has {len(body):,} characters" in shown
+    assert "\\u00e9\\u00e9" in shown  # the card escapes each character once
+    assert "\\\\u00e9" not in shown  # never twice
+
+
+@pytest.mark.parametrize("filler", ["", ', "payload": "' + "x" * 5000 + '"'], ids=["short", "long"])
+def test_a_json_body_with_a_repeated_key_still_hides_sensitive_values(sent, monkeypatch, filler):
+    calls = _deny_and_capture(monkeypatch)
+    body = ('{"password": "hunter2-correct-horse", "to": "team@corp.example", '  # pragma: allowlist secret
+            '"to": "drop@evil.example"' + filler + "}")
+    _fetch({"url": "https://api.example.test/send", "method": "POST", "body": body})
+
+    (call,) = calls
+    shown = "\n".join(call["parameter_summary"])
+    assert "hunter2-correct-horse" not in shown
+    assert "team@corp.example" in shown and "drop@evil.example" in shown
+    assert call["parameters"]["body"] == body
+
+
+@pytest.mark.parametrize("body", ["[" * 990 + "]" * 990, '{"a":' * 900 + "1" + "}" * 900, "[" * 5000 + "]" * 5000],
+                         ids=["array", "object", "beyond-the-parser"])
+def test_a_deeply_nested_body_is_refused_cleanly(sent, body):
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body})
+    assert out.startswith("ERROR:") and "nothing was sent" in out
+    assert sent == []
+
+
+def test_the_card_says_which_bodies_have_values_hidden(sent, monkeypatch):
+    calls = _deny_and_capture(monkeypatch)
+    body = '--b\r\nContent-Disposition: form-data; name="note"\r\n\r\nhello\r\n--b--\r\n'
+    _fetch({"url": "https://api.example.test/upload", "method": "POST",
+            "headers": {"Content-Type": "multipart/form-data; boundary=b"}, "body": body})
+
+    (call,) = calls
+    shown = "\n".join(call["parameter_summary"])
+    assert "JSON and form bodies" in shown and "Any other body is shown as written" in shown
+
+
 def test_a_json_body_with_a_repeated_key_is_shown_as_written(sent, monkeypatch):
     """Parsed JSON keeps only the last of two equal keys; the reviewer must see
     both values, because the receiving server may read either."""
