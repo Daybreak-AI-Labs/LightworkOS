@@ -143,6 +143,15 @@ def _as(monkeypatch, principal):
     monkeypatch.setattr(api, "caller_principal", lambda request: principal)
 
 
+def _as_operator(monkeypatch, principal):
+    """A department-scoped caller whose role may operate. An unassigned
+    principal is a viewer, and the role check would refuse before the
+    department gate these tests exercise."""
+    from maverick_dashboard import rbac
+    rbac.set_role(principal, "operator", actor="test")
+    _as(monkeypatch, principal)
+
+
 def test_auth_off_suite_gates_are_a_noop(monkeypatch, tmp_path):
     c = _client(monkeypatch, tmp_path)
     r = c.get("/api/v1/departments")
@@ -316,7 +325,7 @@ def test_scoped_user_cannot_dispatch_other_departments_agent(monkeypatch, tmp_pa
                    description="", domain="legal_contracts"),
     )))
     suite_grants.set_suites("user:fin", ["finance"])
-    _as(monkeypatch, "user:fin")
+    _as_operator(monkeypatch, "user:fin")
 
     r = c.post("/api/v1/fleets/mixed/run",
                json={"agent": "legal_contracts", "prompt": "review this NDA"})
@@ -435,7 +444,7 @@ def test_scoped_user_sees_filtered_agents_and_safe_workforce_recovery(monkeypatc
     c = _client(monkeypatch, tmp_path)
     from maverick_dashboard import suite_grants
     suite_grants.set_suites("user:fin", ["finance"])
-    _as(monkeypatch, "user:fin")
+    _as_operator(monkeypatch, "user:fin")
 
     workforce = c.get("/workforce", headers={"Accept": "text/html"})
     assert workforce.status_code == 200
@@ -473,7 +482,7 @@ def test_kernel_gate_blocks_dispatch_and_deploy_for_scoped_user(monkeypatch, tmp
                    description="", domain="legal_contracts"),
     )))
     suite_grants.set_suites("user:fin", ["finance"])
-    _as(monkeypatch, "user:fin")
+    _as_operator(monkeypatch, "user:fin")
 
     r = c.post("/api/v1/fleets/mixed/run",
                json={"agent": "legal_contracts", "prompt": "review this NDA"})
@@ -542,7 +551,7 @@ def test_cross_suite_fork_requires_both_grants_on_agent_and_deliverable_views(
     from maverick_dashboard import suite_grants
 
     assert "legal_client" in available_domains()
-    _as(monkeypatch, "user:limited")
+    _as_operator(monkeypatch, "user:limited")
     for suites in (["aerospace_defense"], ["legal"]):
         suite_grants.set_suites("user:limited", suites)
         names = {a["name"] for a in c.get("/api/v1/agents").json()["agents"]}

@@ -1698,6 +1698,26 @@ def test_native_release_uses_locked_python_tools_and_preserves_wheel_bytes():
     assert "npm package propagation incomplete after final retry" in publish_npm
 
 
+def test_native_release_profile_compiles_each_crate_as_one_codegen_unit():
+    # With several codegen units, rustc's ThinLTO keeps whichever unit's copy
+    # of the MSVC panic type descriptor finished optimizing first, so two clean
+    # Windows builds produced one of two different .pyd files.
+    workspace = tomllib.loads(
+        (REPO_ROOT / "rust" / "Cargo.toml").read_text(encoding="utf-8")
+    )
+    release = workspace["profile"]["release"]
+    assert release["codegen-units"] == 1
+    for override in release.get("package", {}).values():
+        assert override.get("codegen-units", 1) == 1
+    for manifest in (REPO_ROOT / "rust").glob("*/Cargo.toml"):
+        member = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        assert "profile" not in member, manifest
+    workflow = (
+        REPO_ROOT / ".github" / "workflows" / "native.yml"
+    ).read_text(encoding="utf-8")
+    assert "CARGO_PROFILE_RELEASE_CODEGEN_UNITS" not in workflow
+
+
 def test_secret_scan_excludes_only_the_rotating_signed_manifest():
     baseline = json.loads(
         (REPO_ROOT / ".secrets.baseline").read_text(encoding="utf-8")
