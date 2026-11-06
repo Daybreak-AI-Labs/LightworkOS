@@ -92,7 +92,7 @@ jobs:
         run: python -m ruff check .
       - name: Check types at selected boundaries
         run: |
-          python -m pip install 'mypy==1.18.2'
+          python -m pip install 'mypy==2.4.1'
           python -m mypy
       - name: Check standalone demo support copies
         run: python scripts/sync_standalone_support.py --check
@@ -794,7 +794,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install the focused test dependency
         if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
-        run: python -m pip install "pytest==9.1.1"
+        run: python -m pip install "pytest==9.2.0"
       - name: Test Windows Job Object process-tree containment
         if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
         env:
@@ -834,7 +834,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install the focused test dependency
         if: github.event_name != 'pull_request'
-        run: python -m pip install "pytest==9.1.1"
+        run: python -m pip install "pytest==9.2.0"
       - name: Test Windows Job Object process-tree containment
         if: github.event_name != 'pull_request'
         env:

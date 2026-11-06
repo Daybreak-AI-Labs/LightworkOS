@@ -10,6 +10,8 @@ import pytest
 from maverick import runner
 from maverick_dashboard._lifecycle import ShutdownSupervisor, shutdown_seconds, supervised_runtime
 
+from test_support.starlette_state import patch_state
+
 
 @pytest.fixture(autouse=True)
 def _isolate_starter_team_admission(monkeypatch):
@@ -257,7 +259,7 @@ def test_shutdown_refuses_new_http_work_and_readiness_but_keeps_liveness(monkeyp
     from fastapi.testclient import TestClient
     from maverick_dashboard.app import app
 
-    monkeypatch.setattr(app.state, "lifecycle_supervisor", SimpleNamespace(phase="stopping"), raising=False)
+    patch_state(monkeypatch, app.state, "lifecycle_supervisor", SimpleNamespace(phase="stopping"), raising=False)
     client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
     assert client.get("/readyz").status_code == 503
     assert client.get("/api/v1/facts").status_code == 503
@@ -294,7 +296,7 @@ def test_optional_drop_lifespan_joins_the_same_supervisor(monkeypatch, tmp_path)
     # DROP attaches only when explicitly configured at composition time.
     # Retain the actual base/composed lifespans and restore this optional wrapper.
     monkeypatch.setattr(app.router, "lifespan_context", app.router.lifespan_context)
-    monkeypatch.setattr(app.state, "privacy_drop_management_scheduler", None, raising=False)
+    patch_state(monkeypatch, app.state, "privacy_drop_management_scheduler", None, raising=False)
     runtime = DROPManagedMaintenanceScheduler(tmp_path / "drop.sqlite3", cycle_runner=lambda: None, enabled=False)
     attach_drop_managed_scheduler(app, runtime)
     with TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"}):

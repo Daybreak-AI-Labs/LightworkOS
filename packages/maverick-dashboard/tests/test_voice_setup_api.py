@@ -13,6 +13,8 @@ from maverick_dashboard import auth
 from maverick_dashboard import voice_setup_api as setup
 from maverick_dashboard.app import app
 
+from test_support.starlette_state import patch_state
+
 PAYLOAD = b"synthetic speech model"
 ENDPOINT = "/api/v1/voice/setup"
 
@@ -29,7 +31,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "config_source_errors", lambda **_: [])
     monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
     monkeypatch.setattr(setup, "_engine_available", lambda: False)
-    monkeypatch.setattr(app.state, "voice_setup", setup.VoiceSetup())
+    patch_state(monkeypatch, app.state, "voice_setup", setup.VoiceSetup())
     monkeypatch.setitem(voice_models.KNOWN_MODELS, "base", ("ggml-base.bin", hashlib.sha256(PAYLOAD).hexdigest(), len(PAYLOAD)))
     monkeypatch.setattr(voice_models, "_open_model_url", lambda *_, **__: io.BytesIO(PAYLOAD))
     yield

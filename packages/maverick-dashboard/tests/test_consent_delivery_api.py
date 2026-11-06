@@ -14,6 +14,8 @@ from maverick.consent_preferences import (
 )
 from maverick_dashboard.app import app
 
+from test_support.starlette_state import patch_state
+
 client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
 API = "/api/v1/consent/delivery"
 NOW = 1_800_000_000.0
@@ -285,7 +287,8 @@ def test_named_destination_dispatch_passes_ready_transport_and_same_stores(
         def inspect(self, _probe):
             raise AssertionError("dispatch construction must not reconcile")
 
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         app.state,
         "consent_destination_reconciliation_authority_factory",
         lambda *, tenant_id: Reconciler(),

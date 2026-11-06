@@ -57,7 +57,7 @@ echo ">> [2/6] install packages NON-editable (so Nuitka can follow them)"
 python scripts/install_release_cohort.py \
   --target-python python \
   --core-extra release-runtime
-python -m pip install --constraint requirements/ci.txt 'nuitka==4.3.1'
+python -m pip install --constraint requirements/ci.txt 'nuitka==4.3.4'
 python -m pip check
 python -c "from maverick.providers import verify_release_runtime; verify_release_runtime()"
 
