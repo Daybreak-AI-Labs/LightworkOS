@@ -118,7 +118,7 @@ python -m nuitka \
   --nofollow-import-to='*.tests' \
   --nofollow-import-to='*.test_*' \
   --assume-yes-for-downloads \
-  --company-name="Daybreak Labs" \
+  --company-name="Daybreak AI Labs" \
   --product-name="Lightwork" \
   --file-description="Lightwork governed agent platform" \
   dist/nuitka-build/_entry.py

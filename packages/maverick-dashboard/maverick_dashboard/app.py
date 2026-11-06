@@ -14723,7 +14723,7 @@ async def natural_voice_js() -> FileResponse:
 
 @app.get("/static/daybreak-logo.jpg")
 async def brand_logo() -> FileResponse:
-    """The Daybreak Labs brand logo, served same-origin for the sidebar brand,
+    """The Daybreak AI Labs brand logo, served same-origin for the sidebar brand,
     the favicon, and the public share view. Auth-exempt by nature (a brand
     image), cached a day."""
     return FileResponse(
@@ -14735,7 +14735,7 @@ async def brand_logo() -> FileResponse:
 
 @app.get("/static/daybreak-mark.png")
 async def brand_mark() -> FileResponse:
-    """The Daybreak Labs mark (the circuit-sunrise D) used by the topbar brand.
+    """The Daybreak AI Labs mark (the circuit-sunrise D) used by the topbar brand.
     Public by nature, cached a day."""
     return FileResponse(
         _STATIC_DIR / "daybreak-mark.png",

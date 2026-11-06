@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>dev.maverick.jetbrains</id>
   <name>Lightwork</name>
-  <vendor url="https://github.com/Daybreak-AI-Labs/LightworkOS">Daybreak Labs</vendor>
+  <vendor url="https://github.com/Daybreak-AI-Labs/LightworkOS">Daybreak AI Labs</vendor>
   <description>Watch Lightwork agent runs live inside the IDE (streams the
   self-hosted dashboard's SSE event feed).</description>
   <depends>com.intellij.modules.platform</depends>

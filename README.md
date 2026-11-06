@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/daybreak-labs-logo.jpg" alt="Daybreak Labs" width="240">
+  <img src="docs/assets/daybreak-labs-logo.jpg" alt="Daybreak AI Labs" width="240">
 </p>
 
 <h1 align="center">Lightwork</h1>
@@ -344,4 +344,4 @@ Pull request titles follow Conventional Commits, and your first pull request sig
 
 Lightwork is licensed under the [Apache License 2.0](LICENSE); see also [NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The Lightwork name and logo are trademarks and are not covered by the license; see [TRADEMARK.md](TRADEMARK.md).
 
-Lightwork is developed by Daybreak Labs; copyright is held by Christopher Day (see [NOTICE](NOTICE)).
+Lightwork is developed by Daybreak AI Labs; copyright is held by Christopher Day (see [NOTICE](NOTICE)).

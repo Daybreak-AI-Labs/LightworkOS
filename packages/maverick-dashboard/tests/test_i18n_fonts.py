@@ -55,7 +55,7 @@ def test_lang_param_translates_chrome_and_sets_cookie():
     assert 'lang="fr">Aller au contenu</a>' in r.text
     assert 'lang="fr">Police</span>' in r.text
     # The footer is the product name only; no untranslated chrome is left in it.
-    assert '<span class="muted">Lightwork by Daybreak Labs</span>' in r.text
+    assert '<span class="muted">Lightwork by Daybreak AI Labs</span>' in r.text
     assert "mvk_lang=fr" in r.headers.get("set-cookie", "")
     r2 = client.get("/overview", params={"lang": "ja"})
     assert '<html lang="en" dir="ltr">' in r2.text
