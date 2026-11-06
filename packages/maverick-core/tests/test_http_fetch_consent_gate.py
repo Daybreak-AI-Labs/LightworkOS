@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from types import SimpleNamespace
+from urllib.parse import quote, quote_plus
 
 import pytest
 
@@ -973,6 +974,75 @@ _DSN_TAIL = "postgres://admin:Sup3rS3cretPassw0rd%21@db.internal/prod"  # pragma
 ], ids=["text", "json-string", "text-after-spacing", "form"])
 def test_a_connection_string_cut_by_the_read_never_shows_its_password(sent, monkeypatch, headers, body, secret):
     assert secret not in _card(monkeypatch, body, headers)
+
+
+def _placed(before: str, filler: str, middle: str, secret: str, after: str, into: int = 30, at: int = 8000) -> str:
+    """``before + filler * n + middle + secret + after``, with ``n`` chosen so
+    character ``at`` (8,000 is where the part of a long read a card keeps
+    ends, 9,000 where the read ends) falls ``into`` characters into
+    ``secret``."""
+    count = at - into - len(before) - len(middle)
+    assert count > 0
+    return before + filler * count + middle + secret + after
+
+
+_AWS_ENCODED = "aws_secret_access_key%3DwJalrXUtnFEMI%2FK7MDENG%2FbPxRfiCYEXAMPLEKE%2F"  # pragma: allowlist secret
+_STORAGE_KEY = ("kL3p/Q9vX+z7Rt2WbN8yHc4M" * 4)[:86] + "=="
+_LONG_JWT = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ" + "c2NvcGUiOiJhZG1pbiJ9" * 195 + ".s1gnatur3" * 10
+
+
+@pytest.mark.parametrize("body,secret", [
+    # A secret whose last character is percent-encoded keeps that character.
+    (_placed("token=", "x", "&k=", "AKIAIOSFODNN7EXAMPL%45", "&z=" + "y" * 2000, into=19),  # pragma: allowlist secret
+     "AKIAIOSFODNN7EXAMPL"),  # pragma: allowlist secret
+    (_placed("id_token=", "e", "&cfg=", _AWS_ENCODED, "&note=" + "n" * 3000, into=len(_AWS_ENCODED) - 2),
+     "bPxRfiCY"),
+    # A key found only once decoded, by the patterns hiding uses there.
+    (_placed("token=", "x", "&conf=AccountKey%3D", quote(_STORAGE_KEY, safe=""), "&z=" + "y" * 2000),
+     "Rt2WbN8yHc4M"),
+    (_placed("certificate=", "c", "&aws_config=" + quote_plus("aws_secret_access_key" + " " * 20 + "= "),
+             "wJalrXUtnFEMIzK7MDENGabPxRfiCYEXAMPLEKEY", "&z=" + "y" * 2000), "wJalrXUtnFEMI"),  # pragma: allowlist secret
+    # A secret that runs on to the end of the read in one pair does not move
+    # the cut for another.
+    (_placed("cache=redis://app:pw@cache.internal:6379&upload_ref=sk-", "A", "&t=", "ghp_" + "Zx9Q" * 9,
+             "&note=" + "n" * 2000, into=20, at=9000), "ghp_Zx9Q"),
+    (_placed("CLIENT_SECRET=x&upload_ref=sk-", "A", "&t=", "ghp_" + "Zx9Q" * 9, "&note=" + "n" * 2000, into=20,
+             at=9000), "ghp_Zx9Q"),
+    # A secret longer than the read keeps nothing.
+    (_placed("certificate=", "c", "&client_assertion=", _LONG_JWT, "&tail=" + "t" * 2000, into=300), "eyJhbGci"),
+], ids=["escaped-last-character", "escaped-last-character-aws", "decoded-account-key", "decoded-spacing",
+        "connection-string-run-on", "env-style-run-on", "long-token"])
+def test_a_form_cut_by_the_read_keeps_no_part_of_a_secret(sent, monkeypatch, body, secret):
+    assert secret not in _real_card(monkeypatch, body, _FORM)
+
+
+_PEM_LINES = "".join("\\nMIIJ" + "Q" * 60 for _ in range(60))
+
+
+@pytest.mark.parametrize("body,secret", [
+    (_placed("sk-", "A", " ", _LONG_JWT, " tail" * 500, into=400), "eyJhbGci"),
+    (json.dumps({"note": _placed("sk-", "A", " ", _LONG_JWT, " tail" * 500, into=400)}), "eyJhbGci"),
+    (_placed("sk-", "A", '\nOIDC_SIGNING_KEY="', "-----BEGIN RSA PRIVATE KEY-----" + _PEM_LINES
+             + '\\n-----END RSA PRIVATE KEY-----"\n', "tail " * 500, into=2000), "MIIJQQ"),
+    (_placed("sk-", "A", '\nAPI_SECRET="', " ".join(f"w0rd{index}" for index in range(400)) + '"\n',
+             "tail " * 500, into=900), "w0rd"),
+], ids=["text-token", "json-string-token", "quoted-key-block", "quoted-value"])
+def test_a_secret_longer_than_the_read_keeps_nothing_on_the_card(sent, monkeypatch, body, secret):
+    assert secret not in _real_card(monkeypatch, body)
+
+
+@pytest.mark.parametrize("body,secret", [
+    ('{"password": "hunter2-correct-horse", "message": "line one\nline two"}', "hunter2"),  # pragma: allowlist secret
+    ('{"message": "a\tb", "api_key": "abcd1234efgh5678"}', "abcd1234efgh5678"),  # pragma: allowlist secret
+], ids=["newline", "tab"])
+def test_a_json_string_with_a_raw_control_character_is_still_read_as_json(sent, monkeypatch, body, secret):
+    import maverick.safety as safety
+
+    assert secret not in _real_card(monkeypatch, body)
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body, "headers": _FORM})
+    assert out.startswith("ERROR:") and "application/json" in out and asked == []
 
 
 def test_connector_cards_hide_secrets_within_each_value(sent):

@@ -550,10 +550,24 @@ def _has_secret(text: str) -> bool:
 _VALUE_WINDOW = 3 * _REVIEW_BODY_CHARS
 
 
-# How far before the end of a read the part of it a card shows stops: any
-# secret the read cut is no longer than this, so it lies wholly in the part
-# that is dropped (a secret that starts earlier is kept whole, as its marker).
+# How far before the end of a read the part of it a card shows stops: a
+# secret that straddles that point and is no longer than this ends inside the
+# read, so it is found whole and kept whole, as its marker.
 _CUT_MARGIN = 1000
+
+# The beginning of a secret whose pattern (maverick.safety.secret_detector)
+# needs text after it: a token before its last part, credentials before the
+# "@", and a quoted value before its closing quote. One that runs to the end
+# of a read was cut there, and is kept not at all.
+_OPEN_SECRET = re.compile(
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*)?\Z"
+    r"|\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://[^@/\s]*\Z"
+    r"|(?:^|\n)[^\S\n]*(?:export\s+)?[A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL)[A-Z0-9_]*"
+    r"\s*[:=]\s*(?:\"[^\"\n]*|'[^'\n]*)\Z",
+    re.MULTILINE,
+)
+_KEY_BEGIN = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")
+_KEY_END = re.compile(r"-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")
 
 
 def _collapsed_with_positions(text: str) -> tuple[str, list[int]]:
@@ -595,42 +609,110 @@ def _decoded_with_positions(text: str) -> tuple[str, list[int]]:
 _PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
 
 
-def _secret_spans(text: str, *, decoded: bool = False) -> list[tuple[int, int]]:
-    """Where in ``text`` (its own positions) anything ``_hidden_secrets`` would
-    hide lies: read as written, with spacing collapsed, and (for a form)
-    percent-decoded."""
+def _readings(text: str, *, decoded: bool) -> list[tuple[str, list[int]]]:
+    """The ways hiding reads ``text``, each with, for each of its characters,
+    the position in ``text`` its writing starts at: as written, percent-decoded
+    (for a form), and each of those with its spacing made single spaces."""
+    readings = [(text, list(range(len(text))))]
+    if decoded:
+        readings.append(_decoded_with_positions(text))
+    for reading, positions in list(readings):
+        collapsed, inner = _collapsed_with_positions(reading)
+        readings.append((collapsed, [positions[index] for index in inner]))
+    return readings
+
+
+def _open_secret(reading: str) -> int | None:
+    """Where the earliest secret that runs to the end of ``reading`` without
+    the text its pattern needs after it starts, if there is one."""
+    found = _OPEN_SECRET.search(reading)
+    starts = [found.start() + (reading[found.start()] == "\n")] if found else []
+    ends = [match.start() for match in _KEY_END.finditer(reading)]
+    starts += [match.start() for match in _KEY_BEGIN.finditer(reading) if not ends or match.start() > ends[-1]][:1]
+    return min(starts) if starts else None
+
+
+def _secret_bounds(text: str, *, decoded: bool = False, cut: bool = False) -> tuple[list[tuple[int, int]], list[int]]:
+    """Where in ``text`` anything hiding would hide lies, read as hiding reads
+    it (see ``_readings``; with the standalone storage-key pattern), and, when
+    the read ``cut`` ``text`` at its end, where any secret it cut starts."""
     from ..governed_tools import _AZURE_ACCOUNT_KEY
     from ..safety.secret_detector import scan
 
-    spans = [match.span for match in scan(text)]
-    spans += [match.span() for match in _AZURE_ACCOUNT_KEY.finditer(text)]
-    readings = [_collapsed_with_positions(text)]
-    if decoded:
-        readings.append(_decoded_with_positions(text))
-    for reading, positions in readings:
-        spans += [(positions[start], positions[end - 1] + 1)
-                  for start, end in (match.span for match in scan(reading)) if end > start]
-    return spans
+    spans: list[tuple[int, int]] = []
+    opens: list[int] = []
+    for reading, positions in _readings(text, decoded=decoded):
+        found = [match.span for match in scan(reading)]
+        found += [match.span() for match in _AZURE_ACCOUNT_KEY.finditer(reading)]
+        # From where the first character's writing starts to where the writing
+        # of the character after the last one starts (a %XX escape is three).
+        spans += [(positions[start], positions[stop] if stop < len(positions) else len(text))
+                  for start, stop in found if stop > start]
+        opened = _open_secret(reading) if cut else None
+        if opened is not None and opened < len(positions):
+            opens.append(positions[opened])
+    return spans, opens
 
 
-def _read_window(text: str, *, cut: bool = False, decoded: bool = False) -> tuple[str, bool]:
-    """The part of ``text`` a card may show, and whether it is all of it. Of a
-    long text (or one the caller already ``cut``) only the first
-    ``_VALUE_WINDOW`` characters are read, and the part kept ends
-    ``_CUT_MARGIN`` characters before the end of the read, moved on past any
-    secret that would straddle it. A secret the read cut is never kept in
-    part; one that starts in time is kept whole and hidden as one."""
-    if len(text) <= _VALUE_WINDOW and not cut:
-        return text, True
-    window = text[:_VALUE_WINDOW]
-    spans = _secret_spans(window, decoded=decoded)
-    end, moved = max(0, len(window) - _CUT_MARGIN), True
+def _settled_end(end: int, spans: list[tuple[int, int]], opens: list[int]) -> int:
+    """``end`` moved on past any secret that straddles it, then back before any
+    secret the read cut and any secret straddling where that leaves it, so no
+    secret is kept in part."""
+    moved = True
     while moved:
         moved = False
         for start, stop in spans:
             if start < end < stop:
                 end, moved = stop, True
-    return window[:end], False
+    while True:
+        back = [start for start, stop in spans if start < end < stop] + [start for start in opens if start < end]
+        if not back:
+            return end
+        end = min(back)
+
+
+def _read_window(text: str, *, cut: bool = False) -> tuple[str, bool]:
+    """The part of ``text`` (one value) a card may show, and whether it is all
+    of it. Of a long text (or one the caller already ``cut``) only the first
+    ``_VALUE_WINDOW`` characters are read, and the part kept ends
+    ``_CUT_MARGIN`` characters before the end of the read, moved so that no
+    secret is kept in part (see ``_settled_end``)."""
+    if len(text) <= _VALUE_WINDOW and not cut:
+        return text, True
+    window = text[:_VALUE_WINDOW]
+    spans, opens = _secret_bounds(window, cut=True)
+    return window[:_settled_end(max(0, len(window) - _CUT_MARGIN), spans, opens)], False
+
+
+def _pairs_window(text: str) -> tuple[str, bool]:
+    """Of a long query string or form body, the part a card may show (as
+    ``_read_window``), and whether it is all of it. The cut is settled within
+    the one pair, or ";"-part of one, it falls in, read as ``_reviewed_pair``
+    reads it: each pair is hidden on its own, so a secret in one never moves
+    the cut for another."""
+    from ..governed_tools import _sensitive_request_key
+
+    if len(text) <= _VALUE_WINDOW:
+        return text, True
+    window = text[:_VALUE_WINDOW]
+    end = len(window) - _CUT_MARGIN
+    piece_start = window.rfind("&", 0, end) + 1
+    piece_stop = window.find("&", end)
+    piece_stop = len(window) if piece_stop < 0 else piece_stop
+    name, sep, _value = window[piece_start:piece_stop].partition("=")
+    if sep and piece_start + len(name) < end and _sensitive_request_key(unquote_plus(name)):
+        return window[:end], False  # the whole value is hidden
+    start = max(piece_start, window.rfind(";", 0, end) + 1)
+    stop = window.find(";", end, piece_stop)
+    stop = piece_stop if stop < 0 else stop
+    part = window[start:stop]
+    name, sep, value = part.partition("=")
+    spans, opens = _secret_bounds(part, cut=stop == len(window))
+    for offset, piece in ((0, name), (len(name) + len(sep), value)):
+        more, more_opens = _secret_bounds(piece, decoded=True, cut=start + offset + len(piece) == len(window))
+        spans += [(begin + offset, finish + offset) for begin, finish in more]
+        opens += [begin + offset for begin in more_opens]
+    return window[:start + _settled_end(end - start, spans, opens)], False
 
 
 def _hidden_beginning(text: str) -> tuple[str, bool]:
@@ -681,7 +763,7 @@ def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) 
     end of what was read after hiding is dropped; reading also stops once more
     than ``limit`` characters are written. Returns the text and whether all of
     it was read."""
-    window, whole = _read_window(text, decoded=True)
+    window, whole = _pairs_window(text)
     written, size = [], 0
     for index, piece in enumerate(window.split("&")):
         parts = _reviewed_pair(piece)
@@ -757,13 +839,13 @@ def _decoded_string(token: str, size: int) -> tuple[str, bool]:
     token longer than ``size``, only the beginning is decoded."""
     if len(token) <= size:
         try:
-            return json.loads(token), True
+            return json.loads(token, strict=False), True
         except ValueError as exc:
             raise _NotJson from exc
     beginning = token[:size]
     for trim in range(7):  # step back over an escape the cut split
         try:
-            return json.loads(beginning[:len(beginning) - trim] + '"'), False
+            return json.loads(beginning[:len(beginning) - trim] + '"', strict=False), False
         except ValueError:
             continue
     raise _NotJson
