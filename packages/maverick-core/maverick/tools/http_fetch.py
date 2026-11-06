@@ -16,6 +16,7 @@ Respects:
 """
 from __future__ import annotations
 
+import codecs
 import copy
 import hashlib
 import http.client
@@ -549,37 +550,94 @@ def _has_secret(text: str) -> bool:
 _VALUE_WINDOW = 3 * _REVIEW_BODY_CHARS
 
 
-# Where a read may end without splitting a key or token: at a space, or else
-# at a character no token holds (a token is letters, digits and "_-+/="; a
-# connection string also holds ":@" and stops only at a space).
-_LAST_SPACE = re.compile(r"\s\S*\Z")
-_LAST_STOP = re.compile(r"""[\s%&;,'"<>()\[\]{}\\.][^\s%&;,'"<>()\[\]{}\\.]*\Z""")
+# How far before the end of a read the part of it a card shows stops: any
+# secret the read cut is no longer than this, so it lies wholly in the part
+# that is dropped (a secret that starts earlier is kept whole, as its marker).
+_CUT_MARGIN = 1000
 
 
-def _cut_at_space(text: str, *, cut: bool = False) -> str:
-    """The first ``_VALUE_WINDOW`` characters of ``text`` (or all of a shorter
-    text the caller has already ``cut``), ending where no key or token can be
-    split: at the last space in its final 1,000 characters, or else at the
-    last character no token holds, or else 200 characters early (no token
-    pattern needs that many characters to match)."""
+def _collapsed_with_positions(text: str) -> tuple[str, list[int]]:
+    """``text`` with each run of spacing made one space, and for each of its
+    characters the position it came from."""
+    shown, positions, spacing = [], [], False
+    for position, character in enumerate(text):
+        if character.isspace():
+            if spacing:
+                continue
+            character, spacing = " ", True
+        else:
+            spacing = False
+        shown.append(character)
+        positions.append(position)
+    return "".join(shown), positions
+
+
+def _decoded_with_positions(text: str) -> tuple[str, list[int]]:
+    """``text`` percent- and plus-decoded as a form server reads it, and for
+    each decoded character the position its encoding started at."""
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    shown, positions, position, began = [], [], 0, None
+    while position < len(text):
+        character, step = text[position], 1
+        if character == "%" and _PERCENT_ESCAPE.match(text, position):
+            encoded, step = bytes([int(text[position + 1:position + 3], 16)]), 3
+        else:
+            encoded = b" " if character == "+" else character.encode("utf-8")
+        began = position if began is None else began
+        decoded = decoder.decode(encoded)
+        shown.append(decoded)
+        positions.extend([began] * len(decoded))
+        began = None if decoded else began
+        position += step
+    return "".join(shown), positions
+
+
+_PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
+
+
+def _secret_spans(text: str, *, decoded: bool = False) -> list[tuple[int, int]]:
+    """Where in ``text`` (its own positions) anything ``_hidden_secrets`` would
+    hide lies: read as written, with spacing collapsed, and (for a form)
+    percent-decoded."""
+    from ..governed_tools import _AZURE_ACCOUNT_KEY
+    from ..safety.secret_detector import scan
+
+    spans = [match.span for match in scan(text)]
+    spans += [match.span() for match in _AZURE_ACCOUNT_KEY.finditer(text)]
+    readings = [_collapsed_with_positions(text)]
+    if decoded:
+        readings.append(_decoded_with_positions(text))
+    for reading, positions in readings:
+        spans += [(positions[start], positions[end - 1] + 1)
+                  for start, end in (match.span for match in scan(reading)) if end > start]
+    return spans
+
+
+def _read_window(text: str, *, cut: bool = False, decoded: bool = False) -> tuple[str, bool]:
+    """The part of ``text`` a card may show, and whether it is all of it. Of a
+    long text (or one the caller already ``cut``) only the first
+    ``_VALUE_WINDOW`` characters are read, and the part kept ends
+    ``_CUT_MARGIN`` characters before the end of the read, moved on past any
+    secret that would straddle it. A secret the read cut is never kept in
+    part; one that starts in time is kept whole and hidden as one."""
+    if len(text) <= _VALUE_WINDOW and not cut:
+        return text, True
     window = text[:_VALUE_WINDOW]
-    if len(window) == len(text) and not cut:
-        return window
-    tail_start = max(0, len(window) - 1000)
-    for pattern in (_LAST_SPACE, _LAST_STOP):
-        found = pattern.search(window, tail_start)
-        if found and found.start() > 0:
-            return window[:found.start()]
-    return window[:-200]
+    spans = _secret_spans(window, decoded=decoded)
+    end, moved = max(0, len(window) - _CUT_MARGIN), True
+    while moved:
+        moved = False
+        for start, stop in spans:
+            if start < end < stop:
+                end, moved = stop, True
+    return window[:end], False
 
 
 def _hidden_beginning(text: str) -> tuple[str, bool]:
     """``text`` with anything that looks like a key or token hidden, and
-    whether all of it was read. Of a long text only the beginning is read
-    (see ``_cut_at_space``)."""
-    if len(text) <= _VALUE_WINDOW:
-        return _hidden_secrets(text), True
-    return _hidden_secrets(_cut_at_space(text)), False
+    whether all of it was read (see ``_read_window``)."""
+    window, whole = _read_window(text)
+    return _hidden_secrets(window), whole
 
 
 def _reviewed_part(part: str) -> str:
@@ -623,8 +681,8 @@ def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) 
     end of what was read after hiding is dropped; reading also stops once more
     than ``limit`` characters are written. Returns the text and whether all of
     it was read."""
-    window = _cut_at_space(text)
-    written, size, whole = [], 0, len(window) == len(text)
+    window, whole = _read_window(text, decoded=True)
+    written, size = [], 0
     for index, piece in enumerate(window.split("&")):
         parts = _reviewed_pair(piece)
         written.append(parts)
@@ -665,8 +723,9 @@ _REVIEW_SCANNED = 4 * _VALUE_WINDOW
 def _string_end(text: str, start: int) -> int:
     """Where the JSON string starting at ``start`` (its opening quote) ends,
     just past its closing quote, found without a pattern so a long string
-    costs no memory per character. Raises ``_NotJson`` if it never closes, or
-    has more escaped quotes than a card reads."""
+    costs no memory per character; -1 if it holds more escaped quotes than a
+    card reads (the read then stops there). Raises ``_NotJson`` if it never
+    closes."""
     position = start + 1
     for _ in range(_REVIEW_TOKENS):
         quote = text.find('"', position)
@@ -678,7 +737,7 @@ def _string_end(text: str, start: int) -> int:
         if (quote - 1 - backslash) % 2 == 0:
             return quote + 1
         position = quote + 1
-    raise _NotJson
+    return -1
 
 
 class _NotJson(ValueError):
@@ -718,7 +777,7 @@ def _reviewed_string(token: str) -> tuple[str, bool]:
     decoded, whole = _decoded_string(token, _VALUE_WINDOW + 1000)
     if whole:
         return (json.dumps(_hidden_secrets(decoded), ensure_ascii=False) if _has_secret(decoded) else token), True
-    return json.dumps(_hidden_secrets(_cut_at_space(decoded, cut=True)), ensure_ascii=False)[:-1], False
+    return json.dumps(_hidden_secrets(_read_window(decoded, cut=True)[0]), ensure_ascii=False)[:-1], False
 
 
 def _key_is_sensitive(token: str) -> bool:
@@ -728,6 +787,22 @@ def _key_is_sensitive(token: str) -> bool:
 
     key, whole = _decoded_string(token, _VALUE_WINDOW)
     return not whole or _sensitive_request_key(key)
+
+
+def _next_token(text: str, position: int) -> tuple[str, int]:
+    """The JSON token at ``position`` and where the next one starts. Of a
+    long string only the beginning a card can show is copied; one too long to
+    find its end comes back cut, with -1 for where the next token starts."""
+    if text[position] != '"':
+        match = _JSON_TOKEN.match(text, position)
+        if match is None:
+            raise _NotJson
+        return match.group(), match.end()
+    end = _string_end(text, position)
+    if end < 0:
+        return text[position:position + _VALUE_WINDOW + 1001], -1
+    shown = text[position:min(end, position + _VALUE_WINDOW + 1000)]
+    return shown + ('"' * (end - position > _VALUE_WINDOW + 1000)), end
 
 
 def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
@@ -752,16 +827,11 @@ def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
             if not ended:
                 raise _NotJson
             return "".join(written).strip(), True
-        if text[position] == '"':
-            end = _string_end(text, position)
-            # Of a long string only the beginning a card can show is copied.
-            token = text[position:min(end, position + _VALUE_WINDOW + 1000)] + ('"' * (end - position > _VALUE_WINDOW + 1000))
-            position = end
-        else:
-            match = _JSON_TOKEN.match(text, position)
-            if match is None:
-                raise _NotJson
-            token, position = match.group(), match.end()
+        token, position = _next_token(text, position)
+        if position < 0:  # a string too long to find its end: the read stops in it
+            if skip_to is None and not expect_key:
+                written.append(hidden if hide_next else _reviewed_string(token)[0])
+            return "".join(written), False
         if token.isspace():
             spaced = True
             if skip_to is None and written and not written[-1].endswith(" "):

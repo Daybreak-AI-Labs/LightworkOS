@@ -915,8 +915,11 @@ def test_a_long_escaped_string_costs_little_memory(sent, monkeypatch):
     assert peak < 60_000_000, peak
 
 
-def test_a_token_cut_by_the_read_never_shows_in_part(sent, monkeypatch):
-    body = "sk-" + "A" * 8970 + "." + "ghp_" + "Q7xR" * 9 + "." + "C" * 20_000
+@pytest.mark.parametrize("body", [
+    "sk-" + "A" * 8970 + "." + "ghp_" + "Q7xR" * 9 + "." + "C" * 20_000,
+    "sk-" + "A" * 8767 + "/token=" + "ghp_" + "Q7xR" * 9 + "/" + "y" * 20_000,
+], ids=["after-a-stop", "no-stop-near-the-end"])
+def test_a_token_cut_by_the_read_never_shows_in_part(sent, monkeypatch, body):
     assert "ghp_Q7xR" not in _card(monkeypatch, body)
 
 
@@ -934,6 +937,42 @@ def test_many_strings_that_hide_down_to_markers_are_read_within_a_bound(sent, mo
     body = json.dumps(["-----BEGIN PRIVATE KEY-----\nA" + "KEY" * 2985] * 200)
     _card(monkeypatch, body)
     assert sum(scanned) < 300_000, sum(scanned)
+
+
+@pytest.mark.parametrize("body", [
+    json.dumps({"password": "hunter2-correct-horse",  # pragma: allowlist secret
+                "payload": json.dumps([{"id": index} for index in range(100_000)])}),
+    '{"password": "hunter2-correct-horse", "x": "' + '\\"' * 200_001 + '"}',  # pragma: allowlist secret
+], ids=["embedded-document", "escaped-quotes"])
+def test_a_string_too_long_to_scan_still_reads_the_body_as_json(sent, monkeypatch, body):
+    assert "hunter2-correct-horse" not in _card(monkeypatch, body)
+
+
+def test_a_json_body_declared_as_a_form_is_refused_however_long_its_strings(sent, monkeypatch):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    body = '{"password": "hunter2-correct-horse", "x": "' + '\\"' * 200_001 + '"}'  # pragma: allowlist secret
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body, "headers": _FORM})
+    assert out.startswith("ERROR:") and "application/json" in out and asked == []
+
+
+_DSN_TAIL = "postgres://admin:Sup3rS3cretPassw0rd%21@db.internal/prod"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize("headers,body,secret", [
+    ({}, "sk-" + "A" * (9000 - len("," + _DSN_TAIL[:-16]) - 3) + "," + _DSN_TAIL + " and more" * 2000,
+     "Sup3rS3cretPassw0rd"),
+    ({}, json.dumps({"note": "sk-" + "A" * (9000 - len("," + _DSN_TAIL[:-16]) - 3) + "," + _DSN_TAIL
+                     + " and more" * 2000}), "Sup3rS3cretPassw0rd"),
+    ({}, " " * 7468 + "x" * 1500 + ";db=postgres://admin:hunter2.secret@db.example.com/app;more=" + "y" * 3000,  # pragma: allowlist secret
+     "hunter2"),
+    (_FORM, "certificate=" + "A" * 8942 + "&backup=postgres%3A%2F%2Fadmin%3AS3cret%21pw%40db.example.com%2Fapp"  # pragma: allowlist secret
+     + "&tail=" + "z" * 3000, "S3cret"),
+], ids=["text", "json-string", "text-after-spacing", "form"])
+def test_a_connection_string_cut_by_the_read_never_shows_its_password(sent, monkeypatch, headers, body, secret):
+    assert secret not in _card(monkeypatch, body, headers)
 
 
 def test_connector_cards_hide_secrets_within_each_value(sent):
