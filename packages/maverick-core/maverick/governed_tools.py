@@ -542,6 +542,32 @@ def _redact_request_fields(value: object, *, sensitive: bool = False) -> object:
     return _REDACTED_REQUEST_VALUE if sensitive else value
 
 
+class ReviewedText(str):
+    """Text whose secrets a caller already hid piece by piece (each JSON value,
+    each form pair). It is shown as is: scanning it again as one text could
+    match across two pieces and hide the text between them."""
+
+
+def _redact_secret_leaves(value: object) -> object:
+    """Hide anything that looks like a key or token inside each value on its
+    own. Scanning the whole request as one text let a match run from one value
+    into the next and hide the fields and headers between them."""
+    from .safety.secret_detector import redact
+
+    if isinstance(value, ReviewedText):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            (redact(key)[0] if isinstance(key, str) else key): _redact_secret_leaves(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_secret_leaves(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return redact(value if isinstance(value, str) else str(value))[0]
+
+
 def _approval_request_parts(args: dict) -> list[str]:
     """Show the frozen request shape with sensitive values redacted."""
     size = 380
@@ -550,12 +576,9 @@ def _approval_request_parts(args: dict) -> list[str]:
         if not raw_request or len(raw_request) > size * 20:
             raise ApprovalCardError("the full connector request is too long to review")
         request = json.dumps(
-            _redact_request_fields(args), sort_keys=True,
+            _redact_secret_leaves(_redact_request_fields(args)), sort_keys=True,
             separators=(",", ":"), default=str,
         )
-        from .safety.secret_detector import redact
-
-        request, _ = redact(request)
         if len(request) > size * 20:
             raise ApprovalCardError("the full connector request is too long to review")
     except ApprovalCardError:

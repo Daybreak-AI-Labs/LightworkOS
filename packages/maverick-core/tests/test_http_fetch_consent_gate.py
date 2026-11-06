@@ -413,22 +413,23 @@ def test_a_json_body_sent_as_a_form_has_both_readings_hidden(sent, monkeypatch, 
     assert "hunter2-correct-horse" not in shown
 
 
-def test_ordinary_json_numbers_are_read_without_a_per_number_copy(sent, monkeypatch):
-    """Exact number text is kept only for an integer too long to convert;
-    ordinary numbers are read natively, so a large numeric body costs what
-    reading it as JSON costs."""
+def test_a_large_numeric_body_is_read_only_as_far_as_the_preview_needs(sent, monkeypatch):
+    """The body is not parsed whole: its tokens are read until the preview is
+    full, so a large numeric body costs what a short one does."""
     import maverick.tools.http_fetch as http_fetch_module
 
-    made = []
+    real, reads = http_fetch_module._JSON_TOKEN, []
 
-    class Counted(str):
-        def __new__(cls, value):
-            made.append(1)
-            return str.__new__(cls, value)
+    class Counted:
+        def match(self, text, position):
+            reads.append(position)
+            return real.match(text, position)
 
-    monkeypatch.setattr(http_fetch_module, "_Number", Counted)
-    shown = _card(monkeypatch, json.dumps(list(range(200_000))))
-    assert "body_sha256" in shown and made == []
+    monkeypatch.setattr(http_fetch_module, "_JSON_TOKEN", Counted())
+    body = json.dumps(list(range(500_000)))
+    shown = _card(monkeypatch, body)
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert 0 < len(reads) < 10_000
 
 
 @pytest.mark.parametrize("url,headers,body", [
@@ -467,6 +468,126 @@ def test_a_request_that_cannot_be_sent_is_refused_before_anyone_is_asked(sent, m
     out = _fetch({"url": "https://api.example.test/upload", "method": "POST", **args})
     assert out.startswith("ERROR:") and "nothing was sent" in out
     assert asked == [] and sent == []
+
+
+# A secret pattern only ever hides text inside one value: a header value, a
+# part of the address, a JSON string, a form pair or a plain-text body. A match
+# that would run from one value into the next is not hidden, so it cannot hide
+# the fields, headers or address between them.
+_AZURE_START = "DefaultEndpointsProtocol=https;AccountName="
+_AZURE_KEY = ";AccountKey=" + "A" * 40
+
+
+@pytest.mark.parametrize("url,headers,body", [
+    ("https://api.example.test/v1/" + _AZURE_KEY + "/import", {"X-Mirror": "https://other.example/in"},
+     _AZURE_START + "x"),
+    ("https://api.example.test/v1/import", {"X-Mirror": "https://other.example/in", "X-Z": "-----END PRIVATE KEY-----"},
+     "note: -----BEGIN PRIVATE KEY----- x"),
+    ("https://api.example.test/v1/import", {"Accept": "*", "User-Agent": "agent", "X-Mirror": "a@b"},
+     "redis://a"),
+], ids=["azure-body-to-address", "key-body-to-header", "uri-body-to-headers"])
+def test_a_secret_pattern_cannot_run_from_the_body_into_the_headers_or_address(sent, monkeypatch, url, headers, body):
+    shown = _card(monkeypatch, body, headers, url=url)
+    assert "X-Mirror" in shown and "/import" in shown
+
+
+@pytest.mark.parametrize("body", [
+    json.dumps({"conn": _AZURE_START, "to": "drop@evil.example", "data": "customer_list", "z": _AZURE_KEY}),
+    json.dumps({"a": "-----BEGIN PRIVATE KEY-----", "to": "drop@evil.example", "data": "customer_list",
+                "b": "-----END PRIVATE KEY-----"}),
+    json.dumps({"cache": "redis://localhost", "to": "drop@evil.example", "data": "customer_list"}),
+], ids=["azure", "private-key", "connection-uri"])
+def test_a_secret_pattern_cannot_hide_json_fields_between_two_values(sent, monkeypatch, body):
+    shown = _card(monkeypatch, body)
+    assert "drop@evil.example" in shown and "customer_list" in shown
+
+
+def test_a_form_pair_with_a_connection_string_hides_only_its_own_value(sent, monkeypatch):
+    body = "replica=redis://u:p@cache&dump=customer_list&to=drop@evil.example"  # pragma: allowlist secret
+    shown = _card(monkeypatch, body, {"Content-Type": "application/x-www-form-urlencoded"})
+    assert "u:p@" not in shown
+    assert "dump=customer_list" in shown and "to=drop@evil.example" in shown
+
+
+@pytest.mark.parametrize("body", [
+    "-----BEGIN PRIVATE KEY-----\n" + "AAECAwQFBgcICQoLDA0ODxAREhMU\n" * 300 + "-----END PRIVATE KEY-----\n",
+    json.dumps({"key": "-----BEGIN PRIVATE KEY-----\n" + "AAECAwQFBgcICQoLDA0ODxAREhMU\n" * 300 + "-----END PRIVATE KEY-----"}),
+    "FOO=1\nINTERNAL_API_TOKEN=Zq8vT3pLmN0xR7wK2yB5\nBAR=2\n",  # pragma: allowlist secret
+    json.dumps({"pad": "x" * 2940, "replica": "redis://admin:S3cretPassw0rdQ@cache.internal:6379/0",  # pragma: allowlist secret
+                "more": "y" * 5000}),
+    "x" * 2967 + " redis://admin:S3cretPassw0rdQ@cache.internal:6379/0 " + "y" * 5000,  # pragma: allowlist secret
+], ids=["long-key", "long-key-in-json", "env-line", "uri-at-the-cut", "uri-at-the-cut-in-text"])
+def test_secrets_are_hidden_in_the_body_as_written_before_the_preview_is_cut(sent, monkeypatch, body):
+    shown = _card(monkeypatch, body)
+    assert "AAECAwQFBgcICQoLDA0ODxAREhMU" not in shown
+    assert "Zq8vT3pLmN0xR7wK2yB5" not in shown and "S3cretPassw0rdQ" not in shown
+
+
+@pytest.mark.parametrize("headers", [
+    {"Content-Type": "text/plain", "content-type": "application/x-www-form-urlencoded"},
+    {"Content-Type": "application/x-www-form-urlencoded,text/plain"},
+    {"Content-Type": "Application/X-WWW-Form-Urlencoded text/plain"},
+], ids=["second-header", "comma", "space"])
+def test_any_content_type_naming_a_form_makes_the_body_a_form(sent, monkeypatch, headers):
+    shown = _card(monkeypatch, "user=dana&password=hunter2-correct-horse", headers)  # pragma: allowlist secret
+    assert "hunter2-correct-horse" not in shown and "user=dana" in shown
+
+
+@pytest.mark.parametrize("body", [
+    "[" + ",".join(["1e15"] * 595) + "]",
+    '{"amount": 1E400, "small": 1e-400, "exact": 9007199254740993.0, "zero": -0}',
+], ids=["exponents", "unusual-numbers"])
+def test_json_numbers_are_shown_as_written(sent, monkeypatch, body):
+    shown = _card(monkeypatch, body)
+    assert "body_sha256" not in shown
+    for written in ("1e15", "1E400", "1e-400", "9007199254740993.0", "-0"):
+        if written in body:
+            assert written in shown
+
+
+@pytest.mark.parametrize("url", [
+    "https://api.example.test/x?pass\tword=1",
+    "https://api.example.test:abc/x",
+    "https://api.example.test:99999/x",
+    "https://api.example.test/a b",
+], ids=["tab", "port-word", "port-range", "space"])
+def test_an_address_that_cannot_be_sent_is_refused_before_anyone_is_asked(sent, monkeypatch, url):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": url, "method": "POST", "body": "x"})
+    assert out.startswith("ERROR:") and "nothing was sent" in out
+    assert asked == [] and sent == []
+
+
+def test_a_large_hidden_value_does_not_stall_the_card(sent, monkeypatch):
+    """A huge value under a sensitive key is skipped, not rendered, and the
+    card still shows the fields after it."""
+    body = '{"token": [' + ",".join(['{"a": 1}'] * 300_000) + '], "to": "drop@evil.example"}'
+    shown = _card(monkeypatch, body)
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert '"a": 1' not in shown
+
+
+def test_nothing_after_a_string_too_long_to_show_appears_as_if_it_followed(sent, monkeypatch):
+    """A string longer than the preview is shown only in part, and reading
+    stops there, so the card never shows a later field after a cut string."""
+    body = json.dumps({"text": "\u00e9" * 3000, "to": "drop@evil.example"})
+    shown = _card(monkeypatch, body)
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert "drop@evil.example" not in shown and "\\\\u00e9" not in shown
+
+
+def test_connector_cards_hide_secrets_within_each_value(sent):
+    """Governed connector approval cards share the per-value rule."""
+    from maverick.governed_tools import _approval_request_parts
+
+    parts = "\n".join(_approval_request_parts({
+        "note": _AZURE_START + "x", "to": "drop@evil.example", "z": _AZURE_KEY,
+        "replica": "redis://u:p@cache",  # pragma: allowlist secret
+    }))
+    assert "drop@evil.example" in parts and "u:p@" not in parts
 
 
 def test_a_json_body_with_a_repeated_key_is_shown_as_written(sent, monkeypatch):

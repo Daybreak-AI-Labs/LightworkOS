@@ -26,7 +26,7 @@ import re
 import socket
 import urllib.request
 from typing import Any
-from urllib.parse import unquote, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urljoin, urlparse, urlsplit, urlunsplit
 
 from ..env_setting import env_or_config as _env_or_config
 from . import Tool
@@ -495,7 +495,8 @@ def _sends_data(method: str, body: Any) -> bool:
 
 def _reviewed_url(url: str) -> str:
     """The address as the reviewer reads it: credentials in the user-info part
-    and query values under sensitive names are hidden, everything else is
+    and query values under sensitive names are hidden, and anything that looks
+    like a key or token is hidden within its own part, everything else is
     shown as written."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE
 
@@ -503,23 +504,57 @@ def _reviewed_url(url: str) -> str:
     netloc = parts.netloc
     if "@" in netloc:
         netloc = f"{_REDACTED_REQUEST_VALUE}@{netloc.rpartition('@')[2]}"
-    query = _reviewed_pairs(parts.query) if parts.query else ""
+    query = _reviewed_pairs(parts.query)[0] if parts.query else ""
     # A fragment is never sent, so it is not shown.
-    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    return urlunsplit((parts.scheme, netloc, _hidden_secrets(parts.path), query, ""))
 
 
-def _reviewed_pairs(text: str) -> str:
-    """``name=value&...`` (a query string or form body) with the values of
-    sensitive names hidden. Some servers also split pairs on ``;``, so a
-    pair after either separator is read."""
+def _hidden_secrets(text: str) -> str:
+    """``text`` with anything that looks like a key or token hidden."""
+    from ..safety.secret_detector import redact
+
+    return redact(text)[0]
+
+
+_PAIR_PIECE = re.compile(r"[&;]|[^&;]+")
+
+
+def _reviewed_value(value: str) -> str:
+    """A pair's value with anything that looks like a key or token hidden,
+    read both as written and percent-decoded."""
+    from ..safety.secret_detector import redact
+
+    shown, found = redact(value)
+    if not found:
+        decoded_found = redact(unquote_plus(value))[1]
+        if decoded_found:
+            return f"[REDACTED:{decoded_found[0].name}]"
+    return shown
+
+
+def _reviewed_pairs(text: str, limit: int | None = None) -> tuple[str, bool]:
+    """``name=value`` pairs (a query string or form body) with the value of
+    each sensitive name hidden, and anything else that looks like a key or
+    token hidden within its own pair. Some servers also split pairs on ``;``,
+    so a pair after either separator is read. Reading stops once more than
+    ``limit`` characters are written; returns the text and whether all of it
+    was read."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
 
-    def reviewed(piece: str) -> str:
-        name, sep, _value = piece.partition("=")
-        return f"{name}={_REDACTED_REQUEST_VALUE}" if sep and _sensitive_request_key(unquote(name)) else piece
-
-    return "".join(piece if piece in ("&", ";") else reviewed(piece)
-                   for piece in re.split(r"([&;])", text))
+    written, size = [], 0
+    for match in _PAIR_PIECE.finditer(text):
+        piece = match.group()
+        if piece not in ("&", ";"):
+            name, sep, value = piece.partition("=")
+            if sep and _sensitive_request_key(unquote_plus(name)):
+                piece = f"{name}={_REDACTED_REQUEST_VALUE}"
+            else:
+                piece = _hidden_secrets(name) + sep + (_reviewed_value(value) if sep else "")
+        written.append(piece)
+        size += len(piece)
+        if limit is not None and size > limit:
+            return "".join(written), match.end() == len(text)
+    return "".join(written), True
 
 
 def _bounded_preview(text: str, limit: int) -> str:
@@ -534,78 +569,125 @@ def _bounded_preview(text: str, limit: int) -> str:
     return text[:low]
 
 
-class _Pairs(list):
-    """A JSON object kept as its (key, value) pairs, a repeated key included."""
+# How much of a body is read for the card, in characters written, and at most
+# how many JSON tokens: enough for a preview, so a body of any size (or a huge
+# hidden value) costs no more to show than a short one.
+_REVIEW_WINDOW = 2 * _REVIEW_BODY_CHARS
+_REVIEW_TOKENS = 200_000
+_JSON_TOKEN = re.compile(
+    r'\s+|"[^"\\]*(?:\\.[^"\\]*)*"|[{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null'
+)
 
 
-class _Number(str):
-    """An integer too long for Python to convert, kept exactly as written."""
+class _NotJson(ValueError):
+    """The body is not JSON."""
 
 
-def _readable_json(value: Any, limit: int) -> str:
-    """Compact JSON text of a parsed body with the whole value under each
-    sensitive key hidden. Every pair of an object is kept, so a repeated key
-    shows each value a server might read. Rendering stops once more than
-    ``limit`` characters are written: a preview needs no more."""
+def _decoded_string(token: str) -> tuple[str, bool]:
+    """The text of a JSON string token, and whether all of it was read: of a
+    string longer than the preview can show, only the beginning is read."""
+    if len(token) <= _REVIEW_WINDOW:
+        try:
+            return json.loads(token), True
+        except ValueError as exc:
+            raise _NotJson from exc
+    beginning = token[:_REVIEW_WINDOW]
+    for trim in range(7):  # step back over an escape the cut split
+        try:
+            return json.loads(beginning[:len(beginning) - trim] + '"'), False
+        except ValueError:
+            continue
+    raise _NotJson
+
+
+def _reviewed_string(token: str) -> tuple[str, bool]:
+    """A JSON string token with anything in it that looks like a key or token
+    hidden within that string, and whether all of it was read; unchanged text
+    is kept exactly as written."""
+    decoded, whole = _decoded_string(token)
+    shown = _hidden_secrets(decoded)
+    if whole and shown == decoded:
+        return token, True
+    return json.dumps(shown, ensure_ascii=False), whole
+
+
+def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
+    """A JSON body exactly as written, but with the whole value under each
+    sensitive key hidden (a repeated key included) and anything in a string
+    that looks like a key or token hidden within that string. Reading stops
+    once more than ``limit`` characters are written; returns the text and
+    whether all of it was read. Raises ``_NotJson``."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
 
     hidden = json.dumps(_REDACTED_REQUEST_VALUE)
-
-    def parts(item: Any):
-        if isinstance(item, _Pairs):
-            yield "{"
-            for index, (key, member) in enumerate(item):
-                yield ("," if index else "") + json.dumps(key, ensure_ascii=False) + ":"
-                if _sensitive_request_key(key):
-                    yield hidden
-                else:
-                    yield from parts(member)
-            yield "}"
-        elif isinstance(item, list):
-            yield "["
-            for index, member in enumerate(item):
-                if index:
-                    yield ","
-                yield from parts(member)
-            yield "]"
+    position = 1 if text.startswith("\ufeff") else 0
+    written, size = [text[:position]], position
+    stack: list[str] = []
+    expect_key = sensitive_key = hide_next = False
+    skip_to: int | None = None  # while a hidden container is read: its depth
+    for _ in range(_REVIEW_TOKENS):
+        if position >= len(text):
+            if stack or skip_to is not None:
+                raise _NotJson
+            return "".join(written), True
+        match = _JSON_TOKEN.match(text, position)
+        if match is None:
+            raise _NotJson
+        token, position = match.group(), match.end()
+        if token in ("{", "["):
+            stack.append(token)
+        elif token in ("}", "]") and (not stack or stack.pop() != {"}": "{", "]": "["}[token]):
+            raise _NotJson
+        if skip_to is not None:  # inside a hidden container
+            if len(stack) == skip_to:
+                skip_to = None
+            continue
+        if token.isspace():
+            piece = token
+        elif token == ":":
+            hide_next, sensitive_key = sensitive_key, False
+            piece = token
+        elif hide_next:
+            hide_next, piece = False, hidden
+            if token in ("{", "["):
+                skip_to = len(stack) - 1
+        elif token[0] == '"':
+            if expect_key:
+                sensitive_key = _sensitive_request_key(_decoded_string(token)[0])
+                expect_key = False
+            piece, whole = _reviewed_string(token)
+            if not whole:  # a string too long to show: nothing after it is shown
+                written.append(piece)
+                return "".join(written), False
         else:
-            yield item if isinstance(item, _Number) else json.dumps(item, ensure_ascii=False)
-
-    written, size = [], 0
-    for part in parts(value):
-        written.append(part)
-        size += len(part)
+            piece = token
+        if token in ("{", ",", "}", "]", "["):
+            expect_key = token == "{" or (token == "," and bool(stack) and stack[-1] == "{")
+        written.append(piece)
+        size += len(piece)
         if size > limit:
-            break
-    return "".join(written)
+            return "".join(written), position >= len(text) and not stack
+    return "".join(written), False
 
 
-def _parsed_json(text: str) -> Any:
-    """The body read as JSON (a leading byte-order mark ignored), or None."""
-    candidate = text.removeprefix("\ufeff")
-    try:
-        return json.loads(candidate, object_pairs_hook=_Pairs)
-    except ValueError as exc:
-        if "integer string conversion" not in str(exc):
-            return None
-    try:  # an integer too long to convert: keep its digits as text
-        return json.loads(candidate, object_pairs_hook=_Pairs, parse_int=_Number)
-    except ValueError:
-        return None
-
-
-def _readable_body(text: str, headers: dict) -> str:
-    """The body as the reviewer reads it: a JSON object or array as compact
-    JSON with the values of sensitive keys hidden, anything else as written;
-    a form body then also has the values of sensitive names hidden, so a
+def _readable_body(text: str, headers: dict) -> tuple[str, bool]:
+    """The body as the reviewer reads it, and whether all of it was read: JSON
+    as written with the values of sensitive keys hidden, anything else as
+    written, and anything that looks like a key or token hidden within its own
+    value. A form body also has the value of each sensitive name hidden, so a
     server reading it either way finds nothing the card showed."""
-    parsed = _parsed_json(text)
-    readable = _readable_json(parsed, _REVIEW_BODY_CHARS) if isinstance(parsed, list) else text
+    try:
+        readable, complete = _reviewed_json(text, _REVIEW_WINDOW)
+    except _NotJson:
+        readable, complete = None, False
     if _is_form_body(headers):
-        # Only a body that fits is shown whole; of a longer one only the
-        # beginning can appear, so the rest is not read.
-        readable = _reviewed_pairs(readable[:2 * _REVIEW_BODY_CHARS])
-    return readable
+        source = text if readable is None else readable
+        pairs, read_all = _reviewed_pairs(source, _REVIEW_WINDOW)
+        return pairs, read_all and (complete or readable is None)
+    if readable is not None:
+        return readable, complete
+    window = text[:_REVIEW_WINDOW]
+    return _hidden_secrets(window), len(window) == len(text)
 
 
 def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[dict, list[str]]:
@@ -613,47 +695,45 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
     and the body (or a bounded preview plus its size and fingerprint), with
     sensitive values hidden as governed connector requests hide them.
 
-    Raises ``ApprovalCardError`` for a body that cannot be shown."""
+    Raises ``ApprovalCardError`` for a request that cannot be shown."""
     from ..approval_cards import ApprovalCardError
+    from ..governed_tools import ReviewedText
 
-    shown: dict[str, Any] = {"method": method, "url": _reviewed_url(url), "headers": headers}
+    # The address and body have their secrets hidden part by part here, so
+    # they are not scanned again as one text; each header value is scanned
+    # on its own when the card is built.
+    shown: dict[str, Any] = {"method": method, "url": ReviewedText(_reviewed_url(url)), "headers": headers}
     notes: list[str] = []
-    if body in (None, "", b""):
-        return shown, notes
-    try:
+    if body not in (None, "", b""):
         text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
-        text.encode("utf-8")
-        readable = _readable_body(text, headers)
-    except UnicodeEncodeError as exc:
-        raise ApprovalCardError("the body is not valid text") from exc
-    except RecursionError as exc:
-        raise ApprovalCardError("the body is nested too deeply to show a person") from exc
-    except (TypeError, ValueError) as exc:
-        raise ApprovalCardError("the body could not be shown to a person") from exc
-    # Shown in full only when both the body that is sent and what the person
-    # reads fit: hiding a long value never makes a large upload look small, and
-    # hiding many short ones never pushes a short body off the card.
-    if len(json.dumps(text)) <= _REVIEW_BODY_CHARS and len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
-        shown["body"] = readable
-        return shown, notes
-    shown["body_preview"] = _bounded_preview(readable, _REVIEW_BODY_CHARS)
-    shown["body_characters"] = len(text)
-    shown["body_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    hidden = ", with sensitive values hidden" if readable is not text else ""
-    notes.append(
-        f"The body has {len(text):,} characters, more than can be shown here, so only "
-        f"its beginning is shown{hidden}. Its fingerprint (body_sha256) fixes the "
-        "exact body that will be sent."
-    )
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ApprovalCardError("the body is not valid text") from exc
+        readable, complete = _readable_body(text, headers)
+        # Shown in full only when the body that is sent fits and all of it was
+        # read: hiding a long value never makes a large upload look small.
+        if complete and len(json.dumps(text)) <= _REVIEW_BODY_CHARS and len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
+            shown["body"] = ReviewedText(readable)
+        else:
+            shown["body_preview"] = ReviewedText(_bounded_preview(readable, _REVIEW_BODY_CHARS))
+            shown["body_characters"] = len(text)
+            shown["body_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            notes.append(
+                f"The body has {len(text):,} characters, more than can be shown here, so "
+                "only its beginning is shown. Its fingerprint (body_sha256) fixes the exact "
+                "body that will be sent."
+            )
     return shown, notes
 
 
 def _is_form_body(headers: dict) -> bool:
-    content_type = next(
-        (str(value) for name, value in headers.items()
-         if str(name).lower() == "content-type"), "",
+    """Whether any Content-Type header (in any letter case) names a form."""
+    return any(
+        str(name).lower() == "content-type"
+        and "application/x-www-form-urlencoded" in str(value).lower()
+        for name, value in headers.items()
     )
-    return content_type.split(";")[0].strip().lower() == "application/x-www-form-urlencoded"
 
 
 def _request_permit(request: dict[str, Any], parsed: Any, max_bytes: int):
@@ -776,6 +856,12 @@ def _run_fetch(args: dict[str, Any]) -> str:
         return f"ERROR: only http/https supported; got scheme={parsed.scheme!r}"
     if not parsed.netloc:
         return "ERROR: missing host in URL"
+    try:
+        parsed.port  # noqa: B018 -- raises for a port that is not a number in range
+    except ValueError:
+        return "ERROR: the address has an invalid port; nothing was sent"
+    if not url.isprintable() or any(character.isspace() for character in url):
+        return "ERROR: the address holds spaces or control characters; nothing was sent"
 
     preflight_error = _preflight_fetch(url, parsed)
     if preflight_error is not None:
