@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from maverick import consent_custom_index as indexes
 from maverick_dashboard import consent_custom_index_api as api
 
+from test_support.starlette_state import patch_state
+
 BASE = "/api/v1/consent/custom-indexes"
 
 
@@ -235,7 +237,8 @@ def test_disabled_unready_and_malformed_composition_never_open_store(
     state.ready = True
     malformed = Runtime()
     malformed.max_page_size = "unbounded"  # type: ignore[assignment]
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         client.app.state,
         "consent_custom_index_store_factory",
         lambda **_kwargs: malformed,
