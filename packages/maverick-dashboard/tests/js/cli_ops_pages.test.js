@@ -382,18 +382,47 @@ test('learning capture distinguishes an unavailable check from an ineligible run
   assert.match(ui.$('lx-status').textContent, /waiting at its first approval/);
 });
 
-test('learning capture says when example collection is off and asks nothing', async t => {
+function captureOff() {
   const markup = slice('flow_run.html', '<section class="panel fr__example" id="lx-card"', '</section>')
     .replace(/data-capture="[^"]*"/, 'data-capture="off"');
   assert.match(markup, /data-capture="off"/);
-  const ui = await page(markup, 'lightwork-learning-capture.js', () => { throw new Error('unexpected request'); });
+  return markup;
+}
+
+test('learning capture says when example collection is off and asks only for past decisions', async t => {
+  const ui = await page(captureOff(), 'lightwork-learning-capture.js', url => {
+    if (url.endsWith('/history')) return new Response('{}', { status: 404 });
+    throw new Error('unexpected request ' + url);
+  });
   t.after(() => ui.w.close());
 
-  assert.equal(ui.calls.length, 0, 'no example lookup while collection is off');
+  assert.deepEqual(ui.calls.map(c => c.url.split('/').at(-1)), ['history'],
+    'no current-example or suggestion lookup while collection is off');
   assert.match(ui.$('lx-status').textContent, /Keep workflow examples for learning/);
   assert.doesNotMatch(ui.$('lx-status').textContent, /not available to your account/);
   assert.equal(ui.$('lx-enroll').hidden, true);
   assert.equal(ui.$('lx-review').hidden, true);
+  assert.equal(ui.$('lx-original').hidden, true);
+});
+
+test('an interrupted decision can still be read while example collection is off', async t => {
+  const operation = 'a'.repeat(32);
+  const ui = await page(captureOff(), 'lightwork-learning-capture.js', url => {
+    if (url.endsWith('/history')) return { context: EXAMPLE_CONTEXT, choices: [{ value: operation, label: 'Example acceptance · Nov 05 at 10:00 UTC' }] };
+    if (url.endsWith('/requests/' + operation)) return { context: EXAMPLE_CONTEXT, operation, confirmed: false,
+      message: 'The original decision is unconfirmed.', current_status: 'accepted' };
+    throw new Error('unexpected request ' + url);
+  });
+  t.after(() => ui.w.close());
+
+  assert.equal(ui.$('lx-original').hidden, false);
+  assert.equal(ui.$('lx-original-choice').value, operation);
+  assert.match(ui.$('lx-status').textContent, /turned off/);
+  ui.$('lx-original-read').click();
+  await ui.settle();
+  assert.equal(ui.calls.filter(c => c.url.endsWith('/requests/' + operation)).length, 1);
+  assert.match(ui.$('lx-original-status').textContent, /original decision is unconfirmed/);
+  assert.equal(ui.calls.filter(c => /\/(suggestion|1\/1)$/.test(c.url)).length, 0);
 });
 
 test('learning capture does not mistake denied status for a missing example', async t => {
