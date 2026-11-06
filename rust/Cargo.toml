@@ -24,3 +24,12 @@ members = ["mvk-scan", "mvk-scan-py", "mvk-scan-wasm", "maverick-verify-audit"]
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+
+# One codegen unit per crate keeps release builds byte-reproducible. With
+# several, rustc runs ThinLTO over a crate's units in the order they finish
+# optimizing, and on MSVC every unit that catches panics carries its own copy
+# of the panic type descriptor (`__rust_panic_type_info`); the copy LTO keeps
+# decides the .data layout, so two clean Windows builds of the same source
+# produced one of two different .pyd files.
+[profile.release]
+codegen-units = 1
