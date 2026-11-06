@@ -504,7 +504,8 @@ def _reviewed_url(url: str) -> str:
     if "@" in netloc:
         netloc = f"{_REDACTED_REQUEST_VALUE}@{netloc.rpartition('@')[2]}"
     query = _reviewed_pairs(parts.query) if parts.query else ""
-    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+    # A fragment is never sent, so it is not shown.
+    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
 
 
 def _reviewed_pairs(text: str) -> str:
@@ -531,41 +532,74 @@ def _bounded_preview(text: str, limit: int) -> str:
     return text[:low]
 
 
-def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    keys = [key for key, _value in pairs]
-    if len(set(keys)) != len(keys):
-        raise ValueError("repeated JSON key")
-    return dict(pairs)
-
-
 class _Pairs(list):
     """A JSON object kept as its (key, value) pairs, a repeated key included."""
 
 
-def _redacted_json(value: Any) -> str:
-    """Compact JSON text of a parsed body with each value under a sensitive
-    key hidden. Objects keep every pair, so a repeated key shows each value a
-    server might read."""
+class _Number(str):
+    """A JSON number exactly as written: no rounding and no digit limit."""
+
+
+def _readable_json(value: Any, limit: int) -> str:
+    """Compact JSON text of a parsed body with the whole value under each
+    sensitive key hidden. Every pair of an object is kept, so a repeated key
+    shows each value a server might read. Rendering stops once more than
+    ``limit`` characters are written: a preview needs no more."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
 
-    if isinstance(value, _Pairs):
-        return "{" + ",".join(
-            json.dumps(key, ensure_ascii=False) + ":" + (
-                json.dumps(_REDACTED_REQUEST_VALUE) if _sensitive_request_key(key)
-                else _redacted_json(item))
-            for key, item in value
-        ) + "}"
-    if isinstance(value, list):
-        return "[" + ",".join(_redacted_json(item) for item in value) + "]"
-    return json.dumps(value, ensure_ascii=False)
+    hidden = json.dumps(_REDACTED_REQUEST_VALUE)
+
+    def parts(item: Any):
+        if isinstance(item, _Pairs):
+            yield "{"
+            for index, (key, member) in enumerate(item):
+                yield ("," if index else "") + json.dumps(key, ensure_ascii=False) + ":"
+                if _sensitive_request_key(key):
+                    yield hidden
+                else:
+                    yield from parts(member)
+            yield "}"
+        elif isinstance(item, list):
+            yield "["
+            for index, member in enumerate(item):
+                if index:
+                    yield ","
+                yield from parts(member)
+            yield "]"
+        else:
+            yield item if isinstance(item, _Number) else json.dumps(item, ensure_ascii=False)
+
+    written, size = [], 0
+    for part in parts(value):
+        written.append(part)
+        size += len(part)
+        if size > limit:
+            break
+    return "".join(written)
+
+
+def _readable_body(text: str, headers: dict) -> str:
+    """The body as the reviewer reads it: a form body with the values of
+    sensitive names hidden, a JSON object or array as compact JSON with the
+    values of sensitive keys hidden, anything else as written."""
+    if _is_form_body(headers):
+        # Only a body that fits is shown whole; of a longer one only the
+        # beginning can appear, so the rest is not read.
+        return _reviewed_pairs(text[:2 * _REVIEW_BODY_CHARS])
+    try:
+        parsed = json.loads(text.removeprefix("\ufeff"),
+                            object_pairs_hook=_Pairs, parse_int=_Number, parse_float=_Number)
+    except ValueError:
+        return text
+    return _readable_json(parsed, _REVIEW_BODY_CHARS) if isinstance(parsed, list) else text
 
 
 def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[dict, list[str]]:
     """What the person reads: method, address, every header that will be sent
-    and the body (or a bounded preview plus fingerprint), with sensitive
-    values hidden exactly as governed connector requests hide them.
+    and the body (or a bounded preview plus its size and fingerprint), with
+    sensitive values hidden as governed connector requests hide them.
 
-    Raises ``ApprovalCardError`` for a body nested too deeply to show."""
+    Raises ``ApprovalCardError`` for a body that cannot be shown."""
     from ..approval_cards import ApprovalCardError
 
     shown: dict[str, Any] = {"method": method, "url": _reviewed_url(url), "headers": headers}
@@ -574,32 +608,18 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
         return shown, notes
     try:
         text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
-        try:
-            parsed = json.loads(text, object_pairs_hook=_Pairs)
-        except ValueError:
-            parsed = None
-        try:
-            # Shown as structure only when that reads the same as the text: a
-            # repeated key would show one value while a server may read another.
-            structured = None if parsed is None else json.loads(text, object_pairs_hook=_unique_keys)
-        except ValueError:
-            structured = None
-        if isinstance(parsed, list):  # a JSON object or array
-            readable = _redacted_json(parsed)
-        elif _is_form_body(headers):
-            readable = _reviewed_pairs(text)
-        else:
-            readable = text
-        # Whether the body is shown in full is decided on the body that will be
-        # sent, so hiding a long value never makes a large upload look small.
-        fits = len(json.dumps(text)) <= _REVIEW_BODY_CHARS
-        if isinstance(structured, (dict, list)) and (
-                fits or len(json.dumps(structured, separators=(",", ":"))) <= _REVIEW_BODY_CHARS):
-            shown["body"] = structured  # keyed values get the same redaction
-            return shown, notes
+        text.encode("utf-8")
+        readable = _readable_body(text, headers)
+    except UnicodeEncodeError as exc:
+        raise ApprovalCardError("the body is not valid text") from exc
     except RecursionError as exc:
         raise ApprovalCardError("the body is nested too deeply to show a person") from exc
-    if fits:
+    except ValueError as exc:
+        raise ApprovalCardError("the body could not be shown to a person") from exc
+    # Shown in full only when both the body that is sent and what the person
+    # reads fit: hiding a long value never makes a large upload look small, and
+    # hiding many short ones never pushes a short body off the card.
+    if len(json.dumps(text)) <= _REVIEW_BODY_CHARS and len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
         shown["body"] = readable
         return shown, notes
     shown["body_preview"] = _bounded_preview(readable, _REVIEW_BODY_CHARS)

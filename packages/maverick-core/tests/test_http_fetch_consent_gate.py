@@ -335,6 +335,74 @@ def test_the_card_says_which_bodies_have_values_hidden(sent, monkeypatch):
     assert "JSON and form bodies" in shown and "Any other body is shown as written" in shown
 
 
+def _card(monkeypatch, body, headers=None, url="https://api.example.test/upload"):
+    calls = _deny_and_capture(monkeypatch)
+    out = _fetch({"url": url, "method": "POST", "headers": headers or {}, "body": body})
+    assert len(calls) == 1, out  # a person was asked, not refused before
+    return "\n".join(calls[0]["parameter_summary"])
+
+
+@pytest.mark.parametrize("headers,body", [
+    ({"Content-Type": "application/x-www-form-urlencoded"}, "password=a&" * 270),  # pragma: allowlist secret
+    ({}, "[" + ",".join(["1e15"] * 595) + "]"),
+    ({}, json.dumps({"token": [1] * 1200}, separators=(",", ":"))),
+], ids=["form", "exponents", "short-values"])
+def test_hiding_values_never_pushes_a_short_body_off_the_card(sent, monkeypatch, headers, body):
+    _card(monkeypatch, body, headers)
+
+
+@pytest.mark.parametrize("body", [
+    '{"q":"weather"}' + " \t" * 50_000,
+    '{"v":0.' + "1" * 100_000 + "}",
+], ids=["whitespace", "digits"])
+def test_padding_does_not_make_a_large_body_look_small(sent, monkeypatch, body):
+    shown = _card(monkeypatch, body)
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert f"{len(body):,} characters" in shown
+
+
+@pytest.mark.parametrize("body", [
+    "\ufeff" + json.dumps({"password": "hunter2-correct-horse", "a": 1}),  # pragma: allowlist secret
+    '{"password": "hunter2-correct-horse", "n": ' + "1" * 4301 + "}",  # pragma: allowlist secret
+    json.dumps({"password": {"hunter2-correct-horse": True}, "user": "alice"}),  # pragma: allowlist secret
+], ids=["byte-order-mark", "long-integer", "secret-held-as-a-key"])
+def test_sensitive_values_in_any_json_body_are_hidden(sent, monkeypatch, body):
+    shown = _card(monkeypatch, body)
+    assert "hunter2-correct-horse" not in shown
+
+
+def test_a_form_body_is_read_as_a_form_even_when_it_parses_as_json(sent, monkeypatch):
+    body = '{"note":"x&password=hunter2-correct-horse&y=1"}'  # pragma: allowlist secret
+    shown = _card(monkeypatch, body, {"Content-Type": "application/x-www-form-urlencoded"})
+    assert "hunter2-correct-horse" not in shown
+
+
+def test_the_address_fragment_is_not_shown_because_it_is_never_sent(sent, monkeypatch):
+    shown = _card(monkeypatch, "x", url="https://api.example.test/cb?page=2#access_token=hunter2&type=bearer")
+    assert "hunter2" not in shown and "#" not in shown.split("Request part")[1]
+    assert "https://api.example.test/cb?page=2" in shown
+
+
+def test_a_body_that_cannot_be_encoded_is_refused_cleanly(sent):
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": "x\ud800" * 2000})
+    assert out.startswith("ERROR:") and "nothing was sent" in out
+    assert sent == []
+
+
+def test_a_long_json_body_is_read_only_as_far_as_the_preview_needs(sent, monkeypatch):
+    """Rendering what the reviewer reads stops once the preview is full, so a
+    body of many megabytes costs no more to show than a short one."""
+    import maverick.governed_tools as governed_tools
+
+    real, checked = governed_tools._sensitive_request_key, []
+    monkeypatch.setattr(governed_tools, "_sensitive_request_key",
+                        lambda key: checked.append(key) or real(key))
+    body = json.dumps([{"row": index, "note": "n"} for index in range(100_000)])
+    shown = _card(monkeypatch, body)
+    assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
+    assert 0 < len(checked) < 2_000
+
+
 def test_a_json_body_with_a_repeated_key_is_shown_as_written(sent, monkeypatch):
     """Parsed JSON keeps only the last of two equal keys; the reviewer must see
     both values, because the receiving server may read either."""
