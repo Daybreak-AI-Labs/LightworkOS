@@ -299,7 +299,15 @@ def test_status_token_shows_progress_without_an_account(prop, _isolate):
     assert prf.status(status_token, now=_NOW + 91 * 86_400) is None
 
 
-def test_send_notice_uses_family_templates_and_logs(prop, _isolate):
+def test_send_notice_uses_family_templates_and_logs(prop, _isolate, monkeypatch):
+    import time
+
+    # The request is received at _NOW. Run on a clock that starts an hour
+    # later, so the extension falls inside the 45-day first response period
+    # on any calendar date (the wall clock passed it on 2026-11-05).
+    shift = time.time() - (_NOW + 3600)
+    real_time = time.time
+    monkeypatch.setattr(time, "time", lambda: real_time() - shift)
     sent = _isolate
     _submit(_payload(jurisdiction="us_ca_ccpa"))
     from maverick import privacy_ops
