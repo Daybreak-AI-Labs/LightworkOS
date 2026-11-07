@@ -293,3 +293,69 @@ def test_discover_tools_direct_when_isolation_off(tmp_path, monkeypatch):
     tools = plugins_mod.discover_tools()
     assert tools[0][1]().fn({}) == "direct"
     sys.modules.pop("direct_tool_plugin", None)
+
+
+def test_subprocess_isolation_never_imports_or_constructs_the_plugin_in_host(tmp_path, monkeypatch):
+    """Under [plugins] isolation = "subprocess" the host process must not run
+    plugin code at all: not the module import at discovery, not the factory.
+    The child describes the tool (name, description, schema) and every call
+    runs there; the host only holds a proxy built from that description."""
+    import types
+
+    from maverick import plugins as plugins_mod
+
+    marker = tmp_path / "imported-in-host"
+    (tmp_path / "oop_tool_plugin.py").write_text(
+        "import os, sys\n"
+        f"if os.getpid() == {__import__('os').getpid()}:\n"
+        f"    open({str(marker)!r}, 'w').close()\n"
+        "def factory():\n"
+        "    import types\n"
+        "    def fn(args):\n"
+        "        return 'child says ' + str(args.get('who'))\n"
+        "    return types.SimpleNamespace(name='oop_tool', description='runs apart',\n"
+        "                                 input_schema={'type': 'object'}, fn=fn,\n"
+        "                                 parallel_safe=False, strict=True)\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("oop_tool_plugin", None)
+
+    class _EP:
+        name = "oop_tool"
+        value = "oop_tool_plugin:factory"
+        dist = types.SimpleNamespace(name="oop-tool-dist")
+
+        @staticmethod
+        def load():
+            pytest.fail("plugin entry point loaded in the host process")
+
+    monkeypatch.setattr(plugins_mod, "_entry_points",
+                        lambda group: [_EP()] if group == "maverick.tools" else [])
+    monkeypatch.setattr(plugins_mod, "_allowed_plugin_names", lambda: None)
+    monkeypatch.setattr(plugins_mod, "_permission_policy", lambda: (set(), False))
+    monkeypatch.setenv("MAVERICK_PLUGIN_ISOLATION", "subprocess")
+
+    tools = plugins_mod.discover_tools()
+    assert [name for name, _ in tools] == ["oop_tool"]
+    tool = tools[0][1]()
+    assert not marker.exists()
+    assert "oop_tool_plugin" not in sys.modules
+    assert (tool.name, tool.description, tool.input_schema) == (
+        "oop_tool", "runs apart", {"type": "object"})
+    assert tool.strict is True and tool.parallel_safe is False
+    assert tool.fn({"who": "ada"}) == "child says ada"
+    assert not marker.exists() and "oop_tool_plugin" not in sys.modules
+
+
+def test_subprocess_isolation_refuses_a_tool_the_child_cannot_describe(monkeypatch):
+    from maverick import plugin_isolation, plugins
+
+    monkeypatch.setattr(plugin_isolation, "isolation_mode", lambda: "subprocess")
+    monkeypatch.setattr(plugin_isolation, "describe_isolated",
+                        lambda entry, **kw: "ERROR: plugin call failed: ImportError: nope")
+    monkeypatch.setattr(plugins, "_iter_loaded_with_value", lambda *_args: [
+        ("example", None, "example_mod:factory", "example-dist"),
+    ])
+    tools = plugins.discover_tools()
+    assert [name for name, _ in tools] == ["example"]
+    with pytest.raises(RuntimeError, match="refusing to load"):
+        tools[0][1]()

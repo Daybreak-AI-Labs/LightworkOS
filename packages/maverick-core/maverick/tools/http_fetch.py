@@ -31,7 +31,7 @@ from urllib.parse import unquote_plus, urljoin, urlparse, urlsplit, urlunsplit
 
 from ..env_setting import env_or_config as _env_or_config
 from . import Tool
-from ._ssrf import BlockedAddress, address_is_blocked, allow_private
+from ._ssrf import BlockedAddress, address_is_always_blocked, address_is_blocked, allow_private
 
 log = logging.getLogger(__name__)
 
@@ -176,8 +176,28 @@ def is_blocked_host(hostname: str) -> bool:
     unreachable with no recourse.
     """
     if allow_private():
-        return False
+        return _resolves_to_always_blocked(hostname or "")
     return _is_private_ip(hostname or "")
+
+
+def _resolves_to_always_blocked(hostname: str) -> bool:
+    """Under the private-network override: True when any resolved address is
+    one the override never opens (link-local metadata, multicast, reserved,
+    unspecified). A host that does not resolve is left to fail at connect."""
+    if not hostname:
+        return False
+    try:
+        addrs = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+    for _fam, _stype, _proto, _name, sockaddr in addrs:
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            continue
+        if address_is_always_blocked(ip):
+            return True
+    return False
 
 
 def _resolves(host: str) -> bool:
@@ -244,6 +264,22 @@ def _resolve_pinned(host: str) -> str:
     re-resolve to an unvalidated address.
     """
     if allow_private():
+        # The override admits private ranges but never the metadata service.
+        try:
+            addrs = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+        except socket.gaierror:
+            return host
+        for _fam, _stype, _proto, _name, sockaddr in addrs:
+            try:
+                ip = ipaddress.ip_address(sockaddr[0])
+            except ValueError:
+                continue
+            if address_is_always_blocked(ip):
+                raise BlockedAddress(
+                    f"refusing to fetch {host!r}: resolves to {sockaddr[0]}, which "
+                    "stays blocked even with private addresses allowed (link-local, "
+                    "metadata, multicast, reserved or unspecified)."
+                )
         return host
     try:
         addrs = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
@@ -431,6 +467,12 @@ def _preflight_fetch(url: str, parsed: Any) -> str | None:
                 "private/loopback/link-local/reserved address. "
                 "Set MAVERICK_FETCH_ALLOW_PRIVATE=1 to override."
             )
+    elif _resolves_to_always_blocked(parsed.hostname or ""):
+        return (
+            f"ERROR: refusing to fetch {parsed.hostname!r}: it resolves to a "
+            "link-local, metadata, multicast, reserved or unspecified address, "
+            "which stays blocked even when private addresses are allowed."
+        )
     if _env_or_config("MAVERICK_FETCH_RESPECT_ROBOTS", "tools", "fetch_respect_robots") == "1":
         if not _check_robots(url):
             return f"ERROR: blocked by robots.txt for {url!r}"

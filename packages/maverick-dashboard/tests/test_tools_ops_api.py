@@ -734,7 +734,11 @@ def test_registry_tools_refuse_an_online_server_inside_the_network(client, monke
     assert started == []  # never contacted
     monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")  # the same escape hatch as every fetch
     r = client.post("/api/v1/mcp-registry/tools", json={"name": "weather", "fingerprint": fp, "confirm": True})
-    assert r.status_code == 200 and started == [True]
+    if ip in ("169.254.169.254", "100.100.100.200"):
+        # The cloud metadata service stays out of reach even with the hatch open.
+        assert r.status_code == 422 and started == [], r.text
+    else:
+        assert r.status_code == 200 and started == [True]
 
 
 

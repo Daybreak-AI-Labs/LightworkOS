@@ -55,6 +55,7 @@ def test_migrate_seals_existing_plaintext(monkeypatch, tmp_path):
         "turns.content": 1, "facts.value": 1, "messages.content": 1,
         "questions.question": 1, "questions.answer": 1,
         "goals.title": 1, "goals.description": 1, "goals.result": 0,
+        "goals.connection_selection": 1,
         "goal_events.content": 0,
         "episodes.summary": 0, "episodes.outcome": 0,
         "approvals.action": 0, "approvals.scope": 0, "approvals.detail": 0,
@@ -67,9 +68,9 @@ def test_migrate_seals_existing_plaintext(monkeypatch, tmp_path):
     # On disk the columns are now sealed (ciphertext, no plaintext).
     c = sqlite3.connect(str(db))
     turn = c.execute("SELECT content FROM turns").fetchone()[0]
-    assert turn.startswith("MVKAR1:") and "123-45-6789" not in turn
-    assert c.execute("SELECT value FROM facts").fetchone()[0].startswith("MVKAR1:")
-    assert c.execute("SELECT title FROM goals").fetchone()[0].startswith("MVKAR1:")
+    assert turn.startswith("MVKBND1:") and "123-45-6789" not in turn
+    assert c.execute("SELECT value FROM facts").fetchone()[0].startswith("MVKBND1:")
+    assert c.execute("SELECT title FROM goals").fetchone()[0].startswith("MVKBND1:")
 
     # Reads still return plaintext.
     wm2 = WorldModel(db)
@@ -82,6 +83,7 @@ def test_migrate_seals_existing_plaintext(monkeypatch, tmp_path):
         "turns.content": 0, "facts.value": 0, "messages.content": 0,
         "questions.question": 0, "questions.answer": 0,
         "goals.title": 0, "goals.description": 0, "goals.result": 0,
+        "goals.connection_selection": 0,
         "goal_events.content": 0,
         "episodes.summary": 0, "episodes.outcome": 0,
         "approvals.action": 0, "approvals.scope": 0, "approvals.detail": 0,
@@ -196,18 +198,18 @@ def test_migrate_preserves_a_concurrent_edit(monkeypatch, tmp_path):
         connection.execute("CREATE TABLE turns (content TEXT)")
         connection.execute("INSERT INTO turns VALUES ('original customer text')")
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
-    original_seal = migration.seal_to_str
+    original_seal = migration.seal_bound_to_str
 
-    def seal_after_customer_edit(value):
+    def seal_after_customer_edit(value, context, **kwargs):
         with sqlite3.connect(db) as connection:
             connection.execute("UPDATE turns SET content='new customer text'")
-        return original_seal(value)
+        return original_seal(value, context, **kwargs)
 
-    monkeypatch.setattr(migration, "seal_to_str", seal_after_customer_edit)
+    monkeypatch.setattr(migration, "seal_bound_to_str", seal_after_customer_edit)
     assert migration.migrate_world_db(db)["turns.content"] == 0
     with sqlite3.connect(db) as connection:
         assert connection.execute("SELECT content FROM turns").fetchone()[0] == "new customer text"
-    monkeypatch.setattr(migration, "seal_to_str", original_seal)
+    monkeypatch.setattr(migration, "seal_bound_to_str", original_seal)
     assert migration.migrate_world_db(db)["turns.content"] == 1
     with sqlite3.connect(db) as connection:
         assert car.unseal_from_str(connection.execute("SELECT content FROM turns").fetchone()[0]) == "new customer text"
@@ -318,3 +320,29 @@ def test_migrate_leaves_no_plaintext_residue_in_the_db_file(monkeypatch, tmp_pat
     # secure_delete zeroed the freed cells + VACUUM/checkpoint rebuilt the file:
     # the pre-encryption plaintext is gone from the DB file and the WAL sidecar.
     assert marker.encode() not in _all_db_bytes(db)
+
+
+@requires_crypto
+def test_migrate_rebinds_legacy_sealed_rows_and_marks_the_store(monkeypatch, tmp_path):
+    from maverick.encryption_migrate import migrate_world_db
+    from maverick.world_model import WorldModel, migrated_marker_path
+
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    wm.upsert_fact("k", "plain fact")
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    # One row sealed by an older build (unbound MVKAR1 token).
+    c = sqlite3.connect(str(db))
+    c.execute("UPDATE facts SET value=? WHERE key='k'", (car.seal_to_str("plain fact"),))
+    c.commit()
+    assert not migrated_marker_path(db).exists()
+    report = migrate_world_db(db)
+    assert report["facts.value"] == 1               # re-sealed with its binding
+    value = c.execute("SELECT value FROM facts WHERE key='k'").fetchone()[0]
+    c.close()
+    assert value.startswith("MVKBND1:facts.value:")
+    assert migrated_marker_path(db).exists()
+    assert wm.get_fact("k") == "plain fact"
+    # Idempotent: a second run finds nothing to do and keeps the marker.
+    assert sum(migrate_world_db(db).values()) == 0
+    assert migrated_marker_path(db).exists()

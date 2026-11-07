@@ -276,7 +276,7 @@ def collect(world) -> list[dict]:
         key = f"conversation:{row[2]}"
         if key not in output:
             raw = world.query("SELECT content FROM turns WHERE id=?", (row[0],))
-            output[key] = _observation(key, "unattributed-channel", row[3], classify(_dec_field(raw[0][0])))
+            output[key] = _observation(key, "unattributed-channel", row[3], classify(_dec_field(raw[0][0], context="turns.content")))
         output[key]["sources"].append({"kind": "turn", "id": str(row[0]), "at": row[3]})
     for item in output.values():
         _provider_costs(item)

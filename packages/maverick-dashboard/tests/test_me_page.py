@@ -336,3 +336,24 @@ def test_waiting_for_decision_table_stacks_on_phones():
     assert headers == labels == ["Request", "Risk", "Spending", "Decide by", "Waiting on"]
     css = (package / "static" / "lightwork.css").read_text(encoding="utf-8")
     assert ".table--stacked td[data-label]::before" in css
+
+
+def test_slack_receivers_bypass_dashboard_bearer_and_still_verify_signature(tmp_path, monkeypatch):
+    """Slack signs its own requests; a tokened or OIDC deployment must not demand
+    the dashboard bearer first (that refused every Slack delivery before the
+    signature check ran). The receivers stay self-authenticating."""
+    from maverick_dashboard import auth
+
+    assert "/webhook/slack/interactions" in auth.SELF_AUTH_WEBHOOK_PATHS
+    assert "/webhook/slack/commands" in auth.SELF_AUTH_WEBHOOK_PATHS
+    monkeypatch.setenv("MAVERICK_DASHBOARD_TOKEN", "dashboard-token")
+    _configure_secret(tmp_path)
+    client = _client()
+    body = urlencode({"payload": json.dumps({"type": "block_actions", "actions": []})}).encode()
+    # No dashboard bearer, no Origin header, but a valid Slack signature: accepted.
+    client.headers.pop("Origin", None)
+    assert client.post("/webhook/slack/interactions", content=body, headers=_signed(body)).status_code == 200
+    # The provider signature is still the gate.
+    assert client.post("/webhook/slack/interactions", content=body,
+                       headers=_signed(body, secret="wrong")).status_code == 401
+    assert client.post("/webhook/slack/commands", content=body).status_code == 401

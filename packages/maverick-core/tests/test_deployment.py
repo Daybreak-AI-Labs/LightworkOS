@@ -141,7 +141,7 @@ def test_regulated_profile_passes_seals_data_and_is_compliant(monkeypatch, tmp_p
     conv = wm.get_or_create_conversation("slack", "u")
     wm.append_turn(conv.id, "user", "patient SSN 123-45-6789")
     raw = sqlite3.connect(str(db)).execute("SELECT content FROM turns").fetchone()[0]
-    assert raw.startswith("MVKAR1:") and "123-45-6789" not in raw
+    assert raw.startswith("MVKBND1:") and "123-45-6789" not in raw
     assert wm.recent_turns(conv.id)[-1].content == "patient SSN 123-45-6789"
 
     # The same profile makes `maverick compliance --strict` green.

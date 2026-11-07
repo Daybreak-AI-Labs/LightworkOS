@@ -96,7 +96,8 @@ def _subinterpreters_available() -> bool:
 
 
 def _bootstrap_code(entry: str, args_json: str, out_path: str, *,
-                    factory: bool = False, args_from_stdin: bool = False) -> str:
+                    factory: bool = False, args_from_stdin: bool = False,
+                    describe: bool = False) -> str:
     """Code that imports pkg.mod:fn, calls it with the args dict, and writes
     the result (or an ERROR string) to ``out_path``.
 
@@ -126,7 +127,18 @@ def _bootstrap_code(entry: str, args_json: str, out_path: str, *,
         try:
             mod_name, _, fn_name = entry.partition(":")
             fn = getattr(importlib.import_module(mod_name), fn_name)
-            if %(factory)s:
+            if %(describe)s:
+                # Discovery: construct the Tool here and report only what the
+                # host needs to build a proxy for it. Nothing callable crosses.
+                tool = fn()
+                result = {
+                    "name": getattr(tool, "name", None),
+                    "description": getattr(tool, "description", None),
+                    "input_schema": getattr(tool, "input_schema", None),
+                    "parallel_safe": bool(getattr(tool, "parallel_safe", False)),
+                    "strict": bool(getattr(tool, "strict", False)),
+                }
+            elif %(factory)s:
                 # Plugin-tool shape: entry is a factory() -> Tool; run tool.fn.
                 result = fn().fn(args)
             else:
@@ -143,7 +155,51 @@ def _bootstrap_code(entry: str, args_json: str, out_path: str, *,
         "path": json.dumps(json.dumps([p for p in sys.path if p])),
         "factory": "True" if factory else "False",
         "args_from_stdin": "True" if args_from_stdin else "False",
+        "describe": "True" if describe else "False",
     }
+
+
+_DESCRIBE_LIMIT = 256 * 1024
+
+
+def describe_isolated(entry: str, *, timeout_s: float = _TIMEOUT_S) -> dict | str:
+    """Construct the plugin tool at ``entry`` ("pkg.mod:factory") in a scrubbed
+    child process and return its description (``name``, ``description``,
+    ``input_schema``, ``parallel_safe``, ``strict``), or an ``ERROR: ...``
+    string. The host never imports the module: this is how discovery stays
+    out of process under ``[plugins] isolation = "subprocess"``."""
+    if ":" not in entry:
+        return f"ERROR: bad plugin entry {entry!r} (expected 'pkg.mod:factory')"
+    from .tools import scrub_child_env
+    with tempfile.TemporaryDirectory(prefix="mvk-plugin-iso-") as td:
+        out_path = str(Path(td) / "result.txt")
+        code = _bootstrap_code(entry, "{}", out_path, describe=True, args_from_stdin=True)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", code], input="{}",
+                capture_output=True, text=True, timeout=timeout_s,
+                env=scrub_child_env(),
+            )
+        except subprocess.TimeoutExpired:
+            return f"ERROR: plugin description timed out after {timeout_s:g}s"
+        if proc.returncode != 0:
+            tail = (proc.stderr or "").strip()[-200:]
+            return f"ERROR: plugin process exited {proc.returncode}: {tail}"
+        try:
+            raw = Path(out_path).read_text(encoding="utf-8")
+        except OSError:
+            return "ERROR: plugin produced no description"
+    if raw.startswith("ERROR:"):
+        return raw
+    if len(raw) > _DESCRIBE_LIMIT:
+        return "ERROR: plugin description is too large"
+    try:
+        described = json.loads(raw)
+    except ValueError:
+        return "ERROR: plugin description is not JSON"
+    if not isinstance(described, dict):
+        return "ERROR: plugin description is not an object"
+    return described
 
 
 def run_isolated(entry: str, args: dict, *, mode: str | None = None,
@@ -237,4 +293,4 @@ def run_isolated(entry: str, args: dict, *, mode: str | None = None,
             return "ERROR: plugin produced no result"
 
 
-__all__ = ["isolation_mode", "run_isolated"]
+__all__ = ["describe_isolated", "isolation_mode", "run_isolated"]

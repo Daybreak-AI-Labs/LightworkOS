@@ -9070,13 +9070,17 @@ async def plugins_approvals(
     The allowlist decides WHAT the one-click installer may ever pull, so it is
     admin + same-origin gated and every name must be a plain distribution name
     (the store re-applies install_plugin's _SAFE_PKG check at write time).
-    ``names`` is a whitespace/comma/newline-separated list; an empty submission
+    ``names`` is a comma/newline-separated list (a pin keeps its inner spaces);
+    an empty submission
     clears the allowlist (fail closed)."""
     _require_same_origin(request)
     require_global_permission(request, "admin")
     from maverick_dashboard import settings_store
 
-    parsed = [p for value in names for chunk in value.replace(",", "\n").splitlines() for p in chunk.split()]
+    # One entry per line or comma; inner whitespace is kept (an exact pin is
+    # "name==version sha256:<hex>", one entry) and collapsed to single spaces.
+    parsed = [" ".join(chunk.split()) for value in names
+              for chunk in value.replace(",", "\n").splitlines() if chunk.strip()]
     from maverick.plugins import installable_plugins
 
     wanted = list(dict.fromkeys(parsed))
@@ -13771,7 +13775,7 @@ def _build_plan_tree(world, goal_id: int, depth_cap: int = 6) -> dict:
         nodes[r["id"]] = {
             "id": r["id"],
             "parent_id": r["parent_id"],
-            "title": _dec_field(r["title"]),
+            "title": _dec_field(r["title"], context="goals.title"),
             "status": r["status"],
             "dollars": float(r["dollars"] or 0.0),
             "children": [],

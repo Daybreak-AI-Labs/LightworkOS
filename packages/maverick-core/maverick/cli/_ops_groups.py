@@ -171,7 +171,12 @@ def encryption_migrate_cmd(ctx, dry_run: bool, backup: bool) -> None:
     if not dry_run:
         try:
             from ..crypto_at_rest import strict_at_rest
-            if not strict_at_rest():
+            from ..world_model import migrated_marker_path
+            if migrated_marker_path(db).exists():
+                click.echo("every sealed column is bound to its table, column and "
+                           "tenant; unsealed values in sealed columns are now withheld "
+                           "(strict) for this store")
+            elif not strict_at_rest():
                 click.echo(
                     "tip: now that legacy rows are sealed, set [encryption] "
                     "strict = true (or MAVERICK_ENCRYPT_STRICT=1) so an unsealed "

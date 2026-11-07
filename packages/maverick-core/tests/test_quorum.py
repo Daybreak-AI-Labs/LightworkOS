@@ -291,3 +291,13 @@ def test_ttl_above_the_approval_card_window_is_clamped(monkeypatch, tmp_path, ca
         policy = quorum.policy_from_config()
     assert policy.ttl_days == quorum.MAX_TTL_DAYS == 7.0
     assert "quorum_ttl_days" in caplog.text
+
+
+def test_private_network_override_is_protected_whatever_the_policy_lists():
+    """One admin flipping [tools] fetch_allow_private turns every agent tool
+    into an intranet client at once, so it needs the quorum whenever one is
+    configured, even when protected_keys was narrowed."""
+    policy = quorum.QuorumPolicy(protected_keys=frozenset())
+    assert quorum.is_protected("tools.fetch_allow_private", policy)
+    assert quorum.is_protected("safety.quorum_required", policy)
+    assert not quorum.is_protected("tools.fetch_respect_robots", policy)

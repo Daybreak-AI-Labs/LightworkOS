@@ -1043,7 +1043,8 @@ def _bound_aad(tenant: str | None, context: str) -> bytes:
         str(len(p)).encode("ascii") + b":" + p for p in parts)
 
 
-def seal_bound(plaintext: bytes, context: str, *, portable: bool = False) -> bytes:
+def seal_bound(plaintext: bytes, context: str, *, portable: bool = False,
+               bind_tenant: bool = True) -> bytes:
     """Seal bound to the current tenant AND ``context``.
 
     A blob copied to another tenant, another record or another field fails GCM
@@ -1052,7 +1053,12 @@ def seal_bound(plaintext: bytes, context: str, *, portable: bool = False) -> byt
     its key id embedded so rotation keeps working. ``portable`` always uses the
     deployment/keyring key: per-tenant data keys live on one host, so anything
     read on another replica (the attachment S3 mirror) must not use them. The
-    tenant binding is kept either way through the authenticated data."""
+    tenant binding is kept either way through the authenticated data.
+
+    ``bind_tenant=False`` binds the context only (kind ``D``): for a store
+    whose identity is the file itself (a per-tenant SQLite world), the
+    request's tenant context is not part of the value's identity, and reads
+    from another context must still open it."""
     if not _have_crypto():
         raise EncryptionUnavailable("at-rest encryption needs 'cryptography'")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -1069,7 +1075,9 @@ def seal_bound(plaintext: bytes, context: str, *, portable: bool = False) -> byt
         else:
             key = _load_or_create_key()
             keyid = _key_fingerprint(key)
-        kind = b"K"
+        kind = b"K" if bind_tenant else b"D"
+    if kind == b"D":
+        tenant = None
     nonce = secrets.token_bytes(_NONCE_BYTES)
     ct = AESGCM(key).encrypt(nonce, plaintext, _bound_aad(tenant, context))
     return _BOUND_MAGIC + kind + keyid + nonce + ct
@@ -1079,9 +1087,11 @@ def is_bound(blob: bytes) -> bool:
     return blob[: len(_BOUND_MAGIC)] == _BOUND_MAGIC
 
 
-def unseal_bound(blob: bytes, context: str) -> bytes:
+def unseal_bound(blob: bytes, context: str,
+                 key_cache: dict[tuple[str, bytes], object] | None = None) -> bytes:
     """Inverse of :func:`seal_bound`; raises :class:`EncryptionUnavailable` when
-    the tenant, context, key or bytes do not match."""
+    the tenant, context, key or bytes do not match. ``key_cache`` lets a
+    result-set reader resolve each key once per page."""
     if not is_bound(blob):
         raise EncryptionUnavailable("not a context-bound blob")
     if not _have_crypto():
@@ -1095,17 +1105,35 @@ def unseal_bound(blob: bytes, context: str) -> bytes:
         raise EncryptionUnavailable("bound blob is truncated")
     kind, keyid = body[:1], body[1:1 + _KEYID_BYTES]
     nonce = body[1 + _KEYID_BYTES:1 + _KEYID_BYTES + _NONCE_BYTES]
-    tenant = current_tenant_id()
-    if kind == b"T":
-        from .tenant.kms import tenant_dek
-        key = tenant_dek(tenant)
-    elif kind == b"K":
-        key = _resolve_key_by_id(keyid)
-    else:
-        raise EncryptionUnavailable("bound blob has an unknown key kind")
+    tenant = None if kind == b"D" else current_tenant_id()
+    cache_key = ("bound:" + kind.decode("ascii", "replace") + ":" + (tenant or ""), keyid)
+    cipher = key_cache.get(cache_key) if key_cache is not None else None
+    if cipher is None:
+        if kind == b"T":
+            from .tenant.kms import tenant_dek
+            key = tenant_dek(tenant)
+        elif kind in (b"K", b"D"):
+            if (_keyring_dir() / (keyid.hex() + ".key")).exists():
+                key = _resolve_key_by_id(keyid)
+            else:
+                # The legacy single key: one load, then the fingerprint check
+                # (a result-set read must load the key once, not once per
+                # resolver layer).
+                key = _load_or_create_key()
+                if _key_fingerprint(key) != keyid:
+                    raise EncryptionUnavailable(
+                        f"no at-rest key for key-id {keyid.hex()}: the key that "
+                        "sealed this data is not available (a rotated key was "
+                        "removed, or the wrong keyring)."
+                    )
+        else:
+            raise EncryptionUnavailable("bound blob has an unknown key kind")
+        cipher = AESGCM(key)
+        if key_cache is not None:
+            key_cache[cache_key] = cipher
     try:
-        return AESGCM(key).decrypt(nonce, body[1 + _KEYID_BYTES + _NONCE_BYTES:],
-                                   _bound_aad(tenant, context))
+        return cipher.decrypt(nonce, body[1 + _KEYID_BYTES + _NONCE_BYTES:],
+                              _bound_aad(tenant, context))
     except InvalidTag as e:
         raise EncryptionUnavailable(
             "cannot open bound data: different tenant or context, wrong key, "
@@ -1176,14 +1204,79 @@ def decrypt(blob: bytes) -> str:
 _STR_PREFIX = "MVKAR1:"
 
 
+# A context-bound TEXT token: ``MVKBND1:<context>:<base64(seal_bound)>``. The
+# context (``table.column``) is carried in clear so a reader that does not
+# know where the value came from can still open it, and it is also inside the
+# GCM associated data, so rewriting the clear copy fails authentication.
+_BOUND_STR_PREFIX = "MVKBND1:"
+_CONTEXT_RE = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*")
+
+
+def _parse_bound_str(s: object) -> tuple[str, bytes] | None:
+    """``(context, blob)`` for a structurally valid bound token, else None."""
+    if not isinstance(s, str) or not s.startswith(_BOUND_STR_PREFIX):
+        return None
+    context, sep, payload = s[len(_BOUND_STR_PREFIX):].partition(":")
+    if not sep or not _CONTEXT_RE.fullmatch(context):
+        return None
+    try:
+        blob = base64.b64decode(payload, validate=True)
+    except (ValueError, binascii.Error):
+        return None
+    if not is_bound(blob) or len(blob) < len(_BOUND_MAGIC) + 1 + _KEYID_BYTES + _NONCE_BYTES + 16:
+        return None
+    return context, blob
+
+
+def is_bound_str(s: object) -> bool:
+    """True only for structurally valid context-bound TEXT-column tokens."""
+    return _parse_bound_str(s) is not None
+
+
+def bound_str_context(s: object) -> str | None:
+    """The ``table.column`` a bound token says it belongs to (unauthenticated
+    until the token is opened), or None for anything else."""
+    parsed = _parse_bound_str(s)
+    return parsed[0] if parsed else None
+
+
+def seal_bound_to_str(text: str, context: str, *, bind_tenant: bool = True) -> str:
+    """Seal ``text`` bound to ``context`` (``table.column``) and, unless
+    ``bind_tenant`` is False, the current tenant, as a TEXT-column token. See
+    :func:`seal_bound`."""
+    if not isinstance(context, str) or not _CONTEXT_RE.fullmatch(context):
+        raise ValueError("seal context must look like 'table.column'")
+    blob = seal_bound(text.encode("utf-8"), context, bind_tenant=bind_tenant)
+    return _BOUND_STR_PREFIX + context + ":" + base64.b64encode(blob).decode("ascii")
+
+
+def unseal_bound_from_str(s: str, context: str | None = None,
+                          key_cache: dict[tuple[str, bytes], object] | None = None) -> str:
+    """Open a bound token. With ``context`` the token must say it belongs
+    there; without it the embedded context is used (and still authenticated).
+    Raises :class:`EncryptionUnavailable` on any mismatch."""
+    parsed = _parse_bound_str(s)
+    if parsed is None:
+        raise EncryptionUnavailable("not a context-bound token")
+    embedded, blob = parsed
+    if context is not None and context != embedded:
+        raise EncryptionUnavailable(
+            f"bound value belongs to {embedded!r}, not {context!r} (moved between "
+            "columns or records)")
+    return unseal_bound(blob, embedded, key_cache).decode("utf-8", errors="replace")
+
+
 def is_sealed_str(s: object) -> bool:
-    """Return True only for structurally valid sealed TEXT-column tokens.
+    """Return True only for structurally valid sealed TEXT-column tokens
+    (legacy ``MVKAR1:`` or context-bound ``MVKBND1:``).
 
     The marker prefix is public, so callers must not treat a value as encrypted
     just because it starts with ``MVKAR1:``.  A legacy plaintext value may collide
     with that marker (or an attacker may forge the prefix).  Such values are not
     sealed and must remain visible to strict-mode guards and migration.
     """
+    if is_bound_str(s):
+        return True
     if not isinstance(s, str) or not s.startswith(_STR_PREFIX):
         return False
     try:
@@ -1208,6 +1301,8 @@ def unseal_from_str(s: str) -> str:
     valid sealed blob. Marker collisions remain plaintext; authentic-looking
     sealed blobs still fail closed if decryption/authentication fails.
     """
+    if is_bound_str(s):
+        return unseal_bound_from_str(s)
     if not is_sealed_str(s):
         return s
     try:
@@ -1230,6 +1325,9 @@ def unseal_many_from_str(values: list[str]) -> list[str]:
     key_cache: dict[tuple[str, bytes], object] = {}
     out: list[str] = []
     for value in values:
+        if is_bound_str(value):
+            out.append(unseal_bound_from_str(value, None, key_cache))
+            continue
         if not is_sealed_str(value):
             out.append(value)
             continue

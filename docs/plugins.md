@@ -165,6 +165,16 @@ plugins.installed_plugins()   # -> {"tools": [...], "channels": [...], ...}
 
 ## Safety + fault isolation
 
+- Where plugin code runs is decided by `[plugins] isolation`. Only
+  `"subprocess"` is a boundary: a tool plugin is then never imported or
+  constructed in the Lightwork process. Discovery asks a scrubbed child to
+  build the tool and report its name, description and schema, the host keeps
+  a proxy, and every call runs in a fresh child with secrets stripped from
+  its environment. `"subinterpreter"` and `"none"` (the default outside
+  enterprise mode) import and run plugin code inside Lightwork with
+  everything the process can reach; channel, skill and persona plugins
+  always load in-process. Declared permissions (`[plugins] grant`) gate
+  loading; they do not confine a loaded plugin.
 - Each plugin loads in isolation; an exception during `entry_point.load()`
   is logged and that single plugin is skipped. Other plugins and the
   core keep working.

@@ -323,8 +323,8 @@ def test_world_db_seals_turns_and_facts(monkeypatch, tmp_path):
     # The raw on-disk columns hold sealed tokens, not plaintext.
     raw_turn = sqlite3.connect(str(db)).execute("SELECT content FROM turns").fetchone()[0]
     raw_fact = sqlite3.connect(str(db)).execute("SELECT value FROM facts").fetchone()[0]
-    assert raw_turn.startswith("MVKAR1:") and "123-45-6789" not in raw_turn
-    assert raw_fact.startswith("MVKAR1:") and "4111111111111111" not in raw_fact
+    assert raw_turn.startswith("MVKBND1:") and "123-45-6789" not in raw_turn
+    assert raw_fact.startswith("MVKBND1:") and "4111111111111111" not in raw_fact
 
     # Reads transparently decrypt.
     assert wm.recent_turns(conv.id)[-1].content == "my secret SSN 123-45-6789"
@@ -494,7 +494,7 @@ def test_world_db_seals_messages(monkeypatch, tmp_path):
     raw = sqlite3.connect(str(db)).execute(
         "SELECT content FROM messages WHERE role = 'assistant'"
     ).fetchone()[0]
-    assert raw.startswith("MVKAR1:") and "123-45-6789" not in raw
+    assert raw.startswith("MVKBND1:") and "123-45-6789" not in raw
 
 
 @requires_crypto
@@ -518,8 +518,8 @@ def test_world_db_seals_questions(monkeypatch, tmp_path):
     row = sqlite3.connect(str(db)).execute(
         "SELECT question, answer FROM questions"
     ).fetchone()
-    assert row[0].startswith("MVKAR1:") and "123-45-6789" not in row[0]
-    assert row[1].startswith("MVKAR1:") and "987-65-4321" not in row[1]
+    assert row[0].startswith("MVKBND1:") and "123-45-6789" not in row[0]
+    assert row[1].startswith("MVKBND1:") and "987-65-4321" not in row[1]
 
     # all_questions decrypts both fields.
     q = wm.all_questions(gid)[0]

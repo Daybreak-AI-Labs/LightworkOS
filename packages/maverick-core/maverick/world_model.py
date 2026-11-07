@@ -838,16 +838,69 @@ def _temporal_memory_enabled() -> bool:
         return False
 
 
-def _enc_field(text: str | None) -> str | None:
+def _enc_field(text: str | None, context: str | None = None, *,
+               bind_tenant: bool = False) -> str | None:
     """Seal a sensitive text field for storage when at-rest encryption is on.
+
+    ``context`` names the destination column (``"goals.title"``): the value is
+    then bound to that column (GCM associated data), so a ciphertext moved to
+    another cell fails to open there instead of decrypting. ``bind_tenant``
+    adds the current tenant to the binding: the Postgres backend sets it,
+    because every tenant's rows share its tables; a SQLite world is one file
+    per tenant and is read from whatever request context opens it. Without a
+    context the legacy unbound token is written.
 
     Fail-closed: if encryption is enabled but the crypto backend is missing,
     this raises (via ``seal_to_str``) rather than silently storing plaintext.
     Returns the value unchanged when encryption is off (and for ``None``)."""
     if text is None:
         return text
-    from .crypto_at_rest import at_rest_enabled, seal_to_str
-    return seal_to_str(text) if at_rest_enabled() else text
+    from .crypto_at_rest import at_rest_enabled, seal_bound_to_str, seal_to_str
+    if not at_rest_enabled():
+        return text
+    if not context:
+        return seal_to_str(text)
+    return seal_bound_to_str(text, context, bind_tenant=bind_tenant)
+
+
+# Stores whose on-disk marker says `maverick encryption migrate` left no
+# plaintext behind, and stores opened without one. Strict reads switch on by
+# themselves only when every store this process opened is migrated: a mixed
+# process keeps the lenient default so an unmigrated tenant stays readable.
+_MIGRATED_STORES: set[str] = set()
+_LEGACY_STORES: set[str] = set()
+_MIGRATED_MARKER_SUFFIX = ".at-rest-migrated.json"
+
+
+def migrated_marker_path(db_path) -> Path:
+    """Where ``maverick encryption migrate`` records that ``db_path`` is fully
+    sealed (next to the DB, so a copied or restored store carries its posture)."""
+    db_path = Path(db_path)
+    return db_path.with_name(db_path.name + _MIGRATED_MARKER_SUFFIX)
+
+
+def _note_store_posture(db_path) -> None:
+    try:
+        key = str(Path(db_path).resolve())
+    except OSError:
+        return
+    if migrated_marker_path(db_path).exists():
+        _MIGRATED_STORES.add(key)
+        _LEGACY_STORES.discard(key)
+    else:
+        _LEGACY_STORES.add(key)
+        _MIGRATED_STORES.discard(key)
+
+
+def auto_strict_at_rest() -> bool:
+    """True when every world store this process opened carries the migration
+    marker, so an unsealed value in a sealed column can only be tampering."""
+    return bool(_MIGRATED_STORES) and not _LEGACY_STORES
+
+
+def _strict_reads() -> bool:
+    from .crypto_at_rest import strict_at_rest
+    return strict_at_rest() or auto_strict_at_rest()
 
 
 # Returned in strict mode when a sealed column holds an unsealed value (legacy
@@ -864,8 +917,14 @@ def _refuse_withheld_placeholder(value: str) -> None:
         )
 
 
-def _dec_field(text: str | None, *, at_rest: bool | None = None) -> str | None:
+def _dec_field(text: str | None, *, at_rest: bool | None = None,
+               context: str | None = None) -> str | None:
     """Unseal a stored field from a sealed column when at-rest encryption is on.
+
+    ``context`` is the column being read (``"goals.title"``). A bound token
+    that says it belongs elsewhere is withheld as an integrity failure: a
+    value moved between cells never decrypts in its new place. Without a
+    context the token's own (authenticated) context opens it.
 
     ``at_rest`` lets a caller that already resolved :func:`at_rest_enabled`
     for a whole result set pass it down: the policy check walks the compliance
@@ -884,18 +943,32 @@ def _dec_field(text: str | None, *, at_rest: bool | None = None) -> str | None:
     if text is None:
         return text
     from .crypto_at_rest import (
+        EncryptionUnavailable,
         at_rest_enabled,
+        bound_str_context,
         is_sealed_str,
-        strict_at_rest,
         unseal_from_str,
     )
     if at_rest is None:
         at_rest = at_rest_enabled()
     if not at_rest:
         return text
+    if context is not None:
+        embedded = bound_str_context(text)
+        if embedded is not None and embedded != context:
+            log.error("at-rest: withholding a sealed value bound to %s read from %s "
+                      "(moved between columns or records)", embedded, context)
+            return _UNSEALED_WITHHELD
     if is_sealed_str(text):
-        return unseal_from_str(text)
-    if strict_at_rest():
+        try:
+            return unseal_from_str(text)
+        except EncryptionUnavailable as exc:
+            if bound_str_context(text) is None:
+                raise
+            log.error("at-rest: withholding a bound value that fails authentication "
+                      "(%s)", exc)
+            return _UNSEALED_WITHHELD
+    if _strict_reads():
         log.error("at-rest strict: withholding an unsealed value in a sealed column "
                   "(run 'maverick encryption migrate'; tampering if already migrated)")
         return _UNSEALED_WITHHELD
@@ -904,31 +977,54 @@ def _dec_field(text: str | None, *, at_rest: bool | None = None) -> str | None:
     return text
 
 
-def _dec_fields(texts: list[str | None]) -> list[str | None]:
-    """Decrypt a result set with one policy and key lookup per query."""
+def _dec_fields(texts: list[str | None],
+                contexts: str | list[str | None] | None = None) -> list[str | None]:
+    """Decrypt a result set with one policy and key lookup per query.
+
+    ``contexts`` is the column every value came from, or one column per
+    value; a bound token read from the wrong column is withheld (see
+    :func:`_dec_field`)."""
     from .crypto_at_rest import (
+        EncryptionUnavailable,
         at_rest_enabled,
+        bound_str_context,
         is_sealed_str,
-        strict_at_rest,
         unseal_many_from_str,
     )
 
     if not at_rest_enabled():
         return list(texts)
+    if isinstance(contexts, str) or contexts is None:
+        expected: list[str | None] = [contexts] * len(texts)
+    else:
+        expected = list(contexts)
+        if len(expected) != len(texts):
+            raise ValueError("one context per value")
     present = [text for text in texts if text is not None]
-    decoded_present = unseal_many_from_str(present)
+    try:
+        decoded_present = unseal_many_from_str(present)
+    except EncryptionUnavailable:
+        # One bad token must not hide the page: fall back to per-value reads.
+        decoded_present = [_dec_field(text) for text in present]
     strict = (
-        strict_at_rest()
+        _strict_reads()
         if any(not is_sealed_str(text) for text in present)
         else False
     )
     decoded_iter = iter(decoded_present)
     out: list[str | None] = []
-    for text in texts:
+    for text, want in zip(texts, expected, strict=True):
         if text is None:
             out.append(None)
             continue
         decoded = next(decoded_iter)
+        if want is not None:
+            embedded = bound_str_context(text)
+            if embedded is not None and embedded != want:
+                log.error("at-rest: withholding a sealed value bound to %s read from %s "
+                          "(moved between columns or records)", embedded, want)
+                out.append(_UNSEALED_WITHHELD)
+                continue
         if not is_sealed_str(text):
             if strict:
                 log.error(
@@ -962,8 +1058,8 @@ def _row_for(cls, d: dict) -> dict:
 def _question_from_row(row) -> Question:
     """Build a Question from a row, decrypting the sealed question/answer fields."""
     d = dict(row)
-    d["question"] = _dec_field(d.get("question"))
-    d["answer"] = _dec_field(d.get("answer"))
+    d["question"] = _dec_field(d.get("question"), context="questions.question")
+    d["answer"] = _dec_field(d.get("answer"), context="questions.answer")
     return Question(**_row_for(Question, d))
 
 
@@ -974,10 +1070,11 @@ def _goal_from_row(row, *, at_rest: bool | None = None) -> Goal:
     if at_rest is None:
         at_rest = at_rest_enabled()
     d = dict(row)
-    d["title"] = _dec_field(d.get("title"), at_rest=at_rest)
-    d["description"] = _dec_field(d.get("description"), at_rest=at_rest)
+    d["title"] = _dec_field(d.get("title"), at_rest=at_rest, context="goals.title")
+    d["description"] = _dec_field(d.get("description"), at_rest=at_rest,
+                                  context="goals.description")
     if "result" in d:
-        d["result"] = _dec_field(d.get("result"), at_rest=at_rest)
+        d["result"] = _dec_field(d.get("result"), at_rest=at_rest, context="goals.result")
     return Goal(**_row_for(Goal, d))
 
 
@@ -986,11 +1083,14 @@ def _goals_from_rows(rows) -> list[Goal]:
     per query (rather than loading the key again for each sealed field)."""
     records = [dict(row) for row in rows]
     texts: list[str | None] = []
+    contexts: list[str | None] = []
     for d in records:
         texts += [d.get("title"), d.get("description")]
+        contexts += ["goals.title", "goals.description"]
         if "result" in d:
             texts.append(d["result"])
-    decoded = iter(_dec_fields(texts))
+            contexts.append("goals.result")
+    decoded = iter(_dec_fields(texts, contexts))
     for d in records:
         d["title"] = next(decoded)
         d["description"] = next(decoded)
@@ -1028,7 +1128,7 @@ def episodes_by_goal_batch(world, goal_ids, *, per_goal: int) -> dict | None:
 
 def _goal_events_from_rows(rows: list) -> list[GoalEvent]:
     """Build goal events while resolving encryption policy and keys once."""
-    decoded = _dec_fields([row["content"] for row in rows])
+    decoded = _dec_fields([row["content"] for row in rows], "goal_events.content")
     events: list[GoalEvent] = []
     for row, content in zip(rows, decoded, strict=True):
         d = dict(row)
@@ -1041,7 +1141,8 @@ def _episode_spends_from_rows(rows: list) -> list[EpisodeSpend]:
     """Build run-cost episodes, decrypting the sealed outcome field, while
     resolving encryption policy and keys once."""
     records = [dict(row) for row in rows]
-    decoded = iter(_dec_fields([d.get("outcome") for d in records if "outcome" in d]))
+    decoded = iter(_dec_fields([d.get("outcome") for d in records if "outcome" in d],
+                               "episodes.outcome"))
     for d in records:
         if "outcome" in d:
             d["outcome"] = next(decoded)
@@ -1062,9 +1163,9 @@ def _notify_approval_created(world, approval_id: int, provenance: str | None) ->
 def _approval_from_row(row) -> Approval:
     """Build an Approval from a row, decrypting the sealed action/scope/detail."""
     d = dict(row)
-    d["action"] = _dec_field(d.get("action"))
-    d["scope"] = _dec_field(d.get("scope"))
-    d["detail"] = _dec_field(d.get("detail"))
+    d["action"] = _dec_field(d.get("action"), context="approvals.action")
+    d["scope"] = _dec_field(d.get("scope"), context="approvals.scope")
+    d["detail"] = _dec_field(d.get("detail"), context="approvals.detail")
     return Approval(**_row_for(Approval, d))
 
 
@@ -1077,7 +1178,8 @@ def _approvals_from_rows(rows: list) -> list[Approval]:
     """
     sealed = ("action", "scope", "detail")
     records = [dict(row) for row in rows]
-    decoded = iter(_dec_fields([d.get(name) for d in records for name in sealed]))
+    decoded = iter(_dec_fields([d.get(name) for d in records for name in sealed],
+                               [f"approvals.{name}" for _d in records for name in sealed]))
     for d in records:
         for name in sealed:
             d[name] = next(decoded)
@@ -1246,6 +1348,7 @@ class WorldModel:
         # default umask (often world-readable 0644) — any local user or
         # backup could read everyone's data. Lock the dir + the file.
         if str(path) != ":memory:":
+            _note_store_posture(path)
             # Tenant/home context is deliberately resolved at request time.
             # Treat the current managed default as Lightwork-owned and let the
             # tenant factory explicitly mark its paths.  A genuinely
@@ -1606,7 +1709,7 @@ class WorldModel:
             reclaimed = 0
             for row in rows:
                 try:
-                    dec = _dec_field(row["result"])
+                    dec = _dec_field(row["result"], context="goals.result")
                     # Strict mode withholds a not-yet-migrated plaintext result
                     # (_dec_field returns the sentinel, never the real value);
                     # re-sealing the sentinel here would overwrite -- and
@@ -1614,7 +1717,7 @@ class WorldModel:
                     # status-only reclaim below instead.
                     new_result = (
                         None if dec == _UNSEALED_WITHHELD
-                        else _enc_field((dec or "") + marker)
+                        else _enc_field((dec or "") + marker, "goals.result")
                     )
                 except EncryptionUnavailable:
                     new_result = None
@@ -1820,8 +1923,10 @@ class WorldModel:
                 "INSERT INTO goals(parent_id, title, description, status, "
                 "created_at, updated_at, owner, execution_principal, domain, project_id, connection_selection) "
                 "VALUES(?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)",
-                (parent_id, _enc_field(title), _enc_field(description), now, now,
-                 owner, execution_principal, domain or "", project_id, _enc_field(selection)),
+                (parent_id, _enc_field(title, "goals.title"),
+                 _enc_field(description, "goals.description"), now, now,
+                 owner, execution_principal, domain or "", project_id,
+                 _enc_field(selection, "goals.connection_selection")),
             )
             goal_id = cur.lastrowid
         # Register after the goal transaction commits: background observation
@@ -1834,7 +1939,7 @@ class WorldModel:
 
     def goal_connection_selection(self, goal_id: int) -> str:
         row = self._read_one("SELECT connection_selection FROM goals WHERE id=?", (goal_id,))
-        return _dec_field(row[0]) if row and row[0] else ""
+        return _dec_field(row[0], context="goals.connection_selection") if row and row[0] else ""
 
     def record_goal_origin(self, goal_id: int, kind: str, ref: str) -> None:
         """Record which automation spawned a goal, so the Automations page can
@@ -1893,7 +1998,7 @@ class WorldModel:
                 "WHERE id = ? AND status = 'done'"
             )
             params: list[Any] = [
-                str(decision), str(decided_by or ""), _enc_field(note),
+                str(decision), str(decided_by or ""), _enc_field(note, "signoffs.note"),
                 time.time(), int(goal_id),
             ]
             if expected_updated_at is not None:
@@ -1945,7 +2050,7 @@ class WorldModel:
             return None
         return {
             "goal_id": row["goal_id"], "decision": row["decision"],
-            "decided_by": row["decided_by"], "note": _dec_field(row["note"]),
+            "decided_by": row["decided_by"], "note": _dec_field(row["note"], context="signoffs.note"),
             "created_at": row["created_at"],
         }
 
@@ -1982,7 +2087,8 @@ class WorldModel:
                 "VALUES(?, ?, ?, ?, "
                 "(SELECT COALESCE(MAX(version), 0) + 1 FROM artifacts "
                 " WHERE goal_id = ? AND title = ?), ?)",
-                (int(goal_id), str(kind or "text"), title or "", _enc_field(content),
+                (int(goal_id), str(kind or "text"), title or "",
+                 _enc_field(content, "artifacts.content"),
                  int(goal_id), title or "", now),
             )
             # The goal timestamp is the optimistic release version used by
@@ -2006,7 +2112,7 @@ class WorldModel:
             (int(goal_id),),
         )
         return [{"id": r["id"], "goal_id": r["goal_id"], "kind": r["kind"],
-                 "title": r["title"] or "", "content": _dec_field(r["content"]) or "",
+                 "title": r["title"] or "", "content": _dec_field(r["content"], context="artifacts.content") or "",
                  "version": r["version"], "created_at": r["created_at"]} for r in rows]
 
     def latest_artifacts(self, goal_id: int) -> list[dict]:
@@ -2030,14 +2136,15 @@ class WorldModel:
             cur = conn.execute(
                 "INSERT INTO projects(name, description, owner, domain, status, created_at) "
                 "VALUES(?, ?, ?, ?, 'active', ?)",
-                (_enc_field(name), _enc_field(description), owner or "", domain or "", now),
+                (_enc_field(name, "projects.name"), _enc_field(description, "projects.description"),
+                 owner or "", domain or "", now),
             )
             return int(cur.lastrowid)
 
     def _project_from_row(self, row) -> dict:
         return {
-            "id": row["id"], "name": _dec_field(row["name"]) or "",
-            "description": _dec_field(row["description"]) or "",
+            "id": row["id"], "name": _dec_field(row["name"], context="projects.name") or "",
+            "description": _dec_field(row["description"], context="projects.description") or "",
             "owner": row["owner"], "domain": row["domain"],
             "status": row["status"], "created_at": row["created_at"],
         }
@@ -2207,7 +2314,7 @@ class WorldModel:
         with self._writing() as conn:
             conn.execute(
                 "UPDATE goals SET title = ?, updated_at = MAX(updated_at + 0.000001, ?) WHERE id = ?",
-                (_enc_field(title), time.time(), int(goal_id)),
+                (_enc_field(title, "goals.title"), time.time(), int(goal_id)),
             )
 
     def set_goal_parent(self, goal_id: int, parent_id: int | None) -> None:
@@ -2257,7 +2364,7 @@ class WorldModel:
                             "UPDATE goals SET status='blocked', completed_at=NULL, "
                             "updated_at=MAX(updated_at + 0.000001, ?), result=? "
                             "WHERE id=? AND status='pending'",
-                            (now, _enc_field("Earlier event request held for review"), int(goal_id)),
+                            (now, _enc_field("Earlier event request held for review", "goals.result"), int(goal_id)),
                         )
                         conn.execute("DELETE FROM signoffs WHERE goal_id=?", (int(goal_id),))
             if not legacy_refused:
@@ -2267,7 +2374,7 @@ class WorldModel:
                 "ELSE MAX(updated_at + 0.000001, ?) END, "
                 "status = ?, updated_at = MAX(updated_at + 0.000001, ?), "
                 "result = COALESCE(?, result) WHERE id = ?",
-                (status, now, status, now, _enc_field(result), goal_id),
+                (status, now, status, now, _enc_field(result, "goals.result"), goal_id),
                 )
                 self._goal_changed(goal_id)
             # A sign-off is authority over one immutable terminal payload, not
@@ -2285,7 +2392,7 @@ class WorldModel:
                 "UPDATE goals SET status = 'blocked', completed_at = NULL, "
                 "updated_at = MAX(updated_at + 0.000001, ?), result = ? "
                 "WHERE id = ? AND status = 'pending'",
-                (time.time(), _enc_field(result), int(goal_id)),
+                (time.time(), _enc_field(result, "goals.result"), int(goal_id)),
             )
             changed = cur.rowcount == 1
             if changed:
@@ -2300,7 +2407,7 @@ class WorldModel:
                 "UPDATE goals SET status = 'blocked', completed_at = NULL, "
                 "updated_at = MAX(updated_at + 0.000001, ?), result = ? "
                 "WHERE id = ? AND status IN ('pending', 'active', 'running', 'blocked')",
-                (time.time(), _enc_field(result), int(goal_id)),
+                (time.time(), _enc_field(result, "goals.result"), int(goal_id)),
             )
             changed = cur.rowcount == 1
             if changed:
@@ -2322,7 +2429,7 @@ class WorldModel:
                 "UPDATE goals SET result = ?, updated_at = MAX(updated_at + 0.000001, ?) "
                 "WHERE id = ? AND status NOT IN "
                 "('done', 'completed', 'failed', 'cancelled', 'blocked', 'error')",
-                (_enc_field(text), now, goal_id),
+                (_enc_field(text, "goals.result"), now, goal_id),
             )
             if cur.rowcount == 1:
                 self._goal_changed(goal_id)
@@ -2427,7 +2534,7 @@ class WorldModel:
                     "UPDATE goals SET status='blocked', completed_at=NULL, "
                     "updated_at=MAX(updated_at + 0.000001, ?), result=? "
                     "WHERE id=? AND status='pending'",
-                    (time.time(), _enc_field("Earlier event request held for review"),
+                    (time.time(), _enc_field("Earlier event request held for review", "goals.result"),
                      int(goal_id)),
                 )
                 conn.execute("DELETE FROM signoffs WHERE goal_id=?", (int(goal_id),))
@@ -2633,7 +2740,7 @@ class WorldModel:
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(max(1, min(100, int(limit))))
         rows = self._read_all(sql, tuple(params))
-        titles = _dec_fields([row["title"] for row in rows])
+        titles = _dec_fields([row["title"] for row in rows], "goals.title")
         return [ConversationSummary(row["id"], title, row["status"], row["updated_at"], row["owner"])
                 for row, title in zip(rows, titles, strict=True)]
 
@@ -2646,7 +2753,7 @@ class WorldModel:
         if row is None:
             return None
         return GoalStreamState(row["id"], row["status"], row["owner"],
-                               _dec_field(row["result"]) if include_result else "")
+                               _dec_field(row["result"], context="goals.result") if include_result else "")
 
     def search_goals(
         self,
@@ -2806,7 +2913,8 @@ class WorldModel:
                 "cost_dollars = ?, input_tokens = ?, output_tokens = ?, "
                 "tool_calls = ?, cache_read_tokens = ?, cache_write_tokens = ? "
                 "WHERE id = ?",
-                (time.time(), _enc_field(summary), _enc_field(outcome), cost_dollars,
+                (time.time(), _enc_field(summary, "episodes.summary"),
+                 _enc_field(outcome, "episodes.outcome"), cost_dollars,
                  input_tokens, output_tokens, tool_calls,
                  cache_read_tokens, cache_write_tokens, episode_id),
             )
@@ -3009,7 +3117,7 @@ class WorldModel:
         with self._writing() as conn:
             cur = conn.execute(
                 "INSERT INTO goal_events(goal_id, agent, kind, content, ts) VALUES(?, ?, ?, ?, ?)",
-                (goal_id, agent, kind, _enc_field(content), time.time()),
+                (goal_id, agent, kind, _enc_field(content, "goal_events.content"), time.time()),
             )
             self._goal_changed(goal_id)
             return cur.lastrowid
@@ -3040,7 +3148,7 @@ class WorldModel:
             "SELECT content FROM goal_events ORDER BY id DESC LIMIT ?", (int(limit),))
         return [
             value
-            for value in _dec_fields([r[0] for r in rows if r and r[0]])
+            for value in _dec_fields([r[0] for r in rows if r and r[0]], "goal_events.content")
             if value is not None
         ]
 
@@ -3140,7 +3248,7 @@ class WorldModel:
         _refuse_withheld_placeholder(value)
         encoded_tags = json.dumps(normalize_tags(tags)) if tags is not None else None
         now = time.time()
-        enc = _enc_field(value)
+        enc = _enc_field(value, "facts.value")
         from .fact_revision import check_expected_revision
         with self._writing() as conn:
             if not conn.in_transaction:
@@ -3154,7 +3262,7 @@ class WorldModel:
                 # same value is a distinct belief worth its own audit window.
                 changed = (
                     prior is None
-                    or _dec_field(prior[0]) != value
+                    or _dec_field(prior[0], context="facts.value") != value
                     or int(prior[1]) != int(trust_tier)
                 )
                 if changed:
@@ -3201,7 +3309,7 @@ class WorldModel:
         if not row:
             return None
         result = dict(row)
-        result["value"] = _dec_field(result["value"])
+        result["value"] = _dec_field(result["value"], context="facts.value")
         result["tags"] = json.loads(result.pop("tags_json"))
         return result
 
@@ -3228,7 +3336,7 @@ class WorldModel:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY key LIMIT ? OFFSET ?"
         rows = self._read_all(sql, (*params, max(1, min(limit, 101)), max(0, offset)))
-        values = _dec_fields([row["value"] for row in rows])  # one policy and key lookup
+        values = _dec_fields([row["value"] for row in rows], "facts.value")  # one policy and key lookup
         result = []
         for row, value in zip(rows, values, strict=True):
             item = dict(row)
@@ -3251,7 +3359,7 @@ class WorldModel:
         rows = self._read_all(
             "SELECT key, value FROM facts ORDER BY id DESC"
         )
-        values = _dec_fields([r["value"] for r in rows])
+        values = _dec_fields([r["value"] for r in rows], "facts.value")
         return {r["key"]: value for r, value in zip(rows, values, strict=True)}
 
     def get_facts_with_trust(self) -> dict[str, tuple[str, int]]:
@@ -3262,7 +3370,7 @@ class WorldModel:
             "SELECT key, value, trust_tier FROM facts "
             "ORDER BY id DESC"
         )
-        values = _dec_fields([r["value"] for r in rows])
+        values = _dec_fields([r["value"] for r in rows], "facts.value")
         return {r["key"]: (value, int(r["trust_tier"]))
                 for r, value in zip(rows, values, strict=True)}
 
@@ -3324,9 +3432,9 @@ class WorldModel:
                 "ORDER BY valid_from DESC LIMIT 1",
                 (key, as_of, as_of),
             )
-            return _dec_field(row["value"]) if row else None
+            return _dec_field(row["value"], context="facts.value") if row else None
         row = self._read_one("SELECT value FROM facts WHERE key = ? LIMIT 1", (key,))
-        return _dec_field(row["value"]) if row else None
+        return _dec_field(row["value"], context="facts.value") if row else None
 
     def fact_history(self, key: str, *, limit: int = 50,
                      owned_only: bool = False) -> list[FactVersion]:
@@ -3340,7 +3448,7 @@ class WorldModel:
         )
         return [
             FactVersion(
-                value=_dec_field(r["value"]),
+                value=_dec_field(r["value"], context="facts.value"),
                 valid_from=r["valid_from"],
                 valid_to=r["valid_to"],
                 source=r["source"] or "",
@@ -3367,7 +3475,7 @@ class WorldModel:
         out: dict[str, list[FactVersion]] = {}
         for r in rows:
             out.setdefault(r["key"], []).append(FactVersion(
-                value=_dec_field(r["value"]),
+                value=_dec_field(r["value"], context="facts.value"),
                 valid_from=r["valid_from"],
                 valid_to=r["valid_to"],
                 source=r["source"] or "",
@@ -3441,7 +3549,7 @@ class WorldModel:
                 "ORDER BY id DESC LIMIT ?",
                 (pfx, q, q, limit),
             )
-            return [(r["key"], _dec_field(r["value"])) for r in rows]
+            return [(r["key"], _dec_field(r["value"], context="facts.value")) for r in rows]
         # Encryption on: `value` is sealed ciphertext, so a SQL LIKE over it can
         # never match the plaintext query (the search would silently return
         # nothing). Keys are stored plaintext, so narrow the scan by prefix in
@@ -3455,7 +3563,7 @@ class WorldModel:
         needle = query.lower()
         out: list[tuple[str, str]] = []
         for r in rows:
-            val = _dec_field(r["value"])
+            val = _dec_field(r["value"], context="facts.value")
             if needle in r["key"].lower() or (val is not None and needle in val.lower()):
                 out.append((r["key"], val))
                 if len(out) >= limit:
@@ -3467,7 +3575,7 @@ class WorldModel:
         with self._writing() as conn:
             cur = conn.execute(
                 "INSERT INTO questions(goal_id, question, asked_at) VALUES(?, ?, ?)",
-                (goal_id, _enc_field(question), time.time()),
+                (goal_id, _enc_field(question, "questions.question"), time.time()),
             )
             return cur.lastrowid
 
@@ -3489,7 +3597,7 @@ class WorldModel:
         """
         sql = "UPDATE questions SET answer = ?, answered_at = ? WHERE id = ?"
         params: tuple[Any, ...] = (
-            _enc_field(answer),
+            _enc_field(answer, "questions.answer"),
             time.time(),
             question_id,
         )
@@ -3543,7 +3651,7 @@ class WorldModel:
                 "AND g.execution_principal = ? "
                 "AND EXISTS (SELECT 1 FROM turns t WHERE t.goal_id = g.id "
                 "AND t.conversation_id = ? AND t.role = 'user'))",
-                (_enc_field(answer), time.time(), question_id, goal_id,
+                (_enc_field(answer, "questions.answer"), time.time(), question_id, goal_id,
                  owner, execution_principal, conversation_id),
             )
             return changed.rowcount == 1
@@ -3590,7 +3698,8 @@ class WorldModel:
                 "INSERT INTO approvals(action, risk, scope, detail, provenance, "
                 "status, requested_at, approvals_required, requested_by, goal_id, department, "
                 "undo_hold) VALUES(?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
-                (_enc_field(action), risk, _enc_field(scope), _enc_field(detail),
+                (_enc_field(action, "approvals.action"), risk, _enc_field(scope, "approvals.scope"),
+                 _enc_field(detail, "approvals.detail"),
                  provenance, time.time(), max(1, int(approvals_required)),
                  (requested_by or None), goal["id"] if goal else None,
                  goal["domain"] if goal else "",
@@ -3773,7 +3882,7 @@ class WorldModel:
         # approval.decided already went out; subscribers learn it was retracted.
         self._emit_approval_event("approval.undone", int(approval_id), {
             "previous_status": row["status"], "undone_by": (undone_by or "").strip(),
-            "action": _dec_field(row["action"])})
+            "action": _dec_field(row["action"], context="approvals.action")})
         return "undone"
 
     def get_approval_audit_event(
@@ -4321,7 +4430,7 @@ class WorldModel:
         with self._writing() as conn:
             conn.execute(
                 "INSERT INTO messages(goal_id, role, content, ts) VALUES(?, ?, ?, ?)",
-                (goal_id, role, _enc_field(content), time.time()),
+                (goal_id, role, _enc_field(content, "messages.content"), time.time()),
             )
 
     # ----- conversations (multi-turn per channel user) -----
@@ -4356,7 +4465,7 @@ class WorldModel:
             cur = conn.execute(
                 "INSERT INTO turns(conversation_id, goal_id, role, content, ts) "
                 "VALUES(?, ?, ?, ?, ?)",
-                (conversation_id, goal_id, role, _enc_field(content), time.time()),
+                (conversation_id, goal_id, role, _enc_field(content, "turns.content"), time.time()),
             )
             return cur.lastrowid
 
@@ -4371,7 +4480,7 @@ class WorldModel:
         out: list[Turn] = []
         for r in rows:
             d = dict(r)
-            d["content"] = _dec_field(d["content"])
+            d["content"] = _dec_field(d["content"], context="turns.content")
             out.append(Turn(**d))
         return list(reversed(out))
 

@@ -2097,13 +2097,18 @@ _INTEGRATIONS_MORE: tuple[Setting, ...] = (
 
     # ------------------------------------------------------ plugin permissions
     S("plugins", "grant", "What plugins may do",
-      "Permissions granted to every turned-on plugin that asks for them.", "multiselect",
+      "Permissions granted to every turned-on plugin that asks for them. Lightwork checks "
+      "what a plugin declares before loading it; it does not stop a loaded plugin from "
+      "doing more. Keep 'Where plugins run' on a separate program for a real boundary.",
+      "multiselect",
       "Integrations", [], "maverick.plugins", subgroup="Plugin permissions",
       choices=(("network", "Use the internet"), ("fs_write", "Change files"),
                ("subprocess", "Run other programs")),
       weaker="grow", warning="Plugins will be able to do more on this server."),
     S("plugins", "enforce_permissions", "Skip plugins that ask for more",
-      "A plugin asking for a permission not granted above is not loaded.", "toggle",
+      "A plugin asking for a permission not granted above is not loaded. This is a "
+      "check on what the plugin declares, not a limit on what it can do once loaded.",
+      "toggle",
       "Integrations", True, "maverick.plugins", subgroup="Plugin permissions", weaker=False,
       env=("MAVERICK_PLUGINS_ENFORCE",),
       warning="Plugins asking for permissions you have not granted will load anyway."),

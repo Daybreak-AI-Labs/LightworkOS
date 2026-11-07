@@ -38,12 +38,12 @@ def test_goal_content_sealed_on_disk_and_round_trips(monkeypatch, tmp_path):
     title, desc, result = c.execute(
         "SELECT title, description, result FROM goals WHERE id=?", (gid,)
     ).fetchone()
-    assert title.startswith("MVKAR1:") and "123-45-6789" not in title
-    assert desc.startswith("MVKAR1:") and result.startswith("MVKAR1:")
+    assert title.startswith("MVKBND1:") and "123-45-6789" not in title
+    assert desc.startswith("MVKBND1:") and result.startswith("MVKBND1:")
     ev = c.execute(
         "SELECT content FROM goal_events WHERE goal_id=?", (gid,)
     ).fetchone()[0]
-    assert ev.startswith("MVKAR1:") and "secret" not in ev
+    assert ev.startswith("MVKBND1:") and "secret" not in ev
 
     # Reads round-trip to plaintext through every accessor.
     g = wm.get_goal(gid)
@@ -70,7 +70,7 @@ def test_recent_event_contents_decrypts_sealed_events(monkeypatch, tmp_path):
     raw = sqlite3.connect(str(db)).execute(
         "SELECT content FROM goal_events WHERE goal_id=?", (gid,)
     ).fetchone()[0]
-    assert raw.startswith("MVKAR1:")
+    assert raw.startswith("MVKBND1:")
     # ...but the corpus reader returns plaintext (parity with goal_events()).
     assert wm.recent_event_contents() == ["coordination message secret"]
 
@@ -162,8 +162,8 @@ def test_episode_outcome_sealed_and_round_trips(monkeypatch, tmp_path):
     summary, outcome = c.execute(
         "SELECT summary, outcome FROM episodes WHERE id=?", (eid,)
     ).fetchone()
-    assert summary.startswith("MVKAR1:") and "secret" not in summary
-    assert outcome.startswith("MVKAR1:")
+    assert summary.startswith("MVKBND1:") and "secret" not in summary
+    assert outcome.startswith("MVKBND1:")
     assert wm.list_episodes(goal_id=gid)[0].outcome == "model-x: done"   # round-trips
 
 
@@ -180,8 +180,8 @@ def test_approval_fields_sealed_and_round_trip(monkeypatch, tmp_path):
     action, scope, detail = c.execute(
         "SELECT action, scope, detail FROM approvals WHERE id=?", (aid,)
     ).fetchone()
-    assert action.startswith("MVKAR1:") and "rm -rf" not in action
-    assert scope.startswith("MVKAR1:") and detail.startswith("MVKAR1:")
+    assert action.startswith("MVKBND1:") and "rm -rf" not in action
+    assert scope.startswith("MVKBND1:") and detail.startswith("MVKBND1:")
     a = wm.get_approval(aid)
     assert a.action == "rm -rf /data" and a.scope == "prod"
     assert a.detail == "delete the SSN export" and a.risk == "high"   # risk not sealed
@@ -208,3 +208,140 @@ def test_search_facts_matches_value_under_encryption(monkeypatch, tmp_path):
 
     # Key-substring search keeps working too.
     assert ("user:bob:other", "unrelated value") in wm.search_facts("user:bob:", "other")
+
+
+# ---- context binding: a sealed value belongs to one table, column and tenant ----
+
+@requires_crypto
+def test_sealed_columns_are_bound_and_a_transplanted_value_is_withheld(monkeypatch, tmp_path):
+    """AES-GCM authenticates the bytes, not where they belong. Binding the
+    table.column (and tenant) into the associated data means a database
+    writer without the key cannot move a valid ciphertext from one cell to
+    another and have the application decrypt it there."""
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    from maverick.world_model import _UNSEALED_WITHHELD, WorldModel
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    gid = wm.create_goal("the title", "the description")
+    wm.upsert_fact("k", "the secret fact")
+
+    c = sqlite3.connect(str(db))
+    title = c.execute("SELECT title FROM goals WHERE id=?", (gid,)).fetchone()[0]
+    value = c.execute("SELECT value FROM facts WHERE key='k'").fetchone()[0]
+    assert title.startswith("MVKBND1:goals.title:")
+    assert value.startswith("MVKBND1:facts.value:")
+
+    # Transplant the fact's ciphertext into the goal title and vice versa.
+    c.execute("UPDATE goals SET title=? WHERE id=?", (value, gid))
+    c.execute("UPDATE facts SET value=? WHERE key='k'", (title,))
+    c.commit()
+    c.close()
+    assert wm.get_goal(gid).title == _UNSEALED_WITHHELD
+    assert wm.get_fact("k") == _UNSEALED_WITHHELD
+    assert [g for g in wm.list_goals() if g.id == gid][0].title == _UNSEALED_WITHHELD
+
+
+@requires_crypto
+def test_legacy_unbound_seal_and_context_less_readers_keep_working(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    from maverick.world_model import WorldModel, _dec_field
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    gid = wm.create_goal("bound title", "d")
+    # A row sealed before binding existed (MVKAR1) still reads.
+    legacy = car.seal_to_str("legacy title")
+    c = sqlite3.connect(str(db))
+    c.execute("UPDATE goals SET description=? WHERE id=?", (legacy, gid))
+    bound = c.execute("SELECT title FROM goals WHERE id=?", (gid,)).fetchone()[0]
+    c.commit()
+    c.close()
+    g = wm.get_goal(gid)
+    assert g.title == "bound title" and g.description == "legacy title"
+    # Raw readers that hand the token to the generic helpers (dashboard
+    # queries, chat stores) decode through the embedded context.
+    assert car.is_sealed_str(bound)
+    assert car.unseal_from_str(bound) == "bound title"
+    assert car.unseal_many_from_str([bound, legacy]) == ["bound title", "legacy title"]
+    assert _dec_field(bound) == "bound title"
+    # A reader that states its context refuses another column's token.
+    assert _dec_field(bound, context="facts.value") != "bound title"
+
+
+@requires_crypto
+def test_bound_token_is_authenticated_with_its_context(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    token = car.seal_bound_to_str("secret", "facts.value")
+    assert token.startswith("MVKBND1:facts.value:")
+    assert car.unseal_bound_from_str(token, "facts.value") == "secret"
+    with pytest.raises(car.EncryptionUnavailable):
+        car.unseal_bound_from_str(token, "goals.title")
+    # Rewriting the embedded context without the key fails GCM authentication.
+    forged = token.replace("MVKBND1:facts.value:", "MVKBND1:goals.title:", 1)
+    with pytest.raises(car.EncryptionUnavailable):
+        car.unseal_bound_from_str(forged, "goals.title")
+    with pytest.raises(ValueError):
+        car.seal_bound_to_str("x", "bad context!")
+
+
+@requires_crypto
+def test_store_turns_strict_by_itself_once_migrated(monkeypatch, tmp_path):
+    """After `maverick encryption migrate` leaves no plaintext behind, the
+    store records that, and an unsealed value in a sealed column is withheld
+    without the operator having to discover [encryption] strict."""
+    from maverick import world_model as wm_mod
+    from maverick.encryption_migrate import migrate_world_db
+    from maverick.world_model import _UNSEALED_WITHHELD, WorldModel
+
+    monkeypatch.setattr(wm_mod, "_MIGRATED_STORES", set())
+    monkeypatch.setattr(wm_mod, "_LEGACY_STORES", set())
+    db = tmp_path / "world.db"
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
+    wm = WorldModel(db)
+    gid = wm.create_goal("plain title", "d")
+    assert wm_mod.auto_strict_at_rest() is False
+
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    migrate_world_db(db)
+    assert wm_mod.migrated_marker_path(db).exists()
+    monkeypatch.setattr(wm_mod, "_MIGRATED_STORES", set())
+    monkeypatch.setattr(wm_mod, "_LEGACY_STORES", set())
+    wm = WorldModel(db)
+    assert wm_mod.auto_strict_at_rest() is True
+    assert wm.get_goal(gid).title == "plain title"       # migrated: bound now
+    c = sqlite3.connect(str(db))
+    c.execute("UPDATE goals SET title='injected plaintext' WHERE id=?", (gid,))
+    c.commit()
+    c.close()
+    assert wm.get_goal(gid).title == _UNSEALED_WITHHELD
+    # A store that was never migrated keeps strict off for the process.
+    WorldModel(tmp_path / "other.db")
+    assert wm_mod.auto_strict_at_rest() is False
+
+
+@requires_crypto
+def test_sqlite_tokens_ignore_the_request_tenant_and_postgres_tokens_bind_it(monkeypatch, tmp_path):
+    """A SQLite world is one file per tenant, opened from whatever request
+    context reaches it (a dispatcher writing into a user's tenant world, say),
+    so its tokens bind the column only. The shared Postgres tables bind the
+    tenant as well, so a row copied between tenants fails to open."""
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    from maverick import paths
+    from maverick.world_model import _UNSEALED_WITHHELD, _dec_field, _enc_field
+
+    token = paths._TENANT.set("tenant-a")
+    try:
+        sqlite_token = _enc_field("hello", "goals.title")
+        shared_token = _enc_field("hello", "goals.title", bind_tenant=True)
+    finally:
+        paths._TENANT.reset(token)
+    token = paths._TENANT.set("tenant-b")
+    try:
+        assert _dec_field(sqlite_token, context="goals.title") == "hello"
+        assert _dec_field(shared_token, context="goals.title") == _UNSEALED_WITHHELD
+    finally:
+        paths._TENANT.reset(token)
+    token = paths._TENANT.set("tenant-a")
+    try:
+        assert _dec_field(shared_token, context="goals.title") == "hello"
+    finally:
+        paths._TENANT.reset(token)

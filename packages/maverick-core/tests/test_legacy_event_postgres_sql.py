@@ -33,7 +33,7 @@ def _world(monkeypatch, selected):
         yield cursor
 
     monkeypatch.setattr(postgres.PostgresWorldModel, "_tx", transaction)
-    monkeypatch.setattr(postgres, "_seal", lambda value: value)
+    monkeypatch.setattr(postgres, "_seal", lambda value, context=None: value)
     monkeypatch.setattr(postgres, "_tenant_scope", lambda column="tenant_id": (
         f"{column}=%s", ["tenant-a"],
     ))

@@ -609,9 +609,9 @@ def _run_speak(args: dict[str, Any], sandbox: Any = None) -> str:
     # in the workspace.
     output = args.get("output")
     if output:
-        from .ffmpeg_tool import _safe_path
+        from .ffmpeg_tool import _safe_output_path
         try:
-            output_path = Path(_safe_path(sandbox, output))
+            output_path = Path(_safe_output_path(sandbox, output))
         except ValueError as e:
             return f"ERROR: {e}"
     else:

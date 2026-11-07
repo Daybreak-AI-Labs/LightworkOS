@@ -1518,9 +1518,9 @@ def test_at_rest_encryption_seals_columns_and_round_trips(world, monkeypatch, tm
         "SELECT title, result FROM goals WHERE id=%s", (gid,)).fetchone()
     val = c.execute("SELECT value FROM facts WHERE key=%s", ("enc:k",)).fetchone()[0]
     c.close()
-    assert title.startswith("MVKAR1:") and "SENSITIVE-TITLE-xyz" not in title
-    assert result.startswith("MVKAR1:") and "SENSITIVE-RESULT-xyz" not in result
-    assert val.startswith("MVKAR1:") and "SENSITIVE-FACT-xyz" not in val
+    assert title.startswith("MVKBND1:") and "SENSITIVE-TITLE-xyz" not in title
+    assert result.startswith("MVKBND1:") and "SENSITIVE-RESULT-xyz" not in result
+    assert val.startswith("MVKBND1:") and "SENSITIVE-FACT-xyz" not in val
 
 
 def test_goal_status_counts_and_ping(world):

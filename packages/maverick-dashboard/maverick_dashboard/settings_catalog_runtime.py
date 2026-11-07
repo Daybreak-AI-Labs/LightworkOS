@@ -772,16 +772,19 @@ def _safety(S, C) -> tuple:
           pattern=r"[0-9a-fA-F-]{8,64}", item_error="a signature number", max_items=500,
           weaker="shrink", warning="Plugins with the signatures you remove will load again."),
         S("plugins", "isolation", "Where plugins run",
-          "Run plugins inside Lightwork, or apart from it so a faulty plugin can't affect "
-          "the rest.", "select", "Integrations", "", "maverick.plugin_isolation",
+          "Run tool plugins apart from Lightwork, in a separate program with no saved keys, "
+          "or inside it with everything Lightwork can reach. Only the separate program keeps "
+          "plugin code out of Lightwork; the other choices run it inside.", "select",
+          "Integrations", "", "maverick.plugin_isolation",
           subgroup="Plugin safety",
           choices=(("", "Apart under enterprise protections, otherwise inside (default)"),
-                   ("subprocess", "In a separate program"),
-                   ("subinterpreter", "In a separate area of Lightwork"),
-                   ("none", "Inside Lightwork")),
+                   ("subprocess", "In a separate program (plugin code never runs inside Lightwork)"),
+                   ("subinterpreter", "In a separate area of Lightwork (same program, full access)"),
+                   ("none", "Inside Lightwork (full access)")),
           weaker=True, order=("subprocess", "subinterpreter", "", "none"),
           env=("MAVERICK_PLUGIN_ISOLATION",),
-          warning="Plugins will run with more access to the rest of Lightwork."),
+          warning="Plugin code will run inside Lightwork with everything it can reach, "
+                  "including saved keys and other workspaces."),
         S("plugins", "lock_policy", "When a plugin's version changes",
           "What happens when an installed plugin no longer matches the recorded version.",
           "select", "Integrations", "", "maverick.plugin_lock", subgroup="Plugin safety",
@@ -1197,7 +1200,8 @@ def _switches(S) -> tuple:
           "toggle", "Security", False, "maverick.tools._ssrf", subgroup="Tool access",
           env=("MAVERICK_FETCH_ALLOW_PRIVATE",), weaker=True,
           warning="Agents will be able to reach services inside your network, including "
-                  "ones that hold credentials."),
+                  "ones that hold credentials. Cloud metadata and link-local addresses "
+                  "stay blocked. When approvals are set up, this change waits for them."),
         S("tools", "fetch_skip_scan", "Skip the safety check on web pages",
           "Give agents web pages without checking them for hidden instructions first.",
           "toggle", "Security", False, "maverick.tools.http_fetch", subgroup="Tool access",

@@ -177,7 +177,7 @@ def _spend(request, world, owner, days, goals=None):
     for values in rows:
         row = dict(zip(columns, values, strict=True))
         if row["goal_id"] in permitted_ids and _permitted(request, {**row, "id": row["goal_id"]}, cache):
-            row["outcome"] = _dec_field(row["outcome"])
+            row["outcome"] = _dec_field(row["outcome"], context="episodes.outcome")
             try:
                 price = float(row["cost_dollars"])
                 row["cost_dollars"] = price if math.isfinite(price) and price >= 0 else None
