@@ -42,7 +42,7 @@ rm -rf .buildvenv dist build/dist build/build
 "$PY" -m venv .buildvenv
 # shellcheck disable=SC1091
 source .buildvenv/bin/activate
-python -m pip install --upgrade 'pip==26.2.2' >/dev/null
+python -m pip install --upgrade 'pip==26.3' >/dev/null
 
 echo ">> [2/6] install packages NON-editable (so PyInstaller can bundle them)"
 python scripts/install_release_cohort.py \

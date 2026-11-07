@@ -62,7 +62,7 @@ jobs:
           build_python="$RUNNER_TEMP/frozen-runtime-python/bin/python"
           echo "BUILD_PYTHON=$build_python" >> "$GITHUB_ENV"
           "$build_python" -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
           "$build_python" scripts/install_release_cohort.py --core-extra release-runtime
           "$build_python" -m pip install --constraint requirements/ci.txt 'pyinstaller==6.22.3'
           "$build_python" -m pip check
