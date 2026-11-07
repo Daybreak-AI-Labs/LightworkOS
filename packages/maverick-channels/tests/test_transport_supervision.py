@@ -1637,6 +1637,53 @@ def test_a_restarted_worker_publishes_nothing_until_a_scan_reads_its_receipts(mo
     asyncio.run(run())
 
 
+def test_a_worker_restarted_while_no_receipt_can_be_read_publishes_nothing(monkeypatch):
+    # As above, but the store lists its receipts and none of them can be read
+    # (the receipt key is out while the status key works). A scan that read
+    # nothing knows no more than no scan: the worker stays unpublished until
+    # one is read, then counts all three.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    outage, reads = [False], [0]
+
+    def failing(record_id):
+        reads[0] += 1
+        return outage[0]
+    journal = _unreadable_journal(0, failing)
+
+    async def send(message, reply, route):
+        if message.text == "X":
+            raise DeliveryNotSent("X's send is refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        first = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                send=send, journal=journal, status=_Status()).start()
+        await asyncio.sleep(0.05)
+        await first.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                           message_id="x"), external_id="x")
+        await until(lambda: bool(first._blocked_conversations))
+        for index in range(3):
+            await first.submit(IncomingMessage(user_id="p", sender_id="p", text=f"Y{index}", channel=Adapter.name,
+                                               message_id=f"y{index}"), external_id=f"y{index}")
+        await until(lambda: len(first._held) == 3)
+        await first.close()
+        outage[0] = True
+        status = _Status()
+        second = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await until(lambda: len(second._unreadable) == 4)
+        before = reads[0]
+        await until(lambda: reads[0] >= before + 8)  # two more scans of all four
+        assert status.counts == []
+        outage[0] = False
+        await until(lambda: bool(status.counts))
+        assert status.counts[0]["held"] == 3
+        await second.close()
+    asyncio.run(run())
+
+
 def test_replies_retried_after_a_failure_or_a_refused_permission_are_counted(monkeypatch):
     # X fails while it is handled and is retried every RETRY_DELAY; Z was
     # admitted but is no longer permitted when handled, and is retried too.

@@ -188,7 +188,7 @@ class TransportWorker:
             self._learned.add(row["id"])
 
     def _oldest_window(self):
-        found = {"selected": [], "waiting": {}, "hints": [], "count": 0}
+        found = {"selected": [], "waiting": {}, "hints": [], "count": 0, "read": False}
         unreadable = set()
         self._scan_pending = self._scan_seen = None
         now = time.monotonic()
@@ -217,6 +217,7 @@ class TransportWorker:
                     # scan after the retry period.
                     unreadable.add(record_id)
                     continue
+                found["read"] = True
                 read_after_failure = read_after_failure or bool(unreadable)
                 self._consider(row, now, found)
         if read_after_failure:
@@ -230,11 +231,14 @@ class TransportWorker:
                     row = self.journal.get(record_id)
                 except Exception:
                     continue
+                found["read"] = True
                 unreadable.discard(record_id)
                 self._consider(row, now, found)
         complete = wrapped or scanned <= MAX_CONFIGURED_RECORDS
         self._report_unreadable(unreadable, complete=complete)
-        self._scan_seen = (found["waiting"], found["hints"])
+        # A scan that could read none of the saved receipts knows no more
+        # about them than no scan.
+        self._scan_seen = (found["waiting"], found["hints"], found["read"] or not unreadable)
         if not complete:
             log.warning("Channel receipt scan exceeds configured safety ceiling")
         else:
@@ -320,8 +324,8 @@ class TransportWorker:
         It is also counted as held from the first scan, before it is handled again."""
         seen, self._scan_seen = self._scan_seen, None
         if seen is not None:
-            self._counted = True
-            waiting, hints = seen
+            waiting, hints, readable = seen
+            self._counted = self._counted or readable
             for record_id, known in waiting.items():
                 if known:
                     self._conversations[record_id] = known
@@ -424,9 +428,10 @@ class TransportWorker:
                 "went_ahead_at": self._went_ahead_at}
 
     def _publish_status(self):
-        # Before a scan has read the store this worker knows nothing about
-        # what its saved receipts hold: publishing its empty counts would say
-        # no reply waits. Unpublished, the page says it is not reporting.
+        # Before a scan has read its saved receipts (or found none) this
+        # worker knows nothing about what they hold: publishing its empty
+        # counts would say no reply waits. Unpublished, the page says it is
+        # not reporting.
         if not self._counted:
             return
         try:

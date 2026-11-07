@@ -336,6 +336,38 @@ def test_a_running_worker_is_current_again_soon_after_the_clock_jumps(tmp_path, 
         publisher.close()
 
 
+def test_a_change_whose_write_failed_is_tried_again_within_seconds(tmp_path, monkeypatch):
+    # The counts change and that write fails once (a full disk for a moment):
+    # the last status, renewed under RENEW_SECONDS ago, still reads as current,
+    # so the write is tried again every few seconds, not once it is due.
+    from maverick import file_lock
+
+    monkeypatch.setattr(hold_status, "_SKEW", 0.2)
+    publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=30)
+    publisher.update(_counts(held=1))
+    publisher.start()
+    try:
+        deadline = time.monotonic() + 5
+        while publisher._stamped is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        real, failures = file_lock.atomic_write_bytes, [1]
+
+        def fails_once(*args, **kwargs):
+            if failures[0]:
+                failures[0] -= 1
+                raise OSError("no space left on device")
+            return real(*args, **kwargs)
+        monkeypatch.setattr(file_lock, "atomic_write_bytes", fails_once)
+        publisher.update(_counts(held=2))
+        state = hold_status.summary({"signal"}, directory=tmp_path)
+        while state["held"] != 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+            state = hold_status.summary({"signal"}, directory=tmp_path)
+        assert not failures[0] and state["state"] == "holding" and state["held"] == 2
+    finally:
+        publisher.close()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="symbolic links and FIFOs need POSIX here")
 def test_cleanup_never_follows_a_linked_folder(tmp_path):
     elsewhere = tmp_path / "elsewhere"

@@ -59,7 +59,8 @@ has read its saved receipts, so a restarted worker counts the replies they say
 are waiting from its first published status, and one that cannot read them yet
 is reported as not reporting. The status is updated after each scan and before
 each reply is worked on, renewed every 30 seconds, even while the worker is
-busy with a long reply, and removed when the worker stops. `maverick serve`
+busy with a long reply (a write that fails is tried again every few seconds),
+and removed when the worker stops. `maverick serve`
 stops on the first SIGTERM as on Ctrl-C, so the dashboard's Stop and Restart
 remove it (a repeated SIGTERM does not cut the close short; whoever sent it
 ends the process if it does not stop in time). Started with Ctrl-C ignored, as

@@ -185,7 +185,9 @@ class Publisher:
                 if self._stop.is_set():
                     return
                 age = None if self._stamped is None else self.clock() - self._stamped
-                if changed or age is None or not 0 <= age < self.renew_seconds:
+                # A failed write is tried again at each check: the last status
+                # still reads as current, with counts that may have changed.
+                if changed or self._failing or age is None or not 0 <= age < self.renew_seconds:
                     self._changed.clear()
                     self.write_now()
                 if time.monotonic() - tidied >= FRESH_SECONDS:

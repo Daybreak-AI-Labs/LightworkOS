@@ -50,19 +50,32 @@ def _wait_for(path, child, deadline):
         time.sleep(0.02)
 
 
-def _serve(tmp_path, *, ignore_sigint=False):
-    marks = tmp_path / "marks"
-    marks.mkdir()
-    script = tmp_path / "child.py"
-    script.write_text(_CHILD)
-    env = {**os.environ, "HOME": str(tmp_path), "MAVERICK_HOME": str(tmp_path / "home")}
-    child = subprocess.Popen(
-        [sys.executable, str(script), str(marks)], env=env, cwd=tmp_path,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        # A script's background job starts with Ctrl-C ignored.
-        preexec_fn=(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN)) if ignore_sigint else None)
-    _wait_for(marks / "started", child, time.monotonic() + 60)
-    return child, marks
+@pytest.fixture
+def serve(tmp_path):
+    children = []
+
+    def start(*, ignore_sigint=False):
+        marks = tmp_path / "marks"
+        marks.mkdir()
+        script = tmp_path / "child.py"
+        script.write_text(_CHILD)
+        env = {**os.environ, "HOME": str(tmp_path), "MAVERICK_HOME": str(tmp_path / "home")}
+        disposition = signal.SIG_IGN if ignore_sigint else signal.SIG_DFL
+        child = subprocess.Popen(
+            [sys.executable, str(script), str(marks)], env=env, cwd=tmp_path,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            # Ctrl-C is set either way: a script's background job, so a test
+            # run started as one too, starts with it ignored.
+            preexec_fn=lambda: signal.signal(signal.SIGINT, disposition))
+        children.append(child)
+        _wait_for(marks / "started", child, time.monotonic() + 60)
+        return child, marks
+
+    yield start
+    for child in children:  # a failed wait never leaves a server running
+        if child.poll() is None:
+            child.kill()
+            child.communicate()
 
 
 def _finish(child):
@@ -75,18 +88,18 @@ def _finish(child):
     return output.decode(errors="replace")
 
 
-def test_sigterm_closes_the_channels_and_exits_cleanly(tmp_path):
-    child, marks = _serve(tmp_path)
+def test_sigterm_closes_the_channels_and_exits_cleanly(serve):
+    child, marks = serve()
     child.send_signal(signal.SIGTERM)
     output = _finish(child)
     assert child.returncode == 0, output
     assert (marks / "closed").exists()
 
 
-def test_a_repeated_sigterm_does_not_cut_the_close_short(tmp_path):
+def test_a_repeated_sigterm_does_not_cut_the_close_short(serve):
     # The dashboard's shutdown and a one-file build's launcher send SIGTERM
     # again while the channels are still closing.
-    child, marks = _serve(tmp_path)
+    child, marks = serve()
     child.send_signal(signal.SIGTERM)
     _wait_for(marks / "closing", child, time.monotonic() + 30)
     child.send_signal(signal.SIGTERM)
@@ -95,10 +108,10 @@ def test_a_repeated_sigterm_does_not_cut_the_close_short(tmp_path):
     assert (marks / "closed").exists()
 
 
-def test_sigterm_still_ends_a_server_started_with_ctrl_c_ignored(tmp_path):
+def test_sigterm_still_ends_a_server_started_with_ctrl_c_ignored(serve):
     # asyncio does not stop on an ignored Ctrl-C, so SIGTERM keeps its
     # default and ends the process, as it did before.
-    child, _marks = _serve(tmp_path, ignore_sigint=True)
+    child, _marks = serve(ignore_sigint=True)
     child.send_signal(signal.SIGTERM)
     output = _finish(child)
     assert child.returncode == -signal.SIGTERM, output
