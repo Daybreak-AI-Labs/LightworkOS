@@ -144,6 +144,28 @@ def test_an_unexpected_exit_is_reported_plainly(client, monkeypatch):
     assert error.startswith("Stopped unexpectedly (exit code 3).") and "bad setting" in error
 
 
+def test_held_chat_reply_statuses_are_cleared_once_the_chat_service_has_ended(client):
+    # A chat service ended without a chance to remove its statuses (every stop
+    # on Windows) leaves them behind; once it has ended the dashboard removes
+    # them, so they never stand in for a chat service that is gone.
+    from maverick.file_lock import ensure_private_directory
+    from maverick_channels import hold_status
+    from maverick_dashboard import service_supervisor
+    holds = hold_status._directory()
+    ensure_private_directory(holds)
+    for kind in ("worker", "channels"):
+        client.post(f"{BASE}/start", json={"service": kind})
+    left = [holds / "irc-4242-0123456789abcdef.enc", holds / "signal-4242-fedcba9876543210.enc"]
+    for path in left:
+        path.write_bytes(b"x")
+    worker = service_supervisor._SERVICES["worker"].process
+    assert client.post(f"{BASE}/stop", json={"service": "worker", "confirm": True}).status_code == 200
+    assert _eventually(lambda: worker.proc.poll() is not None and service_supervisor._SERVICES["worker"].process is None)
+    assert all(path.exists() for path in left)  # only the chat service's end clears them
+    assert client.post(f"{BASE}/stop", json={"service": "channels", "confirm": True}).status_code == 200
+    assert _eventually(lambda: not any(path.exists() for path in left))
+
+
 def test_dashboard_shutdown_stops_every_owned_service(client):
     from maverick_dashboard import service_supervisor
     client.post(f"{BASE}/start", json={"service": "tools"})

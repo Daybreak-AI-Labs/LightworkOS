@@ -12,8 +12,9 @@ ever published.
 
 Like the runtime configuration receipts, a status is renewed while its worker
 runs and removed when it stops (a process ended without a chance to stop,
-such as on Windows, leaves it behind). One that is not renewed is reported as
-not current, never as nothing held, and only a sealed status is ever read.
+such as on Windows, leaves it behind until the dashboard that started it sees
+it end). One that is not renewed is reported as not current, never as nothing
+held, and only a sealed status is ever read.
 Statuses are local to this computer.
 """
 from __future__ import annotations
@@ -141,12 +142,13 @@ class Publisher:
         return True
 
     def _clear_leftovers(self):
-        """Remove statuses nobody renews: any a week old, and this app's from
-        processes that stopped without removing theirs (a renewed one is at
-        most RENEW_SECONDS old). Run at start, every FRESH_SECONDS while the
-        worker runs (one left less than FRESH_SECONDS before the start is not
-        yet known to be unrenewed) and at close. Only a private folder of this
-        module's own is ever cleaned, never one another folder stands in for."""
+        """Remove statuses nobody renews: any a week old, any stamped ahead of
+        the clock, and this app's from processes that stopped without removing
+        theirs (a renewed one is at most RENEW_SECONDS old). Run at start,
+        every FRESH_SECONDS while the worker runs (one left less than
+        FRESH_SECONDS before the start is not yet known to be unrenewed) and
+        at close. Only a private folder of this module's own is ever cleaned,
+        never one another folder stands in for."""
         from maverick.file_lock import ensure_private_directory
 
         ensure_private_directory(self.directory)
@@ -154,11 +156,13 @@ class Publisher:
         for path in list(self.directory.glob("*.enc"))[:_MAX_FILES]:
             try:
                 changed = path.lstat().st_mtime
-                # A renewing worker writes with the current clock, so this
-                # app's status changed further ahead than that was left
-                # before the clock was set back.
-                if changed < now - 7 * 86400 or (path != self.path and _app(path) == self.channel
-                                                 and not now - FRESH_SECONDS <= changed <= now + _SKEW):
+                # A renewing worker of any app writes with this clock, so a
+                # status changed further ahead was left before the clock was
+                # set back (readers ignore it; a live one is rewritten within
+                # seconds).
+                if changed < now - 7 * 86400 or (path != self.path and (
+                        changed > now + _SKEW
+                        or (_app(path) == self.channel and changed < now - FRESH_SECONDS))):
                     path.unlink()
             except OSError:
                 pass
@@ -276,6 +280,28 @@ def records(*, directory=None, now=None):
         except Exception:
             unreadable.add(_app(path))
     return found, frozenset(unreadable)
+
+
+def clear_saved_before(moment, *, directory=None):
+    """Remove the statuses saved before ``moment``, once the chat service
+    that wrote them has ended: one ended without a chance to remove its own
+    (every stop on Windows) would otherwise stand in for it until its status
+    is no longer current. Never raises."""
+    try:
+        from maverick.file_lock import ensure_private_directory
+
+        directory = Path(directory) if directory is not None else _directory()
+        if not directory.is_dir():
+            return
+        ensure_private_directory(directory)
+        for path in list(directory.glob("*.enc"))[:_MAX_FILES]:
+            try:
+                if path.lstat().st_mtime <= moment:
+                    path.unlink()
+            except OSError:
+                pass
+    except Exception:  # noqa: BLE001 -- best effort: a status left behind still ages out
+        log.warning("Held chat replies statuses of the stopped chat service could not be removed")
 
 
 def summary(enabled, *, directory=None, now=None):

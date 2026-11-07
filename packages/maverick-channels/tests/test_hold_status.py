@@ -319,6 +319,32 @@ def test_a_status_left_before_the_clock_was_set_back_is_cleared(tmp_path):
     assert hold_status.summary({"signal"}, directory=tmp_path, now=later)["state"] == "not_reporting"
 
 
+def test_another_apps_status_left_before_the_clock_was_set_back_is_cleared_too(tmp_path):
+    # Left by a chat service that also ran IRC; the one started now runs
+    # only Signal, so no IRC worker is there to clear it.
+    later = time.time() + 3600
+    _publish(tmp_path, "irc", _counts(held=3), clock=lambda: later)
+    (ahead,) = tmp_path.glob("irc-*.enc")
+    os.utime(ahead, (later, later))
+    publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60).start()
+    try:
+        assert not ahead.exists()
+    finally:
+        publisher.close()
+    assert hold_status.summary({"signal"}, directory=tmp_path, now=later)["running_off"] == []
+
+
+def test_statuses_saved_before_the_chat_service_ended_are_cleared(tmp_path):
+    ended = time.time()
+    old = [_publish(tmp_path, channel, _counts(held=1)).path for channel in ("signal", "irc")]
+    for path in old:
+        os.utime(path, (ended - 1, ended - 1))
+    newer = _publish(tmp_path, "signal", _counts()).path  # the chat service started again
+    os.utime(newer, (ended + 1, ended + 1))
+    hold_status.clear_saved_before(ended, directory=tmp_path)
+    assert not any(path.exists() for path in old) and newer.exists()
+
+
 @pytest.mark.parametrize("jump", [3600, -60])
 def test_a_running_worker_is_current_again_soon_after_the_clock_jumps(tmp_path, monkeypatch, jump):
     # A laptop wakes (the clock jumps ahead without the renewal wait counting

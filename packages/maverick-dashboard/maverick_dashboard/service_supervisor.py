@@ -206,8 +206,10 @@ def _drain(service: Service, process: Any) -> None:
         if idle and not open_streams:
             time.sleep(0.05)
     code = process.proc.returncode
+    ended, released = time.time(), False
     with _LOCK:
         if service.process is process:
+            released = True  # not replaced by one started meanwhile
             service.exit_code = code
             service.stopped_at = time.time()
             if not service.stopping and code not in (0, None):
@@ -220,6 +222,20 @@ def _drain(service: Service, process: Any) -> None:
         process.close()
     except Exception:  # noqa: BLE001 -- the tree is already gone; cleanup is best effort
         pass
+    if released and service.kind == "channels":
+        _clear_held_reply_statuses(ended)
+
+
+def _clear_held_reply_statuses(ended: float) -> None:
+    """The chat service has ended: remove the held chat replies statuses it
+    saved, which it cannot remove itself when it is stopped without a signal
+    it can handle (every stop on Windows). A chat service started again since
+    saves its own after ``ended``."""
+    try:
+        from maverick_channels import hold_status
+    except ImportError:
+        return
+    hold_status.clear_saved_before(ended)
 
 
 def _running(service: Service) -> bool:
