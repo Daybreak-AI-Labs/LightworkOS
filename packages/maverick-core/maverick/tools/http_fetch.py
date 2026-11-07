@@ -557,10 +557,13 @@ _CUT_MARGIN = 1000
 
 # Text that completes whatever a secret pattern (maverick.safety.secret_detector)
 # could still need after a read ends: a token's remaining parts, the rest of a
-# connection string's credentials and host, a closing quote, and a private
-# key's END line. A secret those patterns find across the end of the read is
-# one the read cut, and is kept not at all.
-_COMPLETIONS = ("a.a.a", "a:a@a", '"', "'", "\n-----END PRIVATE KEY-----")
+# connection string's credentials and host, a closing quote of either kind, a
+# private key's END line, and the rest of a flow-approval token's payload and
+# its signature (after a letter of another script the token pattern still
+# finds one, while the first completion's pattern does not). A secret those
+# patterns find across the end of the read is one the read cut, and is kept
+# not at all.
+_COMPLETIONS = ("a.a.a", "a:a@a", "\"'", "\n-----END PRIVATE KEY-----", "0" * 64 + "." + "0" * 64)
 
 
 def _collapsed_with_positions(text: str) -> tuple[str, list[int]]:
@@ -603,11 +606,12 @@ _PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
 _PARTIAL_ESCAPE = re.compile(r"(?:%[0-9A-Fa-f]?)?\Z")
 
 
-def _readings(text: str, *, decoded: bool) -> list[tuple[str, list[int]]]:
+def _readings(text: str, *, decoded: bool, written: bool = True) -> list[tuple[str, list[int]]]:
     """The ways hiding reads ``text``, each with, for each of its characters,
-    the position in ``text`` its writing starts at: as written, percent-decoded
-    (for a form), and each of those with its spacing made single spaces."""
-    readings = [(text, list(range(len(text))))]
+    the position in ``text`` its writing starts at: as written (unless the
+    caller already read it so), percent-decoded (for a form), and each of
+    those with its spacing made single spaces."""
+    readings = [(text, list(range(len(text))))] if written else []
     if decoded:
         readings.append(_decoded_with_positions(text))
     for reading, positions in list(readings):
@@ -635,14 +639,18 @@ def _open_secret(reading: str) -> int | None:
     return min(starts) if starts else None
 
 
-def _secret_bounds(text: str, *, decoded: bool = False, cut: bool = False) -> tuple[list[tuple[int, int]], list[int]]:
+def _secret_bounds(text: str, *, decoded: bool = False, cut: bool = False,
+                   written: bool = True) -> tuple[list[tuple[int, int]], list[int]]:
     """Where in ``text`` anything hiding would hide lies, read as hiding reads
     it (see ``_readings``; with the standalone storage-key pattern), and, when
-    the read ``cut`` ``text`` at its end, where any secret it cut starts."""
+    the read ``cut`` ``text`` at its end, where any secret it cut starts. A
+    value the read did not cut is read followed by the closing quote the card
+    writes after it, as hiding reads it."""
     spans: list[tuple[int, int]] = []
     opens: list[int] = []
-    for reading, positions in _readings(text, decoded=decoded):
-        found = _found(reading)
+    for reading, positions in _readings(text, decoded=decoded, written=written):
+        found = _found(reading) if cut else [(start, min(stop, len(reading)))
+                                              for start, stop in _found(reading + '"') if start < len(reading)]
         # From where the first character's writing starts to where the writing
         # of the character after the last one starts (a %XX escape is three).
         spans += [(positions[start], positions[stop] if stop < len(positions) else len(text))
@@ -713,7 +721,8 @@ def _pairs_window(text: str) -> tuple[str, bool]:
     for offset, piece in ((0, name), (len(name) + len(sep), value)):
         if unquote_plus(piece) == piece:
             continue  # read as written above
-        more, more_opens = _secret_bounds(piece, decoded=True, cut=start + offset + len(piece) == len(window))
+        more, more_opens = _secret_bounds(piece, decoded=True, cut=start + offset + len(piece) == len(window),
+                                          written=False)
         spans += [(begin + offset, finish + offset) for begin, finish in more]
         opens += [begin + offset for begin in more_opens]
     return window[:start + _settled_end(end - start, spans, opens)], False
@@ -827,7 +836,13 @@ def _string_end(text: str, start: int) -> int:
 
 
 class _NotJson(ValueError):
-    """The body is not JSON."""
+    """The body is not JSON. Where it begins as JSON, ``read`` is how that
+    beginning is shown and ``rest`` where the text that is not JSON starts
+    (-1 where that text stands for a sensitive value, so none is shown)."""
+
+    def __init__(self, read: str = "", rest: int = -1) -> None:
+        super().__init__("the body is not JSON")
+        self.read, self.rest = read, rest
 
 
 def _track_bracket(stack: list[str], token: str) -> None:
@@ -896,19 +911,37 @@ def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
     whole value under each sensitive key hidden (a repeated key included),
     anything in a string that looks like a key or token hidden within that
     string, a space after each "," and ":", and any other spacing a single
-    space: every boundary between two values is then a space. Reading stops
-    once more than ``limit`` characters are written; returns the text and
-    whether all of it was read. Raises ``_NotJson``."""
+    space: every boundary between two values is then a space, and one is
+    written between two values that have none. Reading stops once more than
+    ``limit`` characters are written; returns the text and whether all of it
+    was read. Raises ``_NotJson``, carrying what was read where the body
+    begins as JSON (many servers read a body's first value and ignore the
+    rest, and a reader that stops at a mistake has read what came before)."""
+    read: dict[str, Any] = {"written": [], "start": 0, "hiding": False}
+    try:
+        return _read_json(text, limit, read)
+    except _NotJson:
+        shown = "".join(read["written"]).strip()
+        if not shown:
+            raise
+        raise _NotJson(shown, -1 if read["hiding"] else read["start"]) from None
+
+
+def _read_json(text: str, limit: int, read: dict[str, Any]) -> tuple[str, bool]:
+    """``_reviewed_json``, token by token. ``read`` keeps what is written,
+    where the token being read starts, and whether it is part of a hidden
+    value."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE
 
     hidden = json.dumps(_REDACTED_REQUEST_VALUE)
     position = 1 if text.startswith("\ufeff") else 0
-    written, size = [], 0
+    written, size = read["written"], 0
     stack: list[str] = []
     expect_key = sensitive_key = hide_next = ended = spaced = False
     scanned = 0
     skip_to: int | None = None  # while a hidden container is read: its depth
     for _ in range(_REVIEW_TOKENS):
+        read["start"], read["hiding"] = position, hide_next or skip_to is not None
         if position >= len(text):
             if not ended:
                 raise _NotJson
@@ -924,8 +957,9 @@ def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
                 written.append(" ")
                 size += 1
             continue
-        if ended and not spaced:  # values one after another need space between
-            raise _NotJson
+        if ended and not spaced:  # a value right after another: shown apart
+            written.append(" ")
+            size += 1
         _track_bracket(stack, token)
         if skip_to is not None:  # inside a hidden container
             if len(stack) == skip_to:
@@ -970,10 +1004,11 @@ def _readable_body(text: str, headers: dict) -> tuple[str, bool]:
     may read it either way, and the two readings hide different values."""
     from ..approval_cards import ApprovalCardError
 
+    leading = _NotJson()
     try:
         readable, complete = _reviewed_json(text, _REVIEW_WINDOW)
-    except _NotJson:
-        readable, complete = None, False
+    except _NotJson as exc:
+        readable, complete, leading = None, False, exc
     if _is_form_body(headers):
         if readable is not None and text.lstrip("\ufeff \t\r\n")[:1] in ("{", "["):
             raise ApprovalCardError(
@@ -981,6 +1016,12 @@ def _readable_body(text: str, headers: dict) -> tuple[str, bool]:
                 "application/json"
             )
         readable, complete = _reviewed_pairs(text, _REVIEW_WINDOW, form=True)
+    elif readable is None and leading.read:
+        # It begins as JSON: that beginning as JSON, then the rest as text.
+        rest, complete = "", leading.rest >= 0
+        if complete:
+            rest, complete = _hidden_beginning(text[leading.rest:leading.rest + _VALUE_WINDOW + 1])
+        readable = f"{leading.read} {rest}".rstrip()
     elif readable is None:
         readable, complete = _hidden_beginning(text)
     return _SPACES.sub(" ", readable), complete
@@ -997,11 +1038,13 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
     text = None
     if body not in (None, "", b""):
         text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
-    # Measured as it will be sent, before anything is hidden: hiding a long
-    # part of the address or a header never makes a request look short. The
-    # body counts only as far as a card shows it.
+    # The address and headers are measured as they will be sent, before
+    # anything is hidden: hiding a long part of either never makes a request
+    # look short. The body counts as it is sent or as the card shows it,
+    # whichever is shorter (spacing the card collapses or adds is not size),
+    # and at most a preview's length.
     sent = len(method) + len(url) + sum(len(name) + len(value) + 6 for name, value in headers.items())
-    if sent + min(len(text) if text else 0, _REVIEW_BODY_CHARS) + 100 > 7600:
+    if sent + 100 > 7600:
         raise ApprovalCardError("the address and headers are too long to show a person in full")
     shown: dict[str, Any] = {"method": method, "url": _reviewed_url(url), "headers": headers}
     notes: list[str] = []
@@ -1012,6 +1055,8 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
     except UnicodeEncodeError as exc:
         raise ApprovalCardError("the body is not valid text") from exc
     readable, complete = _readable_body(text, headers)
+    if sent + min(len(text), len(readable), _REVIEW_BODY_CHARS) + 100 > 7600:
+        raise ApprovalCardError("the address and headers are too long to show a person in full")
     # Shown in full only when the body that is sent fits and all of it was
     # read: hiding a long value never makes a large upload look small.
     if complete and len(json.dumps(text)) <= _REVIEW_BODY_CHARS and len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:

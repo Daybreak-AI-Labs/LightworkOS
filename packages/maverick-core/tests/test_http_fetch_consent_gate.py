@@ -757,12 +757,26 @@ def test_connector_requests_with_many_small_fields_still_fit_the_card(sent):
 
 
 def test_a_long_line_is_read_only_as_far_as_the_preview_needs(sent, monkeypatch):
+    import maverick.governed_tools as governed
     import maverick.safety.secret_detector as detector
+    import maverick.tools.http_fetch as fetch
 
-    real, scanned = detector.redact, []
-    monkeypatch.setattr(detector, "redact", lambda text: scanned.append(len(text)) or real(text))
-    _card(monkeypatch, "A" * 200_000)
-    assert sum(scanned) < 50_000
+    def read(length):
+        """How much text hiding reads (with the card builder's own check),
+        and how much finding where to cut a long read reads."""
+        hidden: list[int] = []
+        bounds: list[int] = []
+        with pytest.MonkeyPatch.context() as patch:
+            for module, name, into in ((detector, "redact", hidden), (governed, "_value_secrets", hidden),
+                                       (fetch, "_found", bounds)):
+                real = getattr(module, name)
+                patch.setattr(module, name, lambda text, real=real, into=into: into.append(len(text)) or real(text))
+            _card(monkeypatch, "A" * length)
+        return hidden, bounds
+
+    hidden, bounds = read(200_000)
+    assert sum(hidden) < 50_000
+    assert (hidden, bounds) == read(2_000_000)  # the same however long the line
 
 
 @pytest.mark.parametrize("args", [{"url": 5}, {"url": "https://api.example.test/x", "render": 5}],
@@ -1053,6 +1067,90 @@ _ESCAPED_JWT = "eyJ" + "H" * 3000 + "%2E" + "P" * 2000 + "%2E" + "Sig0123456789a
         "on-the-second-dot-in-json", "on-the-at-sign", "on-an-escape", "inside-an-escape"])
 def test_a_secret_the_read_cuts_anywhere_keeps_nothing_on_the_card(sent, monkeypatch, body, headers, secret):
     assert secret not in _real_card(monkeypatch, body, headers)
+
+
+_FLOW_TOKEN = "eyJ" + "A" * 1600 + "." + "0123456789abcdef" * 4
+
+
+@pytest.mark.parametrize("body,headers", [
+    (_placed("sk-", "k", " 中", _FLOW_TOKEN, " tail" * 600, into=500), {}),
+    (_placed("sk-", "k", " é", _FLOW_TOKEN, " tail" * 600, into=500), {}),
+    (json.dumps({"note": _placed("sk-", "k", " ²", _FLOW_TOKEN, " tail" * 600, into=500)}), {}),
+    (_placed("a=sk-", "A", "&note=" + quote(" 中"), _FLOW_TOKEN, "&z=" + "y" * 3000, into=500), _FORM),
+], ids=["after-a-chinese-letter", "after-an-accented-letter", "after-a-digit-in-json", "after-an-escaped-letter"])
+def test_a_flow_token_the_read_cuts_after_a_letter_of_any_script_keeps_nothing(sent, monkeypatch, body, headers):
+    assert "eyJAAAA" not in _real_card(monkeypatch, body, headers)
+
+
+_SPACED_KEY = "-----BEGIN  PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----\n"
+
+
+@pytest.mark.parametrize("body", [
+    "PRIVATE_KEY=" + _SPACED_KEY,
+    "export SSH_KEY=" + _SPACED_KEY.replace("BEGIN  PRIVATE", "BEGIN RSA  PRIVATE").replace("END PRIVATE", "END RSA PRIVATE"),
+    json.dumps({"env": "PRIVATE_KEY: " + _SPACED_KEY}),
+], ids=["env-line", "export-rsa", "json-string"])
+def test_a_private_key_with_extra_spacing_in_its_header_is_hidden(sent, monkeypatch, body):
+    assert "MIIEvQIBADAN" not in _real_card(monkeypatch, body)
+
+
+def test_connector_cards_hide_a_private_key_with_extra_spacing_in_its_header(sent):
+    from maverick.governed_tools import _approval_request_parts
+
+    parts = "\n".join(_approval_request_parts({"path": "deploy/.env", "content": "PRIVATE_KEY=" + _SPACED_KEY}))
+    assert "MIIEvQIBADAN" not in parts and "deploy/.env" in parts
+
+
+@pytest.mark.parametrize("headers,body,kept", [
+    ({"X-Cache": "redis://app:pw@", "X-Note": "keep"}, "hello", lambda request: request["headers"]["X-Note"]),
+    ({}, json.dumps({"cache": "redis://app:pw@", "note": "keep me"}),
+     lambda request: json.loads(request["body"])["note"]),
+    ({f"X-Replica-{index}": "redis://app:pw@" for index in range(17)}, "hello",
+     lambda request: request["headers"]["X-Replica-16"]),
+], ids=["header", "json-body", "many-headers"])
+def test_a_connection_string_with_no_host_is_hidden_within_its_own_value(sent, monkeypatch, headers, body, kept):
+    # The rejoined request (the last line) still reads as JSON: nothing
+    # between two values was hidden.
+    request = json.loads(_real_card(monkeypatch, body, headers).rsplit("\n", 1)[1])
+    assert "app:pw" not in json.dumps(request) and kept(request)
+
+
+def test_connector_cards_hide_a_connection_string_with_no_host_within_its_own_value(sent):
+    from maverick.governed_tools import _approval_request_parts
+    from maverick.safety.secret_detector import redact
+
+    parts = _approval_request_parts({"cache": "redis://app:pw@", "note": "keep"})
+    # The card builder checks each line again and finds nothing more to hide.
+    assert all(redact(" ".join(part.split()))[0] == " ".join(part.split()) for part in parts)
+    assert "app:pw" not in "".join(parts) and "keep" in "".join(parts)
+
+
+def test_a_pretty_printed_body_beside_a_long_address_is_still_shown(sent, monkeypatch):
+    body = json.dumps([{"id": index, "ok": True} for index in range(45)], indent=8)
+    assert len(body) > 3000
+    shown = _real_card(monkeypatch, body, {"Content-Type": "application/json"},
+                       url="https://api.example.test/v1/import?sig=" + "a" * 4500)
+    request = json.loads(shown.rsplit("\n", 1)[1])
+    assert '"id": 44' in request["body_preview"] and request["body_characters"] == len(body)
+
+
+@pytest.mark.parametrize("body", [
+    '{"username": "alice", "password": "hunter2-correct-horse"}}',  # pragma: allowlist secret
+    '{"username": "alice", "password": "hunter2-correct-horse"}\n--',  # pragma: allowlist secret
+    '{"username": "alice", "password": "hunter2-correct-horse"}{"x": 1}',  # pragma: allowlist secret
+    '{"x": 1}{"password": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '[{"password": "hunter2-correct-horse"}][1]',  # pragma: allowlist secret
+    '{"password": "hunter2-correct-horse"}\x00',  # pragma: allowlist secret
+], ids=["extra-brace", "trailing-text", "second-document-unspaced", "sensitive-second-document", "extra-array",
+        "trailing-nul"])
+def test_a_json_body_followed_by_more_text_still_hides_sensitive_values(sent, monkeypatch, body):
+    assert "hunter2-correct-horse" not in _real_card(monkeypatch, body, {"Content-Type": "application/json"})
+
+
+def test_text_after_a_json_body_is_still_shown(sent, monkeypatch):
+    shown = _real_card(monkeypatch, '{"password": "hunter2-correct-horse"} then a note',  # pragma: allowlist secret
+                       {"Content-Type": "application/json"})
+    assert "hunter2-correct-horse" not in shown and "then a note" in shown
 
 
 @pytest.mark.parametrize("body,secret", [
