@@ -72,19 +72,25 @@ def _wait_for(path, child, deadline):
 def serve(tmp_path):
     children = []
 
-    def start(*, ignore_sigint=False, mode=""):
+    def start(*, ignore_sigint=False, mode="", no_output=False):
         marks = tmp_path / "marks"
         marks.mkdir()
         script = tmp_path / "child.py"
         script.write_text(_CHILD)
         env = {**os.environ, "HOME": str(tmp_path), "MAVERICK_HOME": str(tmp_path / "home")}
         disposition = signal.SIG_IGN if ignore_sigint else signal.SIG_DFL
+
+        def prepare():
+            signal.signal(signal.SIGINT, disposition)
+            if no_output:  # started with its output closed: Python has no sys.stdout or sys.stderr
+                os.close(1)
+                os.close(2)
         child = subprocess.Popen(
             [sys.executable, str(script), str(marks), *([mode] if mode else [])], env=env, cwd=tmp_path,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             # Ctrl-C is set either way: a script's background job, so a test
             # run started as one too, starts with it ignored.
-            preexec_fn=lambda: signal.signal(signal.SIGINT, disposition))
+            preexec_fn=prepare)
         children.append(child)
         _wait_for(marks / (mode or "started"), child, time.monotonic() + 60)
         return child, marks
@@ -93,7 +99,9 @@ def serve(tmp_path):
     for child in children:  # a failed wait never leaves a server running
         if child.poll() is None:
             child.kill()
-            child.communicate()
+            child.wait()
+        if not child.stdout.closed:
+            child.stdout.close()
 
 
 def _finish(child):
@@ -158,4 +166,30 @@ def test_sigterm_ends_the_server_while_channel_work_runs_on_a_thread(serve):
     except subprocess.TimeoutExpired:
         pytest.fail("serve kept running after SIGTERM until its thread work finished")
     assert child.returncode == -signal.SIGTERM, output.decode(errors="replace")
+    assert (marks / "closed").exists()
+
+
+@pytest.mark.parametrize("mode", ["", "goal", "thread"])
+def test_sigterm_ends_the_server_once_nothing_reads_its_output(serve, mode):
+    # The dashboard that started it is gone, so its output has no reader and
+    # writing fails: the channels still close and SIGTERM still ends it.
+    child, marks = serve(mode=mode)
+    child.stdout.close()
+    child.send_signal(signal.SIGTERM)
+    try:
+        child.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        pytest.fail("serve kept running after SIGTERM once nothing read its output")
+    assert child.returncode == -signal.SIGTERM
+    assert (marks / "closed").exists()
+
+
+def test_sigterm_ends_a_server_started_with_its_output_closed(serve):
+    child, marks = serve(mode="goal", no_output=True)
+    child.send_signal(signal.SIGTERM)
+    try:
+        child.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        pytest.fail("serve kept running after SIGTERM with its output closed")
+    assert child.returncode == -signal.SIGTERM
     assert (marks / "closed").exists()

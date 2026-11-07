@@ -4768,13 +4768,16 @@ def _run_until_stopped(server) -> None:
             except KeyboardInterrupt:
                 if not stopping:
                     raise
-                click.echo("\nshutting down...")
-                runner.run(server.stop())
-                _finish_sigterm(stopping)  # returns only in a process that cannot end on its own SIGTERM
+                try:  # writing fails once nothing reads the output (the dashboard that started it is gone)
+                    click.echo("\nshutting down...")
+                    runner.run(server.stop())
+                finally:
+                    _finish_sigterm(stopping)  # returns only in a process that cannot end on its own SIGTERM
     except KeyboardInterrupt:
         click.echo("\nshutting down...")
         asyncio.run(server.stop())
-    _finish_sigterm(stopping)
+    finally:
+        _finish_sigterm(stopping)
 
 
 def _stop_on_sigterm() -> list[bool]:
@@ -4816,8 +4819,12 @@ def _finish_sigterm(stopping: list[bool]) -> None:
         return
     import signal
 
-    sys.stdout.flush()
-    sys.stderr.flush()
+    for stream in (sys.stdout, sys.stderr):  # None when started with its output closed
+        try:
+            if stream is not None:
+                stream.flush()
+        except (OSError, ValueError):
+            pass
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.raise_signal(signal.SIGTERM)
 
