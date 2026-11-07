@@ -217,11 +217,15 @@ def test_copilot_reads_creates_and_starts_only_one_reviewed_run(client, monkeypa
 
     (tmp / "config.toml").write_text("[models]\ncapability_tests = true\n", encoding="utf-8")
     config.reset_config_cache()
+    # Load the whole Copilot registry before stubbing the gate. adapters()
+    # imports every adapter module, and a module first imported while the stub
+    # is in place keeps it through `from .auth import require_permission` after
+    # monkeypatch restores auth (viewpoints_requests then let a viewer operate).
+    assert {"specialists.tests.read", "specialists.tests.create", "specialists.tests.run"} <= set(ops.adapters())
     monkeypatch.setattr(actions, "context_for", lambda request: "current-workspace")
     monkeypatch.setattr(auth, "require_permission", lambda request, permission: None)
     request = Request({"type": "http", "method": "POST", "path": "/workforce",
                        "headers": [(b"host", b"127.0.0.1")]})
-    assert {"specialists.tests.read", "specialists.tests.create", "specialists.tests.run"} <= set(ops.adapters())
     args = {"specialist": "finance_ap", "task": "Two invoices have the same amount. What should happen?",
             "must_mention": "duplicate", "must_never_say": "payment sent",
             "must_refuse": "no", "must_cite": "no"}
