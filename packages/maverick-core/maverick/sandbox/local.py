@@ -6,6 +6,7 @@ That's the abstraction Hermes' 7 backends collapse to. Start simple.
 from __future__ import annotations
 
 import os
+import sys
 import re
 import signal
 import subprocess
@@ -142,6 +143,47 @@ def scrub_env(source: dict | None = None) -> dict:
     # being defended is the harness process, whose env this never touches.
     out.pop("PYTHONNOUSERSITE", None)
     return out
+
+
+_PR_SET_DUMPABLE = 4
+_PR_GET_DUMPABLE = 3
+_environ_hidden = False
+
+
+def _hide_harness_environ() -> None:
+    """Make this process non-dumpable so ``/proc/<pid>/environ`` (and the rest
+    of ``/proc/<pid>/``) is owned by root and unreadable by a same-uid child.
+
+    :func:`scrub_env` shapes only the child's environment; the child still runs
+    as the harness user, and the harness's exec-time environment (where the
+    deployment puts provider keys) stays readable through ``/proc/$PPID/environ``
+    until the process is marked non-dumpable. Linux only; a no-op elsewhere and
+    when prctl is unavailable. Side effect: no core dumps and no same-user
+    ptrace of the harness, which is the intended posture.
+    """
+    global _environ_hidden
+    if _environ_hidden or sys.platform != "linux":
+        return
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(_PR_SET_DUMPABLE, 0, 0, 0, 0) == 0:
+            _environ_hidden = True
+    except (OSError, AttributeError):  # pragma: no cover -- no libc / no prctl
+        return
+
+
+def _harness_environ_hidden() -> bool:
+    """True when prctl reports this process as non-dumpable (Linux)."""
+    if sys.platform != "linux":
+        return False
+    try:
+        import ctypes
+
+        return ctypes.CDLL(None).prctl(_PR_GET_DUMPABLE, 0, 0, 0, 0) == 0
+    except (OSError, AttributeError):  # pragma: no cover
+        return False
 
 
 def _reap_process_group(proc: subprocess.Popen) -> None:
@@ -313,6 +355,7 @@ class LocalBackend:
             pass
         effective = self.timeout if timeout is None else timeout
         child_env = _contained(scrub_env())
+        _hide_harness_environ()
 
         windows_creation_flags = (
             subprocess.CREATE_NEW_PROCESS_GROUP | _CREATE_SUSPENDED

@@ -291,9 +291,14 @@ def dist_allowed_by_lock(dist_name: str | None) -> bool:
     pinned_hash = read_hashes().get(dist_name)
     if pinned_hash:
         current_hash = _dist_content_hash(dist_name)
-        if current_hash is not None and current_hash != pinned_hash:
+        if current_hash != pinned_hash:
+            # None means a RECORD-listed file could not be read (removed, or
+            # replaced by a sourceless .pyc): the pinned build is gone, which
+            # is drift, not a free pass.
             hmsg = (f"plugin {dist_name} content drift: code changed since lock "
-                    f"(same version {pinned})")
+                    f"(same version {pinned})" if current_hash is not None else
+                    f"plugin {dist_name} content hash cannot be verified against "
+                    f"the lock (same version {pinned})")
             if policy == "enforce":
                 _warn_once(dist_name + ":hash", hmsg + "; refusing (enforce)")
                 return False

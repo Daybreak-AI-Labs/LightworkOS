@@ -44,3 +44,9 @@ def test_speak_rejects_traversal_output(tmp_path):
 
 def test_speak_default_output_lands_in_workspace(tmp_path):
     assert _next_output_path(_SB(tmp_path)) == Path(tmp_path) / "speech-1.mp3"
+
+
+def test_speak_refuses_output_under_git_dir(tmp_path):
+    (tmp_path / ".git").mkdir()
+    out = _run_speak({"text": "hi", "output": ".git/HEAD"}, _SB(tmp_path))
+    assert out.startswith("ERROR") and ".git" in out

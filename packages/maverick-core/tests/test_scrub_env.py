@@ -94,3 +94,22 @@ def test_gold_patch_in_always_strip_list():
     # explicitly -- guard the regression in case the tuple is refactored.
     assert "MAVERICK_GOLD_PATCH" in local._ALWAYS_STRIP_ENV
     assert not local._SECRET_ENV_RE.search("MAVERICK_GOLD_PATCH")
+
+
+def test_local_backend_hides_harness_environ_from_children(tmp_path):
+    """scrub_env() only shapes the child's env; the child could still read the
+    harness's exec-time environment from /proc/<ppid>/environ (same uid). The
+    local backend marks the harness non-dumpable so /proc/<pid>/* is root-owned."""
+    import os
+
+    import pytest
+
+    if sys.platform != "linux":
+        pytest.skip("prctl(PR_SET_DUMPABLE) is Linux-only")
+    from maverick.sandbox import local
+
+    backend = local.LocalBackend(workdir=tmp_path)
+    res = backend.exec("tr '\\0' '\\n' < /proc/$PPID/environ | head -c 1; echo rc=$?")
+    assert local._harness_environ_hidden() is True
+    if os.geteuid() != 0:  # root reads everything; the check is the dumpable flag
+        assert "Permission denied" in (res.stderr or "") or "rc=1" in res.stdout

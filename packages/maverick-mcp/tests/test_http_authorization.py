@@ -1946,3 +1946,25 @@ def test_unreadable_enforced_trust_state_rejects_http_request(monkeypatch):
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
     )
     assert response.status_code == 401
+
+
+def test_exhausted_peer_budget_never_locks_out_a_valid_bearer(monkeypatch):
+    """Many clients share one egress address behind a proxy or NAT, and the
+    transport deliberately ignores forwarded headers. An attacker's failed
+    guesses from that address must not turn into a 429 for a valid token."""
+    from maverick_mcp import http_transport
+
+    monkeypatch.setattr(http_transport, "_AUTH_FAILURES", {})
+    monkeypatch.setattr(http_transport, "_AUTH_FAILED_BEARERS", {})
+    client, _, _ = _client(monkeypatch, registry={}, token="known", shared=True, enforced=False)
+    wrong = {"Authorization": "Bearer wrong"}
+    for _ in range(http_transport._AUTH_FAILURE_LIMIT):
+        assert client.post("/mcp", headers=wrong, json={}).status_code == 401
+    # The repeated wrong bearer is refused before verification.
+    assert client.post("/mcp", headers=wrong, json={}).status_code == 429
+    # A different wrong bearer from the same peer is still refused (429, not 401).
+    assert client.post("/mcp", headers={"Authorization": "Bearer other"}, json={}).status_code == 429
+    # The valid bearer from the same peer gets through to the protocol layer.
+    ok = client.post("/mcp", headers={"Authorization": "Bearer known"}, json={})
+    assert ok.status_code != 429, ok.text
+    assert ok.status_code != 401

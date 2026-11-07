@@ -268,6 +268,41 @@ _RATE_MAX_KEYS = 8192
 _AUTH_FAILURE_LOCK = threading.Lock()
 _AUTH_FAILURES: dict[str, deque] = {}
 _AUTH_FAILURE_LIMIT = 30
+# Fingerprints of bearers that already failed from a peer, most recent last.
+# Once the peer's failure budget is spent, a repeat of one of these is refused
+# before verification; a bearer never seen failing (the legitimate client that
+# shares the peer address behind a proxy or NAT) is still verified, so an
+# attacker's guesses can only lock out the attacker's own guesses.
+_AUTH_FAILED_BEARERS: dict[str, deque] = {}
+_AUTH_FAILED_BEARERS_PER_PEER = 64
+
+
+def _bearer_fingerprint(authorization: str | None) -> str:
+    import hashlib
+
+    return hashlib.sha256((authorization or "").encode("utf-8", "surrogatepass")).hexdigest()[:32]
+
+
+def _bearer_known_failed(host: str, fingerprint: str) -> bool:
+    with _AUTH_FAILURE_LOCK:
+        return fingerprint in _AUTH_FAILED_BEARERS.get(host, ())
+
+
+def _remember_failed_bearer(host: str, fingerprint: str) -> None:
+    with _AUTH_FAILURE_LOCK:
+        seen = _AUTH_FAILED_BEARERS.get(host)
+        if seen is None:
+            if len(_AUTH_FAILED_BEARERS) >= _RATE_MAX_KEYS:
+                # Keep only peers that still hold a live failure budget entry.
+                for key in list(_AUTH_FAILED_BEARERS):
+                    if key not in _AUTH_FAILURES:
+                        del _AUTH_FAILED_BEARERS[key]
+                if len(_AUTH_FAILED_BEARERS) >= _RATE_MAX_KEYS:
+                    return
+            seen = _AUTH_FAILED_BEARERS.setdefault(
+                host, deque(maxlen=_AUTH_FAILED_BEARERS_PER_PEER))
+        if fingerprint not in seen:
+            seen.append(fingerprint)
 
 
 def _auth_failure_budget(host: str, *, failed: bool = False) -> bool:
@@ -686,14 +721,23 @@ def build_app(server) -> FastAPI:
                 detail="cross-origin request blocked (set MAVERICK_MCP_ALLOWED_ORIGINS to allow)",
             )
         # Use the connection peer, never an untrusted forwarded header. An
-        # exhausted failure bucket blocks further guesses before verification.
+        # exhausted failure bucket refuses repeated wrong bearers before
+        # verification and turns every further failure into a 429; it never
+        # refuses a bearer that has not failed, because one peer address is
+        # shared by every client behind a proxy or NAT.
         peer = str(getattr(getattr(request, "client", None), "host", None) or "unknown")
-        if not _auth_failure_budget(peer):
+        fingerprint = _bearer_fingerprint(authorization)
+        exhausted = not _auth_failure_budget(peer)
+        if exhausted and _bearer_known_failed(peer, fingerprint):
             raise HTTPException(status_code=429, detail="authentication rate limit exceeded",
                                 headers={"Retry-After": "60"})
         caller = _authorization_for_bearer(authorization)
         if caller is None:
             _auth_failure_budget(peer, failed=True)
+            _remember_failed_bearer(peer, fingerprint)
+            if exhausted:
+                raise HTTPException(status_code=429, detail="authentication rate limit exceeded",
+                                    headers={"Retry-After": "60"})
             raise HTTPException(status_code=401, detail="invalid bearer")
         caller_identity = caller.caller_identity
         caller_scope = _caller_scope(caller)

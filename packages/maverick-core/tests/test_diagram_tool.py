@@ -89,3 +89,13 @@ def test_non_string_source_does_not_crash(tmp_path):
     out = fn({"engine": "dot", "source": 5})
     assert isinstance(out, str)
     assert not out.startswith("Traceback")
+
+
+def test_out_under_git_dir_is_refused(tmp_path):
+    """The rendered image is a model-chosen write; like every other workspace
+    writer it must not land in .git/ (repo metadata corruption)."""
+    (tmp_path / ".git").mkdir()
+    out = diagram_tool(_FakeSandbox(tmp_path)).fn(
+        {"engine": "dot", "source": "digraph{a}", "out": ".git/config"})
+    assert out.startswith("ERROR") and ".git" in out
+    assert not (tmp_path / ".git" / "config").exists()
