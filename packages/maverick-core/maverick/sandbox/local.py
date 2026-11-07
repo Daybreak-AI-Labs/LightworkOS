@@ -6,10 +6,10 @@ That's the abstraction Hermes' 7 backends collapse to. Start simple.
 from __future__ import annotations
 
 import os
-import sys
 import re
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 

@@ -277,6 +277,30 @@ _AUTH_FAILED_BEARERS: dict[str, deque] = {}
 _AUTH_FAILED_BEARERS_PER_PEER = 64
 
 
+def _authenticate_bearer(peer: str, authorization: str | None):
+    """Resolve the caller for ``authorization`` from ``peer`` or raise.
+
+    Per-peer failure accounting: once the peer's budget is spent, a bearer
+    that already failed from it is refused before verification and every
+    further failure is a 429; a bearer that has not failed is still verified,
+    because one peer address is shared by every client behind a proxy or NAT.
+    """
+    fingerprint = _bearer_fingerprint(authorization)
+    exhausted = not _auth_failure_budget(peer)
+    if exhausted and _bearer_known_failed(peer, fingerprint):
+        raise HTTPException(status_code=429, detail="authentication rate limit exceeded",
+                            headers={"Retry-After": "60"})
+    caller = _authorization_for_bearer(authorization)
+    if caller is None:
+        _auth_failure_budget(peer, failed=True)
+        _remember_failed_bearer(peer, fingerprint)
+        if exhausted:
+            raise HTTPException(status_code=429, detail="authentication rate limit exceeded",
+                                headers={"Retry-After": "60"})
+        raise HTTPException(status_code=401, detail="invalid bearer")
+    return caller
+
+
 def _bearer_fingerprint(authorization: str | None) -> str:
     import hashlib
 
@@ -720,25 +744,10 @@ def build_app(server) -> FastAPI:
                 status_code=403,
                 detail="cross-origin request blocked (set MAVERICK_MCP_ALLOWED_ORIGINS to allow)",
             )
-        # Use the connection peer, never an untrusted forwarded header. An
-        # exhausted failure bucket refuses repeated wrong bearers before
-        # verification and turns every further failure into a 429; it never
-        # refuses a bearer that has not failed, because one peer address is
-        # shared by every client behind a proxy or NAT.
+        # Use the connection peer, never an untrusted forwarded header; see
+        # _authenticate_bearer for the per-peer failure budget.
         peer = str(getattr(getattr(request, "client", None), "host", None) or "unknown")
-        fingerprint = _bearer_fingerprint(authorization)
-        exhausted = not _auth_failure_budget(peer)
-        if exhausted and _bearer_known_failed(peer, fingerprint):
-            raise HTTPException(status_code=429, detail="authentication rate limit exceeded",
-                                headers={"Retry-After": "60"})
-        caller = _authorization_for_bearer(authorization)
-        if caller is None:
-            _auth_failure_budget(peer, failed=True)
-            _remember_failed_bearer(peer, fingerprint)
-            if exhausted:
-                raise HTTPException(status_code=429, detail="authentication rate limit exceeded",
-                                    headers={"Retry-After": "60"})
-            raise HTTPException(status_code=401, detail="invalid bearer")
+        caller = _authenticate_bearer(peer, authorization)
         caller_identity = caller.caller_identity
         caller_scope = _caller_scope(caller)
         quota_scope = _quota_scope(caller)

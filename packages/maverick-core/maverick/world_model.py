@@ -1330,8 +1330,6 @@ class WorldModel:
         path, default_managed = _resolve_world_path(path)
         _managed_path = _managed_path or default_managed
         self.path = path
-        if str(path) != ":memory:":
-            _note_store_posture(path)
         # Whether this DB already held data before we opened it. Captured BEFORE
         # any file creation below so a brand-new world.db (every fresh
         # install/tenant) is not mistaken for a legacy DB needing a
@@ -1344,6 +1342,7 @@ class WorldModel:
         # default umask (often world-readable 0644) — any local user or
         # backup could read everyone's data. Lock the dir + the file.
         if str(path) != ":memory:":
+            _note_store_posture(path)
             # Tenant/home context is deliberately resolved at request time.
             # Treat the current managed default as Lightwork-owned and let the
             # tenant factory explicitly mark its paths.  A genuinely
