@@ -105,6 +105,10 @@ def _waiting_parts(state):
     return parts
 
 
+_START_OR_RESTART = ("If the chat service is stopped, start it with Manage the chat service. If it is running, "
+                     "restart it, then refresh this page. If your IT team runs it on another computer, ask them.")
+
+
 def describe(state):
     """One short paragraph: what is waiting, when it goes out, what to do."""
     kind = state["state"]
@@ -117,13 +121,12 @@ def describe(state):
         names = app_names(state["not_reporting"]) or "Signal or IRC"
         verb = "are" if len(state["not_reporting"]) > 1 else "is"
         return (f"{names} {verb} turned on but not reporting from the chat service on this computer, so held chat "
-                "replies cannot be checked. If the chat service is stopped, start it with Manage the chat service. "
-                "If it is running, restart it, then refresh this page. If your IT team runs it on another "
-                "computer, ask them.")
+                f"replies cannot be checked. {_START_OR_RESTART}")
     if kind == "stale":
-        return " ".join([f"The chat service last reported at {datetime_text(state['last_seen'])} and has stopped "
-                         "reporting, so held chat replies cannot be checked. Check that the chat service is running, "
-                         "then refresh this page.", *_unreadable_parts(state)])
+        # The chat service may be running without the app that last reported.
+        return " ".join([f"Held chat replies were last reported at {datetime_text(state['last_seen'])} and have not "
+                         f"been reported since, so they cannot be checked. {_START_OR_RESTART}",
+                         *_unreadable_parts(state)])
     if kind == "unavailable":
         names = app_names(state["unavailable"]) if "unknown" not in state["unavailable"] else ""
         whose = f"The saved status for {names}" if names else "The chat service's saved status"

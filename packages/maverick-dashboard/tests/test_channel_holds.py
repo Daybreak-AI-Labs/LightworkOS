@@ -132,8 +132,12 @@ def test_replies_that_went_ahead_of_an_expired_hold_are_reported():
 def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
     seen = 1_800_000_000.0
     stale = channel_holds.describe(_state(state="stale", reporting=[], last_seen=seen))
-    assert stale.startswith(f"The chat service last reported at {datetime_text(seen)} and has stopped reporting, "
-                            "so held chat replies cannot be checked.")
+    # The chat service may be running without the app that last reported (a
+    # status left by an earlier run), so the steps cover both.
+    assert stale == (f"Held chat replies were last reported at {datetime_text(seen)} and have not been reported "
+                     "since, so they cannot be checked. If the chat service is stopped, start it with Manage the "
+                     "chat service. If it is running, restart it, then refresh this page. If your IT team runs it "
+                     "on another computer, ask them.")
     partial = channel_holds.describe(_state(reporting=["signal"], not_reporting=["irc"]))
     assert partial.startswith("No Signal replies are waiting.")
     # An app stops reporting when its connection ends (nothing starts it
@@ -147,7 +151,7 @@ def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
 def test_a_stale_status_beside_an_unreadable_one_keeps_the_encryption_key_step():
     seen = 1_800_000_000.0
     text = channel_holds.describe(_state(state="stale", reporting=[], last_seen=seen, unavailable=["signal"]))
-    assert text.startswith(f"The chat service last reported at {datetime_text(seen)} and has stopped reporting")
+    assert text.startswith(f"Held chat replies were last reported at {datetime_text(seen)}")
     assert ("A saved status for Signal could not be read. If this keeps happening, check that this computer's "
             "encryption key is available.") in text
 

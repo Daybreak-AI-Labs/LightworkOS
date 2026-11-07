@@ -67,13 +67,15 @@ local goal or other work still running on a thread, such as a voice note being
 transcribed (a repeated SIGTERM does not cut the close short;
 whoever sent it ends the process if it does not stop in time). Started with
 Ctrl-C ignored, as a script's background job is, it ends on SIGTERM at once,
-as before. On
-Windows, where a stop ends the process without a signal it can handle, the
-last status stays until it is 100 seconds old. One that has not been renewed
-for 100 seconds is reported as not current, never as nothing held: a chat
-service stopped without shutting down cleanly reads as having stopped
-reporting until it starts again, and a running worker clears its app's
-statuses that nobody renews or that were stamped ahead of its clock. A status
+as before. A chat service that ends without removing its status (every stop
+on Windows, where a stop ends the process without a signal it can handle, or a
+crash) leaves it behind; when the dashboard's Manage the chat service started
+it, the dashboard removes those statuses once it has ended. Otherwise the last
+status stays until it is 100 seconds old. One that has not been renewed for
+100 seconds is reported as not current, never as nothing held: a chat service
+stopped without shutting down cleanly reads as having stopped reporting until
+it starts again, and a running worker clears its app's statuses that nobody
+renews and any status stamped ahead of its clock. A status
 stamped more than a few seconds ahead of the dashboard's clock is ignored, and
 a worker renews its status within a few seconds after the clock jumps, as when
 a laptop wakes. Replies that were waiting stay counted while their saved
@@ -81,9 +83,9 @@ receipts cannot be read. A turned-on chat app with no current status
 is named as not reporting, with a restart of the chat service as the next
 step: nothing starts an app again after its connection ends, and an app
 turned on after the chat service started is not running yet. One turned off
-in settings that the chat service still runs is named too. The answer names the apps it covers: other
-chat apps' replies are not among them, and nothing reads the saved replies of
-an app that is turned off. The status is local to the computer that
+in settings that the chat service still runs is named too. The answer names
+the apps it covers: other chat apps' replies are not among them, and nothing
+reads the saved replies of an app that is turned off. The status is local to the computer that
 runs the chat service; a dashboard on another computer says it is not
 reporting.
 
