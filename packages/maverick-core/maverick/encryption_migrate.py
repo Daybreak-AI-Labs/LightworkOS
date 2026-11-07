@@ -23,8 +23,11 @@ from pathlib import Path
 from .crypto_at_rest import (
     EncryptionUnavailable,
     at_rest_enabled,
+    is_bound_str,
     is_sealed_str,
+    seal_bound_to_str,
     seal_to_str,
+    unseal_from_str,
 )
 from .file_lock import atomic_create_bytes, ensure_private_file, prepare_private_directory
 
@@ -53,7 +56,17 @@ _SEALED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("projects", "name"),
     ("projects", "description"),
     ("fact_history", "value"),
+    ("goals", "connection_selection"),
 )
+
+# fact_history rows are copies of fact values and are read with the facts
+# binding; every other column is bound to its own name.
+_BOUND_CONTEXT_ALIASES = {("fact_history", "value"): "facts.value"}
+
+
+def bound_context(table: str, column: str) -> str:
+    """The ``table.column`` binding a sealed value in that cell carries."""
+    return _BOUND_CONTEXT_ALIASES.get((table, column), f"{table}.{column}")
 
 
 def backup_world_db(db_path: Path) -> Path:
@@ -132,7 +145,9 @@ def migrate_world_db(
             sealed = 0
             for r in rows:
                 val = r["val"]
-                if val is None or is_sealed_str(val):
+                # Plaintext, and tokens sealed before binding existed
+                # (unbound MVKAR1), both need the bound seal.
+                if val is None or is_bound_str(val):
                     continue
                 sealed += 1
                 if not dry_run:
@@ -157,6 +172,8 @@ def migrate_world_db(
             report["harness_corpus.row"] = sealed
         if dry_run or not work:
             log.info("encryption migrate (dry_run=%s): %s", dry_run, report)
+            if not dry_run:
+                _mark_migrated(db_path)
             return report
         # Phase 2 -- optionally back up the plaintext, then reseal in place.
         if backup:
@@ -171,17 +188,62 @@ def migrate_world_db(
         # scan can find newer plaintext without mistaking it for a completed seal.
         report = dict.fromkeys(report, 0)
         for table, col, rid, val in work:
+            if table == "harness_corpus":
+                resealed = seal_to_str(val)
+            else:
+                plain = unseal_from_str(val) if is_sealed_str(val) else val
+                resealed = seal_bound_to_str(plain, bound_context(table, col))
             changed = conn.execute(
                 f"UPDATE {table} SET {col} = ? WHERE rowid = ? AND {col} IS ?",
-                (seal_to_str(val), rid, val),
+                (resealed, rid, val),
             )
             report[f"{table}.{col}"] += changed.rowcount
         conn.commit()
         _shred_residue(conn, report)
+        if not _unsealed_remaining(conn):
+            _mark_migrated(db_path)
     finally:
         conn.close()
     log.info("encryption migrate (dry_run=%s): %s", dry_run, report)
     return report
+
+
+def _unsealed_remaining(conn: sqlite3.Connection) -> bool:
+    """True while any sealed column still holds plaintext or an unbound token
+    (a concurrent write that landed after the scan, say)."""
+    for table, col in _SEALED_COLUMNS:
+        try:
+            rows = conn.execute(f"SELECT {col} AS val FROM {table}").fetchall()
+        except sqlite3.OperationalError:
+            continue
+        if any(r["val"] is not None and not is_bound_str(r["val"]) for r in rows):
+            return True
+    try:
+        rows = conn.execute(
+            "SELECT row AS val FROM harness_corpus WHERE kind IN ('pending', 'rejected')"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return False
+    return any(r["val"] is not None and not is_sealed_str(r["val"]) for r in rows)
+
+
+def _mark_migrated(db_path: Path) -> None:
+    """Record next to the DB that no plaintext remains, so reads turn strict by
+    themselves (see ``world_model.auto_strict_at_rest``)."""
+    import json
+    import time
+
+    from .file_lock import atomic_write_text
+    from .world_model import migrated_marker_path
+
+    marker = migrated_marker_path(db_path)
+    try:
+        atomic_write_text(marker, json.dumps({
+            "migrated_at": time.time(), "bound": True, "db": db_path.name,
+        }) + "\n", mode=0o600)
+    except OSError as exc:
+        log.warning("encryption migrate: could not write %s (%s); reads stay "
+                    "lenient until [encryption] strict is set", marker, exc)
 
 
 def _shred_residue(conn: sqlite3.Connection, report: dict[str, int]) -> None:

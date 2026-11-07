@@ -36,7 +36,7 @@ def iter_episodes(world, *, owner=None, since=None, until=None, finished_only=Fa
         if not rows:
             break
         # One encryption policy and key lookup per page, not per episode.
-        outcomes = _dec_fields([row[4] for row in rows])
+        outcomes = _dec_fields([row[4] for row in rows], "episodes.outcome")
         for row, outcome in zip(rows, outcomes, strict=True):
             cursor = int(row[0])
             yield SimpleNamespace(id=cursor, goal_id=row[1], started_at=row[2], ended_at=row[3],

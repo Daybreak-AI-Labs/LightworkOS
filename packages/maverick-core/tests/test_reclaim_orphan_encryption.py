@@ -55,7 +55,7 @@ def test_reclaim_preserves_sealed_nonnull_result(monkeypatch, tmp_path):
     raw = sqlite3.connect(str(db)).execute(
         "SELECT result FROM goals WHERE id=?", (gid,)
     ).fetchone()[0]
-    assert raw.startswith("MVKAR1:") and "partial work" not in raw
+    assert raw.startswith("MVKBND1:") and "partial work" not in raw
 
 
 @requires_crypto
@@ -75,7 +75,7 @@ def test_reclaim_seals_marker_for_null_result(monkeypatch, tmp_path):
     raw = sqlite3.connect(str(db)).execute(
         "SELECT result FROM goals WHERE id=?", (gid,)
     ).fetchone()[0]
-    assert raw.startswith("MVKAR1:")
+    assert raw.startswith("MVKBND1:")
 
 
 @requires_crypto

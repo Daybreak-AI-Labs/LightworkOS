@@ -13775,7 +13775,7 @@ def _build_plan_tree(world, goal_id: int, depth_cap: int = 6) -> dict:
         nodes[r["id"]] = {
             "id": r["id"],
             "parent_id": r["parent_id"],
-            "title": _dec_field(r["title"]),
+            "title": _dec_field(r["title"], context="goals.title"),
             "status": r["status"],
             "dollars": float(r["dollars"] or 0.0),
             "children": [],

@@ -1135,20 +1135,22 @@ class PGGoal:
     project_id: int | None = None
 
 
-def _seal(text):
+def _seal(text, context=None):
     """Seal a sensitive text column for storage (no-op when at-rest is off).
 
     Reuses the SQLite backend's field codec so the on-disk format and the
-    fail-closed semantics are identical across backends."""
+    fail-closed semantics are identical across backends. ``context`` is the
+    destination ``table.column``; the value is bound to it and to the tenant."""
     from ..world_model import _enc_field
-    return _enc_field(text)
+    return _enc_field(text, context)
 
 
-def _unseal(text):
+def _unseal(text, context=None):
     """Inverse of :func:`_seal` (no-op when at-rest is off; legacy plaintext and
-    strict-mode handling identical to the SQLite backend)."""
+    strict-mode handling identical to the SQLite backend). A value bound to
+    another column than ``context`` is withheld."""
     from ..world_model import _dec_field
-    return _dec_field(text)
+    return _dec_field(text, context=context)
 
 
 def _dec_goal_row(row) -> PGGoal:
@@ -1156,7 +1158,7 @@ def _dec_goal_row(row) -> PGGoal:
     (title / description / result). Reuses the SQLite backend's field codec so
     sealing semantics (legacy-plaintext passthrough, strict-mode withhold) are
     identical across backends. No-op when at-rest encryption is off."""
-    return _goal_from_decoded_row(row, _unseal(row[2]), _unseal(row[3]), _unseal(row[8]))
+    return _goal_from_decoded_row(row, _unseal(row[2], "goals.title"), _unseal(row[3], "goals.description"), _unseal(row[8], "goals.result"))
 
 
 def _goal_from_decoded_row(row, title, description, result) -> PGGoal:
@@ -1176,7 +1178,9 @@ def _dec_goal_rows(rows) -> list[PGGoal]:
         return []
     from ..world_model import _dec_fields
 
-    decoded = iter(_dec_fields([value for row in rows for value in (row[2], row[3], row[8])]))
+    decoded = iter(_dec_fields(
+        [value for row in rows for value in (row[2], row[3], row[8])],
+        [c for _row in rows for c in ("goals.title", "goals.description", "goals.result")]))
     return [
         _goal_from_decoded_row(row, next(decoded), next(decoded), next(decoded))
         for row in rows
@@ -1190,7 +1194,7 @@ def _dec_approval_row(r):
     claimed_by, claimed_at, decided_by, approvals_required, requested_by,
     goal_id, department, undo_hold."""
     from ..world_records import Approval
-    return Approval(r[0], _unseal(r[1]), r[2], _unseal(r[3]), _unseal(r[4]),
+    return Approval(r[0], _unseal(r[1], "approvals.action"), r[2], _unseal(r[3], "approvals.scope"), _unseal(r[4], "approvals.detail"),
                     r[5], r[6], r[7], r[8], r[9], r[10], r[11],
                     int(r[12]) if len(r) > 12 and r[12] is not None else 1,
                     r[13] if len(r) > 13 else None,
@@ -1217,7 +1221,7 @@ def _dec_question_row(r):
     """Build a Question, unsealing the question text and the answer. Row order:
     id, goal_id, question, asked_at, answer, answered_at."""
     from ..world_records import Question
-    return Question(r[0], r[1], _unseal(r[2]), r[3], _unseal(r[4]), r[5])
+    return Question(r[0], r[1], _unseal(r[2], "questions.question"), r[3], _unseal(r[4], "questions.answer"), r[5])
 
 
 def _connection_kwargs(dsn: str) -> dict:
@@ -1691,8 +1695,8 @@ class PostgresWorldModel:
                 "VALUES(%s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     parent_id,
-                    _seal(title),
-                    _seal(description),
+                    _seal(title, "goals.title"),
+                    _seal(description, "goals.description"),
                     now,
                     now,
                     owner,
@@ -1700,7 +1704,7 @@ class PostgresWorldModel:
                     domain or "",
                     project_id,
                     tenant,
-                    _seal(selection),
+                    _seal(selection, "goals.connection_selection"),
                 ),
             )
             row = cur.fetchone()
@@ -1715,7 +1719,7 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, args)
             row = cur.fetchone()
-        return _unseal(row[0]) if row and row[0] else ""
+        return _unseal(row[0], "goals.connection_selection") if row and row[0] else ""
 
     def get_goal(self, goal_id: int) -> PGGoal | None:
         frag, params = _tenant_scope()
@@ -1777,7 +1781,7 @@ class PostgresWorldModel:
             "status=%s, result=COALESCE(%s, result), "
             "updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s"
         )
-        params: list = [status, now, status, _seal(result), now, goal_id]
+        params: list = [status, now, status, _seal(result, "goals.result"), now, goal_id]
         if frag:
             sql += " AND " + frag
             params += fparams
@@ -1819,7 +1823,7 @@ class PostgresWorldModel:
                             "updated_at=GREATEST(updated_at + 0.000001, %s), "
                             "result=%s WHERE id=%s AND status='pending'"
                             + (" AND " + frag if frag else ""),
-                            (now, _seal("Earlier event request held for review"),
+                            (now, _seal("Earlier event request held for review", "goals.result"),
                              int(goal_id), *fparams),
                         )
                         cur.execute("DELETE FROM signoffs WHERE goal_id=%s", (int(goal_id),))
@@ -1842,7 +1846,7 @@ class PostgresWorldModel:
             "WHERE id=%s AND status='pending' AND " + frag
         )
         with self._tx() as cur:
-            cur.execute(sql, tuple([time.time(), _seal(result), int(goal_id), *fparams]))
+            cur.execute(sql, tuple([time.time(), _seal(result, "goals.result"), int(goal_id), *fparams]))
             changed = cur.rowcount == 1
             if changed:
                 cur.execute("DELETE FROM signoffs WHERE goal_id=%s", (int(goal_id),))
@@ -1857,7 +1861,7 @@ class PostgresWorldModel:
             "WHERE id=%s AND status IN ('pending','active','running','blocked') AND " + frag
         )
         with self._tx() as cur:
-            cur.execute(sql, tuple([time.time(), _seal(result), int(goal_id), *fparams]))
+            cur.execute(sql, tuple([time.time(), _seal(result, "goals.result"), int(goal_id), *fparams]))
             changed = cur.rowcount == 1
             if changed:
                 cur.execute("DELETE FROM signoffs WHERE goal_id=%s", (int(goal_id),))
@@ -1873,7 +1877,7 @@ class PostgresWorldModel:
             "WHERE id=%s AND status NOT IN "
             "('done','completed','failed','cancelled','blocked','error')"
         )
-        params: list = [_seal(text), now, goal_id]
+        params: list = [_seal(text, "goals.result"), now, goal_id]
         if frag:
             sql += " AND " + frag
             params += fparams
@@ -1999,7 +2003,7 @@ class PostgresWorldModel:
                     "UPDATE goals SET status='blocked', completed_at=NULL, "
                     "updated_at=GREATEST(updated_at + 0.000001, %s), result=%s "
                     "WHERE id=%s AND status='pending' AND " + frag,
-                    (time.time(), _seal("Earlier event request held for review"),
+                    (time.time(), _seal("Earlier event request held for review", "goals.result"),
                      int(goal_id), *fparams),
                 )
                 cur.execute("DELETE FROM signoffs WHERE goal_id=%s", (int(goal_id),))
@@ -2050,7 +2054,7 @@ class PostgresWorldModel:
         now = time.time()
         frag, fparams = _mutation_tenant_scope()
         sql = "UPDATE goals SET title=%s, updated_at=GREATEST(updated_at + 0.000001, %s) WHERE id=%s"
-        params: list = [_seal(title), now, goal_id]
+        params: list = [_seal(title, "goals.title"), now, goal_id]
         if frag:
             sql += " AND " + frag
             params += fparams
@@ -2257,7 +2261,7 @@ class PostgresWorldModel:
                     (int(limit),),
                 )
             rows = cur.fetchall()
-        return [_unseal(r[0]) for r in rows if r and r[0]]
+        return [_unseal(r[0], "goal_events.content") for r in rows if r and r[0]]
 
     # ---- Projects (migration v15) -------------------------------------------
 
@@ -2266,8 +2270,8 @@ class PostgresWorldModel:
         # row: (id, name, description, owner, domain, status, created_at)
         # name/description are sealed at rest; owner/domain/status are plaintext.
         return {
-            "id": row[0], "name": _unseal(row[1]) or "",
-            "description": _unseal(row[2]) or "",
+            "id": row[0], "name": _unseal(row[1], "projects.name") or "",
+            "description": _unseal(row[2], "projects.description") or "",
             "owner": row[3], "domain": row[4], "status": row[5],
             "created_at": row[6],
         }
@@ -2281,7 +2285,7 @@ class PostgresWorldModel:
                 "INSERT INTO projects(name, description, owner, domain, status, "
                 "created_at, tenant_id) VALUES(%s, %s, %s, %s, 'active', %s, %s) "
                 "RETURNING id",
-                (_seal(name), _seal(description), owner or "", domain or "",
+                (_seal(name, "projects.name"), _seal(description, "projects.description"), owner or "", domain or "",
                  time.time(), _active_tenant()),
             )
             return int(cur.fetchone()[0])
@@ -2454,14 +2458,14 @@ class PostgresWorldModel:
                     "INSERT INTO artifacts(goal_id, kind, title, content, version, "
                     "created_at) SELECT %s, %s, %s, %s, %s, %s WHERE EXISTS "
                     "(SELECT 1 FROM goals WHERE id=%s AND " + frag + ") RETURNING id",
-                    (int(goal_id), str(kind or "text"), title or "", _seal(content),
+                    (int(goal_id), str(kind or "text"), title or "", _seal(content, "artifacts.content"),
                      version, time.time(), int(goal_id), *fparams),
                 )
             else:
                 cur.execute(
                     "INSERT INTO artifacts(goal_id, kind, title, content, version, "
                     "created_at) VALUES(%s, %s, %s, %s, %s, %s) RETURNING id",
-                    (int(goal_id), str(kind or "text"), title or "", _seal(content),
+                    (int(goal_id), str(kind or "text"), title or "", _seal(content, "artifacts.content"),
                      version, time.time()),
                 )
             row = cur.fetchone()
@@ -2496,7 +2500,7 @@ class PostgresWorldModel:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
         return [{"id": r[0], "goal_id": r[1], "kind": r[2], "title": r[3] or "",
-                 "content": _unseal(r[4]) or "", "version": r[5], "created_at": r[6]}
+                 "content": _unseal(r[4], "artifacts.content") or "", "version": r[5], "created_at": r[6]}
                 for r in rows]
 
     def latest_artifacts(self, goal_id: int) -> list[dict]:
@@ -2672,7 +2676,7 @@ class PostgresWorldModel:
                 "ON CONFLICT (goal_id) DO UPDATE SET decision=EXCLUDED.decision, "
                 "decided_by=EXCLUDED.decided_by, note=EXCLUDED.note, "
                 "created_at=EXCLUDED.created_at",
-                (int(goal_id), str(decision), str(decided_by or ""), _seal(note),
+                (int(goal_id), str(decision), str(decided_by or ""), _seal(note, "signoffs.note"),
                  time.time()),
             )
             return True
@@ -2689,7 +2693,7 @@ class PostgresWorldModel:
         if not r:
             return None
         return {"goal_id": r[0], "decision": r[1], "decided_by": r[2],
-                "note": _unseal(r[3]), "created_at": r[4]}
+                "note": _unseal(r[3], "signoffs.note"), "created_at": r[4]}
 
     def signoffs_for_goals(self, goal_ids) -> dict[int, str]:
         """Map ``goal_id -> decision`` for a batch of goals (goals with no
@@ -2976,7 +2980,7 @@ class PostgresWorldModel:
         with self._tx() as cursor:
             cursor.execute(sql, tuple(params))
             rows = cursor.fetchall()
-        titles = _dec_fields([row[1] for row in rows])
+        titles = _dec_fields([row[1] for row in rows], "goals.title")
         return [ConversationSummary(row[0], title, row[2], row[3], str(row[4] or ""))
                 for row, title in zip(rows, titles, strict=True)]
 
@@ -2996,7 +3000,7 @@ class PostgresWorldModel:
         if row is None:
             return None
         return GoalStreamState(row[0], row[1], str(row[2] or ""),
-                               _unseal(row[3]) if include_result else "")
+                               _unseal(row[3], "goals.result") if include_result else "")
 
     def most_recent_goal(self) -> PGGoal | None:
         """Most-recently-updated goal regardless of status; mirrors SQLite."""
@@ -3174,7 +3178,7 @@ class PostgresWorldModel:
             reclaimed = 0
             for row in rows:
                 try:
-                    dec = _unseal(row[1])
+                    dec = _unseal(row[1], "goals.result")
                     # Strict mode withholds a not-yet-migrated plaintext result
                     # (_unseal returns the sentinel, never the real value);
                     # re-sealing the sentinel here would overwrite -- and
@@ -3182,7 +3186,7 @@ class PostgresWorldModel:
                     # status-only reclaim below instead.
                     new_result = (
                         None if dec == _UNSEALED_WITHHELD
-                        else _seal((dec or "") + marker)
+                        else _seal((dec or "") + marker, "goals.result")
                     )
                 except EncryptionUnavailable:
                     new_result = None
@@ -3296,7 +3300,7 @@ class PostgresWorldModel:
                 "cost_dollars=%s, input_tokens=%s, output_tokens=%s, "
                 "tool_calls=%s, cache_read_tokens=%s, cache_write_tokens=%s "
                 "WHERE id=%s" + cond,
-                (time.time(), _seal(summary), _seal(outcome),
+                (time.time(), _seal(summary, "episodes.summary"), _seal(outcome, "episodes.outcome"),
                  cost_dollars, input_tokens, output_tokens, tool_calls,
                  cache_read_tokens, cache_write_tokens, episode_id, *cparams),
             )
@@ -3345,7 +3349,7 @@ class PostgresWorldModel:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
         # outcome (index 4) is sealed at rest; the rest are numeric/timestamps.
-        return [EpisodeSpend(r[0], r[1], r[2], r[3], _unseal(r[4]),
+        return [EpisodeSpend(r[0], r[1], r[2], r[3], _unseal(r[4], "episodes.outcome"),
                              r[5], r[6], r[7], r[8], r[9], r[10]) for r in rows]
 
     def episode_costs_since(self, since: float, *, limit: int = 100_000) -> list[tuple[str, float, float]]:
@@ -3450,14 +3454,14 @@ class PostgresWorldModel:
                     "INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
                     "SELECT %s, %s, %s, %s, %s WHERE EXISTS "
                     "(SELECT 1 FROM goals WHERE id=%s AND " + frag + ") RETURNING id",
-                    (goal_id, agent, kind, _seal(content), time.time(),
+                    (goal_id, agent, kind, _seal(content, "goal_events.content"), time.time(),
                      goal_id, *fparams),
                 )
             else:
                 cur.execute(
                     "INSERT INTO goal_events(goal_id, agent, kind, content, ts) "
                     "VALUES(%s, %s, %s, %s, %s) RETURNING id",
-                    (goal_id, agent, kind, _seal(content), time.time()),
+                    (goal_id, agent, kind, _seal(content, "goal_events.content"), time.time()),
                 )
             row = cur.fetchone()
         if row is None:
@@ -3484,7 +3488,7 @@ class PostgresWorldModel:
             cur.execute(sql, tuple(params))
             rows = cur.fetchall()
         # content (index 4) is sealed at rest.
-        return [GoalEvent(r[0], r[1], r[2], r[3], _unseal(r[4]), r[5]) for r in rows]
+        return [GoalEvent(r[0], r[1], r[2], r[3], _unseal(r[4], "goal_events.content"), r[5]) for r in rows]
 
     def recent_goal_events(self, goal_id: int, limit: int = 200) -> list:
         from ..world_records import GoalEvent
@@ -3506,7 +3510,7 @@ class PostgresWorldModel:
             )
             rows = cur.fetchall()
         # content (index 4) is sealed at rest.
-        return [GoalEvent(r[0], r[1], r[2], r[3], _unseal(r[4]), r[5]) for r in rows]
+        return [GoalEvent(r[0], r[1], r[2], r[3], _unseal(r[4], "goal_events.content"), r[5]) for r in rows]
 
     # ----- facts (global key/value memory) -----
 
@@ -3577,7 +3581,7 @@ class PostgresWorldModel:
             rows = cur.fetchall()
         names = ("key", "value", "revision", "updated_at", "source", "source_episode_id",
                  "trust_tier", "sensitivity", "tags")
-        return [{**dict(zip(names, row, strict=True)), "value": _unseal(row[1]),
+        return [{**dict(zip(names, row, strict=True)), "value": _unseal(row[1], "facts.value"),
                  "tags": json.loads(row[8])} for row in rows]
 
     def fact_catalog_revision(self) -> str:
@@ -3624,7 +3628,7 @@ class PostgresWorldModel:
                 # "distinct belief" rule the SQLite backend applies.
                 changed = (
                     open_row is None
-                    or _unseal(open_row[0]) != value
+                    or _unseal(open_row[0], "facts.value") != value
                     or int(open_row[1]) != int(trust_tier)
                 )
                 if changed:
@@ -3643,7 +3647,7 @@ class PostgresWorldModel:
                         "INSERT INTO fact_history(key, value, source_episode_id, "
                         "valid_from, valid_to, source, trust_tier, sensitivity, tenant_id) "
                         "VALUES(%s, %s, %s, %s, NULL, %s, %s, %s, %s)",
-                        (key, _seal(value), episode_id, now, source,
+                        (key, _seal(value, "facts.value"), episode_id, now, source,
                          int(trust_tier), sensitivity, tenant),
                     )
             cur.execute(
@@ -3658,7 +3662,7 @@ class PostgresWorldModel:
                 "source = EXCLUDED.source, "
                 "trust_tier = EXCLUDED.trust_tier, "
                 "sensitivity = EXCLUDED.sensitivity RETURNING write_seq",
-                (key, _seal(value), episode_id, now, source,
+                (key, _seal(value, "facts.value"), episode_id, now, source,
                  int(trust_tier), sensitivity, tenant),
             )
             revision = int(cur.fetchone()[0])
@@ -3684,7 +3688,7 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(precedence_params + params))
             rows = cur.fetchall()
-        return {r[0]: _unseal(r[1]) for r in rows}
+        return {r[0]: _unseal(r[1], "facts.value") for r in rows}
 
     def get_facts_with_trust(self) -> dict[str, tuple[str, int]]:
         """Return each fact with its Memory-Guard recall-trust tier.
@@ -3715,7 +3719,7 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(precedence_params + params))
             rows = cur.fetchall()
-        return {r[0]: (_unseal(r[1]), int(r[2])) for r in rows}
+        return {r[0]: (_unseal(r[1], "facts.value"), int(r[2])) for r in rows}
 
     def facts_matching(self, token: str) -> dict[str, str]:
         """Facts explicitly scoped to ``token`` by ``user:<token>:`` key prefix.
@@ -3803,7 +3807,7 @@ class PostgresWorldModel:
         out: dict[str, list] = {}
         for r in rows:
             out.setdefault(r[1], []).append(FactVersion(
-                value=_unseal(r[2]), valid_from=r[3], valid_to=r[4],
+                value=_unseal(r[2], "facts.value"), valid_from=r[3], valid_to=r[4],
                 source=r[5] or "", trust_tier=int(r[6]),
                 sensitivity=r[7] or "internal",
             ))
@@ -3838,7 +3842,7 @@ class PostgresWorldModel:
             with self._tx() as cur:
                 cur.execute(sql, tuple(p))
                 row = cur.fetchone()
-            return _unseal(row[0]) if row else None
+            return _unseal(row[0], "facts.value") if row else None
         sql = "SELECT value FROM facts WHERE key = %s"
         p = [key]
         if frag:
@@ -3849,7 +3853,7 @@ class PostgresWorldModel:
         with self._tx() as cur:
             cur.execute(sql, tuple(p))
             row = cur.fetchone()
-        return _unseal(row[0]) if row else None
+        return _unseal(row[0], "facts.value") if row else None
 
     def fact_history(self, key: str, *, limit: int = 50,
                      owned_only: bool = False) -> list:
@@ -3932,7 +3936,7 @@ class PostgresWorldModel:
         rows.sort(key=lambda row: (row[3], row[0]), reverse=True)
         return [
             FactVersion(
-                value=_unseal(r[2]), valid_from=r[3], valid_to=r[4],
+                value=_unseal(r[2], "facts.value"), valid_from=r[3], valid_to=r[4],
                 source=r[5] or "", trust_tier=int(r[6]),
                 sensitivity=r[7] or "internal",
             )
@@ -4024,7 +4028,7 @@ class PostgresWorldModel:
             with self._tx() as cur:
                 cur.execute(sql, tuple(p))
                 rows = cur.fetchall()
-            return [(r[0], _unseal(r[1])) for r in rows]
+            return [(r[0], _unseal(r[1], "facts.value")) for r in rows]
         # Encryption on: `value` is sealed ciphertext, so a SQL LIKE over it can
         # never match the plaintext query (search would silently return nothing)
         # and the returned value would be ciphertext. Keys are plaintext: narrow
@@ -4047,7 +4051,7 @@ class PostgresWorldModel:
         needle = query.lower()
         out: list[tuple[str, str]] = []
         for r in rows:
-            val = _unseal(r[1])
+            val = _unseal(r[1], "facts.value")
             if needle in r[0].lower() or (val is not None and needle in val.lower()):
                 out.append((r[0], val))
                 if len(out) >= limit:
@@ -4067,13 +4071,13 @@ class PostgresWorldModel:
                     "INSERT INTO questions(goal_id, question, asked_at) "
                     "SELECT %s, %s, %s WHERE EXISTS "
                     "(SELECT 1 FROM goals WHERE id=%s AND " + frag + ") RETURNING id",
-                    (goal_id, _seal(question), time.time(), goal_id, *fparams),
+                    (goal_id, _seal(question, "questions.question"), time.time(), goal_id, *fparams),
                 )
             else:
                 cur.execute(
                     "INSERT INTO questions(goal_id, question, asked_at) "
                     "VALUES(%s, %s, %s) RETURNING id",
-                    (goal_id, _seal(question), time.time()),
+                    (goal_id, _seal(question, "questions.question"), time.time()),
                 )
             row = cur.fetchone()
         if row is None:
@@ -4094,7 +4098,7 @@ class PostgresWorldModel:
         (overwrite) another tenant's question by id (no-op single-tenant)."""
         frag, fparams = _mutation_tenant_scope("g.tenant_id")
         sql = "UPDATE questions SET answer = %s, answered_at = %s WHERE id = %s"
-        params: list = [_seal(answer), time.time(), question_id]
+        params: list = [_seal(answer, "questions.answer"), time.time(), question_id]
         if expected_owner is not None:
             sql += " AND goal_id IN (SELECT id FROM goals WHERE owner = %s)"
             params.append(str(expected_owner))
@@ -4162,7 +4166,7 @@ class PostgresWorldModel:
                 "AND EXISTS (SELECT 1 FROM turns t WHERE t.goal_id = g.id "
                 "AND t.conversation_id = %s AND t.role = 'user')"
                 + (" AND " + frag if frag else "") + ")",
-                (_seal(answer), time.time(), question_id, goal_id, owner,
+                (_seal(answer, "questions.answer"), time.time(), question_id, goal_id, owner,
                  execution_principal, conversation_id, *fparams),
             )
             return cur.rowcount == 1
@@ -4224,7 +4228,7 @@ class PostgresWorldModel:
                 "requested_at, tenant_id, approvals_required, requested_by, goal_id, department, "
                 "undo_hold) VALUES(%s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s) "
                 "RETURNING id",
-                (_seal(action), risk, _seal(scope), _seal(detail), provenance,
+                (_seal(action, "approvals.action"), risk, _seal(scope, "approvals.scope"), _seal(detail, "approvals.detail"), provenance,
                  time.time(), _active_tenant(), max(1, int(approvals_required)),
                  (requested_by or None), goal[0] if goal else None, goal[1] if goal else "",
                  APPROVAL_UNDO_OPEN if undoable else None),
@@ -4422,7 +4426,7 @@ class PostgresWorldModel:
         # approval.decided already went out; subscribers learn it was retracted.
         self._emit_approval_event("approval.undone", int(approval_id), {
             "previous_status": row[0], "undone_by": (undone_by or "").strip(),
-            "action": _unseal(row[4])})
+            "action": _unseal(row[4], "approvals.action")})
         return "undone"
 
     def get_approval_audit_event(self, event_id: str):
@@ -5034,7 +5038,7 @@ class PostgresWorldModel:
                 "SELECT %s, %s, %s, %s, %s WHERE EXISTS "
                 "(SELECT 1 FROM conversations WHERE id=%s AND " + frag + ")"
             )
-            params = [conversation_id, goal_id, role, _seal(content), time.time(),
+            params = [conversation_id, goal_id, role, _seal(content, "turns.content"), time.time(),
                       conversation_id, *fparams]
             if goal_id is not None:
                 goal_scope, goal_params = _mutation_tenant_scope("g.tenant_id")
@@ -5068,7 +5072,7 @@ class PostgresWorldModel:
             )
             rows = cur.fetchall()
         # content (index 4) is sealed at rest.
-        return list(reversed([Turn(r[0], r[1], r[2], r[3], _unseal(r[4]), r[5])
+        return list(reversed([Turn(r[0], r[1], r[2], r[3], _unseal(r[4], "turns.content"), r[5])
                               for r in rows]))
 
     def list_conversations(self, channel: str | None = None) -> list:
@@ -5600,13 +5604,13 @@ class PostgresWorldModel:
                     "INSERT INTO messages(goal_id, role, content, ts) "
                     "SELECT %s, %s, %s, %s WHERE EXISTS "
                     "(SELECT 1 FROM goals WHERE id=%s AND " + frag + ")",
-                    (goal_id, role, _seal(content), time.time(), goal_id, *fparams),
+                    (goal_id, role, _seal(content, "messages.content"), time.time(), goal_id, *fparams),
                 )
             else:
                 cur.execute(
                     "INSERT INTO messages(goal_id, role, content, ts) "
                     "VALUES(%s, %s, %s, %s)",
-                    (goal_id, role, _seal(content), time.time()),
+                    (goal_id, role, _seal(content, "messages.content"), time.time()),
                 )
 
     # ----- attachments -----

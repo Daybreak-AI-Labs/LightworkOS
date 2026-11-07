@@ -53,7 +53,8 @@ def test_migrate_nudges_strict_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     res = CliRunner().invoke(main, ["--db", str(db), "encryption", "migrate"])
     assert res.exit_code == 0, res.output
-    assert "strict = true" in res.output
+    # Nothing unsealed remains, so the store turned strict by itself.
+    assert "withheld (strict)" in res.output
 
 
 @requires_crypto

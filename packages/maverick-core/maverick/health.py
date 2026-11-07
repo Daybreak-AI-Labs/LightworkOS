@@ -1056,7 +1056,17 @@ def _launch_check_at_rest() -> bool:
         return _launch_row(False, "encryption at rest", f"policy unreadable: {e}",
                            "fix [encryption] at_rest (must be a boolean)")
     if on:
-        return _launch_row(True, "encryption at rest", "on")
+        try:
+            from .crypto_at_rest import strict_at_rest
+            from .world_model import DEFAULT_DB, migrated_marker_path
+            strict = strict_at_rest() or migrated_marker_path(DEFAULT_DB).exists()
+        except Exception:  # noqa: BLE001 -- the posture detail never fails the row
+            strict = False
+        if strict:
+            return _launch_row(True, "encryption at rest", "on (strict)")
+        return _launch_row(True, "encryption at rest",
+                           "on; unsealed legacy values are still accepted",
+                           "run 'maverick encryption migrate' to seal and bind them")
     return _launch_row(False, "encryption at rest", "disabled",
                        "unset MAVERICK_ENCRYPT_AT_REST=0 or set [encryption] at_rest = true")
 
