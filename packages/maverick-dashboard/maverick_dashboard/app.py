@@ -10530,6 +10530,8 @@ def _render_channels_page(request: Request, *, saved: str = "",
         channel_runtime = service_status(["channels"])[0]
     except Exception:
         channel_runtime = None
+    from . import channel_holds
+    held_replies = channel_holds.page_summary(request)
     for channel in managed:
         if channel.get("dashboard_set"):
             channel["removal_people"] = _channel_removal_people(channel["name"])
@@ -10558,6 +10560,7 @@ def _render_channels_page(request: Request, *, saved: str = "",
             "saved_failed": saved in {"test_failed", "send_failed", "email_failed"},
             "sendable": ["email", "sms", "slack"],
             "channel_runtime": channel_runtime,
+            "held_replies": held_replies,
             **teams_links_api.page_context(issued_code),
             **public_chat_api.admin_section_context(request),
             "mail_configured": _mail_configured(),

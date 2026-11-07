@@ -7,6 +7,7 @@ import threading
 import time
 from collections import deque
 
+from . import hold_status
 from .base import IncomingMessage
 from .delivery import MAX_CONFIGURED_RECORDS, DeliveryJournal, _digest, reply_withheld
 
@@ -85,12 +86,15 @@ class TransportWorker:
     be read (see _waiting_ahead). The worker remembers each waiting receipt's
     conversation from when it could read it, and a message that waits records
     what it waits behind in its own receipt, so a restarted worker that cannot
-    read the earlier receipt still knows which conversation it holds.
+    read the earlier receipt still knows which conversation it holds. What it
+    holds is published as counts for the Channels page and Copilot (see
+    hold_status), recomputed after each scan.
     """
-    def __init__(self, channel, *, account, authorize, send, journal=None):
+    def __init__(self, channel, *, account, authorize, send, journal=None, status=None):
         self.channel, self.account = channel, account
         self.authorize, self.send = authorize, send
         self.journal = journal or DeliveryJournal()
+        self._status = status if status is not None else hold_status.Publisher(channel.name)
         self.pending = deque()
         self._wake = asyncio.Event()
         self._stop_scan = threading.Event()
@@ -104,6 +108,8 @@ class TransportWorker:
         self._unreadable_since = {}  # id -> wall-clock time it was first found unreadable
         self._conversations = _Conversations()  # waiting id -> (created_at, conversation), from its last read
         self._learned = set()  # ids learned while the current scan runs
+        self._held = {}  # id waiting its turn -> the oldest earlier receipt it waits behind
+        self._went_ahead, self._went_ahead_at, self._went_ahead_ids = 0, None, set()
         self.task = None
         self._scan_task = None
         self.overflow_count = 0
@@ -121,6 +127,10 @@ class TransportWorker:
             coro.close()
             self.task = None
             raise
+        try:
+            self._status.start()
+        except Exception:
+            log.warning("Channel %s held chat replies status is unavailable", self.channel.name)
         return self
 
     async def submit(self, message, *, external_id, route=None):
@@ -266,11 +276,16 @@ class TransportWorker:
                 self._remember_scan()
                 if self._scan_pending is not None:
                     self._forget_settled(self._scan_pending)
+                self._publish_status()
                 self._overflow = more or generation != self._generation
                 if self.pending:
                     continue
                 if self._closing:
                     return
+            # Published after each scan and before waiting: handling a message
+            # can end a hold with no scan after it, and recounting after every
+            # message would read every held reply each time.
+            self._publish_status()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=RETRY_DELAY)
             except asyncio.TimeoutError:
@@ -305,6 +320,8 @@ class TransportWorker:
     def _forget_settled(self, waiting):
         for record_id in [key for key in self._retry_after if key not in waiting]:
             self._retry_after.pop(record_id)  # finished or removed meanwhile
+        for record_id in [key for key in self._held if key not in waiting]:
+            self._held.pop(record_id)
         # A conversation is remembered only for a receipt still waiting, one
         # that cannot be read (it keeps holding its conversation), or one
         # admitted while the scan ran.
@@ -338,6 +355,30 @@ class TransportWorker:
             if not expired and (conversation not in held or (created_at, other) < held[conversation]):
                 held[conversation] = (created_at, other)
         return {conversation: other for conversation, (_, other) in held.items()}
+
+    def _hold_counts(self):
+        """What this worker holds, as the counts hold_status publishes: replies
+        waiting their turn, those behind a receipt that cannot be read, how
+        many such receipts hold them and when the first of those stops
+        holding, and the replies that went out without waiting."""
+        behind_unreadable, blockers, release = 0, set(), None
+        for ahead in self._held.values():
+            if ahead not in self._unreadable:
+                continue
+            behind_unreadable += 1
+            blockers.add(ahead)
+            since = self._unreadable_since.get(ahead)
+            if since is not None:
+                due = since + UNREADABLE_HOLD_SECONDS
+                release = due if release is None else min(release, due)
+        return {"held": len(self._held), "behind_unreadable": behind_unreadable, "unreadable": len(blockers),
+                "release_at": release, "went_ahead": self._went_ahead, "went_ahead_at": self._went_ahead_at}
+
+    def _publish_status(self):
+        try:
+            self._status.update(self._hold_counts())
+        except Exception:
+            log.warning("Channel %s held chat replies status could not be updated", self.channel.name)
 
     def _waiting_ahead(self, record_id, created_at, conversation):
         """The oldest earlier receipt of this conversation it must wait behind,
@@ -380,15 +421,24 @@ class TransportWorker:
                 log.warning("Channel %s: a message waits behind an earlier one in its conversation whose saved "
                             "receipt cannot be read; it goes out after that one, or without it once that receipt "
                             "has been unreadable for %d hours", self.channel.name, UNREADABLE_HOLD_SECONDS // 3600)
+            self._held[row["id"]] = ahead
             await self._note(row, held_behind={"id": ahead, "created_at": self._conversations[ahead][0],
                                                "unreadable_since": since})
             return None
+        self._held.pop(row["id"], None)
         if passed is not None:
             went_ahead_of = {"id": passed, "unreadable_since": self._unreadable_since.get(passed)}
             if row.get("went_ahead_of") != went_ahead_of:
                 log.warning("Channel %s: a message goes ahead of an earlier one in its conversation whose saved "
                             "receipt has been unreadable for %d hours", self.channel.name,
                             UNREADABLE_HOLD_SECONDS // 3600)
+                if row["id"] not in self._went_ahead_ids:
+                    # Counted once per reply even when its receipt cannot
+                    # record it; the set only deduplicates and stays bounded.
+                    if len(self._went_ahead_ids) >= 10_000:
+                        self._went_ahead_ids.clear()
+                    self._went_ahead_ids.add(row["id"])
+                    self._went_ahead, self._went_ahead_at = self._went_ahead + 1, _wall_clock()
             return await self._note(row, held_behind=None, went_ahead_of=went_ahead_of)
         return await self._note(row, held_behind=None)
 
@@ -419,6 +469,7 @@ class TransportWorker:
         # A receipt a restore holds is not run (a redelivered message can
         # bring one here through submit), and does not hold the conversation.
         if not row or not row.get("message") or row.get("restore_hold"):
+            self._held.pop(record_id, None)
             self._release_after(record_id)
             return
         message = IncomingMessage(**{key: value for key, value in row["message"].items() if key != "attachments"})
@@ -447,6 +498,14 @@ class TransportWorker:
     async def close(self):
         self._closing = True
         self._wake.set()
+        try:
+            await self._stop_task()
+        finally:
+            # A stopped worker reports nothing: its held replies are held again
+            # when it restarts, and the page says the chat service is not reporting.
+            await asyncio.to_thread(self._status.close)
+
+    async def _stop_task(self):
         if self.task is None or self.task is asyncio.current_task():
             return
         done, _ = await asyncio.wait([self.task], timeout=SHUTDOWN_TIMEOUT)

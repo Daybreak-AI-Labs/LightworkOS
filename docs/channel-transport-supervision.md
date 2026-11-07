@@ -41,6 +41,22 @@ receipt can be read keeps its conversation waiting until it goes ahead; the
 status window shows both receipts, and the warning log reports each failed
 attempt.
 
+Administrators see held replies in plain words under **Channels > Message
+delivery**, and the read-only Copilot operation **Check held chat replies**
+(in the Connections family of Copilot actions) gives the same answer under the
+same administrator check: how many replies are waiting, how many wait behind a
+reply that cannot be read and when the earliest of those goes out regardless,
+and how many went out without waiting since the chat service started. Each
+running worker publishes these counts and times, with no message text, person,
+chat or receipt identity, in a small file sealed with the deployment key in
+the `channel-holds` folder next to the configuration file. It is renewed every
+30 seconds, even while the worker is busy with a long reply, and removed when
+the worker stops. One that has not been renewed for 100 seconds is reported as
+not current, never as nothing held, and a turned-on chat app with no current
+status is named as not reporting. The status is local to the computer that
+runs the chat service; a dashboard on another computer says it is not
+reporting.
+
 Readers do not wait for agent execution. Current sender and configured
 account policy is rechecked at execution and delivery. These guarantees are
 per configured adapter instance; configure one active transport instance per

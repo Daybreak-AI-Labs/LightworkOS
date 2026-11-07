@@ -1236,3 +1236,126 @@ def test_more_held_messages_than_one_window_do_not_rescan_back_to_back(monkeypat
         # once, it was over 800 scans.
         assert len(scans) <= 30, len(scans)
     asyncio.run(run())
+
+
+class _Status:
+    """Records what a worker publishes about its held replies."""
+
+    def __init__(self):
+        self.counts, self.started, self.closed = [], False, False
+
+    def start(self):
+        self.started = True
+        return self
+
+    def update(self, counts):
+        self.counts.append(dict(counts))
+
+    def close(self):
+        self.closed = True
+
+    @property
+    def latest(self):
+        return self.counts[-1]
+
+
+def test_held_replies_are_published_as_counts_until_the_unreadable_hold_expires(monkeypatch):
+    # As the test above: Y waits behind X, which cannot be read, until X has
+    # been unreadable for UNREADABLE_HOLD_SECONDS. What the worker publishes
+    # for the Channels page and Copilot says so in counts and times only, and
+    # then that one reply went ahead without waiting.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    wall = [1000.0]
+    monkeypatch.setattr(transport_worker, "_wall_clock", lambda: wall[0])
+    state = {"x": None, "sealed": False}
+    journal = _unreadable_journal(0, lambda record_id: state["sealed"] and record_id == state["x"])
+    sends, status = [], _Status()
+
+    async def send(message, reply, route):
+        sends.append(message.text)
+        if message.text == "X":
+            raise DeliveryNotSent("X's send is refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        assert status.started
+        await asyncio.sleep(0.05)
+        x = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                                message_id="x"), external_id="x")
+        state["x"] = x["id"]
+        await until(lambda: bool(worker._blocked_conversations))
+        state["sealed"] = True
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                            message_id="y"), external_id="y")
+        await until(lambda: status.counts and status.latest["behind_unreadable"] == 1)
+        assert status.latest == {"held": 1, "behind_unreadable": 1, "unreadable": 1,
+                                 "release_at": 1000.0 + transport_worker.UNREADABLE_HOLD_SECONDS,
+                                 "went_ahead": 0, "went_ahead_at": None}
+        wall[0] += transport_worker.UNREADABLE_HOLD_SECONDS
+        await until(lambda: "Y" in sends)
+        await until(lambda: status.latest["went_ahead"] == 1)
+        assert status.latest["held"] == 0 and status.latest["went_ahead_at"] == wall[0]
+        await worker.close()
+        assert status.closed
+        assert all(set(counts) == {"held", "behind_unreadable", "unreadable", "release_at", "went_ahead",
+                                   "went_ahead_at"} for counts in status.counts)
+    asyncio.run(run())
+
+
+def test_a_reply_waiting_for_a_refused_one_is_published_without_a_release_time(monkeypatch):
+    # X's send is refused once, so Y waits for X's retry. Nothing is
+    # unreadable, so the status has no time by which Y goes out regardless;
+    # once X is sent, Y follows and nothing is held.
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    now = [0.0]
+    monkeypatch.setattr(transport_worker, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    journal = _unreadable_journal(0, lambda record_id: False)
+    sends, status = [], _Status()
+
+    async def send(message, reply, route):
+        sends.append(message.text)
+        if len(sends) == 1:
+            raise DeliveryNotSent("X's first send is refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                            message_id="x"), external_id="x")
+        await until(lambda: bool(worker._blocked_conversations))
+        y = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                                message_id="y"), external_id="y")
+        await until(lambda: y["id"] in worker._retry_after and status.counts and status.latest["held"] == 1)
+        assert status.latest == {"held": 1, "behind_unreadable": 0, "unreadable": 0, "release_at": None,
+                                 "went_ahead": 0, "went_ahead_at": None}
+        now[0] += transport_worker.RETRY_DELAY
+        await until(lambda: sends == ["X", "X", "Y"])
+        await until(lambda: status.latest["held"] == 0)
+        await worker.close()
+    asyncio.run(run())
+
+
+def test_a_worker_publishes_its_status_by_default_and_removes_it_on_close():
+    from maverick_channels import hold_status
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=AsyncMock(return_value="confirmed"), journal=DeliveryJournal()).start()
+        await until(lambda: any(record["channel"] == Adapter.name for record in hold_status.records()[0]))
+        found, unavailable = hold_status.records()
+        assert not unavailable and found[0]["fresh"] and found[0]["held"] == 0
+        await worker.close()
+        assert hold_status.records() == ([], False)
+    asyncio.run(run())
