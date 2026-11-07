@@ -21,8 +21,8 @@ function slice(template, start, end) {
   return text.slice(from, to + end.length);
 }
 
-async function page(markup, script, reply, { confirm = true, shell = true, before = [], realTimers = false } = {}) {
-  const dom = new JSDOM('<main>' + strip(markup) + '</main>', { url: 'https://app.example/x', runScripts: 'outside-only' });
+async function page(markup, script, reply, { confirm = true, shell = true, before = [], realTimers = false, url = 'https://app.example/x' } = {}) {
+  const dom = new JSDOM('<main>' + strip(markup) + '</main>', { url, runScripts: 'outside-only' });
   const w = dom.window, calls = [], asked = [];
   // shell: the page script uses the shell's shared helpers (mvFetchJSON,
   // mvStatus), which load before any page script as in base.html; the stubs
@@ -422,6 +422,25 @@ test('an interrupted decision can still be read while example collection is off'
   await ui.settle();
   assert.equal(ui.calls.filter(c => c.url.endsWith('/requests/' + operation)).length, 1);
   assert.match(ui.$('lx-original-status').textContent, /original decision is unconfirmed/);
+  assert.equal(ui.calls.filter(c => /\/(suggestion|1\/1)$/.test(c.url)).length, 0);
+});
+
+test('a Copilot recovery link opens the original decision while example collection is off', async t => {
+  const operation = 'b'.repeat(32);
+  const ui = await page(captureOff(), 'lightwork-learning-capture.js', url => {
+    if (url.endsWith('/history')) return { context: EXAMPLE_CONTEXT, choices: [] };
+    if (url.endsWith('/requests/' + operation)) return { context: EXAMPLE_CONTEXT, operation, confirmed: true,
+      message: 'The original decision was recorded.', current_status: 'accepted' };
+    throw new Error('unexpected request ' + url);
+  }, { url: 'https://app.example/x?example_decision=' + operation + '#lx-card' });
+  t.after(() => ui.w.close());
+
+  assert.equal(ui.$('lx-original').hidden, false);
+  assert.equal(ui.$('lx-original-choice').value, operation);
+  ui.$('lx-original-read').click();
+  await ui.settle();
+  assert.equal(ui.calls.filter(c => c.url.endsWith('/requests/' + operation)).length, 1);
+  assert.match(ui.$('lx-original-status').textContent, /original decision was recorded/);
   assert.equal(ui.calls.filter(c => /\/(suggestion|1\/1)$/.test(c.url)).length, 0);
 });
 
