@@ -957,11 +957,14 @@ def _warm_dashboard_caches(stop: threading.Event | None = None) -> dict[str, flo
 
     def _routes() -> None:
         # Request routing needs these contexts; materialising them here avoids
-        # paying for the full schema build (seconds of extra CPU).
+        # paying for the full schema build (seconds of extra CPU). The route
+        # memory's check walks them too; run here, the first request skips it.
+        from .route_dispatch import validate
         from .route_identity import iter_compatible_route_contexts
 
         for _context in iter_compatible_route_contexts(app.routes):
             pass
+        validate(app.router)
 
     def _shield() -> None:
         from maverick.orchestrator import _build_shield

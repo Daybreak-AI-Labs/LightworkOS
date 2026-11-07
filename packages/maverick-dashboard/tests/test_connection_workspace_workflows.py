@@ -18,6 +18,8 @@ from maverick import config, connections, templates, world_model
 from maverick import connection_oauth as oauth
 from maverick.paths import tenant_scope
 
+from test_support.starlette_state import patch_state
+
 ORIGIN = "http://127.0.0.1:8765"
 OWNER = "user:connection-owner@example.test"
 SETUP = "/api/v1/connection-setup"
@@ -249,7 +251,7 @@ def test_actual_vendor_routes_reject_stale_workspace_context_before_composition(
         invocations.append(True)
         return factory(request)
 
-    monkeypatch.setattr(client.app.state, "vendor_onboarding_binding_factory", observed)
+    patch_state(monkeypatch, client.app.state, "vendor_onboarding_binding_factory", observed)
     body = {"vendor_name": "Context reviewed vendor", "project": "VEND", "purpose": "Current workspace"}
     for response in (
         client.get(f"{CASES}/{row['id']}", headers={"X-Lightwork-Vendor-Context": stale}),

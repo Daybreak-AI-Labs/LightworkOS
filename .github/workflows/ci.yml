@@ -92,7 +92,7 @@ jobs:
         run: python -m ruff check .
       - name: Check types at selected boundaries
         run: |
-          python -m pip install 'mypy==1.18.2'
+          python -m pip install 'mypy==2.4.1'
           python -m mypy
       - name: Check standalone demo support copies
         run: python scripts/sync_standalone_support.py --check
@@ -360,21 +360,38 @@ jobs:
           chmod 0755 "$scanner"
 
           # OSV recognizes a conventional requirements.txt filename. The
-          # reviewed CI lock is copied byte-for-byte so every platform-marked
-          # exact pin is scanned without creating a second Python lock.
+          # reviewed CI and docs locks are copied byte-for-byte so every
+          # platform-marked exact pin is scanned without creating a second lock.
           python_lock="$RUNNER_TEMP/requirements.txt"
           cp requirements/ci.txt "$python_lock"
+          docs_lock="$RUNNER_TEMP/docs/requirements.txt"
+          mkdir -p "$RUNNER_TEMP/docs"
+          cp requirements/docs.txt "$docs_lock"
+          # Every tracked lockfile is passed below unless listed here with the
+          # reason; test_install_supply_chain fails on any other omission.
+          # osv-unscanned: examples/clients/go/go.sum -- module checksums only; OSV reads the module graph from the go.mod scanned below
+          # osv-unscanned: deploy/aws/terraform/.terraform.lock.hcl -- Terraform providers are not an OSV ecosystem and the scanner rejects the file
           scan_status=0
           "$scanner" scan source \
             --config osv-scanner.toml \
             --lockfile "$python_lock" \
+            --lockfile "$docs_lock" \
             --lockfile rust/Cargo.lock \
             --lockfile vendor/tests/Cargo.lock \
             --lockfile examples/clients/rust/Cargo.lock \
             --lockfile apps/desktop/src-tauri/Cargo.lock \
             --lockfile apps/installer-desktop/src-tauri/Cargo.lock \
+            --lockfile apps/desktop-oauth-return/Cargo.lock \
+            --lockfile apps/desktop-runtime/Cargo.lock \
+            --lockfile apps/installer-msi/verify-update/Cargo.lock \
+            --lockfile apps/zed-extension/Cargo.lock \
+            --lockfile apps/jetbrains-plugin/gradle.lockfile \
             --lockfile examples/clients/typescript/package-lock.json \
             --lockfile apps/installer-desktop/pnpm-lock.yaml \
+            --lockfile apps/mobile-companion/package-lock.json \
+            --lockfile apps/mobile-companion/tests/package-lock.json \
+            --lockfile packages/maverick-dashboard/tests/browser/package-lock.json \
+            --lockfile packages/maverick-dashboard/tests/js/package-lock.json \
             --lockfile examples/clients/csharp/packages.lock.json \
             --lockfile examples/clients/go/go.mod \
             --lockfile go/model-proxy/go.mod \
@@ -794,7 +811,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install the focused test dependency
         if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
-        run: python -m pip install "pytest==9.1.1"
+        run: python -m pip install "pytest==9.2.0"
       - name: Test Windows Job Object process-tree containment
         if: "${{ !contains(needs.select-tests.outputs.jobs, '\"windows-process-containment\": false') }}"
         env:
@@ -834,7 +851,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install the focused test dependency
         if: github.event_name != 'pull_request'
-        run: python -m pip install "pytest==9.1.1"
+        run: python -m pip install "pytest==9.2.0"
       - name: Test Windows Job Object process-tree containment
         if: github.event_name != 'pull_request'
         env:

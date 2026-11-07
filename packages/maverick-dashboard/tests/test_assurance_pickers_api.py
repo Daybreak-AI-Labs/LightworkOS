@@ -6,6 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from maverick_dashboard.app import app
 
+from test_support.starlette_state import patch_state
+
 client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
 BASE = "/api/v1/security/assurance/pickers"
 DIGEST = "c" * 64
@@ -252,8 +254,12 @@ def test_agent_identity_choices_come_from_the_workspace_registry(monkeypatch):
         calls.append(tenant_id)
         return registry
 
-    monkeypatch.setattr(
-        app.state, "identity_governance_authority_registry_factory", factory, raising=False
+    patch_state(
+        monkeypatch,
+        app.state,
+        "identity_governance_authority_registry_factory",
+        factory,
+        raising=False,
     )
 
     response = client.get(f"{BASE}/identity-controls")
@@ -277,8 +283,12 @@ def test_agent_identity_choices_are_empty_without_an_enrolment_registry(monkeypa
 
     monkeypatch.setenv("MAVERICK_TENANT", "alpha")
     monkeypatch.setattr(assurance_pickers_api, "_human_principal", lambda _request: "user:admin")
-    monkeypatch.setattr(
-        app.state, "identity_governance_authority_registry_factory", None, raising=False
+    patch_state(
+        monkeypatch,
+        app.state,
+        "identity_governance_authority_registry_factory",
+        None,
+        raising=False,
     )
 
     body = client.get(f"{BASE}/identity-controls").json()
@@ -292,7 +302,8 @@ def test_purview_labels_merge_enrolled_data_and_prepared_changes(monkeypatch):
 
     monkeypatch.setenv("MAVERICK_TENANT", "alpha")
     monkeypatch.setattr(assurance_pickers_api, "_human_principal", lambda _request: "user:admin")
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         app.state,
         "identity_governance_authority_registry_factory",
         lambda _tenant: _Registry(),

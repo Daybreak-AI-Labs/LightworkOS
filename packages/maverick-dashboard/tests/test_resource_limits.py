@@ -14,6 +14,8 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
+from test_support.starlette_state import patch_state
+
 
 def _client():
     from maverick_dashboard.app import app
@@ -224,7 +226,8 @@ def test_public_governance_body_cap_stops_lengthless_stream_before_authority(
 
     monkeypatch.setattr(dash_app, limit_name, 64)
     resolver_calls: list[str] = []
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         dash_app.app.state,
         "third_party_collaboration_portal_resolver",
         lambda *_args, **_kwargs: resolver_calls.append("called"),
@@ -232,7 +235,8 @@ def test_public_governance_body_cap_stops_lengthless_stream_before_authority(
     )
     consent_origin_calls: list[str] = []
     if path.startswith("/api/v1/public/consent/"):
-        monkeypatch.setattr(
+        patch_state(
+            monkeypatch,
             dash_app.app.state,
             "public_consent_error_origin_resolver",
             lambda request: consent_origin_calls.append(request.url.path)
@@ -280,7 +284,8 @@ def test_evidence_files_skip_the_json_cap_and_meet_authentication_first(monkeypa
 
     monkeypatch.setattr(dash_app, "_MAX_THIRD_PARTY_COLLABORATION_BODY_BYTES", 64)
     resolver_calls: list[str] = []
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         dash_app.app.state,
         "third_party_collaboration_portal_resolver",
         lambda *_args, **_kwargs: resolver_calls.append("called"),

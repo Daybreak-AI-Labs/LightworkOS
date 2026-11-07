@@ -10,7 +10,7 @@ these local sources.
 | --- | --- | --- |
 | `glib` 0.18.5 | Backport [gtk-rs/gtk-rs-core#1343](https://github.com/gtk-rs/gtk-rs-core/pull/1343): pass a mutable out-pointer in `VariantStrIter::impl_get`. | RUSTSEC-2024-0429 / GHSA-wrw7-89jp-8q8g; fixes undefined behavior in optimized iteration without changing the GTK3 ABI. |
 | `glib-macros` 0.18.5 and `gtk3-macros` 0.18.2 | Replace `proc-macro-error` with the maintained `proc-macro-error3` 3.1.1 with its Syn 2 integration. | RUSTSEC-2024-0370; removes the abandoned macro implementation and its attribute crate. |
-| `deepmerge` 4.3.1 | Local private package `@lightwork/deepmerge`; reject `__proto__`, `constructor`, and `prototype` while copying either operand, including nested objects. | GHSA-gcqx-w48m-w2h4; prevents target-side and null-prototype-source poisoning while preserving the merge API used by Svelte. |
+| `deepmerge` 4.3.1 | Local private package `@lightwork/deepmerge`; reject `__proto__`, `constructor`, and `prototype` while copying either operand, including nested objects. | GHSA-gcqx-w48m-w2h4; prevents target-side and null-prototype-source poisoning while preserving the merge API used by Svelte and by Expo's config loader. |
 
 The Tauri utility lock is separately updated to 2.10.2, which uses `urlpattern`
 0.6 and ICU instead of the abandoned `unic-*` dependency family.
@@ -26,6 +26,14 @@ and confirming Cargo resolves a path dependency. Any registry GLib copy,
 unrelated advisory, changed source, or scanner error still fails. CI retains
 both the raw OSV report and this explicit remediation record. No blanket
 advisory exception or registry version relabeling is used.
+
+The mobile companion's npm lock resolves the same deepmerge copy through an
+npm override; OSV skips the local package and would flag a returning registry
+copy. Its tar 6 and image-size 1 advisories have no fixed release that Expo
+SDK 52 can load, so `ACCEPTED_RISKS` in `scripts/check_osv_results.py` records
+them, with the reason and a review date, for that lockfile and exact version
+only. The remediation record lists them separately, and the gate fails again
+on a new advisory or once the review date passes.
 
 Validation includes optimized GLib string-iterator operations, macro-derived
 GLib types, Unicode URL patterns, prototype-poisoning regressions, the Svelte

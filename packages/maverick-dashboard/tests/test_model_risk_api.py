@@ -9,6 +9,8 @@ import pytest
 from fastapi.testclient import TestClient
 from maverick_dashboard.app import app
 
+from test_support.starlette_state import patch_state
+
 client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
 
 
@@ -3812,7 +3814,8 @@ def test_identity_control_http_composes_exact_runtime_and_separate_purview_actio
         "_human_principal",
         lambda _request: "user:identity-control-admin",
     )
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         app.state,
         "identity_governance_control_runtime",
         runtime,
@@ -3961,7 +3964,8 @@ def test_identity_control_http_rejects_cross_tenant_runtime(monkeypatch):
         "_human_principal",
         lambda _request: "user:identity-control-admin",
     )
-    monkeypatch.setattr(
+    patch_state(
+        monkeypatch,
         app.state,
         "identity_governance_control_runtime",
         runtime,
