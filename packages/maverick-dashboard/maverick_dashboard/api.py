@@ -11644,21 +11644,34 @@ async def channel_delivery_receipts(request: Request, cursor: str = "", limit: i
         raise HTTPException(status_code=400, detail="invalid receipt window")
     from maverick_channels.delivery import DeliveryJournal
 
+    def readable(journal, record_id):
+        # A receipt whose key is unavailable is listed as unreadable instead of
+        # failing the whole window, so the hold it causes stays visible.
+        try:
+            return journal.get(record_id)
+        except Exception:
+            return {"id": record_id, "readable": False}
+
     def read():
         journal = DeliveryJournal()
         if receipt_id:
             if not re.fullmatch(r"chd-[a-f0-9]{56}", receipt_id):
                 raise HTTPException(status_code=400, detail="invalid receipt identity")
-            row = journal.get(receipt_id)
+            row = readable(journal, receipt_id)
             rows, next_cursor = ([row] if row else []), cursor
         else:
             window = list(journal.store.iter_record_ids(start_after=cursor, limit=limit))
-            rows = [row for _, record_id in window if (row := journal.get(record_id))]
+            rows = [row for _, record_id in window if (row := readable(journal, record_id))]
             next_cursor = window[-1][0] if window else cursor
         results = []
         for row in rows:
+            if row.get("readable") is False:
+                results.append(row)
+                continue
             item = {key: row.get(key) for key in ("id", "channel", "account_sha256", "execution_id", "execution",
-                                                 "delivery", "created_at", "updated_at", "compacted")}
+                                                 "delivery", "created_at", "updated_at", "compacted",
+                                                 "held_behind", "went_ahead_of")}
+            item["readable"] = True
             chunks = row.get("chunks", {})
             item["chunk_states"] = {state: sum(chunk["state"] == state for chunk in chunks.values())
                                     for state in {chunk["state"] for chunk in chunks.values()}}

@@ -92,3 +92,34 @@ def test_poll_checkpoint_visibility_checks_admin_before_store(monkeypatch):
     with pytest.raises(HTTPException) as error:
         asyncio.run(api.channel_poll_checkpoints(_request()))
     assert error.value.status_code == 403
+
+
+def test_receipt_window_lists_an_unreadable_receipt_and_the_message_waiting_behind_it(monkeypatch, tmp_path):
+    # A receipt that cannot be read (its key is unavailable) made the whole
+    # status window fail. It is listed as unreadable, and the newer message of
+    # its conversation shows what it waits behind.
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    monkeypatch.setattr(api, "require_global_permission", lambda *args: None)
+    journal = DeliveryJournal()
+    older = journal.admit(IncomingMessage(user_id="private-person", text="older", channel="signal"),
+                          external_id="older-id", account="private-account")
+    newer = journal.admit(IncomingMessage(user_id="private-person", text="newer", channel="signal"),
+                          external_id="newer-id", account="private-account")
+    hold = {"id": older["id"], "created_at": older["created_at"], "unreadable_since": 1000.0}
+    journal.change(newer, held_behind=hold)
+    readable_get = DeliveryJournal.get
+
+    def get(self, record_id):
+        if record_id == older["id"]:
+            raise ValueError("sealed receipt does not open")
+        return readable_get(self, record_id)
+
+    monkeypatch.setattr(DeliveryJournal, "get", get)
+    page = asyncio.run(api.channel_delivery_receipts(_request(), limit=10))
+    by_id = {item["id"]: item for item in page["receipts"]}
+    assert by_id[older["id"]] == {"id": older["id"], "readable": False}
+    assert by_id[newer["id"]]["readable"] is True and by_id[newer["id"]]["held_behind"] == hold
+    detail = asyncio.run(api.channel_delivery_receipts(_request(), receipt_id=older["id"]))
+    assert detail["receipts"] == [{"id": older["id"], "readable": False}]
+    for secret in ("private-person", "older-id", "newer-id", "private-account"):
+        assert secret not in str(page) and secret not in str(detail)
