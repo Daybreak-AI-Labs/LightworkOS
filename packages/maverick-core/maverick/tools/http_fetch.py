@@ -555,19 +555,12 @@ _VALUE_WINDOW = 3 * _REVIEW_BODY_CHARS
 # read, so it is found whole and kept whole, as its marker.
 _CUT_MARGIN = 1000
 
-# The beginning of a secret whose pattern (maverick.safety.secret_detector)
-# needs text after it: a token before its last part, credentials before the
-# "@", and a quoted value before its closing quote. One that runs to the end
-# of a read was cut there, and is kept not at all.
-_OPEN_SECRET = re.compile(
-    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]*)?\Z"
-    r"|\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://[^@/\s]*\Z"
-    r"|(?:^|\n)[^\S\n]*(?:export\s+)?[A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL)[A-Z0-9_]*"
-    r"\s*[:=]\s*(?:\"[^\"\n]*|'[^'\n]*)\Z",
-    re.MULTILINE,
-)
-_KEY_BEGIN = re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")
-_KEY_END = re.compile(r"-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----")
+# Text that completes whatever a secret pattern (maverick.safety.secret_detector)
+# could still need after a read ends: a token's remaining parts, the rest of a
+# connection string's credentials and host, a closing quote, and a private
+# key's END line. A secret those patterns find across the end of the read is
+# one the read cut, and is kept not at all.
+_COMPLETIONS = ("a.a.a", "a:a@a", '"', "'", "\n-----END PRIVATE KEY-----")
 
 
 def _collapsed_with_positions(text: str) -> tuple[str, list[int]]:
@@ -607,6 +600,7 @@ def _decoded_with_positions(text: str) -> tuple[str, list[int]]:
 
 
 _PERCENT_ESCAPE = re.compile(r"%[0-9A-Fa-f]{2}")
+_PARTIAL_ESCAPE = re.compile(r"(?:%[0-9A-Fa-f]?)?\Z")
 
 
 def _readings(text: str, *, decoded: bool) -> list[tuple[str, list[int]]]:
@@ -619,16 +613,25 @@ def _readings(text: str, *, decoded: bool) -> list[tuple[str, list[int]]]:
     for reading, positions in list(readings):
         collapsed, inner = _collapsed_with_positions(reading)
         readings.append((collapsed, [positions[index] for index in inner]))
-    return readings
+    seen: set[str] = set()
+    return [(reading, positions) for reading, positions in readings
+            if not (reading in seen or seen.add(reading))]
+
+
+def _found(text: str) -> list[tuple[int, int]]:
+    """Where anything hiding would hide lies in ``text`` as read."""
+    from ..governed_tools import _AZURE_ACCOUNT_KEY
+    from ..safety.secret_detector import scan
+
+    return [match.span for match in scan(text)] + [match.span() for match in _AZURE_ACCOUNT_KEY.finditer(text)]
 
 
 def _open_secret(reading: str) -> int | None:
-    """Where the earliest secret that runs to the end of ``reading`` without
-    the text its pattern needs after it starts, if there is one."""
-    found = _OPEN_SECRET.search(reading)
-    starts = [found.start() + (reading[found.start()] == "\n")] if found else []
-    ends = [match.start() for match in _KEY_END.finditer(reading)]
-    starts += [match.start() for match in _KEY_BEGIN.finditer(reading) if not ends or match.start() > ends[-1]][:1]
+    """Where the earliest secret the end of ``reading`` cut starts, if there
+    is one: found by the patterns hiding uses once the text a pattern could
+    still need is added (see ``_COMPLETIONS``)."""
+    starts = [start for completion in _COMPLETIONS
+              for start, stop in _found(reading + completion) if start < len(reading) < stop]
     return min(starts) if starts else None
 
 
@@ -636,14 +639,10 @@ def _secret_bounds(text: str, *, decoded: bool = False, cut: bool = False) -> tu
     """Where in ``text`` anything hiding would hide lies, read as hiding reads
     it (see ``_readings``; with the standalone storage-key pattern), and, when
     the read ``cut`` ``text`` at its end, where any secret it cut starts."""
-    from ..governed_tools import _AZURE_ACCOUNT_KEY
-    from ..safety.secret_detector import scan
-
     spans: list[tuple[int, int]] = []
     opens: list[int] = []
     for reading, positions in _readings(text, decoded=decoded):
-        found = [match.span for match in scan(reading)]
-        found += [match.span() for match in _AZURE_ACCOUNT_KEY.finditer(reading)]
+        found = _found(reading)
         # From where the first character's writing starts to where the writing
         # of the character after the last one starts (a %XX escape is three).
         spans += [(positions[start], positions[stop] if stop < len(positions) else len(text))
@@ -695,6 +694,9 @@ def _pairs_window(text: str) -> tuple[str, bool]:
     if len(text) <= _VALUE_WINDOW:
         return text, True
     window = text[:_VALUE_WINDOW]
+    # A %XX escape the read split is not read at all, so a token written in
+    # escapes still ends where the decoded read does.
+    window = window[:_PARTIAL_ESCAPE.search(window).start()]
     end = len(window) - _CUT_MARGIN
     piece_start = window.rfind("&", 0, end) + 1
     piece_stop = window.find("&", end)
@@ -709,6 +711,8 @@ def _pairs_window(text: str) -> tuple[str, bool]:
     name, sep, value = part.partition("=")
     spans, opens = _secret_bounds(part, cut=stop == len(window))
     for offset, piece in ((0, name), (len(name) + len(sep), value)):
+        if unquote_plus(piece) == piece:
+            continue  # read as written above
         more, more_opens = _secret_bounds(piece, decoded=True, cut=start + offset + len(piece) == len(window))
         spans += [(begin + offset, finish + offset) for begin, finish in more]
         opens += [begin + offset for begin in more_opens]

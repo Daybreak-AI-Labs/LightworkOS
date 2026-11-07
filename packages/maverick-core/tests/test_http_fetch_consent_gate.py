@@ -1031,6 +1031,30 @@ def test_a_secret_longer_than_the_read_keeps_nothing_on_the_card(sent, monkeypat
     assert secret not in _real_card(monkeypatch, body)
 
 
+_SPLIT_JWT = "eyJ" + "A" * 100 + "." + "B" * 1491 + "." + "C" * 342
+_HYPHEN_JWT = "eyJ" + "A" * 100 + "." + "B" * 2000 + "." + "C" * 342
+_SPLIT_URI = "postgres://u:" + "p" * 1582 + "@db.internal:5432/app"
+_ESCAPED_JWT = "eyJ" + "H" * 3000 + "%2E" + "P" * 2000 + "%2E" + "Sig0123456789abcdefXYZ"
+
+
+@pytest.mark.parametrize("body,headers,secret", [
+    # A token after a hyphen is a token to the patterns hiding uses.
+    (_placed("sk-", "k", " x-", _HYPHEN_JWT, " tail" * 500, into=600), {}, "eyJAAAA"),
+    ('{"note": "' + "\\u0041" * 1000 + "id-" + "eyJ" + "h" * 600 + "." + "p" * 4000 + '.sigsigsigsig"}', {}, "eyJhhhh"),
+    (_placed("a=sk-", "A", "&note=x-", _HYPHEN_JWT, "&z=" + "y" * 2000, into=600), _FORM, "eyJAAAA"),
+    # The read ends on the character a pattern needs more after.
+    (_placed("sk-", "k", " ", _SPLIT_JWT, " tail" * 500, into=1595, at=8999), {}, "eyJAAAA"),
+    (json.dumps({"note": _placed("sk-", "k", " ", _SPLIT_JWT, " tail" * 500, into=1595, at=8999)}), {}, "eyJAAAA"),
+    (_placed("sk-", "k", " ", _SPLIT_URI, " tail" * 500, into=1595, at=8999), {}, "u:pppp"),
+    # The read ends inside a %XX escape of a percent-written token.
+    (_placed("a=sk-", "A", "&note=", _ESCAPED_JWT, "&z=" + "y" * 2000, into=5006, at=8999), _FORM, "eyJHHHH"),
+    (_placed("a=sk-", "A", "&note=", _ESCAPED_JWT, "&z=" + "y" * 2000, into=5007, at=8999), _FORM, "eyJHHHH"),
+], ids=["after-a-hyphen", "after-a-hyphen-in-json", "after-a-hyphen-in-a-form", "on-the-second-dot",
+        "on-the-second-dot-in-json", "on-the-at-sign", "on-an-escape", "inside-an-escape"])
+def test_a_secret_the_read_cuts_anywhere_keeps_nothing_on_the_card(sent, monkeypatch, body, headers, secret):
+    assert secret not in _real_card(monkeypatch, body, headers)
+
+
 @pytest.mark.parametrize("body,secret", [
     ('{"password": "hunter2-correct-horse", "message": "line one\nline two"}', "hunter2"),  # pragma: allowlist secret
     ('{"message": "a\tb", "api_key": "abcd1234efgh5678"}', "abcd1234efgh5678"),  # pragma: allowlist secret
