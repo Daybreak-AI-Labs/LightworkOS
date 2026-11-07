@@ -322,7 +322,7 @@ def test_a_running_worker_is_current_again_soon_after_the_clock_jumps(tmp_path, 
     publisher.start()
     try:
         deadline = time.monotonic() + 5
-        while not list(tmp_path.glob("*.enc")) and time.monotonic() < deadline:
+        while publisher._stamped is None and time.monotonic() < deadline:
             time.sleep(0.02)
         stamped = publisher._stamped
         offset[0] += jump

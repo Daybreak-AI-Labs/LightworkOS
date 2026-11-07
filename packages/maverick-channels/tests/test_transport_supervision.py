@@ -1877,7 +1877,8 @@ def test_replies_held_through_a_receipt_read_outage_stay_counted_without_a_relea
 def test_a_reply_released_by_the_one_ahead_is_not_said_to_wait_for_it(monkeypatch):
     # Y waits behind X, which cannot be read. X opens again and is sent in a
     # window with Z from another chat, before Y is due. While Z is answered,
-    # Y waits only for its turn, not for X to be sent first.
+    # Y waits only for its turn, not for X to be sent first. W's turn keeps
+    # the worker busy while X opens and Z is saved, so no scan picks X alone.
     from types import SimpleNamespace
 
     monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
@@ -1886,7 +1887,7 @@ def test_a_reply_released_by_the_one_ahead_is_not_said_to_wait_for_it(monkeypatc
     state = {"x": None, "sealed": False, "refuse_x": True}
     journal = _unreadable_journal(0, lambda record_id: state["sealed"] and record_id == state["x"])
     sends, status, started = [], _Status(), []
-    gates = {"Z": asyncio.Event()}
+    gates = {"W": asyncio.Event(), "Z": asyncio.Event()}
 
     async def send(message, reply, route):
         sends.append(message.text)
@@ -1911,9 +1912,13 @@ def test_a_reply_released_by_the_one_ahead_is_not_said_to_wait_for_it(monkeypatc
         y = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
                                                 message_id="y"), external_id="y")
         await until(lambda: status.counts and status.latest["behind_unreadable"] == 1)
+        await worker.submit(IncomingMessage(user_id="w", sender_id="w", text="W", channel=Adapter.name,
+                                            message_id="w"), external_id="w")
+        await until(lambda: "W" in started)  # no scan runs while W's reply is worked on
         state["sealed"], state["refuse_x"] = False, False
         await worker.submit(IncomingMessage(user_id="z", sender_id="z", text="Z", channel=Adapter.name,
                                             message_id="z"), external_id="z")
+        gates["W"].set()
         await until(lambda: "Z" in started)
         assert journal.get(x["id"])["delivery"] == "delivered"
         assert journal.get(y["id"])["delivery"] != "delivered"
