@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "rate_card_version": "2026-09-13.1",
-  "retrieved_at": "2026-09-13T17:45:37Z",
+  "rate_card_version": "2026-11-05.1",
+  "retrieved_at": "2026-11-05T06:12:15Z",
   "description": "Primary-source evidence and conservative billing ceilings for Lightwork model pricing. Rates are USD per one million tokens.",
   "entries": [
     {
@@ -22,16 +22,16 @@
       "rates": {"gpt-6-astra": [27.5, 82.5], "gpt-5.6-terra": [5.5, 19.8], "gpt-5.6-luna": [0.55, 1.98]}
     },
     {
-      "evidence_id": "openai-sol-promo-ceiling-2026-09-13",
+      "evidence_id": "openai-sol-promo-ceiling-2026-11-05",
       "source_url": "https://developers.openai.com/api/docs/models/gpt-5.6-sol",
-      "retrieved_at": "2026-09-13T17:45:37Z",
-      "as_of": "2026-09-13",
-      "valid_until": "2026-11-21",
+      "retrieved_at": "2026-11-05T06:12:15Z",
+      "as_of": "2026-11-05",
+      "valid_until": "2026-11-30",
       "currency": "USD",
       "confidence": 1.0,
       "verified": true,
       "pricing_basis": "USD per 1M tokens; maximum Standard context tier, 1.25x cache-write input ceiling, plus 10 percent regional-processing uplift",
-      "applicability": "Direct OpenAI Standard processing, including the documented gpt-5.6 alias. Promotional pricing is reviewed through 2026-11-21; billing refuses this quote after that date. Conservative budget ceiling, not an invoice rate; excludes Fast/priority premiums.",
+      "applicability": "Direct OpenAI Standard processing, including the documented gpt-5.6 alias. The model page states promotional pricing is available until 2026-11-30; billing refuses this quote after that date. Conservative budget ceiling, not an invoice rate; excludes Fast/priority premiums.",
       "source_observations": {"short": [4.0, 20.0], "long": [8.0, 30.0], "long_cache_write_input": 10.0},
       "rates": {"gpt-5.6-sol": [11.0, 33.0], "gpt-5.6": [11.0, 33.0]}
     },

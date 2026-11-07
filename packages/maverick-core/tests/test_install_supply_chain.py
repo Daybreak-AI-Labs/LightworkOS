@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Iterator
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from textwrap import dedent
 
 import pytest
@@ -735,6 +735,69 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_source_verified():
     artifact_step = ci.split("- name: Upload cross-ecosystem vulnerability report", 1)[1].split("- name:", 1)[0]
     assert "osv-results.json" in artifact_step
     assert "osv-remediation.json" in artifact_step
+
+
+#: Dependency lockfile names, including ones OSV-Scanner cannot read: those
+#: must still be listed as deliberately unscanned, with the reason.
+DEPENDENCY_LOCKFILE_NAMES = frozenset(
+    {
+        ".terraform.lock.hcl", "Cargo.lock", "Gemfile.lock", "Package.resolved",
+        "Pipfile.lock", "Podfile.lock", "bun.lock", "buildscript-gradle.lockfile",
+        "composer.lock", "conan.lock", "go.mod", "go.sum", "gradle.lockfile",
+        "mix.lock", "npm-shrinkwrap.json", "package-lock.json", "packages.lock.json",
+        "pdm.lock", "pnpm-lock.yaml", "poetry.lock", "pom.xml", "pubspec.lock",
+        "renv.lock", "uv.lock", "verification-metadata.xml", "yarn.lock",
+        # Formats OSV-Scalibr also reads; none is tracked today.
+        "cabal.project.freeze", "deno.lock", "gems.locked", "packages.config",
+        "pylock.toml", "stack.yaml.lock",
+    }
+)
+
+
+def _is_dependency_lockfile(relative_path: str) -> bool:
+    path = PurePosixPath(relative_path)
+    if path.name in DEPENDENCY_LOCKFILE_NAMES:
+        return True
+    # Pinned pip sets: requirements*.txt anywhere and requirements/<name>.txt.
+    return path.suffix == ".txt" and (
+        path.name.startswith("requirements") or "requirements" in path.parts[:-1]
+    )
+
+
+def test_osv_gate_scans_every_tracked_lockfile_or_says_why_not():
+    if shutil.which("git") is None:
+        pytest.skip("git is required to list tracked lockfiles")
+    listing = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True, check=False,
+    )
+    if listing.returncode != 0:
+        pytest.skip("not a git checkout, so there are no tracked lockfiles to list")
+    tracked = {name for name in listing.stdout.decode("utf-8").split("\0") if name}
+    lockfiles = {name for name in tracked if _is_dependency_lockfile(name)}
+    assert "requirements/ci.txt" in lockfiles
+
+    step = _read(".github/workflows/ci.yml").split(
+        "- name: OSV Scanner across every reviewed dependency surface", 1,
+    )[1].split("- name: Upload cross-ecosystem vulnerability report", 1)[0]
+    # A lock copied to a filename OSV recognizes is scanned through the copy.
+    copies = {
+        variable: source
+        for source, variable in re.findall(r'^\s*cp (\S+) "\$(\w+)"$', step, re.MULTILINE)
+    }
+    scanned: set[str] = set()
+    for argument in re.findall(r"--lockfile (\S+)", step):
+        variable = re.fullmatch(r'"\$(\w+)"', argument)
+        scanned.add(copies[variable.group(1)] if variable else argument)
+    unscanned = dict(re.findall(r"^\s*# osv-unscanned: (\S+) -- (\S.*)$", step, re.MULTILINE))
+
+    assert sorted(scanned - tracked) == [], "OSV is pointed at untracked or missing files"
+    assert sorted(scanned & unscanned.keys()) == [], "a lockfile is both scanned and excluded"
+    assert sorted(unscanned.keys() - lockfiles) == [], "stale osv-unscanned exclusions"
+    missing = sorted(lockfiles - scanned - unscanned.keys())
+    assert missing == [], (
+        "tracked lockfiles neither scanned by OSV nor listed as osv-unscanned with a reason:\n"
+        + "\n".join(missing)
+    )
 
 
 def test_go_java_and_standalone_demo_security_floors_are_explicit():

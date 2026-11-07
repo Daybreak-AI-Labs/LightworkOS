@@ -13,7 +13,7 @@ ROWS = [
     ("Main workspace", "Espace de travail principal", "Hauptarbeitsbereich", "メインワークスペース", "主工作区"),
     ("Translation coverage", "Couverture des traductions", "Übersetzungsumfang", "翻訳の対応範囲", "翻译覆盖范围"),
     ("Toggle sidebar", "Afficher ou masquer le volet latéral", "Seitenleiste ein- oder ausblenden", "サイドバーの表示を切り替え", "展开或收起侧栏"),
-    ("Lightwork by Daybreak Labs - home", "Lightwork par Daybreak Labs - accueil", "Lightwork von Daybreak Labs - Startseite", "Daybreak Labs の Lightwork - ホーム", "Daybreak Labs 的 Lightwork - 主页"),
+    ("Lightwork by Daybreak AI Labs - home", "Lightwork par Daybreak AI Labs - accueil", "Lightwork von Daybreak AI Labs - Startseite", "Daybreak AI Labs の Lightwork - ホーム", "Daybreak AI Labs 的 Lightwork - 主页"),
     ("Emergency stop: stop or resume work", "Arrêt d’urgence : arrêter ou reprendre le travail", "Notstopp: Arbeit stoppen oder fortsetzen", "緊急停止：作業を停止または再開", "紧急停止：停止或恢复工作"),
     ("checking", "vérification", "wird geprüft", "確認中", "正在检查"),
     ("Emergency stop status. Halt permission is required to change it.", "État de l’arrêt d’urgence. Une autorisation d’arrêt est nécessaire pour le modifier.", "Status des Notstopps. Zum Ändern ist eine Stoppberechtigung erforderlich.", "緊急停止の状態です。変更には停止権限が必要です。", "紧急停止状态。更改此状态需要停止权限。"),

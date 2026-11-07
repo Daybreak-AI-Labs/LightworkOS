@@ -9,10 +9,19 @@ the same path runs the router's own dispatch over just that entry. Any change
 to the routes (FastAPI counts them) forgets every remembered entry, and a
 request that matches nothing in full, a redirect or a 404 or 405, always takes
 the ordinary path.
+
+Whether every route matches on its path alone is checked once per route
+table, and never by a request: the check walks every route, which cost the
+first request after start-up 8 ms on the event loop, or about 4 s when it also
+had to build FastAPI's included routes. Start-up's warm-up runs it once those
+routes are built. A request that finds the routes unchecked (start-up still
+warming, or the routes changed) starts the check in the background and takes
+the ordinary path meanwhile, as it does when the check turns the memory off.
 """
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from starlette._utils import get_route_path
@@ -66,22 +75,44 @@ class RememberedRouteDispatch:
     def __init__(self, router: Any, dispatch: Any) -> None:
         self.router = router
         self.dispatch = dispatch  # the router's own dispatch, for everything else
-        self.version: Any = None
-        self.usable = False
+        # (route version checked, whether its matches can be remembered), set
+        # as one value so a request never pairs one check's version with
+        # another check's answer.
+        self.verdict: tuple[Any, bool] = (None, False)
+        self.checking: threading.Thread | None = None  # the latest background check
+        self._check_lock = threading.Lock()
+        self._start_lock = threading.Lock()
         self.remembered: dict[tuple, tuple[int, Any, Any]] = {}  # (index or -1, route, version)
+
+    @property
+    def usable(self) -> bool:
+        return self.verdict[1]
 
     def _current_version(self) -> Any:
         routes = self.router.routes
         return (self.router._get_routes_version(), len(routes), id(routes))
 
-    def _revalidate(self, version: Any) -> None:
-        self.remembered.clear()
-        self.version = version
-        try:
-            self.usable = all(_matches_on_path_only(route) for route in _leaves(self.router.routes))
-        except Exception:  # pragma: no cover - an unknown router shape is never remembered
-            log.debug("route dispatch memory disabled", exc_info=True)
-            self.usable = False
+    def validate(self) -> bool:
+        """Check the current routes on this thread and return the answer.
+        Start-up's warm-up calls this; requests only ever start it in the
+        background (:meth:`_validate_soon`)."""
+        with self._check_lock:
+            version = self._current_version()
+            try:
+                usable = all(_matches_on_path_only(route) for route in _leaves(self.router.routes))
+            except Exception:
+                log.debug("route dispatch memory disabled", exc_info=True)
+                usable = False  # an unknown router shape is never remembered
+            self.remembered.clear()
+            self.verdict = (version, usable)
+            return usable
+
+    def _validate_soon(self) -> None:
+        with self._start_lock:
+            if self.checking is not None and self.checking.is_alive():
+                return  # if it checks an older table, a later request starts another
+            self.checking = threading.Thread(target=self.validate, name="lightwork-route-check", daemon=True)
+            self.checking.start()
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -99,9 +130,13 @@ class RememberedRouteDispatch:
             await self.dispatch(scope, receive, send)
             return
         version = self._current_version()
-        if version != self.version:
-            self._revalidate(version)
-        if not self.usable:
+        checked, usable = self.verdict
+        if checked != version:
+            # Unchecked (start-up still warming, or the routes changed): never
+            # check on the event loop. Serve the ordinary way until it is done.
+            self._validate_soon()
+            usable = False
+        if not usable:
             await self.dispatch(scope, receive, send)
             return
         routes = self.router.routes
@@ -131,3 +166,12 @@ def install(router: Any) -> bool:
         return False  # a FastAPI without counted route changes
     router.middleware_stack = RememberedRouteDispatch(router, dispatch)
     return True
+
+
+def validate(router: Any) -> bool | None:
+    """Check ``router``'s routes for its remembering dispatch now, on this
+    thread (start-up's warm-up). None when that dispatch is not installed."""
+    dispatch = getattr(router, "middleware_stack", None)
+    if isinstance(dispatch, RememberedRouteDispatch):
+        return dispatch.validate()
+    return None

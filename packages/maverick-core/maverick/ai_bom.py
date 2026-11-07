@@ -113,7 +113,7 @@ def export_ai_bom(*, asset_id: str | None = None) -> dict[str, Any]:
             "tools": {
                 "components": [
                     {"type": "application", "name": "lightwork",
-                     "manufacturer": {"name": "Daybreak Labs"}}
+                     "manufacturer": {"name": "Daybreak AI Labs"}}
                 ]
             },
         },

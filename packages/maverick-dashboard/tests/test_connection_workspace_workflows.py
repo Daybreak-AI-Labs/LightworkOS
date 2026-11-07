@@ -74,6 +74,8 @@ def customer(tmp_path, monkeypatch):
             "password": "Disposable owner " + secrets.token_hex(16), "confirm": "yes",  # pragma: allowlist secret
         })
         assert enrolled.status_code == 303, enrolled.text
+        # The owner starts in the first workspace; the browser client sends its guard.
+        client.headers["X-Lightwork-Expected-Tenant"] = "local"
         for tenant in ("workspace-a", "workspace-b"):
             created = client.post("/api/v1/admin/tenants", json={
                 "id": tenant, "display_name": tenant, "plan": "free",

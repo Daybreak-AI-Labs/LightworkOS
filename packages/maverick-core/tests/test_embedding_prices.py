@@ -33,6 +33,43 @@ def test_default_voyage_price_is_namespaced_and_keeps_full_context_bound():
     assert evidence["invoice_qualified"] is False
 
 
+# Figures read on the official pages for the reviewed capture: USD per million
+# input tokens, per-item context limit, inputs per request, tokens per request.
+# A refresh changes REVIEWED_WINDOW, and any figure the vendor changed.
+REVIEWED_WINDOW = ("2026-11-05", "2026-12-05")
+REVIEWED = {
+    ("voyage", "voyage-3"): (0.06, 32_000, 1000, None),
+    ("voyage", "voyage-3-lite"): (0.02, 32_000, 1000, None),
+    ("voyage", "voyage-3-large"): (0.18, 32_000, 1000, None),
+    ("voyage", "voyage-3.5"): (0.06, 32_000, 1000, None),
+    ("voyage", "voyage-3.5-lite"): (0.02, 32_000, 1000, None),
+    ("voyage", "voyage-4"): (0.06, 32_000, 1000, None),
+    ("voyage", "voyage-4-lite"): (0.02, 32_000, 1000, None),
+    ("voyage", "voyage-4-large"): (0.12, 32_000, 1000, None),
+    ("voyage", "voyage-code-3"): (0.18, 32_000, 1000, None),
+    ("voyage", "voyage-finance-2"): (0.12, 32_000, 1000, None),
+    ("voyage", "voyage-law-2"): (0.12, 16_000, 1000, None),
+    ("voyage", "voyage-multilingual-2"): (0.12, 32_000, 1000, None),
+    ("openai", "text-embedding-3-small"): (0.02, 8192, 2048, 300_000),
+    ("openai", "text-embedding-3-large"): (0.13, 8192, 2048, 300_000),
+    ("openai", "text-embedding-ada-002"): (0.10, 8192, 2048, 300_000),
+}
+
+
+def test_every_contract_carries_the_figures_read_on_the_capture_day():
+    assert (prices._AS_OF, prices._VALID_UNTIL) == REVIEWED_WINDOW
+    assert prices._FETCHED_AT.startswith(prices._AS_OF + "T")
+    assert f"embedding-direct-text-{prices._AS_OF}.1" == prices.RATE_CARD_VERSION
+    assert set(prices._CONTRACTS) == set(REVIEWED)
+    for key, (rate, per_item, inputs, tokens) in REVIEWED.items():
+        contract = prices._CONTRACTS[key]
+        assert contract.quote.rates == (rate, 0.0)
+        assert (contract.quote.as_of, contract.quote.valid_until) == REVIEWED_WINDOW
+        assert contract.max_input_tokens_per_item == per_item
+        assert contract.max_batch_inputs == inputs
+        assert contract.max_batch_tokens == tokens
+
+
 @pytest.mark.parametrize("model,rate", [
     ("text-embedding-3-small", 0.02), ("text-embedding-3-large", 0.13),
     ("text-embedding-ada-002", 0.10),

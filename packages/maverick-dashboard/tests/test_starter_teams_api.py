@@ -446,3 +446,37 @@ def test_team_authorization_requires_inherited_department_access(monkeypatch):
         native.require_team(request, {"specialists": ["custom_contract_fork"]})
     assert exc.value.status_code == 403
     assert "legal" in seen
+
+
+def test_a_fresh_owner_workspace_lists_every_starter_team(tmp_path, monkeypatch):
+    """No stubs: a fresh install's owner opens starter teams in their own workspace.
+
+    The workspace created for the owner was on the "free" billing plan, which
+    lacks the departments feature, so the catalog read "0 teams available".
+    A self-hosted install's own workspace is not gated by a billing plan.
+    """
+    from maverick import governed_records
+    from maverick.tenant.registry import get_tenant
+
+    governed_records._reset_process_authority_pin_for_testing()
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MAVERICK_SHORING", "1")
+    for name in ("MAVERICK_TENANT", "MAVERICK_DASHBOARD_TOKEN", "MAVERICK_ENTERPRISE", "MAVERICK_CLIENT_ID"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(world_model, "DEFAULT_DB", tmp_path / "world.db")
+    config.reset_config_cache()
+    try:
+        with TestClient(app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 53210),
+                        headers={"Origin": "http://127.0.0.1:8765"}, follow_redirects=False) as client:
+            enrolled = client.post("/auth/local-owner", data={
+                "email": "owner@example.com", "confirm": "yes",
+                "password": "a long local owner fixture phrase"})  # pragma: allowlist secret
+            assert enrolled.status_code == 303, enrolled.text
+            response = client.get(BASE)
+            assert response.status_code == 200, response.text
+            assert len(response.json()["teams"]) == 37
+        assert get_tenant("local").plan == "self-hosted"
+    finally:
+        governed_records._reset_process_authority_pin_for_testing()
+        config.reset_config_cache()

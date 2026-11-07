@@ -71,7 +71,10 @@ def _run_phase(phase: str) -> dict:
         if phase == "first":
             active = client.get("/api/v1/workspace/active-tenant")
             assert active.status_code == 200, active.text
-            assert active.json()["tenant_id"] is None
+            # The owner starts in the first workspace; the browser client
+            # sends the rendered workspace on writes.
+            assert active.json()["tenant_id"] == "local"
+            client.headers["X-Lightwork-Expected-Tenant"] = "local"
             created = client.post("/api/v1/admin/tenants", json={
                 "id": WORKSPACE, "display_name": "Restart acceptance workspace",
                 "plan": "free",

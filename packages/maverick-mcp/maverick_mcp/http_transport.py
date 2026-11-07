@@ -22,7 +22,10 @@ Usage::
     MAVERICK_MCP_TOKEN=secret maverick mcp --http --port 8771
 
 Security:
-  - Bearer-token auth required when MAVERICK_MCP_TOKEN is set.
+  - Every HTTP request needs a bearer token: the shared token
+    (MAVERICK_MCP_TOKEN or ``[mcp] token``) or a per-caller
+    ``[agent_trust] mcp_token``. With neither configured, every request
+    is refused with 401.
   - Per the 2025-11-25 spec, server runs as an OAuth resource server;
     it checks a bearer token and does not implement the full OAuth flow.
   - All requests are routed through the same MCPServer.handle_*

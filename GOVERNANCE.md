@@ -1,6 +1,6 @@
 # Governance
 
-Lightwork is a maintainer-led open-source project developed by Daybreak Labs.
+Lightwork is a maintainer-led open-source project developed by Daybreak AI Labs.
 This document describes how decisions are made today and how contributors
 become maintainers. It will change as the project grows; changes
 to it are made through a pull request like any other change.

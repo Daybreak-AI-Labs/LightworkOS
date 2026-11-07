@@ -99,7 +99,7 @@ ROLE_MODELS: dict[str, str] = {
 # and verification status that justify those floats. Every row must exactly
 # match the tracked evidence pack. Rows whose current official source could not
 # be captured remain available for planning, but cannot cross the billing gate.
-MODEL_RATE_CARD_VERSION = "2026-09-13.1"
+MODEL_RATE_CARD_VERSION = "2026-11-05.1"
 _PRICING_EVIDENCE = load_pricing_evidence_pack()
 
 
@@ -196,8 +196,8 @@ MODEL_PRICING_PROVIDER = VersionedPricingProvider(
         # The evidence pack records both the direct list prices and the exact
         # ceiling policy, so a flat ModelPrice cannot undercount either tier.
         _model_price("gpt-6-astra", (27.5, 82.5), evidence_id="openai-standard-ceiling-2026-09-13"),
-        _model_price("gpt-5.6-sol", (11.0, 33.0), evidence_id="openai-sol-promo-ceiling-2026-09-13"),
-        _model_price("gpt-5.6", (11.0, 33.0), evidence_id="openai-sol-promo-ceiling-2026-09-13"),
+        _model_price("gpt-5.6-sol", (11.0, 33.0), evidence_id="openai-sol-promo-ceiling-2026-11-05"),
+        _model_price("gpt-5.6", (11.0, 33.0), evidence_id="openai-sol-promo-ceiling-2026-11-05"),
         _model_price("gpt-5.6-terra", (5.5, 19.8), evidence_id="openai-standard-ceiling-2026-09-13"),
         _model_price("gpt-5.6-luna", (0.55, 1.98), evidence_id="openai-standard-ceiling-2026-09-13"),
         _model_price(

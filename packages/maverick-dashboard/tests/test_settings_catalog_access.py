@@ -721,6 +721,8 @@ def test_partial_saml_save_cannot_strand_local_owner_after_sign_out(audit_rows):
         response = owner.post("/auth/local-owner", data={
             "email": "owner@example.com", "password": password, "confirm": "yes"})
         assert response.status_code == 303, response.text
+        # The owner starts in the first workspace; the browser client sends its guard.
+        owner.headers["X-Lightwork-Expected-Tenant"] = "local"
         # Disabled OIDC details can be staged without closing owner recovery.
         assert _save([{"id": "auth.oidc.client_id", "value": "lightwork"}],
                      http=owner).status_code == 200

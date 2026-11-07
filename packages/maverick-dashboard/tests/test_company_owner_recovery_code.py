@@ -100,7 +100,9 @@ def owner(clock):
 
 def client(*, raise_server_exceptions=True):
     from maverick_dashboard.app import app
-    return TestClient(app, base_url=ORIGIN, client=("127.0.0.1", 53210), headers={"Origin": ORIGIN},
+    # The owner starts in the first workspace; the browser client sends its guard.
+    return TestClient(app, base_url=ORIGIN, client=("127.0.0.1", 53210),
+                      headers={"Origin": ORIGIN, "X-Lightwork-Expected-Tenant": "local"},
                       follow_redirects=False, raise_server_exceptions=raise_server_exceptions)
 
 

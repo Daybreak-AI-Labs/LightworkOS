@@ -102,7 +102,7 @@
     </form>
   </section>{% endif %}
 
-  {% if learning_capture_panel %}<section class="panel fr__example" id="lx-card" aria-labelledby="lx-title" data-flow-id="{{ flow_id }}" data-run-id="{{ run_id }}">
+  {% if learning_capture_panel %}<section class="panel fr__example" id="lx-card" aria-labelledby="lx-title" data-capture="{{ 'on' if learning_capture_on else 'off' }}" data-flow-id="{{ flow_id }}" data-run-id="{{ run_id }}">
     <h2 id="lx-title">Keep this run as a learning example</h2>
     <p id="lx-status" role="status" aria-live="polite" tabindex="-1">Checking whether this run can be an example…</p>
     <div class="fr__actions"><button type="button" class="btn btn--ghost" id="lx-refresh">Check current status</button></div>

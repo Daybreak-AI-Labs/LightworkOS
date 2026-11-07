@@ -59,6 +59,7 @@ from maverick.runtime_overrides import RuntimeOverridesSecurityError
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from . import __version__ as _dashboard_version
 from . import auth_metrics as _auth_metrics
 from . import (
     capability_assessment_controls_api,
@@ -956,11 +957,14 @@ def _warm_dashboard_caches(stop: threading.Event | None = None) -> dict[str, flo
 
     def _routes() -> None:
         # Request routing needs these contexts; materialising them here avoids
-        # paying for the full schema build (seconds of extra CPU).
+        # paying for the full schema build (seconds of extra CPU). The route
+        # memory's check walks them too; run here, the first request skips it.
+        from .route_dispatch import validate
         from .route_identity import iter_compatible_route_contexts
 
         for _context in iter_compatible_route_contexts(app.routes):
             pass
+        validate(app.router)
 
     def _shield() -> None:
         from maverick.orchestrator import _build_shield
@@ -1445,7 +1449,8 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
     description="Local browser UI plus REST API for programmatic access.",
-    version="0.1.0",
+    # The installed maverick-dashboard release (see maverick_dashboard.__version__).
+    version=_dashboard_version,
     # Global authentication dependency, applied to every route. It composes
     # proxy/OIDC/SAML/invite sessions and the static dashboard bearer, while
     # preserving same-origin loopback mode only when authentication is genuinely
@@ -14721,7 +14726,7 @@ async def natural_voice_js() -> FileResponse:
 
 @app.get("/static/daybreak-logo.jpg")
 async def brand_logo() -> FileResponse:
-    """The Daybreak Labs brand logo, served same-origin for the sidebar brand,
+    """The Daybreak AI Labs brand logo, served same-origin for the sidebar brand,
     the favicon, and the public share view. Auth-exempt by nature (a brand
     image), cached a day."""
     return FileResponse(
@@ -14733,7 +14738,7 @@ async def brand_logo() -> FileResponse:
 
 @app.get("/static/daybreak-mark.png")
 async def brand_mark() -> FileResponse:
-    """The Daybreak Labs mark (the circuit-sunrise D) used by the topbar brand.
+    """The Daybreak AI Labs mark (the circuit-sunrise D) used by the topbar brand.
     Public by nature, cached a day."""
     return FileResponse(
         _STATIC_DIR / "daybreak-mark.png",
@@ -15153,11 +15158,20 @@ async def flow_run_page(request: Request, flow_id: str, run_id: str) -> HTMLResp
     failed step). Data comes from /api/v1/flows/runs/{run_id} client-side, so
     owner-scoping and the flow-engine gate are enforced by the API."""
 
+    from maverick.config import get_flows
+
     signed_in = bool(caller_principal(request))
+    try:
+        capture_on = get_flows().get("action_episode_capture") is True
+    except Exception:  # an unreadable setting leaves the panel's own checks to explain
+        capture_on = True
     return templates.TemplateResponse(request, "flow_run.html", {
         "flow_id": flow_id, "run_id": run_id,
         "learning_example_panel": signed_in,
         "learning_capture_panel": signed_in,
+        # With example collection off the keep-as-example panel says so
+        # instead of probing APIs that refuse while it is off.
+        "learning_capture_on": capture_on,
     })
 
 

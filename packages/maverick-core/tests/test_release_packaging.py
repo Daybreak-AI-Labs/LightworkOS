@@ -403,7 +403,7 @@ def test_core_wheel_includes_tracked_pricing_evidence():
     )
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert evidence["schema_version"] == 1
-    assert evidence["rate_card_version"] == "2026-09-13.1"
+    assert evidence["rate_card_version"] == "2026-11-05.1"
 
 
 def _literal_source_version(path: Path) -> str:

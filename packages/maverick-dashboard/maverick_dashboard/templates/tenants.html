@@ -97,7 +97,7 @@
               <td>
                   <label class="sr-only" for="plan-{{ loop.index }}">Plan for {{ action_name }}</label>
                 <select class="select" id="plan-{{ loop.index }}" data-tenant-plan="{{ t.id }}" data-current="{{ t.plan }}">
-                  {% for p in ('free', 'pro', 'enterprise') %}<option value="{{ p }}"{% if t.plan == p %} selected{% endif %}>{{ p | capitalize }}</option>{% endfor %}
+                  {% for p in ('free', 'pro', 'enterprise', 'self-hosted') %}<option value="{{ p }}"{% if t.plan == p %} selected{% endif %}>{{ p | capitalize }}</option>{% endfor %}
                 </select>
               </td>
               {% endif %}
