@@ -1167,6 +1167,89 @@ def test_a_json_string_with_a_raw_control_character_is_still_read_as_json(sent, 
     assert out.startswith("ERROR:") and "application/json" in out and asked == []
 
 
+@pytest.mark.parametrize("body", [
+    '{"password":"hunter2-correct-horse"};',  # pragma: allowlist secret
+    '{"password":"hunter2-correct-horse"}]',  # pragma: allowlist secret
+    '{"user":"ops","password":"hunter2-correct-horse"}\n--',  # pragma: allowlist secret
+    '{"password": "hunter2-correct-horse"',  # pragma: allowlist secret
+], ids=["semicolon", "bracket", "trailing-text", "unclosed"])
+def test_a_form_body_that_begins_as_json_with_a_sensitive_value_is_refused(sent, monkeypatch, body):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body, "headers": _FORM})
+    assert out.startswith("ERROR:") and "application/json" in out and asked == [] and sent == []
+
+
+@pytest.mark.parametrize("body", ["[filter]=open&page=2", '{"note":"x"}}&page=2'], ids=["bracket-name", "json-like"])
+def test_a_form_body_that_only_begins_like_json_is_still_shown(sent, monkeypatch, body):
+    assert "page=2" in _real_card(monkeypatch, body, _FORM)
+
+
+@pytest.mark.parametrize("body,secret", [
+    ('{"password":4111-1111-1111-1111}', "1111-1111"),
+    ('{"password":1hunter2abc}', "hunter2abc"),  # pragma: allowlist secret
+    ('{"password":nullhunter2abc}', "hunter2abc"),  # pragma: allowlist secret
+    ('{"password":2024 11 07}', "11 07"),
+    ('{"password":0x68756e746572}', "68756e746572"),
+    ('{"password":-1.5e3hunter2abc}', "hunter2abc"),  # pragma: allowlist secret
+    ('{"password":"abc"hunter2abc}', "hunter2abc"),  # pragma: allowlist secret
+], ids=["card-number", "digit-first", "literal-first", "spaced-numbers", "hex", "exponent", "after-a-string"])
+def test_a_sensitive_value_that_runs_on_past_its_first_token_stays_hidden(sent, monkeypatch, body, secret):
+    assert secret not in _real_card(monkeypatch, body, {"Content-Type": "application/json"})
+
+
+def test_escaped_quotes_are_read_within_one_budget_for_the_whole_body(sent):
+    from maverick.tools.http_fetch import _readable_body
+
+    escaped = '"' + '\\"' * 150_000 + '"'
+    body = '{"password": [' + escaped + ", " + escaped + '], "note": "kept"}'  # pragma: allowlist secret
+    readable, complete = _readable_body(body, {"Content-Type": "application/json"})
+    assert not complete and "kept" not in readable
+
+
+@pytest.mark.parametrize("backslashes,end", [(1000, 1002), (1001, 1005)], ids=["even", "odd"])
+def test_a_long_run_of_backslashes_before_a_quote_is_read_as_json_reads_it(sent, backslashes, end):
+    from maverick.tools.http_fetch import _string_end
+
+    assert _string_end('"' + "\\" * backslashes + '"x"', 0) == end
+
+
+def test_a_dense_query_holding_a_connection_string_scheme_is_still_shown(sent, monkeypatch):
+    shown = _real_card(monkeypatch, "x", url="https://api.example.test/v1/import?src=redis://cache" + "&a=1" * 1700)
+    assert "src=redis://cache" in shown
+
+
+_ENV_TOKEN = "Zq8vT3pLmN0xR7wK2yB5Hc4MkL3pQ9vXz7Rt2WbN"  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize("url,headers,body", [
+    ("https://api.example.test/v1/import", _FORM, "certificate=x&config=DB_PASSWORD=" + _ENV_TOKEN + "&tail=z"),
+    ("https://api.example.test/v1/import?config=DB_PASSWORD=" + _ENV_TOKEN, {}, "x"),
+    ("https://api.example.test/v1/import", _FORM,
+     "certificate=" + "A" * 7950 + "&config=DB_PASSWORD=" + _ENV_TOKEN + "%20&tail=" + "z" * 3000),
+], ids=["form", "query", "form-cut-by-the-read"])
+def test_an_env_style_secret_inside_a_pair_value_is_hidden(sent, monkeypatch, url, headers, body):
+    assert _ENV_TOKEN not in _real_card(monkeypatch, body, headers, url=url)
+
+
+@pytest.mark.parametrize("body,secret", [
+    ("certificate=" + "A" * 7955 + "&backup=postgres://admin:SuperSecretPassw0rdXYZ@ &tail=" + "z" * 3000,  # pragma: allowlist secret
+     "SuperSec"),
+    ("certificate=" + "A" * 7940 + "&backup=postgres%3A%2F%2Fadmin%3ASuperSecretPassw0rdXYZ%40%20&tail="  # pragma: allowlist secret
+     + "z" * 3000, "SuperSecretPass"),
+], ids=["raw-space", "escaped-space"])
+def test_a_connection_string_with_no_host_the_read_cuts_keeps_no_part(sent, monkeypatch, body, secret):
+    assert secret not in _real_card(monkeypatch, body, _FORM)
+
+
+def test_an_azure_connection_string_the_read_cuts_keeps_nothing(sent, monkeypatch):
+    body = ("sk-" + "A" * 7596 + " DefaultEndpointsProtocol=https;AccountName=contoso" + "x" * 1500
+            + ";AccountKey=" + _STORAGE_KEY + " tail" * 600)
+    assert "AccountName=contoso" not in _real_card(monkeypatch, body)
+
+
 def test_connector_cards_hide_secrets_within_each_value(sent):
     """Governed connector approval cards share the per-value rule."""
     from maverick.governed_tools import _approval_request_parts

@@ -531,11 +531,12 @@ def _reviewed_url(url: str) -> str:
     return f"{shown} ? {query}" if spaced else f"{shown}?{query}"
 
 
-def _hidden_secrets(text: str) -> str:
-    """``text`` with anything that looks like a key or token hidden."""
+def _hidden_secrets(text: str, also_from: tuple[int, ...] = ()) -> str:
+    """``text`` with anything that looks like a key or token hidden (see
+    ``governed_tools._hidden_secret_text``)."""
     from ..governed_tools import _hidden_secret_text
 
-    return _hidden_secret_text(text)
+    return _hidden_secret_text(text, also_from=also_from)
 
 
 def _has_secret(text: str) -> bool:
@@ -558,28 +559,13 @@ _CUT_MARGIN = 1000
 # Text that completes whatever a secret pattern (maverick.safety.secret_detector)
 # could still need after a read ends: a token's remaining parts, the rest of a
 # connection string's credentials and host, a closing quote of either kind, a
-# private key's END line, and the rest of a flow-approval token's payload and
-# its signature (after a letter of another script the token pattern still
-# finds one, while the first completion's pattern does not). A secret those
-# patterns find across the end of the read is one the read cut, and is kept
-# not at all.
-_COMPLETIONS = ("a.a.a", "a:a@a", "\"'", "\n-----END PRIVATE KEY-----", "0" * 64 + "." + "0" * 64)
-
-
-def _collapsed_with_positions(text: str) -> tuple[str, list[int]]:
-    """``text`` with each run of spacing made one space, and for each of its
-    characters the position it came from."""
-    shown, positions, spacing = [], [], False
-    for position, character in enumerate(text):
-        if character.isspace():
-            if spacing:
-                continue
-            character, spacing = " ", True
-        else:
-            spacing = False
-        shown.append(character)
-        positions.append(position)
-    return "".join(shown), positions
+# private key's END line, the rest of a flow-approval token's payload and its
+# signature (after a letter of another script the token pattern still finds
+# one, while the first completion's pattern does not), and the key an Azure
+# connection string's account name runs on to. A secret those patterns find
+# across the end of the read is one the read cut, and is kept not at all.
+_COMPLETIONS = ("a.a.a", "a:a@a", "\"'", "\n-----END PRIVATE KEY-----", "0" * 64 + "." + "0" * 64,
+                ";AccountKey=" + "A" * 40)
 
 
 def _decoded_with_positions(text: str) -> tuple[str, list[int]]:
@@ -611,11 +597,13 @@ def _readings(text: str, *, decoded: bool, written: bool = True) -> list[tuple[s
     the position in ``text`` its writing starts at: as written (unless the
     caller already read it so), percent-decoded (for a form), and each of
     those with its spacing made single spaces."""
+    from ..governed_tools import _spaced_with_positions
+
     readings = [(text, list(range(len(text))))] if written else []
     if decoded:
         readings.append(_decoded_with_positions(text))
     for reading, positions in list(readings):
-        collapsed, inner = _collapsed_with_positions(reading)
+        collapsed, inner = _spaced_with_positions(reading)
         readings.append((collapsed, [positions[index] for index in inner]))
     seen: set[str] = set()
     return [(reading, positions) for reading, positions in readings
@@ -718,11 +706,14 @@ def _pairs_window(text: str) -> tuple[str, bool]:
     part = window[start:stop]
     name, sep, value = part.partition("=")
     spans, opens = _secret_bounds(part, cut=stop == len(window))
-    for offset, piece in ((0, name), (len(name) + len(sep), value)):
-        if unquote_plus(piece) == piece:
+    # The name decoded, and the value on its own as written and decoded, as
+    # _reviewed_part reads them.
+    for offset, piece, alone in ((0, name, False), (len(name) + len(sep), value, bool(sep))):
+        decoded = unquote_plus(piece) != piece
+        if not (decoded or alone):
             continue  # read as written above
-        more, more_opens = _secret_bounds(piece, decoded=True, cut=start + offset + len(piece) == len(window),
-                                          written=False)
+        more, more_opens = _secret_bounds(piece, decoded=decoded, cut=start + offset + len(piece) == len(window),
+                                          written=alone)
         spans += [(begin + offset, finish + offset) for begin, finish in more]
         opens += [begin + offset for begin in more_opens]
     return window[:start + _settled_end(end - start, spans, opens)], False
@@ -738,7 +729,8 @@ def _hidden_beginning(text: str) -> tuple[str, bool]:
 def _reviewed_part(part: str) -> str:
     """One ``name=value`` part as a server reads it: the whole value hidden
     under a sensitive name; otherwise anything that looks like a key or token
-    hidden within the part, read as written and percent-decoded (a secret
+    hidden within the part, and within its value read on its own (where an
+    env-style NAME=value starts), as written and percent-decoded (a secret
     found only once decoded hides its whole value, or the whole part when it
     is in the name)."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
@@ -752,7 +744,7 @@ def _reviewed_part(part: str) -> str:
         return "[REDACTED:secret]"
     if sep and unquote_plus(value) != value and _has_secret(unquote_plus(_hidden_secrets(value))):
         return f"{_hidden_secrets(name)}=[REDACTED:secret]"
-    return _hidden_secrets(part)
+    return _hidden_secrets(part, also_from=(len(name) + 1,) if sep else ())
 
 
 def _reviewed_pair(piece: str) -> list[str]:
@@ -770,12 +762,14 @@ def _reviewed_pair(piece: str) -> list[str]:
 
 def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) -> tuple[str, bool]:
     """``name=value`` pairs (a query string or form body) as ``_reviewed_pair``
-    reads each, joined by "&", or by " & " in a form body (the card checks a
-    body from its start, where an env-style first pair would run on to the
-    next space) or where they hold a connection-string scheme. Of a long text only ``_VALUE_WINDOW`` characters are read, and the
-    end of what was read after hiding is dropped; reading also stops once more
-    than ``limit`` characters are written. Returns the text and whether all of
-    it was read."""
+    reads each, joined by "&" (";" between parts of one). In a form body a
+    space follows each pair and part (the card checks a body from its start,
+    where an env-style first pair would run on to the next space); elsewhere
+    only those holding a connection-string scheme, which that pattern would
+    run on from, so a dense query string costs no more room for one. Of a long
+    text only ``_VALUE_WINDOW`` characters are read, and the end of what was
+    read after hiding is dropped; reading also stops once more than ``limit``
+    characters are written. Returns the text and whether all of it was read."""
     window, whole = _pairs_window(text)
     written, size = [], 0
     for index, piece in enumerate(window.split("&")):
@@ -785,9 +779,13 @@ def _reviewed_pairs(text: str, limit: int | None = None, *, form: bool = False) 
         if limit is not None and size > limit and index < window.count("&"):
             whole = False
             break
-    spaced = form or any(_CONNECTION_SCHEME.search(part) for parts in written for part in parts)
-    pair_joiner, part_joiner = (" & ", " ; ") if spaced else ("&", ";")
-    return pair_joiner.join(part_joiner.join(parts) for parts in written), whole
+    def joined(pieces: list[str], separator: str) -> str:
+        return "".join(
+            piece + (f" {separator} " if form or _CONNECTION_SCHEME.search(piece) else separator)
+            for piece in pieces[:-1]
+        ) + (pieces[-1] if pieces else "")
+
+    return joined([joined(parts, ";") for parts in written], "&"), whole
 
 
 def _bounded_preview(text: str, limit: int) -> str:
@@ -815,21 +813,27 @@ _JSON_TOKEN = re.compile(
 _REVIEW_SCANNED = 4 * _VALUE_WINDOW
 
 
-def _string_end(text: str, start: int) -> int:
+_BACKSLASHES = re.compile(r"\\+\Z")
+
+
+def _string_end(text: str, start: int, budget: dict[str, Any] | None = None) -> int:
     """Where the JSON string starting at ``start`` (its opening quote) ends,
-    just past its closing quote, found without a pattern so a long string
-    costs no memory per character; -1 if it holds more escaped quotes than a
-    card reads (the read then stops there). Raises ``_NotJson`` if it never
-    closes."""
+    just past its closing quote, found without copying it, so a long string
+    costs no memory per character; -1 once more escaped quotes are read than
+    a card reads for one body (``budget``, shared by every string in it, so
+    hidden values full of them cannot hold the card either; the read then
+    stops there). Raises ``_NotJson`` if it never closes."""
+    budget = {"quotes": _REVIEW_TOKENS} if budget is None else budget
     position = start + 1
-    for _ in range(_REVIEW_TOKENS):
+    while budget["quotes"] > 0:
+        budget["quotes"] -= 1
         quote = text.find('"', position)
         if quote < 0:
             raise _NotJson
-        backslash = quote - 1
-        while text[backslash] == "\\":
-            backslash -= 1
-        if (quote - 1 - backslash) % 2 == 0:
+        # The backslashes right before it, read in one pass: an even number of
+        # them (none included) leaves the quote unescaped.
+        run = _BACKSLASHES.search(text, position, quote)
+        if run is None or (run.end() - run.start()) % 2 == 0:
             return quote + 1
         position = quote + 1
     return -1
@@ -837,16 +841,21 @@ def _string_end(text: str, start: int) -> int:
 
 class _NotJson(ValueError):
     """The body is not JSON. Where it begins as JSON, ``read`` is how that
-    beginning is shown and ``rest`` where the text that is not JSON starts
-    (-1 where that text stands for a sensitive value, so none is shown)."""
+    beginning is shown, ``rest`` where the text that is not JSON starts (-1
+    where that text stands for a sensitive value, so none is shown), and
+    ``hid`` whether a sensitive value was hidden before it."""
 
-    def __init__(self, read: str = "", rest: int = -1) -> None:
+    def __init__(self, read: str = "", rest: int = -1, hid: bool = False) -> None:
         super().__init__("the body is not JSON")
-        self.read, self.rest = read, rest
+        self.read, self.rest, self.hid = read, rest, hid
 
 
-def _track_bracket(stack: list[str], token: str) -> None:
-    """Keep the stack of open containers; raises ``_NotJson`` on a mismatch."""
+def _track_bracket(stack: list[str], token: str, after_value: bool = False) -> None:
+    """Keep the stack of open containers; raises ``_NotJson`` on a mismatch,
+    or on a value that follows another (``after_value``) inside a container
+    with nothing between."""
+    if stack and after_value and token not in (",", ":", "}", "]"):
+        raise _NotJson
     if token in ("{", "["):
         stack.append(token)
     elif token in ("}", "]") and (not stack or stack.pop() != {"}": "{", "]": "["}[token]):
@@ -890,16 +899,17 @@ def _key_is_sensitive(token: str) -> bool:
     return not whole or _sensitive_request_key(key)
 
 
-def _next_token(text: str, position: int) -> tuple[str, int]:
+def _next_token(text: str, position: int, budget: dict[str, Any] | None = None) -> tuple[str, int]:
     """The JSON token at ``position`` and where the next one starts. Of a
     long string only the beginning a card can show is copied; one too long to
-    find its end comes back cut, with -1 for where the next token starts."""
+    find its end (see ``_string_end``) comes back cut, with -1 for where the
+    next token starts."""
     if text[position] != '"':
         match = _JSON_TOKEN.match(text, position)
         if match is None:
             raise _NotJson
         return match.group(), match.end()
-    end = _string_end(text, position)
+    end = _string_end(text, position, budget)
     if end < 0:
         return text[position:position + _VALUE_WINDOW + 1001], -1
     shown = text[position:min(end, position + _VALUE_WINDOW + 1000)]
@@ -917,36 +927,40 @@ def _reviewed_json(text: str, limit: int) -> tuple[str, bool]:
     was read. Raises ``_NotJson``, carrying what was read where the body
     begins as JSON (many servers read a body's first value and ignore the
     rest, and a reader that stops at a mistake has read what came before)."""
-    read: dict[str, Any] = {"written": [], "start": 0, "hiding": False}
+    read: dict[str, Any] = {"written": [], "start": 0, "hiding": False, "hid": False, "quotes": _REVIEW_TOKENS}
     try:
         return _read_json(text, limit, read)
     except _NotJson:
         shown = "".join(read["written"]).strip()
         if not shown:
             raise
-        raise _NotJson(shown, -1 if read["hiding"] else read["start"]) from None
+        raise _NotJson(shown, -1 if read["hiding"] else read["start"], read["hid"]) from None
 
 
 def _read_json(text: str, limit: int, read: dict[str, Any]) -> tuple[str, bool]:
     """``_reviewed_json``, token by token. ``read`` keeps what is written,
-    where the token being read starts, and whether it is part of a hidden
-    value."""
+    where the token being read starts, whether it is part of a hidden value
+    (as is anything that runs on from one with nothing between), whether a
+    sensitive value was hidden, and how many escaped quotes may still be
+    read. Inside an object or array a value must be followed by ",", ":" or
+    its closing bracket: a value that runs on past its first token (an
+    unquoted 4111-1111) is not read as two."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE
 
     hidden = json.dumps(_REDACTED_REQUEST_VALUE)
     position = 1 if text.startswith("\ufeff") else 0
     written, size = read["written"], 0
     stack: list[str] = []
-    expect_key = sensitive_key = hide_next = ended = spaced = False
+    expect_key = sensitive_key = hide_next = ended = spaced = after_value = after_hidden = False
     scanned = 0
     skip_to: int | None = None  # while a hidden container is read: its depth
     for _ in range(_REVIEW_TOKENS):
-        read["start"], read["hiding"] = position, hide_next or skip_to is not None
+        read["start"], read["hiding"] = position, hide_next or skip_to is not None or after_hidden
         if position >= len(text):
             if not ended:
                 raise _NotJson
             return "".join(written).strip(), True
-        token, position = _next_token(text, position)
+        token, position = _next_token(text, position, read)
         if position < 0:  # a string too long to find its end: the read stops in it
             if skip_to is None and not expect_key:
                 written.append(hidden if hide_next else _reviewed_string(token)[0])
@@ -960,16 +974,18 @@ def _read_json(text: str, limit: int, read: dict[str, Any]) -> tuple[str, bool]:
         if ended and not spaced:  # a value right after another: shown apart
             written.append(" ")
             size += 1
-        _track_bracket(stack, token)
+        _track_bracket(stack, token, after_value)
+        after_value = token not in ("{", "[", ",", ":")
+        after_hidden = after_hidden and token not in (",", "}", "]")
         if skip_to is not None:  # inside a hidden container
             if len(stack) == skip_to:
-                skip_to, ended = None, not stack
+                skip_to, ended, after_hidden = None, not stack, True
             continue
         if token == ":":
             hide_next, sensitive_key = sensitive_key, False
             piece = token
         elif hide_next:
-            hide_next, piece = False, hidden
+            hide_next, piece, after_hidden, read["hid"] = False, hidden, True, True
             if token in ("{", "["):
                 skip_to = len(stack) - 1
         elif token[0] == '"':
@@ -1010,7 +1026,10 @@ def _readable_body(text: str, headers: dict) -> tuple[str, bool]:
     except _NotJson as exc:
         readable, complete, leading = None, False, exc
     if _is_form_body(headers):
-        if readable is not None and text.lstrip("\ufeff \t\r\n")[:1] in ("{", "["):
+        # Refused where read as JSON it hides a sensitive value the form
+        # reading would show: wholly JSON, or beginning so.
+        sensitive = readable is not None or leading.hid or bool(leading.read and leading.rest < 0)
+        if sensitive and text.lstrip("\ufeff \t\r\n")[:1] in ("{", "["):
             raise ApprovalCardError(
                 "the body is JSON but its Content-Type names a form; send it as "
                 "application/json"

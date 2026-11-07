@@ -584,18 +584,25 @@ def _value_secrets(reading: str) -> list[tuple[int, int, str]]:
     return [(start, min(stop, len(reading)), name) for start, stop, name in found if start < len(reading)]
 
 
-def _hiding_spans(text: str) -> tuple[list[tuple[int, int, str]], bool]:
+def _hiding_spans(text: str, also_from: tuple[int, ...] = ()) -> tuple[list[tuple[int, int, str]], bool]:
     """Where in ``text`` anything that looks like a key or token lies, and
     whether reading its spacing as single spaces found more. ``text`` is read
     as written (line starts count) and with its spacing made single spaces as
     the card shows it, each reading of ``text`` itself, so a secret one of
-    them finds is never broken up by hiding what the other found first."""
+    them finds is never broken up by hiding what the other found first. The
+    text from each position in ``also_from`` (a pair's value) is read the same
+    way on its own too."""
     spans = _value_secrets(text)
     spaced, positions = _spaced_with_positions(text)
-    if spaced == text:
+    more = [] if spaced == text else [
+        (positions[start], positions[stop] if stop < len(positions) else len(text), name)
+        for start, stop, name in _value_secrets(spaced)]
+    for offset in also_from:
+        alone, alone_spaced = _hiding_spans(text[offset:])
+        (more if alone_spaced else spans).extend(
+            (start + offset, stop + offset, name) for start, stop, name in alone)
+    if not more:
         return spans, False
-    more = [(positions[start], positions[stop] if stop < len(positions) else len(text), name)
-            for start, stop, name in _value_secrets(spaced)]
     covered = [(start, stop) for start, stop, _name in _clusters(spans)]
     return spans + more, [(start, stop) for start, stop, _name in _clusters(spans + more)] != covered
 
@@ -611,11 +618,11 @@ def _clusters(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
     return clusters
 
 
-def _hidden_secret_text(text: str) -> str:
+def _hidden_secret_text(text: str, *, also_from: tuple[int, ...] = ()) -> str:
     """``text`` with anything in it that looks like a key or token hidden (see
     ``_hiding_spans``); where single spacing found more, the spacing is shown
     as single spaces too."""
-    spans, spaced = _hiding_spans(text)
+    spans, spaced = _hiding_spans(text, also_from)
     pieces, written = [], 0
     for start, stop, name in _clusters(spans):
         pieces += [text[written:start], f"[REDACTED:{name}]"]
