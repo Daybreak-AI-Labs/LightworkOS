@@ -4753,19 +4753,21 @@ def serve(ctx: click.Context, max_depth: int, verbose: bool) -> None:
         sys.exit(2)
     server.max_depth = max_depth
     click.echo("Lightwork serve running. Ctrl-C to stop.")
-    _stop_on_sigterm()
+    stopping = _stop_on_sigterm()
     try:
         asyncio.run(server.run())
     except KeyboardInterrupt:
         click.echo("\nshutting down...")
         asyncio.run(server.stop())
+    _finish_sigterm(stopping)
 
 
-def _stop_on_sigterm() -> None:
+def _stop_on_sigterm() -> list[bool]:
     """Stop on SIGTERM as on Ctrl-C, so every channel closes cleanly. The
     dashboard's Stop and Restart, systemd and container runtimes send SIGTERM,
     whose default ends the process before any channel can close. Windows ends
-    the process without a signal Python can handle.
+    the process without a signal Python can handle. Returns a list that holds
+    True once a SIGTERM has arrived (see _finish_sigterm).
 
     Only the first SIGTERM is passed on: the dashboard's shutdown and a
     one-file build's launcher send it again, and asyncio turns a second Ctrl-C
@@ -4775,9 +4777,9 @@ def _stop_on_sigterm() -> None:
     its default."""
     import signal
 
+    stopping: list[bool] = []
     if os.name == "nt" or signal.getsignal(signal.SIGINT) is not signal.default_int_handler:
-        return
-    stopping = []
+        return stopping
 
     def stop(_signum, _frame):
         if not stopping:
@@ -4788,6 +4790,20 @@ def _stop_on_sigterm() -> None:
         signal.signal(signal.SIGTERM, stop)
     except ValueError:  # not the main thread: the default stays
         pass
+    return stopping
+
+
+def _finish_sigterm(stopping: list[bool]) -> None:
+    """After a SIGTERM the channels are closed: end the process as SIGTERM
+    always ended it, instead of waiting at exit for local goals to finish."""
+    if not stopping:
+        return
+    import signal
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.raise_signal(signal.SIGTERM)
 
 
 @main.command("history")

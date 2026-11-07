@@ -60,11 +60,13 @@ are waiting from its first published status, and one that cannot read them yet
 is reported as not reporting. The status is updated after each scan and before
 each reply is worked on, renewed every 30 seconds, even while the worker is
 busy with a long reply (a write that fails is tried again every few seconds),
-and removed when the worker stops. `maverick serve`
-stops on the first SIGTERM as on Ctrl-C, so the dashboard's Stop and Restart
-remove it (a repeated SIGTERM does not cut the close short; whoever sent it
-ends the process if it does not stop in time). Started with Ctrl-C ignored, as
-a script's background job is, it ends on SIGTERM at once, as before. On
+and removed when the worker stops. On the first SIGTERM
+`maverick serve` closes its channels as on Ctrl-C, so the dashboard's Stop and
+Restart remove it, then ends as SIGTERM always ended it, without waiting for a
+local goal still running (a repeated SIGTERM does not cut the close short;
+whoever sent it ends the process if it does not stop in time). Started with
+Ctrl-C ignored, as a script's background job is, it ends on SIGTERM at once,
+as before. On
 Windows, where a stop ends the process without a signal it can handle, the
 last status stays until it is 100 seconds old. One that has not been renewed
 for 100 seconds is reported as not current, never as nothing held: a chat
