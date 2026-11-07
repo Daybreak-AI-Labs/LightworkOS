@@ -419,7 +419,7 @@ jobs:
         run: |
           set -x
           python -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           # Resolve all first-party base dependencies together so pip-audit
           # sees the complete cohort plus the document-processing surface.
@@ -455,7 +455,7 @@ jobs:
           # PYSEC-2026-196; 26.1.2 patches it. Bump pip to the fixed floor
           # before auditing so the gate reflects our shipped dependency tree,
           # not a stale CVE in the runner's own tooling.
-          python -m pip install --upgrade 'pip==26.2.2' 'setuptools==84.2.1'
+          python -m pip install --upgrade 'pip==26.3' 'setuptools==84.2.1'
           python -m pip install 'pip-audit==2.10.1'
           pip-audit
       - name: pip-audit every reviewed optional-dependency lock entry
@@ -567,7 +567,7 @@ jobs:
           SBOM_ENV="$RUNNER_TEMP/lightwork-ci-release-runtime"
           python -m venv "$SBOM_ENV"
           "$SBOM_ENV/bin/python" -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           python scripts/install_release_cohort.py \
             --source-root . \
@@ -910,7 +910,7 @@ jobs:
         run: |
           set -x
           python -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           python -m pip install \
             -e './packages/maverick-core[openai,evidence-analysis,spreadsheet,pdf,postgres]' \
@@ -1163,7 +1163,7 @@ jobs:
         run: |
           set -x
           python -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           pip install -e './packages/maverick-core[postgres]'
           pip install -e ./packages/maverick-knowledge
@@ -1172,7 +1172,7 @@ jobs:
           # boundary tests need the dashboard package importable.
           pip install -e ./packages/maverick-dashboard
           pip install \
-            'psycopg==3.3.6' 'psycopg-binary==3.3.6' \
+            'psycopg==3.3.7' 'psycopg-binary==3.3.7' \
             'psycopg-pool==3.3.3' 'sqlalchemy==2.0.55'
           pip install pytest pytest-asyncio pytest-timeout
           python -m pip check

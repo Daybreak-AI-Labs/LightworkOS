@@ -75,7 +75,7 @@ jobs:
           set -x
           python -c "import sys; print(sys.executable); assert sys.prefix != sys.base_prefix, 'not the isolated venv'"
           python -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           python -m pip install \
             -e './packages/maverick-core[openai,evidence-analysis,spreadsheet,pdf,postgres,plugin-workbench]' \

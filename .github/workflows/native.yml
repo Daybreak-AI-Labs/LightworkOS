@@ -98,7 +98,7 @@ jobs:
         run: |
           set -euo pipefail
           python -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           python -I -m pip install -e packages/maverick-core --no-deps
           python -I -m pip install 'cryptography==50.0.2'
@@ -257,7 +257,7 @@ jobs:
             parity_python=".native-parity-venv/bin/python"
           fi
           "$parity_python" -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3' 'pytest==9.2.0' 'certifi==2026.10.23'
           # Verify the same runtime without the optional extension first.
           "$parity_python" -I -m pip install -e packages/maverick-core --no-deps

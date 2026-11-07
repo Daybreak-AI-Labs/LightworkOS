@@ -65,7 +65,7 @@ jobs:
       - name: Install Lightwork (kernel + MCP server)
         run: |
           python -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           python -I -m pip install -e ./packages/maverick-core
           python -I -m pip install --no-deps -e ./packages/maverick-mcp
