@@ -1105,7 +1105,19 @@ def unseal_bound(blob: bytes, context: str,
             from .tenant.kms import tenant_dek
             key = tenant_dek(tenant)
         elif kind == b"K":
-            key = _resolve_key_by_id(keyid)
+            if (_keyring_dir() / (keyid.hex() + ".key")).exists():
+                key = _resolve_key_by_id(keyid)
+            else:
+                # The legacy single key: one load, then the fingerprint check
+                # (a result-set read must load the key once, not once per
+                # resolver layer).
+                key = _load_or_create_key()
+                if _key_fingerprint(key) != keyid:
+                    raise EncryptionUnavailable(
+                        f"no at-rest key for key-id {keyid.hex()}: the key that "
+                        "sealed this data is not available (a rotated key was "
+                        "removed, or the wrong keyring)."
+                    )
         else:
             raise EncryptionUnavailable("bound blob has an unknown key kind")
         cipher = AESGCM(key)
