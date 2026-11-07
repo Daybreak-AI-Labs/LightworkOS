@@ -63,7 +63,8 @@ busy with a long reply (a write that fails is tried again every few seconds),
 and removed when the worker stops. On the first SIGTERM
 `maverick serve` closes its channels as on Ctrl-C, so the dashboard's Stop and
 Restart remove it, then ends as SIGTERM always ended it, without waiting for a
-local goal still running (a repeated SIGTERM does not cut the close short;
+local goal or other work still running on a thread, such as a voice note being
+transcribed (a repeated SIGTERM does not cut the close short;
 whoever sent it ends the process if it does not stop in time). Started with
 Ctrl-C ignored, as a script's background job is, it ends on SIGTERM at once,
 as before. On
@@ -77,8 +78,10 @@ stamped more than a few seconds ahead of the dashboard's clock is ignored, and
 a worker renews its status within a few seconds after the clock jumps, as when
 a laptop wakes. Replies that were waiting stay counted while their saved
 receipts cannot be read. A turned-on chat app with no current status
-is named as not reporting, and one turned off in settings that the chat
-service still runs is named too. The answer names the apps it covers: other
+is named as not reporting, with a restart of the chat service as the next
+step: nothing starts an app again after its connection ends, and an app
+turned on after the chat service started is not running yet. One turned off
+in settings that the chat service still runs is named too. The answer names the apps it covers: other
 chat apps' replies are not among them, and nothing reads the saved replies of
 an app that is turned off. The status is local to the computer that
 runs the chat service; a dashboard on another computer says it is not

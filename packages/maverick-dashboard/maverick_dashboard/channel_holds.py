@@ -121,9 +121,9 @@ def describe(state):
                 "If it is running, restart it, then refresh this page. If your IT team runs it on another "
                 "computer, ask them.")
     if kind == "stale":
-        return (f"The chat service last reported at {datetime_text(state['last_seen'])} and has stopped reporting, "
-                "so held chat replies cannot be checked. Check that the chat service is running, then refresh "
-                "this page.")
+        return " ".join([f"The chat service last reported at {datetime_text(state['last_seen'])} and has stopped "
+                         "reporting, so held chat replies cannot be checked. Check that the chat service is running, "
+                         "then refresh this page.", *_unreadable_parts(state)])
     if kind == "unavailable":
         names = app_names(state["unavailable"]) if "unknown" not in state["unavailable"] else ""
         whose = f"The saved status for {names}" if names else "The chat service's saved status"
@@ -140,14 +140,21 @@ def describe(state):
                      + (f" (most recently {recent})." if recent else "."))
     for channel in state["not_reporting"]:
         label = _LABELS.get(channel, channel)
-        parts.append(f"{label} is not reporting, so its replies cannot be checked. If {label} was turned on after "
-                     "the chat service started, restart the chat service with Manage the chat service, then refresh "
-                     "this page. If your IT team runs it on another computer, ask them.")
+        parts.append(f"{label} is not reporting, so its replies cannot be checked. This happens when {label} loses "
+                     "its connection or was turned on after the chat service started. Restart the chat service with "
+                     "Manage the chat service, then refresh this page. If your IT team runs it on another computer, "
+                     "ask them.")
     for channel in state["running_off"]:
         parts.append(f"{_LABELS.get(channel, channel)} is turned off, but the chat service keeps running it until "
                      "the chat service is restarted.")
+    parts.extend(_unreadable_parts(state))
+    return " ".join(parts)
+
+
+def _unreadable_parts(state):
+    parts = []
     for channel in state["unavailable"]:
         whose = f"A saved status for {_LABELS.get(channel, channel)}" if channel != "unknown" else "A saved status"
         parts.append(f"{whose} could not be read. If this keeps happening, check that this computer's encryption "
                      "key is available.")
-    return " ".join(parts)
+    return parts

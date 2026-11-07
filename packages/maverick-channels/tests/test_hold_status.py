@@ -169,6 +169,14 @@ def test_a_stale_status_reports_when_it_was_last_renewed(tmp_path):
     assert hold_status.summary({"signal"}, directory=tmp_path, now=later + 1) == state
 
 
+def test_an_old_status_beside_an_unreadable_one_is_stale_and_still_names_the_unreadable_app(tmp_path):
+    _publish(tmp_path, "irc", _counts(), clock=lambda: 1000.0)
+    (tmp_path / "signal-2-damaged.enc").write_bytes(b"not a sealed status")
+    state = hold_status.summary({"signal", "irc"}, directory=tmp_path, now=1000.0 + hold_status.FRESH_SECONDS + 50)
+    assert state["state"] == "stale" and state["last_seen"] == 1000.0
+    assert state["unavailable"] == ["signal"]
+
+
 def test_the_freshest_status_of_a_channel_wins_over_an_older_process(tmp_path):
     _publish(tmp_path, "signal", _counts(held=9), clock=lambda: 1000.0)
     _publish(tmp_path, "signal", _counts(held=0), clock=lambda: 1050.0)
@@ -252,9 +260,11 @@ def test_old_statuses_and_this_apps_unrenewed_ones_are_cleared_on_start(tmp_path
     other_app.write_bytes(b"x")
     os.utime(other_app, (gone, gone))
     publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60).start()
-    publisher.close()
-    assert not old.exists() and not orphan.exists()
-    assert live.exists() and other_app.exists()  # a renewed status, and another app's, are left alone
+    try:  # checked before close(), which clears leftovers too
+        assert not old.exists() and not orphan.exists()
+        assert live.exists() and other_app.exists()  # a renewed status, and another app's, are left alone
+    finally:
+        publisher.close()
 
 
 def test_a_running_worker_clears_its_apps_unrenewed_status_left_just_before_it_started(tmp_path, monkeypatch):
@@ -302,8 +312,10 @@ def test_a_status_left_before_the_clock_was_set_back_is_cleared(tmp_path):
     later = time.time() + 3600
     os.utime(ahead, (later, later))
     publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60).start()
-    publisher.close()
-    assert not ahead.exists()
+    try:  # checked before close(), which clears leftovers too
+        assert not ahead.exists()
+    finally:
+        publisher.close()
     assert hold_status.summary({"signal"}, directory=tmp_path, now=later)["state"] == "not_reporting"
 
 

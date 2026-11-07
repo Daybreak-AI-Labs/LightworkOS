@@ -136,10 +136,20 @@ def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
                             "so held chat replies cannot be checked.")
     partial = channel_holds.describe(_state(reporting=["signal"], not_reporting=["irc"]))
     assert partial.startswith("No Signal replies are waiting.")
-    # The usual cause is an app turned on after the chat service started.
-    assert ("IRC is not reporting, so its replies cannot be checked. If IRC was turned on after the chat "
-            "service started, restart the chat service with Manage the chat service, then refresh this page. "
-            "If your IT team runs it on another computer, ask them.") in partial
+    # An app stops reporting when its connection ends (nothing starts it
+    # again) or when it was turned on after the chat service started; a
+    # restart is the step for both.
+    assert ("IRC is not reporting, so its replies cannot be checked. This happens when IRC loses its connection "
+            "or was turned on after the chat service started. Restart the chat service with Manage the chat "
+            "service, then refresh this page. If your IT team runs it on another computer, ask them.") in partial
+
+
+def test_a_stale_status_beside_an_unreadable_one_keeps_the_encryption_key_step():
+    seen = 1_800_000_000.0
+    text = channel_holds.describe(_state(state="stale", reporting=[], last_seen=seen, unavailable=["signal"]))
+    assert text.startswith(f"The chat service last reported at {datetime_text(seen)} and has stopped reporting")
+    assert ("A saved status for Signal could not be read. If this keeps happening, check that this computer's "
+            "encryption key is available.") in text
 
 
 def test_with_one_app_turned_off_the_answer_names_the_app_it_covers(monkeypatch):

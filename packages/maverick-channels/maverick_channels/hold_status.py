@@ -287,10 +287,10 @@ def summary(enabled, *, directory=None, now=None):
     and ``running_off`` any app turned off in settings that the chat service
     still runs. ``stale``: no status is current, and ``last_seen`` is when one
     was last renewed. ``not_reporting``: none was found. ``unavailable``: the
-    turned-on apps whose status could not be read; with no current status
-    beside them, the state is ``unavailable``. ``release_at`` is the time by
-    which every reply held behind an unreadable one goes out regardless, and
-    ``release_passed`` says it is already past."""
+    turned-on apps whose status could not be read, in every state; the state
+    is ``unavailable`` only when no status, current or old, could be read.
+    ``release_at`` is the time by which every reply held behind an unreadable
+    one goes out regardless, and ``release_passed`` says it is already past."""
     now = time.time() if now is None else now
     found, unreadable = records(directory=directory, now=now)
     enabled = sorted(set(enabled))
