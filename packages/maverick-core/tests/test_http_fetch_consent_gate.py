@@ -1326,6 +1326,58 @@ def test_an_azure_connection_string_cut_inside_its_key_name_keeps_nothing(sent, 
     assert "AccountName=acct" not in _real_card(monkeypatch, body)
 
 
+@pytest.mark.parametrize("body", [
+    "1 [" + '"\\nAKEY=x",' * 200 + '{"password": "hunter2-correct-horse"}]',  # pragma: allowlist secret
+    '"=" {"password": "hunter2-correct-horse' + '\\"' * 200_001 + '"}',  # pragma: allowlist secret
+    '0{"password": "hunter2-correct-horse' + '\\"' * 200_001 + '"}',  # pragma: allowlist secret
+    '0 "' + " " * 6000 + '" {"password": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '0 ["' + " " * 6000 + '", {"password": "hunter2-correct-horse"}]',  # pragma: allowlist secret
+], ids=["past-the-write-limit", "past-the-quote-budget", "budget-inside-the-value", "spaced-string",
+        "spaced-string-in-an-array"])
+def test_a_form_body_whose_json_reading_stops_early_is_refused(sent, monkeypatch, body):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body, "headers": _FORM})
+    assert out.startswith("ERROR:") and "application/json" in out and asked == [] and sent == []
+
+
+@pytest.mark.parametrize("body", ['{"password": hunter2}', '{"password": "x"', '{"token": "abc" "hunter2"}'],
+                         ids=["unquoted", "unclosed", "run-on"])  # pragma: allowlist secret
+def test_a_short_body_cut_at_a_hidden_value_says_why(sent, monkeypatch, body):
+    shown = _real_card(monkeypatch, body, {"Content-Type": "application/json"})
+    assert "more than can be shown" not in shown and "could not be read safely" in shown and "hunter2" not in shown
+
+
+def test_a_request_whose_card_overflows_on_its_body_does_not_blame_the_address(sent, monkeypatch):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    url = "https://api.example.test/v1/import?" + "&".join(f"f{index}=v{index}" for index in range(700))
+    out = _fetch({"url": url[:6544], "method": "POST", "body": "Ж" * 490,
+                  "headers": {"Content-Type": "text/plain; charset=utf-8"}})
+    assert out.startswith("ERROR:") and "too long to show a person in full" in out
+    assert "address and headers" not in out and asked == [] and sent == []
+
+
+_PLUS_KEY = "Zx8Kq2Lm4Np6Rt8Vw0Yb2Dc4Fg6Hj8Kl0Mn2Pq4St6U+v8Wx0Yz2Ab4Cd6Ef8Gh0Ij2Kl4Mn6Op8Qr0St2Uv4Wx6Yz8A=="
+
+
+@pytest.mark.parametrize("url,headers,body,tail", [
+    ("https://api.example.test/v1/import", _FORM,
+     "account=contoso&storage=AccountKey=" + quote(_PLUS_KEY, safe="") + "&page=2", "v8Wx0Yz2Ab4C"),
+    ("https://api.example.test/v1/import", _FORM,
+     "note=sk-ant-" + "Hq3Lp5Zr7Ct9Bm1Nv2Wx" + "%2D" + "Hj4Kl6Zx1Cv3Bn5Mq7Wd" + "&page=2", "Hj4Kl6Zx1Cv3"),
+    ("https://api.example.test/v1/import?note=sk-ant-" + "Hq3Lp5Zr7Ct9Bm1Nv2Wx" + "%2D" + "Hj4Kl6Zx1Cv3Bn5Mq7Wd"
+     + "&page=2", {}, "x", "Hj4Kl6Zx1Cv3"),
+], ids=["storage-key-after-plus", "token-after-hyphen", "query-token-after-hyphen"])
+def test_a_secret_that_runs_on_once_decoded_keeps_nothing_on_the_card(sent, monkeypatch, url, headers, body, tail):
+    shown = _real_card(monkeypatch, body, headers, url=url)
+    assert tail not in shown and "page=2" in shown
+
+
 def test_connector_cards_hide_secrets_within_each_value(sent):
     """Governed connector approval cards share the per-value rule."""
     from maverick.governed_tools import _approval_request_parts

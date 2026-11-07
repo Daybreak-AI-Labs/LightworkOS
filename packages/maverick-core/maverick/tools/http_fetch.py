@@ -747,13 +747,28 @@ def _reviewed_part(part: str) -> str:
     name, sep, value = part.partition("=")
     if sep and _sensitive_request_key(unquote_plus(name)):
         return f"{_hidden_secrets(name)}={_REDACTED_REQUEST_VALUE}"
-    # A secret that only appears once decoded: one still there after the text
-    # as written is hidden and then decoded.
-    if unquote_plus(name) != name and _has_secret(unquote_plus(_hidden_secrets(name))):
+    if _decoded_secret(name):
         return "[REDACTED:secret]"
-    if sep and unquote_plus(value) != value and _has_secret(unquote_plus(_hidden_secrets(value))):
+    if sep and _decoded_secret(value):
         return f"{_hidden_secrets(name)}=[REDACTED:secret]"
     return _hidden_secrets(part, also_from=(len(name) + 1,) if sep else ())
+
+
+def _decoded_secret(piece: str) -> bool:
+    """Whether ``piece`` (a pair's name or value) percent-decoded holds a
+    secret that hiding it as written does not hide whole: one that only
+    appears once decoded, one still there after the text as written is
+    hidden and then decoded, or one whose match as written stops at an
+    escape its decoded match runs on through."""
+    from ..governed_tools import _clusters, _hiding_spans
+
+    if unquote_plus(piece) == piece:
+        return False
+    if _has_secret(unquote_plus(_hidden_secrets(piece))):
+        return True
+    covered = [(start, stop) for start, stop, _name in _clusters(_hiding_spans(piece)[0])]
+    return any(not any(first <= start and stop <= last for first, last in covered)
+               for start, stop in _secret_bounds(piece, decoded=True, written=False)[0])
 
 
 def _reviewed_pair(piece: str) -> list[str]:
@@ -1062,10 +1077,12 @@ def _readable_body(text: str, headers: dict) -> tuple[str, bool]:
     except _NotJson as exc:
         readable, complete, leading = None, False, exc
     if _is_form_body(headers):
-        # Refused where it is wholly a JSON object or array, or where read as
-        # JSON (wholly or as its beginning) it hides a sensitive value the
-        # form reading would show.
-        wholly = readable is not None and text.lstrip("\ufeff \t\r\n")[:1] in ("{", "[")
+        # Refused where it is wholly a JSON object or array; where read as JSON
+        # (wholly or as its beginning) it hides a sensitive value the form
+        # reading would show; and where the JSON reading stopped before the
+        # end without the body turning out not to be JSON, as what it did not
+        # read may hide one. A form body stops being JSON at its first "=".
+        wholly = readable is not None and (not complete or text.lstrip("\ufeff \t\r\n")[:1] in ("{", "["))
         if wholly or read["hid"] or (leading.read and leading.rest < 0):
             raise ApprovalCardError(
                 "the body is JSON but its Content-Type names a form; send it as "
@@ -1112,7 +1129,7 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
         raise ApprovalCardError("the body is not valid text") from exc
     readable, complete = _readable_body(text, headers)
     if sent + min(len(text), len(readable), _REVIEW_BODY_CHARS) + 100 > 7600:
-        raise ApprovalCardError("the address and headers are too long to show a person in full")
+        raise ApprovalCardError("the request is too long to show a person in full")
     # Shown in full only when the body that is sent fits and all of it was
     # read: hiding a long value never makes a large upload look small.
     if complete and len(json.dumps(text)) <= _REVIEW_BODY_CHARS and len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
@@ -1121,11 +1138,19 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
     shown["body_preview"] = _bounded_preview(readable, _REVIEW_BODY_CHARS)
     shown["body_characters"] = len(text)
     shown["body_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    notes.append(
-        f"The body has {len(text):,} characters, more than can be shown here, so "
-        "only its beginning is shown. Its fingerprint (body_sha256) fixes the exact "
-        "body that will be sent."
-    )
+    if len(json.dumps(text)) <= _REVIEW_BODY_CHARS and len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
+        notes.append(
+            f"The body has {len(text):,} characters. Only its beginning is shown: "
+            "what follows could not be read safely here, as it may hold a hidden "
+            "value. Its fingerprint (body_sha256) fixes the exact body that will "
+            "be sent."
+        )
+    else:
+        notes.append(
+            f"The body has {len(text):,} characters, more than can be shown here, so "
+            "only its beginning is shown. Its fingerprint (body_sha256) fixes the exact "
+            "body that will be sent."
+        )
     return shown, notes
 
 
@@ -1160,9 +1185,7 @@ def _request_permit(request: dict[str, Any], parsed: Any, max_bytes: int):
     try:
         request_parts = _approval_request_parts(shown, sized=True)
     except ApprovalCardError as exc:
-        raise ApprovalCardError(
-            "the address and headers are too long to show a person in full"
-        ) from exc
+        raise ApprovalCardError("the request is too long to show a person in full") from exc
     parameter_summary = [
         f"Sends one {method} request to {origin}. Redirects are not followed, "
         "so no other website receives it.",
