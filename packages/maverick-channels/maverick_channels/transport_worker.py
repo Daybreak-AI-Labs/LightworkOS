@@ -496,7 +496,13 @@ class TransportWorker:
             # attempt: one held again, or in turn by then, did not go ahead.
             self._going_ahead.add(row["id"])
             return await self._note(row, held_behind=None, went_ahead_of=went_ahead_of)
-        self._going_ahead.discard(row["id"])
+        # It went ahead at an attempt before a restart of a receipt that still
+        # cannot be read (whose chat a restarted worker no longer knows).
+        earlier = (row.get("went_ahead_of") or {}).get("id")
+        if isinstance(earlier, str) and earlier in self._unreadable:
+            self._going_ahead.add(row["id"])
+        else:
+            self._going_ahead.discard(row["id"])
         return await self._note(row, held_behind=None)
 
     def _release_after(self, record_id):

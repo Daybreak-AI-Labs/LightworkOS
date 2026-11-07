@@ -1725,6 +1725,53 @@ def test_replies_retried_after_a_failure_or_a_refused_permission_are_counted(mon
     asyncio.run(run())
 
 
+def test_a_reply_that_went_ahead_before_a_restart_is_counted_once_delivered_after_it(monkeypatch):
+    # Y goes ahead of X's expired hold and its send is refused; the chat
+    # service then restarts. The restarted worker cannot read X, so it does
+    # not know X's chat, but Y's receipt says it went ahead of X: once Y is
+    # delivered it counts as having gone out without waiting.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    wall = [1000.0]
+    monkeypatch.setattr(transport_worker, "_wall_clock", lambda: wall[0])
+    state = {"x": None, "sealed": False, "refuse_y": True}
+    journal = _unreadable_journal(0, lambda record_id: state["sealed"] and record_id == state["x"])
+    sends, first_status, second_status = [], _Status(), _Status()
+
+    async def send(message, reply, route):
+        sends.append(message.text)
+        if message.text == "X" or (message.text == "Y" and state["refuse_y"]):
+            raise DeliveryNotSent("refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        first = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                send=send, journal=journal, status=first_status).start()
+        await asyncio.sleep(0.05)
+        x = await first.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                               message_id="x"), external_id="x")
+        state["x"] = x["id"]
+        await until(lambda: bool(first._blocked_conversations))
+        state["sealed"] = True
+        y = await first.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                               message_id="y"), external_id="y")
+        await until(lambda: first_status.counts and first_status.latest["behind_unreadable"] == 1)
+        wall[0] += transport_worker.UNREADABLE_HOLD_SECONDS
+        await until(lambda: "Y" in sends)
+        await until(lambda: first_status.latest["retrying"] == 2)
+        assert first_status.latest["went_ahead"] == 0  # refused: it did not go out
+        await first.close()
+        state["refuse_y"] = False
+        second = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=second_status).start()
+        await until(lambda: journal.get(y["id"])["delivery"] == "delivered")
+        await until(lambda: bool(second_status.counts) and second_status.latest["went_ahead"] == 1)
+        assert second_status.latest["went_ahead_at"] is not None
+        await second.close()
+    asyncio.run(run())
+
+
 def test_an_irc_reply_that_goes_ahead_is_counted_once_every_line_is_written(monkeypatch):
     # IRC confirms no delivery: a reply whose lines were all written ends as
     # delivery_unknown. One that went ahead of an expired hold went out, so it
