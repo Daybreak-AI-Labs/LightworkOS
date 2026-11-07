@@ -48,7 +48,7 @@ runs:
       run: |
         set -x
         python -m pip install --upgrade \
-          'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+          'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
           'packaging==26.3'
         # All local distributions are direct requirements in one resolver
         # transaction, so no sibling can fall back to a public lookalike and

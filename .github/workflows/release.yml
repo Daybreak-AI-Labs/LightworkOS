@@ -244,7 +244,7 @@ jobs:
         shell: bash
         run: |
           python -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           # NOT editable (-e): PyInstaller can't collect editable installs,
           # which is why the binary crashed with "No module named 'maverick'".
@@ -335,13 +335,13 @@ jobs:
         run: |
           set -euo pipefail
           python -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3' 'cyclonedx-bom==7.6.0'
           python -I scripts/verify_constraint_closure.py
           SBOM_ENV="$RUNNER_TEMP/lightwork-release-sbom"
           python -m venv "$SBOM_ENV"
           "$SBOM_ENV/bin/python" -I -m pip install --upgrade \
-            'pip==26.2.2' 'setuptools==84.2.1' 'wheel==0.48.0' \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' \
             'packaging==26.3'
           python scripts/install_release_cohort.py \
             --source-root . \
