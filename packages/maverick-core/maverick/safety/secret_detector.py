@@ -67,8 +67,16 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
     ("lightwork_flow_approval_token", re.compile(
         r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{16,}\.[0-9a-fA-F]{64}(?![0-9a-fA-F])"
     )),
-    # JWTs: header.payload.signature, all base64url-without-padding.
-    ("jwt",                re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")),
+    # JWTs: header.payload.signature, all base64url-without-padding. Only the
+    # first "eyJ" in a run of token characters is tried: a later one in the
+    # same run ends where it does, so it matches only if the first does.
+    # Trying each "eyJ" after a "-" rescanned the rest of the run every time,
+    # a ReDoS (~14s on 240KB of "eyJ-"). The token is the named group ``val``;
+    # the native port keeps the plain form, which its engine runs in one pass.
+    ("jwt",                re.compile(
+        r"(?<![A-Za-z0-9_-])(?>[A-Za-z0-9_-]*?(?=\beyJ))"
+        r"(?P<val>eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b)"
+    )),
     # Generic private key blocks. One pattern, one span: match the WHOLE block
     # (BEGIN..END, DOTALL, non-greedy) when an END marker is present so the
     # base64 key MATERIAL is redacted -- the prior marker-only pattern left the

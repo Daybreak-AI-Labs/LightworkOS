@@ -106,7 +106,13 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         re.MULTILINE,
     )),
     # JWT (three base64url segments separated by dots, common shape)
-    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
+    # Group 1 is the run of token characters before it: only the first "eyJ"
+    # in a run is tried, as in secret_detector's jwt (trying each one after a
+    # "-" rescanned the rest of the run every time, a ReDoS).
+    ("jwt", re.compile(
+        r"((?<![A-Za-z0-9_-])(?>[A-Za-z0-9_-]*?(?=\beyJ)))"
+        r"(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b)"
+    )),
     # Credential carried in a URL query string (?access_token=..., &api_key=...,
     # presigned-URL ?sig=..., webhook ?token=...). The env_secret pattern only
     # matches uppercase KEY=value at line start, so these slipped through into
@@ -129,8 +135,9 @@ def scrub(text: str) -> str:
         return text
     out = text
     for kind, pat in _PATTERNS:
-        if kind in ("bearer", "env_secret", "url_secret", "aws_secret_key"):
-            # Keep the prefix (header name / KEY= / ?param=), redact the value.
+        if kind in ("bearer", "env_secret", "url_secret", "aws_secret_key", "jwt"):
+            # Keep the prefix (header name / KEY= / ?param= / text before a
+            # token), redact the value.
             out = pat.sub(lambda m, k=kind: m.group(1) + f"[REDACTED:{k}]", out)
         elif kind == "url_credentials":
             # Keep scheme://user: and the trailing @, redact the password.
