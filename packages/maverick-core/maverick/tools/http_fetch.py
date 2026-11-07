@@ -736,19 +736,20 @@ def _hidden_beginning(text: str) -> tuple[str, bool]:
 
 
 def _reviewed_part(part: str) -> str:
-    """One ``name=value`` part as a server reads it: the whole value hidden
-    under a sensitive name; otherwise anything that looks like a key or token
-    hidden within the part, and within its value read on its own (where an
-    env-style NAME=value starts), as written and percent-decoded (a secret
-    found only once decoded hides its whole value, or the whole part when it
-    is in the name)."""
+    """One ``name=value`` part as a server reads it: a secret found only once
+    the name is percent-decoded hides the whole part; otherwise the whole
+    value is hidden under a sensitive name, and anything else that looks like
+    a key or token is hidden within the part, and within its value read on
+    its own (where an env-style NAME=value starts), as written and
+    percent-decoded (a secret found only once decoded hides its whole
+    value)."""
     from ..governed_tools import _REDACTED_REQUEST_VALUE, _sensitive_request_key
 
     name, sep, value = part.partition("=")
-    if sep and _sensitive_request_key(unquote_plus(name)):
-        return f"{_hidden_secrets(name)}={_REDACTED_REQUEST_VALUE}"
     if _decoded_secret(name):
         return "[REDACTED:secret]"
+    if sep and _sensitive_request_key(unquote_plus(name)):
+        return f"{_hidden_secrets(name)}={_REDACTED_REQUEST_VALUE}"
     if sep and _decoded_secret(value):
         return f"{_hidden_secrets(name)}=[REDACTED:secret]"
     return _hidden_secrets(part, also_from=(len(name) + 1,) if sep else ())
@@ -837,6 +838,10 @@ _JSON_TOKEN = re.compile(
 _REVIEW_SCANNED = 4 * _VALUE_WINDOW
 
 
+# How much of a JSON string whose end is not found is copied for the card.
+_STRING_SHOWN = _VALUE_WINDOW + 1001
+
+
 # The run of backslashes at the end of a stretch of text: it starts only after
 # a character that is not one, so each run is read once.
 _BACKSLASHES = re.compile(r"(?<!\\)\\*\Z")
@@ -846,15 +851,17 @@ def _string_end(text: str, start: int, budget: dict[str, Any] | None = None) -> 
     """Where the JSON string starting at ``start`` (its opening quote) ends,
     just past its closing quote, found without copying it, so a long string
     costs no memory per character. -1 if it holds more escaped quotes than a
-    card reads (the read then stops in it); -2 if the body's budget for them
-    (``budget``, shared by every string in it, so hidden values full of them
-    cannot hold the card either) runs out first (the read then stops before
-    it: where it ends is unknown). Raises ``_NotJson`` if it never closes."""
+    card reads, or the body's budget for them (``budget``, shared by every
+    string in it, so hidden values full of them cannot hold the card either)
+    runs out once it is known to run on past the beginning a card shows (the
+    read then stops in it, showing that beginning); -2 if the budget runs
+    out sooner (the read then stops before it: where it ends is unknown).
+    Raises ``_NotJson`` if it never closes."""
     budget = {"quotes": _REVIEW_TOKENS} if budget is None else budget
     position = start + 1
     for _ in range(_REVIEW_TOKENS):
         if budget["quotes"] <= 0:
-            return -2
+            return -1 if position - start >= _STRING_SHOWN else -2
         budget["quotes"] -= 1
         quote = text.find('"', position)
         if quote < 0:
@@ -961,7 +968,7 @@ def _next_token(text: str, position: int, budget: dict[str, Any] | None = None) 
         return match.group(), match.end()
     end = _string_end(text, position, budget)
     if end < 0:
-        return text[position:position + _VALUE_WINDOW + 1001], end
+        return text[position:position + _STRING_SHOWN], end
     shown = text[position:min(end, position + _VALUE_WINDOW + 1000)]
     return shown + ('"' * (end - position > _VALUE_WINDOW + 1000)), end
 
@@ -1111,13 +1118,12 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
     text = None
     if body not in (None, "", b""):
         text = body if isinstance(body, str) else json.dumps(body, sort_keys=True, default=str)
-    # The address and headers are measured as they will be sent, before
-    # anything is hidden: hiding a long part of either never makes a request
-    # look short. The body counts as it is sent or as the card shows it,
-    # whichever is shorter (spacing the card collapses or adds is not size),
-    # and at most a preview's length.
-    sent = len(method) + len(url) + sum(len(name) + len(value) + 6 for name, value in headers.items())
-    if sent + 100 > 7600:
+    # The address and headers are measured as they will be sent, written out
+    # as the card writes them, before anything is hidden: hiding a long part
+    # of either never makes a request look short. A long body is shown as a
+    # preview with its size, so the card's own limit decides the rest.
+    sent = json.dumps({"method": method, "url": url, "headers": headers}, separators=(",", ":"))
+    if len(sent) > 7600:
         raise ApprovalCardError("the address and headers are too long to show a person in full")
     shown: dict[str, Any] = {"method": method, "url": _reviewed_url(url), "headers": headers}
     notes: list[str] = []
@@ -1128,8 +1134,6 @@ def _reviewed_request(method: str, url: str, headers: dict, body: Any) -> tuple[
     except UnicodeEncodeError as exc:
         raise ApprovalCardError("the body is not valid text") from exc
     readable, complete = _readable_body(text, headers)
-    if sent + min(len(text), len(readable), _REVIEW_BODY_CHARS) + 100 > 7600:
-        raise ApprovalCardError("the request is too long to show a person in full")
     # Shown in full only when the body that is sent fits and all of it was
     # read: hiding a long value never makes a large upload look small.
     if complete and len(json.dumps(text)) <= _REVIEW_BODY_CHARS and len(json.dumps(readable)) <= _REVIEW_BODY_CHARS:
@@ -1264,8 +1268,6 @@ def _unsendable(args: dict[str, Any]) -> str | None:
         return "ERROR: the url and render arguments must be text"
     if not (args.get("url") or "").strip():
         return "ERROR: url is required"
-    if len(args["url"].strip()) > 7600:
-        return "ERROR: the address is too long to show a person in full; nothing was sent"
     headers = args.get("headers") or {}
     if not isinstance(headers, dict) or not all(
             isinstance(name, str) and isinstance(value, str)
@@ -1279,6 +1281,8 @@ def _unsendable(args: dict[str, Any]) -> str | None:
         return "ERROR: the body must be text; nothing was sent"
     if not isinstance(args.get("method") or "GET", str):
         return "ERROR: the method must be text; nothing was sent"
+    if len(args["url"].strip()) > 7600 and _sends_data((args.get("method") or "GET").upper(), args.get("body")):
+        return "ERROR: the address is too long to show a person in full; nothing was sent"
     try:
         import httpx
 
@@ -1315,7 +1319,11 @@ def _run_fetch(args: dict[str, Any]) -> str:
         parsed.port  # noqa: B018 -- raises for a port that is not a number in range
     except ValueError:
         return "ERROR: the address has an invalid port; nothing was sent"
-    if not url.isprintable() or any(character.isspace() for character in url):
+    # A person reads the address as written, while the client sends a space
+    # percent-encoded: a request that needs one has none (the client refuses
+    # control characters for every request).
+    if _sends_data((args.get("method") or "GET").upper(), body) and (
+            not url.isprintable() or any(character.isspace() for character in url)):
         return "ERROR: the address holds spaces or control characters; nothing was sent"
 
     preflight_error = _preflight_fetch(url, parsed)

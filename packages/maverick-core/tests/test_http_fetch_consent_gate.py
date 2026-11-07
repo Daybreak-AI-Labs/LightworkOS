@@ -1378,6 +1378,79 @@ def test_a_secret_that_runs_on_once_decoded_keeps_nothing_on_the_card(sent, monk
     assert tail not in shown and "page=2" in shown
 
 
+_PAT = "ghp_" + "Zx9Q" * 9  # pragma: allowlist secret
+
+
+@pytest.mark.parametrize("url,body", [
+    ("https://api.example.test/v1/import", "access_token%3D" + _PAT + "=1&page=2"),
+    ("https://api.example.test/v1/import", "password%20AKIAIOSFODNN7EXAMPLE=1&page=2"),  # pragma: allowlist secret
+    ("https://api.example.test/v1/import", "a=1;access_token%3D" + _PAT + "=2&page=2"),
+    ("https://api.example.test/v1/import?access_token%3D" + _PAT + "=1&page=2", "x"),
+], ids=["form", "form-aws-key-id", "form-after-a-part", "query"])
+def test_a_secret_in_a_sensitive_name_found_once_decoded_is_hidden(sent, monkeypatch, url, body):
+    shown = _real_card(monkeypatch, body, _FORM, url=url)
+    assert "Zx9QZx9Q" not in shown and "AKIAIOSFODNN7EXAMPLE" not in shown and "page=2" in shown
+
+
+def test_a_long_form_cut_inside_a_sensitive_pair_hides_a_secret_in_its_name(sent, monkeypatch):
+    body = "password=" + "p" * 7900 + "&access_token%3D" + _PAT + "=" + "v" * 3000 + "&page=2"
+    shown = _real_card(monkeypatch, body, _FORM)
+    assert "Zx9QZx9Q" not in shown and "password=" in shown
+
+
+@pytest.mark.parametrize("body,kept", [
+    (json.dumps({"event": "export", "payload": json.dumps(
+        [{"id": index, "name": f"user{index}", "email": f"user{index}@example.com"} for index in range(25_000)])}),
+     "user0@example.com"),
+    ('{"a": "customer list: alice@example.com ' + '\\"' * 250_000 + '"}', "alice@example.com"),
+], ids=["embedded-document", "escaped-quotes"])
+def test_a_later_string_past_the_quote_budget_still_shows_its_beginning(sent, monkeypatch, body, kept):
+    assert kept in _real_card(monkeypatch, body, {"Content-Type": "application/json"})
+
+
+def test_a_sensitive_value_past_the_quote_budget_shows_its_marker(sent, monkeypatch):
+    body = '{"password": "hunter2' + '\\"' * 250_000 + '"}'  # pragma: allowlist secret
+    shown = _real_card(monkeypatch, body, {"Content-Type": "application/json"})
+    assert "hunter2" not in shown and "[REDACTED:sensitive field]" in shown
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("url", [
+    "https://api.example.test/wiki/Hello World",
+    "https://api.example.test/search?q=new york&page=2",
+    "https://api.example.test/items?" + "&".join(f"id={index}" for index in range(1500)),
+], ids=["space", "no-break-space", "long"])
+def test_a_plain_read_is_sent_whatever_its_address_holds(sent, monkeypatch, method, url):
+    calls = _deny_and_capture(monkeypatch)
+    out = _fetch({"url": url, "method": method, "render": "raw"})
+    assert "HTTP 200 OK" in out and calls == [] and [c["method"] for c in sent] == [method]
+
+
+@pytest.mark.parametrize("url", [
+    "https://api.example.test/wiki/Hello World",
+    "https://api.example.test/search?q=new york",
+], ids=["space", "no-break-space"])
+def test_a_request_a_person_reviews_still_refuses_spaces_in_its_address(sent, monkeypatch, url):
+    calls = _deny_and_capture(monkeypatch)
+    out = _fetch({"url": url, "method": "POST", "body": "x"})
+    assert out.startswith("ERROR:") and "spaces" in out and calls == [] and sent == []
+
+
+def _address_of(length: int) -> str:
+    url = "https://api.example.test/v1/import?" + "&".join(f"f{index}=v{index}" for index in range(2000))
+    return url[:length]
+
+
+@pytest.mark.parametrize("length,headers,body,kept", [
+    (7300, {}, "x" * 100, "x" * 100),
+    (6100, {"Content-Type": "application/json"},
+     json.dumps({"items": [{"id": index, "name": f"row {index}", "ok": True} for index in range(40)]}, indent=2),
+     "row 39"),
+], ids=["text", "pretty-printed-json"])
+def test_a_request_whose_card_fits_is_shown(sent, monkeypatch, length, headers, body, kept):
+    assert kept in _real_card(monkeypatch, body, headers, url=_address_of(length))
+
+
 def test_connector_cards_hide_secrets_within_each_value(sent):
     """Governed connector approval cards share the per-value rule."""
     from maverick.governed_tools import _approval_request_parts
