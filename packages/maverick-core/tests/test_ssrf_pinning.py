@@ -199,3 +199,21 @@ def test_resolve_pinned_ip_keeps_the_neighbours_of_shared_space_public(monkeypat
     for ip in ("100.63.255.255", "100.128.0.1"):
         monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo(ip))
         assert _ssrf.resolve_pinned_ip("public.test") == ip
+
+
+@pytest.mark.parametrize("ip", ["169.254.169.254", "fe80::1", "100.100.100.200", "224.0.0.1", "0.0.0.0"])
+def test_private_override_never_opens_metadata_or_link_local(monkeypatch, ip):
+    """'Let agents read addresses inside your network' means RFC1918/loopback,
+    not the cloud metadata service: link-local, the Alibaba metadata literal,
+    multicast, reserved and unspecified stay blocked under the override."""
+    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo(ip))
+    assert _ssrf.address_is_always_blocked(__import__("ipaddress").ip_address(ip))
+    with pytest.raises(_ssrf.BlockedHost):
+        _ssrf.resolve_pinned_ip("metadata.internal")
+
+
+def test_private_override_still_admits_rfc1918(monkeypatch):
+    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("10.0.0.5"))
+    assert _ssrf.resolve_pinned_ip("intranet.example") == "10.0.0.5"

@@ -120,6 +120,38 @@ def _ip_is_blocked(ip_str: str) -> bool:
     return address_is_blocked(ip)
 
 
+# Cloud metadata endpoints that do not sit in a link-local range: Alibaba
+# Cloud serves instance credentials from this shared-address-space literal.
+_ALWAYS_BLOCKED_LITERALS = frozenset({ipaddress.ip_address("100.100.100.200")})
+
+
+def address_is_always_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True for addresses the private-network override must NOT open.
+
+    "Let agents read addresses inside your network" means RFC 1918, loopback
+    and shared address space (an intranet, a dev server, a Tailscale peer).
+    It never means the cloud metadata service (169.254.169.254 on AWS, Azure,
+    GCP, OCI and DigitalOcean; fe80:: and fd00:ec2::254 on IPv6), multicast,
+    reserved or unspecified addresses: one toggled setting must not turn every
+    prompt-injectable tool into an instance-credential client.
+    """
+    return (
+        ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+        or ip in _ALWAYS_BLOCKED_LITERALS
+    )
+
+
+def _ip_is_always_blocked(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    return address_is_always_blocked(ip)
+
+
 def allow_private() -> bool:
     """``MAVERICK_FETCH_ALLOW_PRIVATE`` when set, else ``[tools]
     fetch_allow_private`` (Settings > All settings). Off unless exactly "1"."""
@@ -162,6 +194,15 @@ def resolve_pinned_ip(host: str, *, require_public: bool = False) -> str:
             if _ip_is_blocked(ip):
                 raise BlockedHost(
                     f"{host!r} resolves to non-public address {ip}"
+                )
+    elif not scoped_private:
+        # The private-network override: still never the metadata service.
+        for ip in ips:
+            if _ip_is_always_blocked(ip):
+                raise BlockedHost(
+                    f"{host!r} resolves to {ip}, which stays blocked even when "
+                    "private addresses are allowed (link-local, metadata, "
+                    "multicast, reserved or unspecified)"
                 )
     elif scoped_private:
         expected = ipaddress.ip_address(normalized_host)

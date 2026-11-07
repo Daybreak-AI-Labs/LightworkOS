@@ -4500,6 +4500,11 @@ and a `maverick_llm_cache_tokens_total` hit-rate metric.
   opt-in, the admin role, and the install allowlist — and pip runs as argv (no
   shell), so nothing is injectable and a compromised token can't pull arbitrary
   code, only pre-vetted packages (`plugins.install_plugin` / `installable_plugins`).
+  pip runs `--isolated` (no `pip.conf`, no `PIP_EXTRA_INDEX_URL`, so no second
+  index can win a name), `--no-deps` and `--only-binary :all:` (a wheel; no
+  `setup.py` runs); an entry written as `name==version sha256:<hex>` installs
+  under `--require-hashes`, so only the reviewed wheel bytes can land, and an
+  unpinned entry is logged as such.
   Distinct from the *load* allowlist (`enabled`); installed slots appear in the
   toggle list to enable.
 - **Finance suite (Office of the CFO)** — 31 domain packs across 7 towers

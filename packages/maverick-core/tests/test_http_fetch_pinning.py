@@ -88,3 +88,28 @@ def test_shared_address_space_is_refused_at_the_pinned_connect(monkeypatch):
         _resolve_pinned("metadata.test")
     with pytest.raises(ValueError):
         _check_url_allowed("https://metadata.test/latest/meta-data/", allow_http=False)
+
+
+def test_fetch_override_keeps_link_local_blocked(monkeypatch):
+    import socket
+
+    from maverick.tools import http_fetch
+
+    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+
+    def fake(host, *a, **k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+    assert http_fetch.is_blocked_host("metadata.internal") is True
+    import pytest
+
+    with pytest.raises(http_fetch.BlockedAddress):
+        http_fetch._resolve_pinned("metadata.internal")
+
+    def fake_private(host, *a, **k):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_private)
+    assert http_fetch.is_blocked_host("intranet.example") is False
+    assert http_fetch._resolve_pinned("intranet.example") == "intranet.example"  # override: no pinning

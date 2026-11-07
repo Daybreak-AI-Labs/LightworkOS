@@ -74,6 +74,10 @@ DEFAULT_PROTECTED_KEYS = frozenset({
 # ``protected_keys`` lists, so one person can never switch the approvals off,
 # narrow what they cover or stretch how long they last.
 SELF_PROTECTED_KEYS = frozenset({"safety.quorum_*"})
+# Settings that widen every agent's reach at once: always protected whatever
+# ``protected_keys`` lists. [tools] fetch_allow_private turns each prompt-
+# injectable URL tool into an intranet client in one save.
+GUARD_PROTECTED_KEYS = frozenset({"tools.fetch_allow_private"})
 
 PENDING = "pending"
 APPROVED = "approved"
@@ -121,9 +125,11 @@ class Proposal:
 def is_protected(key: str, policy: QuorumPolicy) -> bool:
     """True iff ``key`` matches any protected pattern (fnmatch, case-sensitive).
 
-    The quorum's own settings (:data:`SELF_PROTECTED_KEYS`) always are."""
+    The quorum's own settings (:data:`SELF_PROTECTED_KEYS`) and the reach
+    guards (:data:`GUARD_PROTECTED_KEYS`) always are."""
     return any(fnmatchcase(key, pat)
-               for pat in (*policy.protected_keys, *SELF_PROTECTED_KEYS))
+               for pat in (*policy.protected_keys, *SELF_PROTECTED_KEYS,
+                           *GUARD_PROTECTED_KEYS))
 
 
 def apply_gate(key: str, *, policy: QuorumPolicy) -> bool:

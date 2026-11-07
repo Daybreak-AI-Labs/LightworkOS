@@ -1197,7 +1197,8 @@ def _switches(S) -> tuple:
           "toggle", "Security", False, "maverick.tools._ssrf", subgroup="Tool access",
           env=("MAVERICK_FETCH_ALLOW_PRIVATE",), weaker=True,
           warning="Agents will be able to reach services inside your network, including "
-                  "ones that hold credentials."),
+                  "ones that hold credentials. Cloud metadata and link-local addresses "
+                  "stay blocked. When approvals are set up, this change waits for them."),
         S("tools", "fetch_skip_scan", "Skip the safety check on web pages",
           "Give agents web pages without checking them for hidden instructions first.",
           "toggle", "Security", False, "maverick.tools.http_fetch", subgroup="Tool access",

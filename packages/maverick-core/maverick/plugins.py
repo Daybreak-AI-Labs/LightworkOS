@@ -1033,18 +1033,72 @@ def installable_plugins() -> list[str]:
     nothing (fail closed). The dashboard offers exactly these as one-click
     installs -- never a free-text package name -- so a compromised token can
     only pull packages an operator already vetted, not arbitrary code."""
+    return list(installable_pins())
+
+
+def installable_pins() -> dict[str, tuple[str | None, tuple[str, ...]]]:
+    """The install allowlist as ``{name: (version, hashes)}``.
+
+    An entry is either a plain distribution name (installed unpinned, with a
+    warning) or an exact pin ``name==version sha256:<hex> [sha256:<hex> ...]``
+    that pip verifies with ``--require-hashes``. A malformed entry is dropped
+    from the allowlist (fail closed) and logged, never installed loosely."""
     raw = _plugins_config().get("installable")
     if isinstance(raw, str):
         raw = [raw]
     if not isinstance(raw, list):
-        return []
-    return [s for s in (str(x).strip() for x in raw) if s]
+        return {}
+    pins: dict[str, tuple[str | None, tuple[str, ...]]] = {}
+    for item in raw:
+        entry = str(item or "").strip()
+        if not entry:
+            continue
+        parsed = parse_installable_entry(entry)
+        if parsed is None:
+            log.warning("[plugins] installable entry %r is not a package name or an "
+                        "exact 'name==version sha256:<hex>' pin; ignoring it", entry)
+            continue
+        name, version, hashes = parsed
+        pins.setdefault(name, (version, hashes))
+    return pins
 
 
-# A conservative dist name: no URLs, version specifiers, or shell metacharacters.
+# A conservative dist name: no URLs, version ranges, or shell metacharacters.
 # The allowlist is matched verbatim and pip runs with argv (no shell), so an
 # entry can't smuggle extra arguments even if config were tampered with.
 _SAFE_PKG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+# An exact pin: ``name==version`` then one or more ``sha256:<64 hex>`` digests
+# of the wheel(s) pip may accept. No ranges, no other digest algorithms.
+_PIN_ENTRY = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9._-]{0,99})"
+    r"(?:==(?P<version>[A-Za-z0-9][A-Za-z0-9.+!_-]{0,49}))?"
+    r"(?P<hashes>(?:\s+sha256:[0-9a-fA-F]{64})*)\s*$"
+)
+
+
+def parse_installable_entry(entry: str) -> tuple[str, str | None, tuple[str, ...]] | None:
+    """``(name, version, hashes)`` for a valid allowlist entry, else None.
+
+    A digest without an exact version is invalid: pip's ``--require-hashes``
+    mode needs ``==`` and there is nothing to pin otherwise."""
+    m = _PIN_ENTRY.match((entry or "").strip())
+    if not m:
+        return None
+    name, version = m.group("name"), m.group("version")
+    hashes = tuple(h.lower() for h in m.group("hashes").split())
+    if hashes and not version:
+        return None
+    return name, version, hashes
+
+
+def _pip_index_args() -> list[str]:
+    """``--index-url`` from ``PIP_INDEX_URL`` only.
+
+    pip runs ``--isolated`` so pip.conf and the ``PIP_*`` environment (in
+    particular ``PIP_EXTRA_INDEX_URL``, the dependency-confusion vector) are
+    ignored; the one index an operator points at explicitly is carried over."""
+    url = (os.environ.get("PIP_INDEX_URL") or "").strip()
+    return ["--index-url", url] if url else []
 
 
 def install_plugin(name: str, *, timeout: float = 300.0) -> dict[str, list[str]]:
@@ -1052,28 +1106,57 @@ def install_plugin(name: str, *, timeout: float = 300.0) -> dict[str, list[str]]
     refreshed plugin-slot snapshot (new entry points are discoverable in this
     process immediately; their code loads on the next agent run).
 
-    Bounded by :func:`installable_plugins`: ``name`` MUST be on the
-    ``[plugins] installable`` allowlist and a plain package name (no URL /
-    version spec / metacharacters). Raises ``ValueError`` otherwise or if pip
-    fails. pip runs as argv (never a shell), so nothing here is injectable."""
+    Bounded by :func:`installable_pins`: ``name`` MUST be on the ``[plugins]
+    installable`` allowlist and a plain package name (no URL / version range /
+    metacharacters). Raises ``ValueError`` otherwise or if pip fails.
+
+    pip runs as argv (never a shell) and ``--isolated`` (no pip.conf, no
+    ``PIP_*`` env, so no extra index can win a name), ``--no-deps`` (only the
+    vetted package; list its dependencies as their own entries), and
+    ``--only-binary :all:`` (a wheel: no ``setup.py`` runs at install time).
+    A pinned entry adds ``--require-hashes`` so only the recorded wheel bytes
+    install; an unpinned entry installs the index's current release and logs
+    that it was not pinned."""
     import subprocess
     import sys
+    import tempfile
 
     name = (name or "").strip()
-    allow = installable_plugins()
-    if not allow:
+    pins = installable_pins()
+    if not pins:
         raise ValueError(
             "plugin install is disabled: set [plugins] installable to a package "
             "allowlist in ~/.maverick/config.toml"
         )
-    if name not in allow:
+    if name not in pins:
         raise ValueError(f"{name!r} is not on the [plugins] installable allowlist")
     if not _SAFE_PKG.match(name):
         raise ValueError(f"unsafe package name: {name!r}")
-    proc = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--no-input", name],
-        capture_output=True, text=True, timeout=timeout, check=False,
-    )
+    version, hashes = pins[name]
+    argv = [sys.executable, "-m", "pip", "install", "--no-input", "--isolated",
+            "--no-deps", "--only-binary", ":all:", *_pip_index_args()]
+    requirements: tempfile.TemporaryDirectory | None = None
+    try:
+        if hashes:
+            requirements = tempfile.TemporaryDirectory(prefix="mvk-plugin-pin-")
+            req = Path(requirements.name) / "requirements.txt"
+            req.write_text(f"{name}=={version} " + " ".join(f"--hash={h}" for h in hashes) + "\n",
+                           encoding="utf-8")
+            argv += ["--require-hashes", "-r", str(req)]
+        else:
+            if version:
+                argv.append(f"{name}=={version}")
+            else:
+                argv.append(name)
+            log.warning("plugin %s is not pinned in [plugins] installable; installing the "
+                        "index's current release. Pin it as 'name==version sha256:<hex>' "
+                        "so only a reviewed wheel can install.", name)
+        proc = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    finally:
+        if requirements is not None:
+            requirements.cleanup()
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip()[-500:]
         raise ValueError(f"pip install of {name!r} failed: {tail}")

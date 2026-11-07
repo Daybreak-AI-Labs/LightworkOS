@@ -1831,19 +1831,20 @@ def enable_container_file_work() -> None:
 def set_installable_plugins(names) -> None:
     """Replace the dashboard-install plugin allowlist ([plugins] installable).
 
-    Every entry must be a plain distribution name (maverick.plugins._SAFE_PKG:
-    no URLs, version specifiers, or shell metacharacters) -- the same check
+    Every entry must be a plain distribution name or an exact pin
+    ``name==version sha256:<hex>`` (maverick.plugins.parse_installable_entry:
+    no URLs, version ranges, or shell metacharacters) -- the same check
     install_plugin() re-applies at install time, enforced here too so a bad
-    name is rejected at approval, not discovered at install.
+    entry is rejected at approval, not discovered at install.
     """
-    from maverick.plugins import _SAFE_PKG
+    from maverick.plugins import parse_installable_entry
 
     cleaned: list[str] = []
     for raw in names:
         name = str(raw or "").strip()
         if not name:
             continue
-        if not _SAFE_PKG.match(name):
+        if parse_installable_entry(name) is None:
             raise ValueError(f"unsafe package name: {name!r}")
         if name not in cleaned:
             cleaned.append(name)
