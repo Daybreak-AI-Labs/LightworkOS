@@ -93,8 +93,11 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         # Separator is `[:=]`, not just `=`: YAML / k8s manifests / many log
         # formats use `KEY: value`, and those colon-delimited secrets slipped
         # through unredacted. The key class stays UPPERCASE so ordinary lowercase
-        # prose isn't over-redacted.
-        r"((?:^|\n)[^\S\n]*(?:export\s+)?[A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL)[A-Z0-9_]*\s*[:=]\s*)"
+        # prose isn't over-redacted. The name is read in one pass, as in
+        # secret_detector's env_secret (the form that backtracked across a
+        # run of capitals once per keyword in it was a ReDoS).
+        r"((?:^|\n)[^\S\n]*(?:export\s+)?"
+        r"(?=[A-Z][A-Z0-9_]*?(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL))[A-Z][A-Z0-9_]*+\s*[:=]\s*)"
         # Value: a single- or double-quoted string (which may contain
         # spaces) OR a bare run of non-space chars. Without the quoted
         # alternatives a value like FOO_SECRET="a b c" matched only "a,
