@@ -11,8 +11,9 @@ Counts and times only: no message text, person, chat or saved-reply name is
 ever published.
 
 Like the runtime configuration receipts, a status is renewed while its worker
-runs and removed when it stops. One that is not renewed is reported as not
-current, never as nothing held, and only a sealed status is ever read.
+runs and removed when it stops (a process ended without a chance to stop,
+such as on Windows, leaves it behind). One that is not renewed is reported as
+not current, never as nothing held, and only a sealed status is ever read.
 Statuses are local to this computer.
 """
 from __future__ import annotations
@@ -30,6 +31,10 @@ from pathlib import Path
 
 FRESH_SECONDS = 100
 RENEW_SECONDS = 30
+# A status stamped up to this far after the reader's clock is still current:
+# a renewal can land between taking the time and reading the file, and two
+# clocks can differ slightly. One stamped further ahead counts as no status.
+_SKEW = 5
 _CLOSE_WAIT = 2
 _SCHEMA = 1
 _MAX_FILES = 1000
@@ -137,8 +142,10 @@ class Publisher:
     def _clear_leftovers(self):
         """Remove statuses nobody renews: any a week old, and this app's from
         processes that stopped without removing theirs (a renewed one is at
-        most RENEW_SECONDS old). Only a private folder of this module's own
-        is ever cleaned, never one another folder stands in for."""
+        most RENEW_SECONDS old). Run at start, every FRESH_SECONDS while the
+        worker runs (one left less than FRESH_SECONDS before the start is not
+        yet known to be unrenewed) and at close. Only a private folder of this
+        module's own is ever cleaned, never one another folder stands in for."""
         from maverick.file_lock import ensure_private_directory
 
         ensure_private_directory(self.directory)
@@ -152,21 +159,28 @@ class Publisher:
             except OSError:
                 pass
 
-    def start(self):
-        """Clear statuses left by stopped processes, then publish and renew."""
+    def _tidy(self):
         try:
             self._clear_leftovers()
         except OSError:
             pass
+
+    def start(self):
+        """Clear statuses left by stopped processes, then publish and renew."""
+        self._tidy()
         self._changed.set()
 
         def renew():
+            tidied = time.monotonic()
             while not self._stop.is_set():
                 self._changed.wait(self.renew_seconds)
                 if self._stop.is_set():
                     return
                 self._changed.clear()
                 self.write_now()
+                if time.monotonic() - tidied >= FRESH_SECONDS:
+                    tidied = time.monotonic()
+                    self._tidy()
 
         self._thread = threading.Thread(target=renew, name="channel-hold-status:" + self.channel, daemon=True)
         self._thread.start()
@@ -179,6 +193,7 @@ class Publisher:
         self._changed.set()
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=_CLOSE_WAIT)
+        self._tidy()
         try:
             self.path.unlink(missing_ok=True)
         except OSError:
@@ -222,8 +237,10 @@ def _parse(blob, now):
             or not math.isfinite(record["seen_at"])):
         raise ValueError("invalid held reply status")
     counts = _checked({key: record.get(key) for key in _COUNTS} if set(_COUNTS) <= set(record) else None)
+    age = now - record["seen_at"]
     return {"schema": _SCHEMA, "channel": record["channel"], "instance": record["instance"],
-            "seen_at": record["seen_at"], "fresh": 0 <= now - record["seen_at"] < FRESH_SECONDS, **counts}
+            "seen_at": record["seen_at"], "fresh": -_SKEW <= age < FRESH_SECONDS, "ahead": age < -_SKEW,
+            **counts}
 
 
 def records(*, directory=None, now=None):
@@ -272,8 +289,10 @@ def summary(enabled, *, directory=None, now=None):
     latest = {}
     for record in found:
         channel = record["channel"]
-        # A current status always wins over one that cannot be current, such
-        # as a leftover stamped ahead of this computer's clock.
+        # A status stamped ahead of this computer's clock (a leftover from
+        # before the clock was set back) says nothing about now.
+        if record["ahead"]:
+            continue
         if channel not in latest or (record["fresh"], record["seen_at"]) > (latest[channel]["fresh"],
                                                                               latest[channel]["seen_at"]):
             latest[channel] = record
@@ -285,7 +304,9 @@ def summary(enabled, *, directory=None, now=None):
     current = [record for record in latest.values() if record["fresh"]]
     if not current:
         if latest:
-            state.update(state="stale", last_seen=min(now, max(record["seen_at"] for record in latest.values())))
+            # Every status left is older than FRESH_SECONDS, so this time is in
+            # the past and stays the same from one read to the next.
+            state.update(state="stale", last_seen=max(record["seen_at"] for record in latest.values()))
         else:
             state.update(state="unavailable" if state["unavailable"] else "not_reporting", not_reporting=enabled)
         return state

@@ -27,6 +27,16 @@ def _waiting(row):
     return row["execution"] == "received" or row["delivery"] in {"ready", "retryable"}
 
 
+def _sent(row):
+    """True when the reply went out: delivered, or (IRC, which confirms no
+    delivery) every line of it was written to the provider."""
+    if row["delivery"] == "delivered":
+        return True
+    written = [chunk for key, chunk in (row.get("chunks") or {}).items() if key != "reply"]
+    return (row["delivery"] == "delivery_unknown" and bool(written)
+            and all(chunk.get("state") == "delivered" for chunk in written))
+
+
 def _conversation(message):
     """A digest naming one conversation: the chat and the person in it."""
     return _digest([message.get("user_id"), message.get("sender_id")])
@@ -113,7 +123,8 @@ class TransportWorker:
         self._held = {}  # id waiting its turn -> the oldest earlier receipt it waits behind
         self._went_ahead, self._went_ahead_at, self._went_ahead_ids = 0, None, set()
         self._going_ahead = set()  # ids that stopped waiting for an expired hold, not yet delivered
-        self._refused = set()  # ids whose send was refused, waiting for another attempt
+        self._retrying = set()  # ids that could not be sent or handled, waiting for another attempt
+        self._counted = False  # a scan has read the store: until then nothing is published
         self.task = None
         self._scan_task = None
         self.overflow_count = 0
@@ -262,6 +273,7 @@ class TransportWorker:
                 except Exception:
                     # Retried by the next scan after RETRY_DELAY, like a refused send.
                     self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
+                    self._retrying.add(record_id)
                     log.warning("Channel %s saved transport work requires review", self.channel.name)
                 continue
             if self._closing and not self._overflow and not self._wake.is_set():
@@ -308,6 +320,7 @@ class TransportWorker:
         It is also counted as held from the first scan, before it is handled again."""
         seen, self._scan_seen = self._scan_seen, None
         if seen is not None:
+            self._counted = True
             waiting, hints = seen
             for record_id, known in waiting.items():
                 if known:
@@ -331,8 +344,10 @@ class TransportWorker:
             self._retry_after.pop(record_id)  # finished or removed meanwhile
         for record_id in [key for key in self._held if key not in waiting]:
             self._held.pop(record_id)
-        self._refused &= waiting.keys()
-        self._going_ahead &= waiting.keys()
+        # A receipt that cannot be read right now keeps its marks: it is still
+        # waiting, and a mark lost here would not come back when it is read.
+        self._retrying &= waiting.keys() | self._unreadable
+        self._going_ahead &= waiting.keys() | self._unreadable
         # A conversation is remembered only for a receipt still waiting, one
         # that cannot be read (it keeps holding its conversation), or one
         # admitted while the scan ran.
@@ -371,8 +386,9 @@ class TransportWorker:
         """What this worker holds, as the counts hold_status publishes: replies
         waiting their turn, those behind a receipt that cannot be read, how
         many such receipts hold them, the time by which every one of those
-        goes out regardless, the replies that could not be sent and wait for
-        another attempt, and the replies that went out without waiting.
+        goes out regardless, the replies that could not be sent or handled
+        and wait for another attempt, and the replies that went out without
+        waiting.
 
         A held reply waits behind each earlier unreadable receipt of its
         conversation until that one has been unreadable for
@@ -398,12 +414,17 @@ class TransportWorker:
                 if other in self._unreadable and since is not None and (self._conversations[other][0], other) < key:
                     due = since + UNREADABLE_HOLD_SECONDS
                     release = due if release is None else max(release, due)
-        retrying = len(self._refused - self._held.keys() - self._unreadable)
+        retrying = len(self._retrying - self._held.keys() - self._unreadable)
         return {"held": len(self._held), "behind_unreadable": behind_unreadable, "unreadable": len(blockers),
                 "retrying": retrying, "release_at": release, "went_ahead": self._went_ahead,
                 "went_ahead_at": self._went_ahead_at}
 
     def _publish_status(self):
+        # Before a scan has read the store this worker knows nothing about
+        # what its saved receipts hold: publishing its empty counts would say
+        # no reply waits. Unpublished, the page says it is not reporting.
+        if not self._counted:
+            return
         try:
             self._status.update(self._hold_counts())
         except Exception:
@@ -462,7 +483,7 @@ class TransportWorker:
                             "receipt has been unreadable for %d hours", self.channel.name,
                             UNREADABLE_HOLD_SECONDS // 3600)
                 if row["id"] not in self._went_ahead_ids:
-                    # Counted once it is delivered (see _process), once per
+                    # Counted once it is sent (see _process), once per
                     # reply even when its receipt cannot record it; the set
                     # only deduplicates and stays bounded.
                     if len(self._went_ahead_ids) >= 10_000:
@@ -500,7 +521,7 @@ class TransportWorker:
         # bring one here through submit), and does not hold the conversation.
         if not row or not row.get("message") or row.get("restore_hold"):
             self._held.pop(record_id, None)
-            self._refused.discard(record_id)
+            self._retrying.discard(record_id)
             self._going_ahead.discard(record_id)
             self._release_after(record_id)
             return
@@ -510,6 +531,7 @@ class TransportWorker:
             return
         if not self.authorize(message):
             self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
+            self._retrying.add(record_id)
             return
         async def send_saved(reply):
             return await self.send(message, reply, row["route"])
@@ -520,19 +542,19 @@ class TransportWorker:
         if result["delivery"] == "retryable" and not reply_withheld(result):
             # Refused: retried, and the conversation's newer messages wait for it.
             self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
-            self._refused.add(record_id)
+            self._retrying.add(record_id)
         elif result["delivery"] == "retryable":
             # Held back by the source check (task or access changed): retried,
             # but the person's newer messages do not wait behind it.
             self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
-            self._refused.discard(record_id)
+            self._retrying.discard(record_id)
             self._release_after(record_id)
         else:
             self._retry_after.pop(record_id, None)
-            self._refused.discard(record_id)
+            self._retrying.discard(record_id)
             if record_id in self._going_ahead:
                 self._going_ahead.discard(record_id)
-                if result["delivery"] == "delivered":
+                if _sent(result):
                     self._went_ahead, self._went_ahead_at = self._went_ahead + 1, _wall_clock()
             self._release_after(record_id)
 

@@ -38,8 +38,9 @@ def test_a_published_status_is_sealed_counts_only_and_reads_back_fresh(tmp_path)
     assert (record["held"], record["behind_unreadable"], record["unreadable"], record["retrying"],
             record["release_at"]) == (3, 2, 1, 1, 5000.0)
     # Only these fields are kept: no message text, person, chat or saved-reply name.
-    assert set(record) == {"schema", "channel", "instance", "seen_at", "fresh", "held", "behind_unreadable",
-                           "unreadable", "retrying", "release_at", "went_ahead", "went_ahead_at"}
+    assert set(record) == {"schema", "channel", "instance", "seen_at", "fresh", "ahead", "held",
+                           "behind_unreadable", "unreadable", "retrying", "release_at", "went_ahead",
+                           "went_ahead_at"}
     publisher.close()
     assert not list(tmp_path.glob("*.enc"))
     assert b"held" not in raw and b"signal" not in raw  # sealed with the deployment key
@@ -144,8 +145,28 @@ def test_a_leftover_from_the_future_never_hides_the_current_status(tmp_path):
     for path in tmp_path.glob("*.enc"):
         path.unlink()
     _publish(tmp_path, "signal", _counts(), clock=lambda: now + 3600)
-    stale = hold_status.summary({"signal"}, directory=tmp_path, now=now)
-    assert stale["state"] == "stale" and stale["last_seen"] <= now  # never a time that has not happened
+    alone = hold_status.summary({"signal"}, directory=tmp_path, now=now)
+    # Alone it says nothing about now: no time that has not happened, and the
+    # same answer on every read (Copilot compares two reads).
+    assert alone["state"] == "not_reporting" and alone["last_seen"] is None
+    assert hold_status.summary({"signal"}, directory=tmp_path, now=now + 1) == alone
+
+
+def test_a_renewal_just_after_the_reader_took_the_time_is_current(tmp_path):
+    # The worker renews between summary() taking the time and reading the
+    # file, so the status is stamped slightly after that time.
+    now = time.time()
+    _publish(tmp_path, "signal", _counts(held=2), clock=lambda: now + 0.5)
+    state = hold_status.summary({"signal"}, directory=tmp_path, now=now)
+    assert state["state"] == "holding" and state["held"] == 2
+
+
+def test_a_stale_status_reports_when_it_was_last_renewed(tmp_path):
+    _publish(tmp_path, "signal", _counts(held=1), clock=lambda: 1000.0)
+    later = 1000.0 + hold_status.FRESH_SECONDS + 50
+    state = hold_status.summary({"signal"}, directory=tmp_path, now=later)
+    assert state["state"] == "stale" and state["last_seen"] == 1000.0
+    assert hold_status.summary({"signal"}, directory=tmp_path, now=later + 1) == state
 
 
 def test_the_freshest_status_of_a_channel_wins_over_an_older_process(tmp_path):
@@ -234,6 +255,45 @@ def test_old_statuses_and_this_apps_unrenewed_ones_are_cleared_on_start(tmp_path
     publisher.close()
     assert not old.exists() and not orphan.exists()
     assert live.exists() and other_app.exists()  # a renewed status, and another app's, are left alone
+
+
+def test_a_running_worker_clears_its_apps_unrenewed_status_left_just_before_it_started(tmp_path, monkeypatch):
+    # A process killed seconds before this one started left a status that was
+    # still recent at start. Once nobody has renewed it for FRESH_SECONDS the
+    # running worker removes it, so it never stands in for this worker later.
+    monkeypatch.setattr(hold_status, "FRESH_SECONDS", 0.3)
+    publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=0.02)
+    publisher.update(_counts(held=1))
+    publisher.start()
+    orphan = tmp_path / "signal-2-orphan.enc"
+    orphan.write_bytes(b"x")
+    other_app = tmp_path / "irc-3-other.enc"
+    other_app.write_bytes(b"x")
+    gone = time.time() - 10
+    os.utime(orphan, (gone, gone))
+    os.utime(other_app, (gone, gone))
+    deadline = time.monotonic() + 5
+    while orphan.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    try:
+        assert not orphan.exists()
+        assert publisher.path.exists() and other_app.exists()
+    finally:
+        publisher.close()
+
+
+def test_a_worker_that_stops_clears_its_apps_unrenewed_statuses_too(tmp_path):
+    orphan = tmp_path / "signal-2-orphan.enc"
+    orphan.write_bytes(b"x")
+    recent = time.time() - 20
+    os.utime(orphan, (recent, recent))
+    publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60).start()
+    assert orphan.exists()  # still recent at start: it may be renewed
+    gone = time.time() - hold_status.FRESH_SECONDS - 5
+    os.utime(orphan, (gone, gone))
+    publisher.close()
+    assert not list(tmp_path.glob("*.enc"))
+    assert hold_status.summary({"signal"}, directory=tmp_path)["state"] == "not_reporting"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="symbolic links and FIFOs need POSIX here")

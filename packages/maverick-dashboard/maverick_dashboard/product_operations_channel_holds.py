@@ -17,8 +17,9 @@ def _state(request):
     state = channel_holds.held_reply_status(request)
     details = {"Answer": state["summary"]}
     if state["state"] in {"holding", "clear"}:
-        # A count never sits beside an app that is not reporting as if it covered it.
-        only = f" ({channel_holds.app_names(state['reporting'])} only)" if state["not_reporting"] else ""
+        # A count never reads as covering an app that is turned off or not reporting.
+        apps = channel_holds.scope(state)
+        only = "" if apps == "chat" else f" ({apps} only)"
         details["Replies waiting" + only] = state["held"]
         details["Waiting behind a reply that cannot be read" + only] = state["behind_unreadable"]
         if state["retrying"]:

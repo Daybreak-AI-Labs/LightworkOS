@@ -20,9 +20,16 @@ UNAVAILABLE = "Held chat replies could not be checked. Refresh this page."
 
 
 def _enabled_channels():
-    from .integration_readiness import require_readable_config
+    from .integration_readiness import IntegrationConfigurationUnavailable, require_readable_config
 
-    channels = require_readable_config().get("channels") or {}
+    try:
+        channels = require_readable_config().get("channels") or {}
+    except IntegrationConfigurationUnavailable as exc:
+        raise ValueError("chat app settings are unreadable") from exc
+    if not isinstance(channels, dict):
+        # A [channels] value of the wrong type: the page and Copilot say they
+        # could not check, as for any unreadable setting.
+        raise ValueError("chat app settings are unreadable")
     return {name for name in WORKER_CHANNELS
             if isinstance(channels.get(name), dict) and bool(channels[name].get("enabled", False))}
 
@@ -54,6 +61,14 @@ def app_names(channels):
     return " and ".join(_LABELS.get(channel, channel) for channel in channels)
 
 
+def scope(state):
+    """Whose replies the counts cover: "chat" when every app that holds
+    replies reports, otherwise the apps that do (one turned off, or not
+    reporting, is not counted)."""
+    reporting = state["reporting"]
+    return "chat" if set(reporting) >= set(WORKER_CHANNELS) or not reporting else app_names(reporting)
+
+
 def _waiting_parts(state):
     """What is waiting and when it goes out, then what to do about it."""
     behind = state["behind_unreadable"]
@@ -80,8 +95,8 @@ def _waiting_parts(state):
         parts.append("This usually clears on its own. If this lasts, ask whoever manages this computer's "
                      "encryption key to check that it is available.")
     if waiting or retrying:
-        parts.append("If this lasts, open Manage the chat service to check that the chat service is running, "
-                     "then restart it.")
+        parts.append("If this lasts, open Manage the chat service to check that the chat service is running and "
+                     "see what it last reported, then restart it.")
     return parts
 
 
@@ -89,7 +104,10 @@ def describe(state):
     """One short paragraph: what is waiting, when it goes out, what to do."""
     kind = state["state"]
     if kind == "off":
-        return "Signal and IRC are turned off, so no chat replies are held."
+        # Nothing reads the saved replies of an app that is turned off, so
+        # whether any wait is not known.
+        return ("Signal and IRC are turned off, so held chat replies are not being checked. A reply that was "
+                "waiting when its app was turned off stays saved until that app is turned on again.")
     if kind == "not_reporting":
         names = app_names(state["not_reporting"]) or "Signal or IRC"
         verb = "are" if len(state["not_reporting"]) > 1 else "is"
@@ -108,9 +126,7 @@ def describe(state):
                 "keeps happening, check that this computer's encryption key is available.")
     parts = _waiting_parts(state)
     if not parts:
-        quiet, reporting = state["not_reporting"], state["reporting"]
-        parts.append(f"No {app_names(reporting)} replies are waiting." if quiet and reporting
-                     else "No chat replies are waiting.")
+        parts.append(f"No {scope(state)} replies are waiting.")
     if state["went_ahead"]:
         count = state["went_ahead"]
         recent = datetime_text(state["went_ahead_at"]) if state["went_ahead_at"] is not None else ""

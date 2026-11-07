@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock
 import pytest
 from maverick_channels import transport_worker
 from maverick_channels.base import Channel, IncomingMessage
-from maverick_channels.delivery import DeliveryJournal, DeliveryNotSent
+from maverick_channels.delivery import (
+    DeliveryJournal,
+    DeliveryNotSent,
+    DeliveryUnknown,
+    delivery_active,
+    send_chunk,
+)
 from maverick_channels.irc import IRCChannel, format_privmsg
 from maverick_channels.signal import SignalChannel
 from maverick_channels.transport_worker import TransportWorker
@@ -1580,4 +1586,200 @@ def test_a_worker_publishes_its_status_by_default_and_removes_it_on_close():
         assert not unreadable and found[0]["fresh"] and found[0]["held"] == 0
         await worker.close()
         assert hold_status.records() == ([], frozenset())
+    asyncio.run(run())
+
+
+def test_a_restarted_worker_publishes_nothing_until_a_scan_reads_its_receipts(monkeypatch):
+    # The first worker holds three replies behind a refused X and stops. The
+    # next one starts while the store cannot be listed: it knows nothing yet,
+    # so it publishes nothing (the page says it is not reporting) instead of
+    # counts that say no reply waits. Once a scan works, all three count.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    journal = _unreadable_journal(0, lambda record_id: False)
+
+    async def send(message, reply, route):
+        if message.text == "X":
+            raise DeliveryNotSent("X's send is refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        first = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                send=send, journal=journal, status=_Status()).start()
+        await asyncio.sleep(0.05)
+        await first.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                           message_id="x"), external_id="x")
+        await until(lambda: bool(first._blocked_conversations))
+        for index in range(3):
+            await first.submit(IncomingMessage(user_id="p", sender_id="p", text=f"Y{index}", channel=Adapter.name,
+                                               message_id=f"y{index}"), external_id=f"y{index}")
+        await until(lambda: len(first._held) == 3)
+        await first.close()
+        listing, broken, attempts = journal.store.iter_record_ids, [True], [0]
+
+        def iter_record_ids(**kwargs):
+            attempts[0] += 1
+            if broken[0]:
+                raise OSError("the store cannot be listed yet")
+            return listing(**kwargs)
+        journal.store.iter_record_ids = iter_record_ids
+        status = _Status()
+        second = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await until(lambda: attempts[0] >= 2)  # the failed first scan and its retry
+        assert status.counts == []
+        broken[0] = False
+        await until(lambda: bool(status.counts))
+        assert status.counts[0]["held"] == 3
+        await second.close()
+    asyncio.run(run())
+
+
+def test_replies_retried_after_a_failure_or_a_refused_permission_are_counted(monkeypatch):
+    # X fails while it is handled and is retried every RETRY_DELAY; Z was
+    # admitted but is no longer permitted when handled, and is retried too.
+    # Both wait for another attempt, so both count, and Y, in X's chat, is
+    # held behind X.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    journal = _unreadable_journal(0, lambda record_id: False)
+    status, checks = _Status(), {"Z": 0}
+
+    def authorize(message):
+        if message.text != "Z":
+            return True
+        checks["Z"] += 1
+        return checks["Z"] == 1  # admitted, then refused each time it is handled
+
+    class Failing(Adapter):
+        async def process_message(self, message, **kwargs):
+            if message.text == "X":
+                raise OSError("X's attachment cannot be opened")
+            return await super().process_message(message, **kwargs)
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Failing(handler), account="account", authorize=authorize,
+                                 send=AsyncMock(return_value="confirmed"), journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        x = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                                message_id="x"), external_id="x")
+        await until(lambda: x["id"] in worker._retry_after)
+        await until(lambda: status.counts and status.latest["retrying"] == 1)
+        assert status.latest["held"] == 0
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                            message_id="y"), external_id="y")
+        await worker.submit(IncomingMessage(user_id="q", sender_id="q", text="Z", channel=Adapter.name,
+                                            message_id="z"), external_id="z")
+        await until(lambda: status.latest["held"] == 1 and status.latest["retrying"] == 2)
+        await worker.close()
+    asyncio.run(run())
+
+
+def test_an_irc_reply_that_goes_ahead_is_counted_once_every_line_is_written(monkeypatch):
+    # IRC confirms no delivery: a reply whose lines were all written ends as
+    # delivery_unknown. One that went ahead of an expired hold went out, so it
+    # counts.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    wall = [1000.0]
+    monkeypatch.setattr(transport_worker, "_wall_clock", lambda: wall[0])
+    state = {"x": None, "sealed": False}
+    journal = _unreadable_journal(0, lambda record_id: state["sealed"] and record_id == state["x"])
+    status, wire = _Status(), []
+
+    async def send(message, reply, route):
+        if message.text == "X":
+            raise DeliveryNotSent("X's send is refused")
+
+        async def write():
+            wire.append(message.text)
+            return "local-wire-write-only"
+        await send_chunk("irc-0", message.text, write)  # as IRCChannel._send_chunks
+        if delivery_active():
+            raise DeliveryUnknown("IRC remote delivery has no acknowledgement")
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        x = await worker.submit(IncomingMessage(user_id="#chan", sender_id="p", text="X", channel=Adapter.name,
+                                                message_id="x"), external_id="x")
+        state["x"] = x["id"]
+        await until(lambda: bool(worker._blocked_conversations))
+        state["sealed"] = True
+        y = await worker.submit(IncomingMessage(user_id="#chan", sender_id="p", text="Y", channel=Adapter.name,
+                                                message_id="y"), external_id="y")
+        await until(lambda: status.counts and status.latest["behind_unreadable"] == 1)
+        wall[0] += transport_worker.UNREADABLE_HOLD_SECONDS
+        await until(lambda: "Y" in wire)
+        await until(lambda: status.latest["went_ahead"] == 1)
+        assert journal.get(y["id"])["delivery"] == "delivery_unknown"
+        await worker.close()
+    asyncio.run(run())
+
+
+def test_a_reply_that_goes_ahead_stays_counted_through_a_scan_that_cannot_read_it(monkeypatch):
+    # Y goes ahead of X's expired hold, but its send is refused. One scan then
+    # cannot read Y's receipt. Y is still waiting, so once it is delivered it
+    # counts as having gone out without waiting.
+    import sys as _sys
+
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    wall = [1000.0]
+    monkeypatch.setattr(transport_worker, "_wall_clock", lambda: wall[0])
+    state = {"x": None, "y": None, "sealed": False, "y_fails": 0, "refuse_y": True}
+
+    def in_scan():
+        frame = _sys._getframe()
+        while frame is not None:
+            if frame.f_code.co_name == "_oldest_window":
+                return True
+            frame = frame.f_back
+        return False
+
+    def failing(record_id):
+        if state["sealed"] and record_id == state["x"]:
+            return True
+        if record_id == state["y"] and state["y_fails"] and in_scan():
+            state["y_fails"] -= 1
+            return True
+        return False
+    journal = _unreadable_journal(0, failing)
+    sends, status = [], _Status()
+
+    async def send(message, reply, route):
+        sends.append(message.text)
+        if message.text == "X" or state["refuse_y"]:
+            raise DeliveryNotSent("the send is refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        x = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                                message_id="x"), external_id="x")
+        state["x"] = x["id"]
+        await until(lambda: bool(worker._blocked_conversations))
+        state["sealed"] = True
+        y = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                                message_id="y"), external_id="y")
+        state["y"] = y["id"]
+        await until(lambda: status.counts and status.latest["behind_unreadable"] == 1)
+        wall[0] += transport_worker.UNREADABLE_HOLD_SECONDS
+        await until(lambda: "Y" in sends)
+        assert y["id"] in worker._going_ahead
+        state["y_fails"] = 1
+        await until(lambda: state["y_fails"] == 0 and y["id"] in worker._unreadable)
+        await until(lambda: y["id"] not in worker._unreadable)  # the scan has finished with it
+        assert y["id"] in worker._going_ahead
+        state["refuse_y"] = False
+        await until(lambda: journal.get(y["id"])["delivery"] == "delivered")
+        await until(lambda: status.latest["went_ahead"] == 1)
+        await worker.close()
     asyncio.run(run())

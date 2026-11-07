@@ -16,7 +16,8 @@ from starlette.requests import Request
 PRIVATE = ("held_behind", "went_ahead_of", "chd-", "receipt", "sha256", "digest", "instance")
 JARGON = re.compile(r"\b(?:tenant|principal|digest|endpoint|schema|revision|runtime|adapter|"
                     r"preflight|authority|credential|worker|process id|unreadable_since)\b", re.IGNORECASE)
-RESTART = "If this lasts, open Manage the chat service to check that the chat service is running, then restart it."
+RESTART = ("If this lasts, open Manage the chat service to check that the chat service is running and see what it "
+           "last reported, then restart it.")
 
 
 def _request():
@@ -26,7 +27,7 @@ def _request():
 def _state(**overrides):
     state = {"state": "clear", "held": 0, "behind_unreadable": 0, "unreadable": 0, "retrying": 0,
              "release_at": None, "release_passed": False, "went_ahead": 0, "went_ahead_at": None,
-             "reporting": ["signal"], "not_reporting": [], "running_off": [], "last_seen": None,
+             "reporting": ["irc", "signal"], "not_reporting": [], "running_off": [], "last_seen": None,
              "unavailable": []}
     state.update(overrides)
     return state
@@ -64,7 +65,10 @@ def _publish(counts, *, clock=time.time, channel="signal"):
 
 
 @pytest.mark.parametrize(("state", "expected"), [
-    (_state(state="off", reporting=[]), "Signal and IRC are turned off, so no chat replies are held."),
+    # Nothing reads a turned-off app's saved replies, so it never says none are held.
+    (_state(state="off", reporting=[]), "Signal and IRC are turned off, so held chat replies are not being "
+                                        "checked. A reply that was waiting when its app was turned off stays "
+                                        "saved until that app is turned on again."),
     (_state(), "No chat replies are waiting."),
     (_state(state="holding", held=1), "1 chat reply is waiting for an earlier reply in the same chat to be sent "
                                       "first. It goes out after that one does."),
@@ -132,6 +136,17 @@ def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
     assert partial.startswith("No Signal replies are waiting.")
     assert ("IRC is not reporting, so its replies cannot be checked. Check that IRC is running in the chat "
             "service, then refresh this page.") in partial
+
+
+def test_with_one_app_turned_off_the_answer_names_the_app_it_covers(monkeypatch):
+    from maverick_dashboard import product_operations_channel_holds as adapter
+
+    clear = _state(reporting=["irc"])
+    assert channel_holds.describe(clear) == "No IRC replies are waiting."
+    monkeypatch.setattr(channel_holds, "held_reply_status",
+                        lambda _request: {**_state(state="holding", held=1, reporting=["irc"]), "summary": "x"})
+    details = adapter.snapshot(_request(), {}).details
+    assert "Replies waiting" not in details and details["Replies waiting (IRC only)"] == 1
 
 
 def test_an_app_turned_off_but_still_running_is_explained():
@@ -257,3 +272,21 @@ def test_a_renewed_status_keeps_the_copilot_answer_current(monkeypatch):
     assert publisher.write_now()
     assert adapter.snapshot(_request(), {}).revision != first
     publisher.close()
+
+
+@pytest.mark.parametrize("value", ['"signal"', "true", '["signal"]'])
+def test_a_wrongly_typed_chat_setting_leaves_copilot_working_on_the_settings_pages(client, monkeypatch, tmp_path,
+                                                                                   value):
+    from maverick import config
+
+    path = tmp_path / "mvhome" / "config.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'channels = {value}\n[copilot]\noperation_families = ["connections"]\n')
+    config.reset_config_cache()
+    monkeypatch.setattr(channel_holds, "require_global_permission", lambda *a: None)
+    for page in ("/settings", "/settings/all"):
+        catalog = client.post("/api/v1/copilot/product-operations/catalog", json={"page": page, "selection": {}})
+        assert catalog.status_code == 200
+        action = next(row for row in catalog.json()["operations"] if row["id"] == "channels.held_replies")
+        assert action["available"] is False
+    assert channel_holds.page_summary(_request()) == channel_holds.UNAVAILABLE

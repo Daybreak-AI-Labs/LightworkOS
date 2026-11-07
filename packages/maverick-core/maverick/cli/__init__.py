@@ -4753,11 +4753,27 @@ def serve(ctx: click.Context, max_depth: int, verbose: bool) -> None:
         sys.exit(2)
     server.max_depth = max_depth
     click.echo("Lightwork serve running. Ctrl-C to stop.")
+    _stop_on_sigterm()
     try:
         asyncio.run(server.run())
     except KeyboardInterrupt:
         click.echo("\nshutting down...")
         asyncio.run(server.stop())
+
+
+def _stop_on_sigterm() -> None:
+    """Stop on SIGTERM as on Ctrl-C, so every channel closes cleanly. The
+    dashboard's Stop and Restart, systemd and container runtimes send SIGTERM,
+    whose default ends the process before any channel can close. Windows ends
+    the process without a signal Python can handle."""
+    import signal
+
+    if os.name == "nt":
+        return
+    try:
+        signal.signal(signal.SIGTERM, lambda _signum, _frame: signal.raise_signal(signal.SIGINT))
+    except ValueError:  # not the main thread: the default stays
+        pass
 
 
 @main.command("history")
