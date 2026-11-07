@@ -714,8 +714,11 @@ def _gate(ep, group: str, allow, name_dists, granted, enforce) -> bool:
             group, name, dist or "unknown-dist",
         )
         return False
-    # Tool-call proxies do not enforce OS permissions, and imports/factories
-    # run in the host process. Declared grants are advisory in every mode.
+    # Tool-call proxies do not enforce OS permissions. Under "subprocess"
+    # isolation a tool plugin's import, construction and calls all run in a
+    # scrubbed child; in every other mode (and for channel, skill and persona
+    # plugins) its code runs in the host process. Declared grants are
+    # advisory in every mode.
     _warn_permissions_advisory(ep, group, manifest, dist)
     return True
 
@@ -771,6 +774,43 @@ def _isolated_factory(name: str, ep_value: str, target: Callable[[], Any], *, mo
     return factory
 
 
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+def _out_of_process_factory(name: str, ep_value: str) -> Callable[[], Any]:
+    """A tool factory that never runs plugin code in this process.
+
+    The child constructs the plugin's Tool and reports its name, description
+    and schema (:func:`maverick.plugin_isolation.describe_isolated`); the host
+    builds a :class:`maverick.tools.Tool` whose ``fn`` is the subprocess
+    proxy. A tool the child cannot describe is refused rather than imported.
+    """
+    def factory():
+        from .plugin_isolation import describe_isolated, run_isolated
+        from .tools import Tool
+
+        described = describe_isolated(ep_value)
+        if isinstance(described, str):
+            raise RuntimeError(
+                f"plugin tool {name} cannot be described out of process "
+                f"({described}); refusing to load")
+        tool_name = described.get("name")
+        description = described.get("description")
+        schema = described.get("input_schema")
+        if (not isinstance(tool_name, str) or not _TOOL_NAME_RE.match(tool_name)
+                or not isinstance(description, str) or not isinstance(schema, dict)):
+            raise RuntimeError(
+                f"plugin tool {name} reported an invalid description; refusing to load")
+
+        def _isolated_fn(args: dict) -> str:
+            return run_isolated(ep_value, args or {}, factory=True, mode="subprocess")
+
+        return Tool(name=tool_name, description=description, input_schema=schema,
+                    fn=_isolated_fn, parallel_safe=bool(described.get("parallel_safe")),
+                    strict=bool(described.get("strict")))
+    return factory
+
+
 def discover_tools() -> list[Any]:
     """Return a list of (name, factory) tuples for installed tool plugins.
 
@@ -778,17 +818,20 @@ def discover_tools() -> list[Any]:
     invocation because Tool constructors may need access to the
     sandbox/world that only exists per-run. With ``[plugins] isolation``
     enabled, each discovered tool's calls are routed through the isolation
-    seam (see :mod:`maverick.plugin_isolation`).
+    seam (see :mod:`maverick.plugin_isolation`); under ``subprocess`` the
+    plugin is never imported or constructed in this process at all.
     """
     from .plugin_isolation import isolation_mode
     from .plugin_telemetry import enabled as telemetry_enabled
     from .plugin_telemetry import wrap_factory as telemetry_wrap
     mode = isolation_mode()
     isolate = mode != "none"
+    out_of_process = mode == "subprocess"
     count = telemetry_enabled()
     out: list[tuple[str, Callable[[], Any]]] = []
-    for name, target, ep_value, dist in _iter_loaded_with_value("maverick.tools", "tools"):
-        if not callable(target):
+    for name, target, ep_value, dist in _iter_loaded_with_value(
+            "maverick.tools", "tools", not out_of_process):
+        if not out_of_process and not callable(target):
             log.warning("plugin tool %s is not callable; skipping", name)
             continue
         factory = target
@@ -796,7 +839,10 @@ def discover_tools() -> list[Any]:
             if not ep_value:
                 log.warning("plugin tool %s has no isolation entry point; skipping", name)
                 continue
-            factory = _isolated_factory(name, ep_value, factory, mode=mode)
+            if out_of_process:
+                factory = _out_of_process_factory(name, ep_value)
+            else:
+                factory = _isolated_factory(name, ep_value, factory, mode=mode)
         if count:
             # Applied last so the tick covers isolated calls too.
             factory = telemetry_wrap(name, dist, factory)
@@ -813,10 +859,13 @@ def discover_tools() -> list[Any]:
     return out
 
 
-def _iter_loaded_with_value(group: str, what: str):
+def _iter_loaded_with_value(group: str, what: str, load: bool = True):
     """Like _iter_loaded, but also yields the entry point's ``value``
     ("pkg.mod:attr") and dist name so callers can re-resolve the target
-    out-of-process / attribute telemetry."""
+    out-of-process / attribute telemetry.
+
+    With ``load`` False the entry point is gated but never loaded: the target
+    is yielded as None and no plugin code runs in this process."""
     if no_cli():
         return
     eps = list(_entry_points(group))
@@ -828,9 +877,12 @@ def _iter_loaded_with_value(group: str, what: str):
     for ep in eps:
         if not _gate(ep, group, allow, name_dists, granted, enforce):
             continue
-        target = _load(ep, what)
-        if target is None:
-            continue
+        if load:
+            target = _load(ep, what)
+            if target is None:
+                continue
+        else:
+            target = None
         yield (ep.name, target, str(getattr(ep, "value", "") or ""),
                _ep_dist_name(ep))
 
