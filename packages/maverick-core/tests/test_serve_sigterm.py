@@ -22,11 +22,17 @@ _CHILD = textwrap.dedent("""
     from maverick.cli import main
 
     marks = pathlib.Path(sys.argv[1])
-    busy = len(sys.argv) > 2
+    mode = sys.argv[2] if len(sys.argv) > 2 else ""
 
     def goal():
         # A local goal: it runs on the goal threads for as long as it takes.
         (marks / "goal").write_text("")
+        time.sleep(60)
+
+    def work():
+        # Channel work on a thread (a voice note being transcribed, a send
+        # with no timeout): cancelling its await does not stop the thread.
+        (marks / "thread").write_text("")
         time.sleep(60)
 
     class Server:
@@ -34,9 +40,11 @@ _CHILD = textwrap.dedent("""
 
         async def run(self):
             try:
-                if busy:
+                if mode == "goal":
                     asyncio.get_running_loop().run_in_executor(runner._goal_executor, goal)
                 (marks / "started").write_text("")
+                if mode == "thread":
+                    await asyncio.to_thread(work)
                 await asyncio.Event().wait()
             finally:
                 # Where Server.run closes every channel; closing takes a moment.
@@ -64,7 +72,7 @@ def _wait_for(path, child, deadline):
 def serve(tmp_path):
     children = []
 
-    def start(*, ignore_sigint=False, goal=False):
+    def start(*, ignore_sigint=False, mode=""):
         marks = tmp_path / "marks"
         marks.mkdir()
         script = tmp_path / "child.py"
@@ -72,13 +80,13 @@ def serve(tmp_path):
         env = {**os.environ, "HOME": str(tmp_path), "MAVERICK_HOME": str(tmp_path / "home")}
         disposition = signal.SIG_IGN if ignore_sigint else signal.SIG_DFL
         child = subprocess.Popen(
-            [sys.executable, str(script), str(marks), *(["goal"] if goal else [])], env=env, cwd=tmp_path,
+            [sys.executable, str(script), str(marks), *([mode] if mode else [])], env=env, cwd=tmp_path,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             # Ctrl-C is set either way: a script's background job, so a test
             # run started as one too, starts with it ignored.
             preexec_fn=lambda: signal.signal(signal.SIGINT, disposition))
         children.append(child)
-        _wait_for(marks / ("goal" if goal else "started"), child, time.monotonic() + 60)
+        _wait_for(marks / (mode or "started"), child, time.monotonic() + 60)
         return child, marks
 
     yield start
@@ -130,11 +138,24 @@ def test_sigterm_still_ends_a_server_started_with_ctrl_c_ignored(serve):
 def test_sigterm_ends_the_server_while_a_local_goal_runs(serve):
     # The channels close, then the process ends as SIGTERM always ended it,
     # instead of waiting at exit for the goal to finish.
-    child, marks = serve(goal=True)
+    child, marks = serve(mode="goal")
     child.send_signal(signal.SIGTERM)
     try:
         output, _ = child.communicate(timeout=20)
     except subprocess.TimeoutExpired:
         pytest.fail("serve kept running after SIGTERM until its local goal finished")
+    assert child.returncode == -signal.SIGTERM, output.decode(errors="replace")
+    assert (marks / "closed").exists()
+
+
+def test_sigterm_ends_the_server_while_channel_work_runs_on_a_thread(serve):
+    # asyncio.run waits at its close for every thread it lent work to; once
+    # the channels are closed, SIGTERM ends the process without that wait.
+    child, marks = serve(mode="thread")
+    child.send_signal(signal.SIGTERM)
+    try:
+        output, _ = child.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        pytest.fail("serve kept running after SIGTERM until its thread work finished")
     assert child.returncode == -signal.SIGTERM, output.decode(errors="replace")
     assert (marks / "closed").exists()

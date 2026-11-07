@@ -4753,9 +4753,24 @@ def serve(ctx: click.Context, max_depth: int, verbose: bool) -> None:
         sys.exit(2)
     server.max_depth = max_depth
     click.echo("Lightwork serve running. Ctrl-C to stop.")
+    _run_until_stopped(server)
+
+
+def _run_until_stopped(server) -> None:
+    """Run the server until Ctrl-C or SIGTERM. After a SIGTERM the process
+    ends once the channels are closed, before asyncio waits for threads still
+    working (a voice note being transcribed, a send with no timeout)."""
     stopping = _stop_on_sigterm()
     try:
-        asyncio.run(server.run())
+        with asyncio.Runner() as runner:
+            try:
+                runner.run(server.run())
+            except KeyboardInterrupt:
+                if not stopping:
+                    raise
+                click.echo("\nshutting down...")
+                runner.run(server.stop())
+                _finish_sigterm(stopping)  # returns only in a process that cannot end on its own SIGTERM
     except KeyboardInterrupt:
         click.echo("\nshutting down...")
         asyncio.run(server.stop())
@@ -4795,7 +4810,8 @@ def _stop_on_sigterm() -> list[bool]:
 
 def _finish_sigterm(stopping: list[bool]) -> None:
     """After a SIGTERM the channels are closed: end the process as SIGTERM
-    always ended it, instead of waiting at exit for local goals to finish."""
+    always ended it, instead of waiting for local goals or other work still
+    running on threads to finish."""
     if not stopping:
         return
     import signal
