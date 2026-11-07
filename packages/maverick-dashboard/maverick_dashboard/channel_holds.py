@@ -140,8 +140,9 @@ def describe(state):
                      + (f" (most recently {recent})." if recent else "."))
     for channel in state["not_reporting"]:
         label = _LABELS.get(channel, channel)
-        parts.append(f"{label} is not reporting, so its replies cannot be checked. Check that {label} is running "
-                     "in the chat service, then refresh this page.")
+        parts.append(f"{label} is not reporting, so its replies cannot be checked. If {label} was turned on after "
+                     "the chat service started, restart the chat service with Manage the chat service, then refresh "
+                     "this page. If your IT team runs it on another computer, ask them.")
     for channel in state["running_off"]:
         parts.append(f"{_LABELS.get(channel, channel)} is turned off, but the chat service keeps running it until "
                      "the chat service is restarted.")

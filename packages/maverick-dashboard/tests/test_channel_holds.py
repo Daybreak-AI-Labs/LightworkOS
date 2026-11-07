@@ -136,8 +136,10 @@ def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
                             "so held chat replies cannot be checked.")
     partial = channel_holds.describe(_state(reporting=["signal"], not_reporting=["irc"]))
     assert partial.startswith("No Signal replies are waiting.")
-    assert ("IRC is not reporting, so its replies cannot be checked. Check that IRC is running in the chat "
-            "service, then refresh this page.") in partial
+    # The usual cause is an app turned on after the chat service started.
+    assert ("IRC is not reporting, so its replies cannot be checked. If IRC was turned on after the chat "
+            "service started, restart the chat service with Manage the chat service, then refresh this page. "
+            "If your IT team runs it on another computer, ask them.") in partial
 
 
 def test_with_one_app_turned_off_the_answer_names_the_app_it_covers(monkeypatch):
