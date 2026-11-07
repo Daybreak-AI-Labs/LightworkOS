@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import threading
 import time
 
 import pytest
@@ -9,7 +12,7 @@ from maverick_channels import hold_status
 
 
 def _counts(**overrides):
-    counts = {"held": 0, "behind_unreadable": 0, "unreadable": 0, "release_at": None,
+    counts = {"held": 0, "behind_unreadable": 0, "unreadable": 0, "retrying": 0, "release_at": None,
               "went_ahead": 0, "went_ahead_at": None}
     counts.update(overrides)
     return counts
@@ -23,35 +26,47 @@ def _publish(directory, channel, counts, *, clock=None):
 
 
 def test_a_published_status_is_sealed_counts_only_and_reads_back_fresh(tmp_path):
-    publisher = _publish(tmp_path, "signal", _counts(held=3, behind_unreadable=2, unreadable=1, release_at=5000.0))
+    publisher = _publish(tmp_path, "signal", _counts(held=3, behind_unreadable=2, unreadable=1, retrying=1,
+                                                     release_at=5000.0))
     files = list(tmp_path.glob("*.enc"))
     assert len(files) == 1
     raw = files[0].read_bytes()
-    found, unavailable = hold_status.records(directory=tmp_path)
-    assert not unavailable and len(found) == 1
+    found, unreadable = hold_status.records(directory=tmp_path)
+    assert not unreadable and len(found) == 1
     record = found[0]
     assert record["fresh"] is True and record["channel"] == "signal"
-    assert (record["held"], record["behind_unreadable"], record["unreadable"], record["release_at"]) == (3, 2, 1, 5000.0)
+    assert (record["held"], record["behind_unreadable"], record["unreadable"], record["retrying"],
+            record["release_at"]) == (3, 2, 1, 1, 5000.0)
     # Only these fields are kept: no message text, person, chat or saved-reply name.
     assert set(record) == {"schema", "channel", "instance", "seen_at", "fresh", "held", "behind_unreadable",
-                           "unreadable", "release_at", "went_ahead", "went_ahead_at"}
+                           "unreadable", "retrying", "release_at", "went_ahead", "went_ahead_at"}
     publisher.close()
     assert not list(tmp_path.glob("*.enc"))
     assert b"held" not in raw and b"signal" not in raw  # sealed with the deployment key
 
 
-def test_a_status_that_is_not_renewed_is_not_fresh_and_a_damaged_one_is_unavailable(tmp_path):
+def test_a_status_that_is_not_renewed_is_not_fresh_and_a_damaged_one_names_its_app(tmp_path):
     _publish(tmp_path, "irc", _counts(), clock=lambda: 1000.0)
-    found, unavailable = hold_status.records(directory=tmp_path, now=1000.0 + hold_status.FRESH_SECONDS + 1)
-    assert not unavailable and found[0]["fresh"] is False
+    found, unreadable = hold_status.records(directory=tmp_path, now=1000.0 + hold_status.FRESH_SECONDS + 1)
+    assert not unreadable and found[0]["fresh"] is False
     (tmp_path / "irc-1-damaged.enc").write_bytes(b"not a sealed status")
-    found, unavailable = hold_status.records(directory=tmp_path, now=1000.0)
-    assert unavailable and len(found) == 1
+    (tmp_path / "Bad Name.enc").write_bytes(b"not a sealed status")
+    found, unreadable = hold_status.records(directory=tmp_path, now=1000.0)
+    assert unreadable == {"irc", "unknown"} and len(found) == 1
+
+
+def test_an_unsealed_status_is_never_read_as_nothing_held(tmp_path):
+    _publish(tmp_path, "signal", _counts(held=4))
+    forged = {"schema": 1, "channel": "signal", "instance": "signal-1-forged", "seen_at": time.time() + 1,
+              **_counts()}
+    (tmp_path / "signal-1-forged.enc").write_text(json.dumps(forged), encoding="utf-8")
+    state = hold_status.summary({"signal"}, directory=tmp_path)
+    assert state["state"] == "holding" and state["held"] == 4 and state["unavailable"] == ["signal"]
 
 
 @pytest.mark.parametrize("bad", [
     {"held": -1}, {"held": True}, {"held": 1, "behind_unreadable": 2}, {"release_at": float("inf")},
-    {"went_ahead": "3"}, {"unreadable": 2, "behind_unreadable": 1, "held": 1},
+    {"went_ahead": "3"}, {"unreadable": 2, "behind_unreadable": 1, "held": 1}, {"retrying": -2},
 ])
 def test_a_status_with_impossible_counts_is_refused(tmp_path, bad):
     publisher = hold_status.Publisher("signal", directory=tmp_path)
@@ -59,42 +74,78 @@ def test_a_status_with_impossible_counts_is_refused(tmp_path, bad):
         publisher.update(_counts(**bad))
 
 
-def test_summary_adds_up_the_fresh_channels_and_takes_the_earliest_release(tmp_path):
+def test_summary_adds_up_the_fresh_channels_and_takes_the_latest_release(tmp_path):
     _publish(tmp_path, "signal", _counts(held=2, behind_unreadable=2, unreadable=1, release_at=9000.0))
-    _publish(tmp_path, "irc", _counts(held=3, behind_unreadable=1, unreadable=1, release_at=7000.0,
+    _publish(tmp_path, "irc", _counts(held=3, behind_unreadable=1, unreadable=1, retrying=2, release_at=7000.0,
                                       went_ahead=1, went_ahead_at=6000.0))
-    state = hold_status.summary({"signal", "irc"}, directory=tmp_path)
+    state = hold_status.summary({"signal", "irc"}, directory=tmp_path, now=time.time())
     assert state["state"] == "holding"
-    assert (state["held"], state["behind_unreadable"], state["unreadable"]) == (5, 3, 2)
-    assert state["release_at"] == 7000.0 and state["went_ahead"] == 1 and state["went_ahead_at"] == 6000.0
-    assert state["not_reporting"] == []
+    assert (state["held"], state["behind_unreadable"], state["unreadable"], state["retrying"]) == (5, 3, 2, 2)
+    # Every held reply goes out by the latest of the times, not the earliest.
+    assert state["release_at"] == 9000.0 and state["went_ahead"] == 1 and state["went_ahead_at"] == 6000.0
+    assert state["not_reporting"] == [] and state["reporting"] == ["irc", "signal"]
+    assert state["release_passed"] is True  # 9000 seconds after 1970 is long past
+
+
+def test_a_release_time_still_ahead_has_not_passed(tmp_path):
+    _publish(tmp_path, "signal", _counts(held=1, behind_unreadable=1, unreadable=1, release_at=time.time() + 3600))
+    assert hold_status.summary({"signal"}, directory=tmp_path)["release_passed"] is False
+
+
+def test_replies_waiting_for_another_attempt_alone_are_holding(tmp_path):
+    _publish(tmp_path, "irc", _counts(retrying=1))
+    state = hold_status.summary({"irc"}, directory=tmp_path)
+    assert state["state"] == "holding" and state["held"] == 0 and state["retrying"] == 1
 
 
 def test_summary_states_when_nothing_can_be_said_to_be_held(tmp_path):
     assert hold_status.summary(set(), directory=tmp_path)["state"] == "off"
-    assert hold_status.summary({"signal"}, directory=tmp_path)["state"] == "not_reporting"
+    quiet = hold_status.summary({"signal"}, directory=tmp_path)
+    assert quiet["state"] == "not_reporting" and quiet["not_reporting"] == ["signal"]
     _publish(tmp_path, "signal", _counts(), clock=lambda: 1000.0)
     stale = hold_status.summary({"signal"}, directory=tmp_path, now=1000.0 + hold_status.FRESH_SECONDS + 1)
     assert stale["state"] == "stale" and stale["last_seen"] == 1000.0
     assert hold_status.summary({"signal"}, directory=tmp_path, now=1001.0)["state"] == "clear"
     (tmp_path / "signal-2-damaged.enc").write_bytes(b"garbage")
     fresh_and_damaged = hold_status.summary({"signal"}, directory=tmp_path, now=1001.0)
-    assert fresh_and_damaged["state"] == "clear" and fresh_and_damaged["unavailable"] is True
+    assert fresh_and_damaged["state"] == "clear" and fresh_and_damaged["unavailable"] == ["signal"]
     for path in tmp_path.glob("*.enc"):
         path.unlink()
     (tmp_path / "signal-3-damaged.enc").write_bytes(b"garbage")
-    assert hold_status.summary({"signal"}, directory=tmp_path)["state"] == "unavailable"
+    unreadable = hold_status.summary({"signal"}, directory=tmp_path)
+    assert unreadable["state"] == "unavailable" and unreadable["unavailable"] == ["signal"]
 
 
-def test_summary_names_an_enabled_channel_that_is_not_reporting_and_ignores_disabled_ones(tmp_path):
-    _publish(tmp_path, "signal", _counts(held=1))
-    _publish(tmp_path, "irc", _counts(held=4))
+def test_a_turned_off_apps_unreadable_leftover_does_not_hide_a_quiet_app(tmp_path):
+    (tmp_path / "irc-1-damaged.enc").write_bytes(b"garbage")
     state = hold_status.summary({"signal"}, directory=tmp_path)
-    assert state["held"] == 1 and state["not_reporting"] == []
-    (tmp_path / "unused").mkdir()
-    _publish(tmp_path / "unused", "signal", _counts(held=1))
-    state = hold_status.summary({"signal", "irc"}, directory=tmp_path / "unused")
-    assert state["state"] == "holding" and state["not_reporting"] == ["irc"]
+    assert state["state"] == "not_reporting" and state["unavailable"] == []
+
+
+def test_summary_names_an_enabled_channel_that_is_not_reporting(tmp_path):
+    _publish(tmp_path, "signal", _counts(held=1))
+    state = hold_status.summary({"signal", "irc"}, directory=tmp_path)
+    assert state["state"] == "holding" and state["not_reporting"] == ["irc"] and state["reporting"] == ["signal"]
+
+
+def test_an_app_turned_off_but_still_running_is_still_counted(tmp_path):
+    _publish(tmp_path, "signal", _counts(held=3))
+    for enabled in (set(), {"irc"}):
+        state = hold_status.summary(enabled, directory=tmp_path)
+        assert state["held"] == 3 and state["running_off"] == ["signal"] and state["state"] == "holding"
+
+
+def test_a_leftover_from_the_future_never_hides_the_current_status(tmp_path):
+    now = time.time()
+    _publish(tmp_path, "signal", _counts(held=3), clock=lambda: now)
+    _publish(tmp_path, "signal", _counts(held=0), clock=lambda: now + 3600)
+    state = hold_status.summary({"signal"}, directory=tmp_path, now=now)
+    assert state["state"] == "holding" and state["held"] == 3
+    for path in tmp_path.glob("*.enc"):
+        path.unlink()
+    _publish(tmp_path, "signal", _counts(), clock=lambda: now + 3600)
+    stale = hold_status.summary({"signal"}, directory=tmp_path, now=now)
+    assert stale["state"] == "stale" and stale["last_seen"] <= now  # never a time that has not happened
 
 
 def test_the_freshest_status_of_a_channel_wins_over_an_older_process(tmp_path):
@@ -103,7 +154,7 @@ def test_the_freshest_status_of_a_channel_wins_over_an_older_process(tmp_path):
     assert hold_status.summary({"signal"}, directory=tmp_path, now=1060.0)["state"] == "clear"
 
 
-def test_a_failed_write_is_logged_once_and_never_raises(tmp_path, monkeypatch, caplog):
+def test_a_failed_write_is_logged_once_and_never_raises(tmp_path, caplog):
     blocked = tmp_path / "file-not-directory"
     blocked.write_text("x")
     publisher = hold_status.Publisher("signal", directory=blocked)
@@ -142,15 +193,72 @@ def test_the_renewal_thread_writes_at_once_renews_and_stops_on_close(tmp_path):
     assert not publisher.write_now()  # a closed publisher never writes again
 
 
-def test_old_statuses_left_by_stopped_processes_are_cleared_on_start(tmp_path):
-    old = tmp_path / "signal-1-old.enc"
+def test_a_write_still_running_when_close_gives_up_does_not_bring_the_status_back(tmp_path, monkeypatch):
+    from maverick import file_lock
+
+    real, entered, release = file_lock.atomic_write_bytes, threading.Event(), threading.Event()
+
+    def slow(*args, **kwargs):
+        entered.set()
+        release.wait(10)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(file_lock, "atomic_write_bytes", slow)
+    monkeypatch.setattr(hold_status, "_CLOSE_WAIT", 0.05)
+    publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60)
+    publisher.update(_counts(held=2))
+    publisher.start()
+    assert entered.wait(5)
+    publisher.close()  # gives up waiting for the write
+    release.set()
+    publisher._thread.join(5)
+    assert not list(tmp_path.glob("*.enc"))
+    assert hold_status.summary({"signal"}, directory=tmp_path)["state"] == "not_reporting"
+
+
+def test_old_statuses_and_this_apps_unrenewed_ones_are_cleared_on_start(tmp_path):
+    old = tmp_path / "irc-1-old.enc"
     old.write_bytes(b"x")
-    stamp = time.time() - 8 * 86400
-    import os
-    os.utime(old, (stamp, stamp))
+    week = time.time() - 8 * 86400
+    os.utime(old, (week, week))
+    orphan = tmp_path / "signal-2-orphan.enc"
+    orphan.write_bytes(b"x")
+    gone = time.time() - hold_status.FRESH_SECONDS - 5
+    os.utime(orphan, (gone, gone))
+    live = tmp_path / "signal-3-live.enc"
+    live.write_bytes(b"x")
+    other_app = tmp_path / "irc-4-recent.enc"
+    other_app.write_bytes(b"x")
+    os.utime(other_app, (gone, gone))
     publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60).start()
     publisher.close()
-    assert not old.exists()
+    assert not old.exists() and not orphan.exists()
+    assert live.exists() and other_app.exists()  # a renewed status, and another app's, are left alone
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links and FIFOs need POSIX here")
+def test_cleanup_never_follows_a_linked_folder(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    victim = elsewhere / "x.enc"
+    victim.write_bytes(b"x")
+    week = time.time() - 8 * 86400
+    os.utime(victim, (week, week))
+    (tmp_path / "holds").symlink_to(elsewhere, target_is_directory=True)
+    hold_status.Publisher("signal", directory=tmp_path / "holds", renew_seconds=60).start().close()
+    assert victim.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links and FIFOs need POSIX here")
+def test_a_fifo_or_device_in_the_folder_is_unreadable_not_a_hang(tmp_path):
+    publisher = _publish(tmp_path, "signal", _counts(held=1))
+    os.mkfifo(tmp_path / "signal-9-fifo.enc")
+    (tmp_path / "signal-8-zero.enc").symlink_to("/dev/zero")
+    started = time.monotonic()
+    found, unreadable = hold_status.records(directory=tmp_path)
+    assert time.monotonic() - started < 5
+    assert [record["held"] for record in found] == [1] and unreadable == {"signal"}
+    publisher.close()
 
 
 def test_a_record_names_only_a_known_channel(tmp_path):

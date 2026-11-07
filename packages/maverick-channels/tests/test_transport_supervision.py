@@ -1259,11 +1259,14 @@ class _Status:
         return self.counts[-1]
 
 
+_COUNT_KEYS = {"held", "behind_unreadable", "unreadable", "retrying", "release_at", "went_ahead", "went_ahead_at"}
+
+
 def test_held_replies_are_published_as_counts_until_the_unreadable_hold_expires(monkeypatch):
     # As the test above: Y waits behind X, which cannot be read, until X has
     # been unreadable for UNREADABLE_HOLD_SECONDS. What the worker publishes
     # for the Channels page and Copilot says so in counts and times only, and
-    # then that one reply went ahead without waiting.
+    # then that one reply went out without waiting once it was delivered.
     monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
     wall = [1000.0]
     monkeypatch.setattr(transport_worker, "_wall_clock", lambda: wall[0])
@@ -1292,7 +1295,8 @@ def test_held_replies_are_published_as_counts_until_the_unreadable_hold_expires(
         await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
                                             message_id="y"), external_id="y")
         await until(lambda: status.counts and status.latest["behind_unreadable"] == 1)
-        assert status.latest == {"held": 1, "behind_unreadable": 1, "unreadable": 1,
+        # X itself cannot be read, so it is not also counted as waiting for another attempt.
+        assert status.latest == {"held": 1, "behind_unreadable": 1, "unreadable": 1, "retrying": 0,
                                  "release_at": 1000.0 + transport_worker.UNREADABLE_HOLD_SECONDS,
                                  "went_ahead": 0, "went_ahead_at": None}
         wall[0] += transport_worker.UNREADABLE_HOLD_SECONDS
@@ -1301,8 +1305,51 @@ def test_held_replies_are_published_as_counts_until_the_unreadable_hold_expires(
         assert status.latest["held"] == 0 and status.latest["went_ahead_at"] == wall[0]
         await worker.close()
         assert status.closed
-        assert all(set(counts) == {"held", "behind_unreadable", "unreadable", "release_at", "went_ahead",
-                                   "went_ahead_at"} for counts in status.counts)
+        assert all(set(counts) == _COUNT_KEYS for counts in status.counts)
+    asyncio.run(run())
+
+
+def test_a_reply_that_goes_ahead_is_counted_only_once_it_is_delivered(monkeypatch):
+    # As above, but once X's hold expires Y's own first send is refused: Y has
+    # not gone out, so nothing is counted until its retried send is delivered.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    wall = [1000.0]
+    monkeypatch.setattr(transport_worker, "_wall_clock", lambda: wall[0])
+    state = {"x": None, "sealed": False, "y_refusals": 1}
+    journal = _unreadable_journal(0, lambda record_id: state["sealed"] and record_id == state["x"])
+    sends, status = [], _Status()
+
+    async def send(message, reply, route):
+        sends.append(message.text)
+        if message.text == "X":
+            raise DeliveryNotSent("X's send is refused")
+        if state["y_refusals"]:
+            state["y_refusals"] -= 1
+            raise DeliveryNotSent("Y's first send is refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        x = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                                message_id="x"), external_id="x")
+        state["x"] = x["id"]
+        await until(lambda: bool(worker._blocked_conversations))
+        state["sealed"] = True
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                            message_id="y"), external_id="y")
+        await until(lambda: status.counts and status.latest["behind_unreadable"] == 1)
+        wall[0] += transport_worker.UNREADABLE_HOLD_SECONDS
+        await until(lambda: sends.count("Y") == 1)
+        await until(lambda: status.latest["retrying"] == 1)
+        assert status.latest["went_ahead"] == 0  # refused: it did not go out
+        await until(lambda: sends.count("Y") == 2)
+        await until(lambda: status.latest["went_ahead"] == 1)
+        assert status.latest["retrying"] == 0
+        await worker.close()
     asyncio.run(run())
 
 
@@ -1336,11 +1383,186 @@ def test_a_reply_waiting_for_a_refused_one_is_published_without_a_release_time(m
         y = await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
                                                 message_id="y"), external_id="y")
         await until(lambda: y["id"] in worker._retry_after and status.counts and status.latest["held"] == 1)
-        assert status.latest == {"held": 1, "behind_unreadable": 0, "unreadable": 0, "release_at": None,
-                                 "went_ahead": 0, "went_ahead_at": None}
+        assert status.latest == {"held": 1, "behind_unreadable": 0, "unreadable": 0, "retrying": 1,
+                                 "release_at": None, "went_ahead": 0, "went_ahead_at": None}
         now[0] += transport_worker.RETRY_DELAY
         await until(lambda: sends == ["X", "X", "Y"])
-        await until(lambda: status.latest["held"] == 0)
+        await until(lambda: status.latest["held"] == 0 and status.latest["retrying"] == 0)
+        await worker.close()
+    asyncio.run(run())
+
+
+def _turns(gates):
+    """A handler whose reply to a message waits for that text's gate."""
+    async def handler(message):
+        gate = gates.get(message.text)
+        if gate is not None:
+            await gate.wait()
+        return "answer"
+    return handler
+
+
+def test_the_status_is_current_for_the_whole_of_a_long_reply(monkeypatch):
+    # X's send is refused. While W's reply is worked on, Y (X's chat) and Z
+    # (another chat) arrive. Y waits behind X, then Z's long reply starts: the
+    # status must say Y is held for the whole of Z's reply, not only after it.
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    now = [0.0]
+    monkeypatch.setattr(transport_worker, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    journal = _unreadable_journal(0, lambda record_id: False)
+    sends, status = [], _Status()
+    gates = {"W": asyncio.Event(), "Z": asyncio.Event()}
+    started = []
+
+    async def send(message, reply, route):
+        sends.append(message.text)
+        if message.text == "X":
+            raise DeliveryNotSent("X's send is refused")
+        return "confirmed"
+
+    async def run():
+        handler = _turns(gates)
+
+        async def watched(message):
+            started.append(message.text)
+            return await handler(message)
+        worker = TransportWorker(Adapter(watched), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                            message_id="x"), external_id="x")
+        await until(lambda: bool(worker._blocked_conversations))
+        await worker.submit(IncomingMessage(user_id="w", sender_id="w", text="W", channel=Adapter.name,
+                                            message_id="w"), external_id="w")
+        await until(lambda: "W" in started)
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                            message_id="y"), external_id="y")
+        await worker.submit(IncomingMessage(user_id="z", sender_id="z", text="Z", channel=Adapter.name,
+                                            message_id="z"), external_id="z")
+        gates["W"].set()
+        await until(lambda: "Z" in started)
+        await asyncio.sleep(0.05)
+        assert status.latest["held"] == 1  # Y waits behind X throughout Z's reply
+        gates["Z"].set()
+        await worker.close()
+    asyncio.run(run())
+
+
+def test_the_status_says_a_released_reply_is_no_longer_held_while_it_is_answered(monkeypatch):
+    # Y waits behind a refused X. X is then sent, so Y is answered: the status
+    # must not keep saying Y is held while Y's own long reply is worked on.
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    now = [0.0]
+    monkeypatch.setattr(transport_worker, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    journal = _unreadable_journal(0, lambda record_id: False)
+    sends, status, started = [], _Status(), []
+    gates = {"Y": asyncio.Event()}
+
+    async def send(message, reply, route):
+        sends.append(message.text)
+        if len(sends) == 1:
+            raise DeliveryNotSent("X's first send is refused")
+        return "confirmed"
+
+    async def run():
+        handler = _turns(gates)
+
+        async def watched(message):
+            started.append(message.text)
+            return await handler(message)
+        worker = TransportWorker(Adapter(watched), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                            message_id="x"), external_id="x")
+        await until(lambda: bool(worker._blocked_conversations))
+        await worker.submit(IncomingMessage(user_id="p", sender_id="p", text="Y", channel=Adapter.name,
+                                            message_id="y"), external_id="y")
+        await until(lambda: status.counts and status.latest["held"] == 1)
+        now[0] += transport_worker.RETRY_DELAY
+        await until(lambda: "Y" in started)
+        await asyncio.sleep(0.05)
+        assert sends == ["X", "X"] and status.latest["held"] == 0
+        gates["Y"].set()
+        await worker.close()
+    asyncio.run(run())
+
+
+def test_a_restarted_worker_reports_every_held_reply_from_its_first_status(monkeypatch):
+    # The first worker holds more replies than one window behind a refused X
+    # and stops. Each held receipt names what it waits behind, so the next
+    # worker's very first status already counts all of them.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    journal = _unreadable_journal(0, lambda record_id: False)
+    count = transport_worker.MAX_PENDING + 8
+
+    async def send(message, reply, route):
+        if message.text == "X":
+            raise DeliveryNotSent("X's send is refused")
+        return "confirmed"
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        first = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                send=send, journal=journal, status=_Status()).start()
+        await asyncio.sleep(0.05)
+        await first.submit(IncomingMessage(user_id="p", sender_id="p", text="X", channel=Adapter.name,
+                                           message_id="x"), external_id="x")
+        await until(lambda: bool(first._blocked_conversations))
+        for index in range(count):
+            await first.submit(IncomingMessage(user_id="p", sender_id="p", text=f"Y{index}", channel=Adapter.name,
+                                               message_id=f"y{index}"), external_id=f"y{index}")
+        await until(lambda: len(first._held) == count)
+        await first.close()
+        status = _Status()
+        second = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await until(lambda: bool(status.counts))
+        assert status.counts[0]["held"] == count
+        await second.close()
+    asyncio.run(run())
+
+
+def test_the_release_time_covers_every_unreadable_reply_ahead_in_the_chat(monkeypatch):
+    # In one chat X1's send is refused, so X2 and Y wait behind it. X1 then
+    # cannot be read from 1000, and X2 from 5000. Y goes out regardless only
+    # once both have been unreadable for UNREADABLE_HOLD_SECONDS, so the status
+    # gives 5000 + that, not the earlier 1000 + that.
+    monkeypatch.setattr(transport_worker, "RETRY_DELAY", 0.05)
+    wall = [1000.0]
+    monkeypatch.setattr(transport_worker, "_wall_clock", lambda: wall[0])
+    sealed = set()
+    journal = _unreadable_journal(0, lambda record_id: record_id in sealed)
+    status = _Status()
+
+    async def send(message, reply, route):
+        raise DeliveryNotSent("every send is refused")
+
+    async def run():
+        async def handler(message):
+            return "answer"
+        worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
+                                 send=send, journal=journal, status=status).start()
+        await asyncio.sleep(0.05)
+        ids = {}
+        for text in ("X1", "X2", "Y"):
+            ids[text] = (await worker.submit(IncomingMessage(user_id="p", sender_id="p", text=text,
+                                                             channel=Adapter.name, message_id=text.lower()),
+                                             external_id=text.lower()))["id"]
+            if text == "X1":
+                await until(lambda: bool(worker._blocked_conversations))
+        await until(lambda: len(worker._held) == 2)
+        sealed.add(ids["X1"])
+        await until(lambda: ids["X1"] in worker._unreadable_since)
+        wall[0] = 5000.0
+        sealed.add(ids["X2"])
+        await until(lambda: ids["X2"] in worker._unreadable_since)
+        await until(lambda: status.latest["release_at"] == 5000.0 + transport_worker.UNREADABLE_HOLD_SECONDS)
         await worker.close()
     asyncio.run(run())
 
@@ -1354,8 +1576,8 @@ def test_a_worker_publishes_its_status_by_default_and_removes_it_on_close():
         worker = TransportWorker(Adapter(handler), account="account", authorize=lambda msg: True,
                                  send=AsyncMock(return_value="confirmed"), journal=DeliveryJournal()).start()
         await until(lambda: any(record["channel"] == Adapter.name for record in hold_status.records()[0]))
-        found, unavailable = hold_status.records()
-        assert not unavailable and found[0]["fresh"] and found[0]["held"] == 0
+        found, unreadable = hold_status.records()
+        assert not unreadable and found[0]["fresh"] and found[0]["held"] == 0
         await worker.close()
-        assert hold_status.records() == ([], False)
+        assert hold_status.records() == ([], frozenset())
     asyncio.run(run())

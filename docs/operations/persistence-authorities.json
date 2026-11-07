@@ -332,7 +332,7 @@
       "observed_mechanism_markers": {},
       "source_sites": [
         {
-          "line": 109,
+          "line": 119,
           "function": "write_now",
           "kind": "atomic_write_bytes",
           "expression": "atomic_write_bytes(self.path, seal(json.dumps(record).encode()), mode=384)"

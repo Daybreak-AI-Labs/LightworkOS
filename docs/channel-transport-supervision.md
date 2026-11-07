@@ -45,17 +45,23 @@ Administrators see held replies in plain words under **Channels > Message
 delivery**, and the read-only Copilot operation **Check held chat replies**
 (in the Connections family of Copilot actions) gives the same answer under the
 same administrator check: how many replies are waiting, how many wait behind a
-reply that cannot be read and when the earliest of those goes out regardless,
-and how many went out without waiting since the chat service started. Each
-running worker publishes these counts and times, with no message text, person,
-chat or receipt identity, in a small file sealed with the deployment key in
-the `channel-holds` folder next to the configuration file. It is renewed every
-30 seconds, even while the worker is busy with a long reply, and removed when
-the worker stops. One that has not been renewed for 100 seconds is reported as
-not current, never as nothing held, and a turned-on chat app with no current
-status is named as not reporting. The status is local to the computer that
-runs the chat service; a dashboard on another computer says it is not
-reporting.
+reply that cannot be read and the time by which all of those go out regardless,
+how many could not be sent and are tried again, and how many went out without
+waiting (counted once delivered) since the chat service started. Each running
+worker publishes these counts and times, with no message text, person, chat or
+receipt identity, in a small file sealed with the deployment key in the
+`channel-holds` folder next to the configuration file; a file that is not
+sealed is never read. A restarted worker counts the replies its saved receipts
+say are waiting from its first scan. The status is updated after each scan and
+before each reply is worked on, renewed every 30 seconds, even while the worker
+is busy with a long reply, and removed when the worker stops. One that has not
+been renewed for 100 seconds is reported as not current, never as nothing held:
+a chat service stopped without shutting down cleanly reads as having stopped
+reporting until it starts again, and a new worker clears its app's statuses
+that nobody renews. A turned-on chat app with no current status is named as
+not reporting, and one turned off in settings that the chat service still runs
+is named too. The status is local to the computer that runs the chat service;
+a dashboard on another computer says it is not reporting.
 
 Readers do not wait for agent execution. Current sender and configured
 account policy is rechecked at execution and delivery. These guarantees are

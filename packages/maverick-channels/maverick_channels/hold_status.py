@@ -4,14 +4,16 @@ Signal and IRC keep each conversation's replies in order: a reply waits while
 an earlier one in the same conversation waits for another attempt or cannot
 be read (see transport_worker). The worker that holds them runs in the chat
 service's process, so each running worker publishes a small sealed status
-here: how many replies wait, how many wait behind a reply that cannot be read,
-when the earliest of those goes out regardless, and how many went out without
-waiting. Counts and times only: no message text, person, chat or saved-reply
-name is ever published.
+here: how many replies wait, how many wait behind a reply that cannot be read
+and the time by which all of those go out regardless, how many could not be
+sent and wait for another attempt, and how many went out without waiting.
+Counts and times only: no message text, person, chat or saved-reply name is
+ever published.
 
 Like the runtime configuration receipts, a status is renewed while its worker
 runs and removed when it stops. One that is not renewed is reported as not
-current, never as nothing held. Statuses are local to this computer.
+current, never as nothing held, and only a sealed status is ever read.
+Statuses are local to this computer.
 """
 from __future__ import annotations
 
@@ -21,18 +23,20 @@ import math
 import os
 import re
 import secrets
+import stat
 import threading
 import time
 from pathlib import Path
 
 FRESH_SECONDS = 100
 RENEW_SECONDS = 30
+_CLOSE_WAIT = 2
 _SCHEMA = 1
 _MAX_FILES = 1000
 _MAX_BYTES = 65_536
 _MAX_COUNT = 10_000_000
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
-_COUNTS = ("held", "behind_unreadable", "unreadable", "release_at", "went_ahead", "went_ahead_at")
+_COUNTS = ("held", "behind_unreadable", "unreadable", "retrying", "release_at", "went_ahead", "went_ahead_at")
 log = logging.getLogger(__name__)
 
 
@@ -50,10 +54,10 @@ def _moment(value):
 
 
 def _checked(counts):
-    """The six published numbers, or ValueError for anything else."""
+    """The published numbers, or ValueError for anything else."""
     if not isinstance(counts, dict) or set(counts) != set(_COUNTS):
         raise ValueError("Held reply status has unexpected fields")
-    if not all(_count(counts[key]) for key in ("held", "behind_unreadable", "unreadable", "went_ahead")):
+    if not all(_count(counts[key]) for key in ("held", "behind_unreadable", "unreadable", "retrying", "went_ahead")):
         raise ValueError("Held reply counts must be whole numbers")
     if not (_moment(counts["release_at"]) and _moment(counts["went_ahead_at"])):
         raise ValueError("Held reply times must be finite")
@@ -61,6 +65,12 @@ def _checked(counts):
     if counts["behind_unreadable"] > counts["held"] or counts["unreadable"] > counts["behind_unreadable"]:
         raise ValueError("Held reply counts do not add up")
     return {key: counts[key] for key in _COUNTS}
+
+
+def _app(path):
+    """The chat app a status file belongs to, from its name, or ``unknown``."""
+    name = path.name.split("-", 1)[0]
+    return name if _NAME.fullmatch(name) else "unknown"
 
 
 class Publisher:
@@ -115,17 +125,37 @@ class Publisher:
             self._failing = True
             return False
         self._failing = False
+        if self._stop.is_set():
+            # close() stopped waiting for this write and has already removed the status.
+            try:
+                self.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False
         return True
+
+    def _clear_leftovers(self):
+        """Remove statuses nobody renews: any a week old, and this app's from
+        processes that stopped without removing theirs (a renewed one is at
+        most RENEW_SECONDS old). Only a private folder of this module's own
+        is ever cleaned, never one another folder stands in for."""
+        from maverick.file_lock import ensure_private_directory
+
+        ensure_private_directory(self.directory)
+        now = time.time()
+        for path in list(self.directory.glob("*.enc"))[:_MAX_FILES]:
+            try:
+                changed = path.lstat().st_mtime
+                if changed < now - 7 * 86400 or (path != self.path and _app(path) == self.channel
+                                                 and changed < now - FRESH_SECONDS):
+                    path.unlink()
+            except OSError:
+                pass
 
     def start(self):
         """Clear statuses left by stopped processes, then publish and renew."""
         try:
-            for path in list(self.directory.glob("*.enc"))[:_MAX_FILES]:
-                try:
-                    if path.stat().st_mtime < time.time() - 7 * 86400:
-                        path.unlink()
-                except OSError:
-                    pass
+            self._clear_leftovers()
         except OSError:
             pass
         self._changed.set()
@@ -148,16 +178,42 @@ class Publisher:
         self._stop.set()
         self._changed.set()
         if self._thread is not None and self._thread is not threading.current_thread():
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=_CLOSE_WAIT)
         try:
             self.path.unlink(missing_ok=True)
         except OSError:
             pass
 
 
-def _parse(blob, now):
-    from maverick.crypto_at_rest import deployment_key_scope, unseal
+def _read(path):
+    """The file's bytes: a regular file, never followed through a link, and
+    never more than the limit (a pipe or device would otherwise never end)."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_BYTES:
+            raise ValueError("held reply status is not a regular file within the limit")
+        chunks, left = [], _MAX_BYTES + 1
+        while left > 0:
+            chunk = os.read(descriptor, left)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        blob = b"".join(chunks)
+        if len(blob) > _MAX_BYTES:
+            raise ValueError("held reply status exceeds the limit")
+        return blob
+    finally:
+        os.close(descriptor)
 
+
+def _parse(blob, now):
+    from maverick.crypto_at_rest import deployment_key_scope, is_sealed, unseal
+
+    if not is_sealed(blob):
+        raise ValueError("held reply status is not sealed")
     with deployment_key_scope():
         record = json.loads(unseal(blob))
     if (not isinstance(record, dict) or record.get("schema") != _SCHEMA
@@ -171,64 +227,76 @@ def _parse(blob, now):
 
 
 def records(*, directory=None, now=None):
-    """(statuses, unavailable): every status on this computer, each marked
-    fresh or not, and whether any could not be read."""
+    """(statuses, unreadable): every status on this computer, each marked fresh
+    or not, and the apps whose status files could not be read (``unknown``
+    when the folder itself could not be listed or a file names no app)."""
     folder = Path(directory) if directory is not None else _directory()
     now = time.time() if now is None else now
     try:
         paths = list(folder.glob("*.enc"))
     except OSError:
-        return [], True
+        return [], frozenset({"unknown"})
     if len(paths) > _MAX_FILES:
-        return [], True
-    found, unavailable = [], False
+        return [], frozenset({"unknown"})
+    found, unreadable = [], set()
     for path in paths:
         try:
-            if path.stat().st_size > _MAX_BYTES:
-                raise ValueError("held reply status exceeds limit")
-            found.append(_parse(path.read_bytes(), now))
+            found.append(_parse(_read(path), now))
         except FileNotFoundError:
             continue  # its worker stopped while this was read
         except Exception:
-            unavailable = True
-    return found, unavailable
+            unreadable.add(_app(path))
+    return found, frozenset(unreadable)
 
 
 def summary(enabled, *, directory=None, now=None):
-    """What the turned-on chat apps hold, in one state.
+    """What the chat apps hold, in one state.
 
-    ``off``: no app that holds replies is turned on. ``holding`` or ``clear``:
-    the current statuses, added up, with ``not_reporting`` naming any turned-on
-    app with no current status. ``stale``: none is current, and ``last_seen``
-    is when one was last renewed. ``not_reporting``: none was found.
-    ``unavailable``: none could be read. ``unavailable`` is also True beside a
-    current answer when another status could not be read."""
-    found, unavailable = records(directory=directory, now=now)
-    state = {"state": "off", "held": 0, "behind_unreadable": 0, "unreadable": 0, "release_at": None,
-             "went_ahead": 0, "went_ahead_at": None, "not_reporting": [], "last_seen": None,
-             "unavailable": unavailable}
+    ``off``: no app that holds replies is turned on or running. ``holding`` or
+    ``clear``: the current statuses, added up. ``reporting`` names the apps
+    with a current status, ``not_reporting`` any turned-on app without one,
+    and ``running_off`` any app turned off in settings that the chat service
+    still runs. ``stale``: no status is current, and ``last_seen`` is when one
+    was last renewed. ``not_reporting``: none was found. ``unavailable``: the
+    turned-on apps whose status could not be read; with no current status
+    beside them, the state is ``unavailable``. ``release_at`` is the time by
+    which every reply held behind an unreadable one goes out regardless, and
+    ``release_passed`` says it is already past."""
+    now = time.time() if now is None else now
+    found, unreadable = records(directory=directory, now=now)
     enabled = sorted(set(enabled))
-    if not enabled:
-        return state
+    state = {"state": "off", "held": 0, "behind_unreadable": 0, "unreadable": 0, "retrying": 0,
+             "release_at": None, "release_passed": False, "went_ahead": 0, "went_ahead_at": None,
+             "reporting": [], "not_reporting": [], "running_off": [], "last_seen": None,
+             "unavailable": sorted(name for name in unreadable if name in enabled or name == "unknown")}
     latest = {}
     for record in found:
         channel = record["channel"]
-        if channel in enabled and (channel not in latest or record["seen_at"] > latest[channel]["seen_at"]):
+        # A current status always wins over one that cannot be current, such
+        # as a leftover stamped ahead of this computer's clock.
+        if channel not in latest or (record["fresh"], record["seen_at"]) > (latest[channel]["fresh"],
+                                                                              latest[channel]["seen_at"]):
             latest[channel] = record
+    latest = {channel: record for channel, record in latest.items() if channel in enabled or record["fresh"]}
+    state["running_off"] = sorted(channel for channel, record in latest.items()
+                                  if record["fresh"] and channel not in enabled)
+    if not enabled and not state["running_off"]:
+        return state
     current = [record for record in latest.values() if record["fresh"]]
     if not current:
         if latest:
-            state.update(state="stale", last_seen=max(record["seen_at"] for record in latest.values()))
+            state.update(state="stale", last_seen=min(now, max(record["seen_at"] for record in latest.values())))
         else:
-            state["state"] = "unavailable" if unavailable else "not_reporting"
+            state.update(state="unavailable" if state["unavailable"] else "not_reporting", not_reporting=enabled)
         return state
-    for key in ("held", "behind_unreadable", "unreadable", "went_ahead"):
+    for key in ("held", "behind_unreadable", "unreadable", "retrying", "went_ahead"):
         state[key] = sum(record[key] for record in current)
     releases = [record["release_at"] for record in current if record["release_at"] is not None]
     went = [record["went_ahead_at"] for record in current if record["went_ahead_at"] is not None]
-    state.update(state="holding" if state["held"] else "clear",
-                 release_at=min(releases) if releases else None,
-                 went_ahead_at=max(went) if went else None,
-                 not_reporting=[channel for channel in enabled
-                                if channel not in {record["channel"] for record in current}])
+    reporting = sorted(record["channel"] for record in current)
+    state.update(state="holding" if state["held"] or state["retrying"] else "clear",
+                 release_at=max(releases) if releases else None,
+                 release_passed=bool(releases) and max(releases) <= now,
+                 went_ahead_at=max(went) if went else None, reporting=reporting,
+                 not_reporting=[channel for channel in enabled if channel not in reporting])
     return state

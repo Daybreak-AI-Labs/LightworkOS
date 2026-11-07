@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from collections import deque
@@ -88,7 +89,8 @@ class TransportWorker:
     what it waits behind in its own receipt, so a restarted worker that cannot
     read the earlier receipt still knows which conversation it holds. What it
     holds is published as counts for the Channels page and Copilot (see
-    hold_status), recomputed after each scan.
+    hold_status), recomputed after each scan, before each reply is worked on
+    and before the worker waits.
     """
     def __init__(self, channel, *, account, authorize, send, journal=None, status=None):
         self.channel, self.account = channel, account
@@ -110,6 +112,8 @@ class TransportWorker:
         self._learned = set()  # ids learned while the current scan runs
         self._held = {}  # id waiting its turn -> the oldest earlier receipt it waits behind
         self._went_ahead, self._went_ahead_at, self._went_ahead_ids = 0, None, set()
+        self._going_ahead = set()  # ids that stopped waiting for an expired hold, not yet delivered
+        self._refused = set()  # ids whose send was refused, waiting for another attempt
         self.task = None
         self._scan_task = None
         self.overflow_count = 0
@@ -240,7 +244,8 @@ class TransportWorker:
         found["waiting"][row["id"]] = known
         hold = row.get("held_behind")
         if known and isinstance(hold, dict):
-            found["hints"].append((hold.get("id"), hold.get("created_at"), known[1], hold.get("unreadable_since")))
+            found["hints"].append((row["id"], hold.get("id"), hold.get("created_at"), known[1],
+                                   hold.get("unreadable_since")))
         if self._retry_after.get(row["id"], 0) > now:
             return
         found["count"] += 1
@@ -282,9 +287,10 @@ class TransportWorker:
                     continue
                 if self._closing:
                     return
-            # Published after each scan and before waiting: handling a message
-            # can end a hold with no scan after it, and recounting after every
-            # message would read every held reply each time.
+            # Published after each scan, before each reply is worked on (see
+            # _process) and before waiting: handling a message can end a hold
+            # with no scan after it. A held message returns before its reply
+            # is worked on, so held replies are not recounted one by one.
             self._publish_status()
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=RETRY_DELAY)
@@ -298,7 +304,8 @@ class TransportWorker:
     def _remember_scan(self):
         """Take in the conversations the scan read. A message that waits names
         the earlier receipt it waits behind: when this worker cannot read that
-        receipt (after a restart it never has), its conversation comes from there."""
+        receipt (after a restart it never has), its conversation comes from there.
+        It is also counted as held from the first scan, before it is handled again."""
         seen, self._scan_seen = self._scan_seen, None
         if seen is not None:
             waiting, hints = seen
@@ -307,7 +314,9 @@ class TransportWorker:
                     self._conversations[record_id] = known
                 else:
                     self._conversations.pop(record_id, None)
-            for record_id, created_at, conversation, since in hints:
+            for held_id, record_id, created_at, conversation, since in hints:
+                if record_id in self._unreadable or waiting.get(record_id):
+                    self._held.setdefault(held_id, record_id)
                 if record_id not in self._unreadable or type(created_at) not in (int, float):
                     continue
                 self._conversations.setdefault(record_id, (created_at, conversation))
@@ -322,6 +331,8 @@ class TransportWorker:
             self._retry_after.pop(record_id)  # finished or removed meanwhile
         for record_id in [key for key in self._held if key not in waiting]:
             self._held.pop(record_id)
+        self._refused &= waiting.keys()
+        self._going_ahead &= waiting.keys()
         # A conversation is remembered only for a receipt still waiting, one
         # that cannot be read (it keeps holding its conversation), or one
         # admitted while the scan ran.
@@ -359,20 +370,38 @@ class TransportWorker:
     def _hold_counts(self):
         """What this worker holds, as the counts hold_status publishes: replies
         waiting their turn, those behind a receipt that cannot be read, how
-        many such receipts hold them and when the first of those stops
-        holding, and the replies that went out without waiting."""
-        behind_unreadable, blockers, release = 0, set(), None
-        for ahead in self._held.values():
+        many such receipts hold them, the time by which every one of those
+        goes out regardless, the replies that could not be sent and wait for
+        another attempt, and the replies that went out without waiting.
+
+        A held reply waits behind each earlier unreadable receipt of its
+        conversation until that one has been unreadable for
+        UNREADABLE_HOLD_SECONDS, so each conversation's time comes from its
+        newest held reply, and each conversation is read once."""
+        behind_unreadable, blockers, newest = 0, set(), {}
+        for record_id, ahead in self._held.items():
             if ahead not in self._unreadable:
                 continue
             behind_unreadable += 1
             blockers.add(ahead)
-            since = self._unreadable_since.get(ahead)
-            if since is not None:
-                due = since + UNREADABLE_HOLD_SECONDS
-                release = due if release is None else min(release, due)
+            blocker = self._conversations.get(ahead)
+            if blocker is None:
+                continue
+            mine = self._conversations.get(record_id)
+            key = (mine[0], record_id) if mine else (math.inf, "")
+            if blocker[1] not in newest or key > newest[blocker[1]]:
+                newest[blocker[1]] = key
+        release = None
+        for conversation, key in newest.items():
+            for other in self._conversations.in_conversation(conversation):
+                since = self._unreadable_since.get(other)
+                if other in self._unreadable and since is not None and (self._conversations[other][0], other) < key:
+                    due = since + UNREADABLE_HOLD_SECONDS
+                    release = due if release is None else max(release, due)
+        retrying = len(self._refused - self._held.keys() - self._unreadable)
         return {"held": len(self._held), "behind_unreadable": behind_unreadable, "unreadable": len(blockers),
-                "release_at": release, "went_ahead": self._went_ahead, "went_ahead_at": self._went_ahead_at}
+                "retrying": retrying, "release_at": release, "went_ahead": self._went_ahead,
+                "went_ahead_at": self._went_ahead_at}
 
     def _publish_status(self):
         try:
@@ -433,12 +462,13 @@ class TransportWorker:
                             "receipt has been unreadable for %d hours", self.channel.name,
                             UNREADABLE_HOLD_SECONDS // 3600)
                 if row["id"] not in self._went_ahead_ids:
-                    # Counted once per reply even when its receipt cannot
-                    # record it; the set only deduplicates and stays bounded.
+                    # Counted once it is delivered (see _process), once per
+                    # reply even when its receipt cannot record it; the set
+                    # only deduplicates and stays bounded.
                     if len(self._went_ahead_ids) >= 10_000:
                         self._went_ahead_ids.clear()
                     self._went_ahead_ids.add(row["id"])
-                    self._went_ahead, self._went_ahead_at = self._went_ahead + 1, _wall_clock()
+                    self._going_ahead.add(row["id"])
             return await self._note(row, held_behind=None, went_ahead_of=went_ahead_of)
         return await self._note(row, held_behind=None)
 
@@ -470,6 +500,8 @@ class TransportWorker:
         # bring one here through submit), and does not hold the conversation.
         if not row or not row.get("message") or row.get("restore_hold"):
             self._held.pop(record_id, None)
+            self._refused.discard(record_id)
+            self._going_ahead.discard(record_id)
             self._release_after(record_id)
             return
         message = IncomingMessage(**{key: value for key, value in row["message"].items() if key != "attachments"})
@@ -481,18 +513,27 @@ class TransportWorker:
             return
         async def send_saved(reply):
             return await self.send(message, reply, row["route"])
+        # The status stays as now for as long as this reply is worked on.
+        self._publish_status()
         result = await self.channel.process_message(message, external_id=row["external_id"], account=self.account,
             authorize=lambda: self.authorize(message), send=send_saved, receipt=row, journal=self.journal)
         if result["delivery"] == "retryable" and not reply_withheld(result):
             # Refused: retried, and the conversation's newer messages wait for it.
             self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
+            self._refused.add(record_id)
         elif result["delivery"] == "retryable":
             # Held back by the source check (task or access changed): retried,
             # but the person's newer messages do not wait behind it.
             self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
+            self._refused.discard(record_id)
             self._release_after(record_id)
         else:
             self._retry_after.pop(record_id, None)
+            self._refused.discard(record_id)
+            if record_id in self._going_ahead:
+                self._going_ahead.discard(record_id)
+                if result["delivery"] == "delivered":
+                    self._went_ahead, self._went_ahead_at = self._went_ahead + 1, _wall_clock()
             self._release_after(record_id)
 
     async def close(self):

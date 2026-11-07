@@ -9,18 +9,23 @@ from .product_operations import Adapter, EmptyInput, Preview, Snapshot
 
 # What a person sees; the time a status was last renewed is left out, so a
 # renewal alone never makes a prepared answer out of date.
-_STABLE = ("state", "held", "behind_unreadable", "unreadable", "release_at", "went_ahead", "went_ahead_at",
-           "not_reporting", "last_seen", "unavailable")
+_STABLE = ("state", "held", "behind_unreadable", "unreadable", "retrying", "release_at", "release_passed",
+           "went_ahead", "went_ahead_at", "reporting", "not_reporting", "running_off", "last_seen", "unavailable")
 
 
 def _state(request):
     state = channel_holds.held_reply_status(request)
     details = {"Answer": state["summary"]}
     if state["state"] in {"holding", "clear"}:
-        details["Replies waiting"] = state["held"]
-        details["Waiting behind a reply that cannot be read"] = state["behind_unreadable"]
+        # A count never sits beside an app that is not reporting as if it covered it.
+        only = f" ({channel_holds.app_names(state['reporting'])} only)" if state["not_reporting"] else ""
+        details["Replies waiting" + only] = state["held"]
+        details["Waiting behind a reply that cannot be read" + only] = state["behind_unreadable"]
+        if state["retrying"]:
+            details["Could not be sent and tried again" + only] = state["retrying"]
         if state["release_at"] is not None:
-            details["Go out by, at the latest"] = datetime_text(state["release_at"])
+            label = "Was due to go out at" if state["release_passed"] else "Go out by, at the latest"
+            details[label] = datetime_text(state["release_at"])
         if state["went_ahead"]:
             details["Went out without waiting since the chat service started"] = state["went_ahead"]
     details["Scope"] = ("Signal and IRC replies held by the chat service on this computer. Reading this does not "
@@ -42,5 +47,5 @@ def prepare(request, _selection, _arguments):
 def entries():
     return (Adapter("channels.held_replies", "Check held chat replies", "connections", "/channels#channel-delivery",
                     ("/channels", "/settings", "/settings/all"), EmptyInput, snapshot, prepare,
-                    aliases=("held chat replies", "are chat replies waiting", "why is a chat reply waiting",
-                             "signal replies waiting", "irc replies waiting")),)
+                    aliases=("held chat replies", "are chat replies waiting", "are any chat replies waiting",
+                             "why is a chat reply waiting", "signal replies waiting", "irc replies waiting")),)

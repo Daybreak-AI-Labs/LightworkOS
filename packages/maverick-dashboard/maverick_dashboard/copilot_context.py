@@ -1499,8 +1499,8 @@ _CONTEXTS = tuple(
                 "Open the protected form, choose a permitted conversation and review the recipient and message.",
                 "Confirm the send separately, then read its saved outcome.",
             ),
-            suggested_questions=("How can I check this chat connection?", "Can I review a test message?", "Was my earlier test accepted?",
-                                 "Are any chat replies waiting?"),
+            suggested_questions=("How can I check this chat connection?", "Are any chat replies waiting?",
+                                 "Can I review a test message?", "Was my earlier test accepted?"),
         ),
         _registered(
             path="/privacy/data-discovery",

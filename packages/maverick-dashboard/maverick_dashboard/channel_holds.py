@@ -50,41 +50,67 @@ def _replies(count, *, more=False):
     return f"{count} {noun} {'is' if count == 1 else 'are'}"
 
 
+def app_names(channels):
+    return " and ".join(_LABELS.get(channel, channel) for channel in channels)
+
+
+def _waiting_parts(state):
+    """What is waiting and when it goes out, then what to do about it."""
+    behind = state["behind_unreadable"]
+    waiting, retrying = state["held"] - behind, state["retrying"]
+    parts = []
+    if behind:
+        when = datetime_text(state["release_at"]) if state["release_at"] is not None else ""
+        lead = f"{_replies(behind)} waiting because an earlier reply in the same chat cannot be read right now."
+        if when and state.get("release_passed"):
+            parts.append(lead + (f" {'They were' if behind != 1 else 'It was'} due to go out at {when} and "
+                                 f"{'go' if behind != 1 else 'goes'} out as soon as the chat service finishes "
+                                 "what it is working on."))
+        else:
+            it = "They go" if behind != 1 else "It goes"
+            parts.append(lead + f" {it} out once it can be read" + (f", or by {when} at the latest." if when else "."))
+    if waiting:
+        it = "They go" if waiting != 1 else "It goes"
+        parts.append(f"{_replies(waiting, more=bool(behind))} waiting for an earlier reply in the same chat to be "
+                     f"sent first." + ("" if behind else f" {it} out after that one does."))
+    if retrying:
+        parts.append(f"{retrying} chat {'reply' if retrying == 1 else 'replies'} could not be sent and "
+                     f"{'is' if retrying == 1 else 'are'} tried again every 30 seconds.")
+    if behind:
+        parts.append("This usually clears on its own. If this lasts, ask whoever manages this computer's "
+                     "encryption key to check that it is available.")
+    if waiting or retrying:
+        parts.append("If this lasts, open Manage the chat service to check that the chat service is running, "
+                     "then restart it.")
+    return parts
+
+
 def describe(state):
     """One short paragraph: what is waiting, when it goes out, what to do."""
     kind = state["state"]
     if kind == "off":
         return "Signal and IRC are turned off, so no chat replies are held."
     if kind == "not_reporting":
-        return ("Signal or IRC is turned on, but the chat service is not reporting from this computer, so held "
-                "chat replies cannot be checked. Start the chat service, then refresh this page. If your IT team "
-                "runs it on another computer, ask them.")
+        names = app_names(state["not_reporting"]) or "Signal or IRC"
+        verb = "are" if len(state["not_reporting"]) > 1 else "is"
+        return (f"{names} {verb} turned on but not reporting from the chat service on this computer, so held chat "
+                "replies cannot be checked. If the chat service is stopped, start it with Manage the chat service. "
+                "If it is running, restart it, then refresh this page. If your IT team runs it on another "
+                "computer, ask them.")
     if kind == "stale":
         return (f"The chat service last reported at {datetime_text(state['last_seen'])} and has stopped reporting, "
                 "so held chat replies cannot be checked. Check that the chat service is running, then refresh "
                 "this page.")
     if kind == "unavailable":
-        return ("Held chat replies could not be checked because the chat service's status could not be read. "
-                "Refresh this page. If it keeps happening, check that this computer's encryption key is available.")
-    behind = state["behind_unreadable"]
-    waiting = state["held"] - behind
-    parts = []
-    if behind:
-        it = "They go" if behind != 1 else "It goes"
-        when = datetime_text(state["release_at"]) if state["release_at"] is not None else ""
-        parts.append(f"{_replies(behind)} waiting because an earlier reply in the same chat cannot be read right "
-                     f"now. {it} out once it can be read" + (f", or by {when} at the latest." if when else "."))
-    if waiting:
-        it = "They go" if waiting != 1 else "It goes"
-        parts.append(f"{_replies(waiting, more=bool(behind))} waiting for an earlier reply in the same chat to be "
-                     f"sent first." + ("" if behind else f" {it} out after that one does."))
+        names = app_names(state["unavailable"]) if "unknown" not in state["unavailable"] else ""
+        whose = f"The saved status for {names}" if names else "The chat service's saved status"
+        return (f"{whose} could not be read, so held chat replies cannot be checked. Refresh this page. If it "
+                "keeps happening, check that this computer's encryption key is available.")
+    parts = _waiting_parts(state)
     if not parts:
-        parts.append("No chat replies are waiting.")
-    if behind:
-        parts.append("This usually clears on its own. If this lasts, ask whoever manages this computer's "
-                     "encryption key to check that it is available.")
-    if waiting:
-        parts.append("Check the chat app's connection on the Channels page and send a test message.")
+        quiet, reporting = state["not_reporting"], state["reporting"]
+        parts.append(f"No {app_names(reporting)} replies are waiting." if quiet and reporting
+                     else "No chat replies are waiting.")
     if state["went_ahead"]:
         count = state["went_ahead"]
         recent = datetime_text(state["went_ahead_at"]) if state["went_ahead_at"] is not None else ""
@@ -92,7 +118,14 @@ def describe(state):
                      "without waiting, after an earlier reply stayed unreadable for 24 hours"
                      + (f" (most recently {recent})." if recent else "."))
     for channel in state["not_reporting"]:
-        parts.append(f"{_LABELS.get(channel, channel)} is not reporting, so its replies cannot be checked.")
-    if state["unavailable"]:
-        parts.append("The status of another chat app could not be read.")
+        label = _LABELS.get(channel, channel)
+        parts.append(f"{label} is not reporting, so its replies cannot be checked. Check that {label} is running "
+                     "in the chat service, then refresh this page.")
+    for channel in state["running_off"]:
+        parts.append(f"{_LABELS.get(channel, channel)} is turned off, but the chat service keeps running it until "
+                     "the chat service is restarted.")
+    for channel in state["unavailable"]:
+        whose = f"A saved status for {_LABELS.get(channel, channel)}" if channel != "unknown" else "A saved status"
+        parts.append(f"{whose} could not be read. If this keeps happening, check that this computer's encryption "
+                     "key is available.")
     return " ".join(parts)
