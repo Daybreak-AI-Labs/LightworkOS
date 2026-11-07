@@ -499,7 +499,7 @@ _AZURE_KEY = ";AccountKey=" + "A" * 40
     ("https://api.example.test/v1/import/" + _AZURE_KEY, {"X-Mirror": "https://other.example/in"},
      _AZURE_START + "x"),
     ("https://api.example.test/v1/import", {"X-Mirror": "https://other.example/in", "X-Z": "-----END PRIVATE KEY-----"},
-     "note: -----BEGIN PRIVATE KEY----- x"),
+     "note: -----BEGIN PRIVATE KEY----- x"),  # pragma: allowlist secret
     ("https://api.example.test/v1/import", {"Accept": "*", "User-Agent": "agent", "X-Mirror": "a@b"},
      "redis://a"),
 ], ids=["azure-body-to-address", "key-body-to-header", "uri-body-to-headers"])
@@ -510,7 +510,7 @@ def test_a_secret_pattern_cannot_run_from_the_body_into_the_headers_or_address(s
 
 @pytest.mark.parametrize("body", [
     json.dumps({"conn": _AZURE_START, "to": "drop@evil.example", "data": "customer_list", "z": _AZURE_KEY}),
-    json.dumps({"a": "-----BEGIN PRIVATE KEY-----", "to": "drop@evil.example", "data": "customer_list",
+    json.dumps({"a": "-----BEGIN PRIVATE KEY-----", "to": "drop@evil.example", "data": "customer_list",  # pragma: allowlist secret
                 "b": "-----END PRIVATE KEY-----"}),
     json.dumps({"cache": "redis://localhost", "to": "drop@evil.example", "data": "customer_list"}),
 ], ids=["azure", "private-key", "connection-uri"])
@@ -527,8 +527,8 @@ def test_a_form_pair_with_a_connection_string_hides_only_its_own_value(sent, mon
 
 
 @pytest.mark.parametrize("body", [
-    "-----BEGIN PRIVATE KEY-----\n" + "AAECAwQFBgcICQoLDA0ODxAREhMU\n" * 300 + "-----END PRIVATE KEY-----\n",
-    json.dumps({"key": "-----BEGIN PRIVATE KEY-----\n" + "AAECAwQFBgcICQoLDA0ODxAREhMU\n" * 300 + "-----END PRIVATE KEY-----"}),
+    "-----BEGIN PRIVATE KEY-----\n" + "AAECAwQFBgcICQoLDA0ODxAREhMU\n" * 300 + "-----END PRIVATE KEY-----\n",  # pragma: allowlist secret
+    json.dumps({"key": "-----BEGIN PRIVATE KEY-----\n" + "AAECAwQFBgcICQoLDA0ODxAREhMU\n" * 300 + "-----END PRIVATE KEY-----"}),  # pragma: allowlist secret
     "FOO=1\nINTERNAL_API_TOKEN=Zq8vT3pLmN0xR7wK2yB5\nBAR=2\n",  # pragma: allowlist secret
     json.dumps({"pad": "x" * 2940, "replica": "redis://admin:S3cretPassw0rdQ@cache.internal:6379/0",  # pragma: allowlist secret
                 "more": "y" * 5000}),
@@ -637,7 +637,7 @@ def test_two_header_names_hidden_alike_stay_two_headers(sent, monkeypatch):
                "AKIAI44QH8DHBEXAMPLE": "second"}  # pragma: allowlist secret
     shown = _real_card(monkeypatch, "hello", headers)
     assert "drop@evil.example" in shown and "second" in shown
-    assert "AKIAIOSFODNN7EXAMPLE" not in shown
+    assert "AKIAIOSFODNN7EXAMPLE" not in shown  # pragma: allowlist secret
 
 
 @pytest.mark.parametrize("body", [
@@ -679,7 +679,7 @@ def test_a_long_form_value_is_read_only_as_far_as_the_preview_needs(sent, monkey
 
     real, scanned = detector.redact, []
     monkeypatch.setattr(detector, "redact", lambda text: scanned.append(len(text)) or real(text))
-    body = "a=" + "-----BEGIN PRIVATE KEY-----" * 40_000
+    body = "a=" + "-----BEGIN PRIVATE KEY-----" * 40_000  # pragma: allowlist secret
     shown = _card(monkeypatch, body, {"Content-Type": "application/x-www-form-urlencoded"})
     assert hashlib.sha256(body.encode("utf-8")).hexdigest() in shown
     assert sum(scanned) < 200_000
@@ -878,7 +878,7 @@ def test_percent_encoded_secrets_in_names_are_hidden(sent, monkeypatch, url, hea
 
 @pytest.mark.parametrize("headers,body", [
     (_FORM, "name=prod-cert&forward_to=drop@evil.example&certificate=" + "QUJD%2B" * 1800),
-    ({}, "Send to drop@evil.example\n-----BEGIN PRIVATE KEY-----\n" + ("QUJDREVG" * 8 + "\n") * 180
+    ({}, "Send to drop@evil.example\n-----BEGIN PRIVATE KEY-----\n" + ("QUJDREVG" * 8 + "\n") * 180  # pragma: allowlist secret
      + "-----END PRIVATE KEY-----"),
 ], ids=["form", "text"])
 def test_a_preview_keeps_what_comes_before_a_long_hidden_value(sent, monkeypatch, headers, body):
@@ -1001,7 +1001,7 @@ def _placed(before: str, filler: str, middle: str, secret: str, after: str, into
 
 
 _AWS_ENCODED = "aws_secret_access_key%3DwJalrXUtnFEMI%2FK7MDENG%2FbPxRfiCYEXAMPLEKE%2F"  # pragma: allowlist secret
-_STORAGE_KEY = ("kL3p/Q9vX+z7Rt2WbN8yHc4M" * 4)[:86] + "=="
+_STORAGE_KEY = ("kL3p/Q9vX+z7Rt2WbN8yHc4M" * 4)[:86] + "=="  # pragma: allowlist secret
 _LONG_JWT = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ" + "c2NvcGUiOiJhZG1pbiJ9" * 195 + ".s1gnatur3" * 10
 
 
@@ -1018,7 +1018,7 @@ _LONG_JWT = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ" + "c2NvcGUiOiJhZG1pbiJ9" 
              "wJalrXUtnFEMIzK7MDENGabPxRfiCYEXAMPLEKEY", "&z=" + "y" * 2000), "wJalrXUtnFEMI"),  # pragma: allowlist secret
     # A secret that runs on to the end of the read in one pair does not move
     # the cut for another.
-    (_placed("cache=redis://app:pw@cache.internal:6379&upload_ref=sk-", "A", "&t=", "ghp_" + "Zx9Q" * 9,
+    (_placed("cache=redis://app:pw@cache.internal:6379&upload_ref=sk-", "A", "&t=", "ghp_" + "Zx9Q" * 9,  # pragma: allowlist secret
              "&note=" + "n" * 2000, into=20, at=9000), "ghp_Zx9Q"),
     (_placed("CLIENT_SECRET=x&upload_ref=sk-", "A", "&t=", "ghp_" + "Zx9Q" * 9, "&note=" + "n" * 2000, into=20,
              at=9000), "ghp_Zx9Q"),
@@ -1036,7 +1036,7 @@ _PEM_LINES = "".join("\\nMIIJ" + "Q" * 60 for _ in range(60))
 @pytest.mark.parametrize("body,secret", [
     (_placed("sk-", "A", " ", _LONG_JWT, " tail" * 500, into=400), "eyJhbGci"),
     (json.dumps({"note": _placed("sk-", "A", " ", _LONG_JWT, " tail" * 500, into=400)}), "eyJhbGci"),
-    (_placed("sk-", "A", '\nOIDC_SIGNING_KEY="', "-----BEGIN RSA PRIVATE KEY-----" + _PEM_LINES
+    (_placed("sk-", "A", '\nOIDC_SIGNING_KEY="', "-----BEGIN RSA PRIVATE KEY-----" + _PEM_LINES  # pragma: allowlist secret
              + '\\n-----END RSA PRIVATE KEY-----"\n', "tail " * 500, into=2000), "MIIJQQ"),
     (_placed("sk-", "A", '\nAPI_SECRET="', " ".join(f"w0rd{index}" for index in range(400)) + '"\n',
              "tail " * 500, into=900), "w0rd"),
@@ -1103,9 +1103,9 @@ def test_connector_cards_hide_a_private_key_with_extra_spacing_in_its_header(sen
 
 @pytest.mark.parametrize("headers,body,kept", [
     ({"X-Cache": "redis://app:pw@", "X-Note": "keep"}, "hello", lambda request: request["headers"]["X-Note"]),
-    ({}, json.dumps({"cache": "redis://app:pw@", "note": "keep me"}),
+    ({}, json.dumps({"cache": "redis://app:pw@", "note": "keep me"}),  # pragma: allowlist secret
      lambda request: json.loads(request["body"])["note"]),
-    ({f"X-Replica-{index}": "redis://app:pw@" for index in range(17)}, "hello",
+    ({f"X-Replica-{index}": "redis://app:pw@" for index in range(17)}, "hello",  # pragma: allowlist secret
      lambda request: request["headers"]["X-Replica-16"]),
 ], ids=["header", "json-body", "many-headers"])
 def test_a_connection_string_with_no_host_is_hidden_within_its_own_value(sent, monkeypatch, headers, body, kept):
@@ -1293,7 +1293,7 @@ def test_a_form_body_whose_json_reading_hides_a_sensitive_value_is_refused(sent,
     '{"password":}"hunter2-correct-horse"',  # pragma: allowlist secret
     '{"password":, "x": "hunter2-correct-horse"}',  # pragma: allowlist secret
     '[{"password": }, "hunter2-correct-horse"]',  # pragma: allowlist secret
-    '{"password": "hun""ter2-RUNON' + '\\"' * 200_001 + '"}',
+    '{"password": "hun""ter2-RUNON' + '\\"' * 200_001 + '"}',  # pragma: allowlist secret
 ], ids=["second-colon", "colon-after-the-value", "closing-brace", "comma", "in-an-array", "run-on-past-the-budget"])
 def test_text_where_a_sensitive_value_was_due_shows_nothing_after_it(sent, monkeypatch, body):
     shown = _real_card(monkeypatch, body, {"Content-Type": "application/json"})
@@ -1305,7 +1305,7 @@ def test_text_where_a_sensitive_value_was_due_shows_nothing_after_it(sent, monke
     ({}, "note redis://AKIAIOSFODNN7EXAMPLEé@h"),  # pragma: allowlist secret
 ], ids=["json", "text"])
 def test_a_token_before_a_letter_of_another_script_leaves_a_card_that_stays_valid(sent, monkeypatch, headers, body):
-    assert "AKIAIOSFODNN7EXAMPLE" not in _real_card(monkeypatch, body, headers)
+    assert "AKIAIOSFODNN7EXAMPLE" not in _real_card(monkeypatch, body, headers)  # pragma: allowlist secret
 
 
 def test_connector_card_lines_do_not_change_when_the_card_checks_them_again(sent):
@@ -1319,7 +1319,7 @@ def test_connector_card_lines_do_not_change_when_the_card_checks_them_again(sent
 
 @pytest.mark.parametrize("cut", range(1, 12))
 def test_an_azure_connection_string_cut_inside_its_key_name_keeps_nothing(sent, monkeypatch, cut):
-    start = "-----BEGIN PRIVATE KEY-----\n" + "A" * 6900 + "\n-----END PRIVATE KEY-----\n"
+    start = "-----BEGIN PRIVATE KEY-----\n" + "A" * 6900 + "\n-----END PRIVATE KEY-----\n"  # pragma: allowlist secret
     start += "DefaultEndpointsProtocol=https;AccountName=acct"
     body = start + "n" * (9000 - len(start) - cut) + ";AccountKey=" + "K" * 88 + " more" * 600
     assert body[:9000].endswith(";AccountKey="[:cut])
@@ -1362,7 +1362,7 @@ def test_a_request_whose_card_overflows_on_its_body_does_not_blame_the_address(s
     assert "address and headers" not in out and asked == [] and sent == []
 
 
-_PLUS_KEY = "Zx8Kq2Lm4Np6Rt8Vw0Yb2Dc4Fg6Hj8Kl0Mn2Pq4St6U+v8Wx0Yz2Ab4Cd6Ef8Gh0Ij2Kl4Mn6Op8Qr0St2Uv4Wx6Yz8A=="
+_PLUS_KEY = "Zx8Kq2Lm4Np6Rt8Vw0Yb2Dc4Fg6Hj8Kl0Mn2Pq4St6U+v8Wx0Yz2Ab4Cd6Ef8Gh0Ij2Kl4Mn6Op8Qr0St2Uv4Wx6Yz8A=="  # pragma: allowlist secret
 
 
 @pytest.mark.parametrize("url,headers,body,tail", [
@@ -1389,7 +1389,7 @@ _PAT = "ghp_" + "Zx9Q" * 9  # pragma: allowlist secret
 ], ids=["form", "form-aws-key-id", "form-after-a-part", "query"])
 def test_a_secret_in_a_sensitive_name_found_once_decoded_is_hidden(sent, monkeypatch, url, body):
     shown = _real_card(monkeypatch, body, _FORM, url=url)
-    assert "Zx9QZx9Q" not in shown and "AKIAIOSFODNN7EXAMPLE" not in shown and "page=2" in shown
+    assert "Zx9QZx9Q" not in shown and "AKIAIOSFODNN7EXAMPLE" not in shown and "page=2" in shown  # pragma: allowlist secret
 
 
 def test_a_long_form_cut_inside_a_sensitive_pair_hides_a_secret_in_its_name(sent, monkeypatch):
