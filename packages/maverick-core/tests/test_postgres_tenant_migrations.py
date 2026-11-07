@@ -338,7 +338,7 @@ def test_postgres_halt_clear_is_generation_bound(monkeypatch):
 
 
 def test_goal_decoder_keeps_owner_and_execution_principal_distinct(monkeypatch):
-    monkeypatch.setattr(pg, "_unseal", lambda value: value)
+    monkeypatch.setattr(pg, "_unseal", lambda value, context=None: value)
 
     goal = pg._dec_goal_row(
         (
@@ -633,7 +633,7 @@ def test_tenant_scope_custom_column(monkeypatch):
 def test_create_goal_persists_owner_with_tenant(monkeypatch):
     monkeypatch.setattr(pg, "_active_tenant", lambda: "tenant-a")
     monkeypatch.setattr(pg.time, "time", lambda: 123.0)
-    monkeypatch.setattr(pg, "_seal", lambda value: value)
+    monkeypatch.setattr(pg, "_seal", lambda value, context=None: value)
 
     class FakeCursor:
         def __init__(self):

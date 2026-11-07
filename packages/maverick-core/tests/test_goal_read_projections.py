@@ -64,8 +64,8 @@ def test_root_survives_newer_children_and_decodes_only_visible_titles(world, mon
     real_decode = world_model._dec_fields
     decrypted = []
 
-    def observed(values):
-        result = real_decode(values)
+    def observed(values, *args, **kwargs):
+        result = real_decode(values, *args, **kwargs)
         decrypted.extend(result)
         return result
 
@@ -101,8 +101,8 @@ def test_stream_projection_decrypts_no_body_until_result_requested(world, monkey
     real_decode = world_model._dec_field
     values = []
 
-    def observed(value):
-        result = real_decode(value)
+    def observed(value, *args, **kwargs):
+        result = real_decode(value, *args, **kwargs)
         values.append(result)
         return result
 

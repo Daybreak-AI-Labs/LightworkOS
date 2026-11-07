@@ -316,3 +316,32 @@ def test_store_turns_strict_by_itself_once_migrated(monkeypatch, tmp_path):
     # A store that was never migrated keeps strict off for the process.
     WorldModel(tmp_path / "other.db")
     assert wm_mod.auto_strict_at_rest() is False
+
+
+@requires_crypto
+def test_sqlite_tokens_ignore_the_request_tenant_and_postgres_tokens_bind_it(monkeypatch, tmp_path):
+    """A SQLite world is one file per tenant, opened from whatever request
+    context reaches it (a dispatcher writing into a user's tenant world, say),
+    so its tokens bind the column only. The shared Postgres tables bind the
+    tenant as well, so a row copied between tenants fails to open."""
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    from maverick import paths
+    from maverick.world_model import _UNSEALED_WITHHELD, _dec_field, _enc_field
+
+    token = paths._TENANT.set("tenant-a")
+    try:
+        sqlite_token = _enc_field("hello", "goals.title")
+        shared_token = _enc_field("hello", "goals.title", bind_tenant=True)
+    finally:
+        paths._TENANT.reset(token)
+    token = paths._TENANT.set("tenant-b")
+    try:
+        assert _dec_field(sqlite_token, context="goals.title") == "hello"
+        assert _dec_field(shared_token, context="goals.title") == _UNSEALED_WITHHELD
+    finally:
+        paths._TENANT.reset(token)
+    token = paths._TENANT.set("tenant-a")
+    try:
+        assert _dec_field(shared_token, context="goals.title") == "hello"
+    finally:
+        paths._TENANT.reset(token)

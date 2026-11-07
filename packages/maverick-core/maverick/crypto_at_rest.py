@@ -1043,7 +1043,8 @@ def _bound_aad(tenant: str | None, context: str) -> bytes:
         str(len(p)).encode("ascii") + b":" + p for p in parts)
 
 
-def seal_bound(plaintext: bytes, context: str, *, portable: bool = False) -> bytes:
+def seal_bound(plaintext: bytes, context: str, *, portable: bool = False,
+               bind_tenant: bool = True) -> bytes:
     """Seal bound to the current tenant AND ``context``.
 
     A blob copied to another tenant, another record or another field fails GCM
@@ -1052,7 +1053,12 @@ def seal_bound(plaintext: bytes, context: str, *, portable: bool = False) -> byt
     its key id embedded so rotation keeps working. ``portable`` always uses the
     deployment/keyring key: per-tenant data keys live on one host, so anything
     read on another replica (the attachment S3 mirror) must not use them. The
-    tenant binding is kept either way through the authenticated data."""
+    tenant binding is kept either way through the authenticated data.
+
+    ``bind_tenant=False`` binds the context only (kind ``D``): for a store
+    whose identity is the file itself (a per-tenant SQLite world), the
+    request's tenant context is not part of the value's identity, and reads
+    from another context must still open it."""
     if not _have_crypto():
         raise EncryptionUnavailable("at-rest encryption needs 'cryptography'")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -1069,7 +1075,9 @@ def seal_bound(plaintext: bytes, context: str, *, portable: bool = False) -> byt
         else:
             key = _load_or_create_key()
             keyid = _key_fingerprint(key)
-        kind = b"K"
+        kind = b"K" if bind_tenant else b"D"
+    if kind == b"D":
+        tenant = None
     nonce = secrets.token_bytes(_NONCE_BYTES)
     ct = AESGCM(key).encrypt(nonce, plaintext, _bound_aad(tenant, context))
     return _BOUND_MAGIC + kind + keyid + nonce + ct
@@ -1097,14 +1105,14 @@ def unseal_bound(blob: bytes, context: str,
         raise EncryptionUnavailable("bound blob is truncated")
     kind, keyid = body[:1], body[1:1 + _KEYID_BYTES]
     nonce = body[1 + _KEYID_BYTES:1 + _KEYID_BYTES + _NONCE_BYTES]
-    tenant = current_tenant_id()
+    tenant = None if kind == b"D" else current_tenant_id()
     cache_key = ("bound:" + kind.decode("ascii", "replace") + ":" + (tenant or ""), keyid)
     cipher = key_cache.get(cache_key) if key_cache is not None else None
     if cipher is None:
         if kind == b"T":
             from .tenant.kms import tenant_dek
             key = tenant_dek(tenant)
-        elif kind == b"K":
+        elif kind in (b"K", b"D"):
             if (_keyring_dir() / (keyid.hex() + ".key")).exists():
                 key = _resolve_key_by_id(keyid)
             else:
@@ -1232,12 +1240,13 @@ def bound_str_context(s: object) -> str | None:
     return parsed[0] if parsed else None
 
 
-def seal_bound_to_str(text: str, context: str) -> str:
-    """Seal ``text`` bound to ``context`` (``table.column``) and the current
-    tenant, as a TEXT-column token. See :func:`seal_bound`."""
+def seal_bound_to_str(text: str, context: str, *, bind_tenant: bool = True) -> str:
+    """Seal ``text`` bound to ``context`` (``table.column``) and, unless
+    ``bind_tenant`` is False, the current tenant, as a TEXT-column token. See
+    :func:`seal_bound`."""
     if not isinstance(context, str) or not _CONTEXT_RE.fullmatch(context):
         raise ValueError("seal context must look like 'table.column'")
-    blob = seal_bound(text.encode("utf-8"), context)
+    blob = seal_bound(text.encode("utf-8"), context, bind_tenant=bind_tenant)
     return _BOUND_STR_PREFIX + context + ":" + base64.b64encode(blob).decode("ascii")
 
 

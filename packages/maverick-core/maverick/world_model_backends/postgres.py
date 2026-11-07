@@ -1142,7 +1142,7 @@ def _seal(text, context=None):
     fail-closed semantics are identical across backends. ``context`` is the
     destination ``table.column``; the value is bound to it and to the tenant."""
     from ..world_model import _enc_field
-    return _enc_field(text, context)
+    return _enc_field(text, context, bind_tenant=True)
 
 
 def _unseal(text, context=None):

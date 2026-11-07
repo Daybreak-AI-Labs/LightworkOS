@@ -200,10 +200,10 @@ def test_migrate_preserves_a_concurrent_edit(monkeypatch, tmp_path):
     monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
     original_seal = migration.seal_bound_to_str
 
-    def seal_after_customer_edit(value, context):
+    def seal_after_customer_edit(value, context, **kwargs):
         with sqlite3.connect(db) as connection:
             connection.execute("UPDATE turns SET content='new customer text'")
-        return original_seal(value, context)
+        return original_seal(value, context, **kwargs)
 
     monkeypatch.setattr(migration, "seal_bound_to_str", seal_after_customer_edit)
     assert migration.migrate_world_db(db)["turns.content"] == 0

@@ -135,6 +135,8 @@ def address_is_always_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address)
     reserved or unspecified addresses: one toggled setting must not turn every
     prompt-injectable tool into an instance-credential client.
     """
+    if ip.is_loopback:  # ::1 sits in ::/8, which ipaddress calls reserved
+        return False
     return (
         ip.is_link_local
         or ip.is_multicast

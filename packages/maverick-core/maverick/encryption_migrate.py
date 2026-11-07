@@ -192,7 +192,7 @@ def migrate_world_db(
                 resealed = seal_to_str(val)
             else:
                 plain = unseal_from_str(val) if is_sealed_str(val) else val
-                resealed = seal_bound_to_str(plain, bound_context(table, col))
+                resealed = seal_bound_to_str(plain, bound_context(table, col), bind_tenant=False)
             changed = conn.execute(
                 f"UPDATE {table} SET {col} = ? WHERE rowid = ? AND {col} IS ?",
                 (resealed, rid, val),

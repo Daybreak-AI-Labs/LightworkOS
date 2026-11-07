@@ -838,13 +838,17 @@ def _temporal_memory_enabled() -> bool:
         return False
 
 
-def _enc_field(text: str | None, context: str | None = None) -> str | None:
+def _enc_field(text: str | None, context: str | None = None, *,
+               bind_tenant: bool = False) -> str | None:
     """Seal a sensitive text field for storage when at-rest encryption is on.
 
     ``context`` names the destination column (``"goals.title"``): the value is
-    then bound to that column and the current tenant (GCM associated data), so
-    a ciphertext moved to another cell or tenant fails to open there instead
-    of decrypting. Without a context the legacy unbound token is written.
+    then bound to that column (GCM associated data), so a ciphertext moved to
+    another cell fails to open there instead of decrypting. ``bind_tenant``
+    adds the current tenant to the binding: the Postgres backend sets it,
+    because every tenant's rows share its tables; a SQLite world is one file
+    per tenant and is read from whatever request context opens it. Without a
+    context the legacy unbound token is written.
 
     Fail-closed: if encryption is enabled but the crypto backend is missing,
     this raises (via ``seal_to_str``) rather than silently storing plaintext.
@@ -854,7 +858,9 @@ def _enc_field(text: str | None, context: str | None = None) -> str | None:
     from .crypto_at_rest import at_rest_enabled, seal_bound_to_str, seal_to_str
     if not at_rest_enabled():
         return text
-    return seal_bound_to_str(text, context) if context else seal_to_str(text)
+    if not context:
+        return seal_to_str(text)
+    return seal_bound_to_str(text, context, bind_tenant=bind_tenant)
 
 
 # Stores whose on-disk marker says `maverick encryption migrate` left no
