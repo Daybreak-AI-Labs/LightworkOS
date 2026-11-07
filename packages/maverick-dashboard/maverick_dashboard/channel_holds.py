@@ -62,11 +62,13 @@ def app_names(channels):
 
 
 def scope(state):
-    """Whose replies the counts cover: "chat" when every app that holds
-    replies reports, otherwise the apps that do (one turned off, or not
-    reporting, is not counted)."""
-    reporting = state["reporting"]
-    return "chat" if set(reporting) >= set(WORKER_CHANNELS) or not reporting else app_names(reporting)
+    """The apps the counts cover, by name: other chat apps' replies are not
+    among them, and neither are those of an app turned off or not reporting."""
+    return " or ".join(_LABELS.get(channel, channel) for channel in state["reporting"]) or "chat"
+
+
+def covers_every_app(state):
+    return set(state["reporting"]) >= set(WORKER_CHANNELS)
 
 
 def _waiting_parts(state):
@@ -89,7 +91,7 @@ def _waiting_parts(state):
         parts.append(f"{_replies(waiting, more=bool(behind))} waiting for an earlier reply in the same chat to be "
                      f"sent first." + ("" if behind else f" {it} out after that one does."))
     if retrying:
-        parts.append(f"{retrying} chat {'reply' if retrying == 1 else 'replies'} could not be sent and "
+        parts.append(f"{retrying} chat {'reply' if retrying == 1 else 'replies'} could not be sent or handled and "
                      f"{'is' if retrying == 1 else 'are'} tried again every 30 seconds.")
     if behind:
         parts.append("This usually clears on its own. If this lasts, ask whoever manages this computer's "
@@ -97,6 +99,9 @@ def _waiting_parts(state):
     if waiting or retrying:
         parts.append("If this lasts, open Manage the chat service to check that the chat service is running and "
                      "see what it last reported, then restart it.")
+    if retrying:
+        parts.append("A reply to someone who is no longer among the app's permitted people waits until they are "
+                     "permitted again; check the app's permitted people in All settings.")
     return parts
 
 

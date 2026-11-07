@@ -44,8 +44,10 @@ attempt.
 Administrators see held replies in plain words under **Channels > Message
 delivery**, and the read-only Copilot operation **Check held chat replies**
 (in the Connections family of Copilot actions) gives the same answer under the
-same administrator check: how many replies are waiting, how many wait behind a
-reply that cannot be read and the time by which all of those go out regardless,
+same administrator check; with that family off, Copilot answers the question
+with a link to Message delivery. The answer says how many replies are waiting,
+how many wait behind a reply that cannot be read and the time by which all of
+those go out regardless,
 how many could not be sent or handled and are tried again, and how many went
 out without waiting (counted once sent; IRC confirms no delivery, so an IRC
 reply counts once every line of it was written) since the chat service
@@ -58,18 +60,24 @@ are waiting from its first published status, and one that cannot read them yet
 is reported as not reporting. The status is updated after each scan and before
 each reply is worked on, renewed every 30 seconds, even while the worker is
 busy with a long reply, and removed when the worker stops. `maverick serve`
-stops on SIGTERM as on Ctrl-C, so the dashboard's Stop and Restart remove it;
-on Windows, where a stop ends the process without a signal it can handle, the
+stops on the first SIGTERM as on Ctrl-C, so the dashboard's Stop and Restart
+remove it (a repeated SIGTERM does not cut the close short; whoever sent it
+ends the process if it does not stop in time). Started with Ctrl-C ignored, as
+a script's background job is, it ends on SIGTERM at once, as before. On
+Windows, where a stop ends the process without a signal it can handle, the
 last status stays until it is 100 seconds old. One that has not been renewed
 for 100 seconds is reported as not current, never as nothing held: a chat
 service stopped without shutting down cleanly reads as having stopped
 reporting until it starts again, and a running worker clears its app's
-statuses that nobody renews. A status stamped more than a few seconds ahead of
-the dashboard's clock is ignored. A turned-on chat app with no current status
+statuses that nobody renews or that were stamped ahead of its clock. A status
+stamped more than a few seconds ahead of the dashboard's clock is ignored, and
+a worker renews its status within a few seconds after the clock jumps, as when
+a laptop wakes. Replies that were waiting stay counted while their saved
+receipts cannot be read. A turned-on chat app with no current status
 is named as not reporting, and one turned off in settings that the chat
-service still runs is named too. With an app turned off, the answer covers
-only the apps that report and names them, because nothing reads the saved
-replies of an app that is turned off. The status is local to the computer that
+service still runs is named too. The answer names the apps it covers: other
+chat apps' replies are not among them, and nothing reads the saved replies of
+an app that is turned off. The status is local to the computer that
 runs the chat service; a dashboard on another computer says it is not
 reporting.
 

@@ -97,6 +97,7 @@ class Publisher:
         self._changed = threading.Event()
         self._stop = threading.Event()
         self._failing = False
+        self._stamped = None  # seen_at of the last status saved
         self._thread = None
 
     def update(self, counts):
@@ -126,10 +127,10 @@ class Publisher:
             if not self._failing:
                 log.warning("Channel %s could not save its held chat replies status for the Channels page; "
                             "it is tried again at each change and every %d seconds", self.channel,
-                            int(self.renew_seconds))
+                            int(min(self.renew_seconds, _SKEW)))
             self._failing = True
             return False
-        self._failing = False
+        self._failing, self._stamped = False, record["seen_at"]
         if self._stop.is_set():
             # close() stopped waiting for this write and has already removed the status.
             try:
@@ -153,8 +154,11 @@ class Publisher:
         for path in list(self.directory.glob("*.enc"))[:_MAX_FILES]:
             try:
                 changed = path.lstat().st_mtime
+                # A renewing worker writes with the current clock, so this
+                # app's status changed further ahead than that was left
+                # before the clock was set back.
                 if changed < now - 7 * 86400 or (path != self.path and _app(path) == self.channel
-                                                 and changed < now - FRESH_SECONDS):
+                                                 and not now - FRESH_SECONDS <= changed <= now + _SKEW):
                     path.unlink()
             except OSError:
                 pass
@@ -171,13 +175,19 @@ class Publisher:
         self._changed.set()
 
         def renew():
+            # Renewed by the age of the last status on this computer's clock,
+            # checked every few seconds: a wait alone does not count time
+            # asleep, so after a laptop wakes, or the clock is changed, a
+            # running worker would read as stopped until the wait ran out.
             tidied = time.monotonic()
             while not self._stop.is_set():
-                self._changed.wait(self.renew_seconds)
+                changed = self._changed.wait(min(self.renew_seconds, _SKEW))
                 if self._stop.is_set():
                     return
-                self._changed.clear()
-                self.write_now()
+                age = None if self._stamped is None else self.clock() - self._stamped
+                if changed or age is None or not 0 <= age < self.renew_seconds:
+                    self._changed.clear()
+                    self.write_now()
                 if time.monotonic() - tidied >= FRESH_SECONDS:
                     tidied = time.monotonic()
                     self._tidy()

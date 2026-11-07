@@ -18,12 +18,11 @@ def _state(request):
     details = {"Answer": state["summary"]}
     if state["state"] in {"holding", "clear"}:
         # A count never reads as covering an app that is turned off or not reporting.
-        apps = channel_holds.scope(state)
-        only = "" if apps == "chat" else f" ({apps} only)"
-        details["Replies waiting" + only] = state["held"]
+        only = "" if channel_holds.covers_every_app(state) else f" ({channel_holds.scope(state)} only)"
+        details["Waiting behind an earlier reply" + only] = state["held"]
         details["Waiting behind a reply that cannot be read" + only] = state["behind_unreadable"]
         if state["retrying"]:
-            details["Could not be sent and tried again" + only] = state["retrying"]
+            details["Could not be sent or handled, tried again" + only] = state["retrying"]
         if state["release_at"] is not None:
             label = "Was due to go out at" if state["release_passed"] else "Go out by, at the latest"
             details[label] = datetime_text(state["release_at"])

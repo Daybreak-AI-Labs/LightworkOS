@@ -121,8 +121,8 @@ class TransportWorker:
         self._conversations = _Conversations()  # waiting id -> (created_at, conversation), from its last read
         self._learned = set()  # ids learned while the current scan runs
         self._held = {}  # id waiting its turn -> the oldest earlier receipt it waits behind
-        self._went_ahead, self._went_ahead_at, self._went_ahead_ids = 0, None, set()
-        self._going_ahead = set()  # ids that stopped waiting for an expired hold, not yet delivered
+        self._went_ahead, self._went_ahead_at = 0, None
+        self._going_ahead = set()  # ids going ahead of an expired hold at their last attempt, not yet sent
         self._retrying = set()  # ids that could not be sent or handled, waiting for another attempt
         self._counted = False  # a scan has read the store: until then nothing is published
         self.task = None
@@ -342,10 +342,10 @@ class TransportWorker:
     def _forget_settled(self, waiting):
         for record_id in [key for key in self._retry_after if key not in waiting]:
             self._retry_after.pop(record_id)  # finished or removed meanwhile
-        for record_id in [key for key in self._held if key not in waiting]:
-            self._held.pop(record_id)
         # A receipt that cannot be read right now keeps its marks: it is still
         # waiting, and a mark lost here would not come back when it is read.
+        for record_id in [key for key in self._held if key not in waiting and key not in self._unreadable]:
+            self._held.pop(record_id)
         self._retrying &= waiting.keys() | self._unreadable
         self._going_ahead &= waiting.keys() | self._unreadable
         # A conversation is remembered only for a receipt still waiting, one
@@ -400,6 +400,8 @@ class TransportWorker:
                 continue
             behind_unreadable += 1
             blockers.add(ahead)
+            if record_id in self._unreadable:
+                continue  # it cannot be read itself: no time by which it goes out
             blocker = self._conversations.get(ahead)
             if blocker is None:
                 continue
@@ -414,7 +416,9 @@ class TransportWorker:
                 if other in self._unreadable and since is not None and (self._conversations[other][0], other) < key:
                     due = since + UNREADABLE_HOLD_SECONDS
                     release = due if release is None else max(release, due)
-        retrying = len(self._retrying - self._held.keys() - self._unreadable)
+        # One that cannot be read is counted once: as what holds the replies
+        # behind it, or else as waiting for another attempt.
+        retrying = len(self._retrying - self._held.keys() - blockers)
         return {"held": len(self._held), "behind_unreadable": behind_unreadable, "unreadable": len(blockers),
                 "retrying": retrying, "release_at": release, "went_ahead": self._went_ahead,
                 "went_ahead_at": self._went_ahead_at}
@@ -472,6 +476,7 @@ class TransportWorker:
                             "receipt cannot be read; it goes out after that one, or without it once that receipt "
                             "has been unreadable for %d hours", self.channel.name, UNREADABLE_HOLD_SECONDS // 3600)
             self._held[row["id"]] = ahead
+            self._going_ahead.discard(row["id"])
             await self._note(row, held_behind={"id": ahead, "created_at": self._conversations[ahead][0],
                                                "unreadable_since": since})
             return None
@@ -482,21 +487,26 @@ class TransportWorker:
                 log.warning("Channel %s: a message goes ahead of an earlier one in its conversation whose saved "
                             "receipt has been unreadable for %d hours", self.channel.name,
                             UNREADABLE_HOLD_SECONDS // 3600)
-                if row["id"] not in self._went_ahead_ids:
-                    # Counted once it is sent (see _process), once per
-                    # reply even when its receipt cannot record it; the set
-                    # only deduplicates and stays bounded.
-                    if len(self._went_ahead_ids) >= 10_000:
-                        self._went_ahead_ids.clear()
-                    self._went_ahead_ids.add(row["id"])
-                    self._going_ahead.add(row["id"])
+            # Counted once it is sent (see _process), as decided at its last
+            # attempt: one held again, or in turn by then, did not go ahead.
+            self._going_ahead.add(row["id"])
             return await self._note(row, held_behind=None, went_ahead_of=went_ahead_of)
+        self._going_ahead.discard(row["id"])
         return await self._note(row, held_behind=None)
 
     def _release_after(self, record_id):
         """This receipt no longer holds its conversation: the newer messages
-        that waited behind it are due now, and a scan picks them up in order."""
+        that waited behind it are due now, and a scan picks them up in order.
+        Until then each is counted as waiting behind what is still ahead of it
+        in its conversation, if anything."""
         known = self._conversations.pop(record_id, None)
+        for other in [key for key, ahead in self._held.items() if ahead == record_id]:
+            waited = self._conversations.get(other)
+            ahead = self._waiting_ahead(other, *waited)[0] if waited else None
+            if ahead is None:
+                self._held.pop(other)
+            else:
+                self._held[other] = ahead
         if known is None:
             return
         now = time.monotonic()

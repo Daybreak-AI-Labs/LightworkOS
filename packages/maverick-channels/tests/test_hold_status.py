@@ -296,6 +296,46 @@ def test_a_worker_that_stops_clears_its_apps_unrenewed_statuses_too(tmp_path):
     assert hold_status.summary({"signal"}, directory=tmp_path)["state"] == "not_reporting"
 
 
+def test_a_status_left_before_the_clock_was_set_back_is_cleared(tmp_path):
+    ahead = tmp_path / "signal-2-ahead.enc"
+    ahead.write_bytes(b"x")
+    later = time.time() + 3600
+    os.utime(ahead, (later, later))
+    publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60).start()
+    publisher.close()
+    assert not ahead.exists()
+    assert hold_status.summary({"signal"}, directory=tmp_path, now=later)["state"] == "not_reporting"
+
+
+@pytest.mark.parametrize("jump", [3600, -60])
+def test_a_running_worker_is_current_again_soon_after_the_clock_jumps(tmp_path, monkeypatch, jump):
+    # A laptop wakes (the clock jumps ahead without the renewal wait counting
+    # the time asleep) or the clock is set back: the worker renews within a
+    # few seconds instead of reading as stopped until its wait runs out.
+    monkeypatch.setattr(hold_status, "_SKEW", 0.2)
+    offset = [0.0]
+
+    def wall():
+        return time.time() + offset[0]
+    publisher = hold_status.Publisher("signal", directory=tmp_path, clock=wall, renew_seconds=30)
+    publisher.update(_counts(held=2))
+    publisher.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not list(tmp_path.glob("*.enc")) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        stamped = publisher._stamped
+        offset[0] += jump
+        state = hold_status.summary({"signal"}, directory=tmp_path, now=wall())
+        while (state["state"] != "holding" or publisher._stamped == stamped) and time.monotonic() < deadline:
+            time.sleep(0.05)
+            state = hold_status.summary({"signal"}, directory=tmp_path, now=wall())
+        assert state["state"] == "holding" and state["held"] == 2
+        assert publisher._stamped - stamped == pytest.approx(jump, abs=5)  # renewed on the new clock
+    finally:
+        publisher.close()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="symbolic links and FIFOs need POSIX here")
 def test_cleanup_never_follows_a_linked_folder(tmp_path):
     elsewhere = tmp_path / "elsewhere"

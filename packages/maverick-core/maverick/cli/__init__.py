@@ -4765,13 +4765,27 @@ def _stop_on_sigterm() -> None:
     """Stop on SIGTERM as on Ctrl-C, so every channel closes cleanly. The
     dashboard's Stop and Restart, systemd and container runtimes send SIGTERM,
     whose default ends the process before any channel can close. Windows ends
-    the process without a signal Python can handle."""
+    the process without a signal Python can handle.
+
+    Only the first SIGTERM is passed on: the dashboard's shutdown and a
+    one-file build's launcher send it again, and asyncio turns a second Ctrl-C
+    into an interruption in the middle of closing. Every one of them ends the
+    process itself if it does not stop in time. When Ctrl-C is ignored (a
+    script's background job), asyncio would not stop on it, so SIGTERM keeps
+    its default."""
     import signal
 
-    if os.name == "nt":
+    if os.name == "nt" or signal.getsignal(signal.SIGINT) is not signal.default_int_handler:
         return
+    stopping = []
+
+    def stop(_signum, _frame):
+        if not stopping:
+            stopping.append(True)
+            signal.raise_signal(signal.SIGINT)
+
     try:
-        signal.signal(signal.SIGTERM, lambda _signum, _frame: signal.raise_signal(signal.SIGINT))
+        signal.signal(signal.SIGTERM, stop)
     except ValueError:  # not the main thread: the default stays
         pass
 

@@ -69,10 +69,12 @@ def _publish(counts, *, clock=time.time, channel="signal"):
     (_state(state="off", reporting=[]), "Signal and IRC are turned off, so held chat replies are not being "
                                         "checked. A reply that was waiting when its app was turned off stays "
                                         "saved until that app is turned on again."),
-    (_state(), "No chat replies are waiting."),
+    # It names the apps it covers: other chat apps' replies are not counted.
+    (_state(), "No IRC or Signal replies are waiting."),
     (_state(state="holding", held=1), "1 chat reply is waiting for an earlier reply in the same chat to be sent "
                                       "first. It goes out after that one does."),
-    (_state(state="holding", retrying=2), "2 chat replies could not be sent and are tried again every 30 seconds."),
+    (_state(state="holding", retrying=2), "2 chat replies could not be sent or handled and are tried again every "
+                                          "30 seconds."),
     (_state(state="not_reporting", reporting=[], not_reporting=["signal"]),
      "Signal is turned on but not reporting from the chat service on this computer, so held chat replies cannot "
      "be checked."),
@@ -122,7 +124,7 @@ def test_a_release_time_that_has_passed_is_not_promised_as_a_limit():
 def test_replies_that_went_ahead_of_an_expired_hold_are_reported():
     when = 1_800_000_000.0
     text = channel_holds.describe(_state(went_ahead=2, went_ahead_at=when))
-    assert text.startswith("No chat replies are waiting.")
+    assert text.startswith("No IRC or Signal replies are waiting.")
     assert ("Since the chat service started, 2 replies went out without waiting, after an earlier reply "
             f"stayed unreadable for 24 hours (most recently {datetime_text(when)}).") in text
 
@@ -146,7 +148,7 @@ def test_with_one_app_turned_off_the_answer_names_the_app_it_covers(monkeypatch)
     monkeypatch.setattr(channel_holds, "held_reply_status",
                         lambda _request: {**_state(state="holding", held=1, reporting=["irc"]), "summary": "x"})
     details = adapter.snapshot(_request(), {}).details
-    assert "Replies waiting" not in details and details["Replies waiting (IRC only)"] == 1
+    assert details["Waiting behind an earlier reply (IRC only)"] == 1
 
 
 def test_an_app_turned_off_but_still_running_is_explained():
@@ -176,7 +178,7 @@ def test_status_reads_only_the_chat_apps_that_are_turned_on(monkeypatch):
     monkeypatch.setattr(channel_holds, "_enabled_channels", lambda: {"signal"})
     monkeypatch.setattr(hold_status, "summary", lambda enabled, **k: calls.append(enabled) or _state())
     result = channel_holds.held_reply_status(_request())
-    assert calls == [{"signal"}] and result["summary"] == "No chat replies are waiting."
+    assert calls == [{"signal"}] and result["summary"] == "No IRC or Signal replies are waiting."
 
 
 def test_the_message_delivery_panel_shows_the_answer(client, monkeypatch):
@@ -241,7 +243,7 @@ def test_copilot_counts_name_only_the_apps_that_are_reporting(monkeypatch):
     monkeypatch.setattr(channel_holds, "held_reply_status",
                         lambda _request: {**_state(reporting=["signal"], not_reporting=["irc"]), "summary": "x"})
     details = adapter.snapshot(_request(), {}).details
-    assert "Replies waiting" not in details and "Replies waiting (Signal only)" in details
+    assert "Waiting behind an earlier reply" not in details and "Waiting behind an earlier reply (Signal only)" in details
 
 
 def test_copilot_is_refused_before_reading_for_someone_who_is_not_an_administrator(monkeypatch):
@@ -290,3 +292,42 @@ def test_a_wrongly_typed_chat_setting_leaves_copilot_working_on_the_settings_pag
         action = next(row for row in catalog.json()["operations"] if row["id"] == "channels.held_replies")
         assert action["available"] is False
     assert channel_holds.page_summary(_request()) == channel_holds.UNAVAILABLE
+
+
+def test_a_reply_tried_again_points_to_the_permitted_people_too():
+    text = channel_holds.describe(_state(state="holding", retrying=1))
+    assert RESTART in text
+    assert ("A reply to someone who is no longer among the app's permitted people waits until they are permitted "
+            "again; check the app's permitted people in All settings.") in text
+
+
+def test_copilot_labels_say_what_each_count_is(monkeypatch):
+    from maverick_dashboard import product_operations_channel_holds as adapter
+
+    monkeypatch.setattr(channel_holds, "held_reply_status",
+                        lambda _request: {**_state(state="holding", retrying=1), "summary": "x"})
+    details = adapter.snapshot(_request(), {}).details
+    # A reply tried again is waiting too, so no count reads as "replies waiting: 0" beside it.
+    assert not any(label.startswith("Replies waiting") for label in details)
+    assert details["Waiting behind an earlier reply"] == 0
+    assert details["Could not be sent or handled, tried again"] == 1
+
+
+def test_the_held_replies_question_is_answered_with_default_copilot_settings(client, monkeypatch):
+    # With the Connections Copilot actions off (the default), the suggested
+    # question still leads somewhere: to Message delivery, which has the answer.
+    from maverick_dashboard import product_operations as operations
+
+    assert "connections" not in operations.enabled_families()
+    payload = client.post("/api/v1/copilot", json={"message": "Are any chat replies waiting?", "page": "/channels",
+                                                   "history": []}).json()
+    link = payload["action_link"]
+    assert (link["href"], link.get("focus"), link["label"]) == ("/channels", "channel-delivery", "Open Message delivery")
+
+
+def test_only_administrators_are_offered_the_held_replies_question():
+    from maverick_dashboard import copilot_context
+
+    context = copilot_context.context_for_page("/channels")
+    assert "Are any chat replies waiting?" not in copilot_context.suggestions_for(context, frozenset({"view",
+                                                                                                    "operate"}))
