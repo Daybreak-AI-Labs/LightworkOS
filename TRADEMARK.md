@@ -1,7 +1,7 @@
 # Trademark Policy
 
 "Lightwork", the Lightwork name, and the Lightwork logo (the "Marks") are
-trademarks of Christopher Day / Day AI Labs (the "Licensor"). All rights
+trademarks of Christopher Day / Daybreak AI Labs (the "Licensor"). All rights
 reserved.
 
 The Lightwork source code is open source, licensed under the

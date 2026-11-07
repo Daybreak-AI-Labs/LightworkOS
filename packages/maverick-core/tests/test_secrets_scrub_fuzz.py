@@ -19,7 +19,14 @@ These tests pin three properties:
      - ``env_secret``: ``(?:^|\\n)\\s*`` backtracked O(N^2) on a long run of
        newlines (``\\s`` matches ``\\n``; re.MULTILINE anchors at every line
        start) -- ~13s / 16KB. Present identically in both redactors.
-   Either is a remote agent-hang (DoS).
+     - ``env_secret``: its name, ``[A-Z][A-Z0-9_]*(?:KEY|...)[A-Z0-9_]*``,
+       backtracked across a run of capitals once for every keyword in it --
+       ~12s / 60KB. Present in both redactors and in the agent's streamed
+       answer preview.
+     - ``jwt``: every ``eyJ`` after a ``-`` in one run of token characters
+       started a scan to the end of that run -- ~14s / 240KB of ``eyJ-``.
+       Present in both redactors.
+   Each is a remote agent-hang (DoS).
 2. No crash -- random adversarial inputs never raise.
 3. Still effective -- a real secret embedded in noise is still redacted,
    and scrubbing is idempotent.
@@ -47,6 +54,7 @@ def test_secret_redactors_do_not_redos_on_long_runs():
     # linear (~3s total); a regression blows past the timeout and is killed.
     prog = textwrap.dedent(
         """
+        from maverick.agent import _OPEN_SECRET_QUOTE
         from maverick.secrets import scrub
         from maverick.safety import secret_detector
         N = 300_000
@@ -54,18 +62,21 @@ def test_secret_redactors_do_not_redos_on_long_runs():
             "a" * N,                                  # url_credentials scheme run
             "A" * N,                                  # uppercase env / url classes
             "A" * N + "KEY",                          # env_secret name run, no '='
+            "A" + "KEY" * (N // 3),                   # env_secret name run of keywords: O(N^2)
             "\\n" * N,                                # newline run: env_secret O(N^2)
             "\\t" * N,                                # tab run
             " " * N,                                  # space run
             "http://" + "a" * N + ":",                # scheme + host run, no '@'
             "sk-ant-" + "a" * N,                      # long key-ish run
             "eyJ" + "a" * N,                          # jwt-ish run, no dots
+            "eyJ-" * (N // 4),                        # jwt starts all through one run: O(N^2)
             "?token=" + "a" * N,                      # url_secret value run
             "-----BEGIN RSA PRIVATE KEY-----" + "a" * N,  # pragma: allowlist secret (fake PEM)
         )
         for s in evil:
             scrub(s)                      # maverick.secrets redactor
             secret_detector.redact(s)     # maverick.safety mirror redactor
+            _OPEN_SECRET_QUOTE.match(s)   # the agent's streamed-answer check
         """
     )
     try:
@@ -83,6 +94,66 @@ def test_secret_redactors_do_not_redos_on_long_runs():
             "a remote-DoS vector: bound the offending greedy quantifier or stop "
             "it from spanning newlines."
         ) from exc
+
+
+def test_env_secret_names_are_read_in_one_pass_and_find_the_same_text():
+    """The env-style patterns read a name in one pass. Each must still find
+    exactly what the form that backtracked found (copied here as it was)."""
+    import re
+
+    from maverick.agent import _OPEN_SECRET_QUOTE
+    from maverick.safety.secret_detector import _PATTERNS as detector_patterns
+    from maverick.secrets import _PATTERNS as scrub_patterns
+
+    name = r"[A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL)[A-Z0-9_]*"
+    value = r"(\"[^\"\n]*\"|'[^'\n]*'|[^\s\n]+)"
+    pairs = [
+        (dict(detector_patterns)["env_secret"], re.compile(
+            r"(?:^|\n)[^\S\n]*(?:export\s+)?" + name + r"\s*[:=]\s*(?P<val>\"[^\"\n]*\"|'[^'\n]*'|[^\s\n]+)",
+            re.MULTILINE)),
+        (dict(scrub_patterns)["env_secret"], re.compile(
+            r"((?:^|\n)[^\S\n]*(?:export\s+)?" + name + r"\s*[:=]\s*)" + value, re.MULTILINE)),
+        (_OPEN_SECRET_QUOTE, re.compile(r"[^\S\n]*(?:export\s+)?" + name + r"\s*[:=]\s*(?P<q>[\"'])")),
+    ]
+    rng = random.Random(13)
+    pieces = ["A", "K", "E", "Y", "KEY", "TOKEN", "PASS", "SECRET", "CREDENTIAL", "_", "0", "=", ":", " ", "\n",
+              "\t", '"', "'", "x", "export ", "export\n"]
+    for _ in range(6000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randrange(1, 24)))
+        for pattern, before in pairs:
+            assert pattern.pattern != before.pattern
+            found = [(match.span(), match.regs) for match in pattern.finditer(text)]
+            assert found == [(match.span(), match.regs) for match in before.finditer(text)], (pattern, text)
+            starts = [0] + [index + 1 for index, character in enumerate(text) if character == "\n"]
+            assert [(match := pattern.match(text, start)) and match.regs for start in starts] == [
+                (match := before.match(text, start)) and match.regs for start in starts], (pattern, text)
+
+
+def test_jwt_patterns_try_one_start_per_run_and_find_the_same_text():
+    """The JWT patterns try only the first ``eyJ`` of a run of token
+    characters (every later one in the run would end where it does). Each
+    must still find exactly what the form that tried every start found."""
+    import re
+
+    from maverick.safety.secret_detector import _PATTERNS as detector_patterns
+    from maverick.safety.secret_detector import redact
+    from maverick.secrets import _PATTERNS as scrub_patterns
+    from maverick.secrets import scrub
+
+    detector_before = re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b")
+    scrub_before = re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
+    detector, scrub_jwt = dict(detector_patterns)["jwt"], dict(scrub_patterns)["jwt"]
+    assert detector.pattern != detector_before.pattern and scrub_jwt.pattern != scrub_before.pattern
+    rng = random.Random(29)
+    pieces = ["eyJ", "eyJ", "-", "_", "a", "Z", "0", ".", ".", " ", "中", "é", "x" * 10, "-eyJ", "\n"]
+    for _ in range(8000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randrange(1, 30)))
+        assert ([match.span("val") for match in detector.finditer(text)]
+                == [match.span() for match in detector_before.finditer(text)]), text
+        assert (scrub_jwt.sub(lambda match: match.group(1) + "[REDACTED:jwt]", text)
+                == scrub_before.sub("[REDACTED:jwt]", text)), text
+    token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghij"  # pragma: allowlist secret
+    assert token not in redact("note-" + token + " done")[0] and token not in scrub("note-" + token + " done")
 
 
 def test_scrub_never_raises_on_random_input():

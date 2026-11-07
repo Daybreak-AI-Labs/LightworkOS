@@ -1662,11 +1662,11 @@ class _ReplayedDecision(Exception):
         self.granted = granted
 
 
-# ``NAME=`` / ``NAME:`` of a named secret (mirrors secret_detector's env_secret)
-# followed by an opening quote.
+# ``NAME=`` / ``NAME:`` of a named secret (mirrors secret_detector's env_secret,
+# the name read in one pass) followed by an opening quote.
 _OPEN_SECRET_QUOTE = re.compile(
-    r"[^\S\n]*(?:export\s+)?[A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL)"
-    r"[A-Z0-9_]*\s*[:=]\s*(?P<q>[\"'])")
+    r"[^\S\n]*(?:export\s+)?(?=[A-Z][A-Z0-9_]*?(?:TOKEN|KEY|SECRET|PASSWORD|PASS|CREDENTIAL))"
+    r"[A-Z][A-Z0-9_]*+\s*[:=]\s*(?P<q>[\"'])")
 
 
 class _PartialAnswerStream:

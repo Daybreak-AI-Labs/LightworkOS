@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/daybreak-labs-logo.jpg" alt="Daybreak Labs" width="240">
+  <img src="docs/assets/daybreak-labs-logo.jpg" alt="Daybreak AI Labs" width="240">
 </p>
 
 <h1 align="center">Lightwork</h1>
@@ -7,7 +7,7 @@
 <p align="center">
   <b>A self-hosted runtime for multi-agent AI&nbsp;work.</b><br>
   An orchestrator agent plans each task and hands parts of it to parallel sub-agents and built-in specialists,
-  on the models you choose. Spending limits, a person's approval for connector writes and shell commands,
+  on the models you choose. Spending limits, a person's approval for connector writes, shell commands and web requests that send data,
   and a signed audit log are built into the runtime.
 </p>
 
@@ -42,7 +42,7 @@
 
 Lightwork is for teams that want agents on their own machines or cloud, with their own model keys or local models, and with approvals, spending limits and an audit trail they can check. The controls live in the runtime, not in the prompt:
 
-- **People approve connector writes and consent-gated high-risk actions.** A connector write is first shown to a person as a preview (nothing is sent), with a digest of the exact request, and sent only after that person approves it. The agent cannot approve its own request, and no setting removes this step. Every shell command, and by default every other consent-gated action rated high or critical risk, also asks a person.<br>*Where to check it:* [`governed_tools.py`](packages/maverick-core/maverick/governed_tools.py), the [governance benchmark](#proof-you-can-check)
+- **People approve connector writes and consent-gated high-risk actions.** A connector write is first shown to a person as a preview (nothing is sent), with a digest of the exact request, and sent only after that person approves it. The agent cannot approve its own request, and no setting removes this step. Every shell command, every `http_fetch` request other than a plain GET or HEAD (any other method, or any request with a body), and by default every other consent-gated action rated high or critical risk, also asks a person.<br>*Where to check it:* [`governed_tools.py`](packages/maverick-core/maverick/governed_tools.py), the [governance benchmark](#proof-you-can-check)
 - **Spending limits that hold under parallel work.** Five caps (input tokens, output tokens, dollars, wall-clock time, tool calls) are checked every time usage is recorded, so a run stops at the first call that crosses a cap that is set; a fresh install sets only the dollar and time caps. Estimated cost is reserved before each model call, so parallel sub-agents cannot all pass the check at once; a call that costs more than its estimate can still take a run past its cap. A model with no verified price stops the run instead of being billed at a guess.<br>*Where to check it:* [`budget.py`](packages/maverick-core/maverick/budget.py), [docs/task-limits.md](docs/task-limits.md)
 - **Delegation with limits and a second opinion.** Agents start one sub-agent, a parallel swarm or a built-in specialist. By default depth is capped at 3, a task at 64 spawned agents, fan-out halves at each level (8, then 4, then 2), and spawning stops once 75% of the dollar cap is spent so the root agent can still answer. A separate verifier call checks the final answer and fails closed: an error in its model call counts as a rejection. A rejection sends the answer back for one revision, and a second rejection is returned with an uncertainty note. By default a chat reply that used no tools or code skips the check.<br>*Where to check it:* [`tools/spawn.py`](packages/maverick-core/maverick/tools/spawn.py), [`verifier.py`](packages/maverick-core/maverick/verifier.py)
 - **An audit log you can verify.** Every event is hash-chained and Ed25519-signed by default; `lightwork audit verify` (today's day-file by default, every day-file with `--all`) and a [standalone Rust binary](rust/maverick-verify-audit/README.md) (one file per run) exit non-zero on any break. Tamper-evident against the service account only with an off-host record: by default the signing key sits on the same host, which catches accidental or unprivileged edits but not someone running as the service account. Supplying `MAVERICK_AUDIT_SIGNING_KEY` (or a KMS-wrapped `MAVERICK_AUDIT_SIGNING_KEY_WRAPPED`) keeps the key off local disk, but the signing process still holds it, so also keep [audit checkpoints](docs/audit-checkpoints.md) off-host and verify with a pinned public key.<br>*Where to check it:* A one-field edit fails both verifiers with `bad_hash`; [docs/audit-checkpoints.md](docs/audit-checkpoints.md)
@@ -53,7 +53,7 @@ Lightwork is for teams that want agents on their own machines or cloud, with the
 
 - `python proof/run_proof.py`: **7 of 7** guarantees pass.<br>Least privilege; no money-moving tool in any finance pack; a dollar-limit gate ($4k release runs, $6k needs a person, a $60k wire is denied); read-not-write fleet access; segregation of duties; tampered handoffs rejected; audit-chain integrity with a co-located key. Real enforcement code against the shipped roster, no provider key.
 - [Governance frontier](benchmarks/GOVERNANCE_FRONTIER_RESULTS.md): **72 of 72** scripted unsafe actions blocked; **48 of 48** benign lookalikes allowed (0.0% false positives)<br>40 fixed scenarios in 8 families (budget control, capability attenuation, destructive actions, egress, financial actions, secret output and more), each under 3 pinned order seeds, against a controls-off baseline that let all 72 unsafe effects through.
-- [Harness overhead](benchmarks/HARNESS_OVERHEAD_RESULTS.md): **Zero** extra model calls, tokens, steps or tool calls; answers and effects byte-identical in **36 of 36** pairs; median **35.33 ms** per task (p95 65.65 ms)<br>What the control path costs per task, for an average of 6 durable evidence records per task (8 for tasks that end in a posting action, 4 for read-only tasks; approvals, prepare and commit receipts and signed audit rows), over 12 fixed tasks under 3 pinned seeds.
+- [Harness overhead](benchmarks/HARNESS_OVERHEAD_RESULTS.md): **Zero** extra model calls, tokens, steps or tool calls; answers and effects byte-identical in **36 of 36** pairs; median **20.49 ms** per task (p95 89.06 ms)<br>What the control path costs per task, for an average of 6 durable evidence records per task (8 for tasks that end in a posting action, 4 for read-only tasks; approvals, prepare and commit receipts and signed audit rows), over 12 fixed tasks under 3 pinned seeds.
 
 **Read these numbers for what they are.** Both benchmarks are offline, deterministic measurements of the control path with no model in the loop (the overhead run calls a deterministic stub), so they show that the controls work and what they cost, not how well agents do tasks. "Blocked" means the control returned a denial before a simulated effect; no live payment or deletion ran. Each manifest is self-signed with a key created on the measuring host (a co-located key): the signature shows the published files match the run, not who ran it. Timings come from one 4-CPU Linux host with Python 3.12.3 and are never asserted. No live-model results are recorded yet.
 
@@ -124,6 +124,7 @@ To reproduce the screenshot at the top: on the dashboard's **Learning** page cho
 | Where commands run | `local`: this computer, no isolation | `--sandbox docker` or `podman`, or **Permissions → Where work runs** in the dashboard |
 | Agent Shield | On, built-in rules, `balanced` profile while no config file exists (the dashboard's initial settings and the wizard's consumer mode write `strict`; express and `--fast` keep `balanced`) | `strict`, `balanced`, `permissive` or `off` ([docs/safety.md](docs/safety.md)) |
 | Connector writes to outside systems | Always wait for a person's approval | Cannot be turned off |
+| Web requests that send data (`http_fetch` with any method other than GET or HEAD, or with a body) | Always wait for a person's approval; plain GET and HEAD run without asking | Cannot be turned off |
 | Consent-gated actions rated high or critical risk | Ask a person (a headless run is denied); low and medium risk run without asking | `MAVERICK_CONSENT_MODE`, or enterprise mode (every gated action asks) |
 | Spending limit per task | $2 and 30 minutes while no config file exists. The wizard's consumer, express and advanced modes offer the same, another limit or none; `lightwork init --fast` and the dashboard's **Save initial settings** set no per-task limit | `--max-dollars`, `--max-wall-seconds`, `lightwork init` |
 | Models without a verified price | Stop the run | `[budget] strict_pricing = false` for estimate-only pricing |
@@ -178,7 +179,7 @@ flowchart TD
   O -- "spawn_subagent, spawn_swarm,<br/>spawn_specialist" --> W["Sub-agents, model<br/>chosen per role"]
   W -- results --> O
   O & W --> TC{{"Tool call: Shield scan,<br/>risk and consent check"}}
-  TC -- "high or critical risk<br/>and consent-gated,<br/>any shell command,<br/>or a connector write" --> AP["A person approves<br/>the exact request"]
+  TC -- "high or critical risk<br/>and consent-gated,<br/>any shell command,<br/>a web request that sends data,<br/>or a connector write" --> AP["A person approves<br/>the exact request"]
   TC --> T["Tool runs; shell goes<br/>through the sandbox"]
   AP --> T
   T --> S3{{"Shield: tool-output scan"}}
@@ -344,4 +345,4 @@ Pull request titles follow Conventional Commits, and your first pull request sig
 
 Lightwork is licensed under the [Apache License 2.0](LICENSE); see also [NOTICE](NOTICE) and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). The Lightwork name and logo are trademarks and are not covered by the license; see [TRADEMARK.md](TRADEMARK.md).
 
-Lightwork is developed by Daybreak Labs; copyright is held by Christopher Day (see [NOTICE](NOTICE)).
+Lightwork is developed by Daybreak AI Labs; copyright is held by Christopher Day (see [NOTICE](NOTICE)).

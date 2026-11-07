@@ -41,7 +41,7 @@
   -->
   <Package
       Name="Lightwork CLI (Engineering Bootstrap)"
-      Manufacturer="Daybreak Labs"
+      Manufacturer="Daybreak AI Labs"
       Version="$(var.ProductVersion)"
       UpgradeCode="9E2B7C41-6A8D-4F3B-8E5A-2C90D17B4F6E"
       Language="1033"

@@ -126,7 +126,7 @@ def build_agent_card(base_url: str | None = None) -> dict[str, Any]:
         "url": f"{url}/a2a/v1",
         "version": _version(),
         "provider": {
-            "organization": "Daybreak Labs",
+            "organization": "Daybreak AI Labs",
             "url": "https://github.com/Daybreak-AI-Labs/LightworkOS",
         },
         "capabilities": {

@@ -139,6 +139,33 @@ def test_actual_http_enrollment_cookie_and_fresh_login():
         assert response.status_code == 303, response.text
 
 
+def test_first_owner_starts_in_a_selected_workspace():
+    """A fresh install's owner works in a real workspace from the first page.
+
+    Left in the unbound root, every workspace-scoped panel the owner opens
+    (a flow run's learning example, the activity log's protection status)
+    answered 409 "select an active tenant", while the shell called that root
+    "Main workspace". The workspace was created only when an HTML tenant gate
+    refused, which stranded anything made before it in the unbound root.
+    """
+    from maverick.tenant.registry import get_tenant
+    from maverick_dashboard import workspace_tenants
+    from maverick_dashboard.app import app
+    with TestClient(app, base_url="http://127.0.0.1:8765", client=("127.0.0.1", 53210),
+                    headers={"Origin": "http://127.0.0.1:8765"}, follow_redirects=False) as client:
+        response = client.post("/auth/local-owner", data={"email": "owner@example.com", "password": PASSPHRASE, "confirm": "yes"})
+        assert response.status_code == 303, response.text
+        assert workspace_tenants.get_selection("user:owner@example.com") == "local"
+        assert get_tenant("local") is not None
+        active = client.get("/api/v1/workspace/active-tenant")
+        assert active.status_code == 200, active.text
+        assert (active.json()["tenant_id"], active.json()["source"]) == ("local", "principal_selection")
+        status = client.get("/api/v1/audit/unified/status")
+        assert status.status_code == 200, status.text
+        capture = client.get("/api/v1/flows/no-such-flow/runs/no-such-run/episode-capture/withdrawal")
+        assert "select an active tenant" not in capture.text
+
+
 def test_owner_claim_is_protected_recovery_authority(tmp_path):
     from maverick import backup
     from maverick_dashboard import local_owner
@@ -181,6 +208,8 @@ def test_named_owner_invite_workspace_and_captured_review(monkeypatch, tmp_path)
     with TestClient(dashboard.app, **options) as owner:
         accepted = owner.post("/auth/local-owner", data={"email": "owner@example.com", "password": PASSPHRASE, "confirm": "yes"})
         assert accepted.status_code == 303, accepted.text
+        # The owner starts in the first workspace; the browser client sends its guard.
+        owner.headers["X-Lightwork-Expected-Tenant"] = "local"
         created = owner.post("/api/v1/admin/tenants", json={"id": "customer-workspace", "display_name": "Customer workspace"})
         assert created.status_code == 201, created.text
         selected = owner.put("/api/v1/workspace/active-tenant", json={"tenant_id": "customer-workspace"})

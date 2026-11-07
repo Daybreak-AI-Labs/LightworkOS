@@ -62,3 +62,27 @@ def test_resolves_active_tenant_from_context():
         reset_tenant(tok)
     # Scope restored -> no tenant -> allowed again.
     assert billing.feature_allowed("channels") is True
+
+
+def test_self_hosted_workspace_plan_allows_every_gated_feature():
+    # A self-hosted installation's own workspace is not on a billing plan:
+    # every feature a plan can gate, and no plan limits.
+    from maverick.departments import DEPARTMENTS_FEATURE, department_entitled
+    from maverick.domain import SUITE_PREFIXES
+    from maverick.tenant import concurrency
+
+    plan = billing.SELF_HOSTED_PLAN
+    tr.create_tenant("local", plan=plan)
+    every = {DEPARTMENTS_FEATURE, *billing._BASE_GATEABLE_FEATURES}
+    every |= {feature for spec in billing.DEFAULT_PLANS.values() for feature in spec.features}
+    for feature in sorted(every):
+        assert billing.feature_allowed(feature, tenant="local") is True, feature
+    for suite in sorted(set(SUITE_PREFIXES.values())):
+        assert department_entitled(suite, tenant="local") is True, suite
+    limits = billing.entitlements_for(plan)
+    assert (limits.max_daily_dollars, limits.max_concurrent_goals) == (0.0, 0)
+    assert concurrency._limit_for("local") == 0
+    assert plan in billing.known_plan_names()
+    # Billed tiers keep their gates.
+    tr.create_tenant("acme", plan="free")
+    assert billing.feature_allowed(DEPARTMENTS_FEATURE, tenant="acme") is False

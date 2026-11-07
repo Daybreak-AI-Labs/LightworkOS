@@ -2677,8 +2677,9 @@ Built-in tool modules. Highlights by group (all under `tools/`):
   workspace; enabled offline OCR handles scans, with `ocr=true` for mixed pages.
   Native text-table extraction requires `pdfplumber`. See
   [document processing](document-processing.md) for setup and format limits.
-- **Web & research** — `web_search` (Tavily/Brave/DDG/SerpAPI), `http_fetch`,
-  `browser` (navigate/click/type/`fill_form`), `browser_device` (device-emulation
+- **Web & research** — `web_search` (Tavily/Brave/DDG/SerpAPI), `http_fetch`
+  (GET/HEAD directly; any other request, or one with a body, after a person
+  approves it), `browser` (navigate/click/type/`fill_form`), `browser_device` (device-emulation
   presets), `browser_auth_vault` (Fernet-encrypted session store), `websocket`
   (ws/wss connect-send-recv), `dom_diff` (structural before/after HTML diff),
   `arxiv`, `semantic_scholar`, `wikipedia`, `hackernews`, `youtube`.

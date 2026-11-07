@@ -45,3 +45,15 @@ test('a first read refused for lost access shows one instruction: sign in or rel
   assert.equal(ui.d.getElementById('acc-refresh').disabled, true);
   assert.doesNotMatch(ui.d.getElementById('independent-checkpoint-custody').textContent, /Use Refresh choices/);
 });
+
+test('an installation without independent storage reads what to set up, not an error', async t => {
+  const setup = 'Enable Connections and encryption for saved data in Settings before using independent checkpoint storage.';
+  const ui = await page(t, () => ({setup_required: setup, context: 'a'.repeat(64)}));
+  assert.equal(ui.calls.length, 1);
+  assert.equal(ui.d.getElementById('acc-status').textContent, setup);
+  assert.equal(ui.d.getElementById('acc-requests').textContent,
+    'No independent copies can be requested until storage is set up.');
+  assert.equal(ui.d.getElementById('acc-review').disabled, true);
+  assert.equal(ui.d.getElementById('acc-check').disabled, true);
+  assert.equal(ui.d.getElementById('acc-refresh').disabled, false);
+});

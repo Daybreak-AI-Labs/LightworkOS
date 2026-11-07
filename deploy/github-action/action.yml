@@ -1,6 +1,6 @@
 name: "Lightwork swarm"
 description: "Run a Lightwork agent swarm on a goal (or a goal template) inside a GitHub workflow, under a hard spend cap."
-author: "Daybreak Labs"
+author: "Daybreak AI Labs"
 
 branding:
   icon: "cpu"

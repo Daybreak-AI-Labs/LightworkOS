@@ -208,6 +208,18 @@ DEFAULT_PLANS: dict[str, Entitlements] = {
     ),
 }
 
+# A self-hosted installation's own workspace (the first workspace, created for
+# its owner) is not on a billing plan: every feature a plan can gate, including
+# the departments add-on (``maverick.departments.DEPARTMENTS_FEATURE``), and no
+# plan limits. The tiers above remain for operators who bill tenants on a
+# shared deployment and assign a plan per tenant.
+SELF_HOSTED_PLAN = "self-hosted"
+DEFAULT_PLANS[SELF_HOSTED_PLAN] = Entitlements(
+    SELF_HOSTED_PLAN,
+    frozenset().union(*(spec.features for spec in DEFAULT_PLANS.values()), {"departments"}),
+    0.0, 0,
+)
+
 
 class BillingPolicyError(RuntimeError):
     """Billing/feature policy cannot be resolved safely."""
@@ -434,7 +446,7 @@ def gateable_features() -> list[str]:
 __all__ = [
     "RateCard", "LineItem", "Invoice",
     "rate_ledger", "generate_invoice", "ledger_for_tenant",
-    "Entitlements", "DEFAULT_PLANS", "entitlements_for", "entitled",
+    "Entitlements", "DEFAULT_PLANS", "SELF_HOSTED_PLAN", "entitlements_for", "entitled",
     "BASE_PLAN", "BillingPolicyError", "tenant_entitled", "feature_allowed", "feature_availability",
     "effective_features", "plan_features_for_tenant", "gateable_features",
 ]

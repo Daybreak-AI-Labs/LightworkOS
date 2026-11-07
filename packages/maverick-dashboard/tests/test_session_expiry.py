@@ -33,8 +33,10 @@ def isolated(monkeypatch, tmp_path):
 
 def _client():
     from maverick_dashboard.app import app
+    # The owner starts in the first workspace; the browser client sends its guard.
     return TestClient(app, base_url=ORIGIN, client=("127.0.0.1", 53210),
-                      headers={"Origin": ORIGIN}, follow_redirects=False)
+                      headers={"Origin": ORIGIN, "X-Lightwork-Expected-Tenant": "local"},
+                      follow_redirects=False)
 
 
 def _owner(client):

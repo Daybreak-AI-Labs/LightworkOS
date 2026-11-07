@@ -1,4 +1,4 @@
-"""Daybreak Labs branding: the logo is served, stays public (the share view needs
+"""Daybreak AI Labs branding: the logo is served, stays public (the share view needs
 it without a login), and appears on the dashboard chrome + public share page."""
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def test_sidebar_and_favicon_use_the_logo(tmp_path, monkeypatch):
     t = client.get("/goals").text
     assert "/static/daybreak-logo.jpg" in t      # favicon + sidebar both point at it
     assert "brand__plate" in t                   # logo sits on the dark brand plate
-    assert "Lightwork by Daybreak Labs" in t      # co-branded footer
+    assert "Lightwork by Daybreak AI Labs" in t      # co-branded footer
 
 
 def test_share_page_shows_the_logo(tmp_path, monkeypatch):
@@ -53,4 +53,4 @@ def test_share_page_shows_the_logo(tmp_path, monkeypatch):
     token = shared.json()["url"].split("/share/")[1]
     page = TestClient(app, base_url="http://127.0.0.1").get(f"/share/{token}").text   # anon viewer
     assert "/static/daybreak-logo.jpg" in page
-    assert "Daybreak Labs" in page
+    assert "Daybreak AI Labs" in page

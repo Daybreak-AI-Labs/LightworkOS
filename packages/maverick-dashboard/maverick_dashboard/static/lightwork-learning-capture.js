@@ -219,7 +219,12 @@
   }
   async function load() {
     const started = epoch, oldReason = $('review-reason').value, oldGrant = $('grant-reason').value;
-    clearCurrentState(); say('Checking this run’s learning status…');
+    // With example collection off, past decisions can still be read (to settle
+    // an interrupted one), but the current example and a new suggestion are refused.
+    const off = card.dataset.capture === 'off';
+    clearCurrentState();
+    say(off ? 'Keeping runs as learning examples is turned off. To keep runs like this one, turn on Keep workflow examples for learning in Settings, then reload this page.'
+      : 'Checking this run’s learning status…');
     try {
       const history = await decisionApi('/history'); if (started !== epoch) return;
       scope = history.context; const choice = $('original-choice'); choice.replaceChildren();
@@ -232,6 +237,7 @@
       if (pending) choice.value = pending.operation;
       showOriginal();
     } catch (error) { if (error.status !== 404) throw error; }
+    if (off) return;
     let row = null, value = null;
     try { value = await decisionApi(''); if (started !== epoch) return; row = value.record; } catch (failure) {
       if (!(failure && failure.status === 404)) throw failure;

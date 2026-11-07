@@ -56,6 +56,15 @@
     const value = await request('');
     if (accessLost) throw unavailable();
     if (before && before.context !== value.context) { clearPrivate(); throw unavailable(); }
+    if (value.setup_required) {
+      // Storage is not set up: say what to set up. There is no account or checkpoint to act on.
+      current = null;
+      el('acc-account').replaceChildren(new Option('Choose an account', ''));
+      el('acc-review').dataset.unavailable = el('acc-check').dataset.unavailable = 'true';
+      el('acc-requests').replaceChildren(node('p', 'No independent copies can be requested until storage is set up.', 'muted'));
+      notice(value.setup_required);
+      return value;
+    }
     current = value;
     const choices = el('acc-account'); choices.replaceChildren(new Option('Choose an account', ''));
     value.accounts.forEach(account => choices.append(new Option(account.name, account.name)));
@@ -167,6 +176,7 @@
       if (!current && !accessLost) el('acc-requests').replaceChildren(node('p', 'Saved copy requests could not be read. Use Refresh choices to try again.', 'muted'));
       throw error;
     }
+    if (!current) return;
     const reference = retained();
     if (reference && /^[a-f0-9]{32}$/.test(reference)) {
       try { show(await request('/ACC-' + reference + '/original')); } catch (error) { notice(error.message); }

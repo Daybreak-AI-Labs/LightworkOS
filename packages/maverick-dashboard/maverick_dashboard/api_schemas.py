@@ -879,7 +879,7 @@ class TenantCreateIn(BaseModel):
     """Provision a new tenant (admin only). Leave ``id`` empty to derive a
     unique one from ``display_name`` (the dashboard asks only for a name)."""
     id: str = Field("", max_length=128)
-    plan: str = Field("free", pattern="^(free|pro|enterprise)$")
+    plan: str = Field("free", pattern="^(free|pro|enterprise|self-hosted)$")
     display_name: str = Field("", max_length=200)
     max_daily_dollars: float = Field(
         DEFAULT_TENANT_DAILY_DOLLARS,
@@ -889,7 +889,7 @@ class TenantCreateIn(BaseModel):
 
 
 class TenantPlanIn(BaseModel):
-    plan: str = Field(..., pattern="^(free|pro|enterprise)$")
+    plan: str = Field(..., pattern="^(free|pro|enterprise|self-hosted)$")
 
 
 class TenantQuotaIn(BaseModel):

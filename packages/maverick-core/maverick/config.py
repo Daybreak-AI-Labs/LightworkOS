@@ -2204,14 +2204,14 @@ def validate_ekko_policy_ceiling(policy) -> None:
 def get_governed_connectors() -> dict:
     """Return the ``[governed_connectors]`` section with defaults filled in.
 
-    Routing a live system-of-record write through a governed Action
-    (simulate -> approve -> commit -> lineage) instead of a bare confirm-gated
-    tool call is OFF by default in the standard profile: it changes how writes
-    are authorized and records tamper-evident transaction receipts, so a
-    standard operator opts in. Enterprise mode treats governance as a mandatory
-    runtime floor even when this stored default is false. ``connectors`` selects
-    reference REST connectors to register (see
-    :data:`maverick.governed_rest.GOVERNED_REST_FACTORIES`). Env override:
+    Every compatible connector write tool is always routed through a governed
+    Action (simulate -> approve -> commit -> lineage) instead of a bare
+    confirm-gated tool call; configuration cannot remove that boundary (see
+    :func:`maverick.governed_tools.governance_enabled`). ``enable`` (OFF by
+    default in the standard profile) only registers the reference REST
+    connectors named in ``connectors`` (see
+    :data:`maverick.governed_rest.GOVERNED_REST_FACTORIES`); enterprise mode
+    registers them regardless. Env override for ``enable``:
     ``MAVERICK_GOVERNED_CONNECTORS`` (standard mode only).
     """
     cfg = load_config().get("governed_connectors", {}) or {}

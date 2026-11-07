@@ -49,6 +49,8 @@ def install(monkeypatch, tmp_path):
     claimed = owner.post("/auth/local-owner", data={
         "email": OWNER, "password": OWNER_PASS, "password2": OWNER_PASS, "confirm": "yes"})
     assert claimed.status_code == 303, claimed.text
+    # The owner starts in the first workspace; the browser client sends its guard.
+    owner.headers["X-Lightwork-Expected-Tenant"] = "local"
     registry.create_tenant(WORKSPACE)
     yield owner
     owner.close()

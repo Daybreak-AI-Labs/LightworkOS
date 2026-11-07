@@ -131,6 +131,8 @@ def customer(tmp_path, monkeypatch):
             },
         )
         assert enrolled.status_code == 303, enrolled.text
+        # The owner starts in the first workspace; the browser client sends its guard.
+        client.headers["X-Lightwork-Expected-Tenant"] = "local"
         for tenant in ("knowledge-a", "knowledge-b"):
             assert client.post(
                 "/api/v1/admin/tenants",

@@ -542,21 +542,182 @@ def _redact_request_fields(value: object, *, sensitive: bool = False) -> object:
     return _REDACTED_REQUEST_VALUE if sensitive else value
 
 
-def _approval_request_parts(args: dict) -> list[str]:
-    """Show the frozen request shape with sensitive values redacted."""
+# An Azure storage key on its own. The connection-string pattern joins an
+# account name to a key written any distance later, so a value holding only
+# the key is hidden too: it is key material, and the pattern then cannot run
+# from one value into another.
+_AZURE_ACCOUNT_KEY = re.compile(r"AccountKey=[A-Za-z0-9+/=]{40,}")
+# The scheme of a connection string: that pattern stops only at a space.
+_CONNECTION_SCHEME = re.compile(r"(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp)://", re.IGNORECASE)
+
+
+def _spaced_with_positions(text: str) -> tuple[str, list[int]]:
+    """``" ".join(text.split())``, the way the card shows a value's spacing,
+    and for each of its characters the position in ``text`` it came from."""
+    shown: list[str] = []
+    positions: list[int] = []
+    spacing = None
+    for position, character in enumerate(text):
+        if character.isspace():
+            if shown and spacing is None:
+                spacing = position
+            continue
+        if spacing is not None:
+            shown.append(" ")
+            positions.append(spacing)
+            spacing = None
+        shown.append(character)
+        positions.append(position)
+    return "".join(shown), positions
+
+
+def _line_with_positions(text: str) -> tuple[str, list[int]]:
+    """``text`` as a card line writes it inside a JSON string (quotes,
+    backslashes, control and non-ASCII characters escaped, as ``json.dumps``
+    writes them) with its spacing made single spaces, and for each character
+    the position in ``text`` it came from. A token right before a letter of
+    another script ends at a word boundary only there."""
+    if json.dumps(text)[1:-1] == text:
+        return _spaced_with_positions(text)
+    escaped: list[str] = []
+    outer: list[int] = []
+    for position, character in enumerate(text):
+        written = character if " " <= character <= "~" and character not in '"\\' else json.dumps(character)[1:-1]
+        escaped.append(written)
+        outer.extend([position] * len(written))
+    shown, inner = _spaced_with_positions("".join(escaped))
+    return shown, [outer[index] for index in inner]
+
+
+def _value_secrets(reading: str) -> list[tuple[int, int, str]]:
+    """Where in ``reading`` anything that looks like a key or token lies, as
+    ``(start, stop, kind)``, with a standalone storage key. The reading is
+    followed by the closing quote the card writes after every value, so a
+    pattern that would otherwise run on past this value into the next (a
+    connection string with nothing after its "@") is found within this one."""
+    from .safety.secret_detector import scan
+
+    found = [(*match.span, match.name) for match in scan(reading + '"')]
+    found += [(*match.span(), "azure_storage") for match in _AZURE_ACCOUNT_KEY.finditer(reading)]
+    return [(start, min(stop, len(reading)), name) for start, stop, name in found if start < len(reading)]
+
+
+def _hiding_spans(text: str, also_from: tuple[int, ...] = ()) -> tuple[list[tuple[int, int, str]], bool]:
+    """Where in ``text`` anything that looks like a key or token lies, and
+    whether reading it otherwise than as written found more. ``text`` is read
+    as written (line starts count), with its spacing made single spaces as
+    the card shows it, and as a card line writes it (see
+    ``_line_with_positions``), each a reading of ``text`` itself, so a secret
+    one of them finds is never broken up by hiding what another found first.
+    The text from each position in ``also_from`` (a pair's value) is read the
+    same way on its own too."""
+    spans = _value_secrets(text)
+    more: list[tuple[int, int, str]] = []
+    seen = {text}
+    for view in (_spaced_with_positions, _line_with_positions):
+        reading, positions = view(text)
+        if reading in seen:
+            continue
+        seen.add(reading)
+        more += [(positions[start], positions[stop] if stop < len(positions) else len(text), name)
+                 for start, stop, name in _value_secrets(reading)]
+    for offset in also_from:
+        alone, alone_spaced = _hiding_spans(text[offset:])
+        (more if alone_spaced else spans).extend(
+            (start + offset, stop + offset, name) for start, stop, name in alone)
+    if not more:
+        return spans, False
+    covered = [(start, stop) for start, stop, _name in _clusters(spans)]
+    return spans + more, [(start, stop) for start, stop, _name in _clusters(spans + more)] != covered
+
+
+def _clusters(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
+    """Overlapping spans joined, as ``secret_detector.redact`` joins them."""
+    clusters: list[tuple[int, int, str]] = []
+    for start, stop, name in sorted(spans, key=lambda span: (span[0], span[0] - span[1])):
+        if clusters and start < clusters[-1][1]:
+            clusters[-1] = (clusters[-1][0], max(clusters[-1][1], stop), clusters[-1][2])
+        else:
+            clusters.append((start, stop, name))
+    return clusters
+
+
+def _hidden_once(text: str, also_from: tuple[int, ...] = ()) -> str:
+    """``text`` with what ``_hiding_spans`` finds hidden; where a reading
+    other than as written found more, the spacing is shown as single spaces
+    too."""
+    spans, spaced = _hiding_spans(text, also_from)
+    pieces, written = [], 0
+    for start, stop, name in _clusters(spans):
+        pieces += [text[written:start], f"[REDACTED:{name}]"]
+        written = stop
+    shown = "".join(pieces) + text[written:]
+    return " ".join(shown.split()) if spaced else shown
+
+
+def _hidden_secret_text(text: str, *, also_from: tuple[int, ...] = ()) -> str:
+    """``text`` with anything in it that looks like a key or token hidden (see
+    ``_hiding_spans``), until nothing more is found: a marker can complete a
+    pattern around it (its ":" between a connection string's scheme and "@"),
+    and the card checks each line again, so what it shows must already be
+    settled. A value that does not settle is hidden whole."""
+    shown = _hidden_once(text, also_from)
+    for _ in range(3):
+        if shown == text or not _has_secret_text(shown):
+            return shown
+        text, shown = shown, _hidden_once(shown)
+    return "[REDACTED:secret]" if _has_secret_text(shown) else shown
+
+
+def _has_secret_text(text: str) -> bool:
+    """Whether ``_hidden_secret_text`` would hide anything in ``text``."""
+    if _value_secrets(text):
+        return True
+    return any(reading != text and _value_secrets(reading)
+               for reading, _positions in (_spaced_with_positions(text), _line_with_positions(text)))
+
+
+def _redact_secret_leaves(value: object) -> object:
+    """Hide anything that looks like a key or token inside each value on its
+    own. Scanning the whole request as one text let a match run from one value
+    into the next and hide the fields and headers between them."""
+    if isinstance(value, dict):
+        shown: dict = {}
+        for key, item in value.items():
+            name = _hidden_secret_text(key) if isinstance(key, str) else key
+            while name in shown:  # two names hidden alike stay two entries
+                name = f"{name} (another)"
+            shown[name] = _redact_secret_leaves(item)
+        return shown
+    if isinstance(value, (list, tuple)):
+        return [_redact_secret_leaves(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _hidden_secret_text(value if isinstance(value, str) else str(value))
+
+
+def _approval_request_parts(args: dict, *, sized: bool = False) -> list[str]:
+    """Show the frozen request shape with sensitive values redacted. A caller
+    that already checked the request's size as it will be sent passes
+    ``sized``; what it shows may be longer than what is sent."""
     size = 380
     try:
         raw_request = json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
-        if not raw_request or len(raw_request) > size * 20:
+        if not raw_request or (not sized and len(raw_request) > size * 20):
             raise ApprovalCardError("the full connector request is too long to review")
-        request = json.dumps(
-            _redact_request_fields(args), sort_keys=True,
-            separators=(",", ":"), default=str,
-        )
-        from .safety.secret_detector import redact
-
-        request, _ = redact(request)
-        if len(request) > size * 20:
+        # Where the request holds a connection-string scheme, values are
+        # separated by a space, where that pattern stops; every other pattern
+        # but two stops at a quote or comma, and _hidden_secret_text leaves
+        # those two nothing to join, so the card's own secret check cannot
+        # hide text between two values.
+        shown = _redact_secret_leaves(_redact_request_fields(args))
+        request = json.dumps(shown, sort_keys=True, separators=(",", ":"), default=str)
+        if _CONNECTION_SCHEME.search(request):
+            request = json.dumps(shown, sort_keys=True, separators=(", ", ": "), default=str)
+        # The spaces add length the size check above does not count: longer
+        # parts (a card line holds up to 500 characters) keep it to 20 parts.
+        size = max(size, -(-len(request) // 20))
+        if size > 480:
             raise ApprovalCardError("the full connector request is too long to review")
     except ApprovalCardError:
         raise

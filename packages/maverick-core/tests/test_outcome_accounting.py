@@ -639,7 +639,7 @@ def test_expiring_rate_is_recorded_and_historical_receipt_survives_expiry(accoun
 
     from maverick import pricing
 
-    clock = [datetime(2026, 9, 14, tzinfo=timezone.utc)]
+    clock = [datetime(2026, 11, 6, tzinfo=timezone.utc)]
     class ReceiptClock(datetime):
         @classmethod
         def now(cls, tz=None):
@@ -656,7 +656,7 @@ def test_expiring_rate_is_recorded_and_historical_receipt_survives_expiry(accoun
     clock[0] = datetime(2027, 1, 1, tzinfo=timezone.utc)
     event = accounting.report(record["id"])["costs"]["events"][0]
     assert event["attempt_state"] == "succeeded"
-    assert event["pricing_evidence"]["valid_until"] == "2026-11-21"
+    assert event["pricing_evidence"]["valid_until"] == "2026-11-30"
     assert Decimal(event["amount"]) > 0
 
 

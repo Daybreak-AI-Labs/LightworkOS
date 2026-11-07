@@ -34,6 +34,13 @@ def store():
     return GovernedRecordStore("audit-checkpoint-custody", "ACC", "audit_checkpoint_custody")
 
 
+class SetupRequired(HTTPException):
+    """Independent storage is not set up yet: a refusal for changes, a state for the overview."""
+
+    def __init__(self, detail: str):
+        super().__init__(409, detail)
+
+
 def _authority(request, context=None, *, setup=True):
     with auth.fresh_configuration():
         auth.require_permission(request, "audit")
@@ -46,7 +53,7 @@ def _authority(request, context=None, *, setup=True):
         if config.config_source_errors(include_tenant=True):
             raise HTTPException(503, "Storage settings could not be read. Nothing was changed.")
         if setup and (not connections.enabled() or not crypto_at_rest.at_rest_enabled()):
-            raise HTTPException(409, "Enable Connections and encryption for saved data in Settings before using independent checkpoint storage.")
+            raise SetupRequired("Enable Connections and encryption for saved data in Settings before using independent checkpoint storage.")
         current = context_for(request)
         if context is not None and current != context:
             raise HTTPException(409, "Your account or workspace changed. Open the current activity log again.")
@@ -63,13 +70,13 @@ def _target():
             or not re.fullmatch(r"[a-z]{2}-[a-z]+-\d+", region) or region.startswith("cn-")
             or len(prefix) > 512 or (bool(prefix) and any(not segment or segment in {".", ".."} for segment in prefix.split("/")))
             or not re.fullmatch(r"[A-Za-z0-9_./-]*", prefix)):
-        raise HTTPException(409, "Choose Amazon S3, a bucket, region and Compliance retention on the Compliance page. Independent checkpoints require the Amazon service and do not use local folders or custom storage endpoints.")
+        raise SetupRequired("Choose Amazon S3, a bucket, region and Compliance retention on the Compliance page. Independent checkpoints require the Amazon service and do not use local folders or custom storage endpoints.")
     try:
         days = int(value.get("retention_days") or 2555)
     except (ValueError, TypeError):
         days = 0
     if not 1 <= days <= 36500:
-        raise HTTPException(409, "Choose a storage retention period between 1 and 36,500 days on the Compliance page.")
+        raise SetupRequired("Choose a storage retention period between 1 and 36,500 days on the Compliance page.")
     return {"bucket": bucket, "region": region, "prefix": prefix, "mode": "COMPLIANCE"}, days
 
 
@@ -379,7 +386,13 @@ async def _call(function, *args):
 
 @router.get("")
 async def overview(request: Request):
-    return JSONResponse(await _call(state, request), headers={"Cache-Control": "private, no-store"})
+    try:
+        value = await _call(state, request)
+    except SetupRequired as exc:
+        # Raised only after the administrator checks: an install without
+        # storage reads what to set up rather than an error on every visit.
+        value = {"setup_required": exc.detail, "context": await run_in_threadpool(context_for, request)}
+    return JSONResponse(value, headers={"Cache-Control": "private, no-store"})
 
 
 @router.post("/prepare")

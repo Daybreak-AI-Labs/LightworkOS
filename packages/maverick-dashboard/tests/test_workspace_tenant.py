@@ -293,12 +293,12 @@ def test_picker_quick_workspace_creates_selects_and_recovers_original_url():
     assert blocked.url.path == GATED_PAGE
     assert "No workspaces exist yet" in blocked.text
     assert 'id="tsel-quick"' in blocked.text
-    assert "createAndSwitch({ id: 'local', display_name: 'My workspace', plan: 'free' }" in blocked.text
+    assert "createAndSwitch({ id: 'local', display_name: 'My workspace', plan: 'self-hosted' }" in blocked.text
 
     # Execute the exact create-then-select sequence wired to the quick action.
     created = client.post(
         "/api/v1/admin/tenants",
-        json={"id": "local", "display_name": "My workspace", "plan": "free"},
+        json={"id": "local", "display_name": "My workspace", "plan": "self-hosted"},
     )
     assert created.status_code == 201, created.text
 
@@ -375,7 +375,7 @@ def test_first_signed_in_admin_gets_a_workspace_instead_of_the_empty_picker(monk
     assert first.status_code == 303, first.text
     assert first.headers["location"] == GATED_PAGE + "?tab=x"
     rec = get_tenant("local")
-    assert rec is not None and rec.display_name == "My workspace" and rec.plan == "free"
+    assert rec is not None and rec.display_name == "My workspace" and rec.plan == "self-hosted"
     assert workspace_tenants.get_selection("user:owner") == "local"
     # The page that refused now renders for the owner.
     assert client.get(GATED_PAGE, headers=_as("owner")).status_code == 200

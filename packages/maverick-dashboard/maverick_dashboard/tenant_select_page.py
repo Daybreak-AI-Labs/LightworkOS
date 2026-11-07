@@ -16,12 +16,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from maverick.billing import SELF_HOSTED_PLAN
 
 PAGE_PATH = "/workspace/tenant"
 
 # The workspace the picker's one-click action creates; the same record is
 # provisioned automatically for the first signed-in administrator (below).
-FIRST_WORKSPACE = {"id": "local", "display_name": "My workspace", "plan": "free"}
+# It is the installation's own workspace, so no billing plan gates it.
+FIRST_WORKSPACE = {"id": "local", "display_name": "My workspace", "plan": SELF_HOSTED_PLAN}
 
 
 def _safe_return_path(value: str | None) -> str:
@@ -100,33 +102,28 @@ def _page_context(
     }
 
 
-def first_workspace_for_admin(request: Request) -> RedirectResponse | None:
-    """Provision and select the first workspace for a signed-in global
-    administrator who reaches a tenant gate on an installation with no
-    workspace at all, then send them back to the page that refused.
+def provision_first_workspace(principal: str) -> str | None:
+    """Create the first workspace and select it for ``principal``.
 
-    The owner's account is the demo account: it must never land on a "no
-    workspaces exist yet" dead end that a one-click button would resolve
-    anyway. Mirrors exactly what that button does (create ``local`` through
-    the registry, record the global audit event, select it for this
-    principal). Anything else -- auth off, a MAVERICK_TENANT binding, an
-    existing roster, a non-admin, a licence or audit refusal -- returns None
-    and the picker renders as before.
+    Mirrors exactly what the picker's one-click button does (create ``local``
+    through the registry, record the global audit event, select it for this
+    principal) and returns the new workspace id. Anything else -- no
+    principal, a MAVERICK_TENANT or client binding, an existing roster, a
+    registry or audit refusal -- returns None and provisions nothing. The
+    caller decides who may provision.
     """
     import os
 
+    from maverick.paths import current_tenant_id
     from maverick.tenant.registry import create_tenant, delete_tenant, list_tenants
 
     from maverick_dashboard import workspace_tenants
 
-    from .auth import caller_principal, has_global_permission
-
-    principal = caller_principal(request)
     if not principal or os.environ.get("MAVERICK_TENANT", "").strip():
         return None
-    if not has_global_permission(request, "admin"):
-        return None
     try:
+        if current_tenant_id() is not None:
+            return None
         if list_tenants():
             return None
         rec = create_tenant(
@@ -158,6 +155,29 @@ def first_workspace_for_admin(request: Request) -> RedirectResponse | None:
     try:
         workspace_tenants.set_selection(principal, rec.id)
     except Exception:
+        return None
+    return rec.id
+
+
+def first_workspace_for_admin(request: Request) -> RedirectResponse | None:
+    """Provision and select the first workspace for a signed-in global
+    administrator who reaches a tenant gate on an installation with no
+    workspace at all, then send them back to the page that refused.
+
+    The owner's account is the demo account: it must never land on a "no
+    workspaces exist yet" dead end that a one-click button would resolve
+    anyway. A local owner already gets this workspace when the claim
+    completes (:mod:`local_owner`); this covers administrators who arrive
+    another way. Anything else -- auth off, a non-admin, or whatever
+    :func:`provision_first_workspace` declines -- returns None and the picker
+    renders as before.
+    """
+    from .auth import caller_principal, has_global_permission
+
+    principal = caller_principal(request)
+    if not principal or not has_global_permission(request, "admin"):
+        return None
+    if provision_first_workspace(principal) is None:
         return None
     back = request.url.path + (f"?{request.url.query}" if request.url.query else "")
     return RedirectResponse(_safe_return_path(back) or PAGE_PATH, status_code=303)

@@ -608,7 +608,7 @@ _REPORT_HEADER = (
     '<w:p><w:pPr><w:jc w:val="right"/><w:spacing w:after="0"/></w:pPr>'
     f'<w:r><w:rPr><w:sz w:val="15"/><w:color w:val="{_MUTED}"/>'
     '<w:spacing w:val="30"/><w:caps/></w:rPr>'
-    '<w:t xml:space="preserve">Lightwork \u00b7 Daybreak Labs</w:t>'
+    '<w:t xml:space="preserve">Lightwork \u00b7 Daybreak AI Labs</w:t>'
     "</w:r></w:p></w:hdr>"
 )
 
