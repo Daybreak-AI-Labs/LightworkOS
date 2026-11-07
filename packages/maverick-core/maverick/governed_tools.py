@@ -571,6 +571,24 @@ def _spaced_with_positions(text: str) -> tuple[str, list[int]]:
     return "".join(shown), positions
 
 
+def _line_with_positions(text: str) -> tuple[str, list[int]]:
+    """``text`` as a card line writes it inside a JSON string (quotes,
+    backslashes, control and non-ASCII characters escaped, as ``json.dumps``
+    writes them) with its spacing made single spaces, and for each character
+    the position in ``text`` it came from. A token right before a letter of
+    another script ends at a word boundary only there."""
+    if json.dumps(text)[1:-1] == text:
+        return _spaced_with_positions(text)
+    escaped: list[str] = []
+    outer: list[int] = []
+    for position, character in enumerate(text):
+        written = character if " " <= character <= "~" and character not in '"\\' else json.dumps(character)[1:-1]
+        escaped.append(written)
+        outer.extend([position] * len(written))
+    shown, inner = _spaced_with_positions("".join(escaped))
+    return shown, [outer[index] for index in inner]
+
+
 def _value_secrets(reading: str) -> list[tuple[int, int, str]]:
     """Where in ``reading`` anything that looks like a key or token lies, as
     ``(start, stop, kind)``, with a standalone storage key. The reading is
@@ -586,17 +604,23 @@ def _value_secrets(reading: str) -> list[tuple[int, int, str]]:
 
 def _hiding_spans(text: str, also_from: tuple[int, ...] = ()) -> tuple[list[tuple[int, int, str]], bool]:
     """Where in ``text`` anything that looks like a key or token lies, and
-    whether reading its spacing as single spaces found more. ``text`` is read
-    as written (line starts count) and with its spacing made single spaces as
-    the card shows it, each reading of ``text`` itself, so a secret one of
-    them finds is never broken up by hiding what the other found first. The
-    text from each position in ``also_from`` (a pair's value) is read the same
-    way on its own too."""
+    whether reading it otherwise than as written found more. ``text`` is read
+    as written (line starts count), with its spacing made single spaces as
+    the card shows it, and as a card line writes it (see
+    ``_line_with_positions``), each a reading of ``text`` itself, so a secret
+    one of them finds is never broken up by hiding what another found first.
+    The text from each position in ``also_from`` (a pair's value) is read the
+    same way on its own too."""
     spans = _value_secrets(text)
-    spaced, positions = _spaced_with_positions(text)
-    more = [] if spaced == text else [
-        (positions[start], positions[stop] if stop < len(positions) else len(text), name)
-        for start, stop, name in _value_secrets(spaced)]
+    more: list[tuple[int, int, str]] = []
+    seen = {text}
+    for view in (_spaced_with_positions, _line_with_positions):
+        reading, positions = view(text)
+        if reading in seen:
+            continue
+        seen.add(reading)
+        more += [(positions[start], positions[stop] if stop < len(positions) else len(text), name)
+                 for start, stop, name in _value_secrets(reading)]
     for offset in also_from:
         alone, alone_spaced = _hiding_spans(text[offset:])
         (more if alone_spaced else spans).extend(
@@ -618,10 +642,10 @@ def _clusters(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
     return clusters
 
 
-def _hidden_secret_text(text: str, *, also_from: tuple[int, ...] = ()) -> str:
-    """``text`` with anything in it that looks like a key or token hidden (see
-    ``_hiding_spans``); where single spacing found more, the spacing is shown
-    as single spaces too."""
+def _hidden_once(text: str, also_from: tuple[int, ...] = ()) -> str:
+    """``text`` with what ``_hiding_spans`` finds hidden; where a reading
+    other than as written found more, the spacing is shown as single spaces
+    too."""
     spans, spaced = _hiding_spans(text, also_from)
     pieces, written = [], 0
     for start, stop, name in _clusters(spans):
@@ -631,12 +655,26 @@ def _hidden_secret_text(text: str, *, also_from: tuple[int, ...] = ()) -> str:
     return " ".join(shown.split()) if spaced else shown
 
 
+def _hidden_secret_text(text: str, *, also_from: tuple[int, ...] = ()) -> str:
+    """``text`` with anything in it that looks like a key or token hidden (see
+    ``_hiding_spans``), until nothing more is found: a marker can complete a
+    pattern around it (its ":" between a connection string's scheme and "@"),
+    and the card checks each line again, so what it shows must already be
+    settled. A value that does not settle is hidden whole."""
+    shown = _hidden_once(text, also_from)
+    for _ in range(3):
+        if shown == text or not _has_secret_text(shown):
+            return shown
+        text, shown = shown, _hidden_once(shown)
+    return "[REDACTED:secret]" if _has_secret_text(shown) else shown
+
+
 def _has_secret_text(text: str) -> bool:
     """Whether ``_hidden_secret_text`` would hide anything in ``text``."""
     if _value_secrets(text):
         return True
-    spaced = " ".join(text.split())
-    return spaced != text and bool(_value_secrets(spaced))
+    return any(reading != text and _value_secrets(reading)
+               for reading, _positions in (_spaced_with_positions(text), _line_with_positions(text)))
 
 
 def _redact_secret_leaves(value: object) -> object:

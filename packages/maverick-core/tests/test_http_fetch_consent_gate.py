@@ -1250,6 +1250,82 @@ def test_an_azure_connection_string_the_read_cuts_keeps_nothing(sent, monkeypatc
     assert "AccountName=contoso" not in _real_card(monkeypatch, body)
 
 
+@pytest.mark.parametrize("body", [
+    '{"note": "' + "\\\\" * 200_000 + 'x"}',
+    '{"note": "' + "\\\\" * 200_000 + 'x\\""}',
+    '"' + "\\\\" * 200_000 + 'x\\"' * 3 + '"',
+], ids=["before-a-letter", "before-an-escaped-quote", "plain-text-string"])
+def test_a_long_run_of_backslashes_is_read_in_one_pass(sent, body):
+    import subprocess
+    import sys
+
+    program = "import sys\nfrom maverick.tools.http_fetch import _readable_body\n_readable_body(sys.stdin.read(), {})"
+    subprocess.run([sys.executable, "-c", program], input=body, text=True, check=True, timeout=20,
+                   capture_output=True)
+
+
+@pytest.mark.parametrize("escaped", range(199_990, 200_002))
+def test_a_body_that_spends_the_quote_budget_still_hides_later_sensitive_values(sent, monkeypatch, escaped):
+    body = ('{"token": "' + '\\"' * escaped + '", "a": "b", "c": ["d", {"password": "hunter2-correct-horse"}]}'  # pragma: allowlist secret
+            )
+    assert "hunter2" not in _real_card(monkeypatch, body, {"Content-Type": "application/json"})
+
+
+@pytest.mark.parametrize("body", [
+    '1{"password": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '"a" {"password": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    'null\n{"password": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '\x0c{"password": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '0{"password":"hunter2-correct-horse"}&x=1',  # pragma: allowlist secret
+], ids=["after-a-number", "after-a-string", "after-null", "after-a-form-feed", "then-a-pair"])
+def test_a_form_body_whose_json_reading_hides_a_sensitive_value_is_refused(sent, monkeypatch, body):
+    import maverick.safety as safety
+
+    asked: list[dict] = []
+    monkeypatch.setattr(safety, "require_operation_consent", lambda *a, **kw: asked.append(kw))
+    out = _fetch({"url": "https://api.example.test/upload", "method": "POST", "body": body, "headers": _FORM})
+    assert out.startswith("ERROR:") and "application/json" in out and asked == [] and sent == []
+
+
+@pytest.mark.parametrize("body", [
+    '{"password": : "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '{"password": "x": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '{"password":}"hunter2-correct-horse"',  # pragma: allowlist secret
+    '{"password":, "x": "hunter2-correct-horse"}',  # pragma: allowlist secret
+    '[{"password": }, "hunter2-correct-horse"]',  # pragma: allowlist secret
+    '{"password": "hun""ter2-RUNON' + '\\"' * 200_001 + '"}',
+], ids=["second-colon", "colon-after-the-value", "closing-brace", "comma", "in-an-array", "run-on-past-the-budget"])
+def test_text_where_a_sensitive_value_was_due_shows_nothing_after_it(sent, monkeypatch, body):
+    shown = _real_card(monkeypatch, body, {"Content-Type": "application/json"})
+    assert "hunter2" not in shown and "RUNON" not in shown
+
+
+@pytest.mark.parametrize("headers,body", [
+    ({"Content-Type": "application/json"}, '{"cache": "redis://AKIAIOSFODNN7EXAMPLEé@h", "to": "x"}'),  # pragma: allowlist secret
+    ({}, "note redis://AKIAIOSFODNN7EXAMPLEé@h"),  # pragma: allowlist secret
+], ids=["json", "text"])
+def test_a_token_before_a_letter_of_another_script_leaves_a_card_that_stays_valid(sent, monkeypatch, headers, body):
+    assert "AKIAIOSFODNN7EXAMPLE" not in _real_card(monkeypatch, body, headers)
+
+
+def test_connector_card_lines_do_not_change_when_the_card_checks_them_again(sent):
+    from maverick.governed_tools import _approval_request_parts
+    from maverick.safety.secret_detector import redact
+
+    parts = _approval_request_parts({"to": "ops", "dsn": "x", "cache": "redis://ghp_" + "a" * 36 + "é@h"})
+    assert all(redact(" ".join(part.split()))[0] == " ".join(part.split()) for part in parts)
+    assert "ghp_aaaa" not in "".join(parts) and "ops" in "".join(parts)
+
+
+@pytest.mark.parametrize("cut", range(1, 12))
+def test_an_azure_connection_string_cut_inside_its_key_name_keeps_nothing(sent, monkeypatch, cut):
+    start = "-----BEGIN PRIVATE KEY-----\n" + "A" * 6900 + "\n-----END PRIVATE KEY-----\n"
+    start += "DefaultEndpointsProtocol=https;AccountName=acct"
+    body = start + "n" * (9000 - len(start) - cut) + ";AccountKey=" + "K" * 88 + " more" * 600
+    assert body[:9000].endswith(";AccountKey="[:cut])
+    assert "AccountName=acct" not in _real_card(monkeypatch, body)
+
+
 def test_connector_cards_hide_secrets_within_each_value(sent):
     """Governed connector approval cards share the per-value rule."""
     from maverick.governed_tools import _approval_request_parts
