@@ -76,7 +76,10 @@ status stays until it is 100 seconds old. One that has not been renewed for
 100 seconds is reported as not current, never as nothing held: a chat service
 stopped without shutting down cleanly reads as having stopped reporting until
 it starts again, and a running worker clears its app's statuses that nobody
-renews and any status stamped ahead of its clock. A status
+renews and any status stamped ahead of its clock. Each status is judged by the
+time sealed in it, taken from the clock of the computer that runs the chat
+service, not by the file's own time, which a file server can set by its own
+clock. A status
 stamped more than a few seconds ahead of the dashboard's clock is ignored, and
 a worker renews its status within a few seconds after the clock jumps, as when
 a laptop wakes. Replies that were waiting stay counted while their saved

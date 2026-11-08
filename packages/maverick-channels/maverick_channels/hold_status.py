@@ -161,17 +161,31 @@ class Publisher:
         now = time.time()
         for path in list(self.directory.glob("*.enc"))[:_MAX_FILES]:
             try:
-                changed = path.lstat().st_mtime
-                # A renewing worker of any app writes with this clock, so a
-                # status changed further ahead was left before the clock was
-                # set back (readers ignore it; a live one is rewritten within
-                # seconds).
-                if changed < now - 7 * 86400 or (path != self.path and (
-                        changed > now + _SKEW
-                        or (_app(path) == self.channel and changed < now - FRESH_SECONDS))):
+                if self._left_over(path, now):
                     path.unlink()
             except OSError:
                 pass
+
+    def _left_over(self, path, now):
+        """Whether nobody renews the status at ``path``, judged by the time
+        sealed in it: its worker took that from this computer's clock, while
+        the file's own time can come from another (a file server's)."""
+        if path == self.path:
+            return path.lstat().st_mtime < now - 7 * 86400
+        try:
+            record = _parse(_read(path), now)
+        except FileNotFoundError:
+            return False  # its worker stopped while this was read
+        except Exception:
+            # Never read as current, so judged by its file time, and only
+            # when it is a week old or this app's.
+            changed = path.lstat().st_mtime
+            return changed < now - 7 * 86400 or (
+                _app(path) == self.channel and not now - FRESH_SECONDS <= changed <= now + _SKEW)
+        # One stamped ahead was left before the clock was set back: readers
+        # ignore it, and a running worker rewrites its own within seconds.
+        return record["ahead"] or record["seen_at"] < now - 7 * 86400 or (
+            record["channel"] == self.channel and not record["fresh"])
 
     def _tidy(self):
         try:
@@ -293,7 +307,10 @@ def clear_saved_before(moment, *, owner, directory=None):
     OWNER_ENV) saved before ``moment``, once it has ended: one ended without a
     chance to remove its own (every stop on Windows) would otherwise stand in
     for it until its status is no longer current. Statuses of a chat service
-    started some other way are left alone. Never raises."""
+    started some other way are left alone. When a status was saved is the
+    time sealed in it, from this computer's clock; the file's own time, which
+    can come from another clock, counts only for one that cannot be read.
+    Never raises."""
     if not isinstance(owner, str) or not _OWNER.fullmatch(owner):
         return
     try:
@@ -305,7 +322,13 @@ def clear_saved_before(moment, *, owner, directory=None):
         ensure_private_directory(directory)
         for path in list(directory.glob(f"*-{owner}-*.enc"))[:_MAX_FILES]:
             try:
-                if path.lstat().st_mtime <= moment:
+                try:
+                    saved = _parse(_read(path), moment)["seen_at"]
+                except FileNotFoundError:
+                    continue
+                except Exception:
+                    saved = path.lstat().st_mtime
+                if saved <= moment:
                     path.unlink()
             except OSError:
                 pass

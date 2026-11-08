@@ -259,10 +259,15 @@ def test_old_statuses_and_this_apps_unrenewed_ones_are_cleared_on_start(tmp_path
     other_app = tmp_path / "irc-4-recent.enc"
     other_app.write_bytes(b"x")
     os.utime(other_app, (gone, gone))
+    # Sealed statuses are judged by the time sealed in them.
+    sealed_old = _publish(tmp_path, "irc", _counts(), clock=lambda: week).path
+    sealed_orphan = _publish(tmp_path, "signal", _counts(held=1), clock=lambda: gone).path
+    sealed_other_app = _publish(tmp_path, "irc", _counts(held=1), clock=lambda: gone).path
     publisher = hold_status.Publisher("signal", directory=tmp_path, renew_seconds=60).start()
     try:  # checked before close(), which clears leftovers too
-        assert not old.exists() and not orphan.exists()
-        assert live.exists() and other_app.exists()  # a renewed status, and another app's, are left alone
+        assert not any(path.exists() for path in (old, orphan, sealed_old, sealed_orphan))
+        # A renewed status, and another app's, are left alone.
+        assert live.exists() and other_app.exists() and sealed_other_app.exists()
     finally:
         publisher.close()
 
@@ -337,19 +342,38 @@ def test_another_apps_status_left_before_the_clock_was_set_back_is_cleared_too(t
 def test_only_the_ended_chat_services_statuses_saved_before_it_ended_are_cleared(tmp_path, monkeypatch):
     owner, ended = "0123456789abcdef", time.time()
     monkeypatch.setenv(hold_status.OWNER_ENV, owner)  # given by the dashboard that started it
-    old = [_publish(tmp_path, channel, _counts(held=1)).path for channel in ("signal", "irc")]
-    for path in old:
-        os.utime(path, (ended - 1, ended - 1))
-    newer = _publish(tmp_path, "signal", _counts()).path
-    os.utime(newer, (ended + 1, ended + 1))
+    old = [_publish(tmp_path, channel, _counts(held=1), clock=lambda: ended - 1).path for channel in ("signal", "irc")]
+    newer = _publish(tmp_path, "signal", _counts(), clock=lambda: ended + 1).path
+    damaged = tmp_path / f"irc-{owner}-1-damaged.enc"  # cannot be read: judged by its file time
+    damaged.write_bytes(b"x")
+    os.utime(damaged, (ended - 1, ended - 1))
     monkeypatch.delenv(hold_status.OWNER_ENV)
-    elsewhere = _publish(tmp_path, "signal", _counts(held=2)).path  # a chat service started some other way
-    os.utime(elsewhere, (ended - 1, ended - 1))
+    elsewhere = _publish(tmp_path, "signal", _counts(held=2), clock=lambda: ended - 1).path  # started some other way
+    # A file server sets file times by its own clock, here ahead of this
+    # computer's; the time sealed in each status is this computer's.
+    for path in (*old, newer, elsewhere):
+        os.utime(path, (ended + 40, ended + 40))
     hold_status.clear_saved_before(ended, owner=owner, directory=tmp_path)
-    assert not any(path.exists() for path in old)
+    assert not any(path.exists() for path in (*old, damaged))
     assert newer.exists() and elsewhere.exists()
     hold_status.clear_saved_before(ended, owner="", directory=tmp_path)  # no tag: nothing is cleared
     assert elsewhere.exists()
+
+
+@pytest.mark.parametrize(("channel", "skew"), [("irc", 40), ("signal", -2 * hold_status.FRESH_SECONDS)])
+def test_file_times_set_by_another_clock_never_clear_a_running_workers_status(tmp_path, channel, skew):
+    # A file server sets file times by its own clock, ahead of or behind this
+    # computer's; the time sealed in each status is this computer's.
+    now = time.time()
+    signal = _publish(tmp_path, "signal", _counts(), clock=lambda: now - 1)
+    running = _publish(tmp_path, channel, _counts(held=2), clock=lambda: now)  # the latest of its app
+    for path in (running.path, signal.path):
+        moved = time.time() + skew
+        os.utime(path, (moved, moved))
+    signal._tidy()
+    assert running.path.exists()
+    state = hold_status.summary({"signal", "irc"}, directory=tmp_path)
+    assert state["state"] == "holding" and state["held"] == 2
 
 
 @pytest.mark.parametrize("jump", [3600, -60])
