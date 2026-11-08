@@ -334,15 +334,22 @@ def test_another_apps_status_left_before_the_clock_was_set_back_is_cleared_too(t
     assert hold_status.summary({"signal"}, directory=tmp_path, now=later)["running_off"] == []
 
 
-def test_statuses_saved_before_the_chat_service_ended_are_cleared(tmp_path):
-    ended = time.time()
+def test_only_the_ended_chat_services_statuses_saved_before_it_ended_are_cleared(tmp_path, monkeypatch):
+    owner, ended = "0123456789abcdef", time.time()
+    monkeypatch.setenv(hold_status.OWNER_ENV, owner)  # given by the dashboard that started it
     old = [_publish(tmp_path, channel, _counts(held=1)).path for channel in ("signal", "irc")]
     for path in old:
         os.utime(path, (ended - 1, ended - 1))
-    newer = _publish(tmp_path, "signal", _counts()).path  # the chat service started again
+    newer = _publish(tmp_path, "signal", _counts()).path
     os.utime(newer, (ended + 1, ended + 1))
-    hold_status.clear_saved_before(ended, directory=tmp_path)
-    assert not any(path.exists() for path in old) and newer.exists()
+    monkeypatch.delenv(hold_status.OWNER_ENV)
+    elsewhere = _publish(tmp_path, "signal", _counts(held=2)).path  # a chat service started some other way
+    os.utime(elsewhere, (ended - 1, ended - 1))
+    hold_status.clear_saved_before(ended, owner=owner, directory=tmp_path)
+    assert not any(path.exists() for path in old)
+    assert newer.exists() and elsewhere.exists()
+    hold_status.clear_saved_before(ended, owner="", directory=tmp_path)  # no tag: nothing is cleared
+    assert elsewhere.exists()
 
 
 @pytest.mark.parametrize("jump", [3600, -60])

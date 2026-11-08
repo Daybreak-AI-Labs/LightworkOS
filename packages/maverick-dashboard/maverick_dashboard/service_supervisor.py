@@ -37,6 +37,7 @@ import atexit
 import collections
 import os
 import queue
+import secrets
 import signal
 import sys
 import threading
@@ -66,6 +67,9 @@ KINDS: dict[str, dict[str, Any]] = {
                     "setting": "model_proxy.enable",
                     "about": "Holds the AI service key in a separate program, so agents never see it."},
 }
+# Tags the chat service's held chat replies statuses (see _drain); the same
+# name as maverick_channels.hold_status.OWNER_ENV.
+HOLDS_OWNER_ENV = "MAVERICK_CHANNEL_HOLDS_OWNER"
 LOG_LINES = 200
 LOG_LINE_CHARS = 400
 STOP_GRACE_SECONDS = 10.0
@@ -168,9 +172,9 @@ def _child_env(kind: str) -> dict[str, str]:
     return env
 
 
-def _spawn(kind: str):
+def _spawn(kind: str, extra_env: dict[str, str] | None = None):
     from maverick.owned_process import OwnedProcess
-    return OwnedProcess(command(kind), env=_child_env(kind))
+    return OwnedProcess(command(kind), env={**_child_env(kind), **(extra_env or {})})
 
 
 def _take_lines(service: Service, pending: bytes, chunk: bytes) -> bytes:
@@ -186,7 +190,7 @@ def _take_lines(service: Service, pending: bytes, chunk: bytes) -> bytes:
     return pending
 
 
-def _drain(service: Service, process: Any) -> None:
+def _drain(service: Service, process: Any, holds_owner: str = "") -> None:
     """Keep the child's bounded pipes flowing into the bounded log, and notice
     when it exits."""
     pending = {"stdout": b"", "stderr": b""}
@@ -222,20 +226,19 @@ def _drain(service: Service, process: Any) -> None:
         process.close()
     except Exception:  # noqa: BLE001 -- the tree is already gone; cleanup is best effort
         pass
-    if released and service.kind == "channels":
-        _clear_held_reply_statuses(ended)
+    if released and holds_owner:
+        _clear_held_reply_statuses(ended, holds_owner)
 
 
-def _clear_held_reply_statuses(ended: float) -> None:
-    """The chat service has ended: remove the held chat replies statuses it
-    saved, which it cannot remove itself when it is stopped without a signal
-    it can handle (every stop on Windows). A chat service started again since
-    saves its own after ``ended``."""
+def _clear_held_reply_statuses(ended: float, owner: str) -> None:
+    """The chat service started with ``owner`` has ended: remove the held
+    chat replies statuses it saved, which it cannot remove itself when it is
+    stopped without a signal it can handle (every stop on Windows)."""
     try:
         from maverick_channels import hold_status
     except ImportError:
         return
-    hold_status.clear_saved_before(ended)
+    hold_status.clear_saved_before(ended, owner=owner)
 
 
 def _running(service: Service) -> bool:
@@ -309,8 +312,9 @@ def start(kind: str, *, quiet: bool = False) -> dict[str, Any]:
 
 def _launch(kind: str, service: Service, label: str) -> tuple[threading.Thread | None, ServiceError | None]:
     """Spawn ``kind`` (caller holds the lock); a refusal is recorded in its status."""
+    holds_owner = secrets.token_hex(8) if kind == "channels" else ""
     try:
-        process = _spawn(kind)
+        process = _spawn(kind, {HOLDS_OWNER_ENV: holds_owner} if holds_owner else None)
     except ServiceError as exc:
         service.last_error = str(exc)
         return None, exc
@@ -324,7 +328,7 @@ def _launch(kind: str, service: Service, label: str) -> tuple[threading.Thread |
     service.last_error = ""
     service.stopping = False
     service.log.clear()
-    thread = threading.Thread(target=_drain, args=(service, process), name=f"lightwork-service-{kind}",
+    thread = threading.Thread(target=_drain, args=(service, process, holds_owner), name=f"lightwork-service-{kind}",
                               daemon=True)
     _threads[:] = [t for t in _threads if t.is_alive()]
     _threads.append(thread)

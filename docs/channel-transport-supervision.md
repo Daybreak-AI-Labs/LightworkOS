@@ -70,7 +70,8 @@ Ctrl-C ignored, as a script's background job is, it ends on SIGTERM at once,
 as before. A chat service that ends without removing its status (every stop
 on Windows, where a stop ends the process without a signal it can handle, or a
 crash) leaves it behind; when the dashboard's Manage the chat service started
-it, the dashboard removes those statuses once it has ended. Otherwise the last
+it, the dashboard removes that service's statuses, and no others, once it has
+ended. Otherwise the last
 status stays until it is 100 seconds old. One that has not been renewed for
 100 seconds is reported as not current, never as nothing held: a chat service
 stopped without shutting down cleanly reads as having stopped reporting until

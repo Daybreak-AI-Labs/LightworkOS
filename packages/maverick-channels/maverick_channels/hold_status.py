@@ -42,6 +42,10 @@ _MAX_FILES = 1000
 _MAX_BYTES = 65_536
 _MAX_COUNT = 10_000_000
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
+# Set by the dashboard on a chat service it starts, so it can remove that
+# service's statuses, and only those, once the service has ended.
+OWNER_ENV = "MAVERICK_CHANNEL_HOLDS_OWNER"
+_OWNER = re.compile(r"[0-9a-f]{16}")
 _COUNTS = ("held", "behind_unreadable", "unreadable", "retrying", "release_at", "went_ahead", "went_ahead_at")
 log = logging.getLogger(__name__)
 
@@ -91,7 +95,9 @@ class Publisher:
         self.directory = Path(directory) if directory is not None else _directory()
         self.clock = clock
         self.renew_seconds = renew_seconds
-        self.instance = channel + "-" + str(os.getpid()) + "-" + secrets.token_hex(8)
+        owner = os.environ.get(OWNER_ENV, "")
+        self.instance = "-".join([channel, *([owner] if _OWNER.fullmatch(owner) else []), str(os.getpid()),
+                                  secrets.token_hex(8)])
         self.path = self.directory / (self.instance + ".enc")
         self._lock = threading.Lock()
         self._counts = None
@@ -282,11 +288,14 @@ def records(*, directory=None, now=None):
     return found, frozenset(unreadable)
 
 
-def clear_saved_before(moment, *, directory=None):
-    """Remove the statuses saved before ``moment``, once the chat service
-    that wrote them has ended: one ended without a chance to remove its own
-    (every stop on Windows) would otherwise stand in for it until its status
-    is no longer current. Never raises."""
+def clear_saved_before(moment, *, owner, directory=None):
+    """Remove the statuses that the chat service started with ``owner`` (see
+    OWNER_ENV) saved before ``moment``, once it has ended: one ended without a
+    chance to remove its own (every stop on Windows) would otherwise stand in
+    for it until its status is no longer current. Statuses of a chat service
+    started some other way are left alone. Never raises."""
+    if not isinstance(owner, str) or not _OWNER.fullmatch(owner):
+        return
     try:
         from maverick.file_lock import ensure_private_directory
 
@@ -294,7 +303,7 @@ def clear_saved_before(moment, *, directory=None):
         if not directory.is_dir():
             return
         ensure_private_directory(directory)
-        for path in list(directory.glob("*.enc"))[:_MAX_FILES]:
+        for path in list(directory.glob(f"*-{owner}-*.enc"))[:_MAX_FILES]:
             try:
                 if path.lstat().st_mtime <= moment:
                     path.unlink()
