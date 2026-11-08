@@ -1487,6 +1487,7 @@ _CONTEXTS = tuple(
                 "Check each saved chat connection and its permitted people.",
                 "Open the complete protected message test for Telegram, Discord, WhatsApp or Mattermost.",
                 "Review a currently permitted private conversation and the fixed test sentence before sending; read its original outcome afterward.",
+                "Check whether Signal or IRC replies are waiting behind an earlier reply in the same chat, and when they go out.",
             ),
             boundaries=(
                 "A connection check does not prove a person received a message; a service accepting the test is a separate result.",

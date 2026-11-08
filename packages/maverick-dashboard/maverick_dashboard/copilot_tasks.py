@@ -129,6 +129,15 @@ TASKS: dict[str, tuple[CopilotTask, ...]] = {
                     "/agents", "Open Agent Factory", "",
                     ("change history", "who changed", "what changed"), "view"),
     ),
+    # Administrators only, like the answer itself; with the Connections
+    # Copilot actions on, the live answer (channels.held_replies) comes first.
+    "/channels": (
+        CopilotTask("Are any chat replies waiting?",
+                    "Message delivery on this page says how many Signal and IRC replies are waiting, why, and "
+                    "when they go out.",
+                    "/channels", "Open Message delivery", "channel-delivery",
+                    ("replies waiting", "waiting replies", "held chat replies", "held replies"), "admin"),
+    ),
 }
 
 

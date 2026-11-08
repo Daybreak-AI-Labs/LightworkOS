@@ -3,7 +3,7 @@
   "counts": {
     "CI_ONLY": 14,
     "CLI_ONLY": 33,
-    "PRODUCTION": 2251,
+    "PRODUCTION": 2254,
     "TEST_ONLY": 21,
     "UNREACHED": 2
   },
@@ -1400,6 +1400,7 @@
     "maverick_channels.discord": "PRODUCTION",
     "maverick_channels.email": "PRODUCTION",
     "maverick_channels.formatting": "PRODUCTION",
+    "maverick_channels.hold_status": "PRODUCTION",
     "maverick_channels.imessage": "PRODUCTION",
     "maverick_channels.irc": "PRODUCTION",
     "maverick_channels.maintenance_cli": "PRODUCTION",
@@ -1515,6 +1516,7 @@
     "maverick_dashboard.capability_assessment_controls": "PRODUCTION",
     "maverick_dashboard.capability_assessment_controls_api": "PRODUCTION",
     "maverick_dashboard.channel_check_api": "PRODUCTION",
+    "maverick_dashboard.channel_holds": "PRODUCTION",
     "maverick_dashboard.channel_test_requests": "PRODUCTION",
     "maverick_dashboard.channel_test_requests_api": "PRODUCTION",
     "maverick_dashboard.chat_answer_exports_api": "PRODUCTION",
@@ -1927,6 +1929,7 @@
     "maverick_dashboard.product_operations_budget": "PRODUCTION",
     "maverick_dashboard.product_operations_bundles": "PRODUCTION",
     "maverick_dashboard.product_operations_capability_assessments": "PRODUCTION",
+    "maverick_dashboard.product_operations_channel_holds": "PRODUCTION",
     "maverick_dashboard.product_operations_channel_people": "PRODUCTION",
     "maverick_dashboard.product_operations_channel_tests": "PRODUCTION",
     "maverick_dashboard.product_operations_chat_code_controls": "PRODUCTION",

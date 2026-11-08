@@ -89,6 +89,7 @@
     <a class="btn btn--primary" href="/settings?focus=ops-services-title">Manage the chat service</a>
     <p class="muted" role="status" aria-live="polite" data-ch-intake-capacity>Checking message history…</p>
     <a href="/settings/all?id=channels.max_intake_records">Set the saved-message limit</a>
+    <p class="muted" role="status" data-ch-held-replies>{{ held_replies }}</p>
   </div>
 
   {% for c in managed %}

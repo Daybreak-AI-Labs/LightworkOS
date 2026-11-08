@@ -4753,11 +4753,89 @@ def serve(ctx: click.Context, max_depth: int, verbose: bool) -> None:
         sys.exit(2)
     server.max_depth = max_depth
     click.echo("Lightwork serve running. Ctrl-C to stop.")
+    _run_until_stopped(server)
+
+
+def _run_until_stopped(server) -> None:
+    """Run the server until Ctrl-C or SIGTERM. After a SIGTERM the process
+    ends once the channels are closed, before asyncio waits for threads still
+    working (a voice note being transcribed, a send with no timeout)."""
+    stopping, restore = _stop_on_sigterm()
     try:
-        asyncio.run(server.run())
+        with asyncio.Runner() as runner:
+            try:
+                runner.run(server.run())
+            except KeyboardInterrupt:
+                if not stopping:
+                    raise
+                try:  # writing fails once nothing reads the output (the dashboard that started it is gone)
+                    click.echo("\nshutting down...")
+                    runner.run(server.stop())
+                finally:
+                    _finish_sigterm(stopping)
     except KeyboardInterrupt:
         click.echo("\nshutting down...")
         asyncio.run(server.stop())
+    finally:
+        restore()  # stopped without one: a later SIGTERM ends the process as before
+        _finish_sigterm(stopping)
+
+
+def _stop_on_sigterm():
+    """Stop on SIGTERM as on Ctrl-C, so every channel closes cleanly. The
+    dashboard's Stop and Restart, systemd and container runtimes send SIGTERM,
+    whose default ends the process before any channel can close. Windows ends
+    the process without a signal Python can handle. Returns a list that holds
+    True once a SIGTERM has arrived (see _finish_sigterm), and a function that
+    puts SIGTERM's earlier handling back.
+
+    Only the first SIGTERM is passed on: the dashboard's shutdown and a
+    one-file build's launcher send it again, and asyncio turns a second Ctrl-C
+    into an interruption in the middle of closing. Every one of them ends the
+    process itself if it does not stop in time. When Ctrl-C is ignored (a
+    script's background job), asyncio would not stop on it, so SIGTERM keeps
+    its default."""
+    import signal
+
+    stopping: list[bool] = []
+    if os.name == "nt" or signal.getsignal(signal.SIGINT) is not signal.default_int_handler:
+        return stopping, lambda: None
+
+    def stop(_signum, _frame):
+        if not stopping:
+            stopping.append(True)
+            signal.raise_signal(signal.SIGINT)
+
+    try:
+        previous = signal.signal(signal.SIGTERM, stop)
+    except ValueError:  # not the main thread: the default stays
+        return stopping, lambda: None
+
+    def restore():
+        # None: the earlier handling was not set from Python, so it cannot be put back.
+        if previous is not None and signal.getsignal(signal.SIGTERM) is stop:
+            signal.signal(signal.SIGTERM, previous)
+    return stopping, restore
+
+
+def _finish_sigterm(stopping: list[bool]) -> None:
+    """After a SIGTERM the channels are closed: end the process as SIGTERM
+    always ended it, instead of waiting for local goals or other work still
+    running on threads to finish. Never returns once a SIGTERM has arrived."""
+    if not stopping:
+        return
+    import signal
+
+    for stream in (sys.stdout, sys.stderr):  # None when started with its output closed
+        try:
+            if stream is not None:
+                stream.flush()
+        except (OSError, ValueError):
+            pass
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.raise_signal(signal.SIGTERM)
+    # Still here: a container's first process, which its own SIGTERM cannot end.
+    os._exit(128 + signal.SIGTERM)
 
 
 @main.command("history")

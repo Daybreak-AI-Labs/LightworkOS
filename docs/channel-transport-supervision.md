@@ -41,6 +41,64 @@ receipt can be read keeps its conversation waiting until it goes ahead; the
 status window shows both receipts, and the warning log reports each failed
 attempt.
 
+Administrators see held replies in plain words under **Channels > Message
+delivery**, and the read-only Copilot operation **Check held chat replies**
+(in the Connections family of Copilot actions) gives the same answer under the
+same administrator check; with that family off, Copilot answers the question
+with a link to Message delivery. The answer says how many replies are waiting,
+how many wait behind a reply that cannot be read and the time by which all of
+those go out regardless,
+how many could not be sent or handled and are tried again, and how many went
+out without waiting (counted once sent; IRC confirms no delivery, so an IRC
+reply counts once every line of it was written) since the chat service
+started. Each running worker publishes these counts and times, with no message
+text, person, chat or receipt identity, in a small file sealed with the
+deployment key in the `channel-holds` folder next to the configuration file; a
+file that is not sealed is never read. A worker publishes nothing until a scan
+has read its saved receipts, so a restarted worker counts the replies they say
+are waiting from its first published status, and one that cannot read them yet
+is reported as not reporting. The status is updated after each scan and before
+each reply is worked on, renewed every 30 seconds, even while the worker is
+busy with a long reply (a write that fails is tried again every few seconds),
+and removed when the worker stops. On the first SIGTERM
+`maverick serve` closes its channels as on Ctrl-C, so the dashboard's Stop and
+Restart remove it, then ends as SIGTERM always ended it, without waiting for a
+local goal or other work still running on a thread, such as a voice note being
+transcribed (a repeated SIGTERM does not cut the close short;
+whoever sent it ends the process if it does not stop in time). Started with
+Ctrl-C ignored, as a script's background job is, it ends on SIGTERM at once,
+as before. A chat service that ends without removing its status (every stop
+on Windows, where a stop ends the process without a signal it can handle, or a
+crash) leaves it behind; when the dashboard's Manage the chat service started
+it, the dashboard removes that service's statuses, and no others, once it has
+ended. Otherwise the last
+status stays until it is 100 seconds old. One that has not been renewed for
+100 seconds is reported as not current, never as nothing held: a chat service
+stopped without shutting down cleanly reads as having stopped reporting until
+it starts again, and a running worker clears its app's statuses that nobody
+renews and any status stamped ahead of its clock. Each status is judged by the
+time sealed in it, taken from the clock of the computer that runs the chat
+service, not by the file's own time, which a file server can set by its own
+clock. A status
+stamped more than a few seconds ahead of the dashboard's clock is ignored, and
+a worker renews its status within a few seconds after the clock jumps, as when
+a laptop wakes. Replies that were waiting stay counted while their saved
+receipts cannot be read. A turned-on chat app with no current status
+is named as not reporting, with a restart of the chat service as the next
+step: nothing starts an app again after its connection ends, and an app
+turned on after the chat service started is not running yet. If it still does
+not report, the answer points to what the chat service last reported: an app
+that could not start, such as Signal without its program installed, does not
+report either. A chat service started outside the dashboard, from a terminal
+or as a system service, is restarted where it was started; Manage the chat
+service does not restart it, and starting a second one there would run each
+account twice. One turned off
+in settings that the chat service still runs is named too. Every count names
+the apps it covers: other chat apps' replies are not among them, and nothing
+reads the saved replies of an app that is turned off. The status is local to the computer that
+runs the chat service; a dashboard on another computer says it is not
+reporting.
+
 Readers do not wait for agent execution. Current sender and configured
 account policy is rechecked at execution and delivery. These guarantees are
 per configured adapter instance; configure one active transport instance per

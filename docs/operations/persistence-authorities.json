@@ -188,7 +188,7 @@
     "business_records": 21,
     "execution": 46,
     "recovery": 12,
-    "derived": 19,
+    "derived": 20,
     "composition": 62,
     "external": 18,
     "key_custody": 4,
@@ -317,6 +317,25 @@
           "function": "__init__",
           "kind": "GovernedRecordStore",
           "expression": "GovernedRecordStore('channel-poll-cursors', 'chp', 'channel_poll_cursor')"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-channels/maverick_channels/hold_status.py",
+      "contract": "derived",
+      "owner": "packages/maverick-channels/maverick_channels/hold_status.py",
+      "purpose": "Held chat replies as counts and times, published by each running chat worker for the Channels page and Copilot.",
+      "referenced_store_owners": [],
+      "review": "Source purpose, path construction and persistence call site reviewed. Counts and times only, sealed with the deployment key, renewed while the worker runs and removed when it stops, or by the dashboard once a chat service it started has ended; a status that is not renewed is reported as not current. Distributed deployment is not qualified.",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {},
+      "source_sites": [
+        {
+          "line": 132,
+          "function": "write_now",
+          "kind": "atomic_write_bytes",
+          "expression": "atomic_write_bytes(self.path, seal(json.dumps(record).encode()), mode=384)"
         }
       ]
     },
