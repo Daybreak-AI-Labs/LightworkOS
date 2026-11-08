@@ -40,12 +40,13 @@ _CHILD = textwrap.dedent("""
 
         async def run(self):
             try:
-                if mode == "goal":
+                if mode.startswith("goal"):
                     asyncio.get_running_loop().run_in_executor(runner._goal_executor, goal)
                 (marks / "started").write_text("")
                 if mode == "thread":
                     await asyncio.to_thread(work)
-                await asyncio.Event().wait()
+                if mode != "goal-returns":  # every channel ended on its own
+                    await asyncio.Event().wait()
             finally:
                 # Where Server.run closes every channel; closing takes a moment.
                 (marks / "closing").write_text("")
@@ -92,7 +93,8 @@ def serve(tmp_path):
             # run started as one too, starts with it ignored.
             preexec_fn=prepare)
         children.append(child)
-        _wait_for(marks / (mode or "started"), child, time.monotonic() + 60)
+        mark = "thread" if mode == "thread" else "goal" if mode.startswith("goal") else "started"
+        _wait_for(marks / mark, child, time.monotonic() + 60)
         return child, marks
 
     yield start
@@ -193,3 +195,37 @@ def test_sigterm_ends_a_server_started_with_its_output_closed(serve):
         pytest.fail("serve kept running after SIGTERM with its output closed")
     assert child.returncode == -signal.SIGTERM
     assert (marks / "closed").exists()
+
+
+def test_sigterm_ends_a_server_that_stopped_on_its_own_while_a_local_goal_runs(serve):
+    # Its channels all ended, so serve waits at exit for the goal; SIGTERM
+    # ends it then as it always did, without a Ctrl-C traceback.
+    child, marks = serve(mode="goal-returns")
+    _wait_for(marks / "closed", child, time.monotonic() + 30)
+    child.send_signal(signal.SIGTERM)
+    try:
+        output, _ = child.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        pytest.fail("serve kept running after SIGTERM until its local goal finished")
+    text = output.decode(errors="replace")
+    assert child.returncode == -signal.SIGTERM, text
+    assert "KeyboardInterrupt" not in text
+
+
+def test_a_process_that_cannot_end_on_its_own_sigterm_still_ends(monkeypatch):
+    # A container's first process (PID 1): the SIGTERM it sends itself is
+    # dropped, so it exits with SIGTERM's code instead of waiting for work.
+    from maverick import cli
+
+    class Exited(Exception):
+        pass
+
+    def exit_(code):
+        raise Exited(code)
+
+    monkeypatch.setattr(signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(signal, "raise_signal", lambda _signum: None)
+    monkeypatch.setattr(cli.os, "_exit", exit_)
+    with pytest.raises(Exited) as exited:
+        cli._finish_sigterm([True])
+    assert exited.value.args == (128 + signal.SIGTERM,)

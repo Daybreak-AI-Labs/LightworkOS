@@ -4760,7 +4760,7 @@ def _run_until_stopped(server) -> None:
     """Run the server until Ctrl-C or SIGTERM. After a SIGTERM the process
     ends once the channels are closed, before asyncio waits for threads still
     working (a voice note being transcribed, a send with no timeout)."""
-    stopping = _stop_on_sigterm()
+    stopping, restore = _stop_on_sigterm()
     try:
         with asyncio.Runner() as runner:
             try:
@@ -4772,20 +4772,22 @@ def _run_until_stopped(server) -> None:
                     click.echo("\nshutting down...")
                     runner.run(server.stop())
                 finally:
-                    _finish_sigterm(stopping)  # returns only in a process that cannot end on its own SIGTERM
+                    _finish_sigterm(stopping)
     except KeyboardInterrupt:
         click.echo("\nshutting down...")
         asyncio.run(server.stop())
     finally:
+        restore()  # stopped without one: a later SIGTERM ends the process as before
         _finish_sigterm(stopping)
 
 
-def _stop_on_sigterm() -> list[bool]:
+def _stop_on_sigterm():
     """Stop on SIGTERM as on Ctrl-C, so every channel closes cleanly. The
     dashboard's Stop and Restart, systemd and container runtimes send SIGTERM,
     whose default ends the process before any channel can close. Windows ends
     the process without a signal Python can handle. Returns a list that holds
-    True once a SIGTERM has arrived (see _finish_sigterm).
+    True once a SIGTERM has arrived (see _finish_sigterm), and a function that
+    puts SIGTERM's earlier handling back.
 
     Only the first SIGTERM is passed on: the dashboard's shutdown and a
     one-file build's launcher send it again, and asyncio turns a second Ctrl-C
@@ -4797,7 +4799,7 @@ def _stop_on_sigterm() -> list[bool]:
 
     stopping: list[bool] = []
     if os.name == "nt" or signal.getsignal(signal.SIGINT) is not signal.default_int_handler:
-        return stopping
+        return stopping, lambda: None
 
     def stop(_signum, _frame):
         if not stopping:
@@ -4805,16 +4807,21 @@ def _stop_on_sigterm() -> list[bool]:
             signal.raise_signal(signal.SIGINT)
 
     try:
-        signal.signal(signal.SIGTERM, stop)
+        previous = signal.signal(signal.SIGTERM, stop)
     except ValueError:  # not the main thread: the default stays
-        pass
-    return stopping
+        return stopping, lambda: None
+
+    def restore():
+        # None: the earlier handling was not set from Python, so it cannot be put back.
+        if previous is not None and signal.getsignal(signal.SIGTERM) is stop:
+            signal.signal(signal.SIGTERM, previous)
+    return stopping, restore
 
 
 def _finish_sigterm(stopping: list[bool]) -> None:
     """After a SIGTERM the channels are closed: end the process as SIGTERM
     always ended it, instead of waiting for local goals or other work still
-    running on threads to finish."""
+    running on threads to finish. Never returns once a SIGTERM has arrived."""
     if not stopping:
         return
     import signal
@@ -4827,6 +4834,8 @@ def _finish_sigterm(stopping: list[bool]) -> None:
             pass
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
     signal.raise_signal(signal.SIGTERM)
+    # Still here: a container's first process, which its own SIGTERM cannot end.
+    os._exit(128 + signal.SIGTERM)
 
 
 @main.command("history")
