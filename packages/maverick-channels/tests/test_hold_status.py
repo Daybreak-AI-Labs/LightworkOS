@@ -106,6 +106,7 @@ def test_summary_states_when_nothing_can_be_said_to_be_held(tmp_path):
     _publish(tmp_path, "signal", _counts(), clock=lambda: 1000.0)
     stale = hold_status.summary({"signal"}, directory=tmp_path, now=1000.0 + hold_status.FRESH_SECONDS + 1)
     assert stale["state"] == "stale" and stale["last_seen"] == 1000.0
+    assert stale["not_reporting"] == ["signal"]  # turned on, with no current status
     assert hold_status.summary({"signal"}, directory=tmp_path, now=1001.0)["state"] == "clear"
     (tmp_path / "signal-2-damaged.enc").write_bytes(b"garbage")
     fresh_and_damaged = hold_status.summary({"signal"}, directory=tmp_path, now=1001.0)

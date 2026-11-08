@@ -376,7 +376,8 @@ def summary(enabled, *, directory=None, now=None):
         if latest:
             # Every status left is older than FRESH_SECONDS, so this time is in
             # the past and stays the same from one read to the next.
-            state.update(state="stale", last_seen=max(record["seen_at"] for record in latest.values()))
+            state.update(state="stale", last_seen=max(record["seen_at"] for record in latest.values()),
+                         not_reporting=enabled)
         else:
             state.update(state="unavailable" if state["unavailable"] else "not_reporting", not_reporting=enabled)
         return state

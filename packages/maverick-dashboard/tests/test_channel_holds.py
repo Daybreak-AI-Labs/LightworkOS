@@ -125,7 +125,7 @@ def test_the_steps_cover_a_chat_service_started_outside_this_app():
         assert RESTART + " " + OUTSIDE in text
         assert "another computer" not in text  # reporting from this computer: it runs here
     for state in (_state(state="not_reporting", reporting=[], not_reporting=["signal"]),
-                  _state(state="stale", reporting=[], last_seen=1_800_000_000.0)):
+                  _state(state="stale", reporting=[], not_reporting=["signal"], last_seen=1_800_000_000.0)):
         assert OUTSIDE + " If your IT team runs it on another computer, ask them." in channel_holds.describe(state)
     both = channel_holds.describe(_state(state="holding", held=1, reporting=["signal"], not_reporting=["irc"]))
     assert both.count(OUTSIDE) == 1  # said once, with the first restart step
@@ -181,13 +181,16 @@ def test_replies_that_went_ahead_are_counted_only_for_the_apps_that_report(monke
 
 def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
     seen = 1_800_000_000.0
-    stale = channel_holds.describe(_state(state="stale", reporting=[], last_seen=seen))
+    stale = channel_holds.describe(_state(state="stale", reporting=[], not_reporting=["signal"], last_seen=seen))
     # The chat service may be running without the app that last reported (a
-    # status left by an earlier run), so the steps cover both.
-    assert stale == (f"Held chat replies were last reported at {datetime_text(seen)} and have not been reported "
-                     "since, so they cannot be checked. If the chat service is stopped, start it with Manage the "
-                     f"chat service. If it is running, restart it, then refresh this page. {OUTSIDE} If your IT "
-                     "team runs it on another computer, ask them.")
+    # status left by an earlier run, as when Signal could not start since),
+    # so the steps cover both, then what the chat service reported.
+    assert stale == (f"Signal is turned on but not reporting. Held chat replies were last reported at "
+                     f"{datetime_text(seen)} and have not been reported since, so they cannot be checked. If the chat "
+                     "service is stopped, start it with Manage the chat service. If it is running, restart it, then "
+                     f"refresh this page. {OUTSIDE} If your IT team runs it on another computer, ask them. If Signal "
+                     "still does not report, see what the chat service last reported in Manage the chat service, and "
+                     "check its settings in All settings.")
     partial = channel_holds.describe(_state(reporting=["signal"], not_reporting=["irc"]))
     assert partial.startswith("No Signal replies are waiting.")
     # An app stops reporting when its connection ends (nothing starts it
@@ -203,8 +206,10 @@ def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
 
 def test_a_stale_status_beside_an_unreadable_one_keeps_the_encryption_key_step():
     seen = 1_800_000_000.0
-    text = channel_holds.describe(_state(state="stale", reporting=[], last_seen=seen, unavailable=["signal"]))
-    assert text.startswith(f"Held chat replies were last reported at {datetime_text(seen)}")
+    text = channel_holds.describe(_state(state="stale", reporting=[], not_reporting=["irc", "signal"], last_seen=seen,
+                                         unavailable=["signal"]))
+    assert text.startswith("IRC and Signal are turned on but not reporting. Held chat replies were last reported at "
+                           f"{datetime_text(seen)}")
     assert ("A saved status for Signal could not be read. If this keeps happening, check that this computer's "
             "encryption key is available.") in text
 

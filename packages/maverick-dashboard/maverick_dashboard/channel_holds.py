@@ -137,10 +137,13 @@ def describe(state):
         return (f"{names} {verb} turned on but not reporting from the chat service on this computer, so held chat "
                 f"replies cannot be checked. {_START_OR_RESTART} {_if_still_silent(state['not_reporting'] or WORKER_CHANNELS)}")
     if kind == "stale":
-        # The chat service may be running without the app that last reported.
-        return " ".join([f"Held chat replies were last reported at {datetime_text(state['last_seen'])} and have not "
-                         f"been reported since, so they cannot be checked. {_START_OR_RESTART}",
-                         *_unreadable_parts(state)])
+        # The chat service may be running without the app that last reported,
+        # as when that app could not start since.
+        silent = state["not_reporting"]
+        lead = f"{app_names(silent)} {'are' if len(silent) > 1 else 'is'} turned on but not reporting. " if silent else ""
+        return " ".join([f"{lead}Held chat replies were last reported at {datetime_text(state['last_seen'])} and have "
+                         f"not been reported since, so they cannot be checked. {_START_OR_RESTART} "
+                         f"{_if_still_silent(silent or WORKER_CHANNELS)}", *_unreadable_parts(state)])
     if kind == "unavailable":
         names = app_names(state["unavailable"]) if "unknown" not in state["unavailable"] else ""
         whose = f"The saved status for {names}" if names else "The chat service's saved status"
