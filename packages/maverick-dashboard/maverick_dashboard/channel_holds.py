@@ -138,8 +138,10 @@ def describe(state):
     if state["went_ahead"]:
         count = state["went_ahead"]
         recent = datetime_text(state["went_ahead_at"]) if state["went_ahead_at"] is not None else ""
-        parts.append(f"Since the chat service started, {count} {'reply' if count == 1 else 'replies'} went out "
-                     "without waiting, after an earlier reply stayed unreadable for 24 hours"
+        # Each app keeps its own count, so one not reporting is not among them.
+        apps = "" if covers_every_app(state) else f"{scope(state)} "
+        parts.append(f"Since the chat service started, {count} {apps}{'reply' if count == 1 else 'replies'} went "
+                     "out without waiting, after an earlier reply stayed unreadable for 24 hours"
                      + (f" (most recently {recent})." if recent else "."))
     for channel in state["not_reporting"]:
         label = _LABELS.get(channel, channel)

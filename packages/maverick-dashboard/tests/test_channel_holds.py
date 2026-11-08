@@ -129,6 +129,18 @@ def test_replies_that_went_ahead_of_an_expired_hold_are_reported():
             f"stayed unreadable for 24 hours (most recently {datetime_text(when)}).") in text
 
 
+def test_replies_that_went_ahead_are_counted_only_for_the_apps_that_report(monkeypatch):
+    # Each app's worker keeps its own count; one that stopped reporting took its count with it.
+    from maverick_dashboard import product_operations_channel_holds as adapter
+
+    state = _state(went_ahead=2, reporting=["signal"], not_reporting=["irc"])
+    assert "Since the chat service started, 2 Signal replies went out without waiting" in channel_holds.describe(state)
+    assert "1 Signal reply went out" in channel_holds.describe({**state, "went_ahead": 1})
+    monkeypatch.setattr(channel_holds, "held_reply_status", lambda _request: {**state, "summary": "x"})
+    details = adapter.snapshot(_request(), {}).details
+    assert details["Went out without waiting since the chat service started (Signal only)"] == 2
+
+
 def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
     seen = 1_800_000_000.0
     stale = channel_holds.describe(_state(state="stale", reporting=[], last_seen=seen))

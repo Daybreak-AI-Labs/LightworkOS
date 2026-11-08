@@ -27,7 +27,7 @@ def _state(request):
             label = "Was due to go out at" if state["release_passed"] else "Go out by, at the latest"
             details[label] = datetime_text(state["release_at"])
         if state["went_ahead"]:
-            details["Went out without waiting since the chat service started"] = state["went_ahead"]
+            details["Went out without waiting since the chat service started" + only] = state["went_ahead"]
     details["Scope"] = ("Signal and IRC replies held by the chat service on this computer. Reading this does not "
                         "send, resend or change any message.")
     details["open"] = {"label": "Open Message delivery", "href": "/channels#channel-delivery"}
