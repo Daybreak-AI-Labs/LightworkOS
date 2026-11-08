@@ -18,6 +18,10 @@ JARGON = re.compile(r"\b(?:tenant|principal|digest|endpoint|schema|revision|runt
                     r"preflight|authority|credential|worker|process id|unreadable_since)\b", re.IGNORECASE)
 RESTART = ("If this lasts, open Manage the chat service to check that the chat service is running and see what it "
            "last reported, then restart it.")
+# Manage the chat service offers no restart for a chat service started some
+# other way, and starting a second one there would run each account twice.
+OUTSIDE = ("If the chat service was started outside this app, for example from a terminal or as a system service, "
+           "restart it there.")
 
 
 def _request():
@@ -71,10 +75,10 @@ def _publish(counts, *, clock=time.time, channel="signal"):
                                         "saved until that app is turned on again."),
     # It names the apps it covers: other chat apps' replies are not counted.
     (_state(), "No IRC or Signal replies are waiting."),
-    (_state(state="holding", held=1), "1 chat reply is waiting for an earlier reply in the same chat to be sent "
-                                      "first. It goes out after that one does."),
-    (_state(state="holding", retrying=2), "2 chat replies could not be sent or handled and are tried again every "
-                                          "30 seconds."),
+    (_state(state="holding", held=1), "1 IRC or Signal reply is waiting for an earlier reply in the same chat to be "
+                                      "sent first. It goes out after that one does."),
+    (_state(state="holding", retrying=2), "2 IRC or Signal replies could not be sent or handled and are tried again "
+                                          "every 30 seconds."),
     (_state(state="not_reporting", reporting=[], not_reporting=["signal"]),
      "Signal is turned on but not reporting from the chat service on this computer, so held chat replies cannot "
      "be checked."),
@@ -102,11 +106,45 @@ def test_an_app_that_is_not_reporting_is_named_with_steps_for_a_running_or_stopp
     assert "If the chat service is stopped, start it" in text and "If it is running, restart it" in text
 
 
+def test_every_count_names_the_apps_it_covers():
+    # IRC is not reporting, so none of its replies are among the counts.
+    only_signal = {"reporting": ["signal"], "not_reporting": ["irc"]}
+    waiting = channel_holds.describe(_state(state="holding", held=2, **only_signal))
+    assert waiting.startswith("2 Signal replies are waiting for an earlier reply in the same chat")
+    behind = channel_holds.describe(_state(state="holding", held=1, behind_unreadable=1, unreadable=1, **only_signal))
+    assert behind.startswith("1 Signal reply is waiting because an earlier reply in the same chat cannot be read")
+    # Other chat apps retry their own replies; only Signal's are counted here.
+    retrying = channel_holds.describe(_state(state="holding", retrying=1, **only_signal))
+    assert retrying.startswith("1 Signal reply could not be sent or handled and is tried again every 30 seconds.")
+    assert " chat repl" not in " ".join((waiting, behind, retrying))
+
+
+def test_the_steps_cover_a_chat_service_started_outside_this_app():
+    for state in (_state(state="holding", held=1), _state(state="holding", retrying=1)):
+        text = channel_holds.describe(state)
+        assert RESTART + " " + OUTSIDE in text
+        assert "another computer" not in text  # reporting from this computer: it runs here
+    for state in (_state(state="not_reporting", reporting=[], not_reporting=["signal"]),
+                  _state(state="stale", reporting=[], last_seen=1_800_000_000.0)):
+        assert OUTSIDE + " If your IT team runs it on another computer, ask them." in channel_holds.describe(state)
+    both = channel_holds.describe(_state(state="holding", held=1, reporting=["signal"], not_reporting=["irc"]))
+    assert both.count(OUTSIDE) == 1  # said once, with the first restart step
+
+
+def test_an_app_that_could_not_start_is_pointed_to_what_the_chat_service_reported():
+    one = channel_holds.describe(_state(state="not_reporting", reporting=[], not_reporting=["signal"]))
+    assert one.endswith("If Signal still does not report, see what the chat service last reported in Manage the "
+                        "chat service, and check its settings in All settings.")
+    both = channel_holds.describe(_state(state="not_reporting", reporting=[], not_reporting=["irc", "signal"]))
+    assert both.endswith("If IRC and Signal still do not report, see what the chat service last reported in Manage "
+                         "the chat service, and check their settings in All settings.")
+
+
 def test_replies_behind_an_unreadable_one_say_when_they_go_out_at_the_latest():
     release = 1_800_000_000.0
     text = channel_holds.describe(_state(state="holding", held=5, behind_unreadable=3, unreadable=1,
                                          release_at=release))
-    assert ("3 chat replies are waiting because an earlier reply in the same chat cannot be read right now. "
+    assert ("3 IRC or Signal replies are waiting because an earlier reply in the same chat cannot be read right now. "
             f"They go out once it can be read, or by {datetime_text(release)} at the latest.") in text
     assert "2 more are waiting for an earlier reply in the same chat to be sent first." in text
     assert "If this lasts, ask whoever manages this computer's encryption key to check that it is available." in text
@@ -148,16 +186,19 @@ def test_a_stale_status_and_a_quiet_app_are_named_not_counted_as_nothing_held():
     # status left by an earlier run), so the steps cover both.
     assert stale == (f"Held chat replies were last reported at {datetime_text(seen)} and have not been reported "
                      "since, so they cannot be checked. If the chat service is stopped, start it with Manage the "
-                     "chat service. If it is running, restart it, then refresh this page. If your IT team runs it "
-                     "on another computer, ask them.")
+                     f"chat service. If it is running, restart it, then refresh this page. {OUTSIDE} If your IT "
+                     "team runs it on another computer, ask them.")
     partial = channel_holds.describe(_state(reporting=["signal"], not_reporting=["irc"]))
     assert partial.startswith("No Signal replies are waiting.")
     # An app stops reporting when its connection ends (nothing starts it
-    # again) or when it was turned on after the chat service started; a
-    # restart is the step for both.
-    assert ("IRC is not reporting, so its replies cannot be checked. This happens when IRC loses its connection "
-            "or was turned on after the chat service started. Restart the chat service with Manage the chat "
-            "service, then refresh this page. If your IT team runs it on another computer, ask them.") in partial
+    # again), when it could not start, or when it was turned on after the
+    # chat service started: a restart, then what the chat service reported.
+    # Signal reports from this computer, so the chat service runs here.
+    assert ("IRC is not reporting, so its replies cannot be checked. This happens when IRC loses its connection, "
+            "could not start, or was turned on after the chat service started. Restart the chat service with Manage "
+            f"the chat service, then refresh this page. {OUTSIDE} If IRC still does not report, see what the chat "
+            "service last reported in Manage the chat service, and check its settings in All settings.") in partial
+    assert "another computer" not in partial
 
 
 def test_a_stale_status_beside_an_unreadable_one_keeps_the_encryption_key_step():
@@ -216,7 +257,7 @@ def test_the_message_delivery_panel_shows_the_answer(client, monkeypatch):
     page = client.get("/channels")
     assert page.status_code == 200
     text = visible_text(page.text)
-    assert "2 chat replies are waiting because an earlier reply in the same chat cannot be read right now." in text
+    assert "2 Signal replies are waiting because an earlier reply in the same chat cannot be read right now." in text
     assert "data-ch-held-replies" in page.text
     assert not any(word in text for word in PRIVATE)
     publisher.close()

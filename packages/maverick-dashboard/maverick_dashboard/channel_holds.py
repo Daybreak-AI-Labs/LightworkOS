@@ -52,8 +52,8 @@ def page_summary(request):
         return UNAVAILABLE
 
 
-def _replies(count, *, more=False):
-    noun = "more" if more else ("chat reply" if count == 1 else "chat replies")
+def _replies(count, apps, *, more=False):
+    noun = "more" if more else f"{apps} {'reply' if count == 1 else 'replies'}"
     return f"{count} {noun} {'is' if count == 1 else 'are'}"
 
 
@@ -72,13 +72,14 @@ def covers_every_app(state):
 
 
 def _waiting_parts(state):
-    """What is waiting and when it goes out, then what to do about it."""
+    """What is waiting and when it goes out, then what to do about it. Each
+    count names the apps it covers: other chat apps retry their own replies."""
     behind = state["behind_unreadable"]
-    waiting, retrying = state["held"] - behind, state["retrying"]
+    waiting, retrying, apps = state["held"] - behind, state["retrying"], scope(state)
     parts = []
     if behind:
         when = datetime_text(state["release_at"]) if state["release_at"] is not None else ""
-        lead = f"{_replies(behind)} waiting because an earlier reply in the same chat cannot be read right now."
+        lead = f"{_replies(behind, apps)} waiting because an earlier reply in the same chat cannot be read right now."
         if when and state.get("release_passed"):
             parts.append(lead + (f" {'They were' if behind != 1 else 'It was'} due to go out at {when} and "
                                  f"{'go' if behind != 1 else 'goes'} out as soon as the chat service finishes "
@@ -88,25 +89,38 @@ def _waiting_parts(state):
             parts.append(lead + f" {it} out once it can be read" + (f", or by {when} at the latest." if when else "."))
     if waiting:
         it = "They go" if waiting != 1 else "It goes"
-        parts.append(f"{_replies(waiting, more=bool(behind))} waiting for an earlier reply in the same chat to be "
+        parts.append(f"{_replies(waiting, apps, more=bool(behind))} waiting for an earlier reply in the same chat to be "
                      f"sent first." + ("" if behind else f" {it} out after that one does."))
     if retrying:
-        parts.append(f"{retrying} chat {'reply' if retrying == 1 else 'replies'} could not be sent or handled and "
+        parts.append(f"{retrying} {apps} {'reply' if retrying == 1 else 'replies'} could not be sent or handled and "
                      f"{'is' if retrying == 1 else 'are'} tried again every 30 seconds.")
     if behind:
         parts.append("This usually clears on its own. If this lasts, ask whoever manages this computer's "
                      "encryption key to check that it is available.")
     if waiting or retrying:
         parts.append("If this lasts, open Manage the chat service to check that the chat service is running and "
-                     "see what it last reported, then restart it.")
+                     f"see what it last reported, then restart it. {_OUTSIDE}")
     if retrying:
         parts.append("A reply to someone who is no longer among the app's permitted people waits until they are "
                      "permitted again; check the app's permitted people in All settings.")
     return parts
 
 
+# Manage the chat service offers no restart for a chat service started some
+# other way, and starting a second one there would run each account twice.
+_OUTSIDE = ("If the chat service was started outside this app, for example from a terminal or as a system "
+            "service, restart it there.")
 _START_OR_RESTART = ("If the chat service is stopped, start it with Manage the chat service. If it is running, "
-                     "restart it, then refresh this page. If your IT team runs it on another computer, ask them.")
+                     f"restart it, then refresh this page. {_OUTSIDE} If your IT team runs it on another computer, "
+                     "ask them.")
+
+
+def _if_still_silent(channels):
+    """The step after a restart: an app that could not start (its program
+    missing, nobody permitted to use it) does not report either."""
+    many = len(channels) > 1
+    return (f"If {app_names(channels)} still {'do' if many else 'does'} not report, see what the chat service last "
+            f"reported in Manage the chat service, and check {'their' if many else 'its'} settings in All settings.")
 
 
 def describe(state):
@@ -121,7 +135,7 @@ def describe(state):
         names = app_names(state["not_reporting"]) or "Signal or IRC"
         verb = "are" if len(state["not_reporting"]) > 1 else "is"
         return (f"{names} {verb} turned on but not reporting from the chat service on this computer, so held chat "
-                f"replies cannot be checked. {_START_OR_RESTART}")
+                f"replies cannot be checked. {_START_OR_RESTART} {_if_still_silent(state['not_reporting'] or WORKER_CHANNELS)}")
     if kind == "stale":
         # The chat service may be running without the app that last reported.
         return " ".join([f"Held chat replies were last reported at {datetime_text(state['last_seen'])} and have not "
@@ -145,10 +159,12 @@ def describe(state):
                      + (f" (most recently {recent})." if recent else "."))
     for channel in state["not_reporting"]:
         label = _LABELS.get(channel, channel)
+        outside = "" if any(_OUTSIDE in part for part in parts) else f"{_OUTSIDE} "
+        # Another app reports from this computer, so the chat service runs here.
         parts.append(f"{label} is not reporting, so its replies cannot be checked. This happens when {label} loses "
-                     "its connection or was turned on after the chat service started. Restart the chat service with "
-                     "Manage the chat service, then refresh this page. If your IT team runs it on another computer, "
-                     "ask them.")
+                     "its connection, could not start, or was turned on after the chat service started. Restart the "
+                     f"chat service with Manage the chat service, then refresh this page. {outside}"
+                     f"{_if_still_silent([channel])}")
     for channel in state["running_off"]:
         parts.append(f"{_LABELS.get(channel, channel)} is turned off, but the chat service keeps running it until "
                      "the chat service is restarted.")

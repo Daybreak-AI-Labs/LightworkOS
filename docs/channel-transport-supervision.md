@@ -86,8 +86,14 @@ a laptop wakes. Replies that were waiting stay counted while their saved
 receipts cannot be read. A turned-on chat app with no current status
 is named as not reporting, with a restart of the chat service as the next
 step: nothing starts an app again after its connection ends, and an app
-turned on after the chat service started is not running yet. One turned off
-in settings that the chat service still runs is named too. The answer names
+turned on after the chat service started is not running yet. If it still does
+not report, the answer points to what the chat service last reported: an app
+that could not start, such as Signal without its program installed, does not
+report either. A chat service started outside the dashboard, from a terminal
+or as a system service, is restarted where it was started; Manage the chat
+service does not restart it, and starting a second one there would run each
+account twice. One turned off
+in settings that the chat service still runs is named too. Every count names
 the apps it covers: other chat apps' replies are not among them, and nothing
 reads the saved replies of an app that is turned off. The status is local to the computer that
 runs the chat service; a dashboard on another computer says it is not
