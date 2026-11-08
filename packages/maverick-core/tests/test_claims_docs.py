@@ -248,7 +248,7 @@ def test_docs_connector_counts_match_the_specs():
 
     write_capable = len(_connector_specs._SPECS) + len(_connector_specs._GRAPHQL_SPECS)
     public_data = len(enterprise_connectors._PUBLIC_DATA_SPECS)
-    for relpath in ("README.md", "docs/architecture.md", "docs/handbook.md"):
+    for relpath in ("docs/technical-overview.md", "docs/architecture.md", "docs/handbook.md"):
         text = _read(relpath)
         found = [int(v.replace(",", "")) for v in re.findall(r"([\d,]+) write-capable", text)]
         assert found and set(found) == {write_capable}, (relpath, found, write_capable)
