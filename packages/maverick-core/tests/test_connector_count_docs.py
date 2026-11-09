@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Every file that states the write-capable connector count in prose.
 DOCS_STATING_THE_COUNT = (
-    "README.md",
+    "docs/technical-overview.md",
     "docs/architecture.md",
     "docs/connectors.md",
     "docs/FEATURES.md",
