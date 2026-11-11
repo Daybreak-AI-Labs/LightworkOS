@@ -58,7 +58,7 @@ jobs:
             'packaging==26.3' 'pip-tools==7.6.2'
           python -I scripts/verify_constraint_closure.py
 
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
       - id: release-authority
         name: Verify the signed exact-release Python authority
@@ -617,7 +617,7 @@ jobs:
           private-key: ${{ secrets.LIGHTWORK_AUTOMATION_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-pull-requests: write
-      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+      - uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           # App-created PRs trigger the normal PR checks; GITHUB_TOKEN-created
           # PRs do not. The workflow stays disabled until this app is configured.
