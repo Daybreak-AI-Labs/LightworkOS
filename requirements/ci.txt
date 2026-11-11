@@ -34,7 +34,7 @@ charset-normalizer==3.5.2
 click==8.5.0
 colorama==0.4.6
 cryptography==50.0.2
-cyclonedx-bom==7.6.0
+cyclonedx-bom==8.0.1
 cyclonedx-python-lib==11.12.0
 defusedxml==0.7.1
 detect-secrets==1.5.0
