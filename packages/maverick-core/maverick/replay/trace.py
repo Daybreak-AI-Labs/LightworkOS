@@ -1,16 +1,22 @@
-"""Tamper-evident, append-only replay traces.
+"""Hash-chained, append-only replay traces.
 
 Each committed JSONL record carries a monotonic sequence, writer/run identity,
 and a SHA-256 link to the prior record. Appends are serialized across processes
-and fsync'd. Readers fail closed on malformed or forged committed records; only
-one non-newline-terminated malformed final fragment is tolerated as the residue
-of a killed writer.
+and fsync'd. Readers fail closed on a committed record that is malformed or
+whose hash or chain link does not match; only one non-newline-terminated
+malformed final fragment is tolerated as the residue of a killed writer.
+
+The chain is an unkeyed hash, so it detects accidental corruption and
+reordering, not deliberate rewriting: someone who can write the file can
+change records and recompute every hash. For tamper evidence use the signed
+audit log (``maverick.audit``).
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
 import json
+import logging
 import math
 import os
 import time
@@ -28,6 +34,8 @@ from ..file_lock import (
     open_private_append,
     prepare_private_directory,
 )
+
+log = logging.getLogger(__name__)
 
 TRACE_VERSION = 2
 MAX_TRACE_FILE_BYTES = 16 * 1024 * 1024
@@ -306,7 +314,15 @@ class TraceWriter:
         self._run_id_explicit = run_id is not None
         requested_run_id = _identity(run_id, prefix="run")
         self._closed = False
-        prepare_private_directory(self.path.parent)
+        try:
+            prepare_private_directory(self.path.parent)
+        except OSError as exc:
+            # Callers that treat tracing as optional swallow this, so say why
+            # nothing is being recorded.
+            log.warning(
+                "replay trace is not being recorded: trace folder %s cannot be used (%s)",
+                self.path.parent, exc)
+            raise
         with cross_process_lock(self.path, strict=True):
             try:
                 atomic_create_bytes(self.path, b"")

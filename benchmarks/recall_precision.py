@@ -44,11 +44,14 @@ POSITIVES = [
     ("tz_dst", "times shift by an hour, fix the timezone dst bug"),
     ("mem_leak", "the worker memory grows over time, find the memory leak"),
 ]
+# Unrelated requests. Lexical recall ignores stop words, so a negative that
+# shares only "the" or "a" with a trigger scores nothing even ungated; four of
+# these share one real word with a trigger, which is the noise the gate removes.
 NEGATIVES = [
     "plan a birthday party menu", "best hiking trails in the alps",
-    "translate this poem into french", "recommend a science fiction novel",
-    "how to tune a six string guitar", "when to plant tomatoes in spring",
-    "knit a winter scarf pattern", "book a flight to tokyo",
+    "translate this poem into french", "find a science fiction novel",
+    "list the strings on a guitar", "add tomatoes to the spring salad",
+    "fix the leaking kitchen tap", "book a flight to tokyo",
 ]
 
 

@@ -155,6 +155,35 @@ def test_weaviate_query_shape(monkeypatch):
     assert out[0]["metadata"] == {"src": "t"}
 
 
+def test_weaviate_upsert_query_delete_round_trips_the_callers_id(monkeypatch):
+    # With an active tenant the object UUID is derived from a namespaced id, so
+    # query() must hand back the caller's own id for delete() to hit the object.
+    monkeypatch.delenv("MAVERICK_WEAVIATE_URL", raising=False)
+    fake = _install_fake_weaviate(monkeypatch)
+    coll = fake.collections.get.return_value
+    batch = MagicMock()
+    coll.batch.dynamic.return_value.__enter__.return_value = batch
+    import maverick.vector_store.weaviate_store as ws
+    monkeypatch.setattr(ws, "_active_tenant", lambda: "t1")
+    monkeypatch.setattr(ws.WeaviateStore, "_tenant_filter",
+                        staticmethod(lambda tenant_id: None))
+    store = ws.WeaviateStore(vectorizer="none")
+
+    store.upsert_one("doc", id="goal:7", metadata={"goal_id": 7}, embedding=[0.1, 0.2])
+    written = batch.add_object.call_args.kwargs
+    assert written["vector"] == [0.1, 0.2]
+    assert written["uuid"] == ws._uuid_for(ws._stored_id("goal:7", "t1"))
+
+    coll.query.near_vector.return_value = SimpleNamespace(objects=[SimpleNamespace(
+        uuid=written["uuid"], properties=dict(written["properties"]), metadata=None)])
+    hit = store.query(top_k=1, embedding=[0.1, 0.2])[0]
+    assert hit["id"] == "goal:7"
+    assert hit["metadata"]["goal_id"] == 7
+
+    store.delete([hit["id"]])
+    coll.data.delete_by_id.assert_called_once_with(written["uuid"])
+
+
 def test_weaviate_query_empty_text(monkeypatch):
     monkeypatch.delenv("MAVERICK_WEAVIATE_URL", raising=False)
     _install_fake_weaviate(monkeypatch)

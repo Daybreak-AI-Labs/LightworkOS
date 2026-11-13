@@ -68,16 +68,18 @@ CONFIRM_BLOCK = "lightwork_typed"
 CONFIRM_INPUT = "typed_confirmation"
 SLASH_VERBS = ("approve", "reject", "status", "help", "ask", "link", "undo")
 SLACK_API = "https://slack.com/api"
+# Plain text: _ephemeral sends these with Slack formatting off, so asterisks
+# and backticks would be shown as typed.
 _HELP = (
-    "*Lightwork commands*\n"
-    "• `/lightwork status` — what is waiting for you\n"
-    "• `/lightwork approve <number> [confirm]` — approve a request (High needs `confirm`; "
-    "Critical needs `confirm APPROVE`)\n"
-    "• `/lightwork reject <number> [confirm]` — reject a request\n"
-    "• `/lightwork undo <number>` — take back a decision made moments ago\n"
-    "• `/lightwork ask <what you need>` — give Lightwork a task\n"
-    "• `/lightwork link <code>` — tie this Slack account to your Lightwork account\n"
-    "• `/lightwork help` — this list"
+    "Lightwork commands\n"
+    "• /lightwork status — what is waiting for you\n"
+    "• /lightwork approve <number> [confirm] — approve a request (High needs confirm; "
+    "Critical needs confirm APPROVE)\n"
+    "• /lightwork reject <number> [confirm] — reject a request\n"
+    "• /lightwork undo <number> — take back a decision made moments ago\n"
+    "• /lightwork ask <what you need> — give Lightwork a task\n"
+    "• /lightwork link <code> — tie this Slack account to your Lightwork account\n"
+    "• /lightwork help — this list"
 )
 
 PrincipalResolver = Callable[[str], "str | None"]
@@ -528,9 +530,9 @@ def _ephemeral(text: str) -> dict[str, Any]:
 
 def _unlinked_note(user_id: str) -> dict[str, Any]:
     return _ephemeral(
-        "Your Slack account is not linked to Lightwork yet. Open *My work* on the "
-        "dashboard, choose *Link Slack*, and send the code here with "
-        f"`/lightwork link <code>` (your Slack id is {user_id})."
+        "Your Slack account is not linked to Lightwork yet. Open My work on the "
+        "dashboard, choose Link Slack, and send the code here with "
+        f"/lightwork link <code> (your Slack id is {user_id})."
     )
 
 
@@ -619,7 +621,7 @@ def handle_block_action(payload: dict[str, Any], *, world, principal_for: Princi
     if action["action_id"] == ACTION_QUESTION:
         return _ephemeral(
             f"Ask your question about request #{approval_id} in a reply to this message, "
-            f"or with `/lightwork ask question about request #{approval_id}: ...`. "
+            f"or with /lightwork ask question about request #{approval_id}: ... "
             "The requester and Lightwork see it; the request stays waiting until you decide."
         )
     if action["action_id"] == ACTION_UNDO:
@@ -636,7 +638,7 @@ def handle_block_action(payload: dict[str, Any], *, world, principal_for: Princi
                 return _ephemeral("Type APPROVE in the window that opened to confirm this "
                                   "critical action.")
             return _ephemeral("This critical action needs a typed confirmation: "
-                              f"`/lightwork approve {approval_id} confirm APPROVE`.")
+                              f"/lightwork approve {approval_id} confirm APPROVE.")
     # The button's confirm dialog is the acknowledgement for High/Critical:
     # Slack only sends this action after the person pressed "Yes" in it.
     result, error = _decide(world, approval_id=approval_id, decision=decision,
@@ -698,7 +700,7 @@ def _status_text(world, principal: str, *, can_decide: bool,
         f"{len(digest['results'])} recent result(s)",
         f"spent ${digest['spending']['dollars']:.2f} this month",
     ]
-    lines = ["*Your Lightwork status*: " + "; ".join(parts) + "."]
+    lines = ["Your Lightwork status: " + "; ".join(parts) + "."]
     for row in digest["approvals"][:10]:
         lines.append(f"• #{row['id']} {row['action']} — {row['risk_label']}")
     return "\n".join(lines)
@@ -735,7 +737,7 @@ def handle_slash_command(form: dict[str, Any], *, world, principal_for: Principa
         return _ephemeral(_status_text(world, principal, can_decide=can_decide, suites=suites))
     if verb == "ask":
         if not rest:
-            return _ephemeral("Tell Lightwork what you need: `/lightwork ask <your request>`.")
+            return _ephemeral("Tell Lightwork what you need: /lightwork ask <your request>.")
         if ask is None:
             return _ephemeral("Asking for work is not available over this connection. "
                               "Message Lightwork directly instead.")
@@ -748,7 +750,7 @@ def handle_slash_command(form: dict[str, Any], *, world, principal_for: Principa
                 "text": str(answer)[:3000]}
     approval_id, confirmed, typed = _decision_args(rest)
     if approval_id is None:
-        return _ephemeral(f"Say which request: `/lightwork {verb} <number>`.")
+        return _ephemeral(f"Say which request: /lightwork {verb} <number>.")
     if verb == "undo":
         reply = _undo_message(world, approval_id, principal=principal, authorize=authorize)
         if reply.get("replace_original"):
@@ -768,9 +770,9 @@ def handle_slash_command(form: dict[str, Any], *, world, principal_for: Principa
     if error:
         hint = ""
         if "Confirm you really mean it" in error:
-            hint = f" Add `confirm`: `/lightwork {verb} {approval_id} confirm`."
+            hint = f" Add confirm: /lightwork {verb} {approval_id} confirm."
         elif "Type APPROVE" in error:
-            hint = f" Send `/lightwork approve {approval_id} confirm APPROVE`."
+            hint = f" Send /lightwork approve {approval_id} confirm APPROVE."
         return _ephemeral(error + hint)
     word = "approved" if decision == "approved" else "rejected"
     if result["status"] == "pending":
@@ -778,7 +780,7 @@ def handle_slash_command(form: dict[str, Any], *, world, principal_for: Principa
                           "more approvers are needed.")
     note = "" if result["effective"] else " It takes effect once the audit record is confirmed."
     if result.get("undo_seconds"):
-        note += f" You can take it back for {int(result['undo_seconds'])} seconds with `/lightwork undo {approval_id}`."
+        note += f" You can take it back for {int(result['undo_seconds'])} seconds with /lightwork undo {approval_id}."
     return _ephemeral(f"Request #{approval_id} {word}." + note)
 
 

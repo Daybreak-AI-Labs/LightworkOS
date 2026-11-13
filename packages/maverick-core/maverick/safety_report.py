@@ -100,7 +100,11 @@ def collect(events: Iterable[dict], start_ts: float, end_ts: float) -> dict:
             stats["halts"] += 1
             stats["halt_sources"][_safe_label(ev.get("source"))] += 1
         elif kind == "consent_result":
-            decision = _safe_label(ev.get("decision"))
+            # Acknowledgement, undo and identity-link rows share this kind but
+            # carry no ``decision``; they are not consent decisions.
+            decision = _safe_label(ev.get("decision"), "")
+            if not decision:
+                continue
             if decision in ("approve", "deny", "timeout"):
                 stats["consent"][decision] += 1
             else:

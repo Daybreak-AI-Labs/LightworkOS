@@ -9,13 +9,14 @@ decision gated on "the win rate is at or below X" should compare against a
 bound, not the point estimate.
 
 Pulled out as its own leaf module (``math`` only, no other imports) because
-two callers need the exact same formula: ``self_harness``'s promotion/
-retirement math and ``skill.stats.evictable``'s eviction gate. A prior
-version duplicated this formula in both modules on the theory that importing
-across them would create a layering cycle; that theory doesn't hold (neither
-module imports the other, in either direction), and the duplication meant a
-future numerical fix (a different ``z``, an edge-case correction) would have
-to be found and applied by hand in two places.
+three callers need the exact same formula: ``self_harness``'s promotion/
+retirement math, ``skill.stats.evictable``'s eviction gate and
+``immune.oversight``'s conservative catch rate. A prior version duplicated
+this formula in the first two modules on the theory that importing across
+them would create a layering cycle; that theory doesn't hold (neither module
+imports the other, in either direction), and the duplication meant a future
+numerical fix (a different ``z``, an edge-case correction) would have to be
+found and applied by hand in two places.
 """
 from __future__ import annotations
 

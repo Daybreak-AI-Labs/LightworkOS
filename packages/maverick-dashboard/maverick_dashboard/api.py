@@ -14067,8 +14067,9 @@ async def export_walkthrough(request: Request, goal_id: int) -> dict:
     Uses the real machinery (``maverick.replay.video.render``): always writes
     the frame manifest + a WebVTT captions track derived from the storyboard;
     the MP4 encode itself needs Pillow + ffmpeg and the response says honestly
-    whether it happened (``encoded``/``detail``) and carries the exact ffmpeg
-    command for out-of-band encoding when it didn't.
+    whether it happened (``encoded``/``detail``). The staged frames are removed
+    after the attempt, so ``ffmpeg_command`` is empty: there is nothing left
+    for an out-of-band encode to read.
     """
     require_permission(request, "operate")
     w = _world()

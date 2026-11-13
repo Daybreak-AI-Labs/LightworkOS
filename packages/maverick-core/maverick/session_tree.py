@@ -201,7 +201,10 @@ def fork(goal_id: int, *, at_event: int | None = None, label: str = "",
     """Branch run ``goal_id`` into a new run and return the child's goal id.
 
     ``at_event`` is the ``goal_events`` **id** of the last parent event to
-    carry over (inclusive); ``None`` carries the whole trail. Ids, not offsets:
+    carry over (inclusive); ``None`` carries the trail. Either way only the
+    parent's first ``_MAX_REPLAY_EVENTS`` (500) events are read, so a longer
+    trail is copied up to that point and a later fork point is refused. (The
+    marker event still words a ``None`` fork as "its full trail".) Ids, not offsets:
     ``goal_events.id`` is a global autoincrement with no per-goal sequence
     column, so an offset would silently mean something different on every read.
 

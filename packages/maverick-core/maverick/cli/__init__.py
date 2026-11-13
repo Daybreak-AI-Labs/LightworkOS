@@ -949,8 +949,9 @@ def safety(as_json: bool) -> None:
 def support(output: str | None) -> None:
     """Print a redacted diagnostics bundle for a support ticket.
 
-    Versions, runtime, client binding, readiness checks, a SECRET-REDACTED
-    config, and a recent-failures summary — one JSON document to attach to a
+    Versions, runtime, client binding, readiness checks, the shape of the
+    config (hashed key names, values removed), and a recent-failures
+    summary — one JSON document to attach to a
     ticket instead of hand-running version/doctor/diag and redacting by hand.
     """
     import json as _json

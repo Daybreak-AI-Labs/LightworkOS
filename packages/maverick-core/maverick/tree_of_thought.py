@@ -182,8 +182,10 @@ def plan_tree_of_thought(
     """Generate N candidate plans, score them, return the winner.
 
     ``budget`` is shared across the N+1 calls; the function honors it.
-    If budget exhausts mid-flight, we return the best plan generated
-    so far (or a synthesized fallback if even the first call failed).
+    If the budget is exhausted while drafting or scoring, ``BudgetExceeded``
+    propagates to the caller; no partial result is returned. Any other
+    failure of a candidate skips that candidate, and if none succeeds a
+    synthesized fallback plan is returned.
     """
     if n < 1:
         raise ValueError("n must be >= 1")

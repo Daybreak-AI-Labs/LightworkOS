@@ -212,8 +212,8 @@ def test_video_scrubs_sandbox_exception_and_cleans_staging(tmp_path, monkeypatch
     assert not result.encoded
     assert "sensitive host detail" not in result.detail
     assert "cleaned" in result.detail
-    assert not result.frame_dir.exists()
-    assert not result.concat_path.exists()
+    assert result.frame_dir is None and result.concat_path is None
+    assert result.command == []
     assert not list(tmp_path.glob(".replay-video-*"))
 
 

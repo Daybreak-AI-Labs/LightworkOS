@@ -197,9 +197,27 @@ class TestRelevantSkills:
 
     def test_gate_is_configurable(self):
         from maverick.skills import _relevant_skills_lexical
-        weak = self._make_skill("weak", ["the weather"])  # shares only "the"
-        assert weak in _relevant_skills_lexical("the price", [weak], min_score=0.0)
-        assert weak not in _relevant_skills_lexical("the price", [weak], min_score=4.0)
+        weak = self._make_skill("weak", ["the weather"])  # shares one content word
+        assert weak in _relevant_skills_lexical("weather price", [weak], min_score=0.0)
+        assert weak not in _relevant_skills_lexical("weather price", [weak], min_score=4.0)
+
+    def test_stop_words_and_repeated_words_are_not_relevance(self):
+        from maverick.skills import _relevant_skills_lexical
+        # Shares only "the", "in" and "of" with the goals below.
+        covenant = self._make_skill(
+            "covenant", ["are we in compliance with the debt covenants",
+                         "check the headroom of the loan"])
+        # Shares one content word ("plan"), repeated in two triggers.
+        recovery = self._make_skill(
+            "recovery", ["write a DR plan", "plan disaster recovery for our systems"])
+        churn = self._make_skill("churn", ["churn prediction", "at risk customers"])
+        skills = [covenant, recovery, churn]
+        for goal in ("Fix the failing unit tests in the auth module",
+                     "What is the capacity of the warehouse",
+                     "Analyze the churn in our customer data and recommend a plan"):
+            assert _relevant_skills_lexical(goal, skills, min_score=4.0) == []
+        assert _relevant_skills_lexical(
+            "Run a churn prediction on last quarter's accounts", skills, min_score=4.0) == [churn]
 
     def test_word_overlap_scoring(self):
         s1 = self._make_skill("a", ["web search results"])

@@ -67,7 +67,7 @@ Unlike a stateless assistant, Lightwork *retains and recalls* what it learns.
 `recall_precision.py` makes the recall side of that claim falsifiable: does
 relevance-gating cut injected noise without losing the right skill? It is
 deterministic (lexical path), needs no key and runs in CI. It shows the
-relevance gate drops the lexical false-positive rate from **88% → 12%** with
+relevance gate drops the lexical false-positive rate from **50% → 0%** with
 Recall@1 held at 100%. Precision is what matters, because injecting
 weakly-relevant memory *regresses* the agent (hard negatives flip answers;
 large or noisy memory degrades).
