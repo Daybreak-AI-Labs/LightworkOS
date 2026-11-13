@@ -7,6 +7,6 @@ description = "Lightwork native safety scanners (pure logic; shared by the Pytho
 
 [dependencies]
 unicode-normalization = "0.1"
-# All current detector patterns avoid lookaround and delegate to the engine's
-# linear regex backend. Boundaries are checked explicitly against the input.
+# Most detector patterns delegate to the linear regex backend; PEM uses the
+# bounded-repeat VM to avoid NFA expansion. Token boundaries are checked in code.
 fancy-regex = "0.20"

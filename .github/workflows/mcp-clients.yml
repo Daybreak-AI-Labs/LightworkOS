@@ -97,7 +97,7 @@ jobs:
         with:
           # The go.mod directive is the module's compatibility floor, not a
           # CI/security patch lock.
-          go-version: "1.26.10"
+          go-version: "1.26.11"
       - name: Install Lightwork (kernel + MCP server)
         run: |
           python -I -m pip install --upgrade \

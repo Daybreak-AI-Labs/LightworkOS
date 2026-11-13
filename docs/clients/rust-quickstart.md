@@ -16,7 +16,7 @@ kernel via the official [Rust MCP SDK](https://github.com/modelcontextprotocol/r
 python -m pip install -e ./packages/maverick-core -e ./packages/maverick-mcp
 # Official Rust MCP SDK; pin a published version for reproducible builds.
 # The client role and the child-process stdio transport are not on by default.
-cargo add rmcp@2.0.0 --features client,transport-child-process
+cargo add 'rmcp@=3.9.0' --features client,transport-child-process
 cargo add tokio --features macros,rt-multi-thread,process,io-util
 cargo add serde_json
 cargo add anyhow

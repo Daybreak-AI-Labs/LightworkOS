@@ -3,7 +3,7 @@ name = "maverick-verify-audit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Standalone Ed25519 hash-chain verifier for Lightwork's NDJSON audit log (byte-exact port of maverick.audit.signing.verify_chain; no Python required)."
+description = "Standalone Ed25519 hash-chain verifier for Lightwork's NDJSON audit log (compatible with the Python signed-log format; no Python required)."
 
 [[bin]]
 name = "maverick-verify-audit"

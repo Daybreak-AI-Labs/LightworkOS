@@ -5,9 +5,8 @@
 //! credit cards, then the SAME overlap-coalescing (stable sort by
 //! `(start, -len)`, merge clusters keeping the first kind). The phone and SSN
 //! patterns check lookaround boundaries outside their linear regex candidates.
-//! We return only
-//! `(kind, cp_start, cp_end)`; the Python shim attaches the constant mask and
-//! splices, so it can never drift from the pure-Python redactor.
+//! We return `(kind, cp_start, cp_end)` for direct native callers. Python
+//! detection and redaction remain pure Python; parity tests compare the spans.
 
 use crate::{byte_spans_to_char, compile_pattern, filtered_matches};
 use fancy_regex::Regex;
@@ -32,7 +31,7 @@ static DEFS: &[(&str, &str)] = &[
         // Python ordering and its comments.
         r"(?:(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|:(?::[0-9a-fA-F]{1,4}){1,7}|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|::)",
     ),
-    // Leading (?<!\d) look-behind stops a 10-digit sub-run of a longer number.
+    // The scan loop checks the leading digit boundary outside this pattern.
     (
         "phone_us",
         r"(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
