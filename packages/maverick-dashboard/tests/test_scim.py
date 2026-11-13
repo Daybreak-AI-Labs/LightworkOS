@@ -412,6 +412,60 @@ class TestLifecycle:
         body = r.json()
         assert body["totalResults"] == 3 and body["itemsPerPage"] == 2
 
+    def test_a_page_never_exceeds_the_advertised_maximum(self, client, monkeypatch):
+        from maverick_dashboard import scim
+
+        monkeypatch.setattr(scim, "_MAX_PAGE", 2)
+        for i in range(3):
+            _make_user(client, username=f"u{i}@x.com")
+            client.post("/scim/v2/Groups", headers=_auth(), json={"displayName": f"g{i}"})
+        cfg = client.get("/scim/v2/ServiceProviderConfig", headers=_auth()).json()
+        assert cfg["filter"]["maxResults"] == 2
+        for resource in ("Users", "Groups"):
+            body = client.get(f"/scim/v2/{resource}?count=100000", headers=_auth()).json()
+            assert body["totalResults"] == 3 and body["itemsPerPage"] == 2
+            assert len(body["Resources"]) == 2
+        # Groups used to ignore startIndex and count altogether.
+        last = client.get("/scim/v2/Groups?startIndex=3&count=5", headers=_auth()).json()
+        assert last["startIndex"] == 3 and last["itemsPerPage"] == 1
+        assert last["Resources"][0]["displayName"] != body["Resources"][0]["displayName"]
+
+    def test_create_refuses_a_bad_record_before_creating_a_tenant(self, client, monkeypatch):
+        from maverick_dashboard import scim
+
+        _make_user(client, username="a@example.com", externalId="shared-id")
+        provisioned = []
+        monkeypatch.setattr(
+            scim, "_provision_tenant", lambda *args: provisioned.append(args)
+        )
+        duplicate = _make_user(client, username="b@example.com", externalId="shared-id")
+        assert duplicate.status_code == 409
+        assert duplicate.json()["scimType"] == "uniqueness"
+        invalid = _make_user(client, username="c@example.com", displayName="C\tat")
+        assert invalid.status_code == 400
+        assert provisioned == []
+        assert client.get("/scim/v2/Users", headers=_auth()).json()["totalResults"] == 1
+
+    def test_invalid_patch_is_refused_before_any_deprovisioning_effect(self, client):
+        # One PATCH with active=false and an invalid value used to suspend the
+        # tenant and end the sessions, then fail the save: GET still said active.
+        from maverick.tenant import registry
+        from maverick_dashboard import session_revocation as sr
+
+        uid = _make_user(client, username="carol@example.com",
+                         externalId="sub-carol").json()["id"]
+        r = client.patch(f"/scim/v2/Users/{uid}", headers=_auth(), json={
+            "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+            "Operations": [
+                {"op": "replace", "path": "active", "value": False},
+                {"op": "replace", "path": "displayName", "value": "Ca\trol"},
+            ],
+        })
+        assert r.status_code == 400
+        assert registry.get_tenant(uid).active is True
+        assert sr.revocation_epoch("sub-carol") == 0.0
+        assert client.get(f"/scim/v2/Users/{uid}", headers=_auth()).json()["active"] is True
+
     def test_put_replaces(self, client):
         uid = _make_user(client).json()["id"]
         r = client.put(f"/scim/v2/Users/{uid}", headers=_auth(), json={

@@ -134,6 +134,7 @@ _MAX_RECORDS = 100_000
 _MAX_ID_CHARS = 1024
 _MAX_TEXT_CHARS = 16_384
 _MAX_TIMESTAMP = 253_402_300_799.0  # 9999-12-31T23:59:59Z
+_MAX_PAGE = 200  # advertised as filter.maxResults in ServiceProviderConfig
 _GROUP_AUDIT_OUTBOX_SCHEMA = "lightwork.scim-group-audit-outbox.v1"
 _GROUP_AUDIT_INLINE_MEMBER_LIMIT = 128
 _GROUP_AUDIT_OUTBOX_MAX_CHARS = (_MAX_STORE_CHARS * 3) + (256 * 1024)
@@ -339,7 +340,7 @@ def _primary_email(resource: dict) -> str:
 
 
 def _coerce_active(value: Any) -> bool:
-    """Coerce a SCIM ``active`` value to bool, matching the PATCH path.
+    """Coerce a SCIM ``active`` value to bool (POST, PUT and PATCH share it).
 
     Some IdPs (notably Azure AD) send ``active`` as the STRING ``"False"``.
     ``bool("False")`` is True, so a plain ``bool()`` here would leave a user
@@ -403,6 +404,32 @@ def _iso(ts: float | None) -> str:
     from datetime import datetime, timezone
     return datetime.fromtimestamp(float(ts or 0.0), tz=timezone.utc).strftime(
         "%Y-%m-%dT%H:%M:%SZ")
+
+
+def _rejected_record(users: dict[str, dict], rec: dict) -> JSONResponse | None:
+    """A SCIM error when ``_save`` would refuse ``rec``; None when it would not.
+
+    Routes call this before any lifecycle side effect (tenant create/suspend,
+    identity retirement, session revocation), so an invalid request is refused
+    with nothing changed instead of failing after access was already altered.
+    """
+    uid = rec["id"]
+    external_id = rec["externalId"]
+    if external_id and any(
+        other_uid != uid and external_id in (other.get("externalId"), other_uid)
+        for other_uid, other in users.items()
+    ):
+        return _scim_error(
+            409,
+            f"externalId {external_id!r} already exists",
+            scim_type="uniqueness",
+        )
+    candidate = {**users, uid: rec}
+    try:
+        _validated_users({"users": [candidate[k] for k in sorted(candidate)]})
+    except ScimStoreError as e:
+        return _scim_error(400, str(e), scim_type="invalidValue")
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -557,6 +584,29 @@ async def _json_body(request: Request) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _list_response(request: Request, resources: list[dict]) -> JSONResponse:
+    """One page of ``resources``: 1-based ``startIndex`` + ``count``, with a
+    page never larger than the advertised ``filter.maxResults``."""
+    try:
+        start = max(1, int(request.query_params.get("startIndex", "1")))
+    except ValueError:
+        start = 1
+    try:
+        count = int(request.query_params.get("count", str(_MAX_PAGE)))
+    except ValueError:
+        count = _MAX_PAGE
+    count = min(max(0, count), _MAX_PAGE)
+    page = resources[start - 1: start - 1 + count]
+    body = {
+        "schemas": [_LIST_SCHEMA],
+        "totalResults": len(resources),
+        "startIndex": start,
+        "itemsPerPage": len(page),
+        "Resources": page,
+    }
+    return JSONResponse(body, media_type="application/scim+json")
+
+
 @router.get("/ServiceProviderConfig")
 async def service_provider_config(request: Request):
     if (err := _authorize(request)) is not None:
@@ -565,7 +615,7 @@ async def service_provider_config(request: Request):
         "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
         "patch": {"supported": True},
         "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
-        "filter": {"supported": True, "maxResults": 200},
+        "filter": {"supported": True, "maxResults": _MAX_PAGE},
         "changePassword": {"supported": False},
         "sort": {"supported": False},
         "etag": {"supported": False},
@@ -607,26 +657,7 @@ async def list_users(request: Request):
         if match is None:
             return _scim_error(400, f"unsupported filter: {flt}", scim_type="invalidFilter")
         resources = [r for r in resources if r.get("userName", "").lower() == match.lower()]
-
-    # 1-based startIndex + count pagination.
-    try:
-        start = max(1, int(request.query_params.get("startIndex", "1")))
-    except ValueError:
-        start = 1
-    try:
-        count = int(request.query_params.get("count", str(len(resources))))
-    except ValueError:
-        count = len(resources)
-    count = max(0, count)
-    page = resources[start - 1: start - 1 + count]
-    body = {
-        "schemas": [_LIST_SCHEMA],
-        "totalResults": len(resources),
-        "startIndex": start,
-        "itemsPerPage": len(page),
-        "Resources": page,
-    }
-    return JSONResponse(body, media_type="application/scim+json")
+    return _list_response(request, resources)
 
 
 @router.post("/Users")
@@ -650,6 +681,10 @@ async def create_user(request: Request):
                 f"userName {username!r} already exists",
                 scim_type="uniqueness",
             )
+        # Refuse a duplicate externalId or an invalid value before a tenant
+        # exists; creating and then purging one leaves its id reserved.
+        if (err := _rejected_record(users, rec)) is not None:
+            return err
         try:
             _provision_tenant(uid, rec["displayName"] or username, username)
         except Exception:
@@ -722,6 +757,8 @@ async def replace_user(uid: str, request: Request):
                 f"userName {rec['userName']!r} already exists",
                 scim_type="uniqueness",
             )
+        if (err := _rejected_record(users, rec)) is not None:
+            return err
         was_active = bool(existing.get("active", True))
         if not rec["active"] and _identity_values(existing) != _identity_values(rec):
             # The PUT renamed an identifier while deactivating: retire the
@@ -780,6 +817,10 @@ async def patch_user(uid: str, request: Request):
                 scim_type="uniqueness",
             )
         rec["updated_at"] = time.time()
+        # Validate before the lifecycle side effects below: a request refused
+        # after them left the tenant suspended behind an ``active`` record.
+        if (err := _rejected_record(users, rec)) is not None:
+            return err
         if bool(rec.get("active", True)) != was_active:
             try:
                 _set_tenant_active(uid, bool(rec.get("active", True)), rec)
@@ -1351,6 +1392,18 @@ def _member_ids(value) -> list[str]:
     return sorted(set(out))
 
 
+def _rejected_members(rec: dict) -> JSONResponse | None:
+    """A 400 when a member is not a SCIM user id (the store refuses those)."""
+    if all(
+        len(member) == 32 and all(char in "0123456789abcdef" for char in member)
+        for member in rec["members"]
+    ):
+        return None
+    return _scim_error(
+        400, "members must be SCIM user ids", scim_type="invalidValue"
+    )
+
+
 def _group_from_resource(resource: dict, *, gid: str,
                          created: float | None = None) -> dict:
     now = time.time()
@@ -1397,14 +1450,7 @@ async def list_groups(request: Request):
                                scim_type="invalidFilter")
         resources = [r for r in resources
                      if r.get("displayName", "").lower() == match.lower()]
-    body = {
-        "schemas": [_LIST_SCHEMA],
-        "totalResults": len(resources),
-        "startIndex": 1,
-        "itemsPerPage": len(resources),
-        "Resources": resources,
-    }
-    return JSONResponse(body, media_type="application/scim+json")
+    return _list_response(request, resources)
 
 
 @router.post("/Groups")
@@ -1417,6 +1463,8 @@ async def create_group(request: Request):
         return _scim_error(400, "displayName is required", scim_type="invalidValue")
     gid = uuid.uuid4().hex
     rec = _group_from_resource(resource, gid=gid)
+    if (err := _rejected_members(rec)) is not None:
+        return err
     try:
         with _locked_groups():
             _flush_group_audit_outbox()
@@ -1467,6 +1515,8 @@ async def replace_group(gid: str, request: Request):
                                        created=existing.get("created_at"))
             if not rec["displayName"]:
                 rec["displayName"] = existing.get("displayName", "")
+            if (err := _rejected_members(rec)) is not None:
+                return err
             # Rename must honor the same case-insensitive uniqueness as create, or
             # two groups share the mapping key.
             if _group_name_taken(groups, rec["displayName"], gid):
@@ -1517,6 +1567,8 @@ async def patch_group(gid: str, request: Request):
                     and _group_name_taken(groups, rec.get("displayName", ""), gid)):
                 return _scim_error(409, f"group {rec['displayName']!r} already exists",
                                    scim_type="uniqueness")
+            if (err := _rejected_members(rec)) is not None:
+                return err
             rec["updated_at"] = time.time()
             groups[gid] = rec
             _save_groups_with_audit(
@@ -1665,10 +1717,10 @@ def _apply_patch(rec: dict, body: dict) -> bool | None:
 def _patch_path(rec: dict, path: str, value: Any) -> bool:
     p = path.lower()
     if p == "active":
-        rec["active"] = value if isinstance(value, bool) else str(value).lower() == "true"
+        rec["active"] = _coerce_active(value)
         return True
     if p == "displayname":
-        rec["displayName"] = str(value or "")
+        rec["displayName"] = str(value or "").strip()
         return True
     if p == "username":
         rec["userName"] = str(value or "")
