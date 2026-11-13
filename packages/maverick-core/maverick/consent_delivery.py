@@ -2846,6 +2846,7 @@ class ConsentDeliveryStore:
 
     def mark_managed_send(self, claim: DeliveryClaim) -> None:
         """Before physical send, persist uncertainty so a crash never replays."""
+        self._require_enabled()
         with self._connect() as connection:
             try:
                 self._begin(connection)

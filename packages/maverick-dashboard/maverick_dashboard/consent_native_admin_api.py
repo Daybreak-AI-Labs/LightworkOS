@@ -113,7 +113,12 @@ def _principal(request: Request, tenant_id: str) -> str:
 def _dependency(request: Request, name: str) -> Callable[..., Any]:
     selected = getattr(request.app.state, name, None)
     if not callable(selected):
-        raise NativeConsentIntegrityError("native consent composition is unavailable")
+        # Raised when called, inside the caller's error mapping, so a missing
+        # composition is a 503 and not an unhandled error.
+        def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+            raise NativeConsentIntegrityError("native consent composition is unavailable")
+
+        return unavailable
     return selected
 
 
