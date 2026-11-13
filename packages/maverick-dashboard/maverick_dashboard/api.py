@@ -3690,12 +3690,26 @@ async def list_regulatory_licenses(request: Request) -> dict:
     }
 
 
+async def _license_change(call):
+    """Run a licence-register change. A register that cannot be read is
+    reported as unavailable and left untouched, never a server error."""
+    from maverick.license_registry import LicenseRegistryError
+
+    try:
+        return await run_in_threadpool(call)
+    except LicenseRegistryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The licence register cannot be read right now. Nothing was changed.",
+        ) from exc
+
+
 @router.post("/licenses", status_code=201)
 async def add_regulatory_license(request: Request, body: LicenseIn) -> dict:
     require_permission(request, "operate")
     from maverick.license_registry import add_license
 
-    return await run_in_threadpool(
+    return await _license_change(
         lambda: add_license(
             name=body.name,
             jurisdiction=body.jurisdiction,
@@ -3717,7 +3731,7 @@ async def renew_regulatory_license(request: Request, license_id: str, body: Lice
     require_permission(request, "operate")
     from maverick.license_registry import renew
 
-    rec = await run_in_threadpool(
+    rec = await _license_change(
         lambda: renew(license_id[:40], note=body.note or "", by=_request_actor(request))
     )
     if rec is None:
@@ -3730,7 +3744,7 @@ async def license_evidence(request: Request, license_id: str, body: LicenseNoteI
     require_permission(request, "operate")
     from maverick.license_registry import attach_evidence
 
-    rec = await run_in_threadpool(
+    rec = await _license_change(
         lambda: attach_evidence(
             license_id[:40],
             note=body.note or "",
@@ -9144,6 +9158,12 @@ def create_trigger(request: Request, payload: TriggerIn) -> TriggerOut:
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        # The saved file could not be parsed; the store refused to write over it.
+        raise HTTPException(
+            status_code=503,
+            detail="The saved triggers cannot be read right now. Nothing was changed.",
+        ) from e
     return TriggerOut(
         name=rec["name"],
         template=rec["template"],
