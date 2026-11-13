@@ -33,7 +33,7 @@
     epoch++; context = null; options = null; pending = null; confirmedOriginal = false; cancelReview(); original.hidden = true; originalMessage.textContent = '';
     if (form) { form.reset(); $('text').value = ''; $('title').value = ''; $('params').replaceChildren(); $('workflow').replaceChildren(); $('rerun').replaceChildren(); if (fields) fields.forget(form); }
   }
-  function request(url, body) { return window.mvFetchJSON(url, {method: body ? 'POST' : 'GET', cache: 'no-store', body, timeout: 15000, onAccess: clearPrivate, onContext: clearPrivate}, 'check this schedule request'); }
+  function request(url, body) { return window.mvFetchJSON(url, {method: body ? 'POST' : 'GET', cache: 'no-store', body, timeout: 15000, onAccess: clearPrivate, onContextChange: clearPrivate}, 'check this schedule request'); }
   async function readOriginal() {
     if (!pending || busy) return false;
     const held = pending, captured = epoch; originalRead.disabled = true;

@@ -160,7 +160,6 @@
     } catch (error) { originalStatus.textContent = error.message; } finally { busy = false; }
   });
   document.getElementById("tprs-refresh").addEventListener("click", function () { if (!busy) load().catch(function (e) { tell(e.message); }); });
-  ["workspace-changed", "account-context-changed"].forEach(function (event) { document.addEventListener(event, clear); });
   ["lightwork:workspace-changed", "lightwork:account-context-changed"].forEach(function (event) { global.addEventListener(event, clear); });
   global.LightworkExecutiveReportSchedules = {open:async function (expected, isCurrent) {
     if (!/^[a-f0-9]{64}$/.test(expected) || busy || (isCurrent && !isCurrent())) return false;

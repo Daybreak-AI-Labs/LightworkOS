@@ -130,8 +130,8 @@
       if (check) check.addEventListener('click', function () {
         var msg = document.getElementById('vu-check-msg');
         msg.textContent = 'Recording for five seconds…';
-        record(this, function (wav, problem) {
-          if (!wav) { msg.textContent = problem; return; }
+        record(this, function (wav, reason) {
+          if (!wav) { msg.textContent = reason; return; }
           var fd = new FormData();
           fd.append('file', wav, 'check.wav');
           fetch(API + '/check', { method: 'POST', body: fd }).then(function (r) {

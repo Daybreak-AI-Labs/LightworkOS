@@ -111,7 +111,6 @@
       root.scrollIntoView({block: 'start'}); (original ? originals : copies).focus(); return true;
     } catch (_) { return false; } finally { clearTimeout(timer); }
   }};
-  window.addEventListener('context-changed', clear);
   window.addEventListener('lightwork:context-changed', clear);
   for (const event of ['lightwork:workspace-changed', 'lightwork:account-context-changed']) document.addEventListener(event, clear);
   document.addEventListener('lightwork:copilot-context-changed', event => {

@@ -382,7 +382,7 @@
       send.disabled = true;
       R.call('POST', API + '/deliveries/run', { limit: 10, lease_seconds: 60, base_backoff_seconds: 30, maximum_backoff_seconds: 86400 })
         .then(function (res) {
-          var sent = (res && (res.delivered || res.sent)) || 0;
+          var sent = (res && res.acknowledged) || 0;
           say(sent ? sent + ' alert(s) sent.' : 'Due alerts processed.');
         })
         .catch(function (f) {

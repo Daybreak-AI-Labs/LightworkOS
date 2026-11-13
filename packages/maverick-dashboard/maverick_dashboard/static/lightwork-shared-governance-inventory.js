@@ -379,6 +379,10 @@
   }
 
   async function purge() {
+    // The server refuses a purge that names no current version, so say why here.
+    if (!current.active || !current.active.revision || !current.active.integrity_sha256) {
+      throw fail("There is no current saved version yet, so there is nothing to delete. Use Update inventory from sources first.");
+    }
     if (!(await confirmed("Delete saved versions whose keep period has ended? The two newest versions are always kept. A short note that each one existed is kept.", "Delete"))) { return; }
     var active = current.active || {};
     var body = {

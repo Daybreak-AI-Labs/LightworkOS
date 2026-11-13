@@ -48,6 +48,11 @@
       inline(inner, el, doc);
       parent.appendChild(el);
     }
+    // A valid opening **, __ or ~~ that finds no closing marker in the rest
+    // of the text cannot find one from any later position either. Each kind
+    // is therefore searched to the end of the text at most once: a long run
+    // of unclosed markers would otherwise cost one full scan apiece.
+    var unclosed = {};
     var i = 0, n = text.length, m, rest;
     while (i < n) {
       var ch = text[i];
@@ -109,10 +114,11 @@
       }
       if (ch === '*' || ch === '_') {
         var dbl = ch + ch;
-        if (rest.indexOf(dbl) === 0) {
+        if (text[i + 1] === ch && !unclosed[dbl]) {
           m = ch === '*' ? /^\*\*(?=\S)([\s\S]+?)(?<=\S)\*\*/.exec(rest)
                          : /^__(?=\S)([\s\S]+?)(?<=\S)__(?![A-Za-z0-9])/.exec(rest);
           if (m) { wrap('strong', m[1]); i += m[0].length; continue; }
+          if (i + 2 < n && /\S/.test(text[i + 2])) unclosed[dbl] = true;
         }
         var prev = i > 0 ? text[i - 1] : ' ';
         var okStart = ch === '*' || !/[A-Za-z0-9]/.test(prev);
@@ -122,9 +128,10 @@
           if (m) { wrap('em', m[1]); i += m[0].length; continue; }
         }
       }
-      if (ch === '~' && rest.indexOf('~~') === 0) {
+      if (ch === '~' && text[i + 1] === '~' && !unclosed['~~']) {
         m = /^~~(?=\S)([\s\S]+?)(?<=\S)~~/.exec(rest);
         if (m) { wrap('del', m[1]); i += m[0].length; continue; }
+        if (i + 2 < n && /\S/.test(text[i + 2])) unclosed['~~'] = true;
       }
       buf += ch; i += 1;
     }

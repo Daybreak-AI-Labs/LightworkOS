@@ -2551,18 +2551,23 @@
   document.getElementById('fd-nl').addEventListener('keydown', function (e) { if (e.key === 'Enter') draft(); });
   nameInput.addEventListener('input', function () { rootFlow.name = nameInput.value; });
   // keyboard: Delete removes the selected node/edge, Esc deselects, Ctrl+Z/Y
-  // undo/redo, Ctrl+D duplicates (all no-ops while typing in a field)
+  // undo/redo, Ctrl+D duplicates (all no-ops while typing in a field). Delete,
+  // duplicate and paste are also no-ops while focus is on a list, a button or
+  // anything inside a dialog, so a key meant for that control cannot change
+  // the flow behind it.
   document.addEventListener('keydown', function (e) {
     var tag = (e.target && e.target.tagName) || '';
     var typing = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+    var control = typing || tag === 'SELECT' || tag === 'BUTTON' ||
+      !!(e.target && e.target.closest && e.target.closest('dialog, [role="dialog"], [role="alertdialog"]'));
     var mod = e.ctrlKey || e.metaKey;
     if (mod && !typing && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
     if (mod && !typing && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
-    if (mod && !typing && (e.key === 'd' || e.key === 'D') && selected) { e.preventDefault(); duplicateNode(selected); return; }
+    if (mod && !control && (e.key === 'd' || e.key === 'D') && selected) { e.preventDefault(); duplicateNode(selected); return; }
     if (mod && !typing && (e.key === 'c' || e.key === 'C') && selected) { e.preventDefault(); copyNode(selected); return; }
-    if (mod && !typing && (e.key === 'v' || e.key === 'V')) { e.preventDefault(); pasteNode(); return; }
+    if (mod && !control && (e.key === 'v' || e.key === 'V')) { e.preventDefault(); pasteNode(); return; }
     if (e.key === 'Escape' && !typing) { selected = null; selectedEdge = null; multiSel = {}; render(); renderProps(); }
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && !typing) {
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && !control) {
       if (selectedEdge) { e.preventDefault(); deleteEdge(selectedEdge); }
       else if (Object.keys(multiSel).length) { e.preventDefault(); deleteSelection(); }
       else if (selected) { e.preventDefault(); deleteNode(selected); }
