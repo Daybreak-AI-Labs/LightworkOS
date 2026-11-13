@@ -299,7 +299,7 @@ def _raw_reference(value: object, label: str) -> bytes:
 
 def _hmac_reference(key: bytes, tenant_id: str, label: str, value: object) -> str:
     if not isinstance(key, bytes) or len(key) < 32:
-        raise PrivacyRightsConfigError("tenant digest key must contain at least 32 bytes")
+        raise PrivacyRightsConfigError("digest key must contain at least 32 bytes")
     raw = _raw_reference(value, label)
     scoped = tenant_id.encode("utf-8") + b"\x00" + label.encode("ascii") + b"\x00" + raw
     return hmac.new(key, scoped, hashlib.sha256).hexdigest()
