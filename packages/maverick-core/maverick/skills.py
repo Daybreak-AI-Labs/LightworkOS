@@ -389,7 +389,7 @@ def load_builtin_skills() -> list[Skill]:
     the enablement check is applied by :func:`available_skills`.
 
     Parsed once while no file in it changed (keyed by each file's name, size
-    and modification time): every agent build read and parsed all 514 files,
+    and modification time): every agent build read and parsed every built-in file,
     about 15-25 ms per chat turn. Each call gets its own copies. A library
     holding learned (auto-distilled) entries, whose readability depends on
     the caller, is loaded afresh every time."""
