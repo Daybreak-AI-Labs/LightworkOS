@@ -2536,7 +2536,18 @@ def start_incident_clock(
         )
         if clock is None:
             raise ValueError("incident does not contain that regulatory clock")
-        if clock.get("state") in _RESOLVED_INCIDENT_CLOCK_STATES:
+        if clock.get("state") == "running":
+            raise SecurityTransitionError(
+                "a running regulatory clock cannot be started again; its human "
+                "anchor and deadline are already recorded"
+            )
+        # A clock documented as not notifiable before it was ever started has
+        # no anchor to overwrite; starting it is the only way a later
+        # notifiable determination can be recorded.
+        if (
+            clock.get("state") in _RESOLVED_INCIDENT_CLOCK_STATES
+            and clock.get("anchor_at") is not None
+        ):
             raise SecurityTransitionError(
                 "a resolved regulatory clock cannot be restarted; record a new "
                 "human notification decision if the determination changes"
@@ -2720,8 +2731,17 @@ def list_incidents() -> list[dict]:
         for item in row.get("regulatory_clocks", []):
             clock = dict(item)
             deadline = clock.get("deadline_at")
+            state = clock.get("state")
+            if state == "running":
+                measured_at = now
+            elif state == "notify":
+                # Nothing records when a notice was sent, so a notifiable
+                # clock stays breached when the decision came after the deadline.
+                measured_at = (clock.get("decision") or {}).get("decided_at")
+            else:
+                measured_at = None
             clock["clock_breached"] = bool(
-                clock.get("state") == "running" and deadline and float(deadline) < now
+                deadline and measured_at is not None and float(deadline) < float(measured_at)
             )
             clock["hours_left"] = int((float(deadline) - now) // 3600) if deadline else None
             clocks.append(clock)
@@ -3288,7 +3308,10 @@ def program_report(assessment_types: set | None = None) -> dict:
             "total": len(risks),
             "open": sum(1 for row in risks if row.get("status") == "open"),
             "critical_high": sum(
-                1 for row in risks if row.get("residual_rating") in ("critical", "high")
+                1
+                for row in risks
+                if row.get("status") == "open"
+                and row.get("residual_rating") in ("critical", "high")
             ),
             "expired_exceptions": sum(1 for row in risks if row.get("exception_expired")),
         },

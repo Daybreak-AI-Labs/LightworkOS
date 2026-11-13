@@ -57,7 +57,7 @@ _log = logging.getLogger(__name__)
 # Answer vocabulary. ``na`` = not applicable (clears the question); ``unknown`` =
 # the assessor could not confirm it (a diligence gap, scored as "unverified").
 ANSWERS = ("yes", "no", "na", "unknown")
-_SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
+_SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 
 def _new_session_id() -> str:
@@ -70,7 +70,7 @@ class Question:
     section: str
     text: str
     risk_answer: str  # the answer that indicates risk: "yes" or "no"
-    severity: str  # "low" | "medium" | "high"
+    severity: str  # "low" | "medium" | "high" | "critical"
     guidance: str = ""  # how to remediate if this is a finding
 
 
@@ -2238,7 +2238,7 @@ _LGPD = AssessmentTemplate(
             "Impact report",
             "Where processing may create relevant risk, is the Art. 38 "
             "impact report (RIPD) prepared and available to the ANPD?",
-            "unknown",
+            "no",
             "medium",
             "Prepare the RIPD for high-risk processing and keep it current.",
         ),
@@ -3138,7 +3138,7 @@ TEMPLATES: dict[str, AssessmentTemplate] = {
 
 TEMPLATE_DEPARTMENTS = ("privacy", "finance", "security")
 _TYPE_RE = r"^[a-z0-9_]{2,40}$"
-_SEVERITIES = ("low", "medium", "high")
+_SEVERITIES = tuple(_SEVERITY_RANK)
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _TEMPLATE_STATE_SCHEMA = 2
 _AUDIT_READ_RETRY_LIMIT = 8
@@ -3517,7 +3517,9 @@ def _normalise_template(
             raise ValueError(f"question {i}: risk_answer must be yes or no")
         severity = str(q.get("severity", "medium")).strip().lower()
         if severity not in _SEVERITIES:
-            raise ValueError(f"question {i}: severity must be low|medium|high")
+            raise ValueError(
+                f"question {i}: severity must be {'|'.join(_SEVERITIES)}"
+            )
         questions.append(
             {
                 "id": qid,
@@ -4003,7 +4005,9 @@ def _rollup(severities: list[str]) -> str:
     if not severities:
         return "minimal"
     top = max(_SEVERITY_RANK.get(s, 1) for s in severities)
-    return {3: "high", 2: "medium", 1: "low"}[top]
+    # The rating vocabulary stays high|medium|low|minimal: a critical finding
+    # outranks a high one but rolls up to the top rating, "high".
+    return {4: "high", 3: "high", 2: "medium", 1: "low"}[top]
 
 
 # --- Persistence -----------------------------------------------------------
@@ -5423,7 +5427,7 @@ def assessment_score_profile(record: dict) -> dict:
         and isinstance(item.get("question_id"), str)
         and item.get("kind") in {"risk", "unverified"}
     }
-    severity_bps = {"low": 2_500, "medium": 5_000, "high": 10_000}
+    severity_bps = {"low": 2_500, "medium": 5_000, "high": 10_000, "critical": 20_000}
     rows: list[dict] = []
     for position, question in enumerate(template.questions, start=1):
         answer_record = answers.get(question.id)
@@ -5586,8 +5590,7 @@ def render_result_text(result: AssessmentResult) -> str:
         lines.append("No findings recorded.")
     else:
         lines.append("Findings (highest severity first):")
-        order = {"high": 0, "medium": 1, "low": 2}
-        for f in sorted(result.findings, key=lambda f: order.get(f.severity, 3)):
+        for f in sorted(result.findings, key=lambda f: -_SEVERITY_RANK.get(f.severity, 0)):
             flag = "UNVERIFIED" if f.kind == "unverified" else f.severity.upper()
             lines.append(f"  [{flag}] {f.section}: {f.question}")
             lines.append(f"      -> {f.recommendation}")

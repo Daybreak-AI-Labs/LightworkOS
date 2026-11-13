@@ -367,7 +367,7 @@ class ThirdPartyReportSourceResolver:
                 "executive_report_collaboration_source_unavailable"
             )
         finalization = invitation.get("finalization")
-        complete = isinstance(finalization, Mapping) and finalization.get("status") == "complete"
+        complete = isinstance(finalization, Mapping) and finalization.get("status") == "finalized"
         safe_digest = reports.canonical_sha256(dict(invitation))
         return self._available(
             selector,

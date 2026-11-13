@@ -1410,9 +1410,18 @@ _DEFAULT_CASES = GovernedRecordStore(
 )
 
 
-def _human(value: object, label: str = "human_actor") -> str:
+def _human(value: object, label: str = "human_actor", *, allow_agent: bool = False) -> str:
+    """Normalise an actor label and refuse the ones that are not a person.
+
+    An ``agent:`` principal may open a case (the scan tool does), but it is
+    never the human who dispositions or closes one.
+    """
+
     actor = " ".join(_text(value, label, 256).split())
-    if actor.casefold() in {"system", "automation"}:
+    folded = actor.casefold()
+    if folded in {"system", "automation"} or (
+        not allow_agent and folded.startswith("agent:")
+    ):
         raise ValueError(f"{label} must identify a human reviewer")
     return actor
 
@@ -1718,7 +1727,7 @@ class FinanceAnomalyCaseQueue:
     def enqueue(self, finding: FinanceAnomalyFinding, *, opened_by: str) -> dict[str, Any]:
         if not isinstance(finding, FinanceAnomalyFinding):
             raise TypeError("finding must be a FinanceAnomalyFinding")
-        actor = _human(opened_by, "opened_by")
+        actor = _human(opened_by, "opened_by", allow_agent=True)
         finding_value = finding.to_dict()
         if len(_canonical(finding_value)) > _MAX_FINDING_JSON_BYTES:
             raise FinanceAnomalyInputLimit(

@@ -441,6 +441,60 @@ def test_archive_delete_tombstone_retention_and_reuse_prevention(tmp_path: Path)
         )
 
 
+def test_linked_contract_cannot_be_deleted_from_under_a_live_engagement(tmp_path: Path) -> None:
+    identifiers = iter(("contract-1", "engagement-1"))
+    store = _store(
+        tmp_path,
+        resolver=lambda *_: _authority(2_500.0),
+        id_factory=lambda _: next(identifiers),
+    )
+    common = {
+        "vendor_id": "vendor-1",
+        "vendor_revision": 7,
+        "owner_ref": "owner",
+        "field_schema": [],
+        "field_values": {},
+        "formulas": [],
+    }
+    contract = store.create_contract(
+        "tenant-a",
+        title_ref="contract-title",
+        status="active",
+        lifecycle=_contract_lifecycle(),
+        idempotency_key="create-contract",
+        **common,
+    )
+    engagement = store.create_engagement(
+        "tenant-a",
+        title_ref="engagement-title",
+        status="planned",
+        lifecycle=_engagement_lifecycle(contract.record_id),
+        idempotency_key="create-engagement",
+        **common,
+    )
+    archived = store.archive_record(
+        "tenant-a", contract.record_id, expected_revision=1, idempotency_key="archive-contract"
+    )
+    with pytest.raises(ThirdPartyContractConflict, match="still linked"):
+        store.delete_record(
+            "tenant-a",
+            contract.record_id,
+            expected_revision=archived.revision,
+            idempotency_key="delete-linked",
+        )
+    # The engagement stays changeable, and releasing it frees the contract.
+    store.archive_record(
+        "tenant-a", engagement.record_id, expected_revision=1, idempotency_key="archive-engagement"
+    )
+    tombstone = store.delete_record(
+        "tenant-a",
+        contract.record_id,
+        expected_revision=archived.revision,
+        idempotency_key="delete-released",
+    )
+    assert tombstone.record_id == contract.record_id
+
+
 def test_integrity_tamper_detection_and_verified_recovery_backup(tmp_path: Path) -> None:
     store = _store(tmp_path, id_factory=lambda _: "contract-1")
     store.create_contract(

@@ -934,8 +934,14 @@ class AIEntityTaskStore:
             if new_status != current.status and new_status not in _TRANSITIONS[current.status]:
                 raise AIEntityTaskConflict("AI-entity task status transition is invalid")
             now = self._now()
+            # Only a changed due date must be in the future; an overdue task
+            # must still accept a status change, an assignee or a resolution.
             normalized_due = normalized.get("due_at", current.due_at)
-            if normalized_due is not None and float(normalized_due) <= now:
+            if (
+                normalized_due != current.due_at
+                and normalized_due is not None
+                and float(normalized_due) <= now
+            ):
                 raise AIEntityTaskValidationError("due_at must be in the future")
             material = {
                 key_name: value

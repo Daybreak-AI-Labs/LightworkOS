@@ -161,6 +161,10 @@ def diff_return(filed: FiledReturn, draft: Draft1040,
 
 def render_backtest(report: BatchReport) -> str:
     """Human-readable accuracy report: headline metric, per-return deltas."""
+    # ``accuracy`` is 1.0 with nothing in scope; printing that as 100.0% would
+    # read as a perfect score earned on no data.
+    accuracy = (f"{report.accuracy * 100:.1f}%" if report.in_scope
+                else "n/a (no in-scope returns to judge)")
     out = [
         "TAX FIRST-PASS BACK-TEST — draft vs. filed",
         "=" * 52,
@@ -168,7 +172,7 @@ def render_backtest(report: BatchReport) -> str:
         f"In scope            : {len(report.in_scope)}  "
         f"(matched {len(report.matched)} within ${report.tolerance:,.2f})",
         f"Out of scope        : {len(report.out_of_scope)}",
-        f"In-scope accuracy   : {report.accuracy * 100:.1f}%",
+        f"In-scope accuracy   : {accuracy}",
     ]
     if report.mismatched:
         out += ["", "IN-SCOPE MISMATCHES (engine math to investigate):",

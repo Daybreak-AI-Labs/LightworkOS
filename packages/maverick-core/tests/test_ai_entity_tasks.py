@@ -289,6 +289,37 @@ def test_non_ascii_text_is_refused_not_a_type_error(tmp_path) -> None:
         store.history("tenant-a", created.task_id)
 
 
+def test_overdue_task_can_be_resolved_but_not_given_a_past_due_date(tmp_path) -> None:
+    store, clock, _current, _actor, _maintenance = _store(tmp_path)
+    created = store.create_task(
+        "tenant-a",
+        entity_id="model.customer-support",
+        entity_revision=4,
+        kind="remediation",
+        title="Overdue finding",
+        due_at=clock.value + 1_000,
+        idempotency_key="overdue-create",
+    )
+    clock.advance(2_000)
+    with pytest.raises(tasks.AIEntityTaskValidationError, match="due_at"):
+        store.update_task(
+            "tenant-a",
+            created.task_id,
+            expected_revision=1,
+            changes={"due_at": clock.value - 1},
+            idempotency_key="overdue-redate",
+        )
+    resolved = store.update_task(
+        "tenant-a",
+        created.task_id,
+        expected_revision=1,
+        changes={"status": "resolved"},
+        idempotency_key="overdue-resolve",
+    )
+    assert resolved.status == "resolved"
+    assert resolved.due_at == created.due_at
+
+
 def test_terminal_retention_purge_keeps_replay_tombstone(tmp_path) -> None:
     store, clock, _current, _actor, maintenance = _store(tmp_path)
     created = store.create_task(
