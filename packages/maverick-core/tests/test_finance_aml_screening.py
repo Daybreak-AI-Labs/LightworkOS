@@ -220,6 +220,28 @@ def test_short_watchlist_entry_does_not_prefix_match_long_subject():
     assert result["case"] is None
 
 
+def test_subject_in_a_non_latin_script_is_not_screened_and_never_clear():
+    from maverick.tools.sanctions_screen import sanctions_screen
+
+    watchlist = _ingest()
+    result = aml.screen_subject(
+        "Иван Петров",
+        screened_by="kyc-operator",
+        list_ids=[watchlist["id"]],
+    )
+    assert result["screened"] is False and result["match"] is None
+    assert result["completeness"]["complete_for_selected_scope"] is False
+    assert result["notice"] == aml.NON_DETERMINATION_NOTICE
+
+    out = sanctions_screen().fn({"name": "Иван Петров"})
+    assert out.startswith("NOT SCREENED (governed)") and "CLEAR" not in out
+
+    latin = aml.screen_subject(
+        "Unlisted Person", screened_by="kyc-operator", list_ids=[watchlist["id"]]
+    )
+    assert latin["screened"] is True and latin["match"] is False
+
+
 def test_typo_match_opens_case_with_exact_list_provenance():
     watchlist = _ingest()
     result = aml.screen_subject(

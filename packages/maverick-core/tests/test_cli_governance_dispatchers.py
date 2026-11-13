@@ -112,8 +112,8 @@ def test_regulatory_feed_sync_bridges_reviewed_alerts_with_isolation(
         return {
             "impact_query": {"matched": True},
             "impact": {"id": "ARI-1"},
-            "staleness": [{"id": "ARS-1"}],
-            "notice": {"id": "ARN-1", "status": "pending"},
+            "staleness": {"id": "ARS-1", "stale_evidence_ids": ["MRE-1"]},
+            "notice": {"id": "ARN-1", "delivery": {"status": "pending"}},
         }
 
     monkeypatch.setattr(feed, "sync_alert", sync_alert)

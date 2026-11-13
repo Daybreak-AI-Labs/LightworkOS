@@ -128,6 +128,15 @@ _SCHEMA = {
 }
 
 
+def _not_screened(name: str, mode: str) -> str:
+    return (
+        f"NOT SCREENED ({mode}): {name!r} has no Latin letters or digits the "
+        "matcher can compare (for example a name in a non-Latin script), so it "
+        "was not checked against any list. This is not a clear result: screen "
+        "the Latin-script spelling or route to a human (do not proceed)."
+    )
+
+
 def _run(args: dict[str, Any]) -> str:
     name = str(args.get("name") or "").strip()
     if not name:
@@ -162,6 +171,8 @@ def _run(args: dict[str, Any]) -> str:
             return f"ERROR: governed sanctions screening is incomplete: {exc}"
         except Exception:
             return "ERROR: governed sanctions screening failed safely"
+        if result.get("screened") is False:
+            return _not_screened(name, "governed")
         lists = result.get("screened_lists") or []
         if not result.get("match"):
             return (
@@ -191,6 +202,8 @@ def _run(args: dict[str, Any]) -> str:
     if not sdn:
         return (f"ERROR: no sanctions list found at {path}. Set [screening] "
                 "sdn_path to an OFAC SDN export (newline or JSON name list).")
+    if not normalize(name):
+        return _not_screened(name, "legacy")
     result = screen(name, sdn, threshold=threshold)
     if not result["match"]:
         return f"CLEAR: {name!r} not found on the sanctions list ({len(sdn)} names)."

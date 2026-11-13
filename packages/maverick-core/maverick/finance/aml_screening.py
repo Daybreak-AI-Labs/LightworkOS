@@ -1198,10 +1198,41 @@ def screen_subject(
     subject_ref: str = "",
     list_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    """Screen a subject and open one idempotent four-eyes case on any hit."""
+    """Screen a subject and open one idempotent four-eyes case on any hit.
+
+    Matching compares Latin letters and digits only. A name with none of them
+    (for example one written in Cyrillic or Arabic script) cannot be compared,
+    so it is returned as not screened (``screened`` False, ``match`` None) and
+    must never be read as a clear result.
+    """
     subject = _required(subject_name, "subject_name", _MAX_NAME)
     actor = _required(screened_by, "screened_by", 4096)
     reference = str(subject_ref or "").strip()[:256]
+    if not normalize_name(subject):
+        return {
+            "match": None,
+            "screened": False,
+            "not_screened_reason": "subject_name_not_comparable",
+            "subject_name": subject,
+            "subject_ref": reference,
+            "hits": [],
+            "screened_lists": [],
+            "rule_version": MATCH_RULE_VERSION,
+            "completeness": {
+                "complete_for_selected_scope": False,
+                "all_latest_active_sources_screened": False,
+                "selection_mode": "not_screened",
+                "selected_list_count": 0,
+                "truncated": False,
+                "limits": {
+                    "lists": _MAX_LISTS_PER_SCREEN,
+                    "fuzzy_comparisons": _MAX_FUZZY_CANDIDATES,
+                    "hits": _MAX_HITS,
+                },
+            },
+            "notice": NON_DETERMINATION_NOTICE,
+            "case": None,
+        }
     ids = [str(value or "").strip() for value in (list_ids or []) if str(value or "").strip()]
     if len(ids) > _MAX_LISTS_PER_SCREEN:
         raise ValueError(f"no more than {_MAX_LISTS_PER_SCREEN} list_ids are allowed")
@@ -1232,6 +1263,7 @@ def screen_subject(
     ]
     result = {
         "match": bool(hits),
+        "screened": True,
         "subject_name": subject,
         "subject_ref": reference,
         "hits": hits,

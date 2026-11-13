@@ -23,6 +23,18 @@ class TestComputeMetrics:
         assert m.passed and m.failing_groups == []
         assert m.min_impact_ratio == 0.8
 
+    def test_no_selections_is_indeterminate_not_a_pass(self):
+        counts = {"A": {"selected": 0, "total": 10}, "B": {"selected": 0, "total": 10}}
+        m = fm.compute_metrics(counts)
+        assert not m.passed and m.indeterminate == "no_selections"
+        report = fm.metrics_report(counts)
+        assert report["passed"] is False
+        assert report["indeterminate"] == "no_selections"
+        # The streaming monitor neither alerts nor pins a baseline on it.
+        mon = fm.FairnessMonitor(min_samples=2)
+        mon.record_batch([("A", False), ("B", False)])
+        assert mon.check() is None and mon.baseline_min_ratio is None
+
     def test_equal_opportunity_difference(self):
         counts = {
             "A": {"selected": 8, "total": 10, "positives": 5, "tp": 4},

@@ -59,6 +59,8 @@ class FairnessMetrics:
     passed: bool
     samples: int
     threshold: float
+    # Set when the four-fifths rule cannot be evaluated; ``passed`` is then False.
+    indeterminate: str | None = None
 
 
 @dataclass
@@ -79,8 +81,12 @@ def compute_metrics(counts: dict, *, threshold: float = DEFAULT_THRESHOLD
     "tp"?: int}``. ``positives`` is the group's ground-truth positive count and
     ``tp`` the selected-among-positives count (for equal opportunity). Returns
     ``None`` when fewer than two groups have ``total > 0`` (a single group has no
-    disparity to measure). Pure and deterministic; tolerant of out-of-range
-    counts (clamped) so a noisy feed never raises.
+    disparity to measure). When no group has any selection the four-fifths rule
+    has no reference rate, so the result is indeterminate, not a pass:
+    ``passed`` is False and ``indeterminate`` is ``"no_selections"`` (the impact
+    ratios stay at 1.0 and no group is listed as failing). Pure and
+    deterministic; tolerant of out-of-range counts (clamped) so a noisy feed
+    never raises.
     """
     rates: dict[str, float] = {}
     tprs: dict[str, float] = {}
@@ -103,6 +109,7 @@ def compute_metrics(counts: dict, *, threshold: float = DEFAULT_THRESHOLD
     best = max(rates.values())
     impact = {n: (r / best if best > 0 else 1.0) for n, r in rates.items()}
     failing = sorted(n for n, ratio in impact.items() if ratio < threshold)
+    indeterminate = None if best > 0 else "no_selections"
     eo = (max(tprs.values()) - min(tprs.values())) if len(tprs) >= 2 else None
     return FairnessMetrics(
         rates=rates,
@@ -111,9 +118,10 @@ def compute_metrics(counts: dict, *, threshold: float = DEFAULT_THRESHOLD
         demographic_parity_diff=best - min(rates.values()),
         equal_opportunity_diff=eo,
         failing_groups=failing,
-        passed=not failing,
+        passed=not failing and indeterminate is None,
         samples=sum(int(g.get("total", 0) or 0) for g in counts.values() if isinstance(g, dict)),
         threshold=threshold,
+        indeterminate=indeterminate,
     )
 
 
@@ -123,13 +131,14 @@ def metrics_report(counts: dict, *, threshold: float = DEFAULT_THRESHOLD
 
     ``None`` when the counts cannot support a disparity measure (fewer
     than two populated groups) — record no evidence rather than empty
-    evidence.
+    evidence. An indeterminate result (no selections in any group) adds an
+    ``indeterminate`` key naming why ``passed`` is False.
     """
 
     metrics = compute_metrics(counts, threshold=threshold)
     if metrics is None:
         return None
-    return {
+    report = {
         "schema": FAIRNESS_REPORT_SCHEMA,
         "rates": dict(metrics.rates),
         "impact_ratios": dict(metrics.impact_ratios),
@@ -141,6 +150,9 @@ def metrics_report(counts: dict, *, threshold: float = DEFAULT_THRESHOLD
         "samples": metrics.samples,
         "threshold": metrics.threshold,
     }
+    if metrics.indeterminate is not None:
+        report["indeterminate"] = metrics.indeterminate
+    return report
 
 
 class FairnessMonitor:
@@ -209,7 +221,8 @@ class FairnessMonitor:
         """Pin the drift baseline to ``value`` (or the current min impact ratio)."""
         if value is None:
             metrics = self.evaluate()
-            value = metrics.min_impact_ratio if metrics else None
+            value = (metrics.min_impact_ratio
+                     if metrics and metrics.indeterminate is None else None)
         if value is not None:
             self.baseline_min_ratio = float(value)
         return self.baseline_min_ratio
@@ -217,14 +230,15 @@ class FairnessMonitor:
     def check(self) -> FairnessAlert | None:
         """Evaluate and raise an alert on breach/drift; ``None`` when healthy.
 
-        On the first healthy evaluation the drift baseline is set automatically.
+        A window with no selections in any group is indeterminate: it raises no
+        alert and never sets the baseline. On the first healthy evaluation the drift baseline is set automatically.
         When an alert fires and an ``audit_sink`` is configured, a signed
         ``FAIRNESS_ALERT`` row is emitted (the sink's truthiness sets
         ``alert.recorded``); a sink that raises is swallowed -- monitoring must
         never crash the path it watches.
         """
         metrics = self.evaluate()
-        if metrics is None:
+        if metrics is None or metrics.indeterminate is not None:
             return None
 
         reasons = []
