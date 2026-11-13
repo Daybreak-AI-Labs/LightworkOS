@@ -399,15 +399,16 @@ def _quorum_abuse(events: tuple[HuntEvent, ...], _baseline: BaselineProfile) -> 
 
 
 def _goal_anomaly(events: tuple[HuntEvent, ...], baseline: BaselineProfile) -> list[Finding]:
-    starts: dict[tuple[str, int], list[HuntEvent]] = defaultdict(list)
+    starts: dict[tuple[str, str, int], list[HuntEvent]] = defaultdict(list)
     for event in events:
         if event.kind in {"goal_start", "goal"} and event.outcome.lower() not in {
             "succeeded", "completed",
         }:
-            starts[(event.actor, int(event.observed_at // 3600))].append(event)
+            starts[(event.actor, event.kind, int(event.observed_at // 3600))].append(event)
     findings = []
-    for (actor, _hour), matches in sorted(starts.items()):
-        history = baseline.hourly_counts.get(f"{actor}|goal_start", ())
+    for (actor, kind, _hour), matches in sorted(starts.items()):
+        # Same key build_baseline writes: one hourly history per actor and kind.
+        history = baseline.hourly_counts.get(f"{actor}|{kind}", ())
         threshold = _rate_threshold(history)
         if len(matches) > threshold:
             findings.append(_finding(

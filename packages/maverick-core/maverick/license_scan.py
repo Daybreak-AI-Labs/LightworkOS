@@ -25,10 +25,12 @@ _RULES: list[tuple[str, str]] = [
     # it, that string falls through to the GPL rule and is over-flagged.
     (r"\blgpl|lesser general public|library general public", "weak-copyleft"),
     (r"\bgpl|general public license|gplv", "strong-copyleft"),
-    (r"\bmpl|mozilla public|epl|eclipse public|cddl|cpl ", "weak-copyleft"),
+    # "epl" and "isc" are whole tokens: unanchored they also match inside
+    # ordinary words ("deployment", "disclaimer").
+    (r"\bmpl|mozilla public|\bepl\b|eclipse public|cddl|cpl ", "weak-copyleft"),
     (r"public domain|unlicense|\bcc0\b|wtfpl|0bsd", "public-domain"),
     (r"\bmit\b|expat", "permissive"),
-    (r"bsd|apache|isc|\bzlib\b|python software foundation|\bpsf\b|"
+    (r"bsd|apache|\bisc\b|\bzlib\b|python software foundation|\bpsf\b|"
      r"boost|\bmit-0\b", "permissive"),
 ]
 _DEFAULT_DENIED = frozenset({"strong-copyleft"})

@@ -313,12 +313,17 @@ level: medium
     rule = env_hunt.load_sigma_rules([path])[0]
     event = _event("endpoint", 1, "process_start", source="edr.generic", category="endpoint")
     assert env_hunt.rule_matches(rule, event) is True
-    unsafe = env_hunt.SigmaRule({
-        "id": "unsafe-regex", "title": "unsafe", "detection": {
-            "selection": {"action|re": "(a+)+$"}, "condition": "selection",
-        },
-    })
-    assert env_hunt.rule_matches(unsafe, event) is False
+    # A modifier the matcher cannot evaluate refuses the rule when it is loaded.
+    # Evaluating it as "no match" would make ``not selection`` fire on every event,
+    # and evaluating an unknown one as equality would silently change the rule.
+    for modifier in ("re", "base64"):
+        with pytest.raises(ValueError, match="unsupported modifier"):
+            env_hunt.SigmaRule({
+                "id": "unsafe-modifier", "title": "unsafe", "detection": {
+                    "selection": {f"action|{modifier}": "(a+)+$"},
+                    "condition": "not selection",
+                },
+            })
     filtered = env_hunt.SigmaRule({
         "id": "condition-rule", "title": "common Sigma condition",
         "detection": {
@@ -337,6 +342,32 @@ level: medium
         ])
     with pytest.raises(ValueError, match="exceeds"):
         env_hunt.load_sigma_texts(["x" * (1024 * 1024 + 1)])
+
+
+def test_sigma_yaml_list_of_mappings_matches_any_item_and_dead_selectors_are_refused():
+    rule = env_hunt.load_sigma_texts(["""title: Endpoint transfer
+id: customer-rule-2
+detection:
+  selection:
+    - action: upload
+      target: host-1
+    - action: process_start
+  condition: selection
+"""])[0]
+    assert rule.detection["selection"] == [
+        {"action": "upload", "target": "host-1"}, {"action": "process_start"},
+    ]
+    event = _event("endpoint", 1, "process_start", source="edr.generic", category="endpoint")
+    assert env_hunt.rule_matches(rule, event) is True
+    # A selector that is not field mappings can never match, so it is refused.
+    with pytest.raises(ValueError, match="mapping"):
+        env_hunt.load_sigma_texts(["""title: Keyword list
+id: customer-rule-3
+detection:
+  keywords:
+    - upload
+  condition: not keywords
+"""])
 
 
 def test_scan_investigation_timeline_and_allowlisted_enrichment(synthetic_attack_chain):

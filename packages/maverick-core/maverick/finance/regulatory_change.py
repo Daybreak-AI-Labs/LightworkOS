@@ -22,6 +22,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlparse
+from xml.parsers import expat
 
 from ..privacy_ops import RecordConflict, _actor_label
 
@@ -670,10 +671,24 @@ def _xml_child_text(element: ET.Element, *names: str) -> str:
     return ""
 
 
+def _refuse_xml_declaration(*_args: Any) -> None:
+    raise FeedParseError("XML DTD and entity declarations are not allowed")
+
+
+def _reject_xml_declarations(payload: bytes) -> None:
+    # Refused by the parser as it meets the declaration, not by scanning the raw
+    # bytes: a UTF-16 payload contains no ASCII "<!DOCTYPE" byte run to find.
+    scanner = expat.ParserCreate()
+    scanner.StartDoctypeDeclHandler = _refuse_xml_declaration
+    scanner.EntityDeclHandler = _refuse_xml_declaration
+    try:
+        scanner.Parse(payload, True)
+    except expat.ExpatError as exc:
+        raise FeedParseError("invalid XML feed") from exc
+
+
 def _parse_xml(payload: bytes, source: FeedSource) -> list[dict[str, Any]]:
-    upper = payload.upper()
-    if b"<!DOCTYPE" in upper or b"<!ENTITY" in upper:
-        raise FeedParseError("XML DTD and entity declarations are not allowed")
+    _reject_xml_declarations(payload)
     try:
         root = ET.fromstring(payload)
     except ET.ParseError as exc:
