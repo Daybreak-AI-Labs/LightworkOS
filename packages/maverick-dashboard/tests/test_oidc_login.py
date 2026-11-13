@@ -387,6 +387,21 @@ def test_logout_clears_session(login_env, client):
     assert ol.SESSION_COOKIE in set_cookie
 
 
+def test_logout_ends_the_session_record(monkeypatch):
+    # Clearing the cookie is not enough: a copied cookie must stop working.
+    from types import SimpleNamespace
+
+    from maverick_dashboard import session_registry
+
+    ended = []
+    monkeypatch.setattr(ol, "_session_payload_unchecked",
+                        lambda _request: {"sub": "alice", "sid": "s-1"})
+    monkeypatch.setattr(session_registry, "revoke",
+                        lambda sid, *, by: ended.append((sid, by)))
+    ol._end_this_session(SimpleNamespace())
+    assert ended == [("s-1", "user:alice")]
+
+
 def test_logout_redirects_to_idp_when_end_session_configured(
     login_env, client, monkeypatch
 ):

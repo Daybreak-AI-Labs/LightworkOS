@@ -900,21 +900,49 @@ def auth_logout_confirmed(request: Request):
     # Local-owner, invite and SAML cookies also need a working local sign-out.
     # Only an enabled OIDC login can supply an OIDC end-session redirect. This
     # does not claim to end the upstream SAML identity-provider session.
+    _end_this_session(request)
     destination = _idp_logout_url(load_oidc_config()) if login_enabled() else None
     response = RedirectResponse(destination or "/", status_code=303)
     _clear_cookie(response, SESSION_COOKIE)
     return response
 
 
+def _end_this_session(request: Request) -> None:
+    """Mark this session ended in the registry, so a copied cookie stops working
+    and the Sessions page no longer lists it as live. Never blocks sign-out."""
+    payload = _session_payload_unchecked(request) or {}
+    sid = payload.get("sid")
+    if not isinstance(sid, str) or not sid:
+        return
+    from . import session_registry
+
+    try:
+        session_registry.revoke(sid, by=f"user:{payload.get('sub')}")
+    except session_registry.SessionStoreError:
+        log.warning("sign-out could not mark the session record ended")
+
+
 def _session_sub_unchecked(request: Request) -> str | None:
     """The ``sub`` from a validly-signed, unexpired session cookie, WITHOUT the
     revocation check -- so "log out everywhere" can revoke even when the session
     is already revoked. Returns None when the cookie is absent/tampered/expired."""
+    from maverick.oidc import validate_subject
+
+    payload = _session_payload_unchecked(request)
+    if not payload:
+        return None
+    try:
+        return validate_subject(payload.get("sub"))
+    except ValueError:
+        return None
+
+
+def _session_payload_unchecked(request: Request) -> dict | None:
+    """The payload of a validly-signed, unexpired session cookie, without the
+    revocation check. None when the cookie is absent, tampered or expired."""
     raw = request.cookies.get(SESSION_COOKIE)
     if not raw:
         return None
-    from maverick.oidc import validate_subject
-
     from .invites import local_login_mode, local_session_secret
     from .saml import saml_enabled
 
@@ -927,10 +955,7 @@ def _session_sub_unchecked(request: Request) -> str | None:
     for secret in secrets:
         payload = verify_session(raw, secret) if secret else None
         if payload:
-            try:
-                return validate_subject(payload.get("sub"))
-            except ValueError:
-                return None
+            return payload
     return None
 
 
