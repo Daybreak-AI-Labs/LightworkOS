@@ -3,8 +3,12 @@
 Writes ``~/.maverick/dashboard-config.toml`` (config.dashboard_overrides_path),
 which ``maverick.config.load_config`` deep-merges over config.toml — so a key
 or toggle set in the UI takes effect on the next run without touching the
-user's config.toml. (Models / budget / tool denials live in the separate
-runtime-overrides.toml, read via their own hooks.)
+user's config.toml. The run-time overrides for models, budget and tool denials
+(``maverick.runtime_overrides``) live in the separate runtime-overrides.toml,
+read via their own hooks.
+This file still holds some settings of those kinds: the ``[models]``
+discovery switch, the ``models.*`` and ``budget.*`` settings saved from All
+settings, and ``security.denied_tools`` when container file work is turned on.
 
 Secrets: provider api_keys, webhook signing material, and channel credentials
 are authenticated-encrypted with the deployment at-rest key before this file is
@@ -735,6 +739,7 @@ def _complete_provider_audit() -> None:
         change.complete()
 
 
+# Tests only: production saves go through ``rotate_provider`` and its checks.
 def set_provider(name: str, api_key: str | None = None, base_url: str | None = None) -> None:
     """Set a provider's api_key/base_url. Empty/None values are left unchanged
     (so re-saving a base_url never wipes a key you can't see). Use
@@ -1453,7 +1458,8 @@ def set_section_enable(section: str, enabled: bool) -> None:
 # Compliance controls the /compliance page can strengthen from inside the app.
 # Only these exact (section, key) pairs are writable, and only to the value
 # types listed; nothing here can turn a protection off except retention
-# periods, which only accept whole days within the bounds below.
+# periods, which accept whole days within the bounds below, or 0 (the kernel
+# then deletes nothing for that period).
 COMPLIANCE_SETTINGS: dict[tuple[str, str], type] = {
     ("audit", "sign"): bool,
     ("privacy", "anonymous"): bool,

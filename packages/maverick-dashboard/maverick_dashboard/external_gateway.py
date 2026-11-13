@@ -12,8 +12,9 @@ Lightwork while doing their work elsewhere:
 * ``GET  /api/v1/external/openapi.json``  — the importable description of the
   agent routes (drops into Agentforce External Services / Bedrock action
   groups as-is).
-* ``POST /api/v1/external/discovery/observations`` — admit a bounded,
-  tenant-scoped observation from a registered Ed25519 discovery sensor.
+* ``POST /api/v1/external/discovery-sensors/{sensor_id}/observations`` —
+  admit a bounded, tenant-scoped observation from a registered Ed25519
+  discovery sensor.
 * ``GET/POST /api/v1/external/ai-vendor/...`` — issue a questionnaire to an
   invited vendor and accept one complete, explicitly attested response.
 
@@ -1350,7 +1351,8 @@ async def external_red_team_result(
 
 
 #: Hand-maintained on purpose: FastAPI's generated schema spans the whole
-#: dashboard; external platforms need exactly these three operations, with
+#: dashboard; external platforms need only the agent operations listed here
+#: (the discovery-sensor and vendor-portal routes are not part of it), with
 #: nothing to leak. Served without auth like /openapi.json (pure shape, no
 #: data) so an operator can import it before any credential exists.
 _OPENAPI: dict = {

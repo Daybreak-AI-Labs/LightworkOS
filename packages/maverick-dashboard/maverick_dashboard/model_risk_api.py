@@ -5167,7 +5167,7 @@ async def set_ai_literacy_assignment(
 )
 async def record_ai_literacy_completion(
     request: Request,
-    person_id: str,
+    person_id: _EmployeeNumber,
     requirement_key: str,
     body: schemas.AILiteracyCompletionIn,
 ) -> dict[str, Any]:
@@ -5189,7 +5189,7 @@ async def record_ai_literacy_completion(
 )
 async def grant_ai_literacy_waiver(
     request: Request,
-    person_id: str,
+    person_id: _EmployeeNumber,
     requirement_key: str,
     body: schemas.AILiteracyWaiverGrantIn,
 ) -> dict[str, Any]:

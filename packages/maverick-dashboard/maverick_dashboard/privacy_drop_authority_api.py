@@ -555,7 +555,7 @@ def create_privacy_drop_authority_router() -> APIRouter:  # noqa: C901,PLR0915
     async def approve(
         request: Request,
         response: Response,
-        proposal_id: str,
+        proposal_id: ClosedRef,
         body: ApproveProposalIn,
     ) -> Mapping[str, object]:
         require_global_permission(request, "admin")

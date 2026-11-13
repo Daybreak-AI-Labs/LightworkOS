@@ -74,6 +74,20 @@ def test_renewal_rotates_secret_and_recovers_only_the_same_generation(store):
     assert pairing.authenticate(renewed['token'], 'GET', '/api/v1/goals').principal == 'user:alice'
 
 
+def test_the_registry_keeps_no_clear_credential_once_the_device_has_collected_it(store, tmp_path):
+    stored = lambda: (tmp_path / 'registry.enc').read_text()  # noqa: E731
+    pending, _, token = paired()
+    assert token not in stored()
+    with pytest.raises(HTTPException):  # collected once; the request is gone
+        pairing.poll(pending['pairing_token'])
+    renewed = pairing.renew(token, 1)['token']
+    pairing.authenticate(renewed, 'GET', '/api/v1/goals')  # first use proves it arrived
+    assert renewed not in stored()
+    again = pairing.renew(renewed, 2)['token']
+    assert pairing.renew(renewed, 2)['token'] == again  # the reply was lost: one repeat
+    assert again not in stored() and '"token"' not in stored()
+
+
 def test_a_device_removed_while_it_renews_is_refused_not_a_server_error(store, monkeypatch):
     # renew() authenticates, releases the lock, then reads the row again; a
     # removal in between drops the row from the store.

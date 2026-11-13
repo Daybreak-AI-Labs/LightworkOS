@@ -1457,7 +1457,7 @@ async def execute_job(request: Request, job_id: ObjectPath) -> dict[str, Any]:
     require_global_permission(request, "admin")
     ops, tenant, store = _authority(request)
     job = await _call(ops, store.get_job, tenant, job_id)
-    coordinator = _coordinator(request, ops, tenant, store)
+    coordinator = await _call(ops, _coordinator, request, ops, tenant, store)
     from maverick import connections
     from maverick.paths import tenant_scope
 

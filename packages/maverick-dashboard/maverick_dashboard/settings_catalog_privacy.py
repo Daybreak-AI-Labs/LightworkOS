@@ -967,8 +967,8 @@ def _rights_rows(S) -> tuple:
           subgroup=sources, minimum=1, maximum=100, integer=True, unit="requests"),
         S(_SOURCES, "lease_seconds", "Time a worker holds a request",
           "How long one worker keeps a request before another may take it over. It must be "
-          "more than twice the wait above.", "number", _P, 60, sr, subgroup=sources,
-          minimum=1, maximum=3600, integer=True, unit="seconds"),
+          "at least twice \"Wait for a system up to\", plus 5 seconds.", "number", _P, 60, sr,
+          subgroup=sources, minimum=1, maximum=3600, integer=True, unit="seconds"),
         S(_SOURCES, "retry_delay_seconds", "Wait before retrying",
           "How long to wait after a failure before trying again.", "number", _P, 30, sr,
           subgroup=sources, minimum=0, maximum=604800, integer=True, unit="seconds"),

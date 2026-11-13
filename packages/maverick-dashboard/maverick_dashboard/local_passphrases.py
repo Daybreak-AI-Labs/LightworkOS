@@ -7,7 +7,10 @@ sign-in still works only on the computer running Lightwork (``local_owner``).
 
 The rules, hashing and lockout are the owner's: 14 to 1,024 characters,
 scrypt (n=16384, r=8, p=1) with a random per-account salt, and after five
-wrong passphrases the account waits one minute before the next try. The hash
+wrong passphrases the account waits one minute before the next try. Once that
+minute has passed the count starts again, so the next wait again takes five
+wrong passphrases. During the wait every try is refused, the correct
+passphrase included. The hash
 runs outside the store lock, and each client address may make ten sign-in
 attempts a minute (refused before any hashing). Only the
 hash is stored, in ``~/.maverick/dashboard-passphrases.json`` (0600). There is
@@ -230,7 +233,10 @@ def login(request: Request, *, email: str, password: str) -> str:
     every other sign-in (and the server thread each one holds) behind it. The
     attempt is reserved under the lock first -- counted, and the account locked
     on the fifth -- so guesses racing in parallel still stop at five per
-    lock window. A correct passphrase clears the count afterwards."""
+    lock window. A correct passphrase clears the count afterwards, and so does
+    a lock that has run out. While the account is locked every attempt is
+    refused (429) without checking the passphrase, the correct one included;
+    letting a correct guess through would leave the lock limiting nothing."""
     if not available():
         raise HTTPException(404, "Passphrase sign-in is not used in this workspace.")
     email = _normal(email)
@@ -243,6 +249,8 @@ def login(request: Request, *, email: str, password: str) -> str:
         if row is not None:
             if row["locked_until"] > time.time():
                 raise HTTPException(429, LOCKED)
+            if row["failures"] >= 5:
+                row["failures"] = 0  # that lock has run out: five more tries before the next
             row["failures"] = min(5, row["failures"] + 1)
             row["locked_until"] = time.time() + 60 if row["failures"] == 5 else 0
             _write(accounts)
@@ -295,6 +303,8 @@ def _count_unknown_attempt(email: str) -> None:
         if locked_until > now:
             _UNKNOWN[key] = (failures, locked_until)
             raise HTTPException(429, LOCKED)
+        if failures >= 5:
+            failures = 0  # the lock has run out, as for a real account
         failures = min(5, failures + 1)
         _UNKNOWN[key] = (failures, now + 60 if failures == 5 else 0.0)
         while len(_UNKNOWN) > _UNKNOWN_LIMIT:

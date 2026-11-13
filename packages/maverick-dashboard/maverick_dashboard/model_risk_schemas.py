@@ -2175,7 +2175,7 @@ class AIBenchmarkPrivacyIn(BaseModel):
 class AIBenchmarkSignatureIn(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    algorithm: Literal["ECDSA-P256-SHA256", "Ed25519", "RSA-PSS-SHA256"]
+    algorithm: Literal["Ed25519"]
     key_id: str = Field(..., pattern=r"^KEY-[0-9a-f]{32}$")
     value: str = Field(..., min_length=32, max_length=2048)
 

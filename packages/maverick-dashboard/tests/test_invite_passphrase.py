@@ -344,6 +344,24 @@ def test_a_correct_sign_in_works_once_the_lock_expires(workspace, monkeypatch):
     assert _sign_in(_remote(), password=OTHER).status_code == 401
 
 
+def test_a_lock_that_has_run_out_gives_five_wrong_tries_before_the_next_one(workspace, monkeypatch):
+    from types import SimpleNamespace
+
+    from maverick_dashboard import local_passphrases
+
+    assert _accept(_remote(), _invite(workspace)).status_code == 303
+    browser = _remote()
+    for _ in range(5):
+        assert _sign_in(browser, password=OTHER).status_code == 401
+    assert _sign_in(browser, password=OTHER).status_code == 429
+    later = time.time() + 61
+    monkeypatch.setattr(local_passphrases, "time", SimpleNamespace(time=lambda: later))
+    # The count starts again: one wrong try must not lock the account at once.
+    assert _sign_in(browser, password=OTHER).status_code == 401
+    assert _sign_in(browser, password=OTHER).status_code == 401
+    assert _sign_in(browser, password=GOOD).status_code == 303
+
+
 def test_the_owners_sign_in_on_this_computer_keeps_its_own_lockout(workspace, tmp_path):
     local = workspace
     local.cookies.clear()

@@ -1540,6 +1540,10 @@ def require_principal(
     return _bind_principal(request if request is not None else websocket, principal)
 
 
+# Despite the names, these limits (and the "identity verification is busy"
+# answer) apply to every bearer that is not the static dashboard token: API
+# keys and paired-device tokens as well as OIDC tokens. Which kind a bearer is
+# becomes known only once verification has started.
 _OIDC_VERIFY_SLOTS = 8
 _OIDC_ADMISSION_SECONDS = 0.25
 

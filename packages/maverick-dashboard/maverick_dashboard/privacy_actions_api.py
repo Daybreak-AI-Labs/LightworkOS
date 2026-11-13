@@ -1,7 +1,8 @@
 """Small privacy actions that had no button: Microsoft 365 collection for a
 data request (``maverick dsar-fulfill collect-graph``).
 
-Same permission (operate) and module gate as the other data-request routes;
+Same permission (operate) as the other data-request routes, and both module
+gates: the privacy register and answering data requests must be on;
 the kernel keeps its own checks (subject must be a Microsoft 365 account,
 the fulfillment revision must match, nothing but counts is collected).
 """
@@ -13,6 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import require_permission
+from .privacy_access import privacy_ops_or_403
 
 router = APIRouter(prefix="/api/v1/privacy", tags=["privacy-actions"])
 
@@ -33,6 +35,7 @@ class CollectIn(BaseModel):
 async def collect_microsoft365(request: Request, request_id: str, body: CollectIn) -> dict:
     """Count the requester's Outlook mail and OneDrive files (no content)."""
     require_permission(request, "operate")
+    privacy_ops_or_403()
     from maverick import dsar_fulfillment as df
     from maverick.privacy_ops import RecordConflict
 
