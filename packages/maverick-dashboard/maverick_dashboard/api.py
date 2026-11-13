@@ -6600,7 +6600,8 @@ def _live_tool_schemas(
 
 
 @router.get("/skills", response_model=list[SkillOut])
-async def list_installed_skills() -> list[SkillOut]:
+async def list_installed_skills(request: Request) -> list[SkillOut]:
+    require_permission(request, "view")
     from maverick.skills import load_skills
 
     return [
@@ -6616,6 +6617,7 @@ def get_flywheel_state(request: Request) -> dict:
     Observed task-history patterns alone are not treated as causal proof or
     promoted into these lists. Empty until promotion-grade evidence exists.
     """
+    require_permission(request, "view")
     out: dict = {"guardrails": [], "habits": [], "signal": {}}
     try:
         from maverick.negative_knowledge import shared as _guardrails
@@ -6647,7 +6649,7 @@ def get_flywheel_state(request: Request) -> dict:
 
 
 @router.get("/codec")
-async def get_codec_telemetry() -> dict:
+async def get_codec_telemetry(request: Request) -> dict:
     """What the token-aware emergent codec is saving on the LIVE coordination stream.
 
     Confirms the bench numbers against production: as the swarm runs, the blackboard
@@ -6656,6 +6658,7 @@ async def get_codec_telemetry() -> dict:
     this process. In-process counters, so this reflects the runtime hosting the
     agents. Zeroed until ``[emergent_codec] enable`` is on and a codebook is learned.
     Read-only; never mutates."""
+    require_permission(request, "view")
     try:
         from maverick.codec_telemetry import snapshot
 
@@ -6733,21 +6736,23 @@ async def create_skill_endpoint(request: Request, payload: SkillCreateIn) -> Ski
 
 
 @router.get("/diag/tail-latency")
-async def diag_tail_latency(ratio: float = 3.0, min_count: int = 20) -> dict:
+async def diag_tail_latency(request: Request, ratio: float = 3.0, min_count: int = 20) -> dict:
     """Tools with a fat latency tail (p99/p50 ≥ ratio) — the ones worth hunting.
 
     Reads this serving process's in-memory per-tool latency samples, so it's
     meaningful on a long-lived dashboard/worker, not a fresh CLI invocation."""
+    require_permission(request, "view")
     from maverick.tail_latency import hunt
 
     return {"flagged": hunt(ratio_threshold=ratio, min_count=min_count)}
 
 
 @router.get("/marketplace/stats")
-async def marketplace_stats() -> dict:
+async def marketplace_stats(request: Request) -> dict:
     """Aggregate stats over the local ratings ledger (total / average / 1–5★
     distribution / per-kind / top-rated). Self-host-first: the operator's own
     ratings, the JSON face of the marketplace stats view."""
+    require_permission(request, "view")
     from maverick.marketplace.ratings import RatingsLedger
     from maverick.marketplace.stats import summarize
 
@@ -6770,6 +6775,7 @@ def templates_suggested(request: Request, k: int = 5) -> dict:
     their goal-title history (pure scorer, no LLM — ``maverick.starter_templates``).
     Owner-scoped history: an authenticated non-admin is ranked on their own
     goals only."""
+    require_permission(request, "view")
     from maverick.starter_templates import suggest
 
     k = max(1, min(int(k or 5), 20))
@@ -7058,12 +7064,13 @@ async def voice_captions(
 
 
 @router.get("/catalog/{kind}")
-def catalog_list(kind: str) -> dict:
+def catalog_list(request: Request, kind: str) -> dict:
     """List federated catalog entries for a kind (skills/plugins/mcp/personas).
 
     Tolerates an unreachable index by returning an empty list, so a
     fresh install shows "no catalog entries" rather than 500ing.
     """
+    require_permission(request, "view")
     from maverick.catalog import VALID_KINDS, load_catalog
 
     if kind not in VALID_KINDS:
@@ -7262,6 +7269,7 @@ def _harness_guidance() -> tuple[list[dict], bool]:
 @router.get("/learned")
 async def learned_api(request: Request) -> dict:
     """Learned-capability ledger entries + on-disk generated tool filenames."""
+    require_permission(request, "view")
     return _learned_snapshot(
         include_pending_items=has_global_permission(request, "admin"), request=request,
     )
@@ -11543,16 +11551,18 @@ def _require_role_editing(request: Request) -> None:
 
 
 @router.get("/roles")
-async def list_roles_endpoint() -> dict:
+async def list_roles_endpoint(request: Request) -> dict:
     """The core-role roster, flagged by override status."""
+    require_permission(request, "view")
     from maverick.role_edit import list_roles
 
     return {"roles": list_roles()}
 
 
 @router.get("/roles/{role}")
-async def get_role_endpoint(role: str) -> dict:
+async def get_role_endpoint(request: Request, role: str) -> dict:
     """A role's merged view: resolved model/effort, addendum, and provenance."""
+    require_permission(request, "view")
     from maverick.role_edit import resolved_role
 
     view = resolved_role(role)
@@ -12073,6 +12083,7 @@ async def external_agent_unenroll(request: Request, agent_id: str) -> None:
 async def discovery(request: Request) -> dict:
     """Inventory of governable surfaces: tools (by risk), MCP servers (with
     supply-chain pins), configured providers, channels, and external agents."""
+    require_global_permission(request, "admin")
     from .control_plane import discovery_overview
 
     return discovery_overview()
