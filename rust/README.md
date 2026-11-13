@@ -97,7 +97,7 @@ byte-for-byte identical to pure Python.
 
 Not every hot CPU module is a Rust win. Unlike the unicode scanner (a per-char *Python* loop),
 the detectors already run on CPython's compiled `re`. Measured on the same
-machine, the native port — 21 separate `fancy-regex` passes — was **~3× slower
+machine, the native port — 23 separate `fancy-regex` passes — was **~3× slower
 for secrets** and roughly break-even for PII:
 
 | scan | input | pure-Python `re` | native | result |
@@ -108,16 +108,16 @@ for secrets** and roughly break-even for PII:
 So the detectors **stay pure `re` on the Python hot path** (the shield, the audit
 log). The native build is retained for the **TypeScript / edge** runtimes
 (Workers, Deno, browser) that have no `re` at all, where it's the only option —
-and `test_native_detect_parity.py` keeps it byte-for-byte identical to Python so
-the two never drift. The `regex` crate can't do the PII phone/SSN look-behind /
+and `test_native_detect_parity.py` compares its spans against Python. The `regex` crate can't do the PII phone/SSN look-behind /
 look-ahead, hence `fancy-regex`; and the detectors are security-critical, so the
 native side **fails safe** — any engine error, or a Luhn-ambiguous
 non-ASCII-digit card candidate, raises rather than guessing.
 
 ## Parity
 
-Spans are reported as **codepoint** indices (Python `re.span()` semantics), not
-byte offsets, so redaction is byte-identical on non-ASCII text.
+The core and PyO3 binding report spans as **codepoint** indices (Python
+`re.span()` semantics). The WASM binding converts those spans to **UTF-16
+code-unit** offsets for JavaScript string slicing, including non-ASCII text.
 
 - `tests/test_native_unicode_parity.py` — unicode native path == pure Python.
 - `tests/test_native_detect_parity.py` — the native extension's secret + PII
@@ -128,4 +128,4 @@ byte offsets, so redaction is byte-identical on non-ASCII text.
 - `mvk-scan-wasm/test/{parity,detect.parity}.test.mjs` — the WASM path == pure
   Python too.
 
-All run off the same `mvk-scan` core, so they cannot diverge.
+Both bindings use the same `mvk-scan` core; parity tests also cover their offset conversions.

@@ -81,7 +81,7 @@ fn main() -> ExitCode {
     // the CLI's UNVERIFIABLE branch).
     if breaks.iter().all(|b| b.reason == "unsigned") {
         eprintln!(
-            "UNVERIFIABLE: {} — {} unsigned row(s); audit signing is off. The log carries \
+            "UNVERIFIABLE: {} — {} unsigned row(s); these rows have no signatures. The log carries \
              no hash chain, so it cannot be proven intact. Enable [audit] sign = true \
              (or MAVERICK_AUDIT_SIGN=1) so future rows are tamper-evident.",
             args.file.display(),

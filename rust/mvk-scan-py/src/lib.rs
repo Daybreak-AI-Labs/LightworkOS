@@ -32,8 +32,8 @@ fn normalize(py: Python<'_>, text: &str, nfkc: bool) -> (String, Vec<u32>, Vec<S
 }
 
 /// Secret scan: `(name, codepoint_start, codepoint_end)` triples in the exact
-/// order/dedup of `secret_detector.scan`. Raises on any engine error so the
-/// Python shim falls back to pure Python (fail-safe: never under-redact).
+/// order/dedup of `secret_detector.scan`. Raises on any engine error; direct
+/// callers must handle failure. The Python detector does not call this binding.
 #[pyfunction]
 fn secret_scan_spans(py: Python<'_>, text: &str) -> PyResult<Vec<(String, usize, usize)>> {
     let result = if text.len() >= DETACH_BYTES {
@@ -46,7 +46,8 @@ fn secret_scan_spans(py: Python<'_>, text: &str) -> PyResult<Vec<(String, usize,
 }
 
 /// PII scan: coalesced `(kind, codepoint_start, codepoint_end)` triples matching
-/// `pii_detector.scan`. Raises on engine error or Luhn ambiguity (Python fallback).
+/// `pii_detector.scan`. Raises on engine error or Luhn ambiguity; the Python
+/// detector does not call this binding.
 #[pyfunction]
 fn pii_scan_spans(py: Python<'_>, text: &str) -> PyResult<Vec<(String, usize, usize)>> {
     let result = if text.len() >= DETACH_BYTES {
