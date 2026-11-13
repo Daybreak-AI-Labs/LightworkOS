@@ -310,11 +310,11 @@ def test_typescript_client_dependency_and_ci_security_gates():
     assert "tsc --noEmit --strict" in package["scripts"]["typecheck"]
     # Reviewed patched versions of vulnerable transitive dependencies.
     assert package["overrides"] == {
-        "@hono/node-server": "2.1.3",
+        "@hono/node-server": "2.1.6",
         "body-parser": "2.4.0",
         "fast-uri": "3.1.9",
         "qs": "6.16.1",
-        "hono": "4.13.11",
+        "hono": "4.13.16",
         "ip-address": "10.7.4",
         "zod": "4.6.6",
     }
@@ -338,7 +338,7 @@ def test_typescript_client_dependency_and_ci_security_gates():
         "'packaging==26.3'",
     ):
         assert workflow.count(packaging_tool) == 2
-    assert 'go-version: "1.26.10"' in workflow
+    assert 'go-version: "1.26.11"' in workflow
     assert "go-version-file:" not in workflow
     assert "go run -mod=readonly ." in workflow
 
