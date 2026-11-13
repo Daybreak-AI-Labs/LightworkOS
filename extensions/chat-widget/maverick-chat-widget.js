@@ -209,6 +209,9 @@
   check.addEventListener("click", function () {
     if (busy || !unknown || !pendingId || !alive) return;
     busy = true;
+    // Whether this check went on to send the held request again. The two
+    // failures read differently: only one of them sent anything.
+    var resent = false;
     controls();
     boundedFetch("/api/v1/goal-submissions/receipt?kind=chat", {
       method: "GET", redirect: "error", cache: "no-store", headers: { "Accept": "application/json", "Idempotency-Key": pendingId }
@@ -218,9 +221,13 @@
       var original = JSON.parse(localStorage.getItem(storageKey + ":payload") || "null");
       if (!original || original.key !== pendingId || typeof original.message !== "string" ||
           !original.message || expectedOrigin !== location.origin) throw new Error("Original draft unavailable");
+      resent = true;
       return submitOriginal(original.message);
     }).catch(function () {
-      if (alive) line("Lightwork", "Recovery is not confirmed. The original request remains held. Check again or review it in the dashboard.");
+      if (!alive) return;
+      line("Lightwork", resent
+        ? "Recovery is not confirmed. The original request remains held. Check again or review it in the dashboard."
+        : "No confirmed receipt is visible yet. The original request remains held; no new start was sent.");
     }).finally(function () { busy = false; if (alive) controls(); });
   });
 
