@@ -311,6 +311,14 @@ def test_reviewed_waiver_expiration_revocation_and_self_review_rejection():
         assert expired["requirements"][0]["state"] == "due"
         assert expired["requirements"][0]["gap_reason"] == "waiver_expired"
 
+        with pytest.raises(ValueError, match="self-reviewed"):
+            register.revoke_waiver(
+                waiver["id"],
+                reviewer_id="person-001",
+                expected_revision=waiver["revision"],
+                idempotency_key="self-revoke",
+                actor="risk-manager",
+            )
         revoked = register.revoke_waiver(
             waiver["id"],
             reviewer_id="reviewer-002",

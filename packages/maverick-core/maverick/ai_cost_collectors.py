@@ -384,7 +384,10 @@ def _bounded_period(
     end = _instant(request.period_end)
     if start.tzinfo is None or end.tzinfo is None:
         raise AICostCollectorProtocolError("collection periods must be offset-aware")
-    if start != start.astimezone(timezone.utc) or end != end.astimezone(timezone.utc):
+    if (
+        start.utcoffset() != timezone.utc.utcoffset(start)
+        or end.utcoffset() != timezone.utc.utcoffset(end)
+    ):
         raise AICostCollectorProtocolError("collection periods must canonicalize to UTC")
     if any((start.hour, start.minute, start.second, start.microsecond)) or any(
         (end.hour, end.minute, end.second, end.microsecond)

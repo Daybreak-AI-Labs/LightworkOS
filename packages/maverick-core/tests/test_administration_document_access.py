@@ -345,7 +345,7 @@ def test_revoke_uses_cas_and_idempotency(tmp_path):
         )
 
 
-def test_failed_issuer_consumes_reserved_use_and_is_idempotent(tmp_path):
+def test_failed_issuer_gives_the_reserved_use_back_and_is_idempotent(tmp_path):
     failures = {"remaining": 1}
 
     def issuer(claim):
@@ -358,21 +358,20 @@ def test_failed_issuer_consumes_reserved_use_and_is_idempotent(tmp_path):
         )
 
     service, *_rest = _service(tmp_path, issuer=issuer)
-    minted = service.mint_token(
-        "doc-retry",
-        max_uses=2,
-        idempotency_key="mint-retry",
-    )
+    # The default single-use token must survive a transient issuer outage.
+    minted = service.mint_token("doc-retry", idempotency_key="mint-retry")
     with pytest.raises(access.DocumentAccessConfigError, match="issuer_unavailable"):
         service.claim(minted.download_token or "", idempotency_key="claim-failed")
     after_failure = service.get_token(minted.record.token_id)
     assert after_failure.state == "active"
     assert after_failure.uses_remaining == 1
+    assert after_failure.claim_count == 0
     with pytest.raises(access.DocumentAccessConflict, match="claim_replay"):
         service.claim(minted.download_token or "", idempotency_key="claim-failed")
     result = service.claim(minted.download_token or "", idempotency_key="claim-second")
     assert result.delivery_grant.startswith("second_delivery_grant_")
     assert service.get_token(minted.record.token_id).state == "exhausted"
+    assert service.store.verify_integrity()["ok"] is True
 
 
 def test_retention_purge_leaves_integrity_checked_tombstone(tmp_path):

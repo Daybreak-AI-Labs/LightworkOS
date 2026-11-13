@@ -14,8 +14,10 @@ EXECUTES it, as a governed pipeline with an audit answer for every stage:
   exports, mailbox pulls) are logged with references so the response's
   completeness is inspectable.
 * **Redaction** — the delivered bundle is passed through the
-  deterministic redactor so OTHER people's identifiers never ride along;
-  the subject's own reference is preserved.
+  deterministic redactor for the identifier categories in
+  :data:`RESPONSE_REDACTION_CATEGORIES`; the subject's own reference is
+  preserved. Names, street addresses and other details of other people
+  are not detected and need human review.
 * **Delivery** — a single-use style token link (stored only as a SHA-256
   digest, with expiry). The bundle is assembled AT DELIVERY TIME from the
   live stores — no second copy of personal data is persisted here.
@@ -46,10 +48,18 @@ IDENTITY_METHODS = (
 #: single-use link sent to the address they gave. Every other method is a
 #: label a named human records after doing the check elsewhere.
 IDENTITY_METHODS_PERFORMED = frozenset({"email_challenge"})
-#: Categories scrubbed from a response so third parties don't ride along.
+#: The only categories scrubbed from a response. Anything else about a
+#: third party (a name, a street address) is left in place.
 RESPONSE_REDACTION_CATEGORIES = [
     "email", "phone", "national_id", "financial", "ip_address", "location",
 ]
+REDACTION_NOTICE = (
+    "Only these categories of identifier were redacted automatically: "
+    + ", ".join(item.replace("_", " ") for item in RESPONSE_REDACTION_CATEGORIES)
+    + ". Other third-party details, such as names and street addresses, "
+    "may remain and need human review. The subject's own reference is "
+    "preserved."
+)
 _MAX_RECORDS = 10_000
 _SCAN_LIMIT = _MAX_RECORDS + 1
 _MAX_SOURCES = 50
@@ -294,7 +304,7 @@ def prepare_response(
 
 
 def _redact_bundle(bundle: Any, subject_id: str) -> Any:
-    """Scrub third-party identifiers; the subject's own reference stays.
+    """Scrub the listed identifier categories; the subject's own reference stays.
 
     Field-aware: each string leaf is redacted individually (no
     serialize/reparse round trip), with the subject's own reference
@@ -328,8 +338,9 @@ def _redact_bundle(bundle: Any, subject_id: str) -> Any:
 def response_for_token(token: str) -> dict[str, Any] | None:
     """Resolve one response token; ``None`` for unknown/expired/undelivered.
 
-    Assembles the platform export live and redacts third-party
-    identifiers before anything leaves. Marks first delivery.
+    Assembles the platform export live and redacts the categories in
+    :data:`RESPONSE_REDACTION_CATEGORIES` before anything leaves. Marks
+    first delivery.
     """
 
     _require_enabled()
@@ -393,10 +404,7 @@ def response_for_token(token: str) -> dict[str, Any] | None:
                 "max_reads": max_reads,
                 "reads_used": reads_used + 1,
             },
-            "redaction_notice": (
-                "Third-party identifiers were redacted deterministically; "
-                "the subject's own reference is preserved."
-            ),
+            "redaction_notice": REDACTION_NOTICE,
         }
     return None
 

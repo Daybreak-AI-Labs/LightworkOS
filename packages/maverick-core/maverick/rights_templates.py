@@ -4,8 +4,9 @@ Six kinds of notice (acknowledgement, verification, identity follow-up,
 extension, completion, refusal) for each template family in
 :data:`maverick.rights_deadlines.FAMILIES`. Defaults ship in code and are
 written for a member of the public; an administrator may replace any of
-them from the settings page, and every save is kept as a numbered version
-so the wording that went out on a given day can be shown later.
+them from the settings page. Each save gets a version number and the last
+20 versions of a template are kept, so recent wording can be shown later;
+the text of older versions is discarded.
 
 Placeholders are ``{name}`` tokens from :data:`PLACEHOLDERS` only -- a saved
 template naming an unknown one is refused, so a typo never ships a literal
