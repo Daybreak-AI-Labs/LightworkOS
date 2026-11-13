@@ -4,6 +4,8 @@ triggers:
   - candidate evaluation
   - debrief synthesis
   - hiring decision
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

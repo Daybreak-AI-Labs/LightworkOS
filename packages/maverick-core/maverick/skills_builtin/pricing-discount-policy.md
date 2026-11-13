@@ -15,7 +15,7 @@ Designs a discount and approval policy: discount tiers, approval thresholds, gua
 
 # Steps
 
-1. Establish the margin floor and list-price logic from `spreadsheet`, and the segments/products where discounting is and isn't allowed.
+1. Use `knowledge_search` to retrieve current pricing and approval policies. Establish the margin floor and list-price logic from `spreadsheet`, and the segments/products where discounting is and isn't allowed.
 2. Define discount tiers with approval thresholds (who can approve what) so routine deals move fast and exceptions escalate.
 3. Set guardrails: caps, bundling rules, and the non-negotiables; specify what's logged for each exception.
 4. Document the policy with examples and the exception path. State assumptions and hand off for governance approval.

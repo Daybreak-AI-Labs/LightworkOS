@@ -4,6 +4,8 @@ triggers:
   - competency model
   - build competencies
   - skills framework
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

@@ -4,6 +4,8 @@ triggers:
   - ccpa
   - cpra
   - california privacy
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

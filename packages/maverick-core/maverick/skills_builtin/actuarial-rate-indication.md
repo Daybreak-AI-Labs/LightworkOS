@@ -14,7 +14,7 @@ Produces an actuarial rate indication for a line of business: the percentage rat
 # Steps
 
 1. Pull the experience period from the source exhibit (earned premium, paid/incurred losses, claim counts by accident year, exposure base). Confirm the number of years and the on-level/current rate level basis; do not invent missing years — flag them.
-2. Develop losses to ultimate: build the paid (or incurred) triangle, compute age-to-age link ratios, select LDFs (volume-weighted or judgmental), apply the tail factor, and record selected ultimates per year.
+2. Use `spreadsheet` to develop losses to ultimate: build the paid (or incurred) triangle, compute age-to-age link ratios, select LDFs (volume-weighted or judgmental), apply the tail factor, and record selected ultimates per year.
 3. Apply trend: bring premium to current rate level (on-leveling), trend ultimate losses and exposures to the midpoint of the prospective period using the stated annual trend rates. Show the trend factor and the period used.
 4. Compute the indicated change: indicated rate = (trended ultimate loss + LAE) / (on-level earned premium) / permissible loss ratio, where permissible = 1 - expense ratio - profit/contingency load. Report the indicated change %, every component (loss ratio, LDFs, trend, expense load, credibility weight if used), and assumptions; stage as a recommendation for actuarial sign-off.
 

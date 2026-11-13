@@ -18,7 +18,7 @@ Handles a GDPR/CCPA data-subject request (access, portability, or erasure) end t
 1. Capture the request from real intake fields: subject identity, verification status, request type (access/portability/erasure/rectification), scope, and the legal regime (GDPR Art. 15/17, CCPA, etc.). Do not proceed past identity verification — flag if unverified.
 2. Build the data map: use `knowledge_search` over the system inventory / RoPA to enumerate every store (CRM, ticketing, logs, backups, processors) that may hold the subject's data, keyed on real identifiers (email, account ID). Mark any source you could not confirm as "unverified — manual check required."
 3. For each store, `read_file` the actual export/extract and classify fields: disclose, redact (third-party PII or another subject's data), or withhold-under-exemption (legal privilege, ongoing investigation, trade secret). Cite the exemption clause for every withhold.
-4. Assemble the deliverable: data map table, per-source disposition, redaction list, exemption register with citations, and the response-deadline (e.g., 30 days GDPR). State assumptions, then hand off — erasure and the outbound disclosure are STAGED for a human DPO to approve and execute.
+4. Assemble the deliverable: data map table, per-source disposition, redaction list, exemption register with citations, and the response-deadline (GDPR: one month from receipt, extendable by two further months where necessary, with notice and reasons within the first month). State assumptions, then hand off — erasure and the outbound disclosure are STAGED for a human DPO to approve and execute.
 
 # Notes
 

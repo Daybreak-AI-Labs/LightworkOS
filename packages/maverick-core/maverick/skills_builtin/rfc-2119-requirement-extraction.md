@@ -14,7 +14,7 @@ Parses a contract, specification, or regulation into a normalized register of MU
 
 # Steps
 
-1. Read the source document with read_file and scan for normative keywords: MUST / SHALL / REQUIRED / WILL (mandatory), SHOULD / RECOMMENDED (advisory), MAY / OPTIONAL (permissive), and their negations (MUST NOT, SHOULD NOT).
+1. Read the source document with read_file and scan for normative keywords: MUST / SHALL / REQUIRED (mandatory), SHOULD / RECOMMENDED (advisory), MAY / OPTIONAL (permissive), and the defined negations (MUST NOT / SHALL NOT, SHOULD NOT / NOT RECOMMENDED). WILL is not an RFC 2119 keyword; treat it according to the source document's definitions or flag it for human interpretation.
 2. For each obligation, create one row: the atomic requirement (split compound sentences so each row is independently testable), its normative strength, and the clause/section reference.
 3. Flag ambiguous modality ("is expected to", "as appropriate", passive voice with no actor) for human interpretation rather than forcing it into a bucket; record who the obligation falls on.
 4. Note cross-references and defined terms so a requirement that depends on a definition elsewhere is not read in isolation. Output the normalized register sorted by clause.

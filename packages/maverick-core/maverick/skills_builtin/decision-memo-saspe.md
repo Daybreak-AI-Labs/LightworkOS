@@ -5,6 +5,7 @@ triggers:
   - recommend an option
   - should we do x
   - options analysis
+  - put together a SASPE memo
 tools_needed:
   - read_file
   - knowledge_search

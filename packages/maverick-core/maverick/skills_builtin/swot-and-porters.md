@@ -4,6 +4,9 @@ triggers:
   - swot
   - porters five forces
   - strategic analysis
+  - five forces
+  - competitive position
+  - industry analysis
 tools_needed:
   - knowledge_search
   - web_search

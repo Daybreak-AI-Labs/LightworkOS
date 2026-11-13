@@ -15,7 +15,7 @@ Builds a short-term direct-method cash forecast (typically a rolling 13 weeks) b
 
 1. Anchor the opening cash position to the latest confirmed bank balance (sum across operating accounts; exclude restricted cash and note it). Reconcile to the GL cash account and flag any unreconciled difference rather than starting from a book balance.
 2. Schedule receipts by expected date: open AR aged against historical collection timing (DSO by customer tier), plus contracted or recurring inflows. Schedule disbursements: open AP by due date, payroll and tax run dates, debt service, rent, and recurring fixed outflows. Mark any inflow/outflow that is estimated rather than contractually dated as an assumption.
-3. Roll the forecast week by week: Opening + Receipts − Disbursements = Closing, carrying each week's close into the next open. Compare each week's closing balance and the trough to the minimum operating cash threshold and any revolver availability; flag weeks that breach.
+3. In `spreadsheet`, roll the forecast week by week: Opening + Receipts − Disbursements = Closing, carrying each week's close into the next open. Compare each week's closing balance and the trough to the minimum operating cash threshold and any revolver availability; flag weeks that breach.
 4. Run sensitivities on the largest swing drivers — typically collection slippage (e.g., AR slips one to two weeks) and a delayed large receipt or accelerated payable. Report the weekly grid, the projected low point and its week, headroom vs. minimum cash, and the downside-case trough; state the collection-timing and payment-timing assumptions used.
 
 # Notes

@@ -34,7 +34,7 @@ larger than this list.
 - `rfc-2119-requirement-extraction` — contract/spec/reg → MUST/SHOULD/MAY register with clause refs.
 
 ### Analytical / consulting methods
-- `root-cause-5-whys` · `executive-one-pager` · `decision-memo-saspe` · `swot-and-portering` ·
+- `root-cause-5-whys` · `executive-one-pager` · `decision-memo-saspe` · `swot-and-porters` ·
   `monte-carlo-sensitivity` · `stakeholder-raci-map` · `okr-drafting` · `competitor-teardown`.
 
 ## Finance / Banking / Insurance (9)

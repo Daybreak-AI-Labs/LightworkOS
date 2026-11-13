@@ -14,7 +14,7 @@ Maintains a decision log from meetings: each decision with its context, owner, d
 
 # Steps
 
-1. Capture each decision as a discrete entry: the decision, the date, the owner/decider, and the options considered.
+1. Use `knowledge_search` to retrieve the meeting notes and prior decision records. Capture each decision as a discrete entry: the decision, the date, the owner/decider, and the options considered.
 2. Record the rationale and key assumptions so a future reader understands why — a decision without its 'why' gets reopened.
 3. Note reversibility and any review/expiry trigger, and link the action items the decision spawned.
 4. Keep the log searchable and append-only; supersede rather than delete. State assumptions and hand off.

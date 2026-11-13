@@ -39,5 +39,5 @@ minor release) or if readiness gates are decorative — a gate with no owner or 
 criterion will be skipped under deadline pressure. Do not assume channels or dates that
 were not confirmed; mark them unverified. This drafts a plan and a go/no-go checklist for a
 human launch owner — it does not send announcements, schedule press, or trigger the live
-launch. Do not use for the positioning/messaging itself (use the positioning procedure) or
-for pricing decisions (use the pricing-and-packaging procedure); this assumes those are set.
+launch. Do not use for the positioning/messaging itself (use `positioning-statement`) or
+for pricing decisions (use `pricing-packaging-design`); this assumes those are set.

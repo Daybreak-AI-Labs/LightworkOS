@@ -15,7 +15,7 @@ Diagnoses how much cash is tied up in day-to-day operations by computing net wor
 # Steps
 
 1. Pull the inputs from the source of record (sql_query the GL/AR/AP/inventory tables or read the provided financials): revenue, COGS, accounts receivable, inventory, and accounts payable for each period in scope. Confirm the period basis (annual vs. annualized) before computing ratios.
-2. Compute the components: DSO = AR / revenue x days, DIO = inventory / COGS x days, DPO = AP / COGS x days, then cash conversion cycle = DSO + DIO - DPO. Use period-average balances where available and note if you used period-end instead.
+2. Use `spreadsheet` to compute the components: DSO = AR / revenue x days, DIO = inventory / COGS x days, DPO = AP / COGS x days, then cash conversion cycle = DSO + DIO - DPO. Use period-average balances where available and note if you used period-end instead.
 3. Build the trend: lay out CCC and each component across periods, compute net working capital (current operating assets - current operating liabilities), and translate day-changes into dollars (e.g. one DSO day = revenue/365). Identify the largest swings and their driver line.
 4. Report the deliverable: a working-capital table with CCC trend, the dollar cash impact per component, and 2-3 grounded levers (collect AR faster, reduce inventory, extend payables). State the period basis and any balance you proxied; mark assumptions unverified.
 

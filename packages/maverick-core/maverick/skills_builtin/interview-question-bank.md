@@ -4,6 +4,8 @@ triggers:
   - interview questions
   - behavioral interview
   - question bank
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

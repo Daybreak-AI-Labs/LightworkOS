@@ -16,7 +16,7 @@ Calibrates a population of employees on the two-axis 9-box grid (performance vs.
 1. Load the input roster with performance and potential signals from the provided source into a `spreadsheet` — typically last-cycle performance rating and a potential indicator (manager assessment, readiness-for-next-level, growth trajectory). Confirm which fields map to each axis; do not infer potential from performance alone, as they are distinct axes.
 2. Define the cut points for low/medium/high on each axis explicitly (e.g. rating thresholds or a forced distribution) and apply them to assign each person a box (1–9). State the thresholds used and whether they were given or chosen.
 3. Build the 3×3 grid showing the count and names in each cell; flag concentration risks (e.g. everyone clustered in the center box suggests weak differentiation or rater leniency).
-4. For each box attach the standard action archetype — top-right (boxes for high/high): retention and succession; bottom-left: performance management; high-potential/lower-performance: stretch/coaching — and produce a per-person rationale and recommended development action. Report the grid plus action list and state all threshold assumptions.
+4. For each box attach the standard action archetype — top-right (high performance/high potential): retention and succession; bottom-left: performance management; high-potential/lower-performance: stretch/coaching — and produce a per-person rationale and recommended development action. Report the grid plus action list and state all threshold assumptions.
 
 # Notes
 

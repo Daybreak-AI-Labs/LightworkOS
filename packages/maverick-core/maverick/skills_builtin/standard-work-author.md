@@ -4,6 +4,8 @@ triggers:
   - write standard work for this process
   - draft a work instruction
   - create an SOP for the operation
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

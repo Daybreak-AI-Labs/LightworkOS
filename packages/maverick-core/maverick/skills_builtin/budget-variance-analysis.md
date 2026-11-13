@@ -15,7 +15,7 @@ Explains why actual results differ from budget (or forecast) by decomposing the 
 # Steps
 
 1. Pull budget and actual figures from the source of record (sql_query the financial/planning tables or read the provided budget file) at a consistent grain — by product, region, or line item — for the same period. Reconcile that budget and actual totals each foot before decomposing.
-2. Compute the total variance per line and tag favorable/unfavorable from the P&L perspective (revenue up = favorable; cost up = unfavorable). Do not net offsetting variances away — keep them visible.
+2. Use `spreadsheet` to compute the total variance per line and tag favorable/unfavorable from the P&L perspective (revenue up = favorable; cost up = unfavorable). Do not net offsetting variances away — keep them visible.
 3. Decompose the revenue variance: volume = (actual qty - budget qty) x budget price; price = (actual price - budget price) x actual qty; mix = the residual from shifts in product/segment weighting. Decompose cost variances into rate vs. usage. Confirm the components sum back to the total variance (bridge reconciles to zero residual).
 4. Report the deliverable: a price/volume/mix bridge from budget to actual, the top drivers ranked by magnitude, and a short narrative per driver grounded in the data. State the decomposition convention used and mark any driver attribution that is inferred rather than sourced as unverified.
 

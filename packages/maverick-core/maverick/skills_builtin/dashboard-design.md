@@ -5,6 +5,7 @@ triggers:
   - report design for stakeholders
   - lay out an analytics dashboard
 tools_needed:
+  - knowledge_search
   - sql_query
   - spreadsheet
 ---
