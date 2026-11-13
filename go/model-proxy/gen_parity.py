@@ -61,8 +61,12 @@ _BUILD_CASES = [
      {"Connection": "keep-alive", "Transfer-Encoding": "chunked", "Host": "evil",
       "Content-Length": "10", "TE": "trailers", "Keep-Alive": "1", "Upgrade": "h2"}),
     (_cfg(upstream=_OPENAI), "/v1/chat/completions", {"Authorization": "Bearer c"}),
-    # SSRF: host outside the allow-set -> error.
+    # An absolute URL remains a path on the configured upstream.
     (_cfg(), "https://evil.example.com/v1/messages", {"Authorization": "Bearer c"}),
+    # SSRF: exclude the configured upstream from the allow-set -> error.
+    (_cfg(allow_hosts=["api.openai.com", "api.example.com"]), "/v1/messages", {}),
+    # A hostless upstream uses Python's None in the error message.
+    (_cfg(upstream="invalid", allow_hosts=["api.openai.com"]), "/v1/messages", {}),
     (_cfg(allow_hosts=["api.anthropic.com", "api.openai.com"]), "/v1/messages",
      {"Authorization": "Bearer c"}),
     (_cfg(), "/", {}),

@@ -19,7 +19,7 @@ implicit replay for caller-supplied idempotency keys.
 Python also accepts the corresponding lowercase fields in `[model_proxy]`.
 Limits must be positive and finite. Go's programmatic zero-valued fields select
 defaults; explicitly invalid environment values fail configuration validation.
-Request headers are bounded to 64 KiB and have a 30 second maximum admission
+Request headers are bounded to 64 KiB and have a 10 second maximum admission
 window (or the shorter total deadline). Normal response writes remain inside
 the overall deadline. Error delivery and connection cleanup have a short grace
 period; cancellation acknowledgement is not a claim that upstream work rolled
