@@ -40,6 +40,8 @@ var scrubRules = []scrubRule{
 	{regexp.MustCompile(`(?i)(aws_secret_access_key\s*[:=]\s*['"]?)([A-Za-z0-9/+]{40})`), `${1}[REDACTED:aws_secret_key]`},
 	// GitHub PAT (ghp_/gho_/ghu_/ghr_/ghs_ prefix).
 	{regexp.MustCompile(`\bgh[ps]_[A-Za-z0-9_]{30,}\b|\bghu_[A-Za-z0-9_]{30,}\b|\bgho_[A-Za-z0-9_]{30,}\b|\bghr_[A-Za-z0-9_]{30,}\b`), `[REDACTED:github_token]`},
+	// Lightwork personal / service-account API key (default lwk_ prefix).
+	{regexp.MustCompile(`\blwk_[A-Za-z0-9_-]{20,}\b`), `[REDACTED:lightwork_api_key]`},
 	// Slack tokens (xoxb-/xoxp-/xapp-...).
 	{regexp.MustCompile(`\bxox[bpaors]-[A-Za-z0-9-]{10,}\b`), `[REDACTED:slack_token]`},
 	// Authorization: Bearer <token> -- keep the header name, redact the value.

@@ -284,6 +284,41 @@
     {
       "config": {
         "allow_hosts": [
+          "api.example.com",
+          "api.openai.com"
+        ],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "https://api.anthropic.com"
+      },
+      "headers": {},
+      "path": "/v1/messages",
+      "result": {
+        "error": "upstream host 'api.anthropic.com' not in allow-set ['api.example.com', 'api.openai.com']"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [
+          "api.openai.com"
+        ],
+        "allowed_routes": [],
+        "api_key": "<upstream-key>",
+        "auth_style": "bearer",
+        "client_token": "<client-token>",
+        "upstream": "invalid"
+      },
+      "headers": {},
+      "path": "/v1/messages",
+      "result": {
+        "error": "upstream host None not in allow-set ['api.openai.com']"
+      }
+    },
+    {
+      "config": {
+        "allow_hosts": [
           "api.anthropic.com",
           "api.openai.com"
         ],

@@ -151,6 +151,24 @@ func TestHandleUpstreamErrorIs502(t *testing.T) {
 	}
 }
 
+func TestHandleErrorsRedactLightworkAPIKeys(t *testing.T) {
+	key := "lwk_" + strings.Repeat("aB0_-", 4) + "z"
+	for _, blockedHost := range []bool{false, true} {
+		cfg := authedConfig()
+		up := &fakeUpstream{err: fmt.Errorf("upstream rejected %s", key)}
+		wantStatus := 502
+		if blockedHost {
+			cfg.Upstream = "https://" + key + ".example.com"
+			cfg.AllowHosts = map[string]struct{}{"api.anthropic.com": {}}
+			wantStatus = 403
+		}
+		status, _, body := Handle(cfg, "POST", "/v1/messages", authHeader(), nil, up)
+		if status != wantStatus || strings.Contains(string(body), "lwk_") || !strings.Contains(string(body), "[REDACTED:lightwork_api_key]") {
+			t.Fatalf("blockedHost=%v: status=%d body=%q", blockedHost, status, body)
+		}
+	}
+}
+
 func TestServeHTTPEndToEnd(t *testing.T) {
 	up := &fakeUpstream{status: 201, respHeaders: map[string]string{"Content-Type": "application/json"}, respBody: []byte(`{"id":1}`)}
 	srv := &Server{Config: authedConfig(), Upstream: BufferedAdapter{Upstream: up}}
@@ -179,8 +197,6 @@ func TestServeHTTPEndToEnd(t *testing.T) {
 	}
 }
 
-// TestConcurrentForwards checks overlapping request ownership: 50 controlled
-// upstream calls delayed 20ms must finish well below the serialized 1s.
 func TestResponseHeadersStripClientCredentialsAndConnectionNominations(t *testing.T) {
 	got := StripResponseHeaders(map[string]string{
 		"Connection": "X-Private", "X-Private": "fixture-secret",
@@ -192,6 +208,8 @@ func TestResponseHeadersStripClientCredentialsAndConnectionNominations(t *testin
 	}
 }
 
+// TestConcurrentForwards checks overlapping request ownership: 50 controlled
+// upstream calls delayed 20ms must finish well below the serialized 1s.
 func TestConcurrentForwards(t *testing.T) {
 	up := &fakeUpstream{status: 200, respBody: []byte("ok"), delay: 20 * time.Millisecond}
 	srv := &Server{Config: authedConfig(), Upstream: BufferedAdapter{Upstream: up}}
