@@ -14,11 +14,9 @@ pub mod secret;
 
 /// Compile a detector pattern with a generous delegate size limit.
 ///
-/// The `private_key_pem` pattern's `{0,8192}` bounds expand past the `regex`
-/// crate's default NFA size limit; Python's backtracking `re` has no such
-/// pre-build cost, so we raise the limit (fancy-regex delegates non-fancy
-/// patterns to `regex`) rather than weaken the ReDoS-guarding bounds and lose
-/// byte-for-byte parity. Applied uniformly so every pattern compiles the same way.
+/// Lookaround-free patterns delegate to `regex`. The PEM detector keeps its
+/// `{0,65536}` repeats in the backtracking VM to avoid a large expanded NFA;
+/// the limit here bounds construction of the remaining delegated patterns.
 // `fancy_regex::Error` is a large enum, but this is called once per pattern at
 // startup behind `.expect`, so the size is irrelevant.
 #[allow(clippy::result_large_err)]
