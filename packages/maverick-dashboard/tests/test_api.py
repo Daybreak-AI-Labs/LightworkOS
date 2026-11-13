@@ -785,7 +785,6 @@ class TestMetrics:
                 return {f"user:{i}": float(i) for i in range(150)}
 
         monkeypatch.setattr(quotas, "UsageLedger", _Usage)
-        monkeypatch.setattr(dash_app, "goal_owner_filter", lambda _request: None)
 
         text = client.get("/metrics").text
         series = [

@@ -33,7 +33,7 @@ class _World(Protocol):
 
 WorldProvider = Callable[[], _World]
 ProviderKeyCheck = Callable[[], bool]
-OwnerFilter = Callable[[Request], str | None]
+UserSpendAllowed = Callable[[Request], bool]
 
 
 def readiness_deep_checks() -> tuple[bool, dict[str, str]]:
@@ -208,9 +208,13 @@ async def metrics_response(
     request: Request,
     *,
     world_provider: WorldProvider,
-    owner_filter: OwnerFilter,
+    user_spend_allowed: UserSpendAllowed,
 ) -> PlainTextResponse:
-    """Render bounded Prometheus text for the configured runtime backend."""
+    """Render bounded Prometheus text for the configured runtime backend.
+
+    ``user_spend_allowed`` decides whether this scrape may carry the
+    per-principal spend series, which names every account that spent today.
+    """
     from maverick.runner import MAX_CONCURRENT_GOALS, inflight_goals
 
     try:
@@ -271,7 +275,7 @@ async def metrics_response(
         lines.append(f'maverick_queue_jobs{{status="{status}"}} {count}')
 
     user_spend: dict[str, float] = {}
-    if owner_filter(request) is None:
+    if user_spend_allowed(request):
         try:
             from maverick.quotas import UsageLedger
 

@@ -106,6 +106,7 @@ jobs:
         run: >-
           npx playwright test connection_task_return.spec.js
           customer_setup_recovery.spec.js vendor_setup_readiness.spec.js
+          sandbox_file_work_recovery.spec.js
       - name: Preserve setup recovery evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
