@@ -12,9 +12,10 @@ maverick-verify-audit path/to/2026-06-18.ndjson
 Exit `0` and `OK: N rows verified` if the chain is intact; non-zero plus a
 human-readable report of the **first** break otherwise.
 
-It is a **byte-exact port** of `maverick.audit.signing.verify_chain` (the Python
-source of truth): same canonical JSON, same SHA-256 hashing, same Ed25519
-verification, same chain linkage, and the same `ChainBreak` reason vocabulary.
+It follows the signed-log format of `maverick.audit.signing.verify_chain`
+(the Python source of truth): canonical JSON, SHA-256 hashing, Ed25519
+verification, chain linkage, and the `ChainBreak` reason vocabulary. The scope
+notes below describe differences in key sources and sealed-segment handling.
 
 ## What it checks (per non-blank NDJSON row)
 
@@ -27,10 +28,11 @@ verification, same chain linkage, and the same `ChainBreak` reason vocabulary.
    (not its hex text), under the public key for the row's `key_id` — else
    `bad_signature`; an unknown key is `no_pubkey`.
 
-An entirely-**unsigned** log (no `hash`/`sig`/`key_id` on any row — the
-signing-disabled default) is reported `UNVERIFIABLE` and exits **1**, exactly as
+An entirely-**unsigned** log (no truthy `hash`/`sig`/`key_id` on any row,
+without a pinned key or remaining `prev_hash` chain context) is reported `UNVERIFIABLE` and exits **1**, exactly as
 the `maverick audit verify` CLI does: a log with no chain cannot be *proven*
-intact, so automation must not pass it as clean.
+intact, so automation must not pass it as clean. Signing defaults on; unsigned
+rows can come from an older log or an explicitly disabled signing setting.
 
 Reasons mirrored from Python: `malformed`, `unsigned`, `chain_mismatch`,
 `bad_hash`, `bad_signature`, `no_pubkey`, plus file-level `missing_file` and
@@ -40,7 +42,10 @@ Reasons mirrored from Python: `malformed`, `unsigned`, `chain_mismatch`,
 
 Matches the Python on-disk layout: each row carries a 16-hex `key_id`
 (`sha256(pubkey)[:16]`), and the raw 32-byte Ed25519 public key lives at
-`<keys_dir>/<key_id>.pub`.
+`<keys_dir>/<key_id>.pub`. Local trust requires a 32-byte private `.key` whose
+derived public key matches the `.pub`, and the public-key fingerprint must
+match `key_id`. An invalid or unprovisioned `.pub` invalidates the local registry;
+a historical `.pub` plus `.injected` marker without a private key is ignored.
 
 - `--keys-dir <DIR>` — directory of `<key_id>.pub` files. Default:
   `~/.maverick/audit/keys` (honoring `MAVERICK_HOME`), the Python legacy default.
@@ -48,7 +53,8 @@ Matches the Python on-disk layout: each row carries a 16-hex `key_id`
   ignoring `key_id` lookups. **Use this for true third-party tamper-evidence:**
   hand the auditor the externally-held pubkey out of band so the verdict does not
   depend on any key file sitting next to the log. (Mirrors Python's
-  `verify_chain(pubkey_hex=...)`.)
+  `verify_chain(pubkey_hex=...)`.) Invalid hex or key length is a file-level
+  `no_pubkey` error, including for an empty log.
 - `--all` — list every break, not just the first.
 
 > Without `--pubkey`, the binary prints a warning that it is trusting local key
@@ -56,6 +62,10 @@ Matches the Python on-disk layout: each row carries a 16-hex `key_id`
 
 ## Scope notes
 
+- **Key sources.** The binary supports local disk keypairs or one explicit
+  `--pubkey`. It does not load Python's configured operator pins, injected
+  private keys, or KMS keys, nor apply Python's filesystem custody checks.
+  Use the external public key explicitly when verifying those deployments.
 - **Per-file chain only.** Like Python's `verify_chain`, this verifies one
   day-file's internal chain. The cross-file *anchor* tip-ledger
   (`anchors.ndjson`, which catches a wholly deleted/truncated day-file) is
@@ -64,7 +74,7 @@ Matches the Python on-disk layout: each row carries a 16-hex `key_id`
   the cross-file tip/row-count reconciliation. (A future `--anchors <dir>` flag
   could add it.)
 - **At-rest sealed segments.** A confidential day-file sealed with AES-256-GCM
-  (header `MVKAR1`/`MVKAR2`/`MVKTEN1`) is reported `unreadable_segment` with a
+  (header `MVKAR1`/`MVKAR2`/`MVKTEN1`/`MVKASF1`) is reported `unreadable_segment` with a
   hint, rather than mis-read as plaintext — the seal key is host-local and not
   portable, so an external auditor verifies the (unsealed) plaintext NDJSON.
 

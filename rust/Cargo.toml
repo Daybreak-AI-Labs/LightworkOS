@@ -14,7 +14,7 @@
 # Second crate (`maverick-verify-audit`): a standalone, dependency-light binary
 # that independently verifies the Ed25519 hash-chained audit log — the SAME
 # chain `maverick audit verify` checks — so an external auditor can prove a log
-# is intact with one binary and NO Python. It is a byte-exact port of
+# is intact with one binary and NO Python. It follows the signed-log format of
 # maverick.audit.signing.verify_chain (canonical JSON + SHA-256 + Ed25519).
 [workspace]
 resolver = "2"

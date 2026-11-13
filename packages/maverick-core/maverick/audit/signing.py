@@ -1082,9 +1082,9 @@ def verify_chain(  # noqa: C901 - linear forensic checks stay auditable together
                         "missing hash/sig/key_id (possible stripped signature fields)",
                     ))
                 else:
-                    # Written with signing disabled (the opt-in default). Not
-                    # the same vocabulary as tampering: a verifier in a default
-                    # deployment must be able to say "signing was never on".
+                    # Written without signature fields, for example when signing
+                    # was explicitly disabled. Signing defaults on; an old
+                    # unsigned row does not establish the current setting.
                     breaks.append(ChainBreak(
                         n, "unsigned",
                         "row has no hash/sig/key_id (audit signing disabled)",

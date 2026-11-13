@@ -1,7 +1,7 @@
 //! Independent verifier for Lightwork's Ed25519 hash-chained NDJSON audit log.
 //!
-//! This is a byte-exact port of `maverick.audit.signing.verify_chain` (the
-//! Python source of truth). For every non-blank line of a day-file it confirms:
+//! This follows the signed-log format of `maverick.audit.signing.verify_chain`
+//! (the Python source of truth). For every non-blank line of a day-file it confirms:
 //!   1. the row parses as JSON (else `malformed`),
 //!   2. `prev_hash` equals the previous row's `hash` (else `chain_mismatch`;
 //!      genesis `prev_hash` is the empty string),
@@ -23,7 +23,7 @@
 
 pub mod canonical;
 
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -71,25 +71,50 @@ fn load_verifying_key(bytes: &[u8]) -> Option<VerifyingKey> {
     VerifyingKey::from_bytes(&arr).ok()
 }
 
+fn pinned_key(keys: &KeySource) -> Result<Option<Option<VerifyingKey>>, ChainBreak> {
+    let KeySource::Pinned(value) = keys else {
+        return Ok(None);
+    };
+    // Like bytes.fromhex, allow ASCII whitespace between hex byte pairs.
+    let bytes = value
+        .split(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c'))
+        .map(hex::decode)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .map(|chunks| chunks.concat());
+    let raw = bytes
+        .filter(|raw| raw.len() == 32)
+        .ok_or_else(|| ChainBreak::new(0, "no_pubkey", "explicit public key is invalid"))?;
+    // Python accepts every 32-byte encoding at setup. An invalid curve point
+    // cannot verify a signature, but is not a malformed explicit-key argument.
+    Ok(Some(load_verifying_key(&raw)))
+}
+
+fn is_truthy(value: Option<&serde_json::Value>) -> bool {
+    use serde_json::Value;
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(v)) => *v,
+        Some(Value::Number(v)) => v.as_f64().map(|n| n != 0.0).unwrap_or(true),
+        Some(Value::String(v)) => !v.is_empty(),
+        Some(Value::Array(v)) => !v.is_empty(),
+        Some(Value::Object(v)) => !v.is_empty(),
+    }
+}
+
 /// Verify the chain in `text` (already-decoded NDJSON). Returns the breaks in
 /// the order found; an empty vec means the chain is intact.
 ///
-/// This is the parity surface: feed it the same bytes Python's `verify_chain`
-/// reads and it returns the same verdict.
+/// Parity tests compare this verdict with Python's `verify_chain` on plaintext
+/// logs. Local key mode validates disk keypairs; externally held keys are pinned.
 pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
     let mut breaks: Vec<ChainBreak> = Vec::new();
     let mut prev = String::new();
-    let mut pubkey_cache: HashMap<String, Option<VerifyingKey>> = HashMap::new();
-
-    // Resolve the pinned key once (its hex may itself be malformed).
-    let pinned: Option<Option<VerifyingKey>> = match keys {
-        KeySource::Pinned(hex) => Some(
-            hex::decode(hex.trim())
-                .ok()
-                .and_then(|b| load_verifying_key(&b)),
-        ),
-        KeySource::KeysDir(_) => None,
+    let pinned = match pinned_key(keys) {
+        Ok(key) => key,
+        Err(error) => return vec![error],
     };
+    let mut registry: Option<HashMap<String, VerifyingKey>> = None;
 
     for (idx, line) in text.lines().enumerate() {
         let n = idx + 1;
@@ -119,15 +144,13 @@ pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
         let row_prev = obj.get("prev_hash").and_then(|v| v.as_str()).unwrap_or("");
         let key_id = obj.get("key_id").and_then(|v| v.as_str()).unwrap_or("");
 
-        // Distinguish "honestly unsigned deployment" from tampering, exactly as
-        // Python does: NONE of hash/sig/key_id present.
-        let has_hash = obj.contains_key("hash");
-        let has_sig = obj.contains_key("sig");
-        let has_key_id = obj.contains_key("key_id");
+        // Python checks truthiness, so null/empty signing fields are unsigned
+        // unless a pinned key or remaining chain context implies stripping.
+        let has_hash = is_truthy(obj.get("hash"));
+        let has_sig = is_truthy(obj.get("sig"));
+        let has_key_id = is_truthy(obj.get("key_id"));
         if !has_hash && !has_sig && !has_key_id {
-            // Python keys this off truthiness of row_hash/sig/key_id; for the
-            // all-absent case `contains_key` and truthiness agree.
-            if matches!(keys, KeySource::Pinned(_)) || !row_prev.is_empty() {
+            if pinned.is_some() || is_truthy(obj.get("prev_hash")) {
                 breaks.push(ChainBreak::new(
                     n,
                     "malformed",
@@ -146,8 +169,20 @@ pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
         // Some-but-not-all signing fields present (or present-but-empty): the
         // vocabulary of real tampering. Python tests truthiness here, so an
         // empty-string hash/sig/key_id counts as missing.
-        if row_hash.is_empty() || sig.is_empty() || key_id.is_empty() {
+        if !has_hash || !has_sig || !has_key_id {
             breaks.push(ChainBreak::new(n, "malformed", "missing hash/sig/key_id"));
+            continue;
+        }
+        if ["hash", "sig", "key_id"]
+            .iter()
+            .any(|name| !obj[*name].is_string())
+            || obj.get("prev_hash").is_some_and(|v| !v.is_string())
+        {
+            breaks.push(ChainBreak::new(
+                n,
+                "malformed",
+                "hash/sig/prev_hash/key_id must be strings",
+            ));
             continue;
         }
 
@@ -175,23 +210,23 @@ pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
         }
 
         // Locate the verifying key.
-        let pub_opt: Option<VerifyingKey> = match &pinned {
-            Some(p) => *p,
+        let pub_opt: Option<VerifyingKey> = match pinned {
+            Some(p) => p,
             None => {
-                if let Some(cached) = pubkey_cache.get(key_id) {
-                    *cached
-                } else {
-                    let loaded = match keys {
-                        KeySource::KeysDir(dir) => load_key_from_dir(dir, key_id),
+                if registry.is_none() {
+                    registry = match keys {
+                        KeySource::KeysDir(dir) => load_keys_from_dir(dir),
                         KeySource::Pinned(_) => unreachable!(),
                     };
-                    pubkey_cache.insert(key_id.to_string(), loaded);
-                    loaded
                 }
+                registry.as_ref().and_then(|keys| keys.get(key_id)).copied()
             }
         };
 
         match pub_opt {
+            None if pinned.is_some() => {
+                breaks.push(ChainBreak::new(n, "bad_signature", "Ed25519 verify failed"));
+            }
             None => {
                 breaks.push(ChainBreak::new(
                     n,
@@ -240,28 +275,43 @@ pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
     breaks
 }
 
-fn load_key_from_dir(dir: &Path, key_id: &str) -> Option<VerifyingKey> {
-    if !is_valid_key_id(key_id) {
-        return None;
+fn load_keys_from_dir(dir: &Path) -> Option<HashMap<String, VerifyingKey>> {
+    let mut registry = HashMap::new();
+    if !dir.exists() {
+        return Some(registry);
     }
-    let pub_path = dir.join(format!("{key_id}.pub"));
-    if !pub_path.exists() {
-        return None;
+    // Validate the whole registry before trusting any row, as Python does.
+    // A stray or malformed public key invalidates every local lookup.
+    for entry in std::fs::read_dir(dir).ok()? {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        if !name.as_encoded_bytes().ends_with(b".pub") {
+            continue;
+        }
+        let key_id = name.to_str()?.strip_suffix(".pub")?;
+        if !is_valid_key_id(key_id) {
+            return None;
+        }
+        let private_path = dir.join(format!("{key_id}.key"));
+        if !private_path.exists() {
+            if dir.join(format!("{key_id}.injected")).exists() {
+                // Historical injected markers are not independent trust roots.
+                continue;
+            }
+            return None;
+        }
+        let public = std::fs::read(entry.path()).ok()?;
+        let private: [u8; 32] = std::fs::read(private_path).ok()?.try_into().ok()?;
+        if public.len() != 32 || &hex::encode(Sha256::digest(&public))[..16] != key_id {
+            return None;
+        }
+        let derived = SigningKey::from_bytes(&private).verifying_key();
+        if derived.as_bytes().as_slice() != public {
+            return None;
+        }
+        registry.insert(key_id.to_string(), derived);
     }
-    // Mirror Python's _load_pubkey: trust a local <id>.pub ONLY when its private
-    // <id>.key sibling exists (this host generated the keypair) OR an
-    // <id>.injected marker exists (provisioned out-of-band from a KMS, private
-    // half deliberately absent). Without this, an attacker who can drop a lone
-    // forged <id>.pub into the keys dir could re-sign tampered rows and have
-    // them verify -- the exact forged-pubkey vector the Python source rejects.
-    // (--pubkey/Pinned mode is the path for true third-party tamper-evidence.)
-    let priv_path = dir.join(format!("{key_id}.key"));
-    let injected_path = dir.join(format!("{key_id}.injected"));
-    if !priv_path.exists() && !injected_path.exists() {
-        return None;
-    }
-    let bytes = std::fs::read(pub_path).ok()?;
-    load_verifying_key(&bytes)
+    Some(registry)
 }
 
 fn truncate12(s: &str) -> String {
@@ -276,6 +326,9 @@ fn truncate12(s: &str) -> String {
 /// never a false "intact". Plaintext NDJSON — the format an auditor is handed —
 /// verifies fully.
 pub fn verify_file(path: &Path, keys: &KeySource) -> Vec<ChainBreak> {
+    if let Err(error) = pinned_key(keys) {
+        return vec![error];
+    }
     if !path.exists() {
         return vec![ChainBreak::new(
             0,
@@ -320,12 +373,19 @@ pub fn verify_file(path: &Path, keys: &KeySource) -> Vec<ChainBreak> {
 /// Detect the at-rest seal magic headers (mirrors `crypto_at_rest.is_sealed`),
 /// so a sealed file fails closed instead of being mistaken for plaintext.
 fn is_sealed(blob: &[u8]) -> bool {
-    blob.starts_with(b"MVKAR1\n") || blob.starts_with(b"MVKAR2\n") || blob.starts_with(b"MVKTEN1\n")
+    blob.starts_with(b"MVKAR1\n")
+        || blob.starts_with(b"MVKAR2\n")
+        || blob.starts_with(b"MVKTEN1\n")
+        || blob.starts_with(b"MVKASF1\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn load_key_from_dir(dir: &Path, key_id: &str) -> Option<VerifyingKey> {
+        load_keys_from_dir(dir)?.get(key_id).copied()
+    }
 
     #[test]
     fn valid_key_id_guard() {
@@ -338,7 +398,7 @@ mod tests {
 
     #[test]
     fn unsigned_log_reports_unsigned() {
-        let text = "{\"event\": \"x\"}\n{\"event\": \"y\"}\n";
+        let text = "{\"event\": \"x\"}\n{\"hash\": \"\", \"sig\": null, \"key_id\": \"\"}\n";
         let breaks = verify_chain_text(text, &KeySource::KeysDir(PathBuf::from("/nonexistent")));
         assert_eq!(breaks.len(), 2);
         assert!(breaks.iter().all(|b| b.reason == "unsigned"));
@@ -367,25 +427,58 @@ mod tests {
         // A forged <id>.pub with no sibling .key and no .injected marker must
         // NOT be trusted (mirrors Python _load_pubkey's anti-forgery check).
         let dir = tempfile::tempdir().unwrap();
-        let key_id = "0123456789abcdef";
-        std::fs::write(dir.path().join(format!("{key_id}.pub")), [0u8; 32]).unwrap();
-        assert!(load_key_from_dir(dir.path(), key_id).is_none());
+        let private = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let public = private.verifying_key();
+        let key_id = hex::encode(Sha256::digest(public.as_bytes()))[..16].to_string();
+        std::fs::write(dir.path().join(format!("{key_id}.pub")), public.as_bytes()).unwrap();
+        assert!(load_key_from_dir(dir.path(), &key_id).is_none());
 
-        // With a sibling .key present, the .pub becomes trustworthy (a valid
-        // 32-byte Ed25519 point loads; the all-zero point is itself valid).
-        std::fs::write(dir.path().join(format!("{key_id}.key")), [0u8; 32]).unwrap();
-        assert!(load_key_from_dir(dir.path(), key_id).is_some());
+        // Only the matching private key can establish a local keypair.
+        for bytes in [vec![], vec![0u8; 31], vec![0u8; 32]] {
+            std::fs::write(dir.path().join(format!("{key_id}.key")), bytes).unwrap();
+            assert!(load_key_from_dir(dir.path(), &key_id).is_none());
+        }
+        std::fs::write(dir.path().join(format!("{key_id}.key")), private.to_bytes()).unwrap();
+        assert_eq!(load_key_from_dir(dir.path(), &key_id), Some(public));
+
+        // One unprovisioned public key invalidates the whole local registry.
+        let stray = dir.path().join("0123456789abcdef.pub");
+        std::fs::write(&stray, public.as_bytes()).unwrap();
+        assert!(load_key_from_dir(dir.path(), &key_id).is_none());
+        std::fs::write(dir.path().join("0123456789abcdef.injected"), b"").unwrap();
+        assert_eq!(load_key_from_dir(dir.path(), &key_id), Some(public));
+
+        // A matching pair under the wrong fingerprint also invalidates it.
+        std::fs::write(dir.path().join("0123456789abcdef.key"), private.to_bytes()).unwrap();
+        assert!(load_key_from_dir(dir.path(), &key_id).is_none());
     }
 
     #[test]
-    fn injected_marker_makes_pubkey_trusted() {
+    fn injected_marker_does_not_make_pubkey_trusted() {
         // An out-of-band (KMS-provisioned) key has only <id>.pub + <id>.injected
-        // (no private half on disk); that combination must be trusted.
+        // (no private half on disk); a writable marker is not a trust root.
         let dir = tempfile::tempdir().unwrap();
         let key_id = "fedcba9876543210";
         std::fs::write(dir.path().join(format!("{key_id}.pub")), [0u8; 32]).unwrap();
         assert!(load_key_from_dir(dir.path(), key_id).is_none());
         std::fs::write(dir.path().join(format!("{key_id}.injected")), b"").unwrap();
-        assert!(load_key_from_dir(dir.path(), key_id).is_some());
+        assert!(load_key_from_dir(dir.path(), key_id).is_none());
+    }
+
+    #[test]
+    fn invalid_pinned_key_is_a_setup_error_even_for_empty_logs() {
+        for key in ["".to_string(), "zz".repeat(32), "00".repeat(31)] {
+            for text in ["", "{\"event\": \"x\"}\n"] {
+                assert_eq!(
+                    verify_chain_text(text, &KeySource::Pinned(key.clone())),
+                    vec![ChainBreak::new(
+                        0,
+                        "no_pubkey",
+                        "explicit public key is invalid"
+                    )]
+                );
+            }
+        }
+        assert!(verify_chain_text("", &KeySource::Pinned("02".repeat(32))).is_empty());
     }
 }

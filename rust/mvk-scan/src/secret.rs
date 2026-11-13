@@ -1,11 +1,11 @@
 //! Native port of `maverick.safety.secret_detector.scan`.
 //!
-//! Faithful, order-for-order reproduction of the Python pass: the SAME patterns
-//! in the SAME order, the SAME "redact the `val` sub-group when present, else the
-//! whole match" rule, and the SAME global exact-span de-duplication. We return
-//! only `(name, codepoint_start, codepoint_end)`; the Python shim rebuilds the
-//! `SecretMatch` (incl. its preview) and does the string splicing, so behaviour
-//! can never drift from the pure-Python redactor. Patterns are compiled once.
+//! Reproduces the Python matching rules and emission order, including the
+//! "redact the `val` sub-group when present, else the whole match" rule and
+//! global exact-span de-duplication. We return
+//! only `(name, codepoint_start, codepoint_end)` for direct native callers.
+//! Python detection and redaction use the pure-Python implementation; parity
+//! tests compare its spans with this engine. Patterns are compiled once.
 //!
 //! Lookaround-free patterns compile to the linear regex backend. Capability
 //! token boundaries are checked against the original input outside the engine.
@@ -27,7 +27,7 @@ struct Pattern {
 
 // (name, pattern, has_val_group). Order is load-bearing: `scan` emits matches in
 // pattern order and the global span de-dup keeps the FIRST pattern to claim a
-// span, so this MUST mirror `_PATTERNS` in secret_detector.py exactly.
+// span, so matching rules and order must mirror `_PATTERNS` in secret_detector.py.
 static DEFS: &[(&str, &str, bool)] = &[
     ("anthropic_api_key", r"\bsk-ant-[a-zA-Z0-9_-]{20,}\b", false),
     (
@@ -78,9 +78,12 @@ static DEFS: &[(&str, &str, bool)] = &[
         false,
     ),
     // DOTALL via (?s); bounded body is the ReDoS guard, same as Python.
+    // The final (?!\A) is always true after the nonempty header. It keeps the
+    // bounded repeats in fancy-regex's VM instead of expanding a large NFA.
+    // A trailing positive lookahead would be optimized back into the NFA.
     (
         "private_key_pem",
-        r"(?s)-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----(?:.{0,8192}?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----|[A-Za-z0-9+/=\s]{0,8192})",
+        r"(?s)\G-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----(?:.{0,65536}?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----|[A-Za-z0-9+/=\s]{0,65536})(?!\A)",
         false,
     ),
     ("gitlab_pat", r"\bglpat-[A-Za-z0-9_-]{20,}\b", false),
@@ -128,6 +131,29 @@ pub fn scan_spans(text: &str) -> Result<Vec<(String, usize, usize)>, String> {
     let mut byte_spans: Vec<(&'static str, usize, usize)> = Vec::new();
     let mut seen: HashSet<(usize, usize)> = HashSet::new();
     for pat in PATTERNS.iter() {
+        if pat.name == "private_key_pem" {
+            // Search for the literal header outside the VM so long clean input
+            // cannot exhaust its backtrack limit. \G anchors each attempt here.
+            let mut offset = 0;
+            while let Some(relative) = text[offset..].find("-----BEGIN ") {
+                let start = offset + relative;
+                match pat
+                    .re
+                    .find_from_pos(text, start)
+                    .map_err(|e| e.to_string())?
+                {
+                    Some(m) => {
+                        let span = (m.start(), m.end());
+                        if seen.insert(span) {
+                            byte_spans.push((pat.name, span.0, span.1));
+                        }
+                        offset = m.end();
+                    }
+                    None => offset = start + 1,
+                }
+            }
+            continue;
+        }
         if matches!(
             pat.name,
             "lightwork_agent_token" | "lightwork_flow_approval_token"
@@ -227,5 +253,18 @@ mod tests {
     #[test]
     fn empty_is_empty() {
         assert!(scan_spans("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn long_private_key_body_is_fully_detected() {
+        let header = "-----BEGIN PRIVATE KEY-----";
+        for length in [13_000, 65_536] {
+            let body = "A".repeat(length);
+            for suffix in ["-----END PRIVATE KEY-----", ""] {
+                let text = format!("{header}{body}{suffix}");
+                let spans = scan_spans(&text).unwrap();
+                assert!(spans.contains(&("private_key_pem".to_string(), 0, text.len())));
+            }
+        }
     }
 }
