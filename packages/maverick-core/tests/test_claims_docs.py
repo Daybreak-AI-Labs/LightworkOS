@@ -82,7 +82,7 @@ def test_firecracker_is_described_as_a_scaffold_not_a_deploy_target():
     # The backend option list and the MAVERICK_FIRECRACKER_STRICT row name
     # Firecracker as an accepted value, not as a shipped target.
     accepted_values = {
-        "docs/configuration.md": "local | docker | ssh | podman | devcontainer | firecracker | kubernetes",
+        "docs/configuration.md": "local | docker | ssh | podman | gvisor | devcontainer | firecracker | kubernetes | modal",
         "docs/env-vars.md": "`MAVERICK_FIRECRACKER_STRICT`",
     }
     for relpath, needle in checked.items():

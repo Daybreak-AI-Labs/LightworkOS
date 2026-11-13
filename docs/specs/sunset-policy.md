@@ -2,7 +2,7 @@
 
 How safety-relevant features, versions, and data formats retire — the policy
 behind the mechanical pieces that already ship (the deprecation registry +
-sunset CI gate, the LTS backport SLA tooling, the retention engine).
+sunset CI gate, optional backport tooling, and the retention engine).
 
 ## Rules
 
@@ -13,9 +13,11 @@ sunset CI gate, the LTS backport SLA tooling, the retention engine).
    recorded decision (docs/specs/) — never a quiet deletion.
 2. **Windows.** Safety-surface deprecations get a minimum of TWO minor
    releases (vs one for ordinary API deprecations) before `remove_in`.
-3. **LTS interaction.** A safety control may not be removed from an `lts/<v>`
-   branch during its 2-year window, even if removed on `main`
-   (docs/security-backports.md governs the flow of fixes, not removals).
+3. **Supported branches.** There are currently no LTS or release branches;
+   fixes land on `main`, as described in [security backports](../security-backports.md).
+   Establish an explicit support and safety-control retention policy before
+   introducing a maintained release branch; the backport tooling alone does
+   not create a support window.
 4. **Data formats.** A retiring on-disk safety format (audit chain, consent
    ledger, revocation list) ships a migration (`maverick migrate`-style) one
    release before removal; readers stay for the full window.

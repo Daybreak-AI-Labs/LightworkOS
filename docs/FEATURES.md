@@ -1022,7 +1022,8 @@ Settings and the installation wizard.
   print-friendly `/security/report`, `[security_ops] enable`) — a governed
   control-program data plane on the shared department chassis. Security
   questionnaires cover SOC 2, ISO/IEC 27001:2022, NIST CSF 2.0, NIST SP
-  800-53 Rev. 5, CIS Controls v8, PCI DSS 4.0, the HIPAA Security Rule,
+  800-53 Rev. 5, CIS Controls v8.1 (pinned assessment specification snapshot),
+  PCI DSS 4.0, the HIPAA Security Rule,
   CMMC 2.0 Level 2, and FedRAMP Rev. 5 Class C readiness (the 2026
   transition mapping for legacy Moderate authorizations) using the existing
   yes/no/na/unknown and inherent→residual scoring contract. Pinned granular
@@ -1489,10 +1490,10 @@ Settings and the installation wizard.
 - **Breach-notification planner** (`breach_notification.py`, opt-in
   `[breach_notification] enable`, `maverick breach`,
   `POST /api/v1/breach/plan`,
-  `GET /api/v1/privacy/incidents/{id}/notification-plan`) — fourteen
+  `GET /api/v1/privacy/incidents/{id}/notification-plan`) — fifteen
   regimes' verified who/when/whether rules (GDPR/UK 72h; HIPAA 60d with
   the 500 split; CA/TX/CO/FL/NY state clocks; LGPD 3 business days per
-  ANPD Res. 15/2024; PIPEDA RROSH; Australia NDB 30-day assessment;
+  ANPD Res. 15/2024; PIPEDA RROSH; Quebec Law 25; Australia NDB 30-day assessment;
   Singapore 3-day post-determination; Japan two-stage 30/60d; Korea 72h)
   turned into per-incident obligations with computed due timestamps,
   threshold notes, and citations. Weekend-aware business-day math
@@ -1614,7 +1615,7 @@ Settings and the installation wizard.
   owner/department reporting. Live billing credentials were not exercised;
   model-level OpenAI cost allocation is not invented from the Costs contract.
 - **Bounded provider-contract acceptance harness**
-  (`provider_contract_acceptance.py`,
+  (`packages/maverick-dashboard/maverick_dashboard/provider_contract_acceptance.py`,
   `scripts/acceptance/run_ai_provider_contracts.py`) — a closed-schema,
   consent-gated runner for one Hugging Face namespace, one Entra tenant, one
   deterministic ServiceNow finding write plus exact replay, and one bounded
@@ -3074,7 +3075,7 @@ decided through the dashboard's own `approval_decisions` path with `channel =
 teams` in the audit, cards updated in place; Teams accounts are linked to
 Lightwork users on the Channels page or by a one-time `link <code>` in chat —
 see [docs/channels/teams.md](channels/teams.md)),
-Signal, Email, Matrix, Bluesky, Mastodon, Voice (Twilio), WhatsApp (Twilio),
+Signal, Email, Matrix, Mattermost, Bluesky, Mastodon, Voice (Twilio), WhatsApp (Twilio),
 **WhatsApp Cloud API** (`whatsapp_cloud.py`: Meta's first-party Graph API —
 GET verification handshake, constant-time `X-Hub-Signature-256` HMAC,
 sender allowlist, atomic message-id dedup claim, chunked outbound; no Twilio
@@ -3103,7 +3104,7 @@ elsewhere the reply says a rendered copy cannot be attached, and plain
 messages pass through byte-identical. **Channel SDK v2** (`base.py`): handlers may return a structured `Reply` (text + attachments +
 thread_ref) instead of bare `str` — `as_reply` is the v1 shim (bare `str`
 accepted through the deprecation window), `Channel.dispatch`/`dispatch_text`
-normalize either contract, and all 19 in-tree adapters route through the
+normalize either contract, and all 18 wired adapters route through the
 dispatch path so a v2 handler works everywhere unchanged.
 
 ## Sandboxes
@@ -4467,7 +4468,7 @@ and a `maverick_llm_cache_tokens_total` hit-rate metric.
   person) through `notifications.notify`, so every configured backend — and
   any backend added later — carries them. Each (record, state, deadline)
   alerts once, recorded in the `deadline_alerts` ledger table (world-model
-  migration v42) so restarts never re-send; the record pages show an "Alerts"
+  migration v47) so restarts never re-send; the record pages show an "Alerts"
   section and `GET /api/v1/deadline-alerts` lists them. Routing prefers the
   record's assignee, else the workspace owner named in `[deadline_alerts]
   owner`. Run by `maverick_dashboard.deadline_alerts_scheduler` (a wizard step,
@@ -4479,8 +4480,8 @@ and a `maverick_llm_cache_tokens_total` hit-rate metric.
   `/api/v1/webhooks/deliveries`) with "Send test event" and "Retry now"; the
   `[webhooks] outbound` list keeps working as a legacy default subscription.
   Every delivery is logged (attempts, status, latency, response snippet, next
-  retry) and retried five times over about an hour with jitter before it is
-  parked as dead. Record events (`dsar.*`, `incident.*`, `assessment.*`,
+  retry), with five attempts total (the initial attempt plus four retries) over
+  about an hour with jitter before it is parked as dead. Record events (`dsar.*`, `incident.*`, `assessment.*`,
   `vendor.*`, `approval.*`, `policy.published`; `maverick.webhook_events`)
   share one envelope (event id, type, occurred_at, workspace, record summary,
   link) documented in `docs/webhooks.md`; the HMAC signature scheme is

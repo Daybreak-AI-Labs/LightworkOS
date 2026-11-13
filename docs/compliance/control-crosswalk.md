@@ -91,7 +91,7 @@ Annex A (AI controls A.2–A.10).
 | --- | --- | --- | --- | --- | --- | --- |
 | Boundary protection / threat detection | CC6.6 | A.8.16, A.8.23 | A.9.x | Agent Shield (prompt-injection/exfil/jailbreak); host-scope capabilities; SSRF guards | Implemented | `packages/maverick-shield/`; `maverick/capability.py` |
 | Secure development lifecycle | CC8.1 | A.8.25–A.8.30 | A.6.2 | Secure coding rules; verifier; threat model | Partial / Process | `maverick/verifier.py`; `docs/security/threat-model.md` |
-| Separation of environments / isolation | CC5.2 | A.8.31 | A.6.2 | 8 sandbox backends; enterprise deny-local; docker hardening | Implemented | `maverick/sandbox/` |
+| Separation of environments / isolation | CC5.2 | A.8.31 | A.6.2 | 9 registered sandbox backends (including local); enterprise deny-local; docker hardening | Implemented | `maverick/sandbox/` |
 | Vulnerability management | CC7.1 | A.8.8 | — | Dependabot; detect-secrets; ruff/vulture CI gates | Partial / Process | `.github/dependabot.yml`; `.github/workflows/ci.yml` |
 | Supply-chain integrity | CC9.2 | A.5.21, A.8.30 | A.10.2 | MCP command hash-pinning; plugin allowlist + hash-pin | Implemented | `maverick/plugin_manifest.py`; `maverick/mcp_oauth.py` |
 

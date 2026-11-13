@@ -27,7 +27,9 @@ enable = true
 ```
 
 Selecting the gateway in `maverick init` also enables the evidence graph and
-Model Risk Officer so the combined assurance cockpit is complete. The gateway's
+Model Risk Officer so the combined assurance cockpit is complete. Choosing
+governance agents or evidence analysis in the wizard also enables
+`[evidence_gateway]`, even without selecting the gateway directly. The gateway's
 runtime gate remains independent: a hand-edited configuration may enable only
 `[evidence_gateway]`; enable the two companion controls when their evidence and
 promotion-governance features are wanted.

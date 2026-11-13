@@ -1,9 +1,7 @@
 # Encryption at rest
 
-Lightwork keeps its state under `~/.maverick`. By default that state is plaintext on
-disk — fine for a personal agent, but a GDPR Art. 32 / HIPAA exposure once the agent
-handles sensitive data. **At-rest encryption** seals the sensitive stores with
-AES-256-GCM.
+Lightwork keeps its state under `~/.maverick`. **At-rest encryption** is on
+by default and seals the sensitive stores below with AES-256-GCM.
 
 ## Enable it
 
@@ -35,10 +33,13 @@ written before it was enabled are returned unchanged until rewritten (run
 |---|---|---|
 | Cross-session memory | `~/.maverick/memory/**` | whole files |
 | Channel conversation turns | world DB | `turns.content` |
-| Persisted facts | world DB | `facts.value` |
+| Persisted facts and history | world DB | `facts.value`, `fact_history.value` |
+| Signoff notes | world DB | `signoffs.note` |
+| Saved artifacts | world DB | `artifacts.content` |
+| Projects | world DB | `projects.name`, `projects.description` |
 | Per-goal agent message log | world DB | `messages.content` |
 | Clarifying questions | world DB | `questions.question`, `questions.answer` |
-| Goal content | world DB | `goals.title`, `goals.description`, `goals.result` |
+| Goal content | world DB | `goals.title`, `goals.description`, `goals.result`, `goals.connection_selection` |
 | Per-agent goal events | world DB | `goal_events.content` |
 | Episode summaries | world DB | `episodes.summary`, `episodes.outcome` |
 | Parked approvals | world DB | `approvals.action`, `approvals.scope`, `approvals.detail` |
@@ -62,11 +63,12 @@ authenticates the whole blob before releasing plaintext; external tools
 (transcription, document extraction) receive a private temporary plaintext copy
 that is removed afterwards.
 
-World-model columns are not context-bound yet: in per-tenant mode a sealed value
-is bound to its tenant, but within one tenant a sealed value copied to another
-row or column still opens. Binding each field to its row needs the row id at
-write time, which the insert paths do not have; treat database write access as
-able to rearrange sealed values within a tenant.
+World-model cells use a `table.column` context binding: copying a bound value
+to a different field fails authentication. `fact_history.value` deliberately
+shares the `facts.value` binding. The binding does not include the row id, so
+copying between rows with the same binding can still open; database write
+access can rearrange such values. Legacy unbound values remain readable until
+resealed.
 
 **Per-tenant keys** (`[encryption] per_tenant`, off by default) give each
 tenant its own data key. A tenant data key is generated and wrapped on the host
@@ -100,6 +102,11 @@ The backup is skipped on `--dry-run` and when there is nothing left to seal (so
 idempotent re-runs don't litter copies).
 
 ## Key management
+
+`maverick encryption rotate` creates a new active deployment key for new writes
+and retains prior keys for existing data. It does not re-encrypt old data or
+rotate per-tenant KMS envelope keys. Keep and back up the old key material
+until the data that needs it has been resealed.
 
 Key resolution (first match wins):
 

@@ -293,7 +293,7 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 
 | Env var | Default | Description |
 | --- | --- | --- |
-| `MAVERICK_CONSENT_MODE` | `auto-approve` | Gating for destructive actions: `auto-approve`, `auto-deny`, `ask`, or `dashboard`. |
+| `MAVERICK_CONSENT_MODE` | `ask` in enterprise mode; otherwise `ask` for high/critical risk under secure defaults, `auto-approve` for low/medium risk | Gating for destructive actions: `auto-approve`, `auto-deny`, `ask`, or `dashboard`. |
 | `MAVERICK_CONSENT_DASHBOARD_TIMEOUT` | `1800` | Seconds to wait for a dashboard approval before treating as denied (overrides `[approval] dashboard_wait_seconds`). |
 | `MAVERICK_APPROVAL_UNDO_GRACE_SECONDS` | `30` | Seconds a decision on the Approvals page can be undone. The agent waits this long before acting on an approval; `0` acts at once and removes Undo. Also `[approval] undo_grace_seconds` (Settings > All settings; this variable wins). |
 | `MAVERICK_APPROVAL_REQUIRE_ACKNOWLEDGEMENT` | `1` | Approving a high or critical risk request needs an explicit confirmation (a ticked box; typing APPROVE for critical). `0` makes those approvals one click. Also `[approval] require_acknowledgement`. |
@@ -349,7 +349,7 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 | Env var | Default | Description |
 | --- | --- | --- |
 | `MAVERICK_PLUGINS_ALLOW` | config `[plugins] enabled` | Comma-separated plugin allowlist; `*` enables all. |
-| `MAVERICK_PLUGINS_ENFORCE` | config `[plugins] enforce_permissions` (off) | Reject plugins whose declared permissions are not granted. This checks declarations at load time; it does not sandbox plugin code or enforce its actual access. |
+| `MAVERICK_PLUGINS_ENFORCE` | config `[plugins] enforce_permissions` (on) | Reject plugins whose declared permissions are not granted. This checks declarations at load time; it does not sandbox plugin code or enforce its actual access. |
 
 ## Channels & integrations
 

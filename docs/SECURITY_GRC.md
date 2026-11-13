@@ -129,7 +129,8 @@ The integrated `maverick.security_ops` data plane and the shared assessment
 engine cover:
 
 - Security questionnaires for SOC 2, ISO/IEC 27001:2022, NIST CSF 2.0,
-  NIST SP 800-53 Rev. 5, CIS Controls v8, PCI DSS 4.0, the HIPAA Security Rule,
+  NIST SP 800-53 Rev. 5, CIS Controls v8.1 (pinned assessment specification snapshot),
+  PCI DSS 4.0, the HIPAA Security Rule,
   CMMC 2.0 Level 2, and FedRAMP Rev. 5 Class C readiness (the 2026
   transition mapping for legacy Moderate authorizations). The pinned granular
   catalogs include 106 CSF subcategories, 287 NIST 800-53 Moderate controls and

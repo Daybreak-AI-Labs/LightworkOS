@@ -55,7 +55,7 @@ check it.
 
 | Field | Rule |
 | --- | --- |
-| `receipt_id` | `tr1_` followed by 16–128 lower-case letters, digits, `.`, `_`, or `-` |
+| `receipt_id` | `tr1_` followed by 16–128 characters: the first must be a lower-case letter or digit; the rest may also contain `.`, `_`, or `-` |
 | `issued_at` | UTC RFC3339 timestamp to whole seconds, e.g. `2026-09-02T00:00:00Z` |
 | `issuer.id` | non-empty string chosen by the issuer |
 | `subject.id` / `subject.type` | non-empty strings naming what the evidence concerns |
@@ -84,7 +84,9 @@ The following additional restrictions are normative:
 - Values may be objects, arrays, strings, booleans, `null`, or integers.
   Floats (including `NaN` and infinity) are invalid.
 - Maximum envelope size is 1 MiB, nesting is 32 levels, and decoded strings
-  total at most 512 KiB.
+  total at most 512 KiB of UTF-8. The JSON tree has at most 20,000 items,
+  counting the root, containers and their values/array elements. Object keys
+  count toward the string-byte limit, not the item count.
 - The file has no leading/trailing whitespace or newline. A semantically
   equivalent but non-canonical serialization is refused.
 

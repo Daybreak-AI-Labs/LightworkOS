@@ -181,7 +181,7 @@ Each of these fails the build (the `lint` job in `.github/workflows/ci.yml`):
 - Do not add a health endpoint under `/api/v1`. `/healthz`, `/livez` and
   `/readyz` already exist on the app and are deliberately auth-exempt
   (load-balancer probes cannot carry a bearer token); their payload is
-  redacted when `MAVERICK_DASHBOARD_TOKEN` is set.
+  always redacted, whether or not `MAVERICK_DASHBOARD_TOKEN` is set.
 - Do not trust the exit code of `cmd | tail`: it is `tail`'s status, and it can
   mask a pytest collection abort. Use `PIPESTATUS` or a log file. The shell's
   working directory also persists between steps, so anchor pytest invocations

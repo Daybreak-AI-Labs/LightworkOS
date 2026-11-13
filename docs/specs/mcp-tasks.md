@@ -41,7 +41,8 @@ The implementation is in `packages/maverick-mcp/maverick_mcp/`:
   (`_structured_override`, `_pending_updates`) and its stdio: the worker only
   mutates its task record and the one push it emits (below). Status →
   `completed`, or `failed` when the `CallToolResult` has `isError`.
-- **Methods** — `tasks/get` (poll), `tasks/result` (blocks until terminal, returns
+- **Methods** — `tasks/get` (poll), `tasks/result` (waits up to the configured
+  result-block timeout for a terminal state, returns
   exactly the `CallToolResult` with `_meta["io.modelcontextprotocol/related-task"]`),
   `tasks/cancel` (best-effort; `-32602` on an already-terminal task), `tasks/list`
   (opaque-cursor pagination).
@@ -53,8 +54,9 @@ The implementation is in `packages/maverick-mcp/maverick_mcp/`:
 - **Store** (`tasks.py`, `TaskStore`) — in-memory registry + a bounded
   `ThreadPoolExecutor`; lazy TTL purge on access; registry size cap; crypto-random
   task ids (no auth context on stdio). Env knobs: `MAVERICK_MCP_TASK_WORKERS`,
-  `MAVERICK_MCP_MAX_TASKS`, `MAVERICK_MCP_TASK_TTL_MS`,
-  `MAVERICK_MCP_TASK_MAX_TTL_MS`, `MAVERICK_MCP_TASK_POLL_MS`.
+  `MAVERICK_MCP_MAX_TASKS`, `MAVERICK_MCP_MAX_TASKS_PER_OWNER`,
+  `MAVERICK_MCP_TASK_TTL_MS`, `MAVERICK_MCP_TASK_MAX_TTL_MS`,
+  `MAVERICK_MCP_TASK_POLL_MS`, `MAVERICK_MCP_TASK_RESULT_BLOCK_MS`.
 
 ## 3. HTTP transport (opt-in)
 
@@ -70,13 +72,15 @@ it with the same state machine:
   methods, used by both transports, that self-gate on `_tasks_enabled`.
   `_error_envelope` maps `TaskError` to its JSON-RPC `(code, message)` so an HTTP
   client sees the same wire codes as stdio.
-- `tasks/result` blocks until terminal, but the HTTP dispatch already runs in a
-  worker thread (`asyncio.to_thread`), so it never wedges the FastAPI event loop.
+- Over HTTP, `tasks/result` waits asynchronously up to the configured
+  result-block timeout, without reserving a dispatch worker or blocking the
+  FastAPI event loop.
 - **No push over HTTP:** `notifications/tasks/status` is stdio-only
   (`_emit_task_status` no-ops when not stdio); HTTP clients poll, which the spec
   requires them to support regardless.
-- **Off by default** because the store is bearer-scoped (see Limits). With the
-  knob off, the server ignores the `task` field and answers synchronously.
+- **Off by default.** HTTP task access is bound to the caller's opaque MCP
+  session. Keep its session id for subsequent task requests. With the knob off,
+  the server ignores the `task` field and answers synchronously.
 
 ## 4. Security / resource notes
 
@@ -84,17 +88,17 @@ it with the same state machine:
   are `secrets.token_hex(16)`. The single-client assumption is why `tasks.list` is
   safe to advertise there.
 - **Bounded** — concurrent workers, registry size, and `ttl` are all capped;
-  expired tasks are purged. `tasks/result` blocks the main loop until the task is
-  terminal, which is acceptable: the client chose to wait (it can poll `tasks/get`
-  instead), and the underlying run is budget/wall-clock bounded.
+  expired tasks are purged. `tasks/result` waits at most
+  `MAVERICK_MCP_TASK_RESULT_BLOCK_MS` (default 60,000 ms); clients can poll
+  `tasks/get` instead. The underlying run is budget/wall-clock bounded.
 
 ## 5. Limits
 
 - **No `input_required`.** Task-driven elicitation is not supported. Elicitation
   is synchronous within a foreground tool call; a task that parks a question
   leaves it for the async `maverick_answer` flow.
-- **No per-caller task isolation over HTTP.** The HTTP task store is
-  bearer-scoped, not per-caller: every request authenticated with the one
-  `MAVERICK_MCP_TOKEN` shares the same task registry, including `tasks/list`.
-  That suits single-tenant or trusted-bearer deployments, and it is why HTTP
-  tasks are opt-in.
+- **Session-bound access over HTTP.** `tasks/get`, `tasks/result`,
+  `tasks/cancel` and `tasks/list` expose only that session's tasks; foreign ids
+  receive the same "task not found" response as absent ids. Worker capacity is
+  shared, with a caller-bound active-task quota (`MAVERICK_MCP_MAX_TASKS_PER_OWNER`)
+  in addition to the global cap. Rotating sessions does not reset that quota.

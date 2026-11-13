@@ -8,7 +8,7 @@ The completed reply is committed before sending it. Delivery retries use that sa
 
 Recovery scans a bounded rotating metadata window, loads only that window, then advances a persisted cursor after processing. An empty window does not imply an empty inbox. Webhook transports own a recovery task for their lifetime; email saves UIDVALIDITY/UID-bound intake before marking it seen and also performs recovery each poll. Acknowledging intake does not mean an agent has completed or the recipient has received an answer.
 
-Current bounds are 10,000 receipts per tenant namespace, 1,000 account recovery cursors, 1,000,000 characters per durable text/reply, 10 source files under the existing attachment size/aggregate rules, 512 reply chunks, and a normal recovery window of 16 records. Capacity refusal backpressures admission. Unknown execution/delivery records are never removed to make room. Explicit retention compaction after 30 days clears content only for confirmed completed-and-delivered records; the deduplication tombstone remains. This does not automatically erase all old claims or permit uncertain effects to replay.
+Current bounds are 20,000 receipts per tenant namespace by default (configurable with `[channels] max_intake_records` from 1,000 to 100,000), 1,000 account recovery cursors, 1,000,000 characters per durable text/reply, 10 source files under the existing attachment size/aggregate rules, 512 reply chunks, and a normal recovery window of 16 records. Capacity refusal backpressures admission. Unknown execution/delivery records are never removed to make room. Explicit retention compaction after 30 days clears content only for confirmed completed-and-delivered records; the deduplication tombstone remains for another 90 days before compaction can delete it. This does not automatically erase all old claims or permit uncertain effects to replay.
 
 Administrators can inspect a tenant-scoped, bounded status window at `GET /api/v1/channels/delivery-receipts?limit=50&cursor=...`. Pass `receipt_id=chd-...` for one receipt's chunk states and provider identifiers. These responses contain status metadata, not message/reply text or credentials. A receipt that cannot be read (for example while its encryption key is unavailable) is listed as `{"id": ..., "readable": false}` instead of failing the window. Signal and IRC keep replies in order within a conversation: a message waiting behind an earlier one shows `held_behind`, and one that went out after an earlier receipt stayed unreadable for 24 hours shows `went_ahead_of` (see [owned transport supervision](channel-transport-supervision.md)). **Channels > Message delivery** and the Copilot operation **Check held chat replies** say in plain words how many replies are waiting and when they go out. There is deliberately no endpoint that automatically resends an uncertain reply or reexecutes an uncertain run.
 
@@ -16,9 +16,10 @@ Run `maverick channel-maintenance compact --limit 100` under the intended
 tenant to compact eligible completed records. Repeated invocations advance a
 persisted cursor, so an ineligible prefix does not hide older eligible work.
 The limit must be 1–100; zero does not request an unbounded scan. Compaction
-clears eligible content, not deduplication identities, so it does not remove
-the 10,000-receipt admission bound. Monitor capacity and plan namespace
-migration before exhaustion; never erase uncertain receipts to create space.
+first clears eligible content and retains deduplication identities. Once a
+fully compacted tombstone has been idle for 90 days, a later pass deletes it
+and releases capacity. Monitor the configured admission bound; never erase
+uncertain receipts to create space.
 
 Before deleting source files, compaction saves a bounded list of their digests
 in the receipt. An interrupted unlink or final receipt write leaves that cleanup

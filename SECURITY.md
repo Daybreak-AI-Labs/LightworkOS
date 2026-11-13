@@ -138,7 +138,7 @@ chooses the blast radius**. Defense in depth, from outermost to innermost:
 
 The consumer wizard (`maverick init`, "consumer" mode) fails closed: when no
 container is available it **denies** the host-mutating tools (`shell`,
-`write_file`, `apply_patch`) and runs the strictest shield profile.
+`write_file`, `apply_patch`, `str_replace_editor`, `ast_edit`) and runs the strictest shield profile.
 
 ## Security-relevant configuration
 

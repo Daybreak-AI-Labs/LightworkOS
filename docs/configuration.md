@@ -185,7 +185,7 @@ record_checks           = true
 check_retention_days    = 90
 
 [sandbox]
-backend = "local"                   # local | docker | ssh | podman | devcontainer | firecracker | kubernetes
+backend = "local"                   # local | docker | ssh | podman | gvisor | devcontainer | firecracker | kubernetes | modal
 workdir = "~/maverick-workspace"
 timeout = 60
 # devcontainer defaults to the invoking non-root UID:GID, ignoring the repo's
@@ -887,8 +887,9 @@ Behavior:
 - Every tool it exposes is registered as `mcp_<name>__<tool>` in the
   agent's catalog and passes through `Shield.scan_tool_call` like any
   other tool.
-- By default *no* environment is inherited from the parent process —
-  only `PATH`, `HOME`, `USER`, `LANG`, `TZ`, `TMPDIR` (see
+- By default the child inherits only the allowlisted environment variables:
+  `PATH`, `HOME`, `USER`, `LANG`, `LC_ALL`, `TZ`, `TMPDIR`, `TEMP`, `TMP`,
+  `NODE_PATH`, `NVM_DIR`, `NPM_CONFIG_PREFIX`, `SHELL` and `PWD` (see
   `mcp_client.DEFAULT_ENV_ALLOWLIST`). Pass secrets explicitly via the
   `env = { ... }` table or set `inherit_env = true` to pass the full
   environment (only do this for fully-trusted servers).
