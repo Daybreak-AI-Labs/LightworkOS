@@ -16,12 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from maverick import no_code_grc_studio as studio
 from maverick.file_lock import atomic_create_bytes, ensure_private_directory, ensure_private_file
 from maverick.paths import canonical_tenant_id, data_dir, tenant_scope
 
-from .auth import caller_principal, has_global_permission
+from ._shared import authenticated_subject
+from .auth import has_global_permission
 
 _CONFIG_KEYS = frozenset({"enable", "max_studios", "retention_seconds", "max_import_bytes"})
 _DEFAULT_MAX_STUDIOS = 10_000
@@ -166,11 +167,16 @@ def _request_for(app: Any, request: object) -> Request:
 
 def principal_ref(request: Request, tenant_id: str) -> str:
     tenant = canonical_tenant_id(tenant_id)
-    subject = caller_principal(request) or "authorized-local-operator"
-    if not isinstance(subject, str) or not subject.strip() or len(subject) > 512:
-        raise studio.GRCStudioPermissionDenied("GRC studio principal is invalid")
+    # The API's own subject resolution, so a static dashboard token resolves
+    # to the same reference on both sides (it is not the local operator).
+    try:
+        subject = authenticated_subject(
+            request, error_detail="GRC studio principal is invalid",
+        )
+    except HTTPException as exc:
+        raise studio.GRCStudioPermissionDenied("GRC studio principal is invalid") from exc
     digest = hashlib.sha256(
-        f"lightwork.no-code-grc-studio.identity.v1:{tenant}:{subject.strip()}".encode()
+        f"lightwork.no-code-grc-studio.identity.v1:{tenant}:{subject}".encode()
     ).hexdigest()
     return f"grc-studio-principal-{digest[:40]}"
 

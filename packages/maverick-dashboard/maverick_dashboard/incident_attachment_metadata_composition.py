@@ -17,10 +17,11 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from maverick import incident_attachment_metadata as attachments
 from maverick.paths import canonical_tenant_id, tenant_scope
 
+from ._shared import authenticated_subject
 from .auth import has_global_permission
 
 _CONFIG_KEYS = frozenset(
@@ -192,13 +193,17 @@ def incident_attachment_metadata_enabled(tenant_id: str) -> bool:
 
 
 def principal_ref_from_request(request: Request, tenant_id: str) -> str:
-    verified = getattr(request.state, "principal", None)
-    subject = getattr(verified, "principal", None) or getattr(verified, "sub", None)
-    if not isinstance(subject, str) or not subject.strip() or len(subject) > 512:
+    # The API's own subject resolution, so the local single-user operator and
+    # a static dashboard token resolve to the same reference on both sides.
+    try:
+        subject = authenticated_subject(
+            request, error_detail="authenticated principal authority is unavailable",
+        )
+    except HTTPException as exc:
         raise attachments.IncidentAttachmentPermissionDenied(
             "authenticated principal authority is unavailable"
-        )
-    return attachments.principal_ref_for_subject(tenant_id, subject.strip())
+        ) from exc
+    return attachments.principal_ref_for_subject(tenant_id, subject)
 
 
 def _canonical_sha256(value: object) -> str:

@@ -393,6 +393,36 @@ def test_principal_is_re_resolved_from_app_request_and_tenants_are_isolated(
     assert "tenant-b" in store_b.path.parts
 
 
+def test_store_factory_admits_the_local_operator_the_api_admitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from maverick_dashboard import ai_entity_tasks_api as api
+    from maverick_dashboard import auth
+
+    app, request, _clock = _install_environment(monkeypatch, tmp_path)
+    # Local single-user mode attaches no principal to the request.
+    del request.state.principal
+    monkeypatch.setattr(auth, "anonymous_local_access_allowed", lambda: True)
+    principal = api._principal(request, TENANT)
+
+    store = app.state.ai_entity_tasks_store_factory(
+        tenant_id=TENANT,
+        principal_ref=principal,
+        request=request,
+    )
+    assert TENANT in store.path.parts
+
+    # The same principal-less request is refused once local access is not allowed.
+    monkeypatch.setattr(auth, "anonymous_local_access_allowed", lambda: False)
+    with pytest.raises(tasks.AIEntityTaskPermissionDenied):
+        app.state.ai_entity_tasks_store_factory(
+            tenant_id=TENANT,
+            principal_ref=principal,
+            request=request,
+        )
+
+
 def test_explicit_deployment_factories_and_probes_are_composed_not_overwritten(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
