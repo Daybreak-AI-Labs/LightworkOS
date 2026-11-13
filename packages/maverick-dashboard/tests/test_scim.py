@@ -144,6 +144,22 @@ class TestAuth:
         assert client.get(f"/scim/v2/Users/{uid}",
                           headers=_auth()).json()["active"] is False
 
+    def test_put_deactivation_without_external_id_still_revokes_the_subject(self, client):
+        # An IdP that sends PUT {userName, active: false} with no externalId
+        # must still end the sessions of the stored subject.
+        from maverick_dashboard import session_revocation as sr
+        uid = _make_user(client, username="dee@example.com",
+                         externalId="sub-dee").json()["id"]
+        assert sr.revocation_epoch("sub-dee") == 0.0
+        r = client.put(f"/scim/v2/Users/{uid}", headers=_auth(), json={
+            "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+            "userName": "dee@example.com",
+            "active": False,
+        })
+        assert r.status_code == 200
+        assert sr.revocation_epoch("sub-dee") > 0.0
+        assert r.json()["externalId"] == "sub-dee"
+
     def test_hard_delete_durably_denies_direct_and_pairwise_fresh_tokens(self, client):
         from fastapi import HTTPException
         from maverick.oidc import VerifiedPrincipal

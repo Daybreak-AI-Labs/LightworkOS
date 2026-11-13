@@ -708,6 +708,10 @@ async def replace_user(uid: str, request: Request):
         # userName is immutable in practice; keep it if the PUT omits it.
         if not rec["userName"]:
             rec["userName"] = existing.get("userName", "")
+        # Live sessions and API keys belong to the stored externalId. A PUT
+        # that omits it must not drop that subject from deactivation.
+        if not rec["externalId"]:
+            rec["externalId"] = existing.get("externalId", "")
         if any(
             other_uid != uid
             and other.get("userName", "").casefold() == rec["userName"].casefold()
@@ -719,6 +723,13 @@ async def replace_user(uid: str, request: Request):
                 scim_type="uniqueness",
             )
         was_active = bool(existing.get("active", True))
+        if not rec["active"] and _identity_values(existing) != _identity_values(rec):
+            # The PUT renamed an identifier while deactivating: retire the
+            # stored identifiers too, or their sessions would stay valid.
+            try:
+                _retire_user_identity(existing)
+            except Exception:
+                return _scim_error(500, "identity lifecycle update failed")
         if rec["active"] != was_active:
             try:
                 _set_tenant_active(uid, rec["active"], rec)
