@@ -2717,9 +2717,17 @@ class _NativeProviderAdapter:
             (binding["catalog"], binding["schema_name"], binding["table"]),
         )
         principal = _quote_identifier(self.provider_id, binding["principal"])
+        # A field can carry a mask together with a row filter. The mask is
+        # emitted last for its column so the unset that the other control
+        # projects can never follow it and leave the column unmasked. The set
+        # of statements stays the one the audit authority expects.
         ordered = sorted(
             controls,
-            key=lambda item: (str(item["field_id"]), str(item["control_id"])),
+            key=lambda item: (
+                str(item["field_id"]),
+                item["operation"] == "mask",
+                str(item["control_id"]),
+            ),
         )
         effects = {str(item["operation"]) for item in ordered}
         deny_first = bool(effects & {"deny", "review"})

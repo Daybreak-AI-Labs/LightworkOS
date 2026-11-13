@@ -1165,3 +1165,44 @@ def test_provider_limits_are_bounded() -> None:
         ProviderLimits(max_response_bytes=1024 * 1024)
     with pytest.raises(DataUseProviderConfigError):
         ProviderLimits(max_attempts=10)
+
+
+def test_masked_column_ends_masked_when_it_also_carries_a_row_filter() -> None:
+    adapter = object.__new__(SnowflakeDataUseControlAdapter)
+    binding = {
+        "catalog": "APP_DB",
+        "schema_name": "PUBLIC",
+        "table": "CUSTOMERS",
+        "principal": "ANALYST_ROLE",
+        "binding_sha256": _digest("binding"),
+        "field_map": {"region": "REGION"},
+        "mask_bindings": {"hash_sha256": ["GOV", "POLICY", "MASK_SHA256"]},
+        "row_filter_bindings": {_object_digest(_ROW_AST): ["GOV", "POLICY", "US_REGION"]},
+        "state_anchor": ["GOV", "TAGS", "DATA_USE_STATE"],
+    }
+    controls = [
+        {
+            "control_id": "a-mask",
+            "field_id": "region",
+            "operation": "mask",
+            "parameters": {"method": "hash_sha256"},
+        },
+        {
+            "control_id": "z-filter",
+            "field_id": "region",
+            "operation": "row_filter",
+            "parameters": {"ast": _ROW_AST},
+        },
+    ]
+    plan = adapter._plan_statements(
+        binding,
+        controls,
+        _digest("state"),
+        ir_sha256=_digest("ir"),
+        operation_idempotency_sha256=_digest("idempotency"),
+        rollback=False,
+    )
+    masking = [item.statement for item in plan if item.change_kind == "masking_policy"]
+    assert len(masking) == 2
+    assert masking[-1].endswith('SET MASKING POLICY "GOV"."POLICY"."MASK_SHA256"')
+    assert "UNSET" not in masking[-1]

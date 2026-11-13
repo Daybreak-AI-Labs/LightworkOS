@@ -984,6 +984,12 @@ class ConsentIdentityFederationStore:
         record: dict[str, Any],
         now: float,
     ) -> dict[str, Any]:
+        """Expire an overdue pairing and commit that before the caller denies it.
+
+        Every caller refuses an expired pairing by raising, and its handler
+        rolls back whatever is still open. The expiry is therefore committed
+        here, so the state change and its audit event outlive the denial.
+        """
         if record["status"] not in _TERMINAL and float(record["expires_at"]) <= now:
             expired = {**record, "status": "expired"}
             expired = self._save_record(
@@ -999,6 +1005,7 @@ class ConsentIdentityFederationStore:
                 payload={"prior_status": record["status"]},
                 now=now,
             )
+            connection.execute("COMMIT")
             return expired
         return record
 

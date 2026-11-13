@@ -1243,6 +1243,14 @@ class GlobalOptOutStore:
     ) -> dict[str, Any]:
         if self._intake_authority is None or self._privacy_rights_submitter is None:
             raise GlobalOptOutDSARUnavailable("privacy-rights intake is unavailable")
+        if record.get("state") == "creating":
+            # A reservation is only good for submission_ttl_seconds; a missing
+            # or malformed expiry is refused as well.
+            expires_at = record.get("expires_at")
+            if not isinstance(expires_at, (int, float)) or expires_at <= _timestamp(
+                self._clock(), "clock"
+            ):
+                raise GlobalOptOutConflict("submission reservation has expired")
         current = self._resolve_public(authority)
         if not _same(current.authority_sha256, record.get("public_authority_sha256")):
             raise GlobalOptOutAuthorityStale("public authority changed before DSAR creation")

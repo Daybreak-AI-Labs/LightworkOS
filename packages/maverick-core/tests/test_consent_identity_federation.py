@@ -341,6 +341,33 @@ def test_drift_cross_tenant_expiry_and_revocation_fail_closed(material):
     assert pairing.verify_integrity()["pairings_verified"] == 2
 
 
+def test_expiry_is_recorded_durably_when_the_expired_pairing_is_denied(material):
+    clock, _preferences, pairing, base = material
+    verifier = "e" * 64
+    target = base[digest("client:target")]
+    challenge = pairing.begin_pairing(
+        target, code_challenge=pkce(verifier), ttl_seconds=60, retention_seconds=120
+    )
+    clock.value += 61
+    with pytest.raises(ConsentIdentityFederationDenied, match="cannot be redeemed"):
+        pairing.redeem_pairing(challenge.pairing_code, code_verifier=verifier, target=target)
+
+    with sqlite3.connect(pairing.path) as connection:
+        assert connection.execute(
+            "SELECT status FROM consent_identity_pairings"
+        ).fetchall() == [("expired",)]
+        assert connection.execute(
+            "SELECT event_type FROM consent_identity_pairing_events ORDER BY sequence"
+        ).fetchall()[-1] == ("pairing.expired",)
+    with pytest.raises(ConsentIdentityFederationDenied, match="cannot be revoked"):
+        pairing.revoke_pairing(
+            challenge.pairing_code, authority=target, reason_sha256=digest("too-late")
+        )
+    assert pairing.verify_integrity()["pairings_verified"] == 1
+    clock.value += 120
+    assert pairing.purge_terminal(before=clock())["pairings_deleted"] == 1
+
+
 def test_current_identity_pointer_cannot_be_starved_by_newer_revoked_pairings(material):
     _clock, preferences, pairing, base = material
     verifier = "p" * 64

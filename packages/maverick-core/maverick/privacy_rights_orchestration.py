@@ -29,6 +29,7 @@ import re
 import secrets
 import sqlite3
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -283,7 +284,9 @@ def _timestamp(value: object, label: str) -> float:
 def _raw_reference(value: object, label: str) -> bytes:
     if not isinstance(value, str):
         raise PrivacyRightsValidationError(f"{label} must be text")
-    encoded = value.encode("utf-8")
+    # NFC first: the source worker hashes the normalized form, so a subject
+    # typed with combining marks must produce the same digest here.
+    encoded = unicodedata.normalize("NFC", value).encode("utf-8")
     if not 1 <= len(encoded) <= 1_024 or value.strip() != value:
         raise PrivacyRightsValidationError(f"{label} is invalid or exceeds 1024 bytes")
     return encoded

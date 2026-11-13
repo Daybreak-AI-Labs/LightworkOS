@@ -409,6 +409,18 @@ def test_cross_tenant_and_corrupt_bundles_are_rejected(
         ).compile(TENANT, str(decision["decision_id"]))
 
 
+def test_compiler_validates_the_tenant_with_the_store_rule(
+    authority: tuple[DataUseGovernanceStore, Clock],
+) -> None:
+    store, _clock = authority
+    compiler = DataUsePolicyCompiler(store, clock=lambda: 1_000.0)
+    # The store accepts this tenant id, so the lookup must reach the store.
+    with pytest.raises(DataUseCompilationStale, match="missing"):
+        compiler.compile("acme corp", "decision-1")
+    with pytest.raises(DataUseCompilationValidationError, match="tenant_id"):
+        compiler.compile("acme corp ", "decision-1")
+
+
 def test_tampered_policy_bindings_raw_filters_and_provider_fields_are_rejected(
     authority: tuple[DataUseGovernanceStore, Clock],
 ) -> None:
