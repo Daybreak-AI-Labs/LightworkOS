@@ -10,8 +10,8 @@ names are refused.
 | Adapter | Supported provider table fields |
 | --- | --- |
 | `anthropic`, `openai` | `api_key`, `base_url`, `default_headers` |
-| `azure` | `api_key`, `base_url`, `default_headers`, `auth_mode` |
-| `bedrock` | `api_key`, `base_url`, `default_headers`, `auth_mode`, `endpoint` |
+| `azure` | `api_key`, `base_url`, `default_headers`, `auth_mode`, `deployment`, `api_version` |
+| `bedrock` | `api_key`, `base_url`, `default_headers`, `auth_mode`, `endpoint`, `region`, `model_id` |
 | `vertex` | `base_url`, `default_headers`, `project_id`, `region`, `model_id`; no `api_key` (Google Application Default Credentials only) |
 | `openrouter`, `gemini`, `moonshot`, `deepseek`, `xai`, `ollama`, `tgi`, `vllm`, `openai_compatible` | `api_key`, `base_url` |
 | `codex_cli` | `api_key`, `binary`, `sandbox_mode`, `timeout_seconds`, `cwd` |
@@ -71,9 +71,11 @@ by constructor tests.
 Upgrading: provider fields that an adapter does not support fail visibly instead of being ignored. For a required
 residency/retention header, choose a supported adapter and an explicitly reviewed
 endpoint; deleting the field means removing that requested control. Azure
-deployment/API version/region and SDK timeouts retain their documented
-environment interfaces instead of being silently accepted as arbitrary provider
-table keys. Direct callers that supply `environment` must supply their complete
+`deployment` and `api_version`, and Bedrock `region` and `model_id`,
+are supported provider-table fields, including values saved by the dashboard.
+The providers' documented environment overrides still take precedence. SDK
+timeouts retain their environment interfaces; unsupported provider-table fields
+are refused. Direct callers that supply `environment` must supply their complete
 desired constructor snapshot; omitted values use adapter defaults, not live
 environment fallback. Omitting that optional argument retains direct-constructor
 environment discovery.

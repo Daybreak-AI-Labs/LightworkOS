@@ -26,8 +26,8 @@ if provider/parser imports, document worker source, or the checks below fail:
 The command reports the loaded libpq version and rejects native versions before
 the fixed branches for [CVE-2026-6477](https://www.postgresql.org/support/security/CVE-2026-6477/):
 14.23, 15.18, 16.14, 17.10 and 18.4. Subsequent major versions include prior
-fixes. The reviewed Psycopg and binary wheel pin is 3.3.5; the connection pool
-remains 3.3.1. This is a release-artifact dependency gate, not a check on every
+fixes. The reviewed Psycopg and binary wheel pin is 3.3.7; the connection pool
+is pinned to 3.3.3. This is a release-artifact dependency gate, not a check on every
 database operation in an independently configured source installation.
 
 These checks do not connect to a remote database, start a metrics listener,

@@ -16,6 +16,8 @@ regimes = ["sox", "dora", "basel_iii", "ifrs_17", "pci"]
 enable = true
 federal_register_enable = true
 texas_register_enable = false
+eur_lex_enable = false
+edpb_enable = false
 regulatory_poll_seconds = 3600
 regulatory_domains = ["finance", "money_transmitter", "insurance_producer"]
 state_feeds = []
@@ -68,7 +70,8 @@ An opt-in built-in uses the official [Texas Register RSS](https://www.sos.state.
 That feed is issue-level, so its HTML/PDF/archive items route to human review;
 Lightwork does not pretend they are notice-level rule records. Up to 50 other
 state sources may be configured explicitly, with no invented or silently
-substituted URL.
+substituted URL. The built-in EUR-Lex legislation and EDPB news feeds are
+also opt-in, through `eur_lex_enable` and `edpb_enable` respectively.
 
 ### State-licensing source packs
 

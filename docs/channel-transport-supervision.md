@@ -4,9 +4,10 @@ Each configured adapter instance owns one transport reader and one serial
 agent worker. Durable admission happens before a message enters the bounded
 32-record memory queue. Overflow remains in the inbox and is visible through
 delivery receipts; it is not discarded or treated as completed work.
-After restart or overflow, recovery scans the receipt namespace's hard
-10,000-record bound, retaining at most 32 identity/time pairs and reading one
-record at a time. It selects the oldest accepted work before new work.
+After restart or overflow, recovery scans the receipt namespace in pages of
+at most 10,000 identities, retaining at most 32 identity/time pairs and reading
+one record at a time. The admission bound defaults to 20,000 records and is
+configurable with `[channels] max_intake_records` (1,000–100,000). It selects the oldest accepted work before new work.
 Normal queueing stays in intake order.
 
 Within one conversation (one chat and one sender), a message is not handled

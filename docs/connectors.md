@@ -3079,9 +3079,11 @@ engine via a single `DATABASE_URL` (or a per-call `url`). Reads run; writes
 
 ## Ambient-credential connectors
 
-AWS (`s3`, `lambda`, `dynamodb`, `ses`, `sns`) and a few others (`airtable`,
-`asana`, `clickup`, `vercel`, `gdrive`) can use ambient host credentials, so
-they register only when `MAVERICK_ENABLE_CRED_TOOLS=1`. See
+The `lambda`, `dynamodb`, `airtable`, `asana`, `clickup`, `vercel` and `gdrive`
+connectors can use ambient host credentials and register only when
+`MAVERICK_ENABLE_CRED_TOOLS=1` (or `[tools] credential_connectors` is enabled).
+The `s3`, `ses` and `sns` descriptors register without that opt-in; their
+credential and authorization checks still apply at use time. See
 [env-vars.md](env-vars.md).
 
 ## Enterprise mode and the hand-written connectors

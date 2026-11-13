@@ -70,8 +70,8 @@ and the service readiness check uses `/readyz`.
 
 Create a project from the repo, add a Volume mounted at `/state`, set
 `ANTHROPIC_API_KEY` and `MAVERICK_DASHBOARD_TOKEN` in the service variables, and
-deploy. Railway injects `$PORT`; the start command binds the dashboard to it and
-health-checks `/readyz`.
+deploy. The shipped start command binds the dashboard to port 8765 and
+health-checks `/readyz`; configure Railway's target port accordingly.
 
 ## Scaling to multi-tenant / multi-worker
 

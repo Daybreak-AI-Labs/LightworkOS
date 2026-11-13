@@ -139,22 +139,18 @@ then an open conversation ("What was most confusing? What would you change?").
 A tree test checks whether people can find things in the sidebar and page
 finder without the rest of the visual design.
 
-1. Write down the current navigation tree: the sidebar groups and their pages
-   as each role sees them (sign in with an account of that role).
-2. Load the tree, as plain text only, into a tree-testing tool, or print it as
-   cards.
-3. Use these ten find-it tasks, worded without the page's own label:
-   "Where would you go to…" (a) stop all running work at once; (b) see who
-   approved yesterday's payment; (c) give a colleague a different role;
-   (d) change what one task may spend; (e) find a result from last week;
-   (f) see what Lightwork has saved the company; (g) answer a person's request
-   for their data; (h) connect Slack; (i) check which AI model is used for
-   planning; (j) turn on two-step sign-in.
-4. For each task record: **success** (ended on a correct page), **directness**
-   (got there without going back up the tree) and **time**. A first-click
-   success rate is also useful.
-5. Targets: at least 80% correct first click per role, at least eight
-   participants per role.
+Use the [tree-test kit](tree-test/README.md) as the authoritative protocol:
+
+1. Compare the exported classic and areas trees in separate studies with
+   different people. Recruit 15–20 people per role per tree.
+2. Use the kit's 61 tasks (15 or 16 per role). Give each participant 8–10 of
+   their role's tasks in random order, ensuring every task is seen by at
+   least 10 people. Use the supplied answer keys.
+3. Record success, directness, time and first click per task, role and tree,
+   with confidence intervals for success rates.
+4. Before enabling areas, require at least 70% overall success for each role,
+   no task below 50%, and improvement over classic without lower directness
+   or a materially worse task. Fix and retest failures with new participants.
 
 ## Sources
 

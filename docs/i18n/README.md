@@ -26,7 +26,13 @@ Every translated file starts with an HTML comment (in the target language) namin
 git log -1 --format=%h -- docs/getting-started.md
 ```
 
-If they differ, the English page changed after the translation was made. When you update a translation, refresh the hash in its header.
+If they differ, the English page changed after the recorded source revision. A
+matching hash alone does not prove the whole translation is current: a partial
+update must name the refreshed sections and disclose that other sections may
+lag. When updating a translation, use a source hash that resolves in this
+repository and refresh that scope note. The current first-run and monitor
+updates use `b05c5ff`, the recorded English source revision; the former
+`a7b9cee` marker did not resolve in this repository.
 
 **Note on links:** link targets are kept byte-identical to the English source, so relative links inside a translation (for example `./configuration.md`) still refer to the English documentation until a translated counterpart exists.
 

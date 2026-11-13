@@ -168,7 +168,7 @@ posture is on:
 | Control | Default kernel behavior | Enterprise mode |
 |---|---|---|
 | **LLM egress** | any configured provider (incl. cloud) sees the prompt | **pinned to local/self-hosted** (`ollama`/`vllm`/`tgi` or an allow-listed endpoint); a cloud-routed call raises `EgressBlocked` **before any prompt is sent**, and the denial is audited |
-| **Consent** | `auto-approve` | `ask`: a task someone started in Lightwork's chat waits for a person on the Approvals page (refused if nobody decides in time); other non-interactive runs are *denied* |
+| **Consent** | `auto-approve` for low/medium risk; high/critical risk defaults to `ask` under secure-by-default | `ask`: a task someone started in Lightwork's chat waits for a person on the Approvals page (refused if nobody decides in time); other non-interactive runs are *denied* |
 | **Capabilities** | opt-in | enforced (least privilege; sub-agents can only narrow their grant) |
 | **Sandbox** | `local` host shell (warned) | **container-default** — a `local`/unset backend is upgraded to an available container runtime (docker → podman); if none is installed it fails closed rather than running `shell=True` on the host (`[sandbox] backend` / `require_container`) |
 | **Plugins** | in-process, lockfile off | plugin **tool calls** are proxied through the configured isolation backend, and lock enforcement refuses version/content drift once a lockfile exists; plugin import/discovery, factories, channel plugins, skill plugins, and persona plugins still run in-process, so install only trusted plugins (`[plugins] isolation` / `lock_policy`) |

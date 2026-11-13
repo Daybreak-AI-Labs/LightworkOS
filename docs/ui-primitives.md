@@ -1,8 +1,10 @@
 # Dashboard UI primitives
 
-Shared, page-agnostic helpers defined once in
-`packages/maverick-dashboard/maverick_dashboard/templates/base.html` and
-available on every page that `{% extends "base.html" %}`. **Prefer these over
+Shared, page-agnostic helpers are defined in
+`packages/maverick-dashboard/maverick_dashboard/static/lightwork-ui.js`, with
+styles in `static/lightwork.css`. `templates/base.html` loads them and supplies
+the toast/confirmation regions, making them available to pages that
+`{% extends "base.html" %}`. **Prefer these over
 native `confirm()` / `alert()` or hand-rolled toasts** — they are accessible
 (assertive vs. polite live regions; a focus-trapping, focus-returning modal),
 themed (no hard-coded colors), and consistent across the dashboard.
@@ -69,7 +71,7 @@ copyBtn.addEventListener('click', function () { mvCopy(urlEl.textContent); });
 
 ## `--scrim`
 
-The single overlay-backdrop token (`:root` in base.html). Use it for any modal /
+The single overlay-backdrop token (`:root` in `static/lightwork.css`). Use it for any modal /
 drawer / picker backdrop instead of a bespoke `rgba(...)`:
 
 ```css

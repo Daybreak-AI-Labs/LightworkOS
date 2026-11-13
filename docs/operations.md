@@ -69,11 +69,14 @@ and burning API credits.
 This is now handled automatically: on every `maverick serve` and
 `maverick dashboard` startup, `reclaim_orphan_goals()` flips rows
 from `active`/`pending` to `blocked` with result
-`[process restarted mid-run]`.
+`[process restarted mid-run]` only when their `updated_at` is at least 60 seconds
+old by default. `MAVERICK_ORPHAN_RECLAIM_SECONDS` can change that window; live
+goals refresh their timestamps.
 
 If you see active goals that *should* be running, check `/metrics`:
-`maverick_concurrent_goals` should be > 0. If it's 0 but rows show
-`active`, the reclaim hook didn't fire — open an issue.
+`maverick_concurrent_goals` should be > 0. If it's 0 but rows remain
+`active` beyond the configured stale window, investigate the reclaim hook and
+worker state; recently updated rows are intentionally left alone.
 
 ## API credits burning unexpectedly
 
@@ -288,16 +291,14 @@ User=maverick
 
 `systemctl enable --now maverick-gc.timer`.
 
-## Rotating API keys without downtime
+## Rotating API keys in the shipped systemd unit
 
 ```sh
 # Edit the new key in:
 sudo -u maverick vim ~maverick/.maverick/.env
 # (chmod 600 is enforced by the installer.)
 
-# Hot reload:
-systemctl reload maverick
-# If the systemd unit doesn't support reload, restart:
+# The shipped unit has no ExecReload; plan a service restart:
 systemctl restart maverick
 ```
 

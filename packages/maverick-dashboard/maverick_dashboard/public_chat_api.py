@@ -2,7 +2,7 @@
 
 The publishable key (``lwpk_...``) is the only credential a host page holds.
 It resolves the tenant and site before any tenant-scoped data is read. A
-visitor session (``lwps_...``, at most one hour) comes from ``POST /sessions``
+visitor session (``lwps_...``, at most 30 minutes) comes from ``POST /sessions``
 and is bound to the origin it was issued for. Every public request must come
 from that exact origin; CORS is granted to that origin only. No route sets or
 reads a cookie, so the browser cannot attach ambient credentials (no CSRF
