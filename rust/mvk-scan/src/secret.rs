@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn long_private_key_body_is_fully_detected() {
-        let header = "-----BEGIN PRIVATE KEY-----";
+        let header = "-----BEGIN PRIVATE KEY-----"; // pragma: allowlist secret
         for length in [13_000, 65_536] {
             let body = "A".repeat(length);
             for suffix in ["-----END PRIVATE KEY-----", ""] {
