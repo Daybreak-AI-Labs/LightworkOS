@@ -118,7 +118,7 @@
       });
       function submit(decision) {
         if (pendingSignoff) { uncertain(); return; }
-        var identity = window.crypto.randomUUID().replace(/-/g, '');
+        var identity = (window.mvNewId ? window.mvNewId() : window.crypto.randomUUID()).replace(/-/g, '');
         pendingSignoff = {id:identity,version:reviewedUpdatedAt};
         try { sessionStorage.setItem(key, JSON.stringify(pendingSignoff)); }
         catch (_) { pendingSignoff = null; say(msg, 'Your browser could not retain a recovery reference. Allow this site to save session data before recording a decision.'); return; }
@@ -258,7 +258,7 @@
       }
       form.addEventListener('submit', async function (event) {
         event.preventDefault(); if (!binding || !chosen || pendingFeedback || feedbackBusy || !form.reportValidity()) return;
-        pendingFeedback={id:window.crypto.randomUUID().replace(/-/g,''),revision:binding};
+        pendingFeedback={id:(window.mvNewId ? window.mvNewId() : window.crypto.randomUUID()).replace(/-/g,''),revision:binding};
         try { sessionStorage.setItem(key, JSON.stringify(pendingFeedback)); }
         catch (_) { pendingFeedback=null; say(msg, 'Your browser could not keep the original feedback reference. Allow session storage before saving; your note is kept.'); return; }
         feedbackBusy=true; lock(); say(msg, 'Saving your feedback…');
@@ -344,7 +344,7 @@
       saveBtn.addEventListener('click', async function () {
         if (saveBtn.disabled) return;
         if (!pendingEdit || pendingEdit.text !== textEl.value || pendingEdit.expected_updated_at !== reviewedAt) {
-          pendingEdit = {text: textEl.value, expected_updated_at: reviewedAt, operation_id: crypto.randomUUID()};
+          pendingEdit = {text: textEl.value, expected_updated_at: reviewedAt, operation_id: (window.mvNewId ? window.mvNewId() : crypto.randomUUID())};
         }
         saveBtn.disabled = true; textEl.readOnly = true;
         editMsg.style.color = 'var(--muted)'; say(editMsg, 'Saving.');

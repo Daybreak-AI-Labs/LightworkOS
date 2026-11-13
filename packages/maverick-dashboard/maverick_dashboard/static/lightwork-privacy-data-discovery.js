@@ -382,7 +382,7 @@
     var resource = document.getElementById("pdd-resource").value.trim();
     if (!descriptor) { say("Choose where the data lives."); return; }
     if (!connection) { say("Choose a saved connection. You can add one on the Connections page."); return; }
-    if (!ID.test(resource)) { say("Enter the name exactly as it appears in " + provider(chosenProvider) + " (letters, numbers, dots, dashes and underscores)."); return; }
+    if (!ID.test(resource)) { say("Enter the name exactly as it appears in " + provider(chosenProvider) + " (up to 128 letters, numbers, dots, colons, dashes and underscores, starting with a letter or number)."); return; }
     var id = R.slug(document.getElementById("pdd-name").value, "data-source");
     var existing = state.sources.filter(function (s) { return s.source_id === id; })[0];
     try {

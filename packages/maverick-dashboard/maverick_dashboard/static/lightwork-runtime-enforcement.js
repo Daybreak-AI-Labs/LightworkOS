@@ -14,7 +14,6 @@
     controller?.abort(); previous.hidden = next.hidden = true;
     status.textContent = 'Your account, workspace or access changed. Read current activity after signing in again.';
   };
-  for (const event of ['workspace-changed', 'account-context-changed']) document.addEventListener(event, clear);
   for (const event of ['lightwork:workspace-changed', 'lightwork:account-context-changed']) window.addEventListener(event, clear);
   const add = (parent, tag, text) => { const node = document.createElement(tag); node.textContent = text; parent.append(node); return node; };
   const choices = { allow: 'Allowed', block: 'Stopped', restrict: 'Restricted', review: 'Needs review', redact: 'Hidden information removed' };

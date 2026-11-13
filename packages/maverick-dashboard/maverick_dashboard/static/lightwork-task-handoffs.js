@@ -62,7 +62,7 @@
     if (busy) return;
     const signature=value=>JSON.stringify(Object.keys(value).filter(key=>key!=='operation_id').sort().map(key=>[key,value[key]]));
     if (pending && (pending.path !== path || signature(pending.body)!==signature(values))) { status.textContent='Retry the exact previous unconfirmed action first. Your new choice was not sent.'; return; }
-    if (!pending) pending={path:path,body:{...values,operation_id:crypto.randomUUID()}};
+    if (!pending) pending={path:path,body:{...values,operation_id:(window.mvNewId ? window.mvNewId() : crypto.randomUUID())}};
     busy=true; button.disabled=true; lock(true); status.textContent='Saving the exact reviewed handoff. No task execution is being started.';
     try { const value=await request(pending.path,pending.body); pending=null; reviewed=null; offer.hidden=true; previewBox.hidden=true; show(value.handoff); status.textContent='Handoff receipt saved.'; }
     catch (error) { if (error.known) { pending=null; reviewed=null; offer.hidden=true; previewBox.hidden=true; } status.textContent=error.message + (pending ? ' The outcome is unconfirmed. Retry this same button; the saved reference prevents a second continuation.' : ' Your draft has been kept; refresh and review current state.'); }

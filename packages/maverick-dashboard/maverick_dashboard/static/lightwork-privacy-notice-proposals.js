@@ -77,7 +77,7 @@
     try {
       var body = {context: source.context, revision: source.revision, notice: document.getElementById('pnp-notice').value, publication: document.getElementById('pnp-publication').value,
         references: Array.from(document.querySelectorAll('#pnp-references input:checked')).map(function (node) { return node.value; }), reasons: Array.from(document.querySelectorAll('#pnp-reasons input:checked')).map(function (node) { return node.value; }), retained_until: R.toEpoch(document.getElementById('pnp-keep').value)};
-      for (var key of ['content', 'policy', 'configuration']) { var file = document.getElementById('pnp-' + key).files[0]; if (!file || file.size > 67108864) throw new Error('Choose all three files, each up to 64 MB.'); var fingerprint = await R.fingerprint(file); if (!valid(start)) return; body[key] = {name: file.name, size: file.size, sha256: fingerprint.sha256}; }
+      for (var key of ['content', 'policy', 'configuration']) { var file = document.getElementById('pnp-' + key).files[0]; if (!file || file.size > 52428800) throw new Error('Choose all three files, each up to 50 MB.'); var fingerprint = await R.fingerprint(file); if (!valid(start)) return; body[key] = {name: file.name, size: file.size, sha256: fingerprint.sha256}; }
       var value = await call('POST', '/review', body); if (!valid(start)) return;
       pending = {token: value.token, uncertain: false}; fullReview(value); say(value.message);
     } catch (error) { if (valid(start)) fail(error); } finally { if (valid(start)) lock(false); }
@@ -155,7 +155,7 @@
     var from=R.toEpoch(document.getElementById('png-from').value),until=R.toEpoch(document.getElementById('png-until').value),keepUntil=R.toEpoch(document.getElementById('png-keep').value);
     if(!jur.length||!loc.length||!from||!until||!keepUntil||until<=from||keepUntil<until){say('Choose jurisdictions and languages, then check the effective and keep-until dates.');return;}
     var files=['png-file-content','png-file-policy','png-file-config'].map(function(id){return document.getElementById(id).files[0];});
-    if(files.some(function(file){return !file||file.size>67108864;})){say('Choose all three files, each up to 64 MB.');return;}
+    if(files.some(function(file){return !file||file.size>52428800;})){say('Choose all three files, each up to 50 MB.');return;}
     if(select.value&&!selected){say('Wait for the accepted update to be read.');return;}
     var start=generation,update=selected;busy=true;
     try{

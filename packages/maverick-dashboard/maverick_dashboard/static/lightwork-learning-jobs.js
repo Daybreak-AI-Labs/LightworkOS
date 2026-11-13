@@ -79,7 +79,7 @@
       consent.addEventListener('change', function () { apply.disabled = busy || !consent.checked; });
       apply.addEventListener('click', async function () {
         if (busy || !consent.checked || started !== generation || !current || current.job.id !== id) return;
-        var operation = crypto.randomUUID().replace(/-/g, ''), body = {context: reviewed.context, revision: reviewed.revision, operation: operation, confirm: true};
+        var operation = (window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g, ''), body = {context: reviewed.context, revision: reviewed.revision, operation: operation, confirm: true};
         try { save({context: reviewed.context, job: id, operation: operation}); }
         catch (_) { originalStatus.textContent = 'The original request could not be saved in this browser. Nothing was submitted. Allow site storage before continuing.'; return; }
         lock(true); apply.disabled = true; original.hidden = false;

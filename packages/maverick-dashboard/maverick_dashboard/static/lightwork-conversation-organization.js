@@ -42,7 +42,7 @@
       if (!model || busy) return; busy = true;
       var controls = Array.from(editor.querySelectorAll('input,button')); controls.forEach(function (control) { control.disabled = true; });
       var before = {title: model.title, pinned: model.pinned, archived: model.archived};
-      if (!operation) operation = crypto.randomUUID();
+      if (!operation) operation = (window.mvNewId ? window.mvNewId() : crypto.randomUUID());
       try {
         var value = await api('/' + editor.dataset.goal + '/organization', {method: 'PUT', body: JSON.stringify(Object.assign({}, values, {expected_revision: model.revision, operation_id: operation}))});
         prior = isUndo ? null : before; operation = null; project(value, false); undo.hidden = !prior;

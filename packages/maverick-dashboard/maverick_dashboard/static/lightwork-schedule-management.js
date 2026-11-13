@@ -104,7 +104,7 @@
       const review=await request('/api/v1/schedules/recovery/'+parked);if(captured!==epoch)return;
       activeContext=review.context;try{pending=sessionStorage.getItem(storageKey(activeContext));}catch(_){pending=null;}
       if(pending){reminder.hidden=false;message.textContent='Check the original saved receipt above before another repair.';return;}
-      const operationId=crypto.randomUUID().replace(/-/g,'');
+      const operationId=(window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g,'');
       message.textContent=review.consequence;
       box.append(node('p',review.title+' · '+when(review.scheduled_at)));
       box.append(node('p','Historical business result: unknown. '+review.problem));

@@ -83,7 +83,7 @@
     jobsContext = result.context;
     var ok = await confirmed("Rebuild " + human(name) + "? " + review.count + " passages, using " + review.model + ". Provider admission ceiling: " + money(review.cost_ceiling) + ". " + review.price_basis + " Time limit: " + review.limits.max_wall_seconds + " seconds, checked between batches. A complete replacement is published only after validation. AI indexing can cost money with a paid provider; paid requests are blocked without verified cost admission.", "Start rebuild");
     if (!ok) return;
-    pendingRebuild = {name:name,body:{context:result.context,job_id:crypto.randomUUID().replace(/-/g,""),review:review.review,confirmed:true}};
+    pendingRebuild = {name:name,body:{context:result.context,job_id:(window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g,""),review:review.review,confirmed:true}};
     statusEl.textContent = "Starting the rebuild. You may leave this page and return to its recorded status.";
     try {
       await call("POST", "/collections/" + encodeURIComponent(name) + "/reindex", pendingRebuild.body, "start rebuild");

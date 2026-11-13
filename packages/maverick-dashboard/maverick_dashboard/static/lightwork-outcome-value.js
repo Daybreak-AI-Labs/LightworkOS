@@ -643,6 +643,8 @@
       ' ' + missingText + ' ' + timestampText;
   }
 
+  // Resolves true when this load rendered the cohort, false when it failed,
+  // and null when a newer load took over (that one owns what is shown).
   async function load() {
     const request = ++generation;
     if (!pilotSelector.value) {
@@ -668,12 +670,12 @@
       let payload;
       try { payload = await response.json(); } catch (_) { fail('The cohort value report could not be read. Refresh the page to try again.'); }
       const validated = validateCohort(payload, 'lightwork.outcome-value-cohort.v1');
-      if (request !== generation) return;
+      if (request !== generation) return null;
       cohort = validated;
       render(validated);
       return true;
     } catch (error) {
-      if (request !== generation) return;
+      if (request !== generation) return null;
       cohort = null;
       selector.replaceChildren(node('option', 'Choose an admitted case'));
       selector.firstChild.value = '';
@@ -834,7 +836,7 @@
         throw new ProjectionError(message);
       }
       const verified = await load();
-      if (!verified) {
+      if (verified === false) {
         throw new ProjectionError(
           'The save response was received, but the updated cohort could not be verified. Your entries and retry identity remain available.',
         );
@@ -844,7 +846,11 @@
       if (form === baselineForm) syncBaselineControls();
       if (form === costForm) syncCostControls();
       if (form === commercialForm) syncCommercialControls();
-      statusHost.textContent = 'Evidence saved and the exact pilot cohort was recalculated.';
+      // A null result means a newer refresh replaced this readback: the save
+      // itself succeeded, and that refresh shows the current cohort.
+      statusHost.textContent = verified
+        ? 'Evidence saved and the exact pilot cohort was recalculated.'
+        : 'Evidence saved. The cohort was refreshed again while this was saving, so the newer refresh is shown.';
     } catch (error) {
       statusHost.textContent = error instanceof ProjectionError
         ? error.message : 'The evidence could not be saved. Your entries remain in the form. Try again.';

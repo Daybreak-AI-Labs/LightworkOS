@@ -8,7 +8,7 @@
   const hasDraft=()=>responseDirty()||el("note").value!==savedRequestNote||!!el("change-summary").value;
   window.addEventListener("beforeunload",event=>{if(!expired&&hasDraft()){event.preventDefault();event.returnValue="";}});
   const refs={};
-  function reference(name){if(!refs[name])refs[name]=crypto.randomUUID();return refs[name];}
+  function reference(name){if(!refs[name])refs[name]=(window.mvNewId ? window.mvNewId() : crypto.randomUUID());return refs[name];}
   function resetReference(name){delete refs[name];}
   // Translate only authored product copy. Stored content is always opaque.
   function product(value,source,values={}){delete value.dataset.userContent;if(window.LightworkI18n)window.LightworkI18n.set(value,source,values);else{value.textContent=source.replace(/\{(\w+)\}/g,(_,key)=>String(values[key]??""));value.lang="en";value.dir="ltr";}return value;}

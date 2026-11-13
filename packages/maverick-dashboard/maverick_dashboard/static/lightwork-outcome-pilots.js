@@ -25,7 +25,7 @@
   let review = null, dirty = false, ownsSelection = false, publishedSelection = '';
   const calls = new Set(), originalStorage = 'lightwork-pilot-original';
   const node = (tag, text) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; return e; };
-  const operation = () => crypto.randomUUID();
+  const operation = () => (window.mvNewId ? window.mvNewId() : crypto.randomUUID());
   const sourceKey = source => source.kind + ':' + source.reference;
   const publishSelection = id => { if ((!id && !ownsSelection) || (ownsSelection && publishedSelection === id)) return; ownsSelection = !!id; publishedSelection = id;
     document.dispatchEvent(new CustomEvent('lightwork:copilot-selection', {detail:{selection:id ? {kind:'outcome_pilot',id} : {}}})); };

@@ -10,6 +10,6 @@
 .navfinder:has(.navfinder-record-controls)>*{flex-shrink:0}
 .navfinder:has(.navfinder-record-controls)>.navfinder__results{flex:0 0 auto;max-height:min(24rem,45dvh)}
 
-#navfinder-history:not([hidden]){display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));gap:var(--space-2);width:100%;min-width:0;border:1px solid var(--line);border-radius:var(--radius-sm)}
+#navfinder-history:not([hidden]){display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,10rem),1fr));gap:var(--space-2);width:100%;min-width:0;border:1px solid var(--border);border-radius:var(--radius-sm)}
 #navfinder-history label{display:flex;flex-direction:column;gap:var(--space-1);min-width:0}
 #navfinder-history input{min-width:0;width:100%;box-sizing:border-box}

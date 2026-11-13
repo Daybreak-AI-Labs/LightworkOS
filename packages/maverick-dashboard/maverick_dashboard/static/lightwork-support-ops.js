@@ -198,7 +198,7 @@
     if (stamp !== generation || !allowed || (isCurrent && !isCurrent())) return false;
     panel.scrollIntoView({block: 'start'}); consent.focus(); return true;
   }};
-  ['workspace-changed', 'account-context-changed'].forEach(name => document.addEventListener(name, clear));
+  ['lightwork:workspace-changed', 'lightwork:account-context-changed'].forEach(name => document.addEventListener(name, clear));
   window.addEventListener('lightwork:copilot-context-changed', clear);
   window.addEventListener('pagehide', clear);
   controls();

@@ -191,7 +191,7 @@
     if (pendingSample && pendingSample.values !== JSON.stringify(values)) {
       say('ekko-pilot-message', 'The earlier run was not confirmed. Refresh saved plans and reopen this plan before changing the values.'); return;
     }
-    if (!pendingSample) pendingSample = {id: crypto.randomUUID(), values: JSON.stringify(values)};
+    if (!pendingSample) pendingSample = {id: (window.mvNewId ? window.mvNewId() : crypto.randomUUID()), values: JSON.stringify(values)};
     const body = {...values, context: workspaceContext, sample_id: pendingSample.id, expected_revision: plan.revision, device_id: scope.device};
     lock(true); say('ekko-pilot-message', 'Recording your observation…');
     try {

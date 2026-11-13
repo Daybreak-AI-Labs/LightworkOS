@@ -160,7 +160,7 @@
     $('watch').hidden = true;
     $('availability').textContent = 'Your access or workspace changed. Reopen the recording controls before recording.';
   }
-  ['lightwork:context-changed', 'lightwork:workspace-changed', 'lightwork:account-changed', 'lightwork:account-context-changed', 'lightwork:authority-changed'].forEach(event => {
+  ['lightwork:context-changed', 'lightwork:workspace-changed', 'lightwork:account-context-changed', 'lightwork:authority-changed'].forEach(event => {
     document.addEventListener(event, invalidateAvailability); window.addEventListener(event, invalidateAvailability);
   });
   document.addEventListener('lightwork:copilot-context-changed', event => { if (event.detail?.reason !== 'selection') invalidateAvailability(); });

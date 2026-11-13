@@ -43,7 +43,7 @@
       if(!prepared||!uncertain&&prepared.max_dollars!==limit){
         const review=await request('/resume-review');if(review.blocked)throw new Error(review.blocked);
         if(review.context!==context)throw new Error('Account or workspace changed. Reopen this task.');
-        prepared={operation_id:crypto.randomUUID().replace(/-/g,''),expected_context:context,expected_updated_at:review.expected_updated_at,expected_owner:review.expected_owner,max_dollars:limit};
+        prepared={operation_id:(window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g,''),expected_context:context,expected_updated_at:review.expected_updated_at,expected_owner:review.expected_owner,max_dollars:limit};
         copy(message,'{title}. {consequence} Reviewed attempt limit: {limit}. Select Confirm restart to authorize this attempt.',{title:review.title,consequence:translated(review.consequence),limit:limit===null?translated('Current workspace defaults'):money(limit)});
         copy(button,'Confirm restart');return;
       }

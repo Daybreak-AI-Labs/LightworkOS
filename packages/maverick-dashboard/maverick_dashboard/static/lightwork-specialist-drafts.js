@@ -224,7 +224,7 @@
     useState(fresh); root.scrollIntoView({block: 'start'}); if (!options.isCurrent() || current !== generation) return false;
     root.querySelector('[data-sd-action="preview"]').focus(); return options.isCurrent() && current === generation;
   };
-  ['lightwork:context-changed', 'lightwork:workspace-changed', 'lightwork:account-changed'].forEach(event => { document.addEventListener(event, clear); window.addEventListener(event, clear); });
+  ['lightwork:context-changed', 'lightwork:workspace-changed'].forEach(event => { document.addEventListener(event, clear); window.addEventListener(event, clear); });
   document.addEventListener('lightwork:account-context-changed', clear); document.addEventListener('lightwork:authority-changed', clear);
   document.addEventListener('lightwork:copilot-context-changed', event => { if (event.detail?.reason !== 'selection') clear(); });
   document.addEventListener('lightwork:product-operation-complete', event => { if (String(event.detail?.operation || '').startsWith('specialists.drafts.')) { generation++; invalidate(); status.textContent = 'A specialist decision changed. Refresh its drafts; your entered editor settings have been kept.'; } });

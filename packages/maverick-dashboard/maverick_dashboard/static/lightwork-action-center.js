@@ -251,7 +251,7 @@
       await request(`/api/v1/action-center/${encodeURIComponent(item.id)}/preference`, {method:"PUT",
         headers:{"Content-Type":"application/json", "X-Lightwork-Action-Context":model.context},
         body:JSON.stringify({expected_revision:model.revision, source_version:item.source_version,
-          operation_id:crypto.randomUUID(), read, snoozed_until:snoozedUntil})});
+          operation_id:(window.mvNewId ? window.mvNewId() : crypto.randomUUID()), read, snoozed_until:snoozedUntil})});
       pending(false); await load(focus);
     } catch (error) { status.textContent = error.message; pending(false); }
   }

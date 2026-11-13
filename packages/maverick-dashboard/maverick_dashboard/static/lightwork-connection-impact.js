@@ -39,7 +39,7 @@
     }
     const replace=button('Switch to staged API key',()=>mutate(replace,'/replace-staged',body(),'Switch the saved credential after reviewing this impact? Sharing stays as currently configured; pinned sources and approvals need fresh review. No historical work will be replayed.'));if(value.can_manage)panel.append(replace);
     for(const item of value.items.filter(row=>value.can_rebind&&row.kind==='discovery_source')){
-      const repair=button('Rebind '+item.title,()=>mutate(repair,'/rebind-source',{...body(),source_id:item.id,source_revision:item.revision,operation_id:crypto.randomUUID().replace(/-/g,'')},'Rebind this exact source to the selected current credential? Its resource and evidence settings stay fixed. No scan or historical action starts.'));panel.append(repair);
+      const repair=button('Rebind '+item.title,()=>mutate(repair,'/rebind-source',{...body(),source_id:item.id,source_revision:item.revision,operation_id:(window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g,'')},'Rebind this exact source to the selected current credential? Its resource and evidence settings stay fixed. No scan or historical action starts.'));panel.append(repair);
     }
     const capabilities=node('fieldset');capabilities.append(node('legend','Check the exact read your task needs'));
     if(!value.capabilities.length)capabilities.append(node('p','This connection has no built-in read check here. A general service check does not prove a task can read the data. Use the source access check where available, or review the provider permissions for the task.'));
