@@ -1231,11 +1231,46 @@ def test_access_package_closure_four_eyes_export_integrity_and_purge(authority) 
     assert verification.verified_records > 0
     assert verification.audit_events > 0
 
+    # A hold placed after closure must keep the closed case out of the purge.
+    with pytest.raises(rights.PrivacyRightsConflict, match="not open"):
+        store.set_identity_verification(
+            "tenant-a",
+            case.case_id,
+            status="pending",
+            evidence_sha256=None,
+            evidence_ref=None,
+            expected_revision=closed.revision,
+            idempotency_key="identity-after-close",
+        )
+    held = store.set_legal_hold(
+        "tenant-a",
+        case.case_id,
+        active=True,
+        evidence_sha256=digest("hold"),
+        evidence_ref="hold:closed",
+        expected_revision=closed.revision,
+        idempotency_key="hold-after-close",
+    )
+    assert held.status == "closed"
+    assert held.closure_approved_by == "closure-approver"
+
     clock.advance(601)
+    assert store.purge_expired(
+        "tenant-a", cutoff=clock(), idempotency_key="purge-held"
+    ) == {"packages": 1, "exports": 1, "cases": 0}
+    store.set_legal_hold(
+        "tenant-a",
+        case.case_id,
+        active=False,
+        evidence_sha256=digest("release"),
+        evidence_ref="hold:released",
+        expected_revision=held.revision,
+        idempotency_key="hold-release-after-close",
+    )
     purged = store.purge_expired(
         "tenant-a", cutoff=clock(), idempotency_key="purge"
     )
-    assert purged == {"packages": 1, "exports": 1, "cases": 1}
+    assert purged == {"packages": 0, "exports": 0, "cases": 1}
     with pytest.raises(rights.PrivacyRightsNotFound):
         store.get_case("tenant-a", case.case_id)
     store.verify_integrity("tenant-a")

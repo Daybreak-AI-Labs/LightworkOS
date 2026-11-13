@@ -1602,6 +1602,7 @@ class PrivacyRightsOrchestrationStore:
         idempotency_key: str,
         actor: str,
         now: float,
+        allow_closed: bool = False,
     ) -> RightsCase:
         request = {
             "action": action,
@@ -1626,17 +1627,16 @@ class PrivacyRightsOrchestrationStore:
                     f"case revision CAS failed: expected {expected_revision}, "
                     f"found {current.revision}"
                 )
-            if current.status != "open":
+            # A legal hold or retention block must stay settable on a closed
+            # case: purge_expired deletes closed cases that carry neither.
+            closed = allow_closed and current.status == "closed"
+            if current.status != "open" and not closed:
                 raise PrivacyRightsConflict("rights case is not open")
             payload = dict(raw)
             payload.update(updates)
-            payload.update(
-                {
-                    "revision": current.revision + 1,
-                    "updated_at": now,
-                    "closure_approved_by": None,
-                }
-            )
+            payload.update({"revision": current.revision + 1, "updated_at": now})
+            if not closed:
+                payload["closure_approved_by"] = None
             digest_value = self._write(
                 connection,
                 "rights_cases",
@@ -1744,6 +1744,7 @@ class PrivacyRightsOrchestrationStore:
             idempotency_key=idempotency_key,
             actor=actor,
             now=now,
+            allow_closed=True,
         )
 
     def set_retention_gate(
@@ -1779,6 +1780,7 @@ class PrivacyRightsOrchestrationStore:
             idempotency_key=idempotency_key,
             actor=actor,
             now=now,
+            allow_closed=True,
         )
 
     @staticmethod

@@ -1448,12 +1448,17 @@ class ConsentPreferenceStore:
         policy_id: str,
         at: float,
     ) -> sqlite3.Row | None:
-        return conn.execute(
+        # The newest version that has taken effect supersedes every older one,
+        # so once it expires there is no current policy: an older unexpired
+        # version must not become current again.
+        row = conn.execute(
             "SELECT * FROM consent_policies WHERE tenant = ? AND policy_id = ? "
-            "AND effective_at <= ? AND (expires_at IS NULL OR expires_at > ?) "
-            "ORDER BY version DESC LIMIT 1",
-            (tenant, policy_id, at, at),
+            "AND effective_at <= ? ORDER BY version DESC LIMIT 1",
+            (tenant, policy_id, at),
         ).fetchone()
+        if row is not None and row["expires_at"] is not None and row["expires_at"] <= at:
+            return None
+        return row
 
     def publish_policy(
         self,
