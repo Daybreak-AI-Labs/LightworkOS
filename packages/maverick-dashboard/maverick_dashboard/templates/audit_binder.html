@@ -179,7 +179,7 @@
     <p class="bnd-mono">Evidence file name: {{ b.artifact.binder_id }}</p>
     <p class="bnd-mono">Signing key: {{ b.artifact.key_id or '—' }}</p>
     <p class="bnd-mono">Evidence file fingerprint: {{ b.artifact.digest }}</p>
-    <p>To check the downloaded evidence file against this fingerprint, remove its “artifact” entry, then write the rest again as UTF-8 JSON with sorted keys and compact separators (no spaces after commas or colons) and take the SHA-256 of that. The file as downloaded is spaced differently, so its own SHA-256 does not match.</p>
+    <p>This is not the fingerprint of the downloaded file as saved. It covers the file’s contents without the “artifact” entry, with names in alphabetical order and no extra spaces.</p>
     {% if b.chain.anchor_breaks %}<ul class="bnd-mono">{% for br in b.chain.anchor_breaks %}<li>{{ br.reason | humanize }}</li>{% endfor %}</ul>{% endif %}
   </details>
 
