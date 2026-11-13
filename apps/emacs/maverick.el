@@ -16,7 +16,7 @@
 ;;   M-x maverick-start    — prompt for a goal, run it (async, compilation buffer)
 ;;   M-x maverick-status   — show runtime status (+ cost)
 ;;   M-x maverick-monitor  — live plan-tree TUI in a term buffer
-;;   M-x maverick-logs     — tail recent run logs
+;;   M-x maverick-logs     — tail recent audit log entries
 ;;   M-x maverick-halt     — arm the killswitch (~/.maverick/HALT)
 ;;   M-x maverick-unhalt   — clear the killswitch
 ;;
@@ -152,7 +152,7 @@
 
 ;;;###autoload
 (defun maverick-logs ()
-  "Show recent Lightwork run logs."
+  "Show recent Lightwork audit log entries."
   (interactive)
   (compilation-start (maverick--command "logs") nil (lambda (_) "*maverick-logs*")))
 

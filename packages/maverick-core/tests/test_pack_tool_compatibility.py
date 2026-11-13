@@ -57,7 +57,7 @@ def test_all_shipped_pack_and_skill_tool_contracts(context):
     # Questionnaire tools exist intentionally only in the assessment registry.
     specialized = {tool.name for tool in assessment_tools(AssessmentSession())}
     loaded = skills.load_builtin_skills()
-    assert len(loaded) == 514
+    assert len(loaded) == 513
     assert {s.name: sorted(set(s.tools_needed) - names - specialized) for s in loaded
             if set(s.tools_needed) - names - specialized} == {}
 

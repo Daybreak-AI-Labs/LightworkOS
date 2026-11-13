@@ -14,7 +14,7 @@ Drafts a data-governance policy: ownership and stewardship, classification and a
 
 # Steps
 
-1. Define scope and roles: data owners, stewards, and custodians, with decision rights named (who approves access, who owns quality).
+1. Use `knowledge_search` to retrieve existing data policies and stewardship assignments. Define scope and roles: data owners, stewards, and custodians, with decision rights named (who approves access, who owns quality).
 2. Set the classification scheme and handling rules per tier, and the access model (least privilege, review cadence).
 3. Assign data-quality accountability with dimensions and thresholds, and define the lifecycle: retention, archival, and disposition.
 4. Add the operating model: a governance forum, change process, and exceptions. State assumptions and hand off for adoption.

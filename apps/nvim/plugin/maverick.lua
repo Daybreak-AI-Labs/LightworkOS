@@ -22,7 +22,7 @@ end, { desc = "Live Lightwork plan-tree monitor" })
 
 vim.api.nvim_create_user_command("MaverickLogs", function()
   mv().logs()
-end, { desc = "Recent Lightwork run logs" })
+end, { desc = "Recent Lightwork audit log entries" })
 
 vim.api.nvim_create_user_command("MaverickHalt", function()
   mv().halt()

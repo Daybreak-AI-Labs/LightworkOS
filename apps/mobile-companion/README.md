@@ -17,23 +17,28 @@ event timeline, and an at-a-glance fleet summary — with an offline cache so
 losing the network shows "as of 12 min ago" instead of a blank screen.
 
 **Task browsing is read-only by default.** A device explicitly enrolled for actions,
-under the administrator's separately enabled policy, can review and confirm one
-answer or request Stop on its own task. An answer can resume that task through the
-dashboard's existing budget admission service. Approvals, attachments and other
-sensitive decisions open the authenticated full dashboard. Offline copies never
-authorize or queue writes. Separately typed POSTs pair and renew the connection. See
+under the administrator's separately enabled policies, can review and confirm an
+answer or Stop on its own task, start a task, or approve/reject an eligible owned
+approval. Each write uses the corresponding preview and confirmation service;
+new-task and approval permissions are separate from answer/Stop enrollment.
+Answers and task starts pass the dashboard's budget admission service. Attachments
+and unsupported decisions open the authenticated full dashboard. Offline copies
+never authorize or queue writes. Typed POSTs pair and renew the connection. See
 [device pairing](../../docs/device-pairing.md) for the exact scope and limits.
 
 ## Endpoints used (all existing dashboard routes)
 
-From `packages/maverick-dashboard/maverick_dashboard/api.py`:
+The client in `src/api.ts` uses these dashboard routes:
 
 | Screen      | Endpoint |
 |-------------|----------|
-| Tasks       | `GET /api/v1/goals?limit=50` |
+| Tasks       | `GET /api/v1/goals?limit=50`, `GET /api/v1/goals/search`, `GET /api/v1/goals/{id}` |
 | Run detail  | `GET /api/v1/goals/{id}/events?since=0&limit=200` |
 | Overview    | `GET /api/v1/oversight/active` + `GET /api/v1/spend` |
 | Offline     | `GET /api/v1/offline/bundle` with `X-Lightwork-Offline-Policy: 1` (optional; older dashboards still support online views, but snapshots without current retention policy are not saved) |
+| Pairing | `POST /api/v1/devices/pairing/begin`, `POST /api/v1/devices/pairing/poll`, `POST /api/v1/devices/renew` |
+| Task and approval review | `GET /api/v1/devices/work/context`, `POST /api/v1/devices/work/prepare`, `POST /api/v1/devices/work/execute`; start/approve/reject as enrolled |
+| Work recovery and history | `GET /api/v1/devices/work/original`, `GET /api/v1/devices/work/history`, `GET /api/v1/devices/work/approvals` |
 | Reviewed actions | `GET /api/v1/devices/actions/context`, `POST /api/v1/devices/actions/prepare`, `POST /api/v1/devices/actions/execute`; exact own-task answer/Stop allowlist only |
 
 Organization controls in **All settings → Data retention** can disable mobile
@@ -115,7 +120,7 @@ checks in the native release matrix before changing a preview's support status.
 `npm run typecheck` (tsc) requires a local `npm install` first; the repo does
 not vendor `node_modules`, so CI here only guarantees the sources are
 syntactically valid TypeScript. Imports are limited to `react`,
-`react-native`, `expo-status-bar`, `expo-secure-store`, and
+`react-native`, `expo-status-bar`, `expo-secure-store`, `expo-modules-core`, and
 `@react-native-async-storage/async-storage`.
 
 ## Local regression tests
@@ -149,5 +154,7 @@ Named connections can be added, switched and removed in Settings; their tokens
 remain in the same device secure store. Switching clears the previous offline
 copy and resets the visible task. The initial connection screen is also the
 mobile setup flow for the offline-saving choice. Native screens follow the
-system light/dark preference and system text size. Product copy is currently
-English; selecting other languages must wait for reviewed translations.
+saved appearance preference and system text size. Settings offers English,
+French, German, Japanese, Chinese and Arabic language/format choices. The partial
+French/German/Japanese/Chinese catalogs and Arabic English fallback are described
+above; task content is not translated by this setting.

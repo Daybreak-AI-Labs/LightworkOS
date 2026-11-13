@@ -4,6 +4,8 @@ triggers:
   - incident severity
   - incident triage
   - sev levels
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

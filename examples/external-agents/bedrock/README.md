@@ -11,7 +11,8 @@ group and one small forwarder Lambda:
 
 The Lambda maps each operation (`screenAction`, `reportRun`, `startRun`,
 `heartbeatRun`, `finishRun`, `memoryIngest`, `memoryRecall`,
-`approvalStatus`, `executeAction`, `executionStatus`, `commitExecution`)
+`approvalStatus`, `executeAction`, `executionStatus`, `commitExecution`,
+`evaluateRuntimeContent`, `pullRedTeamCases`, `submitRedTeamResult`)
 onto the matching `/api/v1/external/...` route, attaches
 the per-agent `rest` bearer read from AWS Secrets Manager (never
 hard-coded), and returns the gateway's status + JSON body in the Bedrock

@@ -135,7 +135,7 @@ fun main() {
     }
     Fixture { exchange, _ ->
         exchange.stream("")
-        val bytes = (event(7).replace("event-7", "café").replace("\n", "\r\n") + end(7)).toByteArray()
+        val bytes = (event(7).replace("id: 7\n", "id: 7\nevent: error\n").replace("event-7", "café").replace("\n", "\r\n") + end(7)).toByteArray()
         for (byte in bytes) { exchange.responseBody.write(byte.toInt()); exchange.responseBody.flush() }
     }.use { f ->
         f.start(); f.finished()

@@ -4,6 +4,9 @@ triggers:
   - grant compliance
   - allowable cost
   - grant budget
+tools_needed:
+  - knowledge_search
+  - spreadsheet
 ---
 # What this skill does
 

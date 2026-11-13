@@ -233,11 +233,11 @@ export async function servePlugin(tools: ToolDef[], opts: ServeOptions = {}): Pr
 }
 
 // --------------------------------------------------------------------------
-// Structured page context (browser extension <-> agent).
+// Structured page context supplied by an integration.
 //
-// The Lightwork browser extension (extensions/browser/) can attach a bounded,
-// OBSERVE-ONLY accessibility/DOM snapshot of the active page to a goal. These
-// types + parser let a TypeScript plugin consume that snapshot safely: parse
+// The browser extension currently flattens its observe-only snapshot into a
+// goal's description; it does not populate a structured plugin argument.
+// These types + parser accept explicitly supplied snapshots safely: parse
 // validates/normalizes untrusted JSON and re-applies the same bounds the
 // extension enforces, so a plugin never trusts oversized or malformed input.
 // --------------------------------------------------------------------------

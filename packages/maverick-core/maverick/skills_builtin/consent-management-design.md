@@ -4,6 +4,8 @@ triggers:
   - consent management
   - cookie consent
   - preference center
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

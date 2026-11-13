@@ -6,7 +6,7 @@
 --   :MaverickStart {goal}   start a goal (prompts when no arg)
 --   :MaverickStatus         runtime status + cost (split)
 --   :MaverickMonitor        live plan-tree TUI (terminal split)
---   :MaverickLogs           recent run logs
+--   :MaverickLogs           recent audit log entries
 --   :MaverickHalt           arm the killswitch (confirms first)
 --   :MaverickUnhalt         clear the killswitch
 --

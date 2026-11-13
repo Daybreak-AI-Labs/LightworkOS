@@ -4,6 +4,9 @@ triggers:
   - expense audit
   - t&e audit
   - policy compliance
+tools_needed:
+  - knowledge_search
+  - sql_query
 ---
 # What this skill does
 
@@ -11,7 +14,7 @@ Audits a set of expense or T&E transactions against the organization's written e
 
 # Steps
 
-1. Load the expense policy thresholds and rules (per-category caps, receipt-required floor, approval tiers, blocked categories, per-diem limits, submission-window deadlines) from the policy source; capture rule IDs/section references for citation.
+1. Use `knowledge_search` to load the expense policy thresholds and rules (per-category caps, receipt-required floor, approval tiers, blocked categories, per-diem limits, submission-window deadlines) from the policy source; capture rule IDs/section references for citation.
 2. Pull the expense lines in scope via `sql_query` — amount, category, date, submitter, approver, receipt flag, and any project/cost-center tags.
 3. Test each line against every applicable rule: over-cap amounts, missing receipts above the floor, wrong/insufficient approval tier, blocked or out-of-policy categories, duplicate submissions, and stale/late filings. Record the matched rule and the dollar exposure per exception.
 4. Compile the exception list grouped by severity (hard violation vs needs-review), total the exposure, and hand off — stating the policy version/date used and noting any line where the policy is silent or ambiguous rather than forcing a verdict.

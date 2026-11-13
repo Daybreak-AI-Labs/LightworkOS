@@ -109,9 +109,26 @@ async function reconcile(s) {
     if (!pending) return null;
     if (!pending.key) throw new ClientError("Legacy unconfirmed start requires dashboard review.", "unknown");
     const data = await request(s, "/api/v1/goal-submissions/receipt?kind=api", undefined, undefined, pending.key);
+    if (data.state === "not_dispatched") {
+      if (!pending.body) throw new ClientError("The original draft was not retained by this version. Review it in the dashboard.", "unknown");
+      await checkCapturePolicy(s, pending.capturePolicy);
+      if ((await settings()).scope !== s.scope) throw new ClientError("Connection changed. Reopen the popup before recovery.", "context");
+      const goal = await request(s, "/api/v1/goals", pending.body, undefined, pending.key);
+      return await rememberAccepted(s, pending, goal);
+    }
     if (data.state !== "accepted") throw new ClientError("Start receipt is not confirmed.", "unknown");
     return await rememberAccepted(s, pending, data.goal);
   } finally { starting = false; }
+}
+
+async function checkCapturePolicy(s, capturePolicy) {
+  if (!capturePolicy) return;
+  const policy = await request(s, "/api/v1/extension/policy");
+  if (policy.revision !== capturePolicy.revision ||
+      (capturePolicy.form_values && !policy.form_values) ||
+      (capturePolicy.page_structure && !policy.page_structure)) {
+    throw new ClientError("Page sharing policy changed. Review the page again before sending.", "refused");
+  }
 }
 
 async function startGoal(s, msg) {
@@ -125,19 +142,13 @@ async function startGoal(s, msg) {
     if (Object.entries(retained).filter(([key, value]) => key.startsWith("pendingGoal:") && value).length >= 8) {
       throw new ClientError("Eight connection scopes have unresolved starts. Reconcile one before starting more work.", "pending");
     }
-    if (msg.capturePolicy) {
-      const policy = await request(s, "/api/v1/extension/policy");
-      if (policy.revision !== msg.capturePolicy.revision ||
-          (msg.capturePolicy.form_values && !policy.form_values) ||
-          (msg.capturePolicy.page_structure && !policy.page_structure)) {
-        throw new ClientError("Page sharing policy changed. Review the page again before sending.", "refused");
-      }
-    }
+    await checkCapturePolicy(s, msg.capturePolicy);
     const title = String(msg.title || "").slice(0, 200);
-    const pending = { scope: s.scope, title, state: "pending", key: crypto.randomUUID() };
+    const pending = { scope: s.scope, title, state: "pending", key: crypto.randomUUID(),
+      body: { title, description: String(msg.description || "") }, capturePolicy: msg.capturePolicy };
     await chrome.storage.local.set({ [pendingKey(s)]: pending });
     try {
-      const goal = await request(s, "/api/v1/goals", { title, description: String(msg.description || "") }, undefined, pending.key);
+      const goal = await request(s, "/api/v1/goals", pending.body, undefined, pending.key);
       return await rememberAccepted(s, pending, goal);
     } catch (error) {
       // A conflict can mean a durable draft/legacy receipt already exists.

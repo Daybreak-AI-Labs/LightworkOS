@@ -3,7 +3,6 @@ name: decision-memo-author
 triggers:
   - write a decision memo
   - draft a recommendation memo
-  - put together a SASPE memo
 tools_needed:
   - knowledge_search
 ---

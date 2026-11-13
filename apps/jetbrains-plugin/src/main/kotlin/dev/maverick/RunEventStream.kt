@@ -83,7 +83,7 @@ internal class RunEventStream(
                                 when (parsed.kind) {
                                     "heartbeat" -> Unit
                                     "timeout" -> break
-                                    "error" -> { emit("[Run visibility changed or its stream is unavailable.]"); return }
+                                    "stream-error" -> { emit("[Run visibility changed or its stream is unavailable.]"); return }
                                     "end" -> { emit("[Run complete.]"); return }
                                     else -> if (parsed.id > cursor) {
                                         if (!emit(parsed.data) || stopped.get()) return
@@ -130,7 +130,8 @@ internal class RunEventStream(
             }
         }
         if (data.isEmpty()) return Frame("heartbeat")
-        if (kind == "timeout" || kind == "error") return Frame(kind)
+        if (kind == "timeout") return Frame(kind)
+        if (kind == "error" && id.isEmpty()) return Frame("stream-error")
         val text = data.joinToString("\n")
         try {
             val json = JsonParser.parseString(text)

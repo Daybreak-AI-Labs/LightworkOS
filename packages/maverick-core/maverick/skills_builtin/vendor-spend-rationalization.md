@@ -4,6 +4,9 @@ triggers:
   - vendor rationalization
   - consolidate vendors
   - tail spend
+tools_needed:
+  - sql_query
+  - spreadsheet
 ---
 # What this skill does
 

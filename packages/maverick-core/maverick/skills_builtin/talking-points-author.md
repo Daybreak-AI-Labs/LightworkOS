@@ -4,7 +4,6 @@ triggers:
   - draft talking points
   - prep messaging for the spokesperson
   - briefing for the interview
----
 tools_needed:
   - knowledge_search
 ---

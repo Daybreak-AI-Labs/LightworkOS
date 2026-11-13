@@ -14,7 +14,7 @@ Builds a waterfall ("bridge") that explains the gap between two scenario outcome
 # Steps
 
 1. Pin the start and end scenarios, each with its outcome value and full set of driver inputs from a sourced model. Confirm both outcomes are verified; record the total delta to be explained.
-2. List the drivers that differ between scenarios. Attribute the delta by flipping one driver at a time from its start to its end value (sequential walk), recording the marginal change each flip produces; hold a fixed flip order and disclose it, since order affects interaction allocation.
+2. In `spreadsheet`, list the drivers that differ between scenarios. Attribute the delta by flipping one driver at a time from its start to its end value (sequential walk), recording the marginal change each flip produces; hold a fixed flip order and disclose it, since order affects interaction allocation.
 3. Sum the driver-level deltas and reconcile to the total change — the bridge must close to zero residual. Park any unexplained gap as an explicit "interaction/other" bar rather than silently absorbing it.
 4. Render the waterfall start -> drivers -> end and return the contribution table. Report the largest contributors, the flip order used, and any residual, noting assumptions.
 

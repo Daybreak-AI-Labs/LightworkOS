@@ -27,7 +27,7 @@ lazy.nvim:
 | `:MaverickStart {goal}` | start a goal (prompts when no arg) |
 | `:MaverickStatus` | runtime status + cost |
 | `:MaverickMonitor` | live plan-tree TUI in a terminal split |
-| `:MaverickLogs` | recent run logs |
+| `:MaverickLogs` | recent audit log entries |
 | `:MaverickHalt` | arm the killswitch (confirms first) |
 | `:MaverickUnhalt` | clear the killswitch |
 | `:MaverickCancelControl` | stop waiting for halt/unhalt; outcome remains unconfirmed |

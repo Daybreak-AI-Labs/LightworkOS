@@ -15,7 +15,7 @@ Prepares a vendor contract renewal: usage vs entitlement, price benchmarks, leve
 
 # Steps
 
-1. Pull the contract terms and the renewal/notice dates — surface auto-renew and price-increase clauses before the window closes.
+1. Use `knowledge_search` to pull the contract terms and the renewal/notice dates — surface auto-renew and price-increase clauses before the window closes.
 2. Analyze actual usage vs entitlement in `spreadsheet` to expose over-provisioning and right-sizing opportunities.
 3. Benchmark pricing and assemble leverage (alternatives, multi-year, consolidation) and the target vs walk-away position.
 4. Produce the negotiation plan with asks ranked and BATNA stated. State assumptions and hand off — signing authority is the owner's.

@@ -4,6 +4,8 @@ triggers:
   - draft a pip
   - performance improvement plan
   - build a coaching plan
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

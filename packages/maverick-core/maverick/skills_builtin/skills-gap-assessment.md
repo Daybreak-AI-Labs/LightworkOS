@@ -5,6 +5,7 @@ triggers:
   - capability gap
   - build buy borrow
 tools_needed:
+  - knowledge_search
   - sql_query
   - spreadsheet
 ---

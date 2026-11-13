@@ -4,16 +4,18 @@
  * packages/maverick-dashboard/maverick_dashboard/api.py:
  *
  *   GET /api/v1/goals?limit=&status=          listGoals()
+ *   GET /api/v1/goals/search                 searchGoals()
  *   GET /api/v1/goals/{id}                    getGoal()
  *   GET /api/v1/goals/{id}/events?since=&limit=  getGoalEvents()
  *   GET /api/v1/oversight/active              getActive()
  *   GET /api/v1/spend                         getSpend()
- *   GET /api/v1/offline/bundle                getOfflineBundle()  (optional —
- *       served once the integrator adds the maverick.offline_bundle endpoint;
- *       404 from older dashboards is handled by the caller)
+ *   GET /api/v1/offline/bundle                getOfflineBundle()
+ *       requires X-Lightwork-Offline-Policy: 1; otherwise the server returns 403.
  *
- * Task browsing remains read-only. Typed POSTs handle pairing/renewal and the
- * explicitly enrolled own-task answer/Stop preview-confirmation service.
+ * Typed POSTs handle pairing begin/poll/renewal, enrolled own-task answer/Stop,
+ * and the devices/work prepare/execute service for start/approve/reject.
+ * devices/work GETs provide context, original outcomes, history and approvals.
+ * Writes require online review and confirmation under the device's permissions.
  */
 
 import { connectionValidationError } from "./connectionValidation";
