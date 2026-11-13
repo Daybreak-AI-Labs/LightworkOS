@@ -59,7 +59,7 @@ func main() {
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           srv,
-		ReadHeaderTimeout: 30 * time.Second,
+		ReadHeaderTimeout: min(10*time.Second, timeout),
 		MaxHeaderBytes:    65536,
 	}
 	log.Printf("model proxy on %s -> %s (auth=%s)", addr, config.Upstream, config.AuthStyle)

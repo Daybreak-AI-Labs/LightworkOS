@@ -102,7 +102,7 @@
   </section>
   <section class="panel">
     <h2>Result</h2>
-    <p class="sr-only" id="csa-output-status" role="status"></p>
+    <p id="csa-output-status" role="status" aria-live="polite"></p>
     <pre class="csa-output" id="csa-output">No request made.</pre>
   </section>
 </div>
@@ -132,8 +132,7 @@
 
   function show(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-    // Announce one short sentence, not the whole result.
-    outputStatus.textContent = typeof value === "string" ? value : "The request finished. The result is shown under Result.";
+    outputStatus.textContent = typeof value === "string" ? value : "Request completed. Review the result below.";
   }
   // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
   function requestProblem(status, detail) {
@@ -173,6 +172,7 @@
     });
   }
   async function run(method, path, payload) {
+    outputStatus.textContent = "Completing the request…";
     var options = {method: method, headers: {"Accept": "application/json"}};
     if (method !== "GET") {
       options.headers["Content-Type"] = "application/json";
