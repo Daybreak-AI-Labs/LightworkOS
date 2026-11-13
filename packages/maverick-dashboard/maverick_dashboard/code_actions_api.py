@@ -209,11 +209,11 @@ async def start_feature(request: Request, body: FeatureIn, bg: BackgroundTasks) 
     if _provider_missing():
         raise HTTPException(status_code=503, detail=(
             "Set up an AI provider in Settings before asking Lightwork to build a change."))
-    _audit(request, "start_feature", repo=body.repo)
     owner = caller_principal(request) or ""
     user_id = execution_user_id_from_request(request)
     if owner and owner != f"user:{user_id}":
         raise HTTPException(status_code=403, detail="A current named execution identity is required.")
+    _audit(request, "start_feature", repo=body.repo)
     bg.add_task(_run_feature, body.repo, body.title.strip(), body.description.strip(),
                 body.max_dollars, owner, user_id)
     return {"started": True, "repo": body.repo}

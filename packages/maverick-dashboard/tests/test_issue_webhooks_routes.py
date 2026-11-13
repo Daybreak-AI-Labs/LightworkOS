@@ -331,6 +331,31 @@ def test_linear_duplicate_delivery_rejected(_configured, _no_real_run):
     assert len(_no_real_run) == 1
 
 
+def test_refused_delivery_can_be_retried(monkeypatch, _no_real_run):
+    # A delivery refused before any work started (no provider yet) must not be
+    # remembered as delivered: the sender's retry spawns the goal, and only a
+    # delivery that did start work is then refused as a duplicate.
+    monkeypatch.setenv("MAVERICK_LINEAR_WEBHOOK_SECRET", SECRET)
+    monkeypatch.setenv("MAVERICK_BOT_LINEAR_ID", LINEAR_BOT)
+    import maverick_dashboard.app as app_mod
+
+    def no_provider():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="no model provider is configured")
+
+    monkeypatch.setattr(app_mod, "require_provider_or_400", no_provider)
+    body = json.dumps(_linear_assigned()).encode()
+    headers = {"Linear-Signature": _sign(body)}
+    assert client.post("/webhook/linear", content=body, headers=headers).status_code == 400
+    assert _no_real_run == []
+
+    monkeypatch.setattr(app_mod, "require_provider_or_400", lambda: None)
+    retry = client.post("/webhook/linear", content=body, headers=headers)
+    assert retry.status_code == 201, retry.text
+    assert len(_no_real_run) == 1
+    assert client.post("/webhook/linear", content=body, headers=headers).status_code == 409
+
+
 def test_linear_duplicate_delivery_rejected_with_prefixed_variant(_configured, _no_real_run):
     # Replay dedup must key on the canonical digest that verification accepts,
     # not the raw header string, or a captured bare Linear signature can be

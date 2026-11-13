@@ -2984,12 +2984,18 @@ def _webhook_duplicate_delivery(route: str, payload: dict) -> bool:
     given, so id-less callers keep the current at-least-once behaviour. The id
     is namespaced per ``route`` so a /webhook/start id can't mask a /webhook/run
     one. Never raises -- a degraded dedup store must not drop a webhook."""
-    delivery_id = str(payload.get("id") or "").strip()[:200]
-    if not delivery_id:
+    key = _webhook_delivery_key(route, payload)
+    if not key:
         return False
     from maverick.webhooks import _default_max_age
 
-    return _issue_webhook_replay_seen(f"webhook-{route}:{delivery_id}", _default_max_age())
+    return _issue_webhook_replay_seen(key, _default_max_age())
+
+
+def _webhook_delivery_key(route: str, payload: dict) -> str:
+    """The dedup key for a signed webhook's delivery ``id`` ("" when it has none)."""
+    delivery_id = str(payload.get("id") or "").strip()[:200]
+    return f"webhook-{route}:{delivery_id}" if delivery_id else ""
 
 
 # Safe methods skip the CSRF check (browsers send Origin/Referer
@@ -3659,10 +3665,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 error["input"] = "[redacted]"
     try:
         return JSONResponse({"detail": errors}, status_code=422)
-    except UnicodeEncodeError:
-        # The error echoes the rejected input, and a lone surrogate in a JSON
-        # string cannot be written as UTF-8: escape it instead of answering 500.
-        return Response(json.dumps({"detail": errors}), status_code=422, media_type="application/json")
+    except ValueError:
+        # The error echoes the rejected input. A lone surrogate in a JSON string
+        # cannot be written as UTF-8 (UnicodeEncodeError) and a non-finite number
+        # (NaN, Infinity) is not JSON at all: escape the first and name the
+        # second as a string instead of answering 500.
+        safe = json.loads(json.dumps({"detail": errors}), parse_constant=str)
+        return Response(json.dumps(safe), status_code=422, media_type="application/json")
 
 
 @app.exception_handler(TaskLimitConfigError)
@@ -7686,7 +7695,10 @@ def replay_page(request: Request, tab: str = "") -> HTMLResponse:
     from .navigation_api import areas_on
 
     raw = (request.query_params.get("goal") or "").strip()
-    goal_id = int(raw) if raw.isdigit() else None
+    try:
+        goal_id = int(raw) if raw.isdigit() else None
+    except ValueError:  # isdigit() admits "²" and digit runs past int()'s length limit
+        goal_id = None
     tabs = _replay_tabs(request, goal_id)
     if tab in ("branches", "video"):
         if tab not in {key for key, _label, _href in tabs}:
@@ -11950,7 +11962,8 @@ async def webhook_start(request: Request, bg: BackgroundTasks) -> JSONResponse:
     if _webhook_duplicate_delivery("start", payload):
         raise HTTPException(status_code=409, detail="duplicate delivery id (already processed)")
 
-    check_goal_rate_limit(request, source="webhook")
+    with _issue_webhook_admission(_webhook_delivery_key("start", payload)):
+        check_goal_rate_limit(request, source="webhook")
     w = _world()
     # HMAC webhooks carry no OIDC principal, so this resolves to "" (unowned):
     # reachable only by no-auth/admin callers, never another tenant.
@@ -12212,60 +12225,63 @@ async def webhook_run(request: Request, bg: BackgroundTasks) -> JSONResponse:  #
         # resume enqueues by varying the timestamp/body.
         if _webhook_duplicate_delivery("run", payload):
             raise HTTPException(status_code=409, detail="duplicate delivery id (already processed)")
-        from maverick import flow as flow_mod
+        # Nothing below starts work until the continuation is enqueued, so a
+        # refusal releases the delivery id for the sender's retry.
+        with _issue_webhook_admission(_webhook_delivery_key("run", payload)):
+            from maverick import flow as flow_mod
 
-        if not flow_mod.enabled():
-            raise HTTPException(status_code=409, detail="the flow engine is off")
-        from maverick.flow import store as flow_store
+            if not flow_mod.enabled():
+                raise HTTPException(status_code=409, detail="the flow engine is off")
+            from maverick.flow import store as flow_store
 
-        # The webhook HMAC covers the full payload, so an explicit tenant claim
-        # is authenticated.  Scope lookup and the queued continuation to that
-        # same tenant; without it a tenant run must never fall through to a
-        # same-id object in the shared namespace.
-        resume_tenant = str(payload.get("tenant") or "").strip()
-        tenant_token = None
-        if resume_tenant:
-            from maverick.tenant.registry import TenantRegistryError, assert_tenant_active
+            # The webhook HMAC covers the full payload, so an explicit tenant claim
+            # is authenticated.  Scope lookup and the queued continuation to that
+            # same tenant; without it a tenant run must never fall through to a
+            # same-id object in the shared namespace.
+            resume_tenant = str(payload.get("tenant") or "").strip()
+            tenant_token = None
+            if resume_tenant:
+                from maverick.tenant.registry import TenantRegistryError, assert_tenant_active
+
+                try:
+                    assert_tenant_active(resume_tenant)
+                except (KeyError, PermissionError, ValueError) as exc:
+                    raise HTTPException(status_code=404, detail="Workspace unavailable. No workflow continuation was started.") from exc
+                except TenantRegistryError as exc:
+                    raise HTTPException(status_code=503, detail="Workspace access could not be verified. No workflow continuation was started.") from exc
+                from maverick.paths import set_tenant
+
+                tenant_token = set_tenant(resume_tenant)
+            try:
+                run = flow_store.load_run(resume_id)
+            finally:
+                if tenant_token is not None:
+                    from maverick.paths import reset_tenant
+
+                    reset_tenant(tenant_token)
+            if run is None:
+                raise HTTPException(status_code=404, detail="no such run")
+            if run.status != "paused_event":
+                raise HTTPException(
+                    status_code=409, detail=f"run is not waiting for an event (status {run.status})"
+                )
+            check_goal_rate_limit(request, source="webhook")
+            inbound_evt = payload.get("data")
+            inputs = (
+                {str(k): v for k, v in inbound_evt.items()} if isinstance(inbound_evt, dict) else {}
+            )
+            from maverick_dashboard import automation_queue as aq
 
             try:
-                assert_tenant_active(resume_tenant)
-            except (KeyError, PermissionError, ValueError) as exc:
-                raise HTTPException(status_code=404, detail="Workspace unavailable. No workflow continuation was started.") from exc
-            except TenantRegistryError as exc:
-                raise HTTPException(status_code=503, detail="Workspace access could not be verified. No workflow continuation was started.") from exc
-            from maverick.paths import set_tenant
-
-            tenant_token = set_tenant(resume_tenant)
-        try:
-            run = flow_store.load_run(resume_id)
-        finally:
-            if tenant_token is not None:
-                from maverick.paths import reset_tenant
-
-                reset_tenant(tenant_token)
-        if run is None:
-            raise HTTPException(status_code=404, detail="no such run")
-        if run.status != "paused_event":
-            raise HTTPException(
-                status_code=409, detail=f"run is not waiting for an event (status {run.status})"
-            )
-        check_goal_rate_limit(request, source="webhook")
-        inbound_evt = payload.get("data")
-        inputs = (
-            {str(k): v for k, v in inbound_evt.items()} if isinstance(inbound_evt, dict) else {}
-        )
-        from maverick_dashboard import automation_queue as aq
-
-        try:
-            aq.enqueue_flow_resume(
-                run.flow_id,
-                run.run_id,
-                owner=run.owner,
-                inputs=inputs,
-                tenant=resume_tenant,
-            )
-        except flow_store.FlowSnapshotError as exc:
-            raise HTTPException(status_code=409, detail="run release is no longer active") from exc
+                aq.enqueue_flow_resume(
+                    run.flow_id,
+                    run.run_id,
+                    owner=run.owner,
+                    inputs=inputs,
+                    tenant=resume_tenant,
+                )
+            except flow_store.FlowSnapshotError as exc:
+                raise HTTPException(status_code=409, detail="run release is no longer active") from exc
         return JSONResponse({"run_id": run.run_id, "status": "resuming"}, status_code=202)
 
     name = str(payload.get("trigger") or "").strip()
@@ -12281,11 +12297,14 @@ async def webhook_run(request: Request, bg: BackgroundTasks) -> JSONResponse:  #
 
     from maverick_dashboard import triggers_store
 
-    trig = triggers_store.get_trigger(name)
-    if trig is None:
-        raise HTTPException(status_code=404, detail="unknown trigger")
+    # Every refusal below is raised before the goal or flow run is created, so
+    # it releases the delivery id for the sender's retry.
+    with _issue_webhook_admission(_webhook_delivery_key("run", payload)):
+        trig = triggers_store.get_trigger(name)
+        if trig is None:
+            raise HTTPException(status_code=404, detail="unknown trigger")
 
-    return _fire_stored_trigger(request, bg, payload, name, trig)
+        return _fire_stored_trigger(request, bg, payload, name, trig)
 
 
 def _flow_approve_page(
@@ -13002,8 +13021,9 @@ async def webhook_gitlab(request: Request, bg: BackgroundTasks) -> JSONResponse:
     if _issue_webhook_replay_seen(f"gitlab:{delivery}", replay_window_seconds()):
         raise HTTPException(status_code=409, detail="duplicate webhook delivery")
 
-    require_provider_or_400()
-    check_goal_rate_limit(request, source="webhook:gitlab")
+    with _issue_webhook_admission(f"gitlab:{delivery}"):
+        require_provider_or_400()
+        check_goal_rate_limit(request, source="webhook:gitlab")
     w = _world()
     title = f"{event.issue_id}: {event.title}".strip()
     goal_id = w.create_goal(title[:200], build_brief(event)[:8000], owner="")
@@ -13057,8 +13077,7 @@ async def webhook_stripe(request: Request) -> JSONResponse:
                                 action="stripe_payment_notice", actor="stripe",
                                 event_id=event_id, event_type=event_type))
     except AuditRefused as exc:
-        with _issue_webhook_seen_lock:
-            _issue_webhook_seen.pop(f"stripe:{event_id}", None)
+        await run_in_threadpool(_issue_webhook_release, f"stripe:{event_id}")
         raise HTTPException(status_code=503, detail=(
             "This notice could not be added to the activity record. Stripe will send it "
             "again.")) from exc
@@ -13124,6 +13143,36 @@ def _issue_webhook_replay_seen(signature: str, ttl_seconds: int) -> bool:
             ]:
                 _issue_webhook_seen.pop(k, None)
         return False
+
+
+def _issue_webhook_release(signature: str) -> None:
+    """Forget a delivery ``_issue_webhook_replay_seen`` recorded, for one that
+    was refused before any work started, so the sender's retry is not answered
+    as a duplicate. Clears the shared store and the in-process window (the mark
+    is in the latter when the shared store was unavailable). Never raises."""
+    if not signature:
+        return
+    try:
+        from maverick.world_model_backends import is_postgres_configured
+
+        if is_postgres_configured():
+            _world().release_processed_message(_ISSUE_WEBHOOK_CHANNEL, signature)
+    except Exception:
+        log.warning("issue webhook dedup: shared store unavailable, delivery not released")
+    with _issue_webhook_seen_lock:
+        _issue_webhook_seen.pop(signature, None)
+
+
+@contextmanager
+def _issue_webhook_admission(signature: str):
+    """Run the checks that can still refuse a delivery already recorded as
+    seen. A refusal (``HTTPException``) releases the record; a delivery that
+    passes them stays recorded, so replay protection is unchanged."""
+    try:
+        yield
+    except HTTPException:
+        _issue_webhook_release(signature)
+        raise
 
 
 async def _handle_issue_webhook(
@@ -13192,8 +13241,9 @@ async def _handle_issue_webhook(
     if _issue_webhook_replay_seen(dedup_signature, replay_window_seconds()):
         raise HTTPException(status_code=409, detail="duplicate webhook delivery")
 
-    require_provider_or_400()
-    check_goal_rate_limit(request, source=f"webhook:{provider}")
+    with _issue_webhook_admission(dedup_signature):
+        require_provider_or_400()
+        check_goal_rate_limit(request, source=f"webhook:{provider}")
     w = _world()
     title = f"{event.issue_id}: {event.title}".strip()
     # Webhook-driven goal: no authenticated principal -> unowned ("").
