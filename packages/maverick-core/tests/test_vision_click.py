@@ -109,6 +109,13 @@ def test_low_confidence_refused_and_not_memorized():
     assert calls2["n"] == 1 and res.source == "vision"
 
 
+def test_nan_confidence_refused():
+    vision, _ = _vision_stub(40, 50, float("nan"))
+    with pytest.raises(LowConfidenceError):
+        resolve_click("ghost button", app="a", screen="s",
+                      image=b"png", vision=vision, calibration=IDENTITY)
+
+
 def test_floor_override_param_and_config(tmp_path, monkeypatch):
     vision, _ = _vision_stub(40, 50, 0.2)
     res = resolve_click("dim button", app="a", screen="s", image=b"png",

@@ -22,6 +22,7 @@ Fully offline: no screenshots, no model calls — both are injected.
 """
 from __future__ import annotations
 
+import math
 import numbers
 import re
 from collections.abc import Callable, Mapping
@@ -114,7 +115,9 @@ def _vision_coords(
         confidence = float(result["confidence"])
     except (KeyError, TypeError, ValueError) as e:
         raise ValueError(f"vision fn result missing/invalid x/y/confidence: {e}") from e
-    if confidence < floor:
+    # NaN compares false against any floor, so a non-finite confidence must be
+    # refused explicitly rather than clicked.
+    if not math.isfinite(confidence) or confidence < floor:
         raise LowConfidenceError(confidence, floor, description)
     return (round(x), round(y), confidence)
 

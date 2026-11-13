@@ -576,7 +576,19 @@ def run_intake(spec: IntakeSpec, *, llm=None, kb=None,
     or sends uploaded document contents before the human approval gate. The
     ``kb`` argument is accepted for backward-compatible callers but is not used
     during draft generation.
+
+    The generative path never runs without a budget: when the caller passes
+    none, one is built from the ``[budget]`` config. If that budget cannot be
+    built, drafting falls back to the deterministic pack.
     """
+    if llm is not None and budget is None:
+        try:
+            from .budget import budget_from_config
+            from .runner import goal_budget_defaults
+            budget = budget_from_config(defaults=goal_budget_defaults())
+        except ValueError as e:
+            log.warning("intake: no budget available (%s); using default pack", e)
+            llm = None
     propose = (
         build_llm_proposer(llm, model=model, budget=budget) if llm is not None else None
     )

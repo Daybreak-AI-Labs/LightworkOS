@@ -87,6 +87,7 @@ CLOUD_PROVIDERS = frozenset({
     "azure",
     "bedrock",
     "vertex",
+    "codex_cli",
     "deepseek",
     "gemini",
     "moonshot",
@@ -380,6 +381,12 @@ def _is_local_endpoint(url: str | None) -> bool:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return False
+    # An IPv4-mapped IPv6 literal (``::ffff:169.254.169.254``) reaches the same
+    # IPv4 host; classify the embedded address so the mapped form cannot slip
+    # past the IMDS deny below.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
     if ip in _IMDS_IPS:
         return False  # IMDS is cloud infra, not a local service -> deny via egress
     return ip.is_loopback or ip.is_private or ip.is_link_local

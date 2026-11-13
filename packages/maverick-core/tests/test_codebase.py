@@ -366,6 +366,22 @@ def test_cli_end_to_end_with_approval_in_the_middle(upstream, tmp_path, monkeypa
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required")
+def test_default_runner_budget_honors_config_and_explicit_override(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr("maverick.config.get_budget_overrides", lambda: {"max_dollars": 3.0})
+    monkeypatch.setattr("maverick.llm.LLM", lambda *a, **k: object())
+    monkeypatch.setattr("maverick.sandbox.build_sandbox", lambda **k: None)
+    monkeypatch.setattr("maverick.world_model.open_world", lambda *a, **k: None)
+    monkeypatch.setattr("maverick.world_model.close_world_if_owned", lambda world: None)
+    monkeypatch.setattr(
+        "maverick.orchestrator.run_goal_sync",
+        lambda llm, world, budget, goal_id, **k: seen.append(budget.max_dollars),
+    )
+    features.default_runner()(1, tmp_path)
+    features.default_runner(max_dollars=7.0)(1, tmp_path)
+    assert seen == [3.0, 7.0]
+
+
 def test_a_run_cannot_reach_host_git_config_beside_its_working_copy(tmp_path, monkeypatch):
     """The working copy is never the host repository's sibling, so a planted
     filter driver has no definition to run."""

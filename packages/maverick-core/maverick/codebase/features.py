@@ -395,14 +395,20 @@ def default_runner(*, max_dollars: float | None = None, user_id: str | None = No
                    allowed_suites: frozenset[str] | None = None) -> Runner:
     """Run the goal as a normal governed swarm whose sandbox is the working copy."""
     def run(goal_id: int, work: Path) -> object:
-        from ..budget import Budget
+        from ..budget import budget_from_config
         from ..llm import LLM
         from ..orchestrator import run_goal_sync
+        from ..runner import goal_budget_defaults
         from ..sandbox import build_sandbox
         from ..world_model import close_world_if_owned, open_world
+        # Honor [budget] config and the per-goal defaults; a bare
+        # Budget(max_dollars=None) would run with no cap of any kind. An
+        # explicit max_dollars still wins.
+        budget = budget_from_config(defaults=goal_budget_defaults(),
+                                    max_dollars=max_dollars)
         world = open_world()
         try:
-            return run_goal_sync(LLM(), world, Budget(max_dollars=max_dollars), goal_id,
+            return run_goal_sync(LLM(), world, budget, goal_id,
                                  sandbox=build_sandbox(workdir=str(work)),
                                  user_id=user_id, allowed_suites=allowed_suites)
         finally:
