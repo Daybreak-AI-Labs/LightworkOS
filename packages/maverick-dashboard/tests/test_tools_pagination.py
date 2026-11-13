@@ -143,5 +143,7 @@ def test_tools_registry_failure_keeps_explicit_unavailable_state(monkeypatch, tm
     assert response.status_code == 200
     assert "Tool list unavailable" in response.text
     assert "The tool list couldn&#39;t be built" in response.text or "The tool list couldn't be built" in response.text
-    assert "synthetic registry unavailable" in response.text
+    # The raw exception text is never shown to the person reading the page.
+    assert "synthetic registry unavailable" not in response.text
+    assert "RuntimeError" not in response.text
     assert "No tools registered" not in response.text

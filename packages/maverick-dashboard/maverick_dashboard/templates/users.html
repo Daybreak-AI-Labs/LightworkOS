@@ -441,7 +441,7 @@
     <ul class="users-list">
       {% for inv in pending_invites %}
       <li>
-        <input type="checkbox" name="invite_ids" value="{{ inv.id }}" form="invites-bulk" id="inv-pick-{{ loop.index }}" /><label class="sr-only" for="inv-pick-{{ loop.index }}">Select the invitation for {{ inv.email }}</label>
+        {% if pending_invites | length > 1 %}<input type="checkbox" name="invite_ids" value="{{ inv.id }}" form="invites-bulk" id="inv-pick-{{ loop.index }}" /><label class="sr-only" for="inv-pick-{{ loop.index }}">Select the invitation for {{ inv.email }}</label>{% endif %}
         <span class="users-grow">{{ inv.email }}<br><span class="muted users-help">Expires {{ inv.expires_at | datetime('absolute') }}</span></span>
         <span class="badge">{{ inv.role | role_label }}</span>
         <form method="post" action="/users/invite/revoke" class="users-inline"

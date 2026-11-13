@@ -67,7 +67,9 @@
     var words = value.trim().split(/\s+/).filter(Boolean).length;
     var classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter(function (re) { return re.test(value); }).length;
     if (value.length < 14) return {level: 0, text: 'Too short: use at least 14 characters (' + (14 - value.length) + ' more).'};
-    if (value.length >= 20 || words >= 4 || (value.length >= 16 && classes >= 3)) return {level: 2, text: 'Strong passphrase.'};
+    // Length alone is not strength: one repeated character, or very few different ones, stays "Fair".
+    var varied = new Set(value).size >= 8;
+    if (varied && (value.length >= 20 || words >= 4 || (value.length >= 16 && classes >= 3))) return {level: 2, text: 'Strong passphrase.'};
     return {level: 1, text: 'Fair. Longer, or a few more unrelated words, makes it stronger.'};
   }
   function update() {

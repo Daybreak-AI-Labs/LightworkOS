@@ -62,6 +62,15 @@
           box.checked = !selected || selected.includes(k);
           box.addEventListener("change", () => {
             const chosen = [...toggles.querySelectorAll("input:checked")].map(b => b.value);
+            if (!chosen.length) {
+              // The server reads an empty list as "hide everything", so nothing
+              // is sent, and the earlier result no longer matches the boxes.
+              const msg = "Choose at least one kind of detail to hide.";
+              output.textContent = ""; copyBtn.hidden = true;
+              badge.className = "badge failure"; badge.textContent = msg;
+              mvToast(msg, { error: true });
+              return;
+            }
             preview(chosen);
           });
           label.append(box, " " + words(k));

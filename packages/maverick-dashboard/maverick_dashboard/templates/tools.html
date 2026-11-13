@@ -24,7 +24,6 @@
     {% if error %}
       <p role="alert">The tool list couldn't be built. Refresh the page to try again.</p>
       <p><a class="btn btn--primary" href="/tools">Reload tool list</a></p>
-      <details><summary>Technical details</summary><p class="muted tl-tech">{{ error }}</p></details>
     {% else %}
       {% if enterprise_blocked_total %}
       <p class="tl-enterprise" role="note">Enterprise mode is on. {{ enterprise_blocked_total }} {{ 'tool' if enterprise_blocked_total == 1 else 'tools' }} on this list can't be used by signed-in people yet. Look for “Not available in Enterprise mode yet” next to them.</p>

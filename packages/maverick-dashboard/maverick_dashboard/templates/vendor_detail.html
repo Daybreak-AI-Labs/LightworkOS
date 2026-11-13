@@ -77,7 +77,7 @@
         {% for q in vendor.questionnaires %}
           <tr>
             <td>{{ q.title }}</td>
-            <td><span class="badge {{ 'done' if q.status == 'answered' else 'warn' if q.status in ('unavailable', 'replaced') else 'info' }}">{{ 'Replies unavailable' if q.status == 'unavailable' else 'Link closed' if q.status == 'replaced' else q.status | humanize }}</span>{% if q.previous_count %}<small class="muted">{{ q.past_replies }} earlier {{ 'reply' if q.past_replies == 1 else 'replies' }} retained</small>{% endif %}</td>
+            <td><span class="badge {{ 'done' if q.status == 'answered' else 'warn' if q.status in ('unavailable', 'replaced') else 'info' }}">{{ 'Replies unavailable' if q.status == 'unavailable' else 'Link closed' if q.status == 'replaced' else q.status | humanize }}</span>{% if q.past_replies %}<small class="muted">{{ q.past_replies }} earlier {{ 'reply' if q.past_replies == 1 else 'replies' }} retained</small>{% endif %}</td>
             <td>{{ q.requested_at_date }}</td>
             <td class="muted">{{ q.requested_by | identity }}</td>
             <td>{% if q.current_replies or q.past_replies %}<button type="button" class="btn" data-vd-replies="{{ q.request_id }}">View replies</button>{% endif %}

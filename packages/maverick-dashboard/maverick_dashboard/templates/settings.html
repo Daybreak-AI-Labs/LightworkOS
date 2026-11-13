@@ -16,7 +16,7 @@
              'AI services: ' ~ workspace.summary,
              badge=workspace.verdict_label,
              badge_class=workspace.badge_class,
-             copy=workspace.reason ~ ' Keys are stored securely and never shown again.') }}
+             copy=workspace.reason ~ ' Keys are stored securely. After saving, only the last four characters are shown.') }}
   {% endcall %}
 
   {% if saved %}
@@ -498,8 +498,8 @@
   <div class="panel" data-settings-group="integrations">
     <p class="muted settings-lead">
       Connect the AI service your company uses. Azure, Bedrock and Vertex AI can use the
-      server's company sign-in instead of a key. Keys are stored securely and
-      never shown again. Leave a key or server address blank to keep its current value.
+      server's company sign-in instead of a key. Keys are stored securely. After saving,
+      only the last four characters are shown. Leave a key or server address blank to keep its current value.
     </p>
     {% for p in providers %}
     <div class="provider-row" data-settings-search-item id="provider-{{ p.name }}" role="group" aria-labelledby="provider-name-{{ p.name }}"{% if p.name == ai_focus_provider %} data-ai-provider-focus{% endif %}>
