@@ -239,6 +239,20 @@ def test_xml_special_characters_are_escaped():
     assert "<may>" in text and "&" in text
 
 
+def test_control_characters_xml_forbids_are_removed():
+    # A form feed (PDF page break) made word/document.xml malformed, and an
+    # inserted clause then raised an uncaught ParseError.
+    res = dr.build_redlined_docx(
+        ["Clause one\x0ctext"],
+        [dr.ClauseEdit(find="Clause one\x0ctext", replace="Clause\x00 two."),
+         dr.ClauseEdit(find="", replace="An added\x0bclause.")],
+        date=DATE)
+    root = ET.fromstring(_document_xml(res.content))
+    text = "".join(n.text or "" for n in root.iter() if n.text)
+    assert "Clause one text" in text and "Clause two." in text and "An added clause." in text
+    assert len(res.applied) == 1 and len(res.inserted) == 1
+
+
 def test_rejects_input_that_is_not_a_docx():
     with pytest.raises(dr.RedlineError):
         dr.redline_docx(b"%PDF-1.7 not a zip", [], date=DATE)

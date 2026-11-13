@@ -130,8 +130,16 @@ class RedlineResult:
         }
 
 
+# Characters XML 1.0 does not allow anywhere in a document (most C0 controls,
+# lone surrogates, U+FFFE/U+FFFF). One of them makes the part malformed.
+_XML_ILLEGAL_RE = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
 def _esc(text: str) -> str:
-    return (str(text).replace("&", "&amp;").replace("<", "&lt;")
+    # A form feed or other whitespace control (PDF text has them) becomes a
+    # space, as anchor matching already reads it; the rest are removed.
+    text = _XML_ILLEGAL_RE.sub(lambda m: " " if m.group().isspace() else "", str(text))
+    return (text.replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 

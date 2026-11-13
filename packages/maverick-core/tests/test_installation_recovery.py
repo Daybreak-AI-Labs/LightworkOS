@@ -1078,6 +1078,42 @@ def test_repair_completion_receipt_crash_finalizes_without_second_install(
     maintenance.assert_normal_start_allowed()
 
 
+def test_upgrade_recovery_receipt_crash_finalizes_without_second_install(
+    installation, monkeypatch,
+):
+    home, runtime, _ = installation
+    grant, _ = staged(installation, monkeypatch)
+    events = []
+
+    def fail_candidate(_directory, action, label):
+        events.append((action, label))
+        runtime.write_bytes(b"candidate-with-wrong-identity")
+
+    monkeypatch.setattr(maintenance, "_msiexec", fail_candidate)
+    with pytest.raises(maintenance.MaintenanceError, match="verified release"):
+        maintenance.execute(grant["authorization"])
+    authorization = maintenance.resume(grant["id"])
+    monkeypatch.setattr(maintenance, "_msiexec", fake_installer(runtime, events))
+    original = maintenance._write
+
+    def crash(path, record):
+        original(path, record)
+        if record.get("status") == "upgrade_recovered":
+            raise SystemExit("synthetic recovery receipt crash")
+
+    monkeypatch.setattr(maintenance, "_write", crash)
+    with pytest.raises(SystemExit, match="recovery receipt"):
+        maintenance.execute(authorization)
+    monkeypatch.setattr(maintenance, "_write", original)
+    recovered = list(events)
+    # The receipt is terminal for an upgrade: resume must finalize it and
+    # clear the startup block, not refuse it.
+    authorization = maintenance.resume(grant["id"])
+    assert maintenance.execute(authorization)["status"] == "upgrade_recovered"
+    assert events == recovered
+    maintenance.assert_normal_start_allowed()
+
+
 def test_whole_home_archive_excludes_live_lease_and_nested_recovery_keys(installation):
     home, _, _ = installation
     with maintenance._locked(), maintenance._quiesced():

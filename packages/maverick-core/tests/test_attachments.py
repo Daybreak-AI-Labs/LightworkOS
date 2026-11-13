@@ -168,6 +168,22 @@ def test_store_rejects_elf_under_benign_mime(tmp_path):
         )
 
 
+def test_text_that_starts_with_executable_letters_is_accepted():
+    # "MZ" and "BZh" are also ordinary letters: only content that reads as
+    # plain text is let through, real executables and archives stay denied.
+    import bz2
+
+    from maverick.attachments import validate_attachment
+
+    validate_attachment("notes.txt", "text/plain", b"MZ is my initials. hello\n")
+    validate_attachment("notes.txt", "text/plain", "BZh\u00e9 and more\n".encode() * 2000)
+    pe = b"MZ\x90\x00\x03" + b"A" * 55 + b"\x40\x00\x00\x00PE\x00\x00"
+    for payload in (pe, b"MZ" + b"A" * 6000 + b"PE\x00\x00", b"MZ\x1b[0m text",
+                    b"MZ caf\xe9", bz2.compress(b"hello"), bz2.compress(b"x" * 100000)):
+        with pytest.raises(AttachmentRejected, match="executable or archive"):
+            validate_attachment("notes.txt", "text/plain", payload)
+
+
 def test_store_rejects_zip_under_benign_mime(tmp_path):
     # ZIP/PK bytes under a benign text/csv type must also be denied.
     zip_bytes = b"PK\x03\x04" + b"\x00" * 32

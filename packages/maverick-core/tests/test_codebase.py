@@ -352,6 +352,8 @@ def test_cli_end_to_end_with_approval_in_the_middle(upstream, tmp_path, monkeypa
     out = run(main, ["code", "add", "pricing", str(upstream)])
     assert out.exit_code == 0 and "protect=approve" in out.output, out.output
     assert "pricing" in run(main, ["code", "list"]).output
+    out = run(main, ["code", "sync", "pricing"])
+    assert out.exit_code == 0 and "pricing now at " in out.output, out.output
     out = run(main, ["code", "feature", "pricing", "Add flag", "--no-review"])
     assert out.exit_code == 0 and "awaiting approval #1" in out.output, out.output
     pid = out.output.split()[1]

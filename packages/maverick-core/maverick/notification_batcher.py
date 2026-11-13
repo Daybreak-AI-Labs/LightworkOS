@@ -73,42 +73,48 @@ def _num(v) -> float | None:
     return float(v) if v > 0 else None
 
 
-def _default_send(title: str, body: str, priority: str, category: str | None) -> int:
+def _default_send(title: str, body: str, priority: str, category: str | None,
+                  backends: list[str] | None = None) -> int:
     from .notifications import notify as _notify
     return _notify(body, title=title, priority=priority, category=category,
-                   async_dispatch=False)
+                   backends=backends, async_dispatch=False)
 
 
 class NotificationBatcher:
     """Coalesce low-priority notifications into windowed digests.
 
     ``send(title, body, priority, category) -> int`` is the real delivery
-    (defaults to a synchronous :func:`maverick.notifications.notify`); ``clock``
-    is injected so the window is tested deterministically.
+    (defaults to a synchronous :func:`maverick.notifications.notify`); it is
+    also passed ``backends=[...]`` for items whose caller named the backends.
+    ``clock`` is injected so the window is tested deterministically.
     """
 
     def __init__(self, policy: BatchPolicy, *,
-                 send: Callable[[str, str, str, str | None], int] | None = None,
+                 send: Callable[..., int] | None = None,
                  clock: Callable[[], float] = time.time):
         self.policy = policy
         self._send = send or _default_send
         self._clock = clock
-        self._pending: list[tuple[str, str, str]] = []
+        # (title, body, priority, backends)
+        self._pending: list[tuple[str, str, str, tuple[str, ...] | None]] = []
         self._first_ts: float | None = None
         self._lock = threading.Lock()
 
     def submit(self, body: str, *, title: str = "Lightwork",
-               priority: str = "default", category: str | None = None) -> int:
+               priority: str = "default", category: str | None = None,
+               backends: list[str] | None = None) -> int:
         """Queue or deliver a notification. Returns backends fired *now*
-        (0 when the item was queued for a later batch)."""
+        (0 when the item was queued for a later batch). ``backends`` is the
+        caller's override; the item is delivered to those backends only."""
+        named = tuple(backends) if backends else None
         if not self.policy.is_active() or priority in _BYPASS:
             # Bypass: flush anything pending first (preserve order), then send.
             flushed = self.flush()
-            return flushed + self._send(title, body, priority, category)
+            return flushed + self._deliver(title, body, priority, category, named)
         with self._lock:
             if not self._pending:
                 self._first_ts = self._clock()
-            self._pending.append((title, body, priority))
+            self._pending.append((title, body, priority, named))
             due = (len(self._pending) >= self.policy.max_batch
                    or self._window_elapsed_locked())
             items = self._take_locked() if due else None
@@ -133,17 +139,31 @@ class NotificationBatcher:
         return (self._pending and self._first_ts is not None
                 and (self._clock() - self._first_ts) >= self.policy.window_seconds)
 
-    def _take_locked(self) -> list[tuple[str, str, str]]:
+    def _take_locked(self) -> list[tuple[str, str, str, tuple[str, ...] | None]]:
         items = self._pending
         self._pending = []
         self._first_ts = None
         return items
 
-    def _emit(self, items: list[tuple[str, str, str]] | None) -> int:
+    def _emit(self, items: list[tuple[str, str, str, tuple[str, ...] | None]] | None) -> int:
         if not items:
             return 0
-        title, body = _coalesce(items)
-        return self._send(title, body, "default", "batch")
+        # One digest per set of backends, so an item only ever reaches the
+        # backends its caller asked for (None = the configured default).
+        groups: dict[tuple[str, ...] | None, list[tuple[str, str, str]]] = {}
+        for title, body, priority, named in items:
+            groups.setdefault(named, []).append((title, body, priority))
+        fired = 0
+        for named, group in groups.items():
+            title, body = _coalesce(group)
+            fired += self._deliver(title, body, "default", "batch", named)
+        return fired
+
+    def _deliver(self, title: str, body: str, priority: str, category: str | None,
+                 named: tuple[str, ...] | None) -> int:
+        if named is None:
+            return self._send(title, body, priority, category)
+        return self._send(title, body, priority, category, backends=list(named))
 
 
 def _coalesce(items: list[tuple[str, str, str]]) -> tuple[str, str]:

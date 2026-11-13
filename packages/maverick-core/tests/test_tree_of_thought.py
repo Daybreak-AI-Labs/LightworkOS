@@ -53,6 +53,15 @@ def test_tree_of_thought_falls_back_when_critic_unparseable():
     assert result.winning_index == 1
 
 
+def test_tree_of_thought_falls_back_when_critic_reply_is_not_an_object():
+    # Valid JSON that is not an object used to raise AttributeError and
+    # discard the candidate drafts that were already paid for.
+    from maverick.tree_of_thought import plan_tree_of_thought
+    llm, _ = _seq_llm(["short", "the longest candidate wins the heuristic", "[0.1, 0.9]"])
+    result = plan_tree_of_thought(llm, "goal", n=2)
+    assert result.winning_index == 1
+
+
 def test_tree_of_thought_n_must_be_positive():
     from maverick.tree_of_thought import plan_tree_of_thought
     llm, _ = _seq_llm([])

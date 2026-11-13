@@ -152,10 +152,12 @@ def _score_candidates(
         raw = raw.strip()
     try:
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("critic reply is not a JSON object")
         scores = [float(s) for s in (data.get("scores") or [])]
         winner = int(data.get("winner", 0))
         reason = str(data.get("reason", ""))
-    except (ValueError, TypeError, json.JSONDecodeError) as e:
+    except (ValueError, TypeError, OverflowError, json.JSONDecodeError) as e:
         log.warning("ToT critic returned malformed JSON: %s", e)
         # Fallback: pick the longest plan (richer = better, naively).
         scores = [float(len(c.text)) for c in candidates]

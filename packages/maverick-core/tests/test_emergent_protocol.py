@@ -86,6 +86,15 @@ def test_round_trip_holds_when_content_contains_sentinels():
         assert ep.decode(ep.encode(msg, book), book) == msg
 
 
+def test_round_trip_holds_when_the_corpus_contains_sentinels():
+    """A learned phrase holding a sentinel bracket broke the round-trip:
+    '⟦abc done now' encoded to '⟦⟦0⟧' and decoded to '⟦0⟧'."""
+    corpus = ["⟦abc done now"] * 2 + ["alpha beta gamma"] * 3 + ["0⟧ xy"] * 2
+    book = ep.learn(corpus)
+    for msg in [*corpus, "alpha beta gamma xy"]:
+        assert ep.decode(ep.encode(msg, book), book) == msg
+
+
 def test_round_trip_fuzz_with_sentinel_alphabet():
     import random
     book = ep.learn(["alpha beta gamma", "alpha beta", "gamma delta"] * 5)

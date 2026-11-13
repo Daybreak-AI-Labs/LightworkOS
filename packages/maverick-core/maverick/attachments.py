@@ -32,6 +32,7 @@ lazily; works against any S3-compatible endpoint via ``AWS_ENDPOINT_URL``.
 from __future__ import annotations
 
 import base64
+import codecs
 import hashlib
 import logging
 import os
@@ -164,8 +165,9 @@ def mime_allowed(mime: str) -> bool:
 # advisory only -- the caller-supplied Content-Type is client-controlled, so
 # the allowlist alone lets an ELF/ZIP through under a benign type. This
 # enforces the docstring's "active deny" by sniffing the actual leading bytes,
-# independent of the claimed mime. (PDF, the structured-text families, images
-# and plain text never start with these signatures.)
+# independent of the claimed mime. (PDF, the structured-text families and
+# images never start with these signatures. Plain text can start with the two
+# that are only letters; see _clearly_text.)
 _DENY_MAGIC: tuple[bytes, ...] = (
     b"\x7fELF",            # ELF executable / shared object (Linux)
     b"MZ",                 # DOS/PE executable (Windows .exe/.dll)
@@ -186,12 +188,37 @@ _DENY_MAGIC: tuple[bytes, ...] = (
 )
 
 
+# Signatures made only of letters: a note can begin "MZ is ..." or "BZh...".
+_LETTER_MAGIC = (b"MZ", b"BZh")
+_TEXT_SNIFF_BYTES = 4096
+
+
+def _clearly_text(data: bytes) -> bool:
+    """Whether ``data`` reads as plain text rather than a binary file.
+
+    No NUL byte anywhere (a PE executable always has them: its ``PE\\0\\0``
+    signature and header fields), and the leading bytes are valid UTF-8 with no
+    control character other than tab, newline, form feed or carriage return
+    (an executable header or a bzip2 block is binary there). Anything less
+    certain stays denied.
+    """
+    if b"\x00" in data:
+        return False
+    head = data[:_TEXT_SNIFF_BYTES]
+    try:
+        # Not final when cut short: the cut may split a multi-byte character.
+        codecs.getincrementaldecoder("utf-8")().decode(head, len(head) == len(data))
+    except UnicodeDecodeError:
+        return False
+    return not any(b < 0x20 and b not in (0x09, 0x0A, 0x0C, 0x0D) or b == 0x7F for b in head)
+
+
 def _looks_executable_or_archive(data: bytes) -> bool:
     head = data[:8]
     for sig in _DENY_MAGIC:
         if sig == b"ustar":
             continue
-        if head.startswith(sig):
+        if head.startswith(sig) and not (sig in _LETTER_MAGIC and _clearly_text(data)):
             return True
     # tar stores its "ustar" magic at byte offset 257.
     if len(data) >= 262 and data[257:262] == b"ustar":

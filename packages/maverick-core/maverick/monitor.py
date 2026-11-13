@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -122,10 +123,38 @@ def _fmt_duration(seconds: float) -> str:
     return f"{seconds / 3600:.1f}h"
 
 
+# A Rich markup tag (or something shaped like one) with any backslashes before it.
+_MARKUP_TAG = re.compile(r"(\\*)(\[[a-z#/@][^[]*?\])")
+
+
+def _esc(text) -> str:
+    """Escape goal and agent text so Rich shows it literally.
+
+    The same rule as ``rich.markup.escape``, kept here because the plain
+    fallback runs without Rich: unescaped, ``[coder]`` is hidden as an unknown
+    style tag and ``wrote [/tmp/out]`` raises ``MarkupError``.
+    """
+    text = _MARKUP_TAG.sub(lambda m: m.group(1) * 2 + "\\" + m.group(2), str(text))
+    if text.endswith("\\") and not text.endswith("\\\\"):
+        text += "\\"
+    return text
+
+
+def _plain(markup: str) -> str:
+    """:func:`render` output without its style tags, with :func:`_esc` undone."""
+    def _strip(m: re.Match) -> str:
+        slashes, tag = m.groups()
+        kept = "\\" * (len(slashes) // 2)
+        return kept + tag if len(slashes) % 2 else kept
+
+    return _MARKUP_TAG.sub(_strip, markup)
+
+
 def _fmt_event(ev) -> str:
     """One-line summary for a GoalEvent."""
     age = time.time() - ev.ts
-    return f"[dim]{_fmt_duration(age)} ago[/dim] [{ev.agent}] {ev.kind}: {(ev.content or '')[:120]}"
+    return (f"[dim]{_fmt_duration(age)} ago[/dim] {_esc(f'[{ev.agent}]')} {_esc(ev.kind)}: "
+            f"{_esc((ev.content or '')[:120])}")
 
 
 @dataclass
@@ -271,9 +300,9 @@ def render(state: MonitorState, keys: MonitorKeys | None = None) -> str:
         f"[bold]Goal #{goal.id}[/bold] [{color}]{goal.status}[/{color}]  "
         f"[dim]{_fmt_duration(age)} elapsed[/dim]"
     )
-    parts.append(f"[bold]{goal.title}[/bold]")
+    parts.append(f"[bold]{_esc(goal.title)}[/bold]")
     if goal.description:
-        parts.append(f"[dim]{goal.description[:200]}[/dim]")
+        parts.append(f"[dim]{_esc(goal.description[:200])}[/dim]")
     parts.append("")
 
     if state.children:
@@ -281,10 +310,10 @@ def render(state: MonitorState, keys: MonitorKeys | None = None) -> str:
         for index, c in enumerate(state.children):
             cc = _status_color(c.status)
             mark = "▸" if keys is not None and keys.focus == index else "├─"
-            parts.append(f"  {mark} [{cc}]{c.status:>11}[/{cc}]  #{c.id} {c.title[:80]}")
+            parts.append(f"  {mark} [{cc}]{c.status:>11}[/{cc}]  #{c.id} {_esc(c.title[:80])}")
             if keys is not None and index in keys.expanded:
                 detail = (getattr(c, "result", None) or c.description or "").strip()
-                parts.append(f"      [dim]{(detail or 'No details yet.')[:300]}[/dim]")
+                parts.append(f"      [dim]{_esc((detail or 'No details yet.')[:300])}[/dim]")
         parts.append("")
 
     if state.episodes:
@@ -406,9 +435,7 @@ def _monitor_loop_plain(
                     )
                 else:
                     # Strip rich tags for plain output.
-                    import re
-                    plain = re.sub(r"\[/?[a-z #]+\]", "", render(state))
-                    sys.stdout.write(plain + "\n")
+                    sys.stdout.write(_plain(render(state)) + "\n")
                 sys.stdout.flush()
                 time.sleep(interval)
         except KeyboardInterrupt:
