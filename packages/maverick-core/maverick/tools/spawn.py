@@ -17,6 +17,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from .._envparse import env_float
+from ..swarm import verifier_confidence as _verifier_confidence
 from . import Tool
 
 if TYPE_CHECKING:
@@ -320,9 +321,7 @@ def _resolve_swarm_fanout(parent: Agent) -> int:
             cap = adaptive_compute.adjust_width(
                 cap,
                 disagreement=float(getattr(parent.ctx, "last_disagreement", 0.0) or 0.0),
-                verifier_confidence=float(
-                    getattr(parent.ctx, "last_verifier_confidence", 1.0) or 1.0
-                ),
+                verifier_confidence=_verifier_confidence(parent.ctx),
             ).width
     except Exception:  # pragma: no cover -- never break the spawn loop
         pass
