@@ -102,6 +102,8 @@ def verify_bundle(bundle_dir: str | Path, *,
         doc = json.loads(mpath.read_text("utf-8"))
     except Exception as e:  # noqa: BLE001
         return BundleCheck(False, f"unreadable manifest: {e}")
+    if not isinstance(doc, dict):
+        return BundleCheck(False, "unreadable manifest: not a JSON object")
     ok, why = verify_manifest(doc, trusted_pubkeys)
     if not ok:
         return BundleCheck(False, f"manifest signature: {why}", doc.get("version", ""))

@@ -76,6 +76,25 @@ def test_license_mutation_refusal_restores_exact_prior_record(
     assert license_registry._load() == prior
 
 
+def test_license_mutation_refuses_to_overwrite_unreadable_register(monkeypatch):
+    from maverick import license_registry
+
+    _audit_succeeds(monkeypatch)
+    license_registry.add_license(
+        name="Producer", jurisdiction="CA", authority="CDI", license_number="P-1",
+    )
+    path = license_registry._store_path()
+    corrupt = path.read_text(encoding="utf-8")[:-5]
+    path.write_text(corrupt, encoding="utf-8")
+
+    with pytest.raises(license_registry.LicenseRegistryError):
+        license_registry.add_license(
+            name="Adjuster", jurisdiction="NY", authority="NYDFS", license_number="A-1",
+        )
+
+    assert path.read_text(encoding="utf-8") == corrupt
+
+
 def test_platform_hunt_refusal_keeps_durable_outbox_pending(tmp_path):
     from maverick.platform_hunt import HuntStore
 

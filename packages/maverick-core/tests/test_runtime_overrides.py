@@ -16,6 +16,21 @@ def test_denied_tools_empty_when_no_file(monkeypatch, tmp_path):
     assert ro.denied_tools() == set()
 
 
+def test_model_rate_source_with_non_bmp_character_is_saved(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+
+    ro = _point_overlay(monkeypatch, tmp_path)
+    today = datetime.now(timezone.utc).date().isoformat()
+    source = "Customer contract \U0001f4c4 caf\u00e9"
+    ro.set_model_rate(
+        "openai_compatible:client-model", input_per_mtok=4.0, output_per_mtok=12.0,
+        source=source, as_of=today, valid_until=today,
+        approved_by="operator@example.com",
+    )
+    rate = ro.model_rate_overrides()["openai_compatible:client-model"]
+    assert rate["source"] == source
+
+
 def test_disable_then_denied(monkeypatch, tmp_path):
     ro = _point_overlay(monkeypatch, tmp_path)
     ro.disable_tool("shell")

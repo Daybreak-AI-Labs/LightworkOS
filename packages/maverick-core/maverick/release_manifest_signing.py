@@ -84,15 +84,18 @@ def verify_manifest_signature(doc: dict, trusted_pubkeys: list[str]) -> tuple[bo
     refuses everything (``no_trust_anchor``).
 
     Never raises: a non-dict ``doc`` (a corrupted file that parses to valid but
-    non-object JSON) returns ``(False, "malformed")``.
+    non-object JSON) or a non-string ``key_id`` returns ``(False, "malformed")``.
     """
     from cryptography.hazmat.primitives.asymmetric import ed25519
     if not isinstance(doc, dict):
         return False, "malformed"
     sig = doc.get("sig")
-    key_id = (doc.get("key_id") or "").lower()
+    key_id = doc.get("key_id")
     if not sig or not key_id:
         return False, "unsigned"
+    if not isinstance(key_id, str):
+        return False, "malformed"
+    key_id = key_id.lower()
     if not trusted_pubkeys:
         return False, "no_trust_anchor"
     if key_id not in [k.lower() for k in trusted_pubkeys]:

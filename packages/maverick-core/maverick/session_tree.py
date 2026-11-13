@@ -121,10 +121,14 @@ def _load_links() -> dict[int, dict]:
             at_event = int(raw_event) if raw_event is not None else None
         except (TypeError, ValueError):
             at_event = None  # an unreadable fork point still has a real parent
+        try:
+            forked_at = float(value.get("forked_at") or 0.0)
+        except (TypeError, ValueError):
+            forked_at = 0.0  # likewise an unreadable fork time
         links[child] = {
             "parent_goal_id": parent,
             "forked_at_event": at_event,
-            "forked_at": float(value.get("forked_at") or 0.0),
+            "forked_at": forked_at,
             "forked_by": str(value.get("forked_by") or ""),
             "label": str(value.get("label") or "")[:_MAX_LABEL],
         }
