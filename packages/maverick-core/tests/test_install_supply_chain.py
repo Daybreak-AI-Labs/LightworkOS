@@ -804,9 +804,9 @@ def test_go_java_and_standalone_demo_security_floors_are_explicit():
     go_client = _read("examples/clients/go/go.mod")
     model_proxy = _read("go/model-proxy/go.mod")
     java_client = _read("examples/clients/java/pom.xml")
-    assert "\ngo 1.26.10\n" in go_client
+    assert "\ngo 1.26.11\n" in go_client
     assert "golang.org/x/sys v0.47.0" in go_client
-    assert "\ngo 1.26.10\n" in model_proxy
+    assert "\ngo 1.26.11\n" in model_proxy
     assert "<jackson.version>3.1.7</jackson.version>" in java_client
     assert "<artifactId>jackson-bom</artifactId>" in java_client
 

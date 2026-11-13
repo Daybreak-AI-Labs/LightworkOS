@@ -226,9 +226,8 @@ def redact_iter(items: Iterable[str]) -> list[tuple[str, list[SecretMatch]]]:
 
 # NOTE on the native engine: rust/mvk-scan ships a byte-for-byte port of this
 # scanner (maverick_native.secret_scan_spans), but it is NOT wired into this
-# Python hot path. CPython's `re` is compiled C, and the 21-pattern sweep
-# measured ~3x FASTER in pure Python than the native port (21 separate
+# Python hot path. CPython's `re` is compiled C, and the 23-pattern sweep
+# measured ~3x FASTER in pure Python than the native port (23 separate
 # fancy-regex passes); see rust/README.md. The native build exists for the
 # TypeScript / edge runtimes (Workers, Deno, browser) that have no `re`, and
-# tests/test_native_detect_parity.py keeps it byte-for-byte identical to this
-# module so the two never diverge.
+# tests/test_native_detect_parity.py compares its spans against this module.
