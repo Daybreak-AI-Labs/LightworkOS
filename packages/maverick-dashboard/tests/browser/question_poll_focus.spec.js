@@ -29,7 +29,9 @@ test('repeated question polls preserve composer selection and other-control focu
   try {
     await page.goto(`/chat/goal/${goal}`);
     await expect(text).toHaveText(question.question);
-    await expect(text).toHaveAttribute('aria-live','polite');
+    // The panel is the live region; the text inside it carries none of its own.
+    await expect(page.locator('#question-panel')).toHaveAttribute('aria-live','assertive');
+    await expect(text).not.toHaveAttribute('aria-live');
     await expect(composer).toBeEnabled();
     await page.evaluate(()=>{
       window.questionTextMutations=[];

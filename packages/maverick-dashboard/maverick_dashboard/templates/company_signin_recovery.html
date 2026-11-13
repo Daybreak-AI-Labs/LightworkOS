@@ -3,8 +3,8 @@
 {% block public_label %}Restricted sign-in recovery{% endblock %}
 {% block public_footer %}Owner recovery on this computer{% endblock %}
 {% block content %}
-<main class="page page--narrow"><h1>Recover company sign-in on this computer</h1>
+<div class="page page--narrow"><h1>Recover company sign-in on this computer</h1>
 {% set company_signin_recovery = true %}{% include "_company_signin_migration.html" %}
-</main>
+</div>
 {% endblock %}
 {% block scripts_extra %}<script src="/static/lightwork-company-signin-migration.js" defer></script>{% endblock %}

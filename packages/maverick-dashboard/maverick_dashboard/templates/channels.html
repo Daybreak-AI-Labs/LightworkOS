@@ -4,6 +4,7 @@
   {% from "_hero.html" import hero, state %}
   {% from "_integration_readiness.html" import integration_readiness %}
       {% macro channel_field(c, f) %}
+      {% if c.name == 'email' and f.key == 'oauth_account' %}<div class="ch-field">{% endif %}
       <label class="ch-field">
         <span>{{ f.label }}{% if f.hint %} <span class="muted">· saved ({{ f.hint }})</span>{% endif %}</span>
         {% if c.name == 'email' and f.key == 'email_auth' %}
@@ -16,7 +17,6 @@
           <option value="">Choose a connected mailbox…</option>
           {% for account in email_oauth_choices %}<option value="{{ account.value }}" data-mailbox="{{ account.email }}" {% if f.value == account.value %}selected{% endif %}>{{ account.label }}</option>{% endfor %}
         </select>
-        <a href="/connections#connection-setup" class="btn btn--ghost">Connect or reconnect a Microsoft mailbox</a>
         {% elif f.secret %}
         <input class="input" type="password" name="{{ f.key }}" autocomplete="off"
                placeholder="{% if f.configured %}Leave blank to keep the saved value{% else %}Paste here{% endif %}"
@@ -37,6 +37,10 @@
         {% endif %}
         <span class="muted ch-help" id="ch-{{ c.name }}-{{ f.key }}-help">{{ f.help }}</span>
       </label>
+      {% if c.name == 'email' and f.key == 'oauth_account' %}
+      <a href="/connections#connection-setup" class="btn btn--ghost">Connect or reconnect a Microsoft mailbox</a>
+      </div>
+      {% endif %}
       {% endmacro %}
   <div id="channel-settings">
   {% set configured_count = managed | selectattr('configured') | list | length %}

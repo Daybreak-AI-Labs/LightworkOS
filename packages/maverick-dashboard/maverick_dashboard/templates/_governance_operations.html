@@ -53,7 +53,7 @@
           <span id="ai-literacy-person-status" role="status" aria-live="polite"></span>
         </div>
       </form>
-      <div id="ai-literacy-person-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="ai-literacy-person-result" class="assurance-table" role="region" aria-label="Employee training status" hidden></div>
 
       <form id="ai-literacy-export" class="assurance-form">
         <label class="assurance-form__wide">Employee numbers from your HR system (optional)
@@ -125,7 +125,7 @@
           <span id="article-73-detail-status" role="status" aria-live="polite"></span>
         </div>
       </form>
-      <div id="article-73-detail-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="article-73-detail-result" class="assurance-table" role="region" aria-label="AI incident details" hidden></div>
 
       <details>
         <summary>Start tracking an incident</summary>
@@ -278,7 +278,7 @@
           <span id="ai-policy-record-status" role="status" aria-live="polite"></span>
         </div>
       </form>
-      <div id="ai-policy-record-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="ai-policy-record-result" class="assurance-table" role="region" aria-label="AI policy record details" hidden></div>
 
       <form id="ai-policy-preview" class="assurance-form">
         <p class="assurance-form__wide">Describe a use of AI to see which rules apply. Nothing is saved.</p>
@@ -288,7 +288,7 @@
           <span id="ai-policy-preview-status" role="status" aria-live="polite"></span>
         </div>
       </form>
-      <div id="ai-policy-preview-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="ai-policy-preview-result" class="assurance-table" role="region" aria-label="AI use policy check" hidden></div>
 
       {% if gateway_admin %}
       <details>
@@ -370,7 +370,7 @@
         <label class="assurance-form__wide">AI system<select class="select" name="asset_id" required>{{ asset_options() }}</select></label>
         <div class="assurance-form__wide assurance-actions"><button class="btn" type="submit">Show score and signals</button><span id="dynamic-risk-asset-status" role="status" aria-live="polite"></span></div>
       </form>
-      <div id="dynamic-risk-score-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="dynamic-risk-score-result" class="assurance-table" role="region" aria-label="AI system risk score" hidden></div>
       <div class="assurance-table"><table>
         <caption>Signals for the chosen AI system</caption>
         <thead><tr><th scope="col">Signal</th><th scope="col">Category</th><th scope="col">Severity / confidence</th><th scope="col">Status</th><th scope="col">Stops counting</th><th scope="col">Actions</th></tr></thead>
@@ -380,7 +380,7 @@
         <input type="hidden" name="signal_id" data-pick="signal" data-pick-required>
         <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><span id="dynamic-risk-signal-status" role="status" aria-live="polite"></span></div>
       </form>
-      <div id="dynamic-risk-signal-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="dynamic-risk-signal-result" class="assurance-table" role="region" aria-label="Risk signal details" hidden></div>
 
       {% if gateway_admin %}
       <details>
@@ -452,7 +452,7 @@
       <div class="assurance-form__wide" data-structured="action-details"></div>
       <div class="assurance-form__wide assurance-actions"><button class="btn" type="submit">Check it</button><span id="runtime-guardrails-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="runtime-guardrails-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="runtime-guardrails-result" class="assurance-table" role="region" aria-label="Runtime safety check result" hidden></div>
   </section>
 
   <section id="ai-explainability-panel" aria-labelledby="ai-explainability-title">
@@ -482,7 +482,7 @@
       <input type="hidden" name="explanation_id" data-pick="explanation" data-pick-required>
       <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><span id="ai-explainability-detail-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-explainability-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-explainability-result" class="assurance-table" role="region" aria-label="AI decision explanation details" hidden></div>
     <details>
       <summary>Add an explanation from a tool</summary>
       <form id="ai-explainability-ingest" class="assurance-form">
@@ -531,7 +531,7 @@
       {{ version_select('Version to download', 'profile', 'Latest approved version') }}
       <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><button id="ai-insurability-export" class="btn btn--ghost" type="button">Download for sharing</button><span id="ai-insurability-detail-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-insurability-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-insurability-result" class="assurance-table" role="region" aria-label="Insurance readiness profile details" hidden></div>
     <details>
       <summary>Prepare a profile</summary>
       <p class="assurance-muted">A profile covers six kinds of measurement, each marked measured, not measured yet, or does not apply. Linked evidence must be current and approved. Raw prompts, answers, personal contacts, secrets and promises of insurance cover are refused.</p>
@@ -587,7 +587,7 @@
       <input type="hidden" name="case_id" data-pick="case" data-pick-required>
       <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><button id="ai-conformity-export" class="btn btn--ghost" type="button">Download the package</button><span id="ai-conformity-detail-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-conformity-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-conformity-result" class="assurance-table" role="region" aria-label="Conformity readiness case details" hidden></div>
     <details>
       <summary>Start and fill in a readiness case</summary>
       <form id="ai-conformity-create" class="assurance-form">
@@ -702,7 +702,7 @@
       {{ version_select('Version to download', 'package', 'Latest approved version') }}
       <div class="assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><button id="ai-regulated-package-export" class="btn btn--ghost" type="button">Download for sharing</button><span id="ai-regulated-package-detail-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-regulated-package-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-regulated-package-result" class="assurance-table" role="region" aria-label="Regulated use evidence package details" hidden></div>
     <details>
       <summary>Prepare a package</summary>
       <form id="ai-regulated-package-prepare" class="assurance-form">
@@ -759,7 +759,7 @@
       {{ version_select('Version to download', 'contribution', 'Latest approved version') }}
       <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><button id="ai-benchmark-export" class="btn btn--ghost" type="button">Download for sharing</button><span id="ai-benchmark-detail-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-benchmark-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-benchmark-result" class="assurance-table" role="region" aria-label="Shared benchmark figures" hidden></div>
     <details>
       <summary>Prepare figures to share</summary>
       <form id="ai-benchmark-prepare" class="assurance-form">
@@ -822,7 +822,7 @@
         <label class="assurance-form__wide">Report file you received<input class="input" type="file" name="report_file" accept=".json,application/json" required></label>
         <div class="assurance-form__wide assurance-actions"><button class="btn" type="submit">Check signature and add</button><span id="ai-benchmark-report-ingest-status" role="status" aria-live="polite"></span></div>
       </form>
-      <div id="ai-benchmark-report-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="ai-benchmark-report-result" class="assurance-table" role="region" aria-label="Received benchmark report details" hidden></div>
     </details>
   </section>
 
@@ -849,7 +849,7 @@
       <input type="hidden" name="sensor_id" data-pick="sensor" data-pick-required>
       <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><span id="ai-discovery-sensor-detail-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-discovery-sensor-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-discovery-sensor-result" class="assurance-table" role="region" aria-label="AI discovery sensor details" hidden></div>
     <details>
       <summary>Add or change a sensor</summary>
       <form id="ai-discovery-sensor-register" class="assurance-form">
@@ -911,7 +911,7 @@
       <form id="ai-discovery-findings" class="assurance-form">
         <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">Summarise findings</button><span id="ai-discovery-findings-status" role="status" aria-live="polite"></span></div>
       </form>
-      <div id="ai-discovery-observation-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="ai-discovery-observation-result" class="assurance-table" role="region" aria-label="AI discovery observation details" hidden></div>
     </details>
   </section>
 
@@ -943,7 +943,7 @@
     <form id="ai-identity-governance-scheduler" class="assurance-form">
       <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">Check scheduled reading</button>{% if gateway_admin %}<button id="ai-identity-governance-scheduler-run" class="btn" type="button">Run scheduled reading now</button>{% endif %}<span id="ai-identity-governance-scheduler-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-identity-governance-scheduler-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-identity-governance-scheduler-result" class="assurance-table" role="region" aria-label="Scheduled access and data label reading" hidden></div>
     <details id="ai-identity-control-workbench">
       <summary>Agent identity controls (administrators)</summary>
       <p class="assurance-muted">Choose an enrolled agent identity and Lightwork
@@ -1003,7 +1003,7 @@
         <input type="hidden" name="expected_record_revision">
         <div class="assurance-form__wide assurance-actions"><button id="ai-identity-purview-get" class="btn btn--ghost" type="button">View the change</button><button id="ai-identity-purview-execute" class="btn" type="button">Apply the change in Purview</button><button id="ai-identity-purview-compensate" class="btn btn--danger" type="button">Undo the applied change</button><span id="ai-identity-purview-resume-status" role="status" aria-live="polite"></span></div>
       </form>
-      <div id="ai-identity-control-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+      <div id="ai-identity-control-result" class="assurance-table" role="region" aria-label="Agent identity control result" hidden></div>
       {% else %}
       <p class="assurance-muted">Only an administrator who is signed in can use the agent identity controls.</p>
       {% endif %}
@@ -1068,7 +1068,7 @@
       <input type="hidden" name="provenance_id" data-pick="provenance" data-pick-required>
       <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View details</button><button id="ai-media-provenance-export" class="btn btn--ghost" type="button">Download for sharing</button><span id="ai-media-provenance-detail-status" role="status" aria-live="polite"></span></div>
     </form>
-    <div id="ai-media-provenance-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="ai-media-provenance-result" class="assurance-table" role="region" aria-label="Media provenance record details" hidden></div>
     <details>
       <summary>Add a result from an outside tool</summary>
       <form id="ai-media-provenance-receipt" class="assurance-form">
@@ -1167,7 +1167,7 @@
         <div class="assurance-form__wide assurance-actions"><button class="btn btn--ghost" type="submit">View delivery status</button><span id="grc-outbound-state-status" role="status" aria-live="polite"></span></div>
       </form>
     </div>
-    <div id="grc-outbound-result" class="assurance-table" role="region" aria-label="Details" hidden></div>
+    <div id="grc-outbound-result" class="assurance-table" role="region" aria-label="Governance record delivery status" hidden></div>
     <div class="assurance-actions"><button id="grc-outbound-original" class="btn btn--ghost" type="button" hidden>Check original delivery result</button><span id="grc-outbound-original-status" role="status" aria-live="polite"></span></div>
     <div class="assurance-table"><table>
       <caption>Recent delivery problems</caption>

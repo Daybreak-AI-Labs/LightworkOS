@@ -124,7 +124,8 @@
   </section>
   <section class="panel">
     <h2>Result</h2>
-    <pre class="cs-output" id="cs-output" aria-live="polite">No request made.</pre>
+    <p id="cs-output-status" role="status" aria-live="polite"></p>
+    <pre class="cs-output" id="cs-output">No request made.</pre>
   </section>
 </div>
 
@@ -138,6 +139,7 @@
   var confirmation = document.getElementById("cs-confirm");
   var confirmationPanel = document.getElementById("cs-confirm-panel");
   var output = document.getElementById("cs-output");
+  var outputStatus = document.getElementById("cs-output-status");
   var highImpact = new Set([
     "questionnaire-publish", "scope-approve", "scope-finalize", "retention-purge"
   ]);
@@ -149,6 +151,7 @@
 
   function show(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    outputStatus.textContent = typeof value === "string" ? value : "Request completed. Review the result below.";
   }
   // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
   function requestProblem(status, detail) {
@@ -188,6 +191,7 @@
     });
   }
   async function run(method, path, payload) {
+    outputStatus.textContent = "Completing the request…";
     var options = {method: method, headers: {"Accept": "application/json"}};
     if (method !== "GET") {
       options.headers["Content-Type"] = "application/json";
