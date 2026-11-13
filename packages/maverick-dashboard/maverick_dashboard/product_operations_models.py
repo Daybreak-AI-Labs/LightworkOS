@@ -1,6 +1,7 @@
 """Model evidence and paid tests use the same native authorization and receipts."""
 from __future__ import annotations
 
+from fastapi import HTTPException
 from maverick import model_tests
 from maverick.governed_operations import digest
 from pydantic import Field
@@ -21,7 +22,7 @@ def providers_snapshot(request, selection):
     """Answer provider-status questions from the same source as Settings."""
     auth.require_global_permission(request, "admin")
     if selection:
-        raise ValueError("Open Settings to check your AI services.")
+        raise HTTPException(422, "Open Settings to check your AI services.")
     current = provider_readiness.workspace_readiness()
     rows = [{"name": row["name"], "label": row["label"],
              "status": row["status_label"], "used_for_work": row["routed"],
@@ -129,7 +130,7 @@ class CancelInput(StrictInput):
 def prepare_cancel(request, selection, arguments):
     state = cancel_snapshot(request, selection)
     if not any(row["id"] == arguments["check_id"] for row in state.details["checks"]):
-        raise ValueError("Choose a current owned model test.")
+        raise HTTPException(409, "Choose a current owned model test.")
     return Preview("Stop this test; cancellation cannot undo a transmitted request.")
 
 

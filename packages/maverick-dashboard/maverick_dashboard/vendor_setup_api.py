@@ -125,12 +125,24 @@ def enable(request: Request, response: Response, payload: Reviewed):
     _authority(request, response, payload)
     if connections.deployment_override() is False:
         raise HTTPException(409, "Deployment policy disables Connections.")
+    from maverick.audit import AuditRefused, EventKind, audit_event
     with settings_store._locked(strict=True):
-        _authority(request, response, payload)
-        data = settings_store._load_overlay_for_update()
+        actor, _, loaded = _authority(request, response, payload)
+        turned_on = [key for key in setup.REQUIRED_MODULES
+                     if (loaded.get(key) or {}).get("enable") is not True]
+        before = settings_store._load_overlay_for_update()
+        data = copy.deepcopy(before)
         for key in setup.REQUIRED_MODULES:
             data.setdefault(key, {})["enable"] = True
         settings_store._write(data)
+        try:
+            for key in turned_on:
+                audit_event(EventKind.SETTING_CHANGED, agent="dashboard", _global=True, actor=actor,
+                            section=key, key="enable", old=False, new=True, confirmed=True)
+        except AuditRefused as exc:
+            settings_store._write(before)
+            config.reset_config_cache()
+            raise HTTPException(503, "The change could not be recorded, so it was undone.") from exc
     config.reset_config_cache()
     state = overview(request, response)
     if not state["modules_enabled"] or not state["connections_enabled"]:

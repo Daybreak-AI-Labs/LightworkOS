@@ -5,10 +5,12 @@ Off by default. Started at dashboard start only when
 takes effect after a restart); how often it runs, how long one process holds
 a pass and how many past passes are kept are read again every cycle. Each
 cycle asks the job store for the due pass (a leased claim, so two processes
-sharing the data folder never both run it), runs the checks for the shared
-floor and every active workspace with data-use governance on, records the
-summary, and adds one activity-record row. Registered with the dashboard's
-lifecycle supervisor, so shutdown stops it.
+sharing the data folder never both run it), runs the checks for the base
+workspace (``MAVERICK_TENANT``, when one is set) and every active workspace
+with data-use governance on, records the summary, and adds one
+activity-record row. With no base workspace set the shared pass checks
+nothing: the checks only read a workspace's own records. Registered with the
+dashboard's lifecycle supervisor, so shutdown stops it.
 """
 from __future__ import annotations
 

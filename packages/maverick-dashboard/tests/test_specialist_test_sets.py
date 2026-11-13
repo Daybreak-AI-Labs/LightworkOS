@@ -476,3 +476,23 @@ def test_a_must_not_contain_check_fails_an_answer_that_says_the_forbidden_phrase
     held = saved.grade(case, "This is a duplicate; hold it for review.")
     assert said["passed"] is False and said["checks"]["excludes"] == 0.0
     assert held["passed"] is True and held["checks"]["excludes"] == 1.0
+
+
+def test_a_full_history_never_drops_a_reserved_run_to_start_another(tmp_path, monkeypatch):
+    import json
+
+    from maverick_dashboard import specialist_test_sets as saved
+
+    path = tmp_path / "specialist-tests" / "cases-and-runs.json"
+    monkeypatch.setattr(saved, "_path", lambda: path)
+    monkeypatch.setattr(saved, "_MAX_RUNS", 2)
+    old = time.time() - 3600
+    runs = {"reserved": {"id": "reserved", "specialist": "finance_ap", "state": "prepared", "started_at": old},
+            "finished": {"id": "finished", "specialist": "finance_ap", "state": "done", "started_at": old + 60}}
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"schema": 1, "cases": {}, "runs": runs}), encoding="utf-8")
+
+    saved.begin_run("finance_ap", "model", "hash", [], "user:local", "fresh")
+
+    kept = json.loads(path.read_text(encoding="utf-8"))["runs"]
+    assert set(kept) == {"reserved", "fresh"}

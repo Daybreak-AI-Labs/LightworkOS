@@ -194,6 +194,30 @@ def test_tenant_failure_is_isolated_and_raw_error_detail_is_not_retained() -> No
     assert "tenant-bad" not in repr(status)
 
 
+def test_an_install_without_a_tenant_has_nothing_to_process_and_nothing_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from maverick.tenant import registry
+    from maverick_dashboard import trc_continuous_evidence_scheduler as evidence_scheduler
+
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    monkeypatch.setattr(registry, "list_tenants", list)
+    touched: list[str] = []
+    runtime = AIGovernanceLoopScheduler(
+        worker_factory=lambda *_args: touched.append("worker"),
+        tenant_context=lambda _tenant: null_context(),
+        config_loader=config,
+        tenant_config_loader=config,
+        worker_id="scheduler-test",
+    )
+    cycle = runtime.run_once()
+    assert cycle is not None
+    assert (cycle.tenants_considered, cycle.tenants_failed) == (0, 0)
+    assert touched == []
+    assert runtime.status()["last_error_code"] is None
+    assert evidence_scheduler._default_tenant_supplier() == ()
+
+
 def test_disabled_scheduler_does_not_touch_tenants_or_workers() -> None:
     touched: list[str] = []
     runtime = AIGovernanceLoopScheduler(

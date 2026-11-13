@@ -115,10 +115,15 @@ def _public_schedule(entry: dict[str, Any] | None) -> dict[str, Any] | None:
     return {"workspace": entry.get("workspace"), "requested_at": entry.get("requested_at")}
 
 
-def _plain_failure(exc: BaseException) -> tuple[str, str]:
+def _still_running(exc: BaseException) -> bool:
+    """Another Lightwork process held the control plane: the move has not been tried yet."""
     from maverick import control_plane_lease
+    return isinstance(exc, (control_plane_lease.ControlPlaneBusy, control_plane_lease.LeaseUnavailable))
+
+
+def _plain_failure(exc: BaseException) -> tuple[str, str]:
     from maverick.governed_records import GovernedRecordBackendError
-    if isinstance(exc, (control_plane_lease.ControlPlaneBusy, control_plane_lease.LeaseUnavailable)):
+    if _still_running(exc):
         return ("Another Lightwork process was still running, so the move waited. It stays scheduled; stop "
                 "every Lightwork process and start again.", "")
     if isinstance(exc, (ValueError, GovernedRecordBackendError)):
@@ -146,8 +151,7 @@ def _run_task_records(entry: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
         receipt = migrate_local_tasks(workspace)
     except Exception as exc:  # noqa: BLE001 -- recorded; startup continues
         summary, technical = _plain_failure(exc)
-        keep = "waited" in summary
-        return keep, {"state": "failed", "workspace": workspace, "finished_at": time.time(),
+        return _still_running(exc), {"state": "failed", "workspace": workspace, "finished_at": time.time(),
                       "summary": summary, "technical": technical}
     claims = int(receipt.get("source_claims") or 0)
     return False, {"state": "done", "workspace": workspace, "finished_at": time.time(),

@@ -145,7 +145,7 @@ def _default_tenant_supplier() -> Sequence[str]:
         tenant = str(getattr(record, "id", "") or "").strip()
         if tenant and getattr(record, "active", False) and tenant not in tenants:
             tenants.append(tenant)
-    return tuple(tenants or [""])
+    return tuple(tenants)
 
 
 @contextmanager

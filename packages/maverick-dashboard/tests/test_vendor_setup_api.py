@@ -337,6 +337,7 @@ def test_vendor_onboarding_turns_off_keeps_setup_and_is_audited(client, monkeypa
     rows: list[dict] = []
     monkeypatch.setattr(audit, "audit_event", lambda kind, **payload: rows.append({"kind": kind, **payload}) or True)
     activate(client)
+    rows.clear()  # turning the modules on is recorded too; this test is about turning off
     record = credential()
     assert bind(client, record).status_code == 200
     state = client.get("/api/v1/vendor-setup").json()
@@ -354,3 +355,23 @@ def test_vendor_onboarding_turns_off_keeps_setup_and_is_audited(client, monkeypa
         assert setup.current()["binding"]["ticket_connection"] == record["name"]
     again = client.post("/api/v1/vendor-setup/enable", json=reviewed(after))
     assert again.status_code == 200 and again.json()["binding"]["ticket_connection"] == record["name"]
+
+
+def test_activation_is_recorded_and_undone_when_the_record_is_refused(client, monkeypatch):
+    import maverick.audit as audit
+
+    def refuse(kind, **payload):
+        raise audit.AuditRefused("refused")
+
+    monkeypatch.setattr(audit, "audit_event", refuse)
+    before = client.get("/api/v1/vendor-setup").json()
+    refused = client.post("/api/v1/vendor-setup/enable", json=reviewed(before))
+    assert refused.status_code == 503, refused.text
+    assert client.get("/api/v1/vendor-setup").json()["modules_enabled"] is False
+
+    rows: list[dict] = []
+    monkeypatch.setattr(audit, "audit_event", lambda kind, **payload: rows.append({"kind": kind, **payload}) or True)
+    assert activate(client)["modules_enabled"] is True
+    assert all(row["kind"] is audit.EventKind.SETTING_CHANGED and row["actor"] == "user:owner" for row in rows)
+    assert [(row["section"], row["key"], row["old"], row["new"]) for row in rows] == [
+        (key, "enable", False, True) for key in setup.REQUIRED_MODULES]

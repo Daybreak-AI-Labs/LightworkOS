@@ -237,7 +237,7 @@ def _default_tenant_supplier() -> Sequence[str]:
         tenant = str(getattr(record, "id", "") or "").strip()
         if tenant and getattr(record, "active", False) and tenant not in tenants:
             tenants.append(tenant)
-    return tuple(tenants or [""])
+    return tuple(tenants)
 
 
 @contextmanager
@@ -541,7 +541,7 @@ class TrcContinuousEvidenceScheduler:
         with self._lock:
             thread = self._thread
         if not wait:
-            return False
+            return
         if thread is not None:
             thread.join(float(timeout))
         with self._lock:

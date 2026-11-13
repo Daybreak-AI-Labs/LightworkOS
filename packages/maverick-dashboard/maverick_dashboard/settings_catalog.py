@@ -2522,6 +2522,8 @@ _REQUIRES_ANY: dict[str, tuple[str, ...]] = {
 _ORDERED: tuple[tuple[str, str], ...] = (
     ("administration_document_access.default_ttl_seconds",
      "administration_document_access.max_ttl_seconds"),
+    ("administration_document_access.delivery_grant_ttl_seconds",
+     "administration_document_access.max_ttl_seconds"),
     ("local_runtime.min_replicas", "local_runtime.max_replicas"),
     # Ekko counts a pattern only on days it still keeps.
     ("ekko.min_distinct_days", "ekko.retention_days"),
