@@ -345,3 +345,38 @@ def test_sqlite_tokens_ignore_the_request_tenant_and_postgres_tokens_bind_it(mon
         assert _dec_field(shared_token, context="goals.title") == "hello"
     finally:
         paths._TENANT.reset(token)
+
+
+@requires_crypto
+def test_migrated_store_withholds_an_unbound_sealed_value_pasted_into_a_column(
+    monkeypatch, tmp_path
+):
+    """A value sealed without a column binding (a webhook secret, a corpus row)
+    decrypts with the same key. In a migrated store every sealed column holds
+    bound values, so one copied into a column is withheld, not shown."""
+    from maverick import world_model as wm_mod
+    from maverick.crypto_at_rest import seal_to_str
+    from maverick.encryption_migrate import migrate_world_db
+    from maverick.world_model import _UNSEALED_WITHHELD, WorldModel
+
+    monkeypatch.setattr(wm_mod, "_MIGRATED_STORES", set())
+    monkeypatch.setattr(wm_mod, "_LEGACY_STORES", set())
+    monkeypatch.setattr(wm_mod, "_UNREBOUND_BACKENDS", set())
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    gid = wm.create_goal("real title", "d")
+    migrate_world_db(db)
+    monkeypatch.setattr(wm_mod, "_MIGRATED_STORES", set())
+    monkeypatch.setattr(wm_mod, "_LEGACY_STORES", set())
+    wm = WorldModel(db)
+    assert wm.get_goal(gid).title == "real title"
+    c = sqlite3.connect(str(db))
+    c.execute("UPDATE goals SET title=? WHERE id=?", (seal_to_str("a webhook secret"), gid))
+    c.commit()
+    c.close()
+    assert wm.get_goal(gid).title == _UNSEALED_WITHHELD
+    assert [g for g in wm.list_goals() if g.id == gid][0].title == _UNSEALED_WITHHELD
+    # A backend with no rebinding migration keeps its older values readable.
+    monkeypatch.setattr(wm_mod, "_UNREBOUND_BACKENDS", {"postgres"})
+    assert wm.get_goal(gid).title == "a webhook secret"
