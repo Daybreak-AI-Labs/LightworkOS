@@ -3133,6 +3133,44 @@ def _donate_bestofn_candidates(llm, world, budget, goal_id, candidates, best) ->
 # test_orchestrator_git_safety.py imports them from here.
 
 
+def _workdir_has_uncommitted_work(workdir) -> bool:
+    """True when a git workdir holds tracked changes or untracked files.
+
+    Best-of-N resets the workdir to HEAD before every attempt, which would
+    destroy that work. A workdir that is not a git repo, or whose reset would
+    be skipped anyway, reads as False. If git cannot answer, assume there is
+    work to lose.
+    """
+    import subprocess as _subprocess
+    from pathlib import Path as _Path
+    if workdir is None:
+        return False
+    wd = _Path(workdir)
+    try:
+        if not (wd / ".git").exists() or _git_metadata_may_execute_filters(wd):
+            return False
+        status = _subprocess.run(
+            ["git", "-C", str(wd), "status", "--porcelain"],
+            capture_output=True, timeout=30, env=_git_env_without_user_config(),
+        )
+    except Exception:
+        return True
+    return status.returncode != 0 or bool(status.stdout.strip())
+
+
+def _single_attempt_only(n: int, coding_mode: bool, workdir) -> bool:
+    """True when best-of-N must fall back to one ordinary attempt."""
+    if n <= 1 or not coding_mode:
+        return True
+    if _workdir_has_uncommitted_work(workdir):
+        # Every attempt starts with a hard reset of the shared workdir. With
+        # uncommitted work in it, run one attempt and leave the work alone.
+        log.warning("best-of-N skipped: the workdir has uncommitted changes; "
+                    "running a single attempt so they are not reset")
+        return True
+    return False
+
+
 def _reset_workdir_to_head(workdir) -> None:
     """Reset a git workdir to clean HEAD without trusting filter-capable metadata.
 
@@ -3271,8 +3309,9 @@ async def run_goal_best_of_n(
     whose patch (a) applies and (b) passes the most FAIL_TO_PASS /
     PASS_TO_PASS tests.
 
-    Falls back to single-shot `run_goal` when n<=1 or coding mode is
-    off. The attempts share one sandbox.workdir, which is reset to clean
+    Falls back to single-shot `run_goal` when n<=1, coding mode is off, or
+    the workdir has uncommitted changes (the per-attempt reset would destroy
+    them). The attempts share one sandbox.workdir, which is reset to clean
     HEAD before each attempt (``git reset --hard HEAD`` + ``git clean -fd``
     when it is a local git repo) so they don't pollute each other's git
     state. Each attempt's patch is the diff in its final answer, or -- when
@@ -3297,7 +3336,7 @@ async def run_goal_best_of_n(
     )
 
     cfg = _cm_from_env()
-    if n <= 1 or not cfg.enabled:
+    if _single_attempt_only(n, cfg.enabled, getattr(sandbox, "workdir", None)):
         return await run_goal(
             llm, world, budget, goal_id,
             sandbox=sandbox, max_depth=max_depth,
