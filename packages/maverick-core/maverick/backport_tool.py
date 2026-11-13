@@ -5,13 +5,15 @@ Read-only git analysis that makes the backport policy executable:
 * :func:`eligible_commits` — commits whose subject carries a security marker
   (``security:`` / ``fix(security)``) or a ``Security-Backport: yes`` trailer.
 * :func:`plan` — eligible commits **not yet** on a release branch, matched by
-  ``git patch-id`` (a cherry-picked fix with a different SHA is still
-  recognized), as an ordered cherry-pick plan.
+  a hash of each commit's changed lines (so a cherry-picked fix with a
+  different SHA, or at a shifted line offset, is still recognized), as an
+  ordered cherry-pick plan. It is the same idea as ``git patch-id``, computed
+  here from ``git show``.
 * :func:`check` — the SLA gate: eligible fixes older than ``sla_days`` that
   are still missing from the branch (CI exits non-zero on any).
 
 The git runner is injected so everything is unit-tested offline; the real
-runner shells ``git`` read-only (log / patch-id). Cherry-picking and pushing
+runner shells ``git`` read-only (log / show). Cherry-picking and pushing
 remain the maintainer's reviewed acts — this tool never mutates the repo.
 """
 
@@ -88,7 +90,10 @@ def eligible_commits(since_ref: str, *, branch: str = "main", git: Runner = _rea
 
 def _patch_id_of(sha: str, git: Runner) -> str:
     """A SHA-independent identity for a commit's change (cherry-pick twin
-    detection): hash the normalized diff lines, like ``git patch-id``."""
+    detection): hash the file headers and the added and removed lines.
+
+    Hunk headers are left out. They carry line numbers, which differ on a
+    branch where the same change lands at another offset."""
     import hashlib
 
     if not _valid_commit_sha(sha):
@@ -97,15 +102,15 @@ def _patch_id_of(sha: str, git: Runner) -> str:
     lines = [
         line
         for line in diff.splitlines()
-        if line.startswith(("+", "-", "@@", "diff --git")) and not line.startswith(("+++", "---"))
+        if line.startswith(("+", "-", "diff --git")) and not line.startswith(("+++", "---"))
     ]
-    # SHA1 matches `git patch-id` semantics: a content fingerprint for
-    # cherry-pick twin detection, not a security boundary.
+    # SHA1 as in `git patch-id`: a content fingerprint for cherry-pick twin
+    # detection, not a security boundary.
     return hashlib.sha1("\n".join(lines).encode(), usedforsecurity=False).hexdigest()
 
 
 def _patch_ids(ref_range: str, git: Runner) -> set[str]:
-    """patch-ids of every commit in ``ref_range``."""
+    """Change ids (:func:`_patch_id_of`) of every commit in ``ref_range``."""
     try:
         shas = [s.strip() for s in git(["log", "--format=%H", ref_range]).splitlines() if s.strip()]
     except RuntimeError:
@@ -122,7 +127,7 @@ def _patch_ids(ref_range: str, git: Runner) -> set[str]:
 def plan(
     lts_branch: str, since_ref: str, *, branch: str = "main", git: Runner = _real_git
 ) -> list[Fix]:
-    """Eligible commits not yet on ``lts_branch`` (patch-id matched)."""
+    """Eligible commits not yet on ``lts_branch`` (matched by change id)."""
     fixes = eligible_commits(since_ref, branch=branch, git=git)
     if not fixes:
         return []

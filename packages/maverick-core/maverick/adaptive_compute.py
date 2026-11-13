@@ -67,10 +67,15 @@ def adjust_width(
 
     When uncertainty is low, scale the width down toward ``min_width`` (spend
     less on easy sub-problems); when high, keep the full safety cap. Never
-    exceeds ``base_width``. Returns ``base_width`` unchanged when disabled.
+    exceeds ``base_width``. Returns ``base_width`` unchanged when disabled:
+    explicit ``settings`` decide by their own ``enable``, otherwise
+    :func:`enabled` does, so ``MAVERICK_ADAPTIVE_COMPUTE`` counts here too.
     """
-    s = settings if settings is not None else _settings()
-    if not s["enable"] or base_width <= s["min_width"]:
+    if settings is not None:
+        s, on = settings, bool(settings["enable"])
+    else:
+        s, on = _settings(), enabled()
+    if not on or base_width <= s["min_width"]:
         return ComputePlan(base_width)
     u = _uncertainty(disagreement, verifier_confidence)
     if u >= s["low_uncertainty"]:

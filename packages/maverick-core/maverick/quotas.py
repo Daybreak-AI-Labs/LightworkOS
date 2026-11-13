@@ -8,9 +8,15 @@ agent-OS leaves unowned.
 A small persistent :class:`UsageLedger` records cumulative spend (dollars +
 input/output tokens) per ``(principal, UTC day)`` under the tenant-aware data
 dir (``<data>/usage/ledger.json``), so it is already tenant-isolated. Every
-write is atomic-ish (temp file + ``os.replace``) and the whole module is
-**fail-soft**: a ledger error logs a warning and never crashes a run — cost
-accounting must not be able to take down the agent loop.
+write is atomic-ish (temp file + ``os.replace``). The module has two halves:
+
+* **Recording is fail-soft.** :func:`record_usage` logs a ledger error and
+  returns ``False`` — cost accounting must not be able to take down the agent
+  loop.
+* **Enforcement is fail-closed.** :func:`over_quota`, the :class:`UsageLedger`
+  methods and the ``[quotas]`` policy reader raise on a corrupt or unreadable
+  ledger, or an invalid policy, so the caller can refuse to start a goal
+  instead of treating unknown spend as zero.
 
 Default-off and opt-in, exactly like :func:`maverick.capability.capability_enforced`
 and :func:`maverick.agent._risk_proportional_verify_enabled`: with nothing
@@ -288,7 +294,11 @@ class UsageLedger:
         day: str | None = None,
     ) -> None:
         """Add one run's spend to ``(principal, day)``. Negative inputs are
-        clamped to zero; a blank principal is ignored. Never raises."""
+        clamped to zero; a blank principal is ignored.
+
+        Raises ``ValueError`` for an untrimmed or over-long principal or a
+        non-finite amount, and :class:`UsageLedgerError` for a corrupt ledger.
+        :func:`record_usage` is the wrapper that never raises."""
         if not principal:
             return
         if principal != principal.strip() or len(principal) > 1024:
@@ -346,7 +356,9 @@ class UsageLedger:
         the retention valve. A day is expired when it is on or before the cutoff
         (``now - keep_days*86400``), matching the audit-file window. Principals
         left with no days are dropped. ``keep_days <= 0`` is a no-op (retention
-        disabled). Returns a report; never raises.
+        disabled). Returns a report. Raises :class:`UsageLedgerError` when
+        the existing ledger is corrupt or unreadable, so nothing is pruned
+        from state it cannot interpret.
         """
         if not keep_days or int(keep_days) <= 0:
             return {"removed_buckets": 0, "removed_principals": 0, "reason": "disabled"}

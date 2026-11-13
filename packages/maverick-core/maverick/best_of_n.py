@@ -16,6 +16,7 @@ Off by default + fail-open at the call site; this module is a pure primitive.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
@@ -24,17 +25,28 @@ from .config import env_flag
 log = logging.getLogger(__name__)
 
 
-class AllAttemptsFailed(Exception):
+class AllAttemptsFailed(ValueError):
     """Every candidate/attempt in a best-of-N / racing primitive failed.
 
     Defined here once and re-exported by latency_best_of_n, so a caller
-    catching it from one module also catches it from the other."""
+    catching it from one module also catches it from the other. A
+    ``ValueError`` because :func:`best_of_n` used to raise a bare one."""
 
 
 def enabled() -> bool:
+    """``MAVERICK_BEST_OF_N`` wins over ``[search] enable``.
+
+    ``coding_mode.from_env`` reads the same variable as a candidate count, so
+    a count above 1 means on here too, alongside the usual true/false words.
+    """
     _v = env_flag("MAVERICK_BEST_OF_N")
     if _v is not None:
         return _v
+    try:
+        if int(os.environ.get("MAVERICK_BEST_OF_N", "").strip()) > 1:
+            return True
+    except ValueError:
+        pass
     try:
         from .config import get_search
         return bool(get_search()["enable"])
@@ -81,8 +93,8 @@ async def best_of_n(
 
     ``accept_early``: stop as soon as a candidate is accepted with confidence
     >= any already seen (saves compute on easy tasks). Empty/failed generations
-    are skipped; if all fail, raises ValueError (the caller falls back to its
-    normal single-pass path).
+    are skipped; if all fail, raises :class:`AllAttemptsFailed`, a
+    ``ValueError`` (the caller falls back to its normal single-pass path).
 
     ``select``: an optional hook that chooses the winner from the scored
     candidates, overriding the default ``max(accepts, confidence)``. This is the
@@ -113,7 +125,7 @@ async def best_of_n(
             break
 
     if not scored:
-        raise ValueError("best_of_n: no usable candidates generated")
+        raise AllAttemptsFailed("best_of_n: no usable candidates generated")
     if select is not None:
         try:
             best = select(scored)

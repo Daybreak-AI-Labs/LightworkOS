@@ -9,10 +9,13 @@ this tiers *effort* the same way — keep the critical reasoning roles
 (researcher, verifier, writer) to ``medium``/``low`` for real token savings with
 no loss on the critical path.
 
-**Opt-in, default-OFF** (CLAUDE.md: users own model choice). With nothing
-configured :func:`effort_for_role` returns ``None`` and behaviour is unchanged.
-Turn it on with ``[effort] enabled = true`` (then per-role overrides), a global
-``MAVERICK_EFFORT=medium``, or per-role ``MAVERICK_EFFORT_<ROLE>=low``.
+**Opt-in** (CLAUDE.md: users own model choice). With nothing configured
+:func:`effort_for_role` returns ``None`` and behaviour is unchanged. Any
+explicit level applies on its own, with no master switch: a per-role
+``MAVERICK_EFFORT_<ROLE>=low``, a global ``MAVERICK_EFFORT=medium``, a per-role
+``[effort] <role> = "low"`` or ``[effort] default = "medium"``. ``[effort]
+enabled = true`` (or ``MAVERICK_EFFORT_ENABLED=1``) additionally turns on the
+built-in role profile below and a domain pack's authored tier.
 
 Model-gated so it never 400s: effort is supported on Opus 4.5+, Sonnet 4.6,
 and the current generation (Opus 5, Sonnet 5, Fable 5.x); ``xhigh`` is Opus
@@ -95,10 +98,19 @@ def _config_effort() -> dict:
 def _configured_level(role: str, pack_default: str | None = None) -> str | None:
     """The effort level chosen for ``role``, or ``None`` if the feature is off.
 
-    Precedence: per-role env > global env > per-role config > config default >
-    the built-in role profile, then a pack-authored ``effort`` (both only when
-    ``[effort] enabled`` -- so a pack's tier never turns the feature on, it only
-    right-sizes it once an operator has)."""
+    Precedence, first match wins:
+
+    1. the effort chosen for the current task
+       (``task_model_selection.current_effort()``);
+    2. per-role env ``MAVERICK_EFFORT_<ROLE>``;
+    3. global env ``MAVERICK_EFFORT``;
+    4. the per-tenant role override (``role_edit.override_effort``);
+    5. per-role config ``[effort] <role>``;
+    6. a pack-authored ``effort``, only when ``[effort] enabled`` -- a pack's
+       tier is more specific than the deployment default, but it never turns
+       the feature on and never overrides a per-role or environment setting;
+    7. config ``[effort] default``;
+    8. the built-in role profile, only when ``[effort] enabled``."""
     from .task_model_selection import current_effort
     task_effort = current_effort()
     if task_effort:
@@ -154,10 +166,10 @@ def effort_for_role(role: str, model_id: str,
                     pack_default: str | None = None) -> str | None:
     """The effort level to send for ``(role, model)``, or ``None`` to omit it.
 
-    ``pack_default`` is a domain pack's authored effort tier; it applies only at
-    the lowest precedence and only when the effort feature is enabled (see
-    :func:`_configured_level`), so it right-sizes an opted-in deployment without
-    ever turning effort on.
+    ``pack_default`` is a domain pack's authored effort tier; it applies only
+    when the effort feature is enabled, below every per-role and environment
+    setting and above the deployment default (see :func:`_configured_level`),
+    so it right-sizes an opted-in deployment without ever turning effort on.
 
     Returns ``None`` (omit ``output_config.effort``, API default applies) when the
     feature is off, the model doesn't support effort, or the configured value is

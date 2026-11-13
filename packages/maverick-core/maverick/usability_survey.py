@@ -222,6 +222,8 @@ def record_seq(principal: str, task: str, rating: int, role: object = None, now:
 
 def dismiss(principal: str, topic: str = "sus", now: float | None = None) -> None:
     """One "Not now": the survey (``"sus"``) or one task's question stays hidden this quarter."""
+    if not enabled():
+        raise SurveyError("the usability survey is turned off")
     if topic != "sus" and topic.removeprefix("seq:") not in dict(TOP_TASKS):
         raise SurveyError("unknown survey question")
     with _locked():

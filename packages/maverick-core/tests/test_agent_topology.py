@@ -143,6 +143,19 @@ def test_mcp_blast_radius_lists_affected_agents_and_downstream_endpoint(_configu
     assert radius["affected_count"] == 2
 
 
+def test_wildcard_allowed_host_is_projected_and_queryable(_configured):
+    """Shipped packs list hosts as fnmatch globs; one must not break the view."""
+    profiles, _specs = _configured
+    profiles["legal_agent"].allow_hosts = ["*.stripe.com"]
+
+    view = topology.agent_view("legal_agent")
+    assert "data_endpoint:*.stripe.com" in {node["id"] for node in view["nodes"]}
+    # Every profile is projected for any query, so this used to fail here too.
+    assert topology.blast_radius("mcp_server", "vendor_api")["affected_count"] == 2
+    radius = topology.blast_radius("data_endpoint", "*.stripe.com")
+    assert [row["agent"] for row in radius["affected_agents"]] == ["legal_agent"]
+
+
 def test_sync_promotes_mcp_servers_to_safe_governed_inventory(_configured):
     first = topology.sync_mcp_inventory(actor="topology-operator")
     second = topology.sync_mcp_inventory(actor="topology-operator")

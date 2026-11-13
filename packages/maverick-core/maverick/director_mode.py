@@ -162,9 +162,6 @@ def direct(outcome: str, *, profile: str = "supervised",
     )
 
 
-__all__ = ["PROFILES", "DirectorRun", "UnknownProfileError", "direct"]
-
-
 _CONSENT_WORDS = {"ask": "asks a person", "dashboard": "waits on the Approvals page",
                   "auto-deny": "refuses actions that can't be undone",
                   "auto-approve": "allows actions that can't be undone"}
@@ -250,3 +247,17 @@ def spending_cap(env: dict[str, Any] | None, requested: float | None) -> float |
     if cap is None:
         return requested
     return cap if requested is None else min(requested, cap)
+
+
+__all__ = [
+    "PROFILES",
+    "DirectorRun",
+    "UnknownProfileError",
+    "direct",
+    "envelope",
+    "profile_choices",
+    "record",
+    "recorded_envelope",
+    "run_scope",
+    "spending_cap",
+]

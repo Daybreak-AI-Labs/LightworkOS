@@ -1,7 +1,8 @@
 """Attachment storage for goal inputs (files of all kinds).
 
-Stores bytes under ``~/.maverick/attachments/<goal_id>/<sha256>`` and
-records the metadata in the world model. Enforces:
+Stores bytes under the tenant's data directory at
+``attachments/<goal_id>/<sha256[:16]>-<filename>`` (``~/.maverick/...`` for the
+default tenant) and records the metadata in the world model. Enforces:
   - max per-file size (default 100 MiB, MAVERICK_ATTACH_MAX_FILE_BYTES)
   - max total per-goal size (default 500 MiB, env-configurable)
   - mime-type allowlist: text, image, audio, and video families plus the
@@ -22,7 +23,7 @@ their bytes.
 
 **S3-backed attachments** (opt-in): with ``[attachments] s3_bucket`` (or
 ``MAVERICK_ATTACH_S3_BUCKET``) set, every stored attachment is also mirrored
-to ``s3://<bucket>/<prefix><goal_id>/<name>`` — the durable/shared copy for
+to ``s3://<bucket>/<prefix><tenant>/<goal_id>/<name>`` — the durable/shared copy for
 multi-host deployments — and :func:`s3_fetch` pulls a missing attachment back
 down on a worker that doesn't have the local file. Local disk remains the
 source the tools read; the mirror is best-effort fail-open (an S3 outage
@@ -71,8 +72,8 @@ _WINDOWS_RESERVED = {
 }
 _REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
-# 25 MiB per file, 100 MiB per goal. Tunable via env so a VPS deployment
-# can raise the cap without a code change.
+# Size limits (the defaults are set below). Tunable via env so a VPS
+# deployment can raise the cap without a code change.
 def _env_int(name: str, default: int, key: str) -> int:
     # A non-numeric value falls back to the default instead of raising
     # ValueError at import time and killing the attachment path.

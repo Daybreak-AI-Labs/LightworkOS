@@ -129,10 +129,6 @@ _FALSE_WORDS = {"0", "false", "no", "off", "disable", "disabled", "n", "f", ""}
 _UNSET = object()
 
 
-def _truthy(value: object) -> bool:
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _env_tristate(value: str) -> bool | None:
     """Parse an env flag: True/False for a recognized affirmative/negative, None
     for an unrecognized value -- so an ambiguous *security* flag is never silently

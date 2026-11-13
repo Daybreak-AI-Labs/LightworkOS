@@ -68,6 +68,23 @@ def _name(value: object, label: str) -> str:
     return text
 
 
+def _host_pattern(value: object, label: str) -> str:
+    """Validate one ``allow_hosts`` entry or a query for one.
+
+    Pack host lists are fnmatch globs (``Capability.host_ok``) and the pack
+    linter only requires non-empty strings, so a wildcard such as
+    ``*.example.com`` is a normal entry. ``_name`` would refuse it and take
+    the whole projection down with it; bound the text instead.
+    """
+
+    text = str(value or "").strip()
+    if not text or len(text) > 253 or any(
+        ord(char) < 32 or ord(char) == 127 for char in text
+    ):
+        raise ValueError(f"{label} is invalid")
+    return text
+
+
 def _origin(raw_url: object) -> str:
     """Return scheme/host/port only; never expose a credential, path, or query."""
 
@@ -281,7 +298,7 @@ def _agent_projection(
                 authority=f"mcp_config:{server}",
             ))
     for host in sorted(set(getattr(profile, "allow_hosts", None) or [])):
-        target = _name(host, "allowed host")
+        target = _host_pattern(host, "allowed host")
         nodes.append(_node("data_endpoint", target))
         edges.append(_edge(
             agent_id,
@@ -396,7 +413,6 @@ def blast_radius(kind: str, name: str) -> dict[str, Any]:
 
     _require_enabled()
     target_kind = _name(kind, "kind")
-    target_name = _name(name, "name")
     if target_kind not in {
         "tool",
         "mcp_server",
@@ -407,6 +423,11 @@ def blast_radius(kind: str, name: str) -> dict[str, Any]:
         "model",
     }:
         raise ValueError("unsupported blast-radius kind")
+    # A data endpoint is named by its allow_hosts glob, wildcard included.
+    target_name = (
+        _host_pattern(name, "name") if target_kind == "data_endpoint"
+        else _name(name, "name")
+    )
     profiles = _profiles()
     manifests = _mcp_manifests()
     target_id = f"{target_kind}:{target_name}"

@@ -15,7 +15,7 @@ Three reference implementations ship:
 
   * NullPRM           — always returns 0.5 promise + 0.0 progress
                         (back-compat default; preserves prior behavior).
-  * HeuristicPRM      — cheap rule-based scorer (errors → -1 promise,
+  * HeuristicPRM      — cheap rule-based scorer (errors → -0.5 promise,
                         FINAL → +1, tool-call success → +0.1 progress).
                         Useful right now, ZERO training needed.
   * RemotePRM         — POSTs to a user-deployed AgentPRM endpoint

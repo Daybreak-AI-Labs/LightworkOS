@@ -17,11 +17,17 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 
-# The one reference profile. Enabling these together makes
-# ``maverick compliance --strict`` green and the verifier below pass. Enterprise
-# mode alone covers egress lock + fail-closed consent + capability enforcement +
-# at-rest encryption; signing and retention are the two extra knobs. Kept here so
-# docs/regulated-deployment.md and the code never drift.
+# The one reference profile: the config.toml half of a regulated deployment.
+# Enterprise mode alone covers egress lock + fail-closed consent + capability
+# enforcement + at-rest encryption; signing and retention are the two extra
+# knobs. These settings are NOT enough for the verifier below to pass. It also
+# needs:
+#   * an off-host audit signing key (MAVERICK_AUDIT_SIGNING_KEY, or a
+#     KMS-wrapped key): enterprise mode refuses a key generated on the host;
+#   * an isolated sandbox, e.g. ``[sandbox] backend = "docker"`` (the default
+#     ``local`` runs agent code on the host);
+#   * maverick-shield installed and enforcing.
+# Kept here so docs/regulated-deployment.md and the code never drift.
 REGULATED_PROFILE = """\
 [enterprise]
 mode = true            # egress lock + fail-closed consent + capabilities + at-rest encryption
