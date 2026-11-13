@@ -98,7 +98,7 @@ export function watchEvents(options: Options): () => void {
           }
           if (!data.length) continue; // heartbeat comments refresh idle only
           if (event === "timeout") { reconnect("stream lifetime reached"); return; }
-          if (event === "error") { stop("Run visibility changed or its stream is unavailable."); return; }
+          if (event === "error" && !id) { stop("Run visibility changed or its stream is unavailable."); return; }
           let value: Partial<Pick<GoalEventsResponse, "next_id" | "terminal" | "status">>;
           try { value = JSON.parse(data.join("\n")); }
           catch { stop("Stream event is unreadable."); return; }

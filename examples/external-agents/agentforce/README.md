@@ -103,7 +103,7 @@ System.debug(LightworkGateway.screen(new List<LightworkGateway.ScreenRequest>{ r
 
 Expect `allowed=true, rule=allow` (and an `external_action_screened` audit
 event on the Lightwork side). A readable `transport_error` reason tells you
-which side to fix — 401 token, 403 license, 404 plane off, 429 rate limit.
+which side to fix — 401 token, 403 governance refusal, 404 plane off, 429 rate limit.
 
 ## Notes
 

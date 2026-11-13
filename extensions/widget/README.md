@@ -5,6 +5,9 @@ framework, no CDN, no build step) that you drop into any page to get
 a floating Lightwork status pill. Clicking it expands a panel with
 **active / done / failed** counts and the most recent finished result.
 
+The dashboard does not serve `/widget/` automatically. Host the script on the
+same origin using a reverse-proxy static alias before adding this tag.
+
 ```html
 <script src="/widget/maverick-widget.js"
         data-endpoint=""

@@ -94,6 +94,18 @@ CAS, replayed nonce, rebound key/install subject, or ambiguous response is not
 treated as success; the host obtains a new attestation/nonce and reconciles the
 current device revision before retrying.
 
+## Apple preference encoding check
+
+On a macOS host with Swift and CryptoKit, run from this directory:
+
+```sh
+swiftc apple/LightworkConsent.swift tests/PreferenceChoiceTest.swift -o /tmp/lightwork-preference-test
+/tmp/lightwork-preference-test
+```
+
+This focused check verifies that a choice without an expiry encodes
+`"expires_at": null`, matching the payload the server verifies.
+
 ## Evidence boundary
 
 The web contract suite runs with `npm test` in this directory. For the Kotlin

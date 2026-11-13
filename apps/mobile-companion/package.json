@@ -1,6 +1,6 @@
 {
   "name": "maverick-mobile-companion",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "private": true,
   "description": "Personal Lightwork companion with paired own-task previews and reviewed actions",
   "main": "node_modules/expo/AppEntry.js",

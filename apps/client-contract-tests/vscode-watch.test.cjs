@@ -89,9 +89,12 @@ test('SSE disposal closes socket and all timers; late events cannot append',()=>
 
 test('SSE parser handles fragmented CRLF and UTF8 without losing cursor',()=>{
   const f=fixture();f.open();
-  const bytes=Buffer.from('id: 7\r\ndata: {"content":"café"}\r\n\r\n');
+  const bytes=Buffer.from('id: 7\r\nevent: error\r\ndata: {"content":"café"}\r\n\r\n');
   for(let i=0;i<bytes.length;i++)f.connections[0].response.emit('data',bytes.subarray(i,i+1));
-  assert.equal(f.cursors.at(-1),7);assert.match(f.events[0],/café/);f.stop();
+  assert.equal(f.cursors.at(-1),7);assert.match(f.events[0],/café/);
+  assert.equal(f.stops.length,0);
+  f.send('event: error\ndata: {"detail":"goal vanished"}\n\n');
+  assert.match(f.stops[0].reason,/visibility changed/);
 });
 
 test('SSE oversized frame and unmatched terminal cursor fail explicitly',()=>{
