@@ -144,7 +144,7 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
 ### 4.4 Other reference architectures
-`deploy/reference-architectures/{ecs,fly,railway}/` — ECS uses SSM Parameter
+`deploy/reference-architectures/{ecs,flyio,railway}/` — ECS uses SSM Parameter
 Store secrets + EFS; Fly uses `fly secrets set` + a volume; Railway uses a
 mounted volume + env vars. All pin a single writer unless Postgres is used.
 
@@ -258,7 +258,7 @@ maverick compliance --strict          # maps controls to regulation; exits 1 on 
                                       #   (add --framework gdpr|us|… )
 maverick audit verify --all           # Ed25519 hash-chain integrity; exits 1 on break
 ```
-HTTP probes (auth-exempt; payload redacts when a token is set):
+HTTP probes (auth-exempt; payloads are always redacted):
 - `GET /livez` — TCP-accept liveness
 - `GET /healthz` — DB writable + provider key present + runner alive (200/503)
 - `GET /readyz` — readiness (client-binding, shield, agent-trust)
@@ -266,7 +266,9 @@ HTTP probes (auth-exempt; payload redacts when a token is set):
   `maverick_concurrent_goals`); bearer-gated when a token is set.
 
 Wire monitoring from `deploy/observability/`: `prometheus-rules.yaml`
-(MaverickDown, ConcurrencySaturated, SpendSpike, GoalFailureRate),
+(`MaverickDown`, `MaverickConcurrencySaturated`, `MaverickSpendSpike`,
+`MaverickGoalFailureRate`, `MaverickJobQueueBacklog`, `MaverickJobQueueDeadLetter`,
+`MaverickDiskLow`, `MaverickAuthFailureSpike`),
 `grafana-dashboard.json`, and `runbook.md`.
 
 ---

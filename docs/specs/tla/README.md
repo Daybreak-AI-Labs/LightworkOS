@@ -14,8 +14,12 @@ just the tested ones:
 | `BudgetBounded` | invariant | execution steps never exceed the timeout budget |
 | `EventuallyTerminal` | temporal | every command reaches done / timeout / refused — never wedged |
 
-Verified result (TLC 2.19, config `SandboxInterface.cfg`, 2 symmetric
-commands, MaxSteps=3): **982 states generated, 521 distinct, no errors.**
+A previously recorded local run (TLC 2.19, config `SandboxInterface.cfg`,
+2 commands, MaxSteps=3) reported **982 states generated, 521 distinct, no errors**.
+This is historical evidence, not a CI-verified result for the current source.
+The configuration declares no symmetry reduction; the command below disables
+deadlock checking with `-deadlock`. CI does not currently run TLC, so rerun it
+after changing the model or configuration.
 The liveness property needs fairness on *dispatch*: without it, a submitted
 command may stutter forever. The code's synchronous chokepoint provides that
 fairness, and the spec states it as an explicit assumption.

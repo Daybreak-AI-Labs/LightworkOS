@@ -1,8 +1,8 @@
-<!-- これは docs/getting-started.md（翻訳元コミット: a7b9cee）のコミュニティによって維持されている翻訳です。英語版が正式版です。 -->
+<!-- これは docs/getting-started.md（翻訳元コミット: b05c5ff）のコミュニティによって維持されている翻訳です。英語版が正式版です。 -->
 
 # はじめに
 
-<!-- See the authoritative English page for the latest installation status. -->
+このリビジョンに基づき初回実行とモニターの節を更新しました。他の節は英語版より古い場合があります。 [English](../../getting-started.md).
 
 ## インストール
 
@@ -12,41 +12,50 @@ Lightwork はソースコードからインストールします。Python 3.11�
 
 ## 初回実行
 
+チームを招待する前に、ダッシュボードで **Start → Set up named sign-in** を開きます。ローカル所有者がメールアドレスのラベルとパスフレーズを設定すると、匿名の管理者アクセスが閉じられます。メールアドレスはローカルの識別子であり、メールボックスは検証されません。招待リンクは非公開にしてください。このコンピューターで再度サインインするには `/auth/local-login` を使います。ワークスペースと部門への権限は **Users** で付与します。
+
+最初の所有者の設定は、役割や管理されたサインインを構成する前に、このコンピューターからの直接のループバック要求でのみ行えます。`[dashboard] local_owner_setup` は既定で `true` です。`MAVERICK_LOCAL_OWNER_SETUP=0` で登録を無効にできます。既存のサインインや招待のポリシーは引き続き適用されます。
+
+ウィザードと確認処理はコマンドラインからも実行できます。
+
 ```bash
-maverick init
+lightwork init
+lightwork preflight
+lightwork doctor
 ```
 
-ウィザードの所要時間は 2 分ほどです。`~/.maverick/config.toml` と `~/.maverick/.env` を書き出します。
+ウィザードは `~/.maverick/config.toml` と `~/.maverick/.env` を作成します。新規の個人向け設定では、タスクあたり 2 米ドル・30 分の上限が提案されます。別の上限や上限なしも選べ、後で **Settings → General → Spending per task** から変更できます。タスク上限がなくても支出は記録され、プロバイダーの課金と組織の支出上限は引き続き適用されます。[タスクの上限](../../task-limits.md)を参照してください。
 
-次に、以下を実行します。
+稼働中の Docker デーモンが見つからなかった場合、ファイル変更とプログラム実行は無効になります。代替の `local` バックエンドは、このコンピューターで隔離せずにコマンドを実行するためです。まず次のタスクを試してください。
 
 ```bash
-maverick start "Build a CLI that emails me a digest of today's top Hacker News stories — research the API, write it, and verify it runs"
+lightwork start "Draft a one-page plan to reduce our customer support response time without adding headcount. State your assumptions and the facts you need from me."
 ```
 
 ## スウォームが目標を分解する様子を見る
 
-2 つ目のターミナルで `maverick monitor` を実行します。オーケストレーターが目標の計画を立て、並列で動作する専門のサブエージェントを起動します。この例では、リサーチャーが API を特定し、コーダーがツールを書き、ベリファイアがそれを実行して確認します。
+2 つ目のターミナルで `lightwork monitor` を実行します。最初のタスクの計画は、例えば次のように表示されます。
 
 ```
 Goal #1 active  2m elapsed
-Build a CLI that emails me a digest of today's top Hacker News stories
+Draft a one-page support response plan
 
 Plan tree
-  ├─        done  #2 Research the Hacker News Firebase API
-  ├─      active  #3 Write the digest CLI (fetch + format + send)
-  ├─      active  #4 Verify it runs and emails a sample digest
-  ├─     pending  #5 Write a short usage README
+  ├─        done  #2 Identify likely response-time bottlenecks
+  ├─      active  #3 Draft actions that do not require hiring
+  └─     pending  #4 Check assumptions and questions for the owner
 
 Latest episode #7 (running)  $0.0431  in=18,204 out=2,910 tools=11
 
 Recent activity
-  4s ago [researcher] decision: top stories live at /v0/topstories.json, then /v0/item/<id>.json
-  3s ago [coder] tool_call: write_file hn_digest.py (118 lines)
-  1s ago [verifier] tool_call: run "python hn_digest.py --dry-run" -> printed 10 stories
+  4s ago [researcher] decision: separate volume from process delays
+  3s ago [writer] draft: owner-facing plan with assumptions
+  1s ago [verifier] review: mark unsupported savings estimates
 
 Cumulative spend on this DB: $0.21
 ```
+
+後でファイル変更やプログラム実行を行うには、Docker または Podman を起動し、**Permissions → Where work runs** でコンテナーを選び、**Allow file work** を確認します。Lightwork はコンテナーを確認し、操作を妨げる他のポリシーも表示します。`lightwork doctor` でも同じ制限を確認できます。
 
 完了したら:
 

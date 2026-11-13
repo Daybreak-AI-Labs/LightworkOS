@@ -8,8 +8,8 @@ Each recipe is:
 - **Self-contained**: doesn't assume you have anything beyond a fresh
   Lightwork install (native installer or [source install](../source-install.md))
   + `maverick init`.
-- **Bounded**: ~3 minutes of agent runtime on Claude Sonnet 4.6,
-  budget-capped at $1.
+- **Bounded**: each recipe gives its own runtime and budget estimate; set
+  an explicit cap appropriate to that recipe (the examples range up to $3).
 - **Real**: copy-paste-and-run, no placeholder TODOs in the goal text.
 
 | Recipe | When to use |

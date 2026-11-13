@@ -1,8 +1,8 @@
-<!-- यह docs/getting-started.md (स्रोत कमिट: a7b9cee) का समुदाय-अनुरक्षित अनुवाद है — अंग्रेज़ी संस्करण ही आधिकारिक है। -->
+<!-- यह docs/getting-started.md (स्रोत कमिट: b05c5ff) का समुदाय-अनुरक्षित अनुवाद है — अंग्रेज़ी संस्करण ही आधिकारिक है। -->
 
 # शुरुआत करें
 
-<!-- See the authoritative English page for the latest installation status. -->
+इस संशोधन के अनुसार पहले रन और मॉनिटर वाले भाग अद्यतन किए गए हैं; दूसरे भाग अंग्रेज़ी मूल से पुराने हो सकते हैं। [English](../../getting-started.md).
 
 ## इंस्टॉल
 
@@ -12,41 +12,50 @@ Lightwork को सोर्स कोड से इंस्टॉल कि�
 
 ## पहली बार चलाना
 
+टीम को आमंत्रित करने से पहले डैशबोर्ड में **Start → Set up named sign-in** खोलें। स्थानीय मालिक ईमेल पहचान और पासफ़्रेज़ चुनता है; इससे अनाम व्यवस्थापक पहुँच बंद हो जाती है। ईमेल केवल स्थानीय पहचान है, मेलबॉक्स सत्यापित नहीं होता। आमंत्रण लिंक निजी रखें। इस कंप्यूटर पर दोबारा साइन इन करने के लिए `/auth/local-login` इस्तेमाल करें। कार्यक्षेत्र और विभाग के अधिकार **Users** में दें।
+
+पहले मालिक का सेटअप केवल इसी कंप्यूटर से सीधे लूपबैक अनुरोध स्वीकार करता है, और वह भी भूमिकाएँ या प्रबंधित साइन-इन कॉन्फ़िगर होने से पहले। `[dashboard] local_owner_setup` का डिफ़ॉल्ट `true` है; `MAVERICK_LOCAL_OWNER_SETUP=0` नामांकन बंद करता है। मौजूदा साइन-इन और आमंत्रण नीतियाँ लागू रहती हैं।
+
+विज़ार्ड और उसकी जाँचें कमांड लाइन से भी चलती हैं:
+
 ```bash
-maverick init
+lightwork init
+lightwork preflight
+lightwork doctor
 ```
 
-विज़ार्ड में लगभग 2 मिनट लगते हैं। यह `~/.maverick/config.toml` और `~/.maverick/.env` लिखता है।
+विज़ार्ड `~/.maverick/config.toml` और `~/.maverick/.env` लिखता है। नया निजी सेटअप प्रति कार्य $2 और 30 मिनट की सीमा सुझाता है; आप दूसरी सीमा चुन सकते हैं या बिना सीमा के काम कर सकते हैं। इसे बाद में **Settings → General → Spending per task** में बदलें। कार्य की सीमा न होने पर भी खर्च दर्ज होता है, मॉडल प्रदाता शुल्क लेता है और संगठन की खर्च सीमा लागू रहती है। [कार्य सीमाएँ](../../task-limits.md) देखें।
 
-इसके बाद:
+अगर चल रहा Docker daemon नहीं मिला, तो फ़ाइल बदलाव और प्रोग्राम चलाना बंद कर दिया जाता है: वैकल्पिक `local` बैकएंड इस कंप्यूटर पर बिना अलगाव के सीधे कमांड चलाएगा। इस कार्य से शुरुआत करें:
 
 ```bash
-maverick start "Build a CLI that emails me a digest of today's top Hacker News stories — research the API, write it, and verify it runs"
+lightwork start "Draft a one-page plan to reduce our customer support response time without adding headcount. State your assumptions and the facts you need from me."
 ```
 
 ## स्वार्म को लक्ष्य विभाजित करते हुए देखें
 
-दूसरे टर्मिनल में `maverick monitor` चलाएँ। ऑर्केस्ट्रेटर लक्ष्य की योजना बनाता है, फिर समानांतर काम करने वाले विशेषज्ञ सब-एजेंट शुरू करता है — यहाँ एक रिसर्चर API का पता लगाता है, एक कोडर टूल लिखता है, और एक वेरिफ़ायर उसे चलाकर जाँचता है:
+दूसरे टर्मिनल में `lightwork monitor` चलाएँ। पहले कार्य की योजना का एक उदाहरण:
 
 ```
 Goal #1 active  2m elapsed
-Build a CLI that emails me a digest of today's top Hacker News stories
+Draft a one-page support response plan
 
 Plan tree
-  ├─        done  #2 Research the Hacker News Firebase API
-  ├─      active  #3 Write the digest CLI (fetch + format + send)
-  ├─      active  #4 Verify it runs and emails a sample digest
-  ├─     pending  #5 Write a short usage README
+  ├─        done  #2 Identify likely response-time bottlenecks
+  ├─      active  #3 Draft actions that do not require hiring
+  └─     pending  #4 Check assumptions and questions for the owner
 
 Latest episode #7 (running)  $0.0431  in=18,204 out=2,910 tools=11
 
 Recent activity
-  4s ago [researcher] decision: top stories live at /v0/topstories.json, then /v0/item/<id>.json
-  3s ago [coder] tool_call: write_file hn_digest.py (118 lines)
-  1s ago [verifier] tool_call: run "python hn_digest.py --dry-run" -> printed 10 stories
+  4s ago [researcher] decision: separate volume from process delays
+  3s ago [writer] draft: owner-facing plan with assumptions
+  1s ago [verifier] review: mark unsupported savings estimates
 
 Cumulative spend on this DB: $0.21
 ```
+
+बाद में फ़ाइल बदलने या प्रोग्राम चलाने के लिए Docker या Podman शुरू करें, **Permissions → Where work runs** में कंटेनर चुनें और **Allow file work** की पुष्टि करें। Lightwork कंटेनर जाँचता है और अन्य रोकने वाली नीतियाँ दिखाता है; `lightwork doctor` भी यही सीमा दिखाता है।
 
 काम पूरा होने पर:
 

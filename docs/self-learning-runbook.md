@@ -195,8 +195,10 @@ improved — a CI gate you can wire in.
   `donate_min_entropy = 0` in `[telemetry]` to capture them (step 0).
 - **"ingested 0 trajectories from 0 donation record(s)"** → same cause: the
   selection gate donated nothing. Set `donate_min_entropy = 0` and re-run.
-- **DPO finds no preference pairs** → you ran each task once. DPO needs repeated
-  attempts at the *same* task; use `maverick start --repeat N "…task…"`.
+- **DPO finds no preference pairs** → check that the same task has divergent
+  outcomes, such as a rejected draft and an accepted revision, or best-of-N
+  candidates distinguished by failing tests. Repeating successful answers
+  alone does not create a preference pair.
 - **DPO is extremely slow** → you're on a CPU pod. The PRM/proof steps are CPU,
   but L3 needs a GPU.
 - **OOM during DPO** → the default run is full-parameter. Use a smaller

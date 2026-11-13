@@ -1,8 +1,8 @@
-<!-- Traduction maintenue par la communauté de docs/getting-started.md (commit source : a7b9cee) — la version anglaise fait foi. -->
+<!-- Traduction maintenue par la communauté de docs/getting-started.md (commit source : b05c5ff) — la version anglaise fait foi. -->
 
 # Premiers pas
 
-<!-- See the authoritative English page for the latest installation status. -->
+Les sections de premier lancement et de suivi ont été mises à jour avec cette révision ; les autres sections peuvent être en retard sur l'anglais. [English](../../getting-started.md).
 
 ## Installation
 
@@ -12,41 +12,50 @@ Lancez ensuite `lightwork dashboard` et ouvrez <http://127.0.0.1:8765> pour term
 
 ## Premier lancement
 
+Dans le tableau de bord, ouvrez **Start → Set up named sign-in** avant d'inviter une équipe. Le propriétaire local choisit une adresse comme identifiant et une phrase secrète ; cela ferme l'accès administrateur anonyme. L'adresse est une identité locale : la boîte mail n'est pas vérifiée. Gardez les liens d'invitation privés. Pour vous reconnecter sur cet ordinateur, utilisez `/auth/local-login`. Accordez les droits d'espace de travail et de département dans **Users**.
+
+La création du premier propriétaire accepte uniquement les requêtes locales directes sur cet ordinateur, avant la configuration de rôles ou d'une connexion gérée. `[dashboard] local_owner_setup` vaut `true` par défaut ; `MAVERICK_LOCAL_OWNER_SETUP=0` la désactive. Les politiques de connexion et d'invitation existantes restent applicables.
+
+L'assistant et ses vérifications sont aussi accessibles en ligne de commande :
+
 ```bash
-maverick init
+lightwork init
+lightwork preflight
+lightwork doctor
 ```
 
-L'assistant prend environ 2 minutes. Il écrit `~/.maverick/config.toml` et `~/.maverick/.env`.
+L'assistant écrit `~/.maverick/config.toml` et `~/.maverick/.env`. Une nouvelle configuration personnelle propose une limite de 2 $ et 30 minutes par tâche ; vous pouvez choisir d'autres limites ou aucune. Modifiez ce choix dans **Settings → General → Spending per task**. Sans limite par tâche, les dépenses restent enregistrées et facturées par le fournisseur ; les plafonds de l'organisation restent applicables. Voir les [limites des tâches](../../task-limits.md).
 
-Ensuite :
+Si aucun démon Docker actif n'a été trouvé, les modifications de fichiers et l'exécution de programmes sont désactivées : le moteur de repli `local` exécuterait des commandes directement sur cet ordinateur, sans isolation. Commencez par cette tâche :
 
 ```bash
-maverick start "Build a CLI that emails me a digest of today's top Hacker News stories — research the API, write it, and verify it runs"
+lightwork start "Draft a one-page plan to reduce our customer support response time without adding headcount. State your assumptions and the facts you need from me."
 ```
 
 ## Regarder l'essaim décomposer l'objectif
 
-Lancez `maverick monitor` dans un second terminal. L'orchestrateur planifie l'objectif, puis lance des sous-agents spécialisés qui travaillent en parallèle — ici, un chercheur identifie l'API, un codeur écrit l'outil et un vérificateur l'exécute :
+Lancez `lightwork monitor` dans un second terminal. Voici un exemple de plan pour cette première tâche :
 
 ```
 Goal #1 active  2m elapsed
-Build a CLI that emails me a digest of today's top Hacker News stories
+Draft a one-page support response plan
 
 Plan tree
-  ├─        done  #2 Research the Hacker News Firebase API
-  ├─      active  #3 Write the digest CLI (fetch + format + send)
-  ├─      active  #4 Verify it runs and emails a sample digest
-  ├─     pending  #5 Write a short usage README
+  ├─        done  #2 Identify likely response-time bottlenecks
+  ├─      active  #3 Draft actions that do not require hiring
+  └─     pending  #4 Check assumptions and questions for the owner
 
 Latest episode #7 (running)  $0.0431  in=18,204 out=2,910 tools=11
 
 Recent activity
-  4s ago [researcher] decision: top stories live at /v0/topstories.json, then /v0/item/<id>.json
-  3s ago [coder] tool_call: write_file hn_digest.py (118 lines)
-  1s ago [verifier] tool_call: run "python hn_digest.py --dry-run" -> printed 10 stories
+  4s ago [researcher] decision: separate volume from process delays
+  3s ago [writer] draft: owner-facing plan with assumptions
+  1s ago [verifier] review: mark unsupported savings estimates
 
 Cumulative spend on this DB: $0.21
 ```
+
+Pour modifier des fichiers ou exécuter des programmes ensuite, démarrez Docker ou Podman, choisissez le conteneur dans **Permissions → Where work runs**, puis confirmez **Allow file work**. Lightwork vérifie le conteneur et indique les autres politiques bloquantes ; `lightwork doctor` affiche la même limitation.
 
 Une fois terminé :
 

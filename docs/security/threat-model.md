@@ -74,7 +74,9 @@ or unknown caller is refused before any work is done.
 
 - User's filesystem (`~/.maverick/`, the project working directory).
 - API keys (in `~/.maverick/.env`, chmod 600).
-- Session cookies (in `~/.maverick/sessions/*.json`, chmod 600).
+- Browser session state (default path `~/.maverick/browser/state.json`, mode
+  0600; standalone persistence requires `MAVERICK_BROWSER_STATE`, which selects
+  the path). Goal sessions use the explicit browser authentication vault.
 - Audit log (in `~/.maverick/audit/*.ndjson`, chmod 600).
 - World model SQLite db (optional per-column at-rest encryption,
   `crypto_at_rest` / `tenant/kms.py`; AES-256-GCM, per-tenant DEK).
@@ -150,7 +152,7 @@ or unknown caller is refused before any work is done.
 | Browser tool leaks session cookies to external sites             | Cookies sent only to the origin they were captured from.                          |
 | Telemetry phones home with prompt content                       | Telemetry is opt-in (trajectory donation is off by default; plugin usage counts stay local); anonymous mode (`MAVERICK_ANON=1`) strips user-identifying content from logs. |
 | Webhook payload leaks PII                                       | Outbound webhooks send only minimal payload; users control which events fire.     |
-| Audit log readable by other local users                         | chmod 600 enforced; load refuses if perms relax.                                  |
+| Audit log readable by other local users                         | Audit writing/sealing re-tightens regular files to mode 0600; symlinks, unsafe aliases and hard links are refused.                                  |
 
 ### Denial of service
 

@@ -971,9 +971,9 @@ export MAVERICK_VERIFY_CHAT_ANSWERS=1   # verify every chat answer
 
 **Wizard toggle:** no; both are runtime defaults edited in config.toml.
 
-**Gotcha.** Off by default; with it off, the orchestrator's FINAL is always
-verified (subject to budget). Leave it off if you want maximal verification
-regardless of cost.
+**Gotcha.** `verify_chat_answers` is off by default, so a plain chat prose
+answer of at most 12,000 characters with no tool, code or edit use skips the
+self-verifier. Turn it on to verify those chat answers too (subject to budget).
 
 ---
 
