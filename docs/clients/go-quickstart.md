@@ -16,7 +16,7 @@ python -m pip install -e ./packages/maverick-core -e ./packages/maverick-mcp
 go get github.com/modelcontextprotocol/go-sdk@v1.6.1
 ```
 
-Use Go 1.26.10 or newer so the client inherits the current standard-library
+Use Go 1.26.11 or newer so the client inherits the current standard-library
 security fixes. Set `ANTHROPIC_API_KEY` (or whichever provider key the kernel
 needs).
 
