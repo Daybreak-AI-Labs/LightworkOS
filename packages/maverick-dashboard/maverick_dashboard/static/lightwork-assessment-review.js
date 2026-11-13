@@ -154,7 +154,7 @@
           const row = el('div', 'arv__row');
           const q = el('div', 'arv__q', f.question || f.text || human(f.question_id));
           if (f.recommendation) q.appendChild(el('div', 'arv__note', f.recommendation));
-          const sev = el('span', 'badge ' + (f.severity === 'high' ? 'blocked' : f.severity === 'medium' ? 'warn' : 'done'), f.kind === 'unverified' ? 'Not yet confirmed' : human(f.severity));
+          const sev = el('span', 'badge ' + (f.severity === 'high' || f.severity === 'critical' ? 'blocked' : f.severity === 'medium' ? 'warn' : 'done'), f.kind === 'unverified' ? 'Not yet confirmed' : human(f.severity));
           const ans = el('div', 'arv__ans'); ans.appendChild(sev);
           row.append(q, ans); body.appendChild(row);
         });

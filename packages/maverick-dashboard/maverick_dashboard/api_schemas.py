@@ -1239,7 +1239,7 @@ class TemplateQuestionIn(BaseModel):
     section: str = Field("", max_length=80)
     text: str = Field(..., min_length=3, max_length=500)
     risk_answer: str = Field("no", pattern="^(yes|no)$")
-    severity: str = Field("medium", pattern="^(low|medium|high)$")
+    severity: str = Field("medium", pattern="^(low|medium|high|critical)$")
     guidance: str = Field("", max_length=500)
 
 
