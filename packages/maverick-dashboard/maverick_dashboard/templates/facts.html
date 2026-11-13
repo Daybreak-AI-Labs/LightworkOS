@@ -36,7 +36,7 @@
     <table id="fact-list"{% if not fact_records %} hidden{% endif %}>
       <thead><tr><th scope="col">Select</th><th scope="col">Name</th><th scope="col">Detail</th><th scope="col">Last updated</th><th scope="col">Actions</th></tr></thead>
       <tbody>{% for item in fact_records[:50] %}<tr data-key="{{ item.key }}" data-revision="{{ item.revision }}">
-        <td><input type="checkbox" data-select-fact aria-label="Select {{ item.key }}"></td>
+        <td><input type="checkbox" data-select-fact aria-label="Select {{ item.key | humanize }}"></td>
         <td class="fact-key">{{ item.key | humanize }}</td><td class="fact-value" style="white-space:pre-wrap;overflow-wrap:anywhere">{{ item.value }}</td>
         <td>{{ item.updated_at | datetime }}</td>
         <td class="mv-row__actions"><button class="btn btn--ghost" type="button" data-view-fact>Details and history</button>{% if can_create_goal %}<button class="btn btn--ghost" type="button" data-edit-fact>Edit</button><button class="btn btn--ghost btn--danger" type="button" data-remove-fact>Remove fact</button>{% endif %}</td>

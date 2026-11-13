@@ -658,7 +658,7 @@
     </div>
     <div id="question-panel" class="ask__question" style="display: none;" role="alert" aria-live="assertive">
       <p class="ask__eyebrow">{{ ui('Lightwork needs one thing from you') }}</p>
-      <p id="question-text" lang="und" dir="auto" data-user-content class="ask__text" role="status" aria-live="polite"></p>
+      <p id="question-text" lang="und" dir="auto" data-user-content class="ask__text"></p>
     </div>
     {% from "_composer_recovery.html" import composer_recovery with context %}
     {% call composer_recovery(can_create_goal and draft_recovery_context) %}

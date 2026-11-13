@@ -185,7 +185,7 @@
     var LB = {overdue: 'Overdue', d0_30: 'Within 30 days', d31_60: 'In 31 to 60 days',
               d61_90: 'In 61 to 90 days', d90_plus: 'More than 90 days'};
     if (!lic.total) {
-      empty(lb, 'No licences yet', 'Software licences appear here by how soon they renew. Add the first one in the Finance workspace.',
+      empty(lb, 'No licences yet', 'Your regulatory licences, such as a money transmitter licence, appear here by how soon they renew. Add the first one in the Finance workspace.',
         { label: 'Add a licence', href: '/finance#lic-form' });
     } else {
       Object.keys(LB).forEach(function (band) {

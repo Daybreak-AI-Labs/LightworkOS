@@ -124,7 +124,8 @@
   </section>
   <section class="panel">
     <h2>Result</h2>
-    <pre class="cs-output" id="cs-output" aria-live="polite">No request made.</pre>
+    <p class="sr-only" id="cs-output-status" role="status"></p>
+    <pre class="cs-output" id="cs-output">No request made.</pre>
   </section>
 </div>
 
@@ -138,6 +139,7 @@
   var confirmation = document.getElementById("cs-confirm");
   var confirmationPanel = document.getElementById("cs-confirm-panel");
   var output = document.getElementById("cs-output");
+  var outputStatus = document.getElementById("cs-output-status");
   var highImpact = new Set([
     "questionnaire-publish", "scope-approve", "scope-finalize", "retention-purge"
   ]);
@@ -149,6 +151,8 @@
 
   function show(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    // Announce one short sentence, not the whole result.
+    outputStatus.textContent = typeof value === "string" ? value : "The request finished. The result is shown under Result.";
   }
   // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
   function requestProblem(status, detail) {

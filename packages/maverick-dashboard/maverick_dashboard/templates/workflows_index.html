@@ -54,7 +54,8 @@
         <div class="mv-row__main">
           <div class="mv-row__title">{{ f.name or (f.id|humanize) }}</div>
           <div class="mv-row__sub">{{ f.nodes }} step{{ '' if f.nodes == 1 else 's' }}</div>
-          <div class="mv-row__sub" data-flow-status="{{ f.id }}">Checking flow status…</div>
+          {# The script that fills this in is loaded only for people who can operate workflows. #}
+          {% if can_operate_workflows %}<div class="mv-row__sub" data-flow-status="{{ f.id }}">Checking flow status…</div>{% endif %}
           <details hidden><summary>Technical details</summary><p class="muted">Flow reference: <code>{{ f.id }}</code></p></details>
         </div>
         {% if can_operate_workflows %}<div class="mv-row__actions">
@@ -103,7 +104,7 @@
         </div>
         {% if can_operate_workflows %}<div class="mv-row__actions">
           <a class="btn btn--ghost" href="/workflow-builder?edit={{ t.name | urlencode }}">Edit</a>
-          <a class="btn btn--ghost" href="/flows/designer?from_template={{ t.name | urlencode }}" title="Open this template as a one-step flow, then add branches, approvals, and loops around it">Open as flow</a>
+          {% if flows_enabled %}<a class="btn btn--ghost" href="/flows/designer?from_template={{ t.name | urlencode }}" title="Open this template as a one-step flow, then add branches, approvals, and loops around it">Open as flow</a>{% endif %}
           {% if scheduling_enabled or triggers_enabled %}<a class="btn btn--ghost" href="/workflow-builder?template={{ t.name | urlencode }}">Automate</a>{% endif %}
           <a class="btn btn--ghost" href="/chat?title={{ t.title | urlencode }}">Use</a>
         </div>{% endif %}

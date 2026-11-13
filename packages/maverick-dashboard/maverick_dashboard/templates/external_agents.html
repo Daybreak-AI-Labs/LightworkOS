@@ -84,6 +84,7 @@
         {% endfor %}
       </tbody>
     </table>
+    {% if not external_agents_can_manage %}<p class="muted" style="margin: var(--space-2) 0 0; font-size: var(--text-sm);">{% if enabled %}Only an administrator can change these agents.{% else %}Outside agents is turned off, so agents cannot be added or changed.{% endif %}</p>{% endif %}
     {% else %}
     <div class="mv-empty">
       <p class="mv-empty__title">No outside agents yet</p>
@@ -97,6 +98,7 @@
 
   <div class="section-head"><h2>Add an outside agent</h2></div>
   <div class="panel">
+    {% if not external_agents_can_manage %}<p class="muted" style="margin: 0 0 var(--space-3); font-size: var(--text-sm);">{% if enabled %}Only an administrator can add an agent.{% else %}Outside agents is turned off, so agents cannot be added or changed.{% endif %}</p>{% endif %}
     <form id="xa-add">
       <fieldset id="xa-add-controls" data-feature-enabled="{{ 'true' if external_agents_can_manage else 'false' }}"{% if not external_agents_can_manage %} disabled aria-disabled="true"{% endif %} style="display:grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-3); border:0; margin:0; padding:0; min-width:0;">
       <legend class="sr-only">Add an outside agent</legend>

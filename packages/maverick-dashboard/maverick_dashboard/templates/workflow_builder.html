@@ -332,7 +332,7 @@
       </div>
       <div class="wf__row">
         <button type="button" id="pb-save-btn" class="btn btn--primary"{% if not pack_editing_allowed %} disabled title="{{ ut('An administrator must check and save this draft') }}"{% endif %} lang="{{ ul('An administrator must check and save this draft') }}">{{ ui("Review Save draft") }}</button>
-        <span class="wf__hint">{% if pack_editing_allowed %}{{ ui("Save a retained draft, then separately review Publish in Agent Factory. Saving here does not change the agent people use.") }} <a href="/agents">{{ ui("Agent Factory") }}</a>.{% else %}This draft stays unsaved until an administrator checks and saves it. <button type="button" class="btn btn--ghost" id="pb-copy-draft">{{ ui("Copy the draft to send to an administrator") }}</button>{% endif %}</span>
+        <span class="wf__hint">{% if pack_editing_allowed %}{{ ui("Save a retained draft, then separately review Publish in Agent Factory. Saving here does not change the agent people use.") }} <a href="/agents">{{ ui("Agent Factory") }}</a>.{% else %}{{ ui("This draft stays unsaved until an administrator checks and saves it.") }} <button type="button" class="btn btn--ghost" id="pb-copy-draft">{{ ui("Copy the draft to send to an administrator") }}</button>{% endif %}</span>
       </div>
       </form>
       <label><input type="checkbox" id="pb-acknowledge-original"> I read any earlier unconfirmed original and acknowledge that earlier work may already exist. This is a separate new Save draft intent.</label>
@@ -428,7 +428,7 @@
           <span class="wf__hint" id="trig-msg" role="status" aria-live="polite"></span>
         </div>
         <div id="trig-howto" hidden>
-          <p class="wf__hint">{{ ui("In the other app, add a step that sends a web request to this address and names this start. Your administrator can help with the security key.") }}<span id="trig-secret-warn" hidden> ⚠ {{ ui("The security key isn’t set up yet, so the address won’t accept requests.") }} {% if webhook_setup_available %}<a href="/settings#webhook-settings">{{ ui("Set it up in Settings") }}</a>{% else %}Ask an administrator to set it up in Settings.{% endif %}</span></p>
+          <p class="wf__hint">{{ ui("In the other app, add a step that sends a web request to this address and names this start. Your administrator can help with the security key.") }}<span id="trig-secret-warn" hidden> ⚠ {{ ui("The security key isn’t set up yet, so the address won’t accept requests.") }} {% if webhook_setup_available %}<a href="/settings#webhook-settings">{{ ui("Set it up in Settings") }}</a>{% else %}{{ ui("Ask an administrator to set it up in Settings.") }}{% endif %}</span></p>
           <div class="wf__copyrow"><code id="trig-url"></code><button type="button" class="btn btn--ghost" id="trig-url-copy">{{ ui("Copy address") }}</button><button type="button" class="btn btn--ghost" id="trig-name-copy">{{ ui("Copy start name") }}</button></div>
         </div>
         <ul class="wf__sched-list" id="trig-list" aria-label="{{ ut('Starts from other apps') }}" lang="{{ ul('Starts from other apps') }}"></ul>

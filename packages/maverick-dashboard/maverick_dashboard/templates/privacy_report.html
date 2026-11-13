@@ -6,6 +6,7 @@
   .rpt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-4); margin: var(--space-3) 0 var(--space-4); }
   .rpt-actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-4); }
   .rpt-note { color: var(--muted); font-size: var(--text-sm); }
+  .pw-age-warn { color: var(--warn); font-weight: var(--font-medium); }
   @media print {
     .sidebar, .topbar, nav, .rpt-actions, #mv-sidebar, header { display: none !important; }
     .panel { break-inside: avoid; border: 1px solid var(--print-border); }
@@ -17,8 +18,10 @@
   'approved': 'Approved', 'rejected': 'Rejected', 'in_progress': 'In progress',
 } %}
 {% set kind_labels = {
-  'access': 'Copy of data', 'portability': 'Move data', 'erasure': 'Delete data',
-  'rectification': 'Correct data', 'objection': 'Stop using data', 'restriction': 'Limit use of data',
+  'access': 'A copy of their data', 'portability': 'Portable copy', 'erasure': 'Delete their data',
+  'correction': 'Correct their data', 'opt_out': 'Opt out of sale or sharing',
+  'limit_sensitive': 'Limit sensitive data use', 'objection': 'Stop a use',
+  'restriction': 'Restrict use', 'withdraw_consent': 'Withdraw consent',
 } %}
 {% set tier_labels = {'prohibited': 'Banned', 'high': 'High risk', 'limited': 'Limited risk', 'minimal': 'Minimal risk'} %}
 {% macro days(n) %}{{ n }} {{ 'day' if n == 1 else 'days' }}{% endmacro %}
