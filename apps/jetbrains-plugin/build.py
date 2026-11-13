@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -28,7 +29,11 @@ def main() -> None:
          "org.gradle.wrapper.GradleWrapperMain", "--no-daemon", "--console=plain",
          "check", "buildPlugin"], cwd=ROOT, check=True,
     )
-    artifact = ROOT / "build/distributions/lightwork-jetbrains-0.1.6.zip"
+    plugin_version = re.search(r'^version = "([^"\r\n]+)"$',
+                               (ROOT / "build.gradle.kts").read_text(encoding="utf-8"), re.MULTILINE)
+    if plugin_version is None or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", plugin_version[1]):
+        raise SystemExit("Expected a literal plugin version in build.gradle.kts.")
+    artifact = ROOT / "build/distributions" / f"lightwork-jetbrains-{plugin_version[1]}.zip"
     if not artifact.is_file():
         raise SystemExit("Expected plugin archive missing; no release manifest written.")
     inputs = [ROOT / name for name in (

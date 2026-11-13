@@ -68,14 +68,14 @@ function appendEvent(agent, content) {
 }
 
 // background.js gives each dashboard request 15 s, and a page send (a chat
-// message with a capture policy) makes two in a row: the policy check, then the
-// start. Wait for all of them plus a margin before calling the worker silent.
+// message with a capture policy) makes two in a row. Recovery may read a
+// receipt, check policy and replay the original start: allow all three plus a margin.
 const WORKER_REQUEST_MS = 15000;
 
 function ask(msg) {
   return new Promise((resolve) => {
     let settled = false;
-    const requests = msg.type === "chat" && msg.capturePolicy ? 2 : 1;
+    const requests = msg.type === "reconcile" ? 3 : msg.type === "chat" && msg.capturePolicy ? 2 : 1;
     const timer = setTimeout(() => finish({ ok: false, kind: msg.type === "chat" ? "unknown" : "transient",
       error: "Client request not confirmed. Check the dashboard before retrying a start." }),
     requests * WORKER_REQUEST_MS + 2000);
@@ -333,7 +333,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await ask({ type: "reconcile", scope });
       if (!alive || epoch !== generation) return;
       if (!response.ok || response.scope !== scope || !response.goal) {
-        setStatus("Start remains unconfirmed. " + (response.error || "No receipt is visible yet.") + " No new request was sent.", true);
+        setStatus("Start remains unconfirmed. " + (response.error || "No receipt is visible yet.") + " The original request identity is still retained.", true);
         return;
       }
       held = false;

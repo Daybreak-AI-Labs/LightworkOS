@@ -340,7 +340,7 @@
   </p>
   <header>
     <h1>Lightwork</h1>
-    <p class="sub">Engineering source setup for authorized repository users.</p>
+    <p class="sub">Engineering source setup from Lightwork’s public repository.</p>
   </header>
 
   {#if status !== 'installing'}

@@ -5,6 +5,9 @@
  * dashboard's own origin; it talks to that dashboard's chat endpoint.
  * Self-hostable: it posts to YOUR dashboard origin, not a hosted service.
  *
+ * Host this file at /widget/ on the dashboard origin using a static alias;
+ * the dashboard does not mount this directory itself.
+ *
  * Usage:
  *   <script src="/widget/maverick-chat-widget.js"
  *           data-maverick-url="https://your-dashboard.example.com"
@@ -155,7 +158,10 @@
       target: "_blank", rel: "noopener" }));
     log.appendChild(row);
     status.textContent = "Task accepted. Open the task to follow its progress.";
-    if (localStorage.getItem(storageKey) === pendingId) localStorage.removeItem(storageKey);
+    if (localStorage.getItem(storageKey) === pendingId) {
+      localStorage.removeItem(storageKey + ":payload");
+      localStorage.removeItem(storageKey);
+    }
     pendingId = null;
     unknown = false;
     if (msg && input.value.trim() === msg) input.value = "";
@@ -194,23 +200,68 @@
         text += decoder.decode(part.value, { stream: true });
       }
       var data = JSON.parse(text + decoder.decode());
-      if (data.state !== "accepted" || !data.goal || typeof data.goal.status !== "string") throw new Error("Invalid receipt");
-      return data.goal;
+      if (!["accepted", "not_dispatched"].includes(data.state) || !data.goal ||
+          !Number.isSafeInteger(data.goal.id) || data.goal.id <= 0 || typeof data.goal.status !== "string") throw new Error("Invalid receipt");
+      return data;
     } finally { reader.releaseLock(); }
   }
 
   check.addEventListener("click", function () {
     if (busy || !unknown || !pendingId || !alive) return;
     busy = true;
+    // Whether this check went on to send the held request again. The two
+    // failures read differently: only one of them sent anything.
+    var resent = false;
     controls();
     boundedFetch("/api/v1/goal-submissions/receipt?kind=chat", {
       method: "GET", redirect: "error", cache: "no-store", headers: { "Accept": "application/json", "Idempotency-Key": pendingId }
-    }, readReceipt).then(function (goal) {
-      if (alive) accepted(goal.id);
+    }, readReceipt).then(function (receipt) {
+      if (!alive) return;
+      if (receipt.state === "accepted") { accepted(receipt.goal.id); return; }
+      var original = JSON.parse(localStorage.getItem(storageKey + ":payload") || "null");
+      if (!original || original.key !== pendingId || typeof original.message !== "string" ||
+          !original.message || expectedOrigin !== location.origin) throw new Error("Original draft unavailable");
+      resent = true;
+      return submitOriginal(original.message);
     }).catch(function () {
-      if (alive) line("Lightwork", "No confirmed receipt is visible yet. The original request remains held; no new start was sent.");
+      if (!alive) return;
+      line("Lightwork", resent
+        ? "Recovery is not confirmed. The original request remains held. Check again or review it in the dashboard."
+        : "No confirmed receipt is visible yet. The original request remains held; no new start was sent.");
     }).finally(function () { busy = false; if (alive) controls(); });
   });
+
+  function submitOriginal(msg) {
+    // /chat/send takes multipart form fields (title required) and answers
+    // with a 303 redirect to the new goal page. fetch follows the redirect,
+    // so a landed response whose URL contains /chat/goal/ IS the success
+    // signal; link the user straight to the live goal.
+    var fd = new FormData();
+    var characters = Array.from(msg);
+    fd.append("title", characters.length > 200 ? characters.slice(0, 199).join("") + "…" : msg);
+    if (characters.length > 200) fd.append("description", msg);
+    fd.append("submission_key", pendingId);
+    return boundedFetch("/chat/send", { method: "POST", body: fd }, async function (r) {
+        if (!alive) return;
+        if (!r.ok) {
+          var detail = null;
+          try { detail = await r.json(); } catch (_) { /* Fall back to the status if no JSON detail is available. */ }
+          var failure = new Error(detail && typeof detail.detail === "string" ? detail.detail : "Dashboard replied HTTP " + r.status + ".");
+          // A followed redirect can fail AFTER goal creation. Only a direct
+          // client-error response proves the start was refused.
+          failure.refused = !r.redirected && r.status >= 400 && r.status < 500 && r.status !== 409;
+          throw failure;
+        }
+        var landed = new URL(r.url, location.href);
+        var expected = new URL(BASE || location.origin, location.href);
+        var m = landed.pathname.match(/^\/chat\/goal\/([1-9]\d*)$/);
+        if (r.redirected && landed.origin === expected.origin && !landed.search && !landed.hash && m) {
+          accepted(Number(m[1]), msg);
+        } else {
+          throw new Error("Start not confirmed. Open the dashboard to check your session and tasks before sending again.");
+        }
+      });
+  }
 
   form.addEventListener("submit", function (e) {
     e.preventDefault();
@@ -231,45 +282,21 @@
         hold(); busy = false; controls(); return;
       }
       pendingId = crypto.randomUUID();
+      localStorage.setItem(storageKey + ":payload", JSON.stringify({ key: pendingId, message: msg }));
       localStorage.setItem(storageKey, pendingId);
     } catch (error) {
       busy = false;
       line("Lightwork", "Start refused before sending: secure request identity could not be retained.");
       controls(); return;
     }
-    // /chat/send takes multipart form fields (title required) and answers
-    // with a 303 redirect to the new goal page. fetch follows the redirect,
-    // so a landed response whose URL contains /chat/goal/ IS the success
-    // signal; link the user straight to the live goal.
-    var fd = new FormData();
-    var characters = Array.from(msg);
-    fd.append("title", characters.length > 200 ? characters.slice(0, 199).join("") + "…" : msg);
-    if (characters.length > 200) fd.append("description", msg);
-    fd.append("submission_key", pendingId);
-    boundedFetch("/chat/send", { method: "POST", body: fd }, async function (r) {
-        if (!alive) return;
-        if (!r.ok) {
-          var detail = null;
-          try { detail = await r.json(); } catch (_) { /* Fall back to the status if no JSON detail is available. */ }
-          var failure = new Error(detail && typeof detail.detail === "string" ? detail.detail : "Dashboard replied HTTP " + r.status + ".");
-          // A followed redirect can fail AFTER goal creation. Only a direct
-          // client-error response proves the start was refused.
-          failure.refused = !r.redirected && r.status >= 400 && r.status < 500 && r.status !== 409;
-          throw failure;
-        }
-        var landed = new URL(r.url, location.href);
-        var expected = new URL(BASE || location.origin, location.href);
-        var m = landed.pathname.match(/^\/chat\/goal\/([1-9]\d*)$/);
-        if (r.redirected && landed.origin === expected.origin && !landed.search && !landed.hash && m) {
-          accepted(Number(m[1]), msg);
-        } else {
-          throw new Error("Start not confirmed. Open the dashboard to check your session and tasks before sending again.");
-        }
-      })
+    submitOriginal(msg)
       .catch(function (err) {
         if (!alive) return;
         if (err.refused) {
-          if (localStorage.getItem(storageKey) === pendingId) localStorage.removeItem(storageKey);
+          if (localStorage.getItem(storageKey) === pendingId) {
+            localStorage.removeItem(storageKey + ":payload");
+            localStorage.removeItem(storageKey);
+          }
           pendingId = null;
           line("Lightwork", "Start refused. " + err.message);
         } else { hold(); }

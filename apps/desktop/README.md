@@ -106,9 +106,11 @@ Bundle targets (`src-tauri/tauri.conf.json`):
   own), or point the shell at the binary explicitly:
   `MAVERICK_BIN=/full/path/to/maverick` in the app's environment.
 - **Wrong port:** this shell targets `8765` (the dashboard default). If you run
-  the dashboard on another port, run it yourself on `8765`, or change
-  `DASHBOARD_PORT` in `src/lib.rs`, the `PORT` in `ui/app.js`, and the CSP
-  hosts in `tauri.conf.json`, then rebuild.
+  the dashboard on another port, run it on `8765` for this shell. There is no
+  single port setting: a custom build must coordinate the runtime and OAuth
+  return library, `ui/app.js`, `ui/recovery.js`, the Tauri CSP and the
+  `capabilities/account-return.json` URL allowlist, then rebuild and requalify
+  startup and account return.
 
 ## Status
 

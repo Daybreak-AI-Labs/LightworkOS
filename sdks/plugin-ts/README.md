@@ -114,9 +114,11 @@ for host limits, cleanup behavior and operating-system constraints.
 
 ## Structured page context
 
-The Lightwork browser extension (`extensions/browser/`) can attach a bounded,
-observe-only accessibility/DOM snapshot of the active page to a goal. This SDK
-exports types and a safe parser for consuming that snapshot in a plugin:
+This SDK exports types and a safe parser for a bounded, observe-only
+accessibility/DOM snapshot supplied by an integration. The browser extension
+(`extensions/browser/`) currently flattens its snapshot into the goal's plain-text
+description; it does not populate a structured `args.page` field. An integration
+must explicitly supply that field before a plugin can use this example:
 
 ```ts
 import { parseStructuredPageContext, summarizePageContext } from "@maverick/plugin-sdk";

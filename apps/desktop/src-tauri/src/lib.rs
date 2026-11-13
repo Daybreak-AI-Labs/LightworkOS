@@ -1,9 +1,8 @@
 //! Tauri shell for the local Lightwork dashboard.
 //!
 //! The window first shows a bundled splash page (ui/index.html + ui/app.js)
-//! that polls `http://127.0.0.1:8765/healthz` (an auth-exempt endpoint, see
-//! maverick_dashboard/app.py `_AUTH_EXEMPT`) and navigates to the dashboard as
-//! soon as the port answers. On the Rust side, if nothing is listening on
+//! that calls the native `dashboard_readiness` command and navigates only
+//! after the dashboard's identity and readiness have been verified. On the Rust side, if nothing is listening on
 //! 127.0.0.1:8765 at launch we spawn the user's installed CLI —
 //! `maverick dashboard --host 127.0.0.1 --port 8765` — as a child process and
 //! drain it on exit, with bounded forced termination if it cannot finish.

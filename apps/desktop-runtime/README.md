@@ -1,8 +1,12 @@
 # Local dashboard launcher
 
 Dependency-free Rust library shared by the installer and desktop shell. It
-launches only the installed `maverick dashboard --host 127.0.0.1 --port 8765`
-command. No webview-supplied command, path, argument, or URL is accepted.
+launches `maverick dashboard --host 127.0.0.1 --port 8765`, adding
+`--recovery-mode` for recovery launches. The caller can pin the installed binary;
+otherwise the native lookup honors `MAVERICK_BIN`. The child receives the
+caller's environment overrides plus `MAVERICK_DESKTOP_CONTROL=stdin-v1` and
+`MAVERICK_SHUTDOWN_TIMEOUT` for coordinated shutdown. No webview-supplied command,
+path, argument, or URL is accepted.
 Existing listeners are reused, running owned children are not duplicated, and
 failed/exited launches can be retried. Startup output is kept only in memory,
 bounded to 32 KiB, and displayed through an explicit diagnostics action.

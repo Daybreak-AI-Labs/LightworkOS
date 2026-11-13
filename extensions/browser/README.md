@@ -87,7 +87,8 @@ types, focuses, submits, or otherwise mutates the page.
   `getPageContext` message triggered by your click on "Send this page". The
   structured snapshot is strictly **observe-only** — it reads the DOM
   (`getAttribute`/`textContent`/`getBoundingClientRect`) but never clicks,
-  types, focuses, submits, or mutates the page, never auto-injects, and is
+  types, focuses, submits, or mutates the page. The manifest auto-injects the
+  inert script into HTTP(S) pages at `document_idle`. Its response is
   bounded (element/landmark/length caps) so nothing is exfiltrated or bloated.
   Password field values are never read.
 - **No remote code.** All scripts are local files; the extension-page CSP is
@@ -95,3 +96,10 @@ types, focuses, submits, or otherwise mutates the page.
   invariants (`packages/maverick-dashboard/tests/test_extension_static.py`).
 
 See the [client request and acknowledgement contract](../../docs/client-request-lifecycle.md) for replay, deadlines, access errors, and platform qualification limits.
+
+Unconfirmed task starts retain their original title, description and request key
+in extension-local storage. **Check start status** first reads the receipt; only a
+`not_dispatched` draft is replayed, with the same inputs and key and a fresh page
+sharing-policy check. Unknown outcomes remain held. Accepted starts remove the
+saved payload. Older entries without the original payload require dashboard
+review if the draft was never dispatched.

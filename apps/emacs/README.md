@@ -22,7 +22,7 @@ Add to `load-path` and require:
 | `M-x maverick-start` | prompt for a goal, run it (compilation buffer) |
 | `M-x maverick-status` | runtime status + cost |
 | `M-x maverick-monitor` | live plan-tree TUI (term buffer) |
-| `M-x maverick-logs` | recent run logs |
+| `M-x maverick-logs` | recent audit log entries |
 | `M-x maverick-halt` | arm the killswitch (confirms first) |
 | `M-x maverick-unhalt` | clear the killswitch |
 | `M-x maverick-cancel-control` | stop local status/halt supervision; outcome remains unconfirmed |

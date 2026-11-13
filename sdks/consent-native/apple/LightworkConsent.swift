@@ -121,6 +121,20 @@ public struct PreferenceChoice: Codable, Sendable {
     public let channel: String
     public let vendorID: String
     public let expiresAt: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case purposeID, action, channel, vendorID, expiresAt
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(purposeID, forKey: .purposeID)
+        try container.encode(action, forKey: .action)
+        try container.encode(channel, forKey: .channel)
+        try container.encode(vendorID, forKey: .vendorID)
+        // The server verifies an explicit null for a choice without an expiry.
+        try container.encode(expiresAt, forKey: .expiresAt)
+    }
 }
 
 public struct NativePrivacySignals: Codable, Sendable {

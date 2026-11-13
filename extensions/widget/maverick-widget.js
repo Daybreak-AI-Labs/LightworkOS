@@ -2,6 +2,8 @@
  * maverick-widget.js — embeddable Lightwork status widget.
  *
  * Single self-contained file: no framework, no CDN, no external CSS.
+ * Host this file at /widget/ on the dashboard origin using a static alias;
+ * the dashboard does not mount this directory itself.
  * Embed:
  *
  *   <script src="/widget/maverick-widget.js"

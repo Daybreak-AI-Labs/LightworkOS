@@ -4,10 +4,10 @@ import {msg, messageLanguage, useLanguage, formattedNumber, formattedDateTime} f
  * Online path composes two real read-only endpoints:
  *   GET /api/v1/oversight/active  (active runs + latest activity)
  *   GET /api/v1/spend             (total spend)
- * It also opportunistically refreshes the offline cache from
- * GET /api/v1/offline/bundle when the dashboard serves it (404 on older
- * dashboards is fine — the cache just isn't refreshed). When everything is
- * unreachable, renders the cached bundle with an offline banner. */
+ * App.tsx owns bundle refresh through useConnectionCache, including the
+ * X-Lightwork-Offline-Policy: 1 header required by GET /api/v1/offline/bundle.
+ * When online reads fail, this screen can render an eligible cached bundle
+ * with an offline banner. */
 import React, { useCallback } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 

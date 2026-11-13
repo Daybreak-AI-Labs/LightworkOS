@@ -376,3 +376,47 @@ test('widget persistence failure prevents network dispatch',async()=>{
   assert.equal(calls,0);assert.equal(fixture.input.value,'goal');
   assert.match(fixture.dom.window.document.body.textContent,/refused before sending/);fixture.close();
 });
+
+
+test('worker replays an admitted draft after reload with the original body and key',async()=>{
+  const calls=[];
+  const fixture=worker(async(url,options)=>{calls.push({url,options});return response({},503);});
+  await fixture.call({type:'chat',title:'original',description:'original instructions'});
+  const identity=await fixture.call({type:'identity'});
+  const restarted=worker(async(url,options)=>{
+    calls.push({url,options});
+    return response(options.method==='GET'?{state:'not_dispatched',goal:{id:43,status:'draft'}}:{id:43,status:'pending'});
+  },fixture.local.values);
+  const recovered=await restarted.call({type:'reconcile',scope:identity.scope});
+  assert.equal(recovered.ok,true);assert.equal(recovered.goal.id,43);
+  assert.deepEqual(calls.map(call=>call.options.method),['POST','GET','POST']);
+  assert.equal(calls[2].options.body,calls[0].options.body);
+  assert.equal(calls[2].options.headers['Idempotency-Key'],calls[0].options.headers['Idempotency-Key']);
+  assert.equal(restarted.local.values['pendingGoal:'+identity.scope],null);
+});
+
+test('widget replays only a not-dispatched original with the retained draft and key',async()=>{
+  const calls=[];
+  const fixture=await widget(async(url,options)=>{calls.push({url,options});return new Promise(()=>{});});
+  fixture.input.value='original instructions';fixture.submit();
+  await waitFor(()=>hasTimer(fixture.timers,15000),'the widget start');
+  fixture.timers.fire(15000);await flush();
+  const storageKey='lightwork.pending-chat.v1:http://127.0.0.1:8765';
+  const key=fixture.dom.window.localStorage.getItem(storageKey);
+  const payload=fixture.dom.window.localStorage.getItem(storageKey+':payload');
+  fixture.close();
+  const restarted=await widget(async(url,options)=>{
+    calls.push({url,options});
+    return options.method==='GET'?new Response(JSON.stringify({state:'not_dispatched',goal:{id:45,status:'draft'}})):
+      {ok:true,status:200,redirected:true,url:'http://127.0.0.1:8765/chat/goal/45'};
+  },key);
+  if(payload)restarted.dom.window.localStorage.setItem(storageKey+':payload',payload);
+  restarted.input.value='changed draft must not be sent';
+  restarted.check.click();await flush();
+  assert.deepEqual(calls.map(call=>call.options.method),['POST','GET','POST']);
+  assert.deepEqual([...calls[2].options.body.entries()],[...calls[0].options.body.entries()]);
+  assert.equal(restarted.dom.window.localStorage.getItem(storageKey),null);
+  assert.equal(restarted.dom.window.localStorage.getItem(storageKey+':payload'),null);
+  assert.equal(restarted.input.value,'changed draft must not be sent');
+  restarted.close();
+});

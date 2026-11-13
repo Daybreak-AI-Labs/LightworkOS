@@ -26,7 +26,7 @@ impl zed::Extension for MaverickExtension {
         _context_server_id: &ContextServerId,
         _project: &Project,
     ) -> Result<Command> {
-        // `maverick mcp` serves MCP over stdio by default (maverick/cli.py).
+        // `maverick mcp` serves MCP over stdio by default (packages/maverick-core/maverick/cli/__init__.py).
         // The CLI must already be installed and on PATH (pipx / pip / the
         // platform installers under apps/ and deploy/); the extension does
         // not install it.
