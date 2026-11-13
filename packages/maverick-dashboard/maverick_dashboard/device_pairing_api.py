@@ -50,7 +50,10 @@ def _private(response):
 
 def _principal(request):
     actor = auth.caller_principal(request)
-    if not actor or getattr(request.state, "paired_device_id", None):
+    # An API key must not approve, list or revoke devices: a paired device is a
+    # longer-lived credential that would outlive the key's scope and revocation.
+    if (not actor or getattr(request.state, "paired_device_id", None)
+            or auth.api_key_permissions(request) is not None):
         raise HTTPException(403, "Sign in to your named account to manage paired devices.")
     auth.require_permission(request, "view")
     return actor

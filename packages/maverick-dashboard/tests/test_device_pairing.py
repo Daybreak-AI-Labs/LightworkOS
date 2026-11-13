@@ -164,3 +164,19 @@ def test_pairing_review_refuses_a_non_ascii_context_like_any_other_wrong_one(mon
             api._binding(request, wrong)
         assert refused.value.status_code == 409
     api._binding(request, 'a' * 64)
+
+
+def test_an_api_key_cannot_manage_paired_devices(monkeypatch):
+    # A paired device outlives the key that approved it, so key callers are refused.
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+    from maverick_dashboard import auth
+    from maverick_dashboard import device_pairing_api as pairing_api
+
+    monkeypatch.setattr(auth, 'caller_principal', lambda _request: 'user:alice')
+    monkeypatch.setattr(auth, 'require_permission', lambda *_args: None)
+    monkeypatch.setattr(auth, 'api_key_permissions', lambda _request: frozenset({'tasks:read'}))
+    with pytest.raises(HTTPException) as refused:
+        pairing_api._principal(SimpleNamespace(state=SimpleNamespace()))
+    assert refused.value.status_code == 403
