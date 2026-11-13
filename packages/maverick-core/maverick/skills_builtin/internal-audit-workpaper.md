@@ -4,6 +4,8 @@ triggers:
   - internal audit
   - audit workpaper
   - audit testing
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

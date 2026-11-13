@@ -1,7 +1,7 @@
 ---
 name: board-deck-narrative
 triggers:
-  - board deck
+  - board deck outline
   - exec presentation
   - board narrative
 tools_needed:

@@ -15,7 +15,7 @@ Assigns shared, indirect, or overhead costs to cost objects (departments, produc
 
 1. Define the cost pools to allocate (e.g., IT, facilities, HR, corporate) and pull their actual total cost from the source ledger — cite the GL account/period. Confirm the grand total you will allocate; every dollar must land somewhere and the model must foot back to it.
 2. Choose a driver for each pool that has a causal link to consumption (headcount for HR, square footage for facilities, ticket count or seats for IT, revenue or machine-hours for production overhead). Record the driver source and date; mark any driver you estimated rather than measured.
-3. Compute the absorption rate per pool (pool cost ÷ total driver units) and multiply by each object's driver units to get its charge. Handle reciprocal services (e.g., IT serves HR and vice versa) with a step-down or simultaneous-equation method, and state which you used.
+3. Use `spreadsheet` to compute the absorption rate per pool (pool cost ÷ total driver units) and multiply by each object's driver units to get its charge. Handle reciprocal services (e.g., IT serves HR and vice versa) with a step-down or simultaneous-equation method, and state which you used.
 4. Reconcile total charges to the pool totals (must equal — show the tie-out), surface the largest few allocations and any object whose charge moved sharply vs. prior period, and report the rates and basis. State driver assumptions and hand off; do not push intercompany or chargeback journal entries automatically — recommend them for finance approval.
 
 # Notes

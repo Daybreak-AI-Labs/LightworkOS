@@ -39,4 +39,4 @@ seasonal SKU looks erratic on raw CV — note it, don't silently bucket it Z), o
 if returns/cancellations inflate consumption. Thresholds are tunable
 conventions; surface them, never bury them. Policy recommendations are a draft —
 delisting, MOQ changes, and automation rollout are business decisions a human
-owns. Do not use for new SKUs with no history; use NPI forecasting instead.
+owns. Do not use for new SKUs with no history; ask a demand planner for a new-product forecast instead; no built-in NPI forecasting skill is provided.

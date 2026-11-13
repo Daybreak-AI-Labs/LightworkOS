@@ -14,7 +14,7 @@ Interprets an employee engagement survey to produce a readout: overall and segme
 
 # Steps
 
-1. Pull the response data via `sql_query`: item-level scores, the overall engagement/eNPS measure, and segment fields (team, tenure, location, level). Record response counts per segment and the response rate — segments below a minimum-n threshold must be suppressed to protect anonymity.
+1. Pull the response data via `sql_query`: item-level scores, the overall engagement/eNPS measure, and segment fields (team, tenure, location, level). Record response counts per segment and the response rate — confirm the organization's approved minimum-n confidentiality threshold before reporting segments, and suppress segments below it to protect anonymity.
 2. In a `spreadsheet`, compute overall and per-segment mean/favorable scores and the change vs. prior wave if a comparison is available. Mark any cell where n is too small to report rather than showing a number.
 3. Run the driver analysis: correlate (or regress) each survey dimension against the overall engagement outcome to estimate importance, then plot importance vs. current score to find high-impact/low-score drivers (the priority quadrant). State that correlation is not causation and that drivers are associations, not proven levers.
 4. Write the readout — top strengths, top concerns, the priority drivers — and a ranked action list addressing the high-impact weak drivers. Report it and state assumptions: response rate, suppression threshold, comparison basis, and any segments excluded.

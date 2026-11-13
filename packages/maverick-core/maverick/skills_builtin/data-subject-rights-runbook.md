@@ -4,6 +4,8 @@ triggers:
   - dsr runbook
   - data subject rights
   - access request process
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

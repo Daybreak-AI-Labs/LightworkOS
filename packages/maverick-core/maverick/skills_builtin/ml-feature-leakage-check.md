@@ -10,7 +10,7 @@ tools_needed:
 ---
 # What this skill does
 
-Audits a supervised ML pipeline for data leakage — features or splits that let information from outside the training-time horizon (or from the target itself) bleep into the model, inflating offline metrics that collapse in production. Produces a findings report covering target leakage, train/test contamination, and point-in-time correctness. Output is a diagnostic, not a refit.
+Audits a supervised ML pipeline for data leakage — features or splits that let information from outside the training-time horizon (or from the target itself) leak into the model, inflating offline metrics that collapse in production. Produces a findings report covering target leakage, train/test contamination, and point-in-time correctness. Output is a diagnostic, not a refit.
 
 # Steps
 

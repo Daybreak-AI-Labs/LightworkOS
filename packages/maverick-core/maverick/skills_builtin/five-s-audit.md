@@ -4,6 +4,8 @@ triggers:
   - run a 5S audit
   - score this area on 5S
   - workplace organization assessment
+tools_needed:
+  - knowledge_search
 ---
 # What this skill does
 

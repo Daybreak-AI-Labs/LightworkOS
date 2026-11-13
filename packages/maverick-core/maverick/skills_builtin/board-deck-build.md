@@ -15,7 +15,7 @@ Assembles a board meeting deck: a tight narrative of performance against plan, t
 
 # Steps
 
-1. Open with the CEO summary: 3-5 takeaways, the asks, and what changed since last meeting. State the period and whether numbers are actuals or estimates.
+1. Use `knowledge_search` to retrieve the prior deck, commitments, and meeting agenda. Open with the CEO summary: 3-5 takeaways, the asks, and what changed since last meeting. State the period and whether numbers are actuals or estimates.
 2. Build the performance section from `spreadsheet`: results vs plan and vs prior period for the few metrics that matter, each with a one-line driver and an action where off-track.
 3. Lay out each decision as situation / options / recommendation, with the dissent or open question named so the board can actually decide rather than rubber-stamp.
 4. Close with a risk and governance section (top risks, mitigations, compliance/financial items requiring approval) and an appendix for backup detail. State assumptions and hand off.

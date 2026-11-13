@@ -14,9 +14,9 @@ Classifies SKUs on two axes — ABC by annual consumption value and XYZ by deman
 
 # Steps
 
-1. Query the real transaction data with sql_query: per-SKU annual usage quantity, unit cost, and a per-period demand series over a consistent window (e.g. 12 monthly buckets). Confirm the window and that costs are current — stale unit costs distort the value ranking.
+1. Query the real transaction data with sql_query: per-SKU annual usage quantity, unit cost, and a per-period demand series over a consistent window of at least 12 months. Confirm the window and that costs are current — stale unit costs distort the value ranking.
 2. Compute annual consumption value (usage * unit cost) per SKU. Rank descending, take the cumulative share, and assign A/B/C by Pareto cutoffs (typical A ~80% of value, B next ~15%, C ~5%) — state the exact cutoffs used; they are a choice, not a law.
-3. Compute demand variability per SKU as coefficient of variation (std / mean of the period series). Assign X (low/steady, e.g. CV < 0.5), Y (moderate, 0.5–1.0), Z (high/erratic, > 1.0). State the CV thresholds; flag SKUs with too few periods as unclassifiable.
+3. Compute demand variability per SKU as coefficient of variation (std / mean of the period series). Assign X (low/steady, e.g. CV < 0.5), Y (moderate, 0.5–1.0), Z (high/erratic, > 1.0). State the CV thresholds; mark SKUs with fewer than 6 periods of data as "insufficient history" and do not classify them.
 4. Cross the two axes into a 9-cell matrix and attach a stocking policy per cell (e.g. AX = tight continuous review, high service; CZ = make-to-order / minimal stock or review for delisting). Hand off the matrix and per-SKU assignments, reporting cutoffs, the window, and any unclassified SKUs.
 
 # Notes

@@ -1,7 +1,7 @@
 ---
 name: access-review-campaign
 triggers:
-  - run an access review
+  - plan an access review campaign
   - start a certification campaign
   - do an entitlement review
 tools_needed:
