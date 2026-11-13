@@ -555,6 +555,19 @@ def test_leases_exclude_other_workers_and_expired_lease_recovers(harness: Harnes
         )
 
 
+def test_expired_lease_on_the_last_attempt_dead_letters(harness: Harness) -> None:
+    job = harness.enqueue(maximum_attempts=1)
+    assert len(harness.runtime.claim_jobs(TENANT, worker_id="worker-a", lease_seconds=5)) == 1
+    harness.clock.advance(5)
+    assert harness.runtime.claim_jobs(TENANT, worker_id="worker-b", lease_seconds=5) == ()
+    stored = harness.runtime.get_job(TENANT, job.job_id)
+    assert (stored.state, stored.attempt, stored.last_error_code) == (
+        "dead_letter",
+        1,
+        "attempts_exhausted",
+    )
+
+
 def test_concurrent_enqueue_and_claim_deduplicate_one_monitor_revision(
     harness: Harness,
 ) -> None:

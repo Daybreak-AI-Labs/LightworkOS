@@ -2208,16 +2208,29 @@ def _looks_like_env_ref(v: str) -> bool:
     return s == "" or s.startswith("$")
 
 
+# Markers of an at-rest ciphertext token (``crypto_at_rest`` ``seal_str`` and
+# its context-bound form). Marker-only, like ``config._tree_contains_sealed_value``,
+# so linting never imports the encryption stack.
+_SEALED_TOKEN_PREFIXES = ("MVKAR1:", "MVKBND1:")
+
+
 def _lint_inline_secrets(cfg: dict, _path: tuple[str, ...] = ()) -> list[Finding]:
     """Walk the whole config (nested tables included) and warn on a literal
-    string under a secret-bearing key -- a plaintext secret in config.toml."""
+    string under a secret-bearing key -- a plaintext secret in config.toml.
+    A sealed at-rest token (set from the dashboard) is ciphertext, not a
+    plaintext secret, and is not flagged."""
     out: list[Finding] = []
     for key, val in cfg.items():
         if not isinstance(key, str):
             continue
         if isinstance(val, dict):
             out.extend(_lint_inline_secrets(val, _path + (key,)))
-        elif _is_secret_key(key) and isinstance(val, str) and not _looks_like_env_ref(val):
+        elif (
+            _is_secret_key(key)
+            and isinstance(val, str)
+            and not _looks_like_env_ref(val)
+            and not val.startswith(_SEALED_TOKEN_PREFIXES)
+        ):
             dotted = ".".join(_path + (key,))
             out.append(
                 Finding(
@@ -5272,9 +5285,9 @@ def warn_config_at_startup(*, strict: bool | None = None) -> list[Finding]:
     server starts, rather than only when an operator happens to run
     ``maverick config-lint``. Warn-only by default (operators may legitimately
     use keys newer than this build). With ``strict`` (or
-    ``MAVERICK_CONFIG_STRICT=1``) an error-level finding raises ``SystemExit`` so
-    a regulated deployment fails fast instead of running with a mis-typed
-    control. Never raises on its own bugs -- config linting must not block a
+    ``MAVERICK_CONFIG_STRICT=1``) any finding, warnings included, raises
+    ``SystemExit`` so a regulated deployment fails fast instead of running
+    with a mis-typed control. Never raises on its own bugs -- config linting must not block a
     start except via the explicit strict gate."""
     import logging
     import os

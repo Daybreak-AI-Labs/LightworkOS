@@ -40,6 +40,11 @@ LINK_KINDS = (
 CONTRACT_KINDS = ("dpa", "msa", "sla", "addendum", "other")
 #: Severity ladder for questionnaire scoring; "clear" = no risk findings.
 _SEVERITY_ORDER = ("low", "medium", "high", "critical")
+# Carried on every scoring output so the rating is never read without it.
+SCORE_NOTICE = (
+    "Decision support for the operator's own third-party program; not a "
+    "security rating, a certification of any vendor, or advice."
+)
 
 #: Store capacity and the matching full-scan window. Projections that carry
 #: correctness (renewals and posture) must scan the WHOLE store:
@@ -660,7 +665,8 @@ def _score_submission(
     raises an ``unverified`` finding (diligence gap), and ``na`` clears the
     question. The rating is the worst finding severity, ``clear`` when
     everything answered came back safe. Deterministic and explainable:
-    every finding names its question.
+    every finding names its question. The output carries ``notice``
+    (:data:`SCORE_NOTICE`).
     """
 
     findings: list[dict[str, Any]] = []
@@ -701,6 +707,7 @@ def _score_submission(
         "total_questions": len(questions),
         "findings": findings,
         "rating": rating,
+        "notice": SCORE_NOTICE,
     }
 
 

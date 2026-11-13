@@ -597,8 +597,12 @@ def run_sync(
 def list_outbound(*, limit: int = 100) -> list[dict[str, Any]]:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
         raise ValueError("limit must be between 1 and 500")
-    rows = _STORE.list(limit=limit)
+    # Sort the whole store before applying the limit: a limited read returns
+    # an arbitrary window, so sorting it afterwards would not give the first
+    # ``limit`` rows of the promised (kind, id) order.
+    rows = _STORE.list()
     rows.sort(key=lambda row: (str(row.get("kind")), str(row.get("id"))))
+    rows = rows[:limit]
     return [
         {
             "id": row.get("id"),
@@ -766,7 +770,7 @@ def sync_status() -> dict[str, Any]:
         "pending": 0, "delivered": 0, "delivered_unconfirmed": 0, "failed": 0,
         "dispatching": 0, "dispatch_unconfirmed": 0,
     }
-    for row in _STORE.list(limit=500):
+    for row in _STORE.list():
         status = str(row.get("status") or "")
         if status in counts:
             counts[status] += 1

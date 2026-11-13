@@ -674,7 +674,8 @@ def test_tenant_isolation(store: PolicyPublicationStore):
     with pytest.raises(PolicyPublicationAccessDenied):
         store.retrieve("tenant-b", link_id=link["link_id"])
     assert store.list_access_events(TENANT) == ()
-    assert store.list_access_events("tenant-b")[0]["outcome"] == "not_found"
+    # An unknown link id is refused without an access event.
+    assert store.list_access_events("tenant-b") == ()
 
 
 def test_integrity_detects_mutable_link_tampering(store: PolicyPublicationStore):

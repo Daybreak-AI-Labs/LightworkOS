@@ -73,6 +73,29 @@ ASSESSMENT_ROUTES = frozenset(
     }
 )
 ASSESSMENT_TASK_STATES = frozenset({"open", "completed", "waived"})
+# Every audit action this store emits, mapped to the closest unified-audit
+# source action. An action missing here is exported as "record_changed".
+_UNIFIED_AUDIT_ACTIONS = {
+    "template_created": "record_created",
+    "template_approved": "approval_granted",
+    "assessment_created": "record_created",
+    "assessment_response_recorded": "evidence_recorded",
+    "assessment_response_batch_recorded": "evidence_recorded",
+    "assessment_evaluated": "risk_changed",
+    "assessment_task_set": "record_updated",
+    "lifecycle_created": "record_created",
+    "lifecycle_transitioned": "status_changed",
+    "offboarding_started": "status_changed",
+    "offboarding_task_set": "record_updated",
+    "offboarding_completed": "status_changed",
+    "callbacks_claimed": "status_changed",
+    "callback_failed": "status_changed",
+    "callback_acknowledged": "status_changed",
+    "callback_requeued": "status_changed",
+    "legal_hold_set": "retention_action",
+    "evidence_export_created": "export_recorded",
+    "retention_purged": "retention_action",
+}
 LIFECYCLE_STAGES = frozenset({"onboarding", "active", "suspended", "offboarding", "offboarded"})
 DEPENDENCY_KINDS = frozenset({"system", "access", "data", "contract"})
 OFFBOARDING_TASK_STATES = frozenset({"open", "completed", "blocked"})
@@ -1102,7 +1125,8 @@ class ThirdPartyLifecycleStore:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM templates WHERE tenant_id=? "
-                "ORDER BY template_id, version DESC LIMIT ?",
+                "ORDER BY json_extract(payload_json,'$.updated_at') DESC, "
+                "template_id, version DESC LIMIT ?",
                 (tenant, bounded),
             ).fetchall()
         values = tuple(
@@ -1342,7 +1366,8 @@ class ThirdPartyLifecycleStore:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM assessments WHERE tenant_id=? "
-                "ORDER BY assessment_id LIMIT ?",
+                "ORDER BY json_extract(payload_json,'$.updated_at') DESC, "
+                "assessment_id LIMIT ?",
                 (tenant, bounded),
             ).fetchall()
         values = tuple(
@@ -1478,6 +1503,7 @@ class ThirdPartyLifecycleStore:
                 "evidence_refs": list(references),
                 "respondent_ref": actor,
                 "responded_at": now,
+                "evidence_status": "respondent_attestation_unverified",
             }
             payload.update(
                 {
@@ -1512,7 +1538,11 @@ class ThirdPartyLifecycleStore:
                 "assessment_response_recorded",
                 assessment_key,
                 actor,
-                {"question_id": question_key, "evidence_sha256": evidence},
+                {
+                    "question_id": question_key,
+                    "evidence_sha256": evidence,
+                    "evidence_status": "respondent_attestation_unverified",
+                },
                 now,
             )
             return self._assessment_from(payload, digest)
@@ -2211,7 +2241,8 @@ class ThirdPartyLifecycleStore:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM lifecycles WHERE tenant_id=? "
-                "ORDER BY lifecycle_id LIMIT ?",
+                "ORDER BY json_extract(payload_json,'$.updated_at') DESC, "
+                "lifecycle_id LIMIT ?",
                 (tenant, bounded),
             ).fetchall()
         values = tuple(
@@ -3650,17 +3681,7 @@ class ThirdPartyLifecycleStore:
                 payload.get("actor_ref"),
                 "authenticated principal",
             )
-            source_action = (
-                "approval_granted"
-                if "approved" in action_name
-                else "approval_denied"
-                if "revoked" in action_name
-                else "evidence_recorded"
-                if "export" in action_name
-                else "risk_changed"
-                if any(token in action_name for token in ("risk", "assessment"))
-                else "status_changed"
-            )
+            source_action = _UNIFIED_AUDIT_ACTIONS.get(action_name, "record_changed")
             record = build_source_record(
                 sequence=expected_sequence,
                 occurred_at=float(payload["occurred_at"]),
@@ -3793,7 +3814,8 @@ class ThirdPartyLifecycleStore:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT * FROM offboarding_plans WHERE tenant_id=? "
-                "ORDER BY plan_id LIMIT ?",
+                "ORDER BY json_extract(payload_json,'$.updated_at') DESC, "
+                "plan_id LIMIT ?",
                 (tenant, bounded),
             ).fetchall()
         values = tuple(
@@ -3887,7 +3909,10 @@ class ThirdPartyLifecycleStore:
             payload.update(
                 {
                     "legal_hold": active,
-                    "legal_hold_evidence_ref": evidence,
+                    # A released hold keeps no evidence reference on the plan
+                    # (begin_offboarding refuses that state); the release
+                    # evidence stays in the legal_hold_set audit event.
+                    "legal_hold_evidence_ref": evidence if active else None,
                     "revision": current.revision + 1,
                     "updated_at": now,
                 }

@@ -838,6 +838,7 @@ def test_offboarding_four_eyes_legal_hold_no_silent_completion_and_recovery(
         idempotency_key="legal-hold-release",
     )
     assert "legal_hold_active" not in plan.blockers
+    assert plan.legal_hold is False and plan.legal_hold_evidence_ref is None
 
     principal.value = "worker"
     claimed = store.claim_callbacks("tenant-a", limit=1, lease_seconds=30)

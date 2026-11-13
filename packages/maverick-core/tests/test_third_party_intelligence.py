@@ -794,6 +794,84 @@ def test_human_override_and_rollback_are_immutable_explainable_receipts(store) -
     assert store.get_risk_decision("tenant-a", initial.decision_id) == initial
 
 
+def test_hard_stop_decision_needs_a_second_actor_to_override_or_roll_back(store) -> None:
+    kinds = AUTO_KINDS
+    vendor = create_vendor(store)
+    _sources, snapshots = setup_sources(store, kinds)
+    run = start_run(store, vendor, snapshots)
+    finding = store.record_finding(
+        "tenant-a",
+        run.run_id,
+        finding_id="sanctions-match",
+        source_id="source-sanctions",
+        kind="sanctions",
+        candidate_ref="candidate-1",
+        match_confidence=0.99,
+        severity="critical",
+        observed_at=store._clock(),
+        valid_until=store._clock() + 600,
+        evidence_sha256=digest("sanctions-match"),
+        citations=citation("sanctions-match"),
+        detected_by="screening-worker",
+        idempotency_key="record-sanctions-match",
+    )
+    store.review_finding(
+        "tenant-a",
+        finding.finding_id,
+        disposition="confirmed",
+        expected_revision=finding.revision,
+        reviewer_ref="match-reviewer",
+        rationale="Independent identifiers match the licensed record.",
+        idempotency_key="confirm-sanctions-match",
+    )
+    run = store.complete_screening_run(
+        "tenant-a",
+        run.run_id,
+        expected_revision=run.revision,
+        actor_ref="screening-operator",
+        idempotency_key="complete-blocked-run",
+    )
+    policy = create_approved_policy(store, kinds)
+    blocked = store.evaluate_risk(
+        "tenant-a",
+        decision_id="blocked-decision",
+        vendor_id=vendor.vendor_id,
+        run_id=run.run_id,
+        policy_id=policy.policy_id,
+        policy_version=policy.version,
+        actor_ref="risk-officer",
+        idempotency_key="evaluate-blocked",
+    )
+    assert "hard_stop_sanctions" in blocked.reason_codes
+
+    def override(actor: str):
+        return store.override_risk_decision(
+            "tenant-a",
+            blocked.decision_id,
+            override_decision_id=f"override-by-{actor}",
+            status="approved",
+            expected_revision=blocked.revision,
+            actor_ref=actor,
+            rationale="Reviewed the match and accepted the relationship.",
+            idempotency_key=f"override-by-{actor}",
+        )
+
+    with pytest.raises(intelligence.ThirdPartyIntelligencePermissionDenied):
+        override("risk-officer")
+    with pytest.raises(intelligence.ThirdPartyIntelligencePermissionDenied):
+        store.rollback_risk_decision(
+            "tenant-a",
+            blocked.decision_id,
+            restore_decision_id=blocked.decision_id,
+            rollback_decision_id="rollback-by-risk-officer",
+            actor_ref="risk-officer",
+            rationale="Undo the block.",
+            idempotency_key="rollback-by-risk-officer",
+        )
+    assert store.list_risk_decisions("tenant-a") == (blocked,)
+    assert override("risk-director").status == "approved"
+
+
 def test_edd_tasks_evidence_decision_and_escalation_are_governed(store) -> None:
     vendor = create_vendor(store)
     _source, snapshot = enroll_source(store, "compliance")

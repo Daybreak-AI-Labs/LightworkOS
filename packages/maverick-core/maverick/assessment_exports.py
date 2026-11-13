@@ -6,7 +6,9 @@ Two projections over one saved assessment record:
   OSCAL ``assessment-results`` JSON document (the NIST format FedRAMP
   automation and GRC pipelines standardized on), one observation per
   answered question and one finding per question with a satisfied /
-  not-satisfied target status.
+  not-satisfied target status. A satisfied outcome is described as
+  self-reported unless the record is approved; the record's review status
+  and the non-certification notice are in the document metadata.
 * :func:`render_statement_of_applicability` — the ISO-style Statement of
   Applicability an AIMS/ISMS certification audit starts from: one row per
   control with applicability (``na`` answers are exclusions, justified by
@@ -25,6 +27,12 @@ from typing import Any
 from .assessment import load_saved
 
 OSCAL_VERSION = "1.1.2"
+
+# Carried by both exports (in the OSCAL document's metadata remarks).
+_NOTICE = (
+    "A projection of the operator's own self-assessment — not a "
+    "certification audit or an auditor's statement."
+)
 
 
 class AssessmentExportError(RuntimeError):
@@ -68,6 +76,15 @@ def render_oscal_assessment_results(assessment_id: str) -> dict[str, Any]:
         for finding in result.get("findings") or []
     }
     created = float(record.get("created_at") or 0.0)
+    # Only an approved record has been through review; anything else is the
+    # operator's own unreviewed answer and is labelled as such.
+    review_status = str(record.get("status") or "pending_review")
+    outcome_basis = (
+        "Control outcome attested by the recorded answer."
+        if review_status == "approved"
+        else "Control outcome self-reported by the recorded answer; "
+        f"the assessment record is not approved (review status: {review_status})."
+    )
 
     observations = []
     findings = []
@@ -101,7 +118,7 @@ def render_oscal_assessment_results(assessment_id: str) -> dict[str, Any]:
                 "description": (
                     str(finding.get("recommendation") or "")
                     if finding is not None
-                    else "Control outcome attested by the recorded answer."
+                    else outcome_basis
                 ),
                 "target": {
                     "type": "objective-id",
@@ -128,10 +145,12 @@ def render_oscal_assessment_results(assessment_id: str) -> dict[str, Any]:
                 "last-modified": _rfc3339(created),
                 "version": str(record.get("revision") or 1),
                 "oscal-version": OSCAL_VERSION,
+                "props": [{"name": "review-status", "value": review_status}],
                 "remarks": (
                     "Self-assessment exported from Lightwork governed "
-                    f"record {session_id}; residual risk rating: "
-                    f"{result.get('risk_rating')}."
+                    f"record {session_id}; review status: {review_status}; "
+                    f"residual risk rating: {result.get('risk_rating')}. "
+                    + _NOTICE
                 ),
             },
             "import-ap": {"href": f"#lightwork-template-{record.get('template_digest')}"},
@@ -209,10 +228,7 @@ def render_statement_of_applicability(assessment_id: str) -> dict[str, Any]:
         "template_digest": str(record.get("template_digest") or ""),
         "rows": rows,
         "counts": counts,
-        "notice": (
-            "A projection of the operator's own self-assessment — not a "
-            "certification audit or an auditor's statement."
-        ),
+        "notice": _NOTICE,
     }
 
 

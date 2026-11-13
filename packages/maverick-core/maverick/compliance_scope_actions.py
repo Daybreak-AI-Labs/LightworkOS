@@ -2056,7 +2056,7 @@ class ComplianceScopeActionStore:
                 self._get_catalog(connection, tenant, row[0], int(row[1]))
                 for row in connection.execute(
                     "SELECT catalog_id, version FROM action_catalog_definitions "
-                    "WHERE tenant_id=? ORDER BY catalog_id, version DESC LIMIT ?",
+                    "WHERE tenant_id=? ORDER BY rowid DESC LIMIT ?",
                     (tenant, bounded),
                 ).fetchall()
             )

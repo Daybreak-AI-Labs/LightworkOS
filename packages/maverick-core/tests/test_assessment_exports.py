@@ -62,6 +62,15 @@ def test_oscal_export_mirrors_the_record():
     ]
     assert states.count("not-satisfied") == 1
     assert states.count("satisfied") == 20
+    # An unreviewed record is self-reported, never "attested".
+    metadata = document["assessment-results"]["metadata"]
+    assert {"name": "review-status", "value": "pending_review"} in metadata["props"]
+    assert "not a certification audit" in metadata["remarks"]
+    satisfied = [
+        finding for finding in results["findings"]
+        if finding["target"]["status"]["state"] == "satisfied"
+    ]
+    assert all("self-reported" in finding["description"] for finding in satisfied)
     # Deterministic: an unchanged record re-exports identically.
     again = assessment_exports.render_oscal_assessment_results(session_id)
     assert again == document

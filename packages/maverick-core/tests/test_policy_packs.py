@@ -685,3 +685,22 @@ def test_subscription_changes_view_shows_exact_pending_and_applied_deltas():
     # Tenant isolation: another tenant sees no subscription at all.
     with tenant_scope(tenant="beta"):
         assert service.subscription_changes("example-ai-policy") is None
+
+
+def test_default_transport_never_requests_an_off_origin_redirect_target(monkeypatch):
+    import httpx
+    from maverick.tools import _ssrf
+
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return httpx.Response(302, headers={"Location": "https://evil.example/pack.json"})
+
+    def fake_safe_client(url: str, **kwargs):
+        return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False)
+
+    monkeypatch.setattr(_ssrf, "safe_client", fake_safe_client)
+    with pytest.raises(policy_packs.PolicyPackUpdateRefused, match="off-host"):
+        policy_packs.fetch_update("https://updates.example.test/pack.json")
+    assert requested == ["https://updates.example.test/pack.json"]
