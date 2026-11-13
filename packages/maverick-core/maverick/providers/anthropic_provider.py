@@ -113,7 +113,7 @@ def _min_cache_tokens(model_id: str) -> int:
         return _MIN_CACHE_TOKENS_4096
     if model_id.startswith("claude-opus-4-7"):
         return _MIN_CACHE_TOKENS_2048
-    if model_id.startswith("claude-opus-5") or model_id.startswith("claude-fable-5"):
+    if model_id.startswith(("claude-opus-5", "claude-fable-5", "claude-mythos-5")):
         return _MIN_CACHE_TOKENS_512
     return _MIN_CACHE_TOKENS_1024
 
@@ -221,10 +221,15 @@ def _mark_user_message(msg: dict) -> dict:
 
 def _forced_tool_choice_unsupported(model_id: str) -> bool:
     """Models on which ``tool_choice`` ``any``/``tool`` return a 400
-    (forced-tool-use-not-supported): Claude Fable 5.1 and Claude Mythos 5.1
-    per the tool-use docs. ``auto``/``none`` still work there; strict tool
-    use is the documented substitute for schema-valid inputs."""
-    return model_id.startswith("claude-fable-5-1") or model_id.startswith("claude-mythos-5-1")
+    (forced-tool-use-not-supported): Claude Fable and Mythos 5.1 and 5.2,
+    Opus 5.5 and Sonnet 5.5 per the tool-use and migration docs.
+    ``auto``/``none`` still work there; strict tool use is the documented
+    substitute for schema-valid inputs."""
+    return model_id.startswith((
+        "claude-fable-5-1", "claude-mythos-5-1",
+        "claude-fable-5-2", "claude-mythos-5-2",
+        "claude-opus-5-5", "claude-sonnet-5-5",
+    ))
 
 
 def _append_user_text(messages: list[dict], text: str) -> list[dict]:
@@ -256,8 +261,8 @@ def _apply_tool_choice(
     """Translate a normalized ``tool_choice`` onto an Anthropic request.
 
     A forced choice (``any``/``tool``) is clamped to ``auto`` where the API
-    rejects it -- Fable/Mythos 5.1, or manual extended thinking
-    (``thinking.type == "enabled"``) -- and the intent is carried as an
+    rejects it -- Fable/Mythos 5.1 and 5.2, Opus 5.5, Sonnet 5.5, or manual
+    extended thinking (``thinking.type == "enabled"``) -- and the intent is carried as an
     instruction on the last user message instead, which the docs name as the
     supported alternative. ``disable_parallel_tool_use`` survives the clamp.
     """

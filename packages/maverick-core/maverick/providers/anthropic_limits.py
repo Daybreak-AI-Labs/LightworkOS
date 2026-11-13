@@ -22,7 +22,8 @@ def _adaptive_max_tokens_floor() -> int:
 def _is_opus_adaptive(model_id: str) -> bool:
     """Models that ONLY accept adaptive thinking (explicit "enabled" returns
     400) and get the auto-adaptive default: Opus 4.7/4.8 (incl. ``-fast``
-    variants) and the current generation (Opus 5, Sonnet 5, Fable 5.x), all
+    variants) and the current generation (Opus 5.x, Sonnet 5.x, Fable 5.x,
+    Mythos 5.x, which is the same model as Fable, and Haiku 5.5), all
     "Adaptive"-only per each model's own capabilities table at
     https://platform.claude.com/docs/en/about-claude/models/overview.
 
@@ -36,7 +37,9 @@ def _is_opus_adaptive(model_id: str) -> bool:
             or model_id.startswith("claude-opus-4-8")
             or model_id.startswith("claude-opus-5")
             or model_id.startswith("claude-sonnet-5")
-            or model_id.startswith("claude-fable-5"))
+            or model_id.startswith("claude-fable-5")
+            or model_id.startswith("claude-mythos-5")
+            or model_id.startswith("claude-haiku-5"))
 
 
 def effective_max_tokens(model_id: str, max_tokens: int,
