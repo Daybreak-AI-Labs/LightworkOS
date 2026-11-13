@@ -2,7 +2,7 @@
 
 ROWS = [
 ('Ordinary response style.','Style de réponse habituel.','Üblicher Antwortstil.','通常の回答スタイル。','常规回复风格。'),
-('Unavailable','Indisponible','Nicht verfügbar','利用不可','不可用'),
+('Unavailable','Indisponible','Nicht verfügbar','取得不可','不可用'),
 ('This preference is set by organization policy.','Cette préférence est définie par la politique de l’organisation.','Diese Einstellung wird durch die Organisationsrichtlinie festgelegt.','この設定は組織のポリシーで指定されています。','此偏好由组织策略设置。'),
 ('This preference belongs to one person only.','Cette préférence appartient à une seule personne.','Diese Einstellung gehört nur zu einer Person.','この設定は1人だけに適用されます。','此偏好仅属于一个人。'),
 ('Only response style preferences can change for one conversation.','Seules les préférences de style de réponse peuvent changer pour une conversation.','Für eine einzelne Unterhaltung können nur Antwortstileinstellungen geändert werden.','1つの会話で変更できるのは回答スタイルの設定のみです。','单个对话只能更改回复风格偏好。'),
@@ -44,7 +44,7 @@ ROWS = [
 ('Executive','Pour la direction','Für Führungskräfte','経営層向け','高管型'),
 ('Technical','Technique','Technisch','技術的','技术型'),
 ('Bullet','Liste à puces','Aufzählung','箇条書き','项目符号'),
-('High contrast','Contraste élevé','Hoher Kontrast','ハイコントラスト','高对比度'),
+('High contrast','Contraste élevé','Hoher Kontrast','高コントラスト','高对比度'),
 ('Choose the initial execution boundary while a task runs. Every message still shows its selected mode; administrator policy may disable a mode.','Choisissez le mode initial pendant l’exécution d’une tâche. Chaque message affiche toujours son mode ; la politique administrateur peut en désactiver certains.','Wählen Sie die anfängliche Ausführungsgrenze während einer laufenden Aufgabe. Jede Nachricht zeigt weiterhin ihren ausgewählten Modus; die Administratorrichtlinie kann einen Modus deaktivieren.','タスクの実行中に使う初期の実行範囲を選びます。各メッセージには選択したモードが表示されます。管理者ポリシーによって無効になるモードもあります。','选择任务运行时的初始执行边界。每条消息仍会显示所选模式；管理员策略可能禁用某种模式。'),
 ('While a task runs','Pendant une tâche','Während einer Aufgabe','タスクの実行中','任务运行时'),
 ('Queue next message','Mettre le prochain message en attente','Nächste Nachricht einreihen','次のメッセージを待機登録','将下一条消息排队'),
@@ -107,7 +107,7 @@ ROWS = [
 ('Allow within administrator policy','Autoriser dans les limites de la politique administrateur','Im Rahmen der Administratorrichtlinie erlauben','管理者ポリシーの範囲内で許可','在管理员策略范围内允许'),
 ('Recall and collection off','Rappel et collecte désactivés','Abruf und Erfassung aus','参照と収集を無効化','检索和收集已关闭'),
 ('Allowed','Autorisé','Erlaubt','許可','允许'),
-('Off','Désactivé','Aus','無効','关闭'),
+('Off','Désactivé','Aus','オフ','关闭'),
 ('Your saved channel choice','Votre choix de canal enregistré','Ihre gespeicherte Kanalauswahl','保存したチャネル設定','您保存的渠道选择'),
 ('Product default, constrained by administrator policy','Valeur du produit, limitée par la politique administrateur','Produktstandard, begrenzt durch Administratorrichtlinie','管理者ポリシーの制限内での製品の既定値','受管理员策略限制的产品默认值'),
 ('Effective recall: {state}','Rappel effectif : {state}','Wirksamer Abruf: {state}','有効な参照状態：{state}','实际检索状态：{state}'),

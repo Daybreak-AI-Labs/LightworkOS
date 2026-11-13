@@ -592,6 +592,8 @@ def readiness(app: Any, tenant_id: str) -> Mapping[str, object]:
         "enabled": bool(settings and settings.enabled),
         "configured": configured,
         "configuration_preflight_ready": configured and valid,
+        # A constant: this probe never opens a store or processes an intent,
+        # so only "configuration_preflight_ready" is meaningful.
         "executable_ready": False,
         "execution_preflight_required": configured and valid,
         "config_valid": valid,

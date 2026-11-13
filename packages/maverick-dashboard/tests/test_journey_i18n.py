@@ -192,3 +192,13 @@ def test_trusted_markup_never_answers_for_plain_text():
     plain = i18n_journeys.region("<b>Not in the catalog</b>", "en")
     assert "<b>" in str(trusted)
     assert "<b>" not in str(plain) and "&lt;b&gt;" in str(plain)
+
+
+def test_a_source_repeated_across_tables_has_one_translation_per_language():
+    # The loader keeps the first row of a repeated source, so a later table
+    # that disagrees would be silently ignored.
+    first, conflicts = {}, {}
+    for source, *translations in i18n_journeys.ROWS:
+        if first.setdefault(source, translations) != translations:
+            conflicts[source] = (first[source], translations)
+    assert conflicts == {}, "Tables give different translations for the same source"

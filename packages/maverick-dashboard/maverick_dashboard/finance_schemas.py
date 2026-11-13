@@ -82,8 +82,22 @@ class RegulatorySourceIn(_StrictModel):
 class RegulatoryFeedIngestIn(_StrictModel):
     source: RegulatorySourceIn
     payload: str
-    enabled_regimes: list[str] = Field(default_factory=list, max_length=128)
-    enabled_domains: list[str] = Field(default_factory=list, max_length=128)
+    enabled_regimes: list[str] = Field(
+        default_factory=list,
+        max_length=128,
+        description=(
+            "Accepted for compatibility and ignored: the regimes in scope "
+            "come from the tenant's finance configuration."
+        ),
+    )
+    enabled_domains: list[str] = Field(
+        default_factory=list,
+        max_length=128,
+        description=(
+            "Accepted for compatibility and ignored: the domains in scope "
+            "come from the tenant's finance configuration."
+        ),
+    )
 
     @field_validator("payload")
     @classmethod

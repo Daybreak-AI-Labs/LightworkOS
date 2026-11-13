@@ -320,7 +320,11 @@ async def ingest_regulatory_feed(
     request: Request,
     body: schemas.RegulatoryFeedIngestIn,
 ) -> dict[str, Any]:
-    """Ingest only caller-supplied bytes and an explicit official source."""
+    """Ingest only caller-supplied bytes and an explicit official source.
+
+    The regime and domain scopes come from the tenant's configuration; the
+    body's ``enabled_regimes`` and ``enabled_domains`` are ignored.
+    """
     require_global_permission(request, "admin")
     _ensure_enabled()
     actor = _actor(request)

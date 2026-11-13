@@ -19,11 +19,6 @@ from maverick.runtime_overrides import RuntimeOverridesSecurityError
 _world_cache: dict[str, Any] = {}
 
 
-# SSE concurrency cap. Each open event-stream holds a slot; new streams 503
-# past the cap. This lived as a verbatim copy in both ``app`` and ``api``,
-# which created TWO independent semaphores -- so the real ceiling was the cap
-# per module, not process-wide. One shared semaphore makes the limit actually
-# bind across all streaming routes. Built lazily on the running loop.
 def dashboard_setting(env: str, key: str, default: object) -> object:
     """``env`` when set, else ``[dashboard] <key>`` (settable on Settings > All
     settings), else ``default``."""
@@ -58,6 +53,11 @@ def dashboard_token() -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+# SSE concurrency cap. Each open event-stream holds a slot; new streams 503
+# past the cap. This lived as a verbatim copy in both ``app`` and ``api``,
+# which created TWO independent semaphores -- so the real ceiling was the cap
+# per module, not process-wide. One shared semaphore makes the limit actually
+# bind across all streaming routes. Built lazily on the running loop.
 def _max_sse_streams() -> int:
     try:
         return max(1, int(dashboard_setting("MAVERICK_DASHBOARD_MAX_SSE", "max_sse", 64)))

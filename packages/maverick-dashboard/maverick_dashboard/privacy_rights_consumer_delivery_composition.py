@@ -36,8 +36,10 @@ from maverick.paths import canonical_tenant_id, data_dir, tenant_scope
 
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}\Z")
+# The same references the delivery API and the kernel accept. Only ``env:``
+# resolves here; ``vault:`` and ``secret:`` need an installed key resolver.
 _KEY_REF_RE = re.compile(
-    r"(?:env|vault|secret):([A-Z][A-Z0-9_]{0,95})\Z"
+    r"(?:env|vault|secret):([A-Za-z0-9][A-Za-z0-9_.:-]{0,119})\Z"
 )
 _MAX_PUBLIC_PACKAGE_BYTES = 16 * 1024 * 1024
 _MAX_REAUTHENTICATION_AGE_SECONDS = 5 * 60
@@ -141,6 +143,18 @@ def _key_ref(value: object, label: str) -> tuple[str, str]:
     if match is None:
         raise PrivacyRightsConsumerDeliveryCompositionError(f"{label} is unavailable")
     return value, match.group(1)
+
+
+def _stock_secret_name(value: object, label: str) -> str:
+    """The name the stock resolver reads: an ``env:`` reference only."""
+
+    selected, name = _key_ref(value, label)
+    if not selected.startswith("env:"):
+        raise PrivacyRightsConsumerDeliveryCompositionError(
+            f"{label} scheme is not supported: vault: and secret: references "
+            "need an installed key resolver; use env:"
+        )
+    return name
 
 
 def _bounded_integer(
@@ -301,7 +315,7 @@ def _same_settings(
 
 
 def _reference_present(ref: str) -> bool:
-    _selected, name = _key_ref(ref, "key reference")
+    name = _stock_secret_name(ref, "key reference")
     if name in os.environ:
         return True
     raw_dir = os.environ.get("MAVERICK_SECRETS_DIR")
@@ -329,6 +343,11 @@ def _resolve_key(
         "privacy_rights_consumer_delivery_key_resolver",
         None,
     )
+    name = (
+        None
+        if callable(custom)
+        else _stock_secret_name(key_ref, f"{purpose} key reference")
+    )
     try:
         if callable(custom):
             value = custom(
@@ -339,7 +358,6 @@ def _resolve_key(
         else:
             from maverick.secret_provider import get_secret
 
-            _ref, name = _key_ref(key_ref, f"{purpose} key reference")
             raw = get_secret(name)
             value = None if raw is None else raw.encode("utf-8")
     except (KeyboardInterrupt, SystemExit):

@@ -265,6 +265,7 @@ def test_injected_live_contracts_pass_and_emit_only_bounded_hashed_evidence():
         "passed": 4,
         "blocked": 0,
         "failed": 0,
+        "skipped": 0,
     }
     assert report["configured_contracts_live_accepted"] is True
     assert report["complete_enterprise_inventory_claimed"] is False
@@ -384,3 +385,30 @@ def test_default_factories_construct_the_existing_real_adapters_without_io():
         dependencies.openai_costs_factory(config.openai_costs),
         OpenAIOrganizationCostCollector,
     )
+
+
+def test_a_provider_disabled_by_configuration_is_skipped_not_blocked():
+    mapping = _mapping()
+    mapping["openai_costs"] = {"enable": False}
+    dependencies, _snow, openai = _dependencies()
+    config = acceptance.ProviderContractAcceptanceConfig.from_mapping(mapping)
+
+    live = acceptance.run_acceptance(config, dependencies=dependencies)
+    ready = acceptance.run_acceptance(
+        config, readiness_only=True, dependencies=dependencies
+    )
+
+    checks = {item["provider"]: item for item in live["checks"]}
+    assert checks["openai_costs"]["status"] == "skipped"
+    assert checks["openai_costs"]["reason_code"] == "provider_disabled"
+    assert live["status"] == "passed" and live["summary"]["skipped"] == 1
+    assert ready["status"] == "ready"
+    assert openai.requests == []
+
+    for name in ("hugging_face", "entra", "servicenow"):
+        mapping[name] = {"enable": False}
+    none_enabled = acceptance.run_acceptance(
+        acceptance.ProviderContractAcceptanceConfig.from_mapping(mapping),
+        dependencies=dependencies,
+    )
+    assert none_enabled["status"] == "blocked"

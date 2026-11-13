@@ -15,8 +15,8 @@ Replaces the old bespoke asyncio scheduler with maverick-core's durable
   slow goal doesn't stall polling.
 * **Dreaming is its own ``dream_cycle`` cron job**, re-armed by the worker.
 * JobQueue's atomic ``claim`` hands each tick/dream *job* to one worker at a time
-  (at-least-once across a lease reclaim); a non-blocking
-  ``flock`` around the poll body dedupes the *poll/cursor* critical section, so
+  (at-least-once across a lease reclaim); a blocking cross-process
+  lock around the poll body serializes the *poll/cursor* critical section, so
   two overlapping ticks (N dashboard workers, a slow source) can't both advance
   the same cursor and double-create goals.
 
@@ -774,7 +774,8 @@ def _poll_due_triggers() -> None:
 def _handle_tick(_job=None) -> None:
     """Poll every DUE event trigger and fire its goals as durable run_goal jobs.
     Fail-open: a raise here must NOT fail the job (which would retry-storm every
-    60s); the next cron tick re-runs. Single-polled across workers via flock."""
+    60s); the next cron tick re-runs. Polls are serialized across workers by
+    the cross-process poll lock (a second worker waits, then re-checks)."""
     from maverick import automation_events
     if not automation_events.enabled():
         return
@@ -1593,7 +1594,9 @@ def _reserve_initial_flow_slot(flow, payload: dict, run_id: str, dry_run: bool) 
 def _handle_flow_run(job=None) -> None:
     """Run a stored flow to its next pause/finish (durable one-shot job). An
     agent node becomes a real goal, an action node a tool call; the run state is
-    persisted so a pause survives. Fail-open: a bad flow must not retry-storm."""
+    persisted so a pause survives. A refused run is marked failed and returns;
+    an unexpected error is logged and re-raised, so the queue's retry and
+    dead-letter policy applies (this handler is not fail-open)."""
     payload = getattr(job, "payload", None) or {}
     flow_id = str(payload.get("flow_id") or "")
     if not flow_id:
@@ -1922,7 +1925,7 @@ def _handle_flow_evolve(_job=None) -> None:
 
 
 def _evolve_current_tenant() -> None:
-    """Run one evolve/revert/auto-apply pass in the already-pinned namespace."""
+    """Run one evolve/revert pass in the already-pinned namespace."""
     from maverick import flow as flow_mod
 
     if not flow_mod.auto_evolve_enabled():
@@ -2006,9 +2009,11 @@ def _save_autonomous_flow_change(store, current, candidate):
 
 
 def _auto_apply_proposals() -> None:
-    """Autonomously APPLY the strongest self-rewrite proposal per flow (the
-    forward arrow, gated on ``[flows] auto_apply``). Current proposals require
-    human review of the work definition:
+    """Deliberately does nothing: automatic apply is retired.
+
+    ``[flows] auto_apply`` is still read and still gates this call, but the
+    knob has no effect: no proposal is applied without a person. Current
+    proposals require human review of the work definition:
 
     * SOFTEN (action -> agent): action inputs do not establish replacement AI
       instructions. Preserve the fixed action until a person reviews them.

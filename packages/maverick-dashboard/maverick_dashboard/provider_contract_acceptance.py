@@ -729,23 +729,27 @@ def _readiness_checks(
             section,
             mutation=mutation,
         )
-        reasons: list[str] = []
         if not section.enable:
-            reasons.append("provider_disabled")
+            # Disabled by configuration: skipped, so it neither blocks the
+            # run nor counts as accepted.
+            check["status"] = "skipped"
+            check["reason_code"] = "provider_disabled"
+            checks.append(check)
+            continue
+        reasons: list[str] = []
         if config.estate_classification != ESTATE_CLASSIFICATION:
             reasons.append("consenting_test_estate_not_declared")
         if config.consent_acknowledgement != CONSENT_ACKNOWLEDGEMENT:
             reasons.append("live_test_consent_not_acknowledged")
-        if section.enable:
-            reference = section.credential_secret_ref
-            try:
-                available = dependencies.credential_probe(provider, reference)
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except Exception:
-                available = False
-            if not available:
-                reasons.append("credential_unavailable")
+        reference = section.credential_secret_ref
+        try:
+            available = dependencies.credential_probe(provider, reference)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception:
+            available = False
+        if not available:
+            reasons.append("credential_unavailable")
         if isinstance(section, ServiceNowAcceptanceConfig):
             if section.write_acknowledgement != SERVICENOW_WRITE_ACKNOWLEDGEMENT:
                 reasons.append("sandbox_write_not_acknowledged")
@@ -1049,10 +1053,14 @@ def _failure_code(exc: BaseException) -> tuple[str, str]:
 
 
 def _overall(checks: list[dict[str, object]], *, readiness_only: bool) -> str:
-    statuses = {str(check["status"]) for check in checks}
+    """The run's status over the enabled providers; skipped ones do not count.
+
+    Blocked when an enabled provider is blocked or when none is enabled.
+    """
+    statuses = {str(check["status"]) for check in checks} - {"skipped"}
     if "failed" in statuses:
         return "failed"
-    if "blocked" in statuses:
+    if "blocked" in statuses or not statuses:
         return "blocked"
     if readiness_only and statuses == {"ready"}:
         return "ready"
@@ -1127,7 +1135,7 @@ def run_acceptance(
         "checks": checks,
         "summary": {
             label: sum(check["status"] == label for check in checks)
-            for label in ("ready", "passed", "blocked", "failed")
+            for label in ("ready", "passed", "blocked", "failed", "skipped")
         },
         "admission": {
             "consenting_test_estate_declared": (

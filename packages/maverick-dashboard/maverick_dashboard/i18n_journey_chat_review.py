@@ -2,14 +2,14 @@
 
 ROWS = [
     ('Check original outcome', 'Vérifier le résultat initial', 'Ursprüngliches Ergebnis prüfen', '元の結果を確認', '查看原始结果'),
-    ('Choose an original question', 'Choisir une question initiale', 'Eine ursprüngliche Frage auswählen',
-     '元の質問を選択', '选择一个原始问题'),
+    ('Choose an original question', "Choisissez une question d'origine", 'Wählen Sie eine ursprüngliche Frage',
+     '元の質問を選択', '选择原始问题'),
     ('Describe the steps, spending limit, and where you want updates, then start the work.',
      'Décrivez les étapes, la limite de dépenses et où vous souhaitez recevoir les mises à jour, puis lancez le travail.',
      'Beschreiben Sie die Schritte, das Ausgabenlimit und wohin Updates gehen sollen, und starten Sie dann die Arbeit.',
      '手順、支出上限、更新の受け取り先を入力してから、作業を開始してください。',
      '描述步骤、支出限额以及希望接收更新的位置，然后开始工作。'),
-    ('Original question', 'Question initiale', 'Ursprüngliche Frage', '元の質問', '原始问题'),
+    ('Original question', "Question d'origine", 'Ursprüngliche Frage', '元の質問', '原始问题'),
     ('Read the same saved answers after leaving Chat. Checking an original request never starts AI again.',
      'Relisez les mêmes réponses enregistrées après avoir quitté le Chat. Vérifier une demande initiale ne relance jamais l’IA.',
      'Lesen Sie dieselben gespeicherten Antworten nach dem Verlassen des Chats. Das Prüfen einer ursprünglichen Anfrage startet die KI nie erneut.',
@@ -22,7 +22,7 @@ ROWS = [
      'Stattdessen ein schrittweises Formular verwenden', '代わりにステップ形式のフォームを使う', '改用分步表单'),
     ('Write a message instead', 'Écrire plutôt un message', 'Stattdessen eine Nachricht schreiben',
      '代わりにメッセージを書く', '改为撰写消息'),
-    ('Your original viewpoints', 'Vos points de vue initiaux', 'Ihre ursprünglichen Sichtweisen', '元の視点', '您的原始观点'),
+    ('Your original viewpoints', "Vos points de vue d'origine", 'Ihre ursprünglichen Sichtweisen', '元の2つの視点', '您最初的两种观点'),
     ('Your retained questions are shown. Saved answers remain available after a restart. An interrupted request '
      'may have an unknown outcome; Lightwork will never repeat it automatically.',
      'Vos questions conservées sont affichées. Les réponses enregistrées restent disponibles après un redémarrage. '

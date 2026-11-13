@@ -1117,6 +1117,14 @@ def _credential_for(
         raise PrivacyRightsSourceCompositionError(
             "privacy-rights source credential reference is invalid"
         )
+    if not credential_ref.startswith("env:"):
+        # The stock resolver reads one named secret; it has no vault: or
+        # secret: backend, so it must not answer for them as if they were env:.
+        raise PrivacyRightsSourceCompositionError(
+            "privacy-rights source credential reference scheme is not "
+            "supported: vault: and secret: references need an installed "
+            "credential resolver; use env:"
+        )
     from maverick.secret_provider import get_secret
 
     selected = get_secret(match.group(1))
@@ -1306,6 +1314,9 @@ def readiness(app: Any, tenant_id: str) -> Mapping[str, object]:
         settings
         and any("delete" in source.capabilities for source in settings.sources)
     )
+    # True whenever the settings parse: without an injected factory,
+    # _target_custody_for builds the stock EncryptedMutationTargetCustody from
+    # them, so this flag never withholds configuration_preflight_ready.
     target_custody_configured = not mutation_required or callable(
         getattr(
             app.state,
@@ -1325,6 +1336,9 @@ def readiness(app: Any, tenant_id: str) -> Mapping[str, object]:
         "tenant_id": tenant,
         "enabled": bool(settings and settings.enabled),
         "configured": configured,
+        # "ready" and "executable_ready" are constants: this probe never opens
+        # a store, resolves a credential or calls a provider, so it cannot
+        # claim either. Only "configuration_preflight_ready" is meaningful.
         "ready": False,
         "configuration_preflight_ready": configuration_ready,
         "executable_ready": False,

@@ -2,7 +2,7 @@
 
 * ``GET/POST /api/v1/webhooks/subscriptions`` and
   ``GET/PATCH /api/v1/webhooks/subscriptions/{id}`` -- saved subscriptions
-  (address, event filter, signing secret, on/off, description). Workspace
+  (address, event filter, signing secret, on/off, description). Global
   ``admin``, like the signing-secret panel. The secret is never returned.
 * ``POST /api/v1/webhooks/subscriptions/{id}/test`` -- send a ``webhook.test``
   event now and return the delivery row.
@@ -12,8 +12,8 @@
 * ``GET /api/v1/webhooks/events`` -- the event catalogue for the page.
 * ``GET /api/v1/deadline-alerts`` (``operate``) -- alerts sent about one
   record (``record_type`` + ``record_id``) or the latest across the
-  workspace; ``POST /api/v1/deadline-alerts/run`` (``admin``) runs one
-  evaluation cycle now.
+  workspace; ``POST /api/v1/deadline-alerts/run`` (global ``admin``) runs
+  one evaluation cycle now.
 * ``GET /settings/webhooks/manage`` -- the Settings > Webhooks page.
 
 Every change is written to the activity log by the kernel store before it

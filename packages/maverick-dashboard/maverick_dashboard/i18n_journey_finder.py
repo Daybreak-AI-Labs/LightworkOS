@@ -139,7 +139,7 @@ ROWS = [
     ("Law research", "Recherche juridique", "Rechtsrecherche", "法令調査", "法律研究"),
     ("Financial controls", "Contrôles financiers", "Finanzkontrollen", "財務統制", "财务控制"),
     ("AI risk", "Risques liés à l’IA", "KI-Risiken", "AIのリスク", "AI风险"),
-    ("Trust receipts", "Reçus de confiance", "Vertrauensbelege", "信頼レシート", "信任凭证"),
+    ("Trust receipts", "Justificatifs de confiance", "Vertrauensnachweise", "信頼の記録", "信任凭证"),
     ("Budget", "Budget", "Budget", "予算", "预算"),
     ("General", "Général", "Allgemein", "一般", "常规"),
     ("Setup", "Configuration", "Einrichtung", "セットアップ", "初始设置"),
@@ -171,8 +171,8 @@ ROWS = [
     # Your preferences: choosing the sidebar.
     ("Sidebar", "Barre latérale", "Seitenleiste", "サイドバー", "侧边栏"),
     ("Classic", "Classique", "Klassisch", "クラシック", "经典"),
-    ("Job-named areas", "Rubriques par métier", "Bereiche nach Aufgaben", "業務別のエリア", "按工作命名的区域"),
-    ("Same as everyone", "Comme tout le monde", "Wie für alle", "全員と同じ", "与所有人相同"),
+    ("Job-named areas", "Espaces nommés par métier", "Nach Aufgaben benannte Bereiche", "業務名のエリア", "按工作命名的区域"),
+    ("Same as everyone", "Comme tout le monde", "Wie bei allen anderen", "全員と同じ", "与其他人相同"),
     ("Applies from the next page you open. Who can open each page does not change.", "S’applique à partir de la prochaine page que vous ouvrez. Les personnes autorisées à ouvrir chaque page ne changent pas.", "Gilt ab der nächsten Seite, die Sie öffnen. Wer welche Seite öffnen darf, ändert sich nicht.", "次に開くページから適用されます。各ページを開ける人は変わりません。", "从您打开的下一个页面开始生效。谁可以打开每个页面不会改变。"),
     # Ctrl+K: people, agents and specialists, approvals and help (navfinder_find.py).
     ("Specialist", "Spécialiste", "Spezialist", "スペシャリスト", "专家"),

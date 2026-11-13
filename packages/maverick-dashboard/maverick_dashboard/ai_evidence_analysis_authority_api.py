@@ -35,6 +35,7 @@ _MEDIA_BY_NAME = {
     "pdf": evidence.MEDIA_PDF,
     "png": evidence.MEDIA_PNG,
     "text": evidence.MEDIA_TEXT,
+    "xls": evidence.MEDIA_XLS,
     "xlsx": evidence.MEDIA_XLSX,
 }
 
@@ -68,7 +69,7 @@ class _StrictModel(BaseModel):
 
 class ArtifactAuthorityIn(_StrictModel):
     case_ref: OpaqueRef
-    media_type: Literal["pdf", "jpeg", "png", "xlsx", "text"]
+    media_type: Literal["pdf", "jpeg", "png", "xls", "xlsx", "text"]
     content_sha256: Digest
     byte_length: int = Field(strict=True, ge=1, le=104_857_600)
     source_ref: OpaqueRef

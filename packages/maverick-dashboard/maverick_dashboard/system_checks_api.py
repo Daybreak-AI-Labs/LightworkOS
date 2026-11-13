@@ -10,7 +10,12 @@ can keep them inside a collapsed "Technical details" section.
 
 Also the one-button checks (regulated-deployment guarantees, no outbound
 connections, hardware memory protection, add-on versions), the organisation's
-data download and erase, and tidying up old records.
+data download, erase preview and erase receipt, and tidying up old records.
+
+Two routes always refuse with 409: ``POST /client/erase`` (the running
+dashboard cannot erase its own data safely; Lightwork must be stopped first)
+and ``POST /queue/{job_id}/resume`` (it points to the schedule's review in
+Automations).
 
 Routes that read or change installation-wide state require the global
 ``admin`` permission; the read-only checks need the global ``audit``
@@ -765,11 +770,11 @@ class EraseIn(BaseModel):
 
 @router.post("/client/erase")
 async def client_erase(body: EraseIn, request: Request) -> dict:
-    """Erase all of this organisation's data (offboarding).
+    """Refuse the organisation data erase (offboarding): always 409.
 
     ``organisation`` is the name the person typed to confirm; anything but the
-    current binding is refused, so a typo or a stale page can never erase
-    someone else's data."""
+    current binding is refused first. A matching request is refused too,
+    because the running dashboard cannot erase its own data safely."""
     _mutation(request)
     if body.confirm is not True:
         raise HTTPException(409, "Confirm the erase to continue. Nothing was erased.")

@@ -52,6 +52,11 @@ def key(source):
 
 
 def messages():
+    """One row per source: the first table in ``ROWS`` order wins.
+
+    A source repeated in a later table must carry the same translations (a
+    test pins that), so the order decides nothing a reader can see.
+    """
     result = {}
     for row in ROWS:
         source, *translations = row
@@ -62,7 +67,7 @@ def messages():
             if (not text.strip() or {name for _, name, _, _ in Formatter().parse(text) if name} != expected
                     or set(re.findall(r"\{\{[a-z_]+\}\}", text)) != set(re.findall(r"\{\{[a-z_]+\}\}", source))):
                 raise ValueError("Journey catalog placeholders differ")
-        result[key(source)] = {"en": source, **dict(zip(TRANSLATION_LANGS, translations, strict=True))}
+        result.setdefault(key(source), {"en": source, **dict(zip(TRANSLATION_LANGS, translations, strict=True))})
     return result
 
 

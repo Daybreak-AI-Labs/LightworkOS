@@ -40,14 +40,13 @@ class RestoreIn(Mutation):
     new_name: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[A-Za-z0-9_-]+$")
 
 
-def _authority(request, name, *, mutation=None, publish=False):
+def _authority(request, name, *, mutation=None):
     from maverick.templates import _validate_template_name
     from maverick.workflow_versions import enabled
 
     # Publishing pins a reviewed revision of one's own workflow. It neither
     # shares private content nor arms a schedule, and needs the same operate
     # ceiling as authoring and running that workflow.
-    del publish
     require_permission(request, "operate")
     try:
         _validate_template_name(name)
@@ -115,7 +114,7 @@ def fixture(request: Request, name: str, body: FixtureIn):
 def publish(request: Request, name: str, body: PublishIn):
     from maverick.workflow_versions import publish as publish_version
 
-    actor, admin = _authority(request, name, mutation=body, publish=True)
+    actor, admin = _authority(request, name, mutation=body)
     if not body.confirm:
         raise HTTPException(422, "Review the schedule impact before publishing.")
     if not hmac.compare_digest(body.impact_version, _impact(request, name)["impact_version"]):
