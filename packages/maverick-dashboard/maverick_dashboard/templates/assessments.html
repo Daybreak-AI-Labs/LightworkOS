@@ -28,8 +28,8 @@
   .as-item:hover{ border-color: var(--brand-border); }
   .as-item.sel{ border-color: var(--brand); box-shadow: 0 0 0 2px var(--brand-subtle); }
   .as-item__main{ flex: 1; min-width: 0; }
-  .as-item__name{ font-weight: var(--font-semibold); overflow-wrap: anywhere; }
-  .as-item__sub{ color: var(--muted); font-size: var(--text-sm); }
+  .as-item__name{ display: block; font-weight: var(--font-semibold); overflow-wrap: anywhere; }
+  .as-item__sub{ display: block; color: var(--muted); font-size: var(--text-sm); }
   .pill{ font-size: var(--text-xs); padding: 1px 9px; border-radius: var(--radius-pill);
     border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
   .pill.status-draft{ color: var(--muted); }
@@ -321,8 +321,8 @@
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'as-item'; b.dataset.kind = a.kind; b.dataset.subject = a.subject;
       if (current && current.kind === a.kind && current.subject === a.subject) b.classList.add('sel');
-      b.innerHTML = '<span class="as-item__main"><div class="as-item__name">' + esc(subjectName(a.kind, a.subject))
-        + '</div><div class="as-item__sub">' + esc(KIND_LABEL[a.kind] || a.kind) + (a.open_high ? ' · ' + a.open_high + ' serious ' + (a.open_high === 1 ? 'issue' : 'issues') + ' open' : '') + '</div></span>'
+      b.innerHTML = '<span class="as-item__main"><span class="as-item__name">' + esc(subjectName(a.kind, a.subject))
+        + '</span><span class="as-item__sub">' + esc(KIND_LABEL[a.kind] || a.kind) + (a.open_high ? ' · ' + a.open_high + ' serious ' + (a.open_high === 1 ? 'issue' : 'issues') + ' open' : '') + '</span></span>'
         + lensesMini(a) + statusPill(a);
       b.addEventListener('click', function () { open(a.kind, a.subject); });
       listEl.appendChild(b);
@@ -335,8 +335,8 @@
     if (!items.length) { dueEl.innerHTML = '<p class="muted">Nothing due. New drafts and changed subjects show up here.</p>'; return; }
     dueEl.innerHTML = items.map(function (a) {
       return '<button type="button" class="as-item" data-kind="' + esc(a.kind) + '" data-subject="' + esc(a.subject) + '">'
-        + '<span class="as-item__main"><div class="as-item__name">' + esc(subjectName(a.kind, a.subject)) + '</div>'
-        + '<div class="as-item__sub">' + esc(KIND_LABEL[a.kind] || a.kind) + (a.drift_note ? ' · changed since approval' : '') + '</div></span>' + statusPill(a) + '</button>';
+        + '<span class="as-item__main"><span class="as-item__name">' + esc(subjectName(a.kind, a.subject)) + '</span>'
+        + '<span class="as-item__sub">' + esc(KIND_LABEL[a.kind] || a.kind) + (a.drift_note ? ' · changed since approval' : '') + '</span></span>' + statusPill(a) + '</button>';
     }).join('');
     Array.prototype.forEach.call(dueEl.querySelectorAll('.as-item'), function (el) {
       el.addEventListener('click', function () { open(el.dataset.kind, el.dataset.subject); });

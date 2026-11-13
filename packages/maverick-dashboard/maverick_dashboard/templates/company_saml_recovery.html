@@ -1,7 +1,7 @@
 {% extends "public_base.html" %}
 {% block title %}Restore previous single sign-on · Lightwork{% endblock %}
 {% block content %}
-<main class="page" style="max-width:42rem;margin:auto;padding:1rem">
+<div class="page" style="max-width:42rem;margin:auto;padding:1rem">
 <section class="panel" data-saml-recovery>
   <h1>Restore previous single sign-on</h1>
   <p>Only this computer's original owner can review restoring the single-sign-on choice from their retained activation. This does not change provider files, passwords, roles, proxy policy, enterprise requirements or second-factor rules. It never signs you into the dashboard.</p>
@@ -16,6 +16,6 @@
   <p role="status" aria-live="polite" data-saml-recovery-status></p>
   <p><a href="/auth/local-login">Sign in with this computer's owner account</a></p>
 </section>
-</main>
+</div>
 <script src="/static/lightwork-company-saml-setup.js" defer></script>
 {% endblock %}

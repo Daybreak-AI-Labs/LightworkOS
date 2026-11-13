@@ -9,7 +9,7 @@
   .own h1 { margin: 0 0 var(--space-2); }
   .own__lede { color: var(--muted); margin: 0 0 var(--space-4); }
   .own__field { display: flex; flex-direction: column; gap: var(--space-1); margin: 0 0 var(--space-3); }
-  .own__field > span { font-weight: var(--font-semibold); font-size: var(--text-sm); }
+  .own__field > span, .own__field > label { font-weight: var(--font-semibold); font-size: var(--text-sm); }
   .own__row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .own__row .input { flex: 1 1 14rem; }
   .own__check { display: flex; gap: var(--space-2); align-items: flex-start; margin: var(--space-3) 0; }
@@ -25,7 +25,7 @@
 {% endmacro %}
 
 {% macro passphrase(new=True) %}
-    <label class="own__field"><span>Passphrase{% if new %} (at least 14 characters){% endif %}</span>
+    <div class="own__field"><label for="owner-password">Passphrase{% if new %} (at least 14 characters){% endif %}</label>
       <span class="own__row">
         <input class="input" type="password" name="password" id="owner-password" minlength="14" maxlength="1024" required
                autocomplete="{{ 'new-password' if new else 'current-password' }}"{% if new %} aria-describedby="owner-strength"{% endif %}>
@@ -35,12 +35,12 @@
       <span class="own__meter" id="owner-meter" aria-hidden="true"><i></i></span>
       <span class="own__hint" id="owner-strength" aria-live="polite">A few unrelated words make a passphrase that is long and easy to remember.</span>
       {% endif %}
-    </label>
+    </div>
     {% if new %}
-    <label class="own__field"><span>Confirm passphrase</span>
+    <div class="own__field"><label for="owner-password2">Confirm passphrase</label>
       <input class="input" type="password" name="password2" id="owner-password2" minlength="14" maxlength="1024" required autocomplete="new-password" aria-describedby="owner-match">
       <span class="own__hint" id="owner-match" aria-live="polite"></span>
-    </label>
+    </div>
     {% endif %}
 {% endmacro %}
 

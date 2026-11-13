@@ -1110,7 +1110,7 @@
     bars.style.gap = '3px';
     bars.style.height = '52px';
     bars.style.margin = 'var(--space-2) 0';
-    bars.setAttribute('role', 'img');
+    bars.setAttribute('role', 'group');
     bars.setAttribute('aria-label', 'Monthly first-pass acceptance rate');
     (L.trend || []).forEach(function (r) {
       var b = el('div');
@@ -1123,6 +1123,7 @@
         : r.rate >= 40 ? 'var(--warn)' : 'var(--danger)';
       b.title = r.month + ': ' + (r.rate == null ? 'no decisions'
         : r.rate + '% first pass (' + r.first_pass + '/' + r.decided + ')');
+      b.appendChild(el('span', 'sr-only', b.title));
       bars.appendChild(b);
     });
     box.appendChild(bars);
