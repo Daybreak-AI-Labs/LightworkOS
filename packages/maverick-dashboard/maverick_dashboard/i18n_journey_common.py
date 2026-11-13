@@ -42,7 +42,7 @@ ROWS = [('Your account', 'Votre compte', 'Ihr Konto', 'アカウント', '您的
  ('Yes', 'Oui', 'Ja', 'はい', '是'),
  ('No', 'Non', 'Nein', 'いいえ', '否'),
  ('Unknown', 'Inconnu', 'Unbekannt', '不明', '未知'),
- ('Unavailable', 'Indisponible', 'Nicht verfügbar', '利用できません', '不可用'),
+ ('Unavailable', 'Indisponible', 'Nicht verfügbar', '取得不可', '不可用'),
  ('Personal', 'Personnel', 'Persönlich', '個人', '个人'),
  ('Workspace', 'Espace de travail', 'Arbeitsbereich', 'ワークスペース', '工作区'),
  ('Organization', 'Organisation', 'Organisation', '組織', '组织'),

@@ -106,7 +106,8 @@ def compute(
     human_cost: float | None = None, human_cost_for: Any = None,
     episode_limit: int = 5000, now: float | None = None,
 ) -> list[AgentScore]:
-    """Per-agent scorecards over ``window_days``, richest-value first.
+    """Per-agent scorecards over ``window_days``, most goals delivered first
+    (ties: most recently active first).
 
     ``human_cost`` overrides the flat baseline; ``human_cost_for(agent)`` is an
     optional per-agent override (e.g. a legal specialist's hour priced above

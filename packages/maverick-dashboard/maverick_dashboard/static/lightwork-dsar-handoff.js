@@ -50,7 +50,7 @@
           try {
             var result = await call('POST', {receipt_id: row.id}, '/confirm-saved');
             await load(); text(status, result.message);
-            document.dispatchEvent(new CustomEvent('lightwork:product-statechanged'));
+            window.dispatchEvent(new CustomEvent('lightwork:product-state-changed'));
           } catch (error) { text(status, error.message); }
           finally { lock(false); retry.disabled = false; }
         });
@@ -81,7 +81,7 @@
       var agreed = window.mvConfirm && await window.mvConfirm('Record your statement about the exact collected package you handed off through ' + labels[body.channel] + '? Lightwork will not send anything. This is not proof that the requester received it.', {okText: 'Record statement'});
       if (!agreed) return;
       var result = await call('POST', body); await load(); text(status, result.message);
-      document.dispatchEvent(new CustomEvent('lightwork:product-statechanged'));
+      window.dispatchEvent(new CustomEvent('lightwork:product-state-changed'));
     } catch (error) { text(status, error.message + ' Your draft is kept. Recheck saved statements before retrying.'); }
     finally { lock(false); }
   });

@@ -523,6 +523,9 @@ def _authn_instant(authn_response) -> float:
     return 0.0
 
 
+# Tests only: the sign-in route issues its session through
+# ``oidc_login.mint_browser_session`` (tracked in the session record); the
+# cookie minted here carries no session id and is not tracked.
 def mint_session_cookie(name_id: str, *, secret: str | None = None) -> str:
     """Sign an ``mvk_session`` value for ``user:<name_id>`` -- the SAME cookie the
     OIDC browser login issues, so it verifies through the shared session path."""

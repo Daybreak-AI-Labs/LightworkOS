@@ -30,6 +30,11 @@ def test_counters_accumulate_per_label_set():
     assert 'probe_total{route="/b"} 2.5' in text
 
 
+def test_label_values_are_escaped_for_the_exposition_format():
+    rm.increment("probe_total", route='a"b\\c\nd')
+    assert 'probe_total{route="a\\"b\\\\c\\nd"} 1.0\n' in rm.render()
+
+
 def test_series_cap_drops_and_counts():
     for index in range(rm.MAX_SERIES_PER_METRIC + 25):
         rm.increment("burst_total", key=str(index))

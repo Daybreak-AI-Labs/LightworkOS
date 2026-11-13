@@ -162,11 +162,13 @@ def test_step_up_fresh_session_passes_and_stale_session_is_refused(client, monke
     assert ok.status_code == 303
     monkeypatch.setattr(mfa_policy, "step_up_seconds", lambda: -1)  # everything is stale
     refused = client.post("/users/set", data={"principal": "user:bob", "role": "admin"},
+                          headers={"Referer": "http://127.0.0.1/users?tab=roles"},
                           follow_redirects=False)
     assert refused.status_code == 403
     body = refused.json()
     assert body["detail"].startswith("This action needs a recent sign-in")
-    assert body["reauthenticate"].startswith("/auth/login?fresh=1&return_to=%2Fusers%2Fset")
+    # Back to the page the form was on: /users/set itself has no GET route.
+    assert body["reauthenticate"] == "/auth/login?fresh=1&return_to=%2Fusers%3Ftab%3Droles"
     assert refused.headers["X-Reauthenticate"] == body["reauthenticate"]
     # The stale session may still read.
     assert client.get("/users", headers={"Accept": "text/html"}).status_code == 200

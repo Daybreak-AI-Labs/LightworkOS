@@ -1,11 +1,11 @@
 """Branch or rewind a task from the dashboard (also available on the command line).
 
-* ``POST /run-tree/{goal_id}/fork`` records a new branch of a task that starts
-  from a chosen step (``maverick run-tree fork``). Nothing is re-executed.
-* ``GET /run-tree/{goal_id}/checkpoints`` lists the saved steps a task can go
-  back to.
-* ``POST /run-tree/{goal_id}/rewind`` goes back to one of those steps, either
-  on the task itself or as a new copy (``maverick rewind``).
+* ``POST /api/v1/run-tree/{goal_id}/fork`` records a new branch of a task that
+  starts from a chosen step (``maverick run-tree fork``). Nothing is re-executed.
+* ``GET /api/v1/run-tree/{goal_id}/checkpoints`` lists the saved steps a task
+  can go back to.
+* ``POST /api/v1/run-tree/{goal_id}/rewind`` goes back to one of those steps,
+  either on the task itself or as a new copy (``maverick rewind``).
 
 Each action needs the ``operate`` permission and access to the task, exactly
 like the task's other controls.

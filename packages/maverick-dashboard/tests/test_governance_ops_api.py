@@ -243,9 +243,10 @@ def _feed(monkeypatch, alerts):
     def sync_alert(alert, *, rules, actor, deliver):
         seen.append((alert.alert_id, rules, deliver))
         if alert.alert_id == "RA-2":
-            return {"impact": None, "staleness": [], "notice": None}
-        return {"impact": {"id": "ARI-1"}, "staleness": [{"id": "ARS-1"}],
-                "notice": {"id": "ARN-1", "status": "pending"}}
+            return {"impact": None, "staleness": None, "notice": None}
+        return {"impact": {"id": "ARI-1"},
+                "staleness": {"id": "ARS-1", "stale_evidence_ids": ["MRE-1"]},
+                "notice": {"id": "ARN-1", "delivery": {"status": "pending"}}}
     monkeypatch.setattr(feed, "sync_alert", sync_alert)
     return seen
 

@@ -471,7 +471,7 @@ class OutcomeIn(BaseModel):
     """A real downstream outcome for a past episode (the Consequence Engine)."""
     goal_id: int
     episode_id: int
-    value: float
+    value: float = Field(..., allow_inf_nan=False)
     kind: str = ""
 
 
@@ -505,7 +505,7 @@ class OutcomeByKeyIn(BaseModel):
     """A real downstream outcome reported by a system of record using only the
     business key it owns -- resolved to the episode that acted via the link."""
     key: str = Field(..., min_length=1, max_length=256)
-    value: float
+    value: float = Field(..., allow_inf_nan=False)
     kind: str = ""
 
 
@@ -893,7 +893,7 @@ class TenantPlanIn(BaseModel):
 
 
 class TenantQuotaIn(BaseModel):
-    max_daily_dollars: float = Field(..., ge=0.0)
+    max_daily_dollars: float = Field(..., ge=0.0, allow_inf_nan=False)
 
 
 class TenantOut(BaseModel):
@@ -1239,7 +1239,7 @@ class TemplateQuestionIn(BaseModel):
     section: str = Field("", max_length=80)
     text: str = Field(..., min_length=3, max_length=500)
     risk_answer: str = Field("no", pattern="^(yes|no)$")
-    severity: str = Field("medium", pattern="^(low|medium|high)$")
+    severity: str = Field("medium", pattern="^(low|medium|high|critical)$")
     guidance: str = Field("", max_length=500)
 
 

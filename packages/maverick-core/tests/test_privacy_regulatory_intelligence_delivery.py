@@ -157,7 +157,8 @@ def test_destination_failures_are_sanitized_and_retried(
     assert result.retry_pending == 1
     assert result.outcomes[0].error_code == error_code
     assert store.failures[0]["error_code"] == error_code
-    assert store.failures[0]["backoff_seconds"] == 60.0
+    # Two earlier failures: the third wait is the base interval doubled twice.
+    assert store.failures[0]["backoff_seconds"] == 120.0
     assert resolved not in repr(result)
 
 

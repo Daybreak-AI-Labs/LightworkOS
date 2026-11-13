@@ -3043,6 +3043,23 @@ class ThirdPartyIntelligenceStore:
         )
         return self._decision_from(payload, digest)
 
+    def _require_second_actor_for_hard_stop(
+        self, tenant: str, decision: RiskDecision, actor: str
+    ) -> None:
+        """Refuse a same-actor override or rollback of a hard-stop decision.
+
+        A decision is a hard stop when its screening run is ``blocked`` or it
+        carries a ``hard_stop_*`` reason code. Whoever recorded that decision
+        cannot also be the one who supersedes it.
+        """
+        hard_stop = any(code.startswith("hard_stop_") for code in decision.reason_codes)
+        if not hard_stop:
+            hard_stop = self.get_screening_run(tenant, decision.run_id).state == "blocked"
+        if hard_stop and actor == decision.decided_by:
+            raise ThirdPartyIntelligencePermissionDenied(
+                "a blocked or hard-stop decision must be overridden by a different actor"
+            )
+
     def override_risk_decision(
         self,
         tenant_id: str,
@@ -3069,6 +3086,7 @@ class ThirdPartyIntelligenceStore:
             raise ThirdPartyIntelligenceConflict(
                 "risk decision expected revision does not match"
             )
+        self._require_second_actor_for_hard_stop(tenant, prior, actor)
         request = {
             "action": "override_risk_decision",
             "decision_id": prior.decision_id,
@@ -3171,6 +3189,7 @@ class ThirdPartyIntelligenceStore:
             raise ThirdPartyIntelligencePermissionDenied(
                 "rollback decisions belong to different vendors"
             )
+        self._require_second_actor_for_hard_stop(tenant, current, actor)
         request = {
             "action": "rollback_risk_decision",
             "decision_id": current.decision_id,
@@ -4303,7 +4322,7 @@ class ThirdPartyIntelligenceStore:
                     )
                     continue
                 lease_token = hashlib.sha256(
-                    f"{tenant}:{payload['delivery_id']}:{worker}:{moment}".encode()
+                    f"{tenant}:{payload['delivery_id']}:{worker}:{self._token_factory()}".encode()
                 ).hexdigest()
                 payload.update(
                     {

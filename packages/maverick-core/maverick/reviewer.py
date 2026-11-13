@@ -4,8 +4,10 @@ PR-review bots such as Cursor's BugBot review agent-generated diffs.
 Lightwork has a verifier role for FINAL answers; this module repurposes
 it for DIFF review specifically.
 
-The reviewer is invoked AFTER the agent emits its FINAL answer when
-the goal's working directory has uncommitted changes. It returns:
+``review_diff`` is called by ``codebase/features.py`` (``default_reviewer``)
+on the diff of a proposed code change. The agent loop and the orchestrator
+do not call it after a FINAL answer, and ``get_diff`` has no production
+caller. It returns:
 
     ReviewVerdict(
         approves: bool,
@@ -14,8 +16,8 @@ the goal's working directory has uncommitted changes. It returns:
     )
 
 ReviewComment(path, line, severity, message). Severity is "blocker",
-"warning", or "nit"; the orchestrator surfaces blockers as a revision
-request, warnings/nits as advisory notes attached to the FINAL.
+"warning", or "nit"; the caller decides what to do with them (the code
+proposal records the blocker count and the comments).
 """
 from __future__ import annotations
 

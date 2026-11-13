@@ -121,10 +121,14 @@ def _load_links() -> dict[int, dict]:
             at_event = int(raw_event) if raw_event is not None else None
         except (TypeError, ValueError):
             at_event = None  # an unreadable fork point still has a real parent
+        try:
+            forked_at = float(value.get("forked_at") or 0.0)
+        except (TypeError, ValueError):
+            forked_at = 0.0  # likewise an unreadable fork time
         links[child] = {
             "parent_goal_id": parent,
             "forked_at_event": at_event,
-            "forked_at": float(value.get("forked_at") or 0.0),
+            "forked_at": forked_at,
             "forked_by": str(value.get("forked_by") or ""),
             "label": str(value.get("label") or "")[:_MAX_LABEL],
         }
@@ -197,7 +201,10 @@ def fork(goal_id: int, *, at_event: int | None = None, label: str = "",
     """Branch run ``goal_id`` into a new run and return the child's goal id.
 
     ``at_event`` is the ``goal_events`` **id** of the last parent event to
-    carry over (inclusive); ``None`` carries the whole trail. Ids, not offsets:
+    carry over (inclusive); ``None`` carries the trail. Either way only the
+    parent's first ``_MAX_REPLAY_EVENTS`` (500) events are read, so a longer
+    trail is copied up to that point and a later fork point is refused. (The
+    marker event still words a ``None`` fork as "its full trail".) Ids, not offsets:
     ``goal_events.id`` is a global autoincrement with no per-goal sequence
     column, so an offset would silently mean something different on every read.
 

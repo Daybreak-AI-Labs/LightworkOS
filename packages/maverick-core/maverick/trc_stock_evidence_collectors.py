@@ -1873,8 +1873,11 @@ class _StockCollector:
 
         over_record_bound = state.records > source.limits.max_records
         has_more = parsed.next_locator is not None
-        truncated = has_more and (
-            state.pages >= source.limits.max_pages or over_record_bound
+        # Facts dropped by the record budget make the run incomplete even on
+        # the provider's last page, where there is no further page to report.
+        truncated = len(admitted_facts) < len(parsed.facts) or (
+            has_more
+            and (state.pages >= source.limits.max_pages or over_record_bound)
         )
         terminal = not has_more or truncated
         cumulative_revision = _sha256(

@@ -139,7 +139,7 @@
       <div class="label">Emergency stop</div>
     </div>
     <div class="stat">
-      <div class="num">{{ total }}</div>
+      <div class="num">{{ 'Unknown' if total is none else total }}</div>
       <div class="label">Interventions {% if ranged %}({{ since or 'start' }} to {{ until or 'today' }}){% elif day %}({{ day }}){% else %}(today){% endif %}</div>
     </div>
   </div>

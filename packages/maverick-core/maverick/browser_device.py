@@ -5,8 +5,8 @@ so a browser session can emulate a real device — the viewport size, device-sca
 factor, user-agent, and touch/mobile flags that change how a page renders and how
 responsive layouts behave. The presets mirror the well-known Playwright/Chrome
 DevTools device list. ``get_device`` / ``list_devices`` are pure and unit-tested;
-the ``browser_device`` tool surfaces them, and the browser tool consumes a preset
-dict to configure its context.
+the ``browser_device`` tool returns a preset as JSON. Nothing applies a preset
+to a browser context yet: the browser tool does not read one.
 """
 from __future__ import annotations
 

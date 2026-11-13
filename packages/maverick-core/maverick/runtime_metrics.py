@@ -35,6 +35,12 @@ def _series_key(labels: dict[str, str]) -> tuple[tuple[str, str], ...]:
     ))
 
 
+def _escape_label_value(text: str) -> str:
+    """Escape a label value as the Prometheus text exposition format requires."""
+
+    return text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
 def increment(
     name: str, *, amount: float = 1.0, help_text: str = "", **labels: str,
 ) -> None:
@@ -86,7 +92,7 @@ def render() -> str:
         lines.append(f"# TYPE {name} counter")
         for key, value in sorted(metric["series"].items()):
             label_text = ",".join(
-                f'{label}="{text}"' for label, text in key
+                f'{label}="{_escape_label_value(text)}"' for label, text in key
             )
             suffix = f"{{{label_text}}}" if label_text else ""
             lines.append(f"{name}{suffix} {value}")

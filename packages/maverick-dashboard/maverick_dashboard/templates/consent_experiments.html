@@ -295,7 +295,7 @@
     }
     function paintEvidence() {
       var box = $("ce-evidence"); box.replaceChildren();
-      box.appendChild(CW.el("p", "muted", "For each version, attach the accessibility review and the review showing Accept and Reject are equally easy to use."));
+      box.appendChild(CW.el("p", "muted", "For each version, attach the accessibility review and the review showing Accept and Reject are equally easy to use. Only a fingerprint of each file is recorded. The files themselves are not stored, so keep your own copies."));
       chosenLayouts().forEach(function (layout) {
         if (!layout) return;
         var set = CW.el("fieldset", "cw-form"); set.appendChild(CW.el("legend", "", LAYOUTS[layout] || CW.human(layout)));

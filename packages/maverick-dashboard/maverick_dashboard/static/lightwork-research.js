@@ -410,7 +410,7 @@
     act(async () => {
       await api('/jobs', 'POST', {context, confirm:true, files,
         evaluator_id:evaluatorId, entrypoint,
-        idempotency_key:`ui-${crypto.randomUUID()}`});
+        idempotency_key:`ui-${(window.mvNewId ? window.mvNewId() : crypto.randomUUID())}`});
       form.reset();
       fileSelectionGeneration += 1;
       selectedFiles = {};

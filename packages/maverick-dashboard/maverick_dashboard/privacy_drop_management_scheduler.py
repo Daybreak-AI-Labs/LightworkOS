@@ -59,6 +59,16 @@ def _canonical(value: object) -> bytes:
         raise DROPManagementSchedulerError("DROP maintenance result is invalid") from exc
 
 
+def _cycle_had_tenant_failure(cycle_json: object) -> bool:
+    """Whether the stored last cycle counted a failed tenant; unreadable counts as failed."""
+    if not cycle_json:
+        return False
+    try:
+        return int(json.loads(str(cycle_json))["tenants_failed"]) != 0
+    except (KeyError, TypeError, ValueError):
+        return True
+
+
 def _count(value: object, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 1_000_000:
         raise DROPManagementSchedulerError(f"DROP maintenance {label} is invalid")
@@ -509,7 +519,7 @@ class DROPManagedMaintenanceScheduler:
         with self._lock:
             thread = self._thread
         if not wait:
-            return False
+            return
         if thread is not None:
             thread.join(float(timeout))
             if thread.is_alive():
@@ -543,7 +553,11 @@ class DROPManagedMaintenanceScheduler:
             "installed": True,
             "enabled": self._enabled,
             "running": running,
-            "healthy": bool(self._enabled and int(state["consecutive_failures"]) == 0),
+            "healthy": bool(
+                self._enabled
+                and int(state["consecutive_failures"]) == 0
+                and not _cycle_had_tenant_failure(state["last_cycle_json"])
+            ),
             "lease_active": lease_active,
             "lease_owned_by_this_process": bool(
                 lease_active and state["lease_owner"] == self._worker_id

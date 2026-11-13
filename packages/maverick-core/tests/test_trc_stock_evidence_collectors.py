@@ -367,6 +367,30 @@ def test_page_bound_reports_explicit_truncation_instead_of_completeness():
     assert page.items[0].reason_code == "provider_signal_absent"
 
 
+def test_record_budget_on_the_last_page_reports_truncation():
+    item = source(
+        GCP_SECURITY_COMMAND_CENTER,
+        "PUBLIC_BUCKET_ACL",
+        limits=StockCollectorLimits(max_records=1),
+    )
+    finding = {
+        "finding": {
+            "category": "PUBLIC_BUCKET_ACL",
+            "state": "INACTIVE",
+            "eventTime": "2026-08-30T01:00:00Z",
+        }
+    }
+    active = {"finding": {**finding["finding"], "state": "ACTIVE"}}
+    transport = FakeTransport(response({"listFindingsResults": [finding, active]}))
+    page = GCPSecurityCommandCenterCollector(
+        transport=transport,
+        clock=Clock(),
+    ).fetch(request(item), None)
+    assert page.terminal is True
+    assert page.complete is False
+    assert page.incomplete_reason == "provider_truncated"
+
+
 def test_exact_tenant_definition_enrollment_and_scope_binding_precedes_io():
     item = source(AZURE_DEFENDER, "assessment-1")
     transport = FakeTransport(response({"value": []}))

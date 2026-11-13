@@ -1,11 +1,12 @@
-"""Linear + Jira inbound triggers — assign an issue to the bot, get a goal.
+"""Linear, Jira and GitLab inbound triggers — assign an issue to the bot, get a goal.
 
-Mirrors ``github_app.py`` (label an issue, get a PR) for the two other
+Mirrors ``github_app.py`` (label an issue, get a PR) for the three other
 trackers Lightwork already has read/write tools for (``tools/linear.py``,
-``tools/jira.py``). When a Linear or Jira issue is *assigned to the bot*,
-the receiver creates a Lightwork goal from the issue title + body.
+``tools/jira.py``, ``tools/gitlab_issues.py``). When a Linear, Jira or
+GitLab issue is *assigned to the bot*, the receiver creates a Lightwork goal
+from the issue title + body.
 
-Two pure pieces, kept transport-free so they unit-test without a server
+The pure pieces, kept transport-free so they unit-test without a server
 (the FastAPI routes live in ``maverick_dashboard.app`` next to
 ``/webhook/start`` and just call into here):
 
@@ -14,13 +15,19 @@ Two pure pieces, kept transport-free so they unit-test without a server
     automation/Connect senders commonly use a ``sha256=`` prefix. Accept
     both. Empty secret fails CLOSED (unlike github_app's dev fail-open):
     these receivers are mounted on the public dashboard app.
-  - ``parse_issue_event(provider, payload)`` — normalize a Linear/Jira
+  - ``verify_gitlab_token(header, secret)`` — GitLab does not sign the
+    body; it replays a shared secret in ``X-Gitlab-Token``
+    (``gitlab_webhook_token()`` reads the configured one). Also fails
+    CLOSED when no secret is set.
+  - ``parse_issue_event(provider, payload)`` — normalize a Linear/Jira/GitLab
     webhook into an ``IssueEvent`` IFF it is an assignment whose assignee
     is the configured bot. Returns ``None`` for anything else (non-assign
     events, assigned-to-someone-else) so the caller no-ops.
 
-Who is "the bot": set ``MAVERICK_BOT_LINEAR_ID`` (Linear user id) and/or
-``MAVERICK_BOT_JIRA_ACCOUNT_ID`` (Jira accountId, or the bot's email).
+Who is "the bot": set ``MAVERICK_BOT_LINEAR_ID`` (Linear user id),
+``MAVERICK_BOT_JIRA_ACCOUNT_ID`` (Jira accountId, or the bot's email) and/or
+``MAVERICK_BOT_GITLAB_USERNAME`` (GitLab username), or the matching
+``[webhooks]`` setting.
 Matching is case-insensitive and also accepts the assignee's email so an
 operator can configure either. With no bot id configured the receiver
 fails closed: a signed tracker event alone must not be enough to trigger
@@ -384,7 +391,9 @@ def build_brief(event: IssueEvent) -> str:
 
 __all__ = [
     "IssueEvent",
+    "canonical_signature",
     "verify_signature",
+    "gitlab_webhook_token",
     "verify_gitlab_token",
     "parse_issue_event",
     "build_brief",

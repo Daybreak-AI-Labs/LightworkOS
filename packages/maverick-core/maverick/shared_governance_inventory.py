@@ -73,6 +73,7 @@ _SOURCE_IDS = tuple(REQUIRED_SUITES)
 _SOURCE_SET = frozenset(_SOURCE_IDS)
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+_CHECKPOINT_NAME_RE = re.compile(r"inventory-(\d{8,})-[0-9a-f]{16}\.json\Z")
 _MAX_QUERY_LIMIT = 1_000
 _MAX_RECOVERY_BYTES = 64 * 1024 * 1024
 
@@ -2032,6 +2033,11 @@ class SharedGovernanceInventoryStore:
                             "inventory payload changed during retention"
                         )
                     purged.append(str(metadata["snapshot_id"]))
+                lowest_purged = connection.execute(
+                    "SELECT MIN(version) AS version FROM inventory_tombstones "
+                    "WHERE tenant_id=?",
+                    (self.tenant_id,),
+                ).fetchone()["version"]
                 result = {
                     "kind": "retention",
                     "purged_snapshot_ids": purged,
@@ -2048,12 +2054,35 @@ class SharedGovernanceInventoryStore:
                 )
                 connection.commit()
         try:
-            self.write_recovery_checkpoint()
+            written = self.write_recovery_checkpoint()
         except (KeyboardInterrupt, SystemExit):
             raise
         except SharedGovernanceInventoryError:
             pass
+        else:
+            if lowest_purged is not None:
+                self._remove_purged_checkpoints(
+                    int(lowest_purged), int(written["revision"])
+                )
         return result
+
+    def _remove_purged_checkpoints(
+        self, lowest_purged_version: int, current_revision: int
+    ) -> None:
+        """Remove earlier checkpoints that can still embed purged payloads.
+
+        A checkpoint named for revision ``r`` holds every payload that existed
+        when it was written, so each file from the lowest purged snapshot
+        version up to, but excluding, the checkpoint just rewritten is stale.
+        Files with another name are not this store's and are left alone.
+        """
+
+        for path in self._checkpoint_paths():
+            match = _CHECKPOINT_NAME_RE.match(path.name)
+            if match is None:
+                continue
+            if lowest_purged_version <= int(match.group(1)) < current_revision:
+                path.unlink(missing_ok=True)
 
     def verify_integrity(self) -> dict[str, object]:
         self._gate()

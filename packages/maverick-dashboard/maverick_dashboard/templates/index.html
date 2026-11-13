@@ -141,11 +141,16 @@
         return Math.floor(secs / 86400) + 'd ago';
       }
 
+      // The same plain status words the Tasks page shows.
+      function statusWords(status) {
+        return window.mvHuman ? mvHuman(status) : String(status).replace(/_/g, ' ');
+      }
+
       function renderRecent() {
         var box = document.getElementById('bd-recent');
         var chip = document.getElementById('bd-recent-filter');
         chip.hidden = !statusFilter;
-        chip.textContent = statusFilter ? statusFilter + ' ✕' : '';
+        chip.textContent = statusFilter ? statusWords(statusFilter) + ' ✕' : '';
         chip.onclick = function () { statusFilter = ''; renderRecent(); };
         chip.classList.toggle('bd-clickable', !!statusFilter);
         var rows = (DATA.recent || []).filter(function (g) {
@@ -155,7 +160,7 @@
           B.empty(box, DATA.scope === 'workspace'
             ? 'Task titles are not shown in the whole-workspace view. The counts above cover everyone\'s tasks.'
             : statusFilter
-              ? 'No recent tasks with status "' + statusFilter + '".'
+              ? 'No recent tasks with status "' + statusWords(statusFilter) + '".'
               : 'No tasks yet. Start one in Chat and it appears here.');
           return;
         }
@@ -173,7 +178,7 @@
           code.textContent = '#' + g.id;
           td1.appendChild(code);
           var td2 = document.createElement('td');
-          var badge = B.el('span', 'badge ' + g.status, g.status);
+          var badge = B.el('span', 'badge ' + g.status, statusWords(g.status));
           td2.appendChild(badge);
           var td3 = document.createElement('td');
           var a = document.createElement('a');

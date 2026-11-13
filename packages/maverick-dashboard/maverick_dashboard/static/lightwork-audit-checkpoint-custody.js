@@ -128,7 +128,7 @@
         if (saved.copy_may_exist || saved.can_apply || saved.state === 'review') { show(saved); return; }
       } catch (error) { if (!/no longer available/.test(error.message)) throw error; }
     }
-    const reference = crypto.randomUUID().replaceAll('-', '');
+    const reference = (window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replaceAll('-', '');
     remember(reference); // before the first writer; a lost reply keeps Original.
     try { show(await request('/prepare', {...account(),inventory:current.inventory,reference})); await refresh(); }
     catch (error) { if (!accessLost) { const recovery = button('Read the saved Original request', async () => show(await request('/ACC-' + reference + '/original')));

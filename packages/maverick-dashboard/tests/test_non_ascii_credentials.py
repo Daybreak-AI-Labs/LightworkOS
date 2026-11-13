@@ -127,3 +127,11 @@ def test_a_lone_surrogate_in_a_rejected_body_is_a_422_not_a_500(client):
     assert refused.headers["content-type"].startswith("application/json")
     assert refused.json()["detail"]
 
+
+def test_a_non_finite_number_in_a_rejected_body_is_a_422_not_a_500(client):
+    """JSON text may carry NaN and Infinity; the 422 that echoes one must still be JSON."""
+    for value in ("NaN", "Infinity"):
+        refused = client.post("/api/v1/outcomes", content=f'{{"goal_id": 1, "episode_id": 1, "value": {value}}}',
+                              headers={"Content-Type": "application/json"})
+        assert refused.status_code == 422, (value, refused.status_code, refused.text)
+        assert refused.json()["detail"][0]["loc"] == ["body", "value"]

@@ -2,10 +2,11 @@
 
 Closed loop over real run outcomes: when a thinking role (orchestrator/revisor)
 has been succeeding, trim its thinking budget (cheaper); when it's been failing,
-raise it (more reasoning) — clamped to a sane band. Off by default
-(``[thinking] adaptive = true`` to enable). Pure + thread-safe; needs a few
-samples before it adjusts, and disabled/insufficient-data both return the base
-budget unchanged (so the wire-ins are no-ops until earned).
+raise it (more reasoning) — clamped to a sane band. The success rate is a
+cumulative tally for the life of the process: there is no window or decay. Off
+by default (``[thinking] adaptive = true`` to enable). Pure + thread-safe; needs
+a few samples before it adjusts, and disabled/insufficient-data both return the
+base budget unchanged (so the wire-ins are no-ops until earned).
 """
 from __future__ import annotations
 
@@ -50,11 +51,13 @@ def adjust(
     enabled: bool | None = None,
     min_budget: int = _MIN_BUDGET, max_budget: int = _MAX_BUDGET,
 ) -> int | None:
-    """Adjusted thinking budget for ``role`` given its recent success rate.
+    """Adjusted thinking budget for ``role`` given its cumulative success rate.
 
     ``base`` None (role doesn't think) stays None. Disabled, or fewer than
     ``_MIN_SAMPLES`` outcomes, returns ``base`` unchanged. High success → trim
-    toward ``min_budget``; low success → raise toward ``max_budget``."""
+    toward ``min_budget``; low success → raise toward ``max_budget``. The band
+    never reverses the direction: a trim returns at most ``base`` (a budget
+    already below ``min_budget`` is left alone) and a raise at least ``base``."""
     if base is None:
         return None
     on = _enabled() if enabled is None else enabled
@@ -66,12 +69,10 @@ def adjust(
         return base
     rate = succ / total
     if rate >= _HIGH:
-        adj = int(base * 0.75)
-    elif rate <= _LOW:
-        adj = int(base * 1.5)
-    else:
-        return base
-    return max(min_budget, min(max_budget, adj))
+        return min(base, max(min_budget, int(base * 0.75)))
+    if rate <= _LOW:
+        return max(base, min(max_budget, int(base * 1.5)))
+    return base
 
 
 __all__ = ["record", "reset", "adjust"]

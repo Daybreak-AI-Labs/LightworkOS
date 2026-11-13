@@ -589,6 +589,41 @@ def test_governed_case_queue_is_idempotent_cas_and_four_eyes():
     assert [item["id"] for item in restarted.list_cases(status="closed")] == [opened["id"]]
 
 
+def test_agent_principal_may_open_a_case_but_never_review_or_close_it():
+    report = scan_transactions(
+        [
+            _transaction("dup-a", 500, "2026-07-20T14:00:00Z", invoice="INV-1"),
+            _transaction("dup-b", 500, "2026-07-20T15:00:00Z", invoice="INV-1"),
+        ]
+    )
+    finding = next(item for item in report.findings if item.rule_id == DUPLICATE_RULE_ID)
+    queue = FinanceAnomalyCaseQueue()
+    opened = queue.enqueue(finding, opened_by="agent:finance_anomaly")
+    with pytest.raises(ValueError, match="human reviewer"):
+        queue.record_disposition(
+            opened["id"],
+            outcome="confirmed",
+            rationale="Agent attempt.",
+            human_actor="agent:bot",
+            expected_revision=opened["revision"],
+        )
+    disposed = queue.record_disposition(
+        opened["id"],
+        outcome="confirmed",
+        rationale="The payment register confirms both records were released.",
+        human_actor="fraud-investigator",
+        expected_revision=opened["revision"],
+    )
+    with pytest.raises(ValueError, match="human reviewer"):
+        queue.close_case(
+            opened["id"],
+            rationale="Agent attempt at the second pair of eyes.",
+            human_actor="Agent:bot",
+            expected_revision=disposed["revision"],
+        )
+    assert queue.get(opened["id"])["status"] == "dispositioned"
+
+
 def test_case_queue_pages_more_than_five_thousand_with_status_filtering():
     rows = [
         _transaction(

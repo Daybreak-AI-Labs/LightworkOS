@@ -137,7 +137,8 @@ def reserve(world, *, peer: str, correlation: str, digest: str, title: str,
             db.execute(
                 "INSERT INTO goals(title,description,status,created_at,updated_at,owner,"
                 "execution_principal,tenant_id) VALUES(%s,%s,'federation_held',%s,%s,%s,%s,%s) RETURNING id",
-                (_enc_field(title.strip()), _enc_field(description), now, now,
+                (_enc_field(title.strip(), "goals.title", bind_tenant=True),
+                 _enc_field(description, "goals.description", bind_tenant=True), now, now,
                  f"federation:{peer}", principal, _active_tenant()))
             goal_id = int(db.fetchone()[0])
         else:

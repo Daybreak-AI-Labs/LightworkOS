@@ -99,7 +99,7 @@ ROLE_MODELS: dict[str, str] = {
 # and verification status that justify those floats. Every row must exactly
 # match the tracked evidence pack. Rows whose current official source could not
 # be captured remain available for planning, but cannot cross the billing gate.
-MODEL_RATE_CARD_VERSION = "2026-11-05.1"
+MODEL_RATE_CARD_VERSION = "2026-11-13.1"
 _PRICING_EVIDENCE = load_pricing_evidence_pack()
 
 
@@ -190,6 +190,33 @@ MODEL_PRICING_PROVIDER = VersionedPricingProvider(
             "claude-fable-5-1",
             (10.0, 50.0),
             evidence_id="anthropic-direct-2026-09-07",
+        ),
+        _model_price(
+            "claude-fable-5-2",
+            (8.0, 40.0),
+            evidence_id="anthropic-direct-2026-11-13",
+        ),
+        _model_price(
+            "claude-mythos-5-2",
+            (8.0, 40.0),
+            evidence_id="anthropic-direct-2026-11-13",
+        ),
+        _model_price(
+            "claude-opus-5-5",
+            (4.0, 20.0),
+            evidence_id="anthropic-direct-2026-11-13",
+        ),
+        _model_price(
+            "claude-sonnet-5-5",
+            (2.0, 10.0),
+            evidence_id="anthropic-direct-2026-11-13",
+        ),
+        # Haiku 5.5 is priced by prompt size. Billing stores the higher tier
+        # as a ceiling; the evidence pack records both tiers.
+        _model_price(
+            "claude-haiku-5-5",
+            (0.5, 2.5),
+            evidence_id="anthropic-haiku-5-5-ceiling-2026-11-13",
         ),
         # OpenAI billing stores a conservative flat ceiling because the
         # published price varies by context length and processing region.

@@ -11,7 +11,6 @@
     results.textContent = ''; results.hidden = true; context = null;
   }
   function boundary() { clear(); unavailable = true; load.disabled = true; days.disabled = true; message.textContent = 'Your account, workspace or access changed. Reload this page before reading private work.'; }
-  ['workspace-changed', 'account-context-changed'].forEach(function (name) { document.addEventListener(name, boundary); window.addEventListener(name, boundary); });
   window.addEventListener('lightwork:workspace-changed', boundary);
   window.addEventListener('lightwork:account-context-changed', boundary);
   function add(tag, text, parent) { var node = document.createElement(tag); node.textContent = text; (parent || results).appendChild(node); return node; }

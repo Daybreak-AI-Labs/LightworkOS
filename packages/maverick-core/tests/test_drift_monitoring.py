@@ -317,3 +317,10 @@ def test_shifted_window_trips_the_new_statistics(monkeypatch):
     reasons = set(report["metrics"]["exceeded"])
     assert {"feature:score:js", "feature:score:chi2", "feature:score:ks"} <= reasons
     assert report["metrics"]["thresholds"]["js_threshold"] == 0.1
+
+
+def test_accuracy_matches_numbers_by_value_and_labels_by_text():
+    # A float prediction against an integer label is the same outcome.
+    assert drift._accuracy([1.0, 0.0, 1], [1, 0, 0])["value"] == round(2 / 3, 12)
+    # Text labels still compare as text.
+    assert drift._accuracy(["approve", "1.0"], ["approve", "1"])["value"] == 0.5

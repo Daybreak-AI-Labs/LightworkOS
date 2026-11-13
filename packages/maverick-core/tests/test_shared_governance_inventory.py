@@ -186,6 +186,9 @@ def test_store_cas_idempotency_queries_integrity_retention_and_recovery(tmp_path
         store.get_snapshot(first["metadata"]["snapshot_id"])
     assert store.get_snapshot(second["metadata"]["snapshot_id"])
     assert store.verify_integrity()["tombstone_count"] == 1
+    # The revision-1 checkpoint embedded the purged payload and must not outlive it.
+    checkpoints = sorted(path.name for path in (tmp_path / "recovery").iterdir())
+    assert len(checkpoints) == 1 and checkpoints[0].startswith("inventory-00000002-")
 
     recovered = _store(
         tmp_path,

@@ -628,13 +628,18 @@ def calculate_article_73_clock(
         raise ValueError("widespread_infringement must be a boolean")
     causal_state = _enum(causality, "causality", _CAUSALITY)
     zone_name = _calendar_timezone(calendar_timezone)
-    return _clock(
-        awareness,
-        normalized_outcomes,
-        widespread_infringement,
-        causal_state,
-        zone_name,
-    )
+    # A record carries the notice beside its embedded clock; a bare clock
+    # returned to a caller has to carry it itself.
+    return {
+        **_clock(
+            awareness,
+            normalized_outcomes,
+            widespread_infringement,
+            causal_state,
+            zone_name,
+        ),
+        "notice": NON_LEGAL_NOTICE,
+    }
 
 
 def report_template(kind: str = "initial") -> dict[str, Any]:

@@ -157,6 +157,7 @@ def test_article_73_clock_uses_earliest_2_10_15_day_outer_limit(
     )
 
     assert clock["outer_limit_days"] == expected_days
+    assert clock["notice"] == incident_api.NON_LEGAL_NOTICE
     expected_date = (
         datetime.fromtimestamp(awareness, tz=ZoneInfo("UTC")).date()
         + timedelta(days=expected_days)

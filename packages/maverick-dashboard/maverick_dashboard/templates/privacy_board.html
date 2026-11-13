@@ -872,8 +872,10 @@
 
   // ---- DSAR runway --------------------------------------------------------
   var BANDS = ['overdue', 'd0_7', 'd8_14', 'd15_30', 'd30_plus'];
-  var KIND_LABEL = { access: 'Copy of data', portability: 'Move data', erasure: 'Delete data',
-                     rectification: 'Correct data', objection: 'Stop using data', restriction: 'Limit use' };
+  var KIND_LABEL = { access: 'A copy of their data', portability: 'Portable copy', erasure: 'Delete their data',
+                     correction: 'Correct their data', opt_out: 'Opt out of sale or sharing',
+                     limit_sensitive: 'Limit sensitive data use', objection: 'Stop a use',
+                     restriction: 'Restrict use', withdraw_consent: 'Withdraw consent' };
   var BAND_LABEL = { overdue: 'overdue', d0_7: '7 days or less', d8_14: '8 to 14 days',
                      d15_30: '15 to 30 days', d30_plus: 'more than 30 days' };
   var BAND_COLOR = { overdue: 'var(--danger)', d0_7: 'var(--warn)',

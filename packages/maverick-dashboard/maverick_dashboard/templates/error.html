@@ -25,8 +25,8 @@
   {% endif %}
   <details class="panel muted" style="font-size: var(--text-sm);">
     <summary>Support details</summary>
-    <p>Page: {{ path }} · Reference: {{ status }}</p>
-    <button type="button" class="btn btn--ghost" data-copy-support="Page {{ path }}, reference {{ status }}">Copy support details</button>
+    <p>Page: {{ path }} · Status code: {{ status }}</p>
+    <button type="button" class="btn btn--ghost" data-copy-support="Page {{ path }}, status code {{ status }}">Copy support details</button>
   </details>
   {% if gate == 'retry' %}
   <p class="muted" id="error-retry-status" role="status"></p>

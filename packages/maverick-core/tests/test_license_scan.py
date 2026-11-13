@@ -36,6 +36,10 @@ def test_classify_public_domain_and_unknown():
     assert classify_license("") == "unknown"
     assert classify_license("Some Custom Thing") == "unknown"
     assert classify_license("Other/Proprietary License") == "proprietary"
+    # "isc" / "epl" inside ordinary words are not licence names.
+    assert classify_license("Commercial license; see DISCLAIMER") == "unknown"
+    assert classify_license("Proprietary - internal deployment only") == "unknown"
+    assert classify_license("EPL-2.0") == "weak-copyleft"
 
 
 class _Meta(dict):

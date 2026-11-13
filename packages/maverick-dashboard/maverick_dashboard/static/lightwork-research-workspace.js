@@ -822,7 +822,7 @@
   });
 
   if (!byId('research-run-form').elements.run_id.value) {
-    byId('research-run-form').elements.run_id.value = `run-${crypto.randomUUID()}`;
+    byId('research-run-form').elements.run_id.value = `run-${(window.mvNewId ? window.mvNewId() : crypto.randomUUID())}`;
   }
   syncConditionalFields();
   // A failed first load leaves nothing to show: say so in each list instead of

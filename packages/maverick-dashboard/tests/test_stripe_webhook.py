@@ -108,3 +108,44 @@ def test_oversized_body_is_refused(env, monkeypatch):
     r = http.post(PATH, content=body, headers=_signed(body))
     assert r.status_code == 413
     assert handled == []
+
+
+def test_a_notice_refused_by_the_activity_record_is_applied_on_retry(env, monkeypatch):
+    # With the shared (Postgres) dedup store, a notice the activity record
+    # refused must be released there too, or Stripe's retry is answered as a
+    # duplicate and the payment notice is never applied.
+    http, handled, _rows = env
+    monkeypatch.setenv("MAVERICK_STRIPE_WEBHOOK_SECRET", SECRET)
+    import maverick.audit as audit
+    from maverick import world_model_backends
+    from maverick_dashboard import app as dash_app
+
+    class SharedStore:
+        def __init__(self):
+            self.seen = set()
+
+        def mark_message_processed(self, channel, external_id, goal_id=None):
+            first = (channel, external_id) not in self.seen
+            self.seen.add((channel, external_id))
+            return first
+
+        def release_processed_message(self, channel, external_id):
+            self.seen.discard((channel, external_id))
+
+    store = SharedStore()
+    monkeypatch.setattr(world_model_backends, "is_postgres_configured", lambda: True)
+    monkeypatch.setattr(dash_app, "_world", lambda: store)
+    recorded = audit.audit_event
+
+    def refuse(kind, **payload):
+        raise audit.AuditRefused("activity record unavailable")
+
+    monkeypatch.setattr(audit, "audit_event", refuse)
+    body = _event("evt_retry")
+    assert http.post(PATH, content=body, headers=_signed(body)).status_code == 503
+    assert handled == [] and store.seen == set()
+
+    monkeypatch.setattr(audit, "audit_event", recorded)
+    retry = http.post(PATH, content=body, headers=_signed(body))
+    assert retry.status_code == 200 and retry.json() == {"received": True, "handled": True}
+    assert [e["id"] for e in handled] == ["evt_retry"]

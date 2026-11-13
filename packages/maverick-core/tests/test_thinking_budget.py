@@ -28,6 +28,8 @@ def test_high_success_trims_budget():
     for _ in range(5):
         tb.record("orchestrator", True)   # rate 1.0 >= 0.8
     assert tb.adjust("orchestrator", 8000, enabled=True) == 6000  # 8000*0.75
+    # a budget already below the floor is not raised by a "trim"
+    assert tb.adjust("orchestrator", 1024, enabled=True) == 1024
     tb.reset("orchestrator")
 
 

@@ -1458,6 +1458,8 @@ class AILiteracyRegister:
             )
         if current["status"] != "active":
             raise AILiteracyStateError("AI literacy waiver is already revoked")
+        if current["subject_ref"] == reviewer_ref:
+            raise ValueError("a literacy exemption or waiver cannot be self-reviewed")
         revoked_at = self._now()
 
         def mutate(row: dict[str, Any]) -> None:

@@ -14,7 +14,7 @@
     const button=node('button','Confirm complete provider cost coverage');button.type='submit';button.className='btn';button.disabled=!coverage.can_confirm;form.append(button);box.append(form);panel.append(box);
     form.addEventListener('input',event=>{if(event.target!==checkbox){checkbox.checked=false;delete form.dataset.operation;}});
     form.addEventListener('submit',event=>{event.preventDefault();if(!coverage.can_confirm||!checkbox.checked||!form.reportValidity())return;
-      const body={expected_revision:data.revision,operation_id:form.dataset.operation||crypto.randomUUID(),coverage_version:coverage.version,currency:coverage.currency,note:note.value.trim(),confirm:true};form.dataset.operation=body.operation_id;
+      const body={expected_revision:data.revision,operation_id:form.dataset.operation||(window.mvNewId ? window.mvNewId() : crypto.randomUUID()),coverage_version:coverage.version,currency:coverage.currency,note:note.value.trim(),confirm:true};form.dataset.operation=body.operation_id;
       mutation(async()=>{try{await request('/'+data.id+'/provider-costs/coverage','PUT',body);}catch(error){if([401,403,404].includes(error.status))panel.replaceChildren(node('h2','Provider billing unavailable'),node('p',error.message));throw error;}delete form.dataset.operation;await reload(data.id);});
     });
   }
@@ -80,7 +80,7 @@
       const selectedShares=[];let total=0;
       for(const {case:c,input} of shares){const text=input.value.trim();if(!/^\d{1,3}(?:\.\d{1,2})?$/.test(text)){status.textContent='Use a percentage from 0 to 100 with at most two decimal places.';return;}const [whole,decimal='']=text.split('.'),points=Number(whole)*100+Number(decimal.padEnd(2,'0'));if(points>10000){status.textContent='Each share must be between 0 and 100%.';return;}if(points)selectedShares.push({case_id:c.id,basis_points:points,source_version:c.source.version});total+=points;}
       if(total>10000){status.textContent='Case shares exceed 100%. Adjust them before saving.';return;}
-      const body={expected_revision:data.revision,operation_id:form.dataset.operation||crypto.randomUUID(),observation_id:selected.id,billing_version:selected.version,shares:selectedShares,note:note.value.trim(),confirm:true};form.dataset.operation=body.operation_id;
+      const body={expected_revision:data.revision,operation_id:form.dataset.operation||(window.mvNewId ? window.mvNewId() : crypto.randomUUID()),observation_id:selected.id,billing_version:selected.version,shares:selectedShares,note:note.value.trim(),confirm:true};form.dataset.operation=body.operation_id;
       mutation(async()=>{try{await request('/'+data.id+'/provider-costs','PUT',body);}catch(error){if([401,403,404].includes(error.status))panel.replaceChildren(node('h2','Provider billing unavailable'),node('p',error.message));throw error;}delete form.dataset.operation;await reload(data.id);});
     });
   }};

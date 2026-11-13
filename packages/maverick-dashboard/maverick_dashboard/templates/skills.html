@@ -354,7 +354,6 @@
       if (existing.length) {
         var replace = await window.mvConfirm('A skill called “' + human(key) + '” already exists. Replace it with this one?', {okText: 'Replace'});
         if (!replace) return;
-        existing.forEach(function (c) { c.remove(); });
       }
       var payload = {
         name: key,
@@ -371,6 +370,8 @@
           body: JSON.stringify(payload)
         });
         if (r.ok) {
+          // The replaced skill's card goes only now, so a failed request leaves it on the page.
+          existing.forEach(function (c) { c.remove(); });
           var s = await r.json().catch(function () { return null; });
           if (s && s.name) { appendSkill(s); msg.textContent = 'Created ' + human(s.name) + '. Agents use it from the next task.'; form.reset(); }
           else msg.textContent = 'Created.';

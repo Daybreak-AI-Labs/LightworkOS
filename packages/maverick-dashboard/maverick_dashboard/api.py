@@ -916,6 +916,8 @@ async def delete_tenant(
 ) -> Response:
     require_global_permission(request, "admin")
     step_up.require_recent_mfa(request, "delete_workspace")
+    # ``purge`` is accepted only so an old caller gets this answer: permanent
+    # erasure has its own reviewed flow, and this route never purges.
     if purge:
         raise HTTPException(status_code=409, detail=(
             "Remove the workspace first. Then use Workspaces > Removed workspaces > Review erasure "
@@ -936,7 +938,7 @@ async def delete_tenant(
             raise HTTPException(status_code=409, detail=(
                 "This installation is fixed to this workspace. Change that binding before removing it."
             ))
-        tenant_registry.delete_tenant(tenant_id, purge=purge)
+        tenant_registry.delete_tenant(tenant_id, purge=False)
     try:
         revoked = rbac.clear_tenant_roles(tenant_id)
         cleared = workspace_tenants.clear_tenant_selections(tenant_id)
@@ -947,7 +949,7 @@ async def delete_tenant(
         raise HTTPException(status_code=503, detail=(
             "Workspace access is closed, but member cleanup could not be confirmed. Retry Remove."
         )) from exc
-    await _audit_tenant_change(request, "tenant_deleted", tenant_id, purge=purge,
+    await _audit_tenant_change(request, "tenant_deleted", tenant_id, purge=False,
                                applied="The workspace was removed",
                                revoked_members=revoked, cleared_selections=cleared,
                                local_selection_cleared=local_selection_cleared)
@@ -3690,12 +3692,26 @@ async def list_regulatory_licenses(request: Request) -> dict:
     }
 
 
+async def _license_change(call):
+    """Run a licence-register change. A register that cannot be read is
+    reported as unavailable and left untouched, never a server error."""
+    from maverick.license_registry import LicenseRegistryError
+
+    try:
+        return await run_in_threadpool(call)
+    except LicenseRegistryError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The licence register cannot be read right now. Nothing was changed.",
+        ) from exc
+
+
 @router.post("/licenses", status_code=201)
 async def add_regulatory_license(request: Request, body: LicenseIn) -> dict:
     require_permission(request, "operate")
     from maverick.license_registry import add_license
 
-    return await run_in_threadpool(
+    return await _license_change(
         lambda: add_license(
             name=body.name,
             jurisdiction=body.jurisdiction,
@@ -3717,7 +3733,7 @@ async def renew_regulatory_license(request: Request, license_id: str, body: Lice
     require_permission(request, "operate")
     from maverick.license_registry import renew
 
-    rec = await run_in_threadpool(
+    rec = await _license_change(
         lambda: renew(license_id[:40], note=body.note or "", by=_request_actor(request))
     )
     if rec is None:
@@ -3730,7 +3746,7 @@ async def license_evidence(request: Request, license_id: str, body: LicenseNoteI
     require_permission(request, "operate")
     from maverick.license_registry import attach_evidence
 
-    rec = await run_in_threadpool(
+    rec = await _license_change(
         lambda: attach_evidence(
             license_id[:40],
             note=body.note or "",
@@ -5847,9 +5863,10 @@ async def create_connection_endpoint(request: Request, payload: ConnectionIn) ->
     from maverick import connections
 
     try:
-        # Owner-scope like triggers: a non-admin can't overwrite another
-        # tenant's connection by reusing its name. Enforced INSIDE the store
-        # lock (expected_owner) so the check and the write are atomic.
+        # Owner-scope like triggers: the caller is an administrator (gate
+        # above) and still can't overwrite a connection saved under another
+        # identity by reusing its name. Enforced INSIDE the store lock
+        # (expected_owner) so the check and the write are atomic.
         owner = _request_identity(request)
         def save_reviewed():
             from .connection_dependencies import require_review
@@ -5902,8 +5919,9 @@ async def test_connection_endpoint(request: Request, name: str) -> dict:
         raise HTTPException(
             status_code=503, detail="connection credential registry is unavailable"
         ) from exc
-    # Owner-scope like list/delete/create: a non-admin can only test their own
-    # connection (else a name-guess is a cross-owner reachability oracle AND
+    # Owner-scope like list/delete/create: the caller is an administrator
+    # (gate above) and can still only test a connection saved under their own
+    # identity (else a name-guess is a cross-owner reachability oracle AND
     # sends another owner's token). A 404 (not 403) so it can't confirm the name.
     owner_filter = _request_identity(request)
     if rec is None or ((rec.get("owner") or None) != owner_filter):
@@ -6600,7 +6618,8 @@ def _live_tool_schemas(
 
 
 @router.get("/skills", response_model=list[SkillOut])
-async def list_installed_skills() -> list[SkillOut]:
+async def list_installed_skills(request: Request) -> list[SkillOut]:
+    require_permission(request, "view")
     from maverick.skills import load_skills
 
     return [
@@ -6616,6 +6635,7 @@ def get_flywheel_state(request: Request) -> dict:
     Observed task-history patterns alone are not treated as causal proof or
     promoted into these lists. Empty until promotion-grade evidence exists.
     """
+    require_permission(request, "view")
     out: dict = {"guardrails": [], "habits": [], "signal": {}}
     try:
         from maverick.negative_knowledge import shared as _guardrails
@@ -6647,7 +6667,7 @@ def get_flywheel_state(request: Request) -> dict:
 
 
 @router.get("/codec")
-async def get_codec_telemetry() -> dict:
+async def get_codec_telemetry(request: Request) -> dict:
     """What the token-aware emergent codec is saving on the LIVE coordination stream.
 
     Confirms the bench numbers against production: as the swarm runs, the blackboard
@@ -6656,6 +6676,7 @@ async def get_codec_telemetry() -> dict:
     this process. In-process counters, so this reflects the runtime hosting the
     agents. Zeroed until ``[emergent_codec] enable`` is on and a codebook is learned.
     Read-only; never mutates."""
+    require_permission(request, "view")
     try:
         from maverick.codec_telemetry import snapshot
 
@@ -6733,21 +6754,23 @@ async def create_skill_endpoint(request: Request, payload: SkillCreateIn) -> Ski
 
 
 @router.get("/diag/tail-latency")
-async def diag_tail_latency(ratio: float = 3.0, min_count: int = 20) -> dict:
+async def diag_tail_latency(request: Request, ratio: float = 3.0, min_count: int = 20) -> dict:
     """Tools with a fat latency tail (p99/p50 ≥ ratio) — the ones worth hunting.
 
     Reads this serving process's in-memory per-tool latency samples, so it's
     meaningful on a long-lived dashboard/worker, not a fresh CLI invocation."""
+    require_permission(request, "view")
     from maverick.tail_latency import hunt
 
     return {"flagged": hunt(ratio_threshold=ratio, min_count=min_count)}
 
 
 @router.get("/marketplace/stats")
-async def marketplace_stats() -> dict:
+async def marketplace_stats(request: Request) -> dict:
     """Aggregate stats over the local ratings ledger (total / average / 1–5★
     distribution / per-kind / top-rated). Self-host-first: the operator's own
     ratings, the JSON face of the marketplace stats view."""
+    require_permission(request, "view")
     from maverick.marketplace.ratings import RatingsLedger
     from maverick.marketplace.stats import summarize
 
@@ -6770,6 +6793,7 @@ def templates_suggested(request: Request, k: int = 5) -> dict:
     their goal-title history (pure scorer, no LLM — ``maverick.starter_templates``).
     Owner-scoped history: an authenticated non-admin is ranked on their own
     goals only."""
+    require_permission(request, "view")
     from maverick.starter_templates import suggest
 
     k = max(1, min(int(k or 5), 20))
@@ -7058,12 +7082,13 @@ async def voice_captions(
 
 
 @router.get("/catalog/{kind}")
-def catalog_list(kind: str) -> dict:
+def catalog_list(request: Request, kind: str) -> dict:
     """List federated catalog entries for a kind (skills/plugins/mcp/personas).
 
     Tolerates an unreachable index by returning an empty list, so a
     fresh install shows "no catalog entries" rather than 500ing.
     """
+    require_permission(request, "view")
     from maverick.catalog import VALID_KINDS, load_catalog
 
     if kind not in VALID_KINDS:
@@ -7262,6 +7287,7 @@ def _harness_guidance() -> tuple[list[dict], bool]:
 @router.get("/learned")
 async def learned_api(request: Request) -> dict:
     """Learned-capability ledger entries + on-disk generated tool filenames."""
+    require_permission(request, "view")
     return _learned_snapshot(
         include_pending_items=has_global_permission(request, "admin"), request=request,
     )
@@ -8993,17 +9019,16 @@ async def delete_schedule(request: Request, job_id: int) -> dict:
     from maverick.job_queue import JobQueue
 
     q = JobQueue()
-    # Owner scoping, mirroring the goal routes: an authenticated non-admin may
-    # cancel only schedules stamped with their own principal (create_schedule
-    # records it in payload["owner"]). 404, not 403, so a cross-user probe
-    # can't distinguish "exists but not yours" from "does not exist".
+    # Owner scoping, mirroring the goal routes: every caller, an administrator
+    # included, may cancel only schedules stamped with their own principal
+    # (create_schedule records it in payload["owner"]); an unidentified local
+    # caller only unowned ones. 404, not 403, so a cross-user probe can't
+    # distinguish "exists but not yours" from "does not exist".
     owner = goal_owner_filter(request)
-    if owner is not None:
-        job = q.get(job_id)
-        if job is None or (job.payload or {}).get("owner", "") != owner:
-            raise HTTPException(status_code=404, detail="no pending schedule with that id")
     job = q.get(job_id)
-    if job is not None and job.recurrence_id:
+    if job is None or (job.payload or {}).get("owner", "") != owner:
+        raise HTTPException(status_code=404, detail="no pending schedule with that id")
+    if job.recurrence_id:
         raise HTTPException(status_code=409, detail="This is a durable schedule. Review its current version in Automations and choose Retire.")
     if not q.cancel(job_id):
         raise HTTPException(status_code=404, detail="no pending schedule with that id")
@@ -9042,9 +9067,11 @@ def _inbound_secret_set() -> bool:
 def list_triggers_endpoint(request: Request) -> dict:
     """Registered inbound webhook triggers (read-only; always available).
 
-    Owner-scoped: an authenticated non-admin sees only the triggers it
-    registered, so one tenant can't enumerate another's trigger names, bound
-    templates, and default param values. Admin / auth-off callers see all."""
+    Owner-scoped: every caller, an administrator included, sees only the
+    triggers it registered, so one tenant can't enumerate another's trigger
+    names, bound templates, and default param values. A caller with no named
+    account sees only unowned triggers (the static dashboard token also sees
+    ``user:local`` ones; see ``_event_trigger_allowed_owners``)."""
     from maverick_dashboard import triggers_store
 
     triggers = triggers_store.list_triggers()
@@ -9136,6 +9163,12 @@ def create_trigger(request: Request, payload: TriggerIn) -> TriggerOut:
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        # The saved file could not be parsed; the store refused to write over it.
+        raise HTTPException(
+            status_code=503,
+            detail="The saved triggers cannot be read right now. Nothing was changed.",
+        ) from e
     return TriggerOut(
         name=rec["name"],
         template=rec["template"],
@@ -9923,20 +9956,16 @@ def automation_runs(request: Request, kind: str, ref: str, limit: int = 8) -> di
     w = _world()
     capped = max(1, min(int(limit), 50))
     # Owner-scope: a trigger name (enumerable via GET /triggers) is shared across
-    # tenants, so an authenticated non-admin must not read another owner's goal
-    # titles/history -- nor the cross-owner aggregate from origin_status_counts.
-    # Auth-off / admin keep the original (unscoped) behaviour exactly.
-    if goal_owner_filter(request) is None:
-        goals = w.goals_for_origin(kind, ref, limit=capped)
-        summary = w.origin_status_counts(kind, ref)
-    else:
-        accessible = [
-            g for g in w.goals_for_origin(kind, ref, limit=10_000) if can_access_goal(request, g)
-        ]
-        summary = {}
-        for g in accessible:
-            summary[g.status] = summary.get(g.status, 0) + 1
-        goals = accessible[:capped]
+    # tenants, so no caller, an administrator included, may read another owner's
+    # goal titles/history -- nor the cross-owner aggregate from
+    # origin_status_counts. The summary is counted from the accessible goals.
+    accessible = [
+        g for g in w.goals_for_origin(kind, ref, limit=10_000) if can_access_goal(request, g)
+    ]
+    summary = {}
+    for g in accessible:
+        summary[g.status] = summary.get(g.status, 0) + 1
+    goals = accessible[:capped]
     runs = [
         {"goal_id": g.id, "title": g.title, "status": g.status, "created_at": g.created_at}
         for g in goals
@@ -11543,16 +11572,18 @@ def _require_role_editing(request: Request) -> None:
 
 
 @router.get("/roles")
-async def list_roles_endpoint() -> dict:
+async def list_roles_endpoint(request: Request) -> dict:
     """The core-role roster, flagged by override status."""
+    require_permission(request, "view")
     from maverick.role_edit import list_roles
 
     return {"roles": list_roles()}
 
 
 @router.get("/roles/{role}")
-async def get_role_endpoint(role: str) -> dict:
+async def get_role_endpoint(request: Request, role: str) -> dict:
     """A role's merged view: resolved model/effort, addendum, and provenance."""
+    require_permission(request, "view")
     from maverick.role_edit import resolved_role
 
     view = resolved_role(role)
@@ -12073,6 +12104,7 @@ async def external_agent_unenroll(request: Request, agent_id: str) -> None:
 async def discovery(request: Request) -> dict:
     """Inventory of governable surfaces: tools (by risk), MCP servers (with
     supply-chain pins), configured providers, channels, and external agents."""
+    require_global_permission(request, "admin")
     from .control_plane import discovery_overview
 
     return discovery_overview()
@@ -12567,8 +12599,6 @@ def undo_approval(request: Request, approval_id: int) -> Response:
 @router.post("/approvals/{approval_id}/revise")
 async def revise_approval(request: Request, approval_id: int) -> Response:
     """Supersede one request and record why its producer must regenerate it."""
-    from maverick.approval_cards import ApprovalCardError, decode_approval_detail
-
     from .approval_authority import require_approval_authority
 
     require_approval_authority(
@@ -12591,6 +12621,14 @@ async def revise_approval(request: Request, approval_id: int) -> Response:
         rationale, _matches = redact(rationale)
     except Exception:
         rationale = "Revision requested; rationale was removed because redaction failed."
+    # As with approve and deny: the vote commits to the database, signs audit
+    # rows and takes cross-process locks, so keep it off the event loop.
+    return await run_in_threadpool(_revise_approval, request, approval_id, rationale)
+
+
+def _revise_approval(request: Request, approval_id: int, rationale: str) -> Response:
+    """The synchronous half of ``revise_approval``: the vote and its audit rows."""
+    from maverick.approval_cards import ApprovalCardError, decode_approval_detail
 
     world = _world()
     row = world.get_approval(approval_id)
@@ -12749,7 +12787,8 @@ def release_approval(request: Request, approval_id: int) -> dict:
 def oversight_active(request: Request) -> dict:
     """Active agents right now: running goals + their latest activity.
 
-    Owner-scoped (auth-off/admin -> all). Powers the live "Active now" panel on
+    Owner-scoped: every caller, an administrator included, sees its own goals;
+    an unidentified local caller sees unowned ones. Powers the live "Active now" panel on
     the oversight console -- polled client-side so the operator watches the
     fleet work without a full-page reload. Fail-soft per goal: a goal whose
     event tail can't be read still lists with an empty activity.
@@ -12850,8 +12889,9 @@ async def list_fleets_api(request: Request) -> dict:
     Read-only mirror of the ``/fleets`` page (Layer C of the enterprise control
     plane). Fail-soft to an empty list so a missing registry never 500s.
 
-    Owner-scoped: a non-admin authenticated caller sees only the fleets they
-    own; auth-off and admin callers see all (``goal_owner_filter`` returns None).
+    Owner-scoped: every caller, an administrator included, sees only the
+    fleets they own; a caller with no named account sees only unowned fleets
+    (``goal_owner_filter`` returns ``""`` for it, never None).
     """
     try:
         from maverick.fleet import list_fleets
@@ -12860,8 +12900,7 @@ async def list_fleets_api(request: Request) -> dict:
     except Exception:
         fleets = []
     owner = goal_owner_filter(request)
-    if owner is not None:
-        fleets = [f for f in fleets if f.owner == owner]
+    fleets = [f for f in fleets if f.owner == owner]
     return {"fleets": [f.to_dict() for f in fleets]}
 
 
@@ -13422,7 +13461,7 @@ def goal_tree_api(request: Request, limit: int = 300) -> dict:
 
     Powers /graph-editor and /plan-tree-3d: nodes carry (x, y) pixel
     positions so the client JS is a thin renderer. Owner-scoped like
-    GET /goals (auth-off/admin see all).
+    GET /goals (an administrator also sees only its own goals).
     """
     from .goal_tree import forest_view, goal_nodes
 
@@ -14028,8 +14067,9 @@ async def export_walkthrough(request: Request, goal_id: int) -> dict:
     Uses the real machinery (``maverick.replay.video.render``): always writes
     the frame manifest + a WebVTT captions track derived from the storyboard;
     the MP4 encode itself needs Pillow + ffmpeg and the response says honestly
-    whether it happened (``encoded``/``detail``) and carries the exact ffmpeg
-    command for out-of-band encoding when it didn't.
+    whether it happened (``encoded``/``detail``). The staged frames are removed
+    after the attempt, so ``ffmpeg_command`` is empty: there is nothing left
+    for an out-of-band encode to read.
     """
     require_permission(request, "operate")
     w = _world()

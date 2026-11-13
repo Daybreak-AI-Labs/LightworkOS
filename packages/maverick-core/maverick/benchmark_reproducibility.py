@@ -179,8 +179,9 @@ def record_with_manifest(
     History recording is byte-identical to ``continuous_benchmark`` (append +
     ``save_history``; prior rows untouched). When the hook is enabled
     (``write_manifest`` overrides :func:`enabled`), the manifest lands next to
-    the history at ``<history dir>/manifests/<suite>-<ms>.json`` (atomic,
-    0600). Returns the manifest path, or ``None`` when disabled.
+    the history at
+    ``<history dir>/manifests/<suite>-<ms>-<pid>-<6 hex>.json`` (atomic, 0600).
+    Returns the manifest path, or ``None`` when disabled.
     """
     from . import continuous_benchmark as cb
     path = Path(history_path) if history_path is not None else cb._store_path()

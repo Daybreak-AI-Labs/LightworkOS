@@ -3,7 +3,10 @@
 This module coordinates local control-plane state only.  It performs no
 network I/O, provider writes, response delivery, identity verification, or
 legal-compliance determination.  Provider work is represented by a durable
-callback outbox and must be performed by separately governed adapters.
+callback outbox and must be performed by separately governed adapters.  Those
+adapters and the source worker that drives them do call providers, including
+provider deletes, once a deployment configures them; the statements above and
+``product_boundaries()`` describe this store, not that composed runtime.
 
 The capability is closed unless both gates are explicitly enabled::
 
@@ -13,8 +16,10 @@ The capability is closed unless both gates are explicitly enabled::
     enable = true
 
 Raw subject identifiers and external request references are accepted only long
-enough to derive tenant-keyed HMAC digests.  They are never persisted or
-returned.  Sources contain opaque adapter and credential *references*, never
+enough to derive HMAC digests.  The default key is one deployment-wide secret
+(``MAVERICK_PRIVACY_RIGHTS_DIGEST_KEY``), not a key per tenant; the tenant is
+bound into the digested message instead.  The raw values are never persisted
+or returned.  Sources contain opaque adapter and credential *references*, never
 credentials, URLs, origins, or provider payloads.
 """
 
@@ -29,6 +34,7 @@ import re
 import secrets
 import sqlite3
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -283,7 +289,9 @@ def _timestamp(value: object, label: str) -> float:
 def _raw_reference(value: object, label: str) -> bytes:
     if not isinstance(value, str):
         raise PrivacyRightsValidationError(f"{label} must be text")
-    encoded = value.encode("utf-8")
+    # NFC first: the source worker hashes the normalized form, so a subject
+    # typed with combining marks must produce the same digest here.
+    encoded = unicodedata.normalize("NFC", value).encode("utf-8")
     if not 1 <= len(encoded) <= 1_024 or value.strip() != value:
         raise PrivacyRightsValidationError(f"{label} is invalid or exceeds 1024 bytes")
     return encoded
@@ -291,7 +299,7 @@ def _raw_reference(value: object, label: str) -> bytes:
 
 def _hmac_reference(key: bytes, tenant_id: str, label: str, value: object) -> str:
     if not isinstance(key, bytes) or len(key) < 32:
-        raise PrivacyRightsConfigError("tenant digest key must contain at least 32 bytes")
+        raise PrivacyRightsConfigError("digest key must contain at least 32 bytes")
     raw = _raw_reference(value, label)
     scoped = tenant_id.encode("utf-8") + b"\x00" + label.encode("ascii") + b"\x00" + raw
     return hmac.new(key, scoped, hashlib.sha256).hexdigest()
@@ -1602,6 +1610,7 @@ class PrivacyRightsOrchestrationStore:
         idempotency_key: str,
         actor: str,
         now: float,
+        allow_closed: bool = False,
     ) -> RightsCase:
         request = {
             "action": action,
@@ -1626,17 +1635,16 @@ class PrivacyRightsOrchestrationStore:
                     f"case revision CAS failed: expected {expected_revision}, "
                     f"found {current.revision}"
                 )
-            if current.status != "open":
+            # A legal hold or retention block must stay settable on a closed
+            # case: purge_expired deletes closed cases that carry neither.
+            closed = allow_closed and current.status == "closed"
+            if current.status != "open" and not closed:
                 raise PrivacyRightsConflict("rights case is not open")
             payload = dict(raw)
             payload.update(updates)
-            payload.update(
-                {
-                    "revision": current.revision + 1,
-                    "updated_at": now,
-                    "closure_approved_by": None,
-                }
-            )
+            payload.update({"revision": current.revision + 1, "updated_at": now})
+            if not closed:
+                payload["closure_approved_by"] = None
             digest_value = self._write(
                 connection,
                 "rights_cases",
@@ -1744,6 +1752,7 @@ class PrivacyRightsOrchestrationStore:
             idempotency_key=idempotency_key,
             actor=actor,
             now=now,
+            allow_closed=True,
         )
 
     def set_retention_gate(
@@ -1779,6 +1788,7 @@ class PrivacyRightsOrchestrationStore:
             idempotency_key=idempotency_key,
             actor=actor,
             now=now,
+            allow_closed=True,
         )
 
     @staticmethod
@@ -4031,18 +4041,40 @@ class PrivacyRightsOrchestrationStore:
     ) -> None:
         if rights_case.status != "open" or rights_case.identity_status != "verified":
             raise PrivacyRightsConflict("case is not open with verified identity")
-        tasks = connection.execute(
-            "SELECT * FROM rights_tasks WHERE tenant_id=? AND case_id=?",
-            (tenant, rights_case.case_id),
-        ).fetchall()
+        tasks = tuple(
+            self._task(self._payload(row, "source task"), row["integrity_sha256"])
+            for row in connection.execute(
+                "SELECT * FROM rights_tasks WHERE tenant_id=? AND case_id=?",
+                (tenant, rights_case.case_id),
+            ).fetchall()
+        )
         if not tasks:
             raise PrivacyRightsConflict("case has no planned source tasks")
-        if any(
-            self._task(self._payload(row, "source task"), row["integrity_sha256"]).state
-            != "complete"
-            for row in tasks
-        ):
+        if any(task.state != "complete" for task in tasks):
             raise PrivacyRightsConflict("all planned source tasks must be complete")
+        # Completed work is not enough: every enrolled source needs every phase
+        # the requested rights require and the source can perform, or closure
+        # would hide skipped work.  A phase a source has no capability for
+        # cannot be planned, so it is handled outside this store.
+        planned = {(task.source_id, task.phase) for task in tasks}
+        required = self._required_phases(rights_case.rights)
+        sources = tuple(
+            self._source(self._payload(row, "source"), row["integrity_sha256"])
+            for row in connection.execute(
+                "SELECT * FROM rights_sources WHERE tenant_id=?",
+                (tenant,),
+            ).fetchall()
+        )
+        if any(
+            (source.source_id, phase) not in planned
+            for source in sources
+            for phase in required
+            if phase in source.capabilities
+        ):
+            raise PrivacyRightsConflict(
+                "every enrolled source must complete every phase the requested "
+                "rights require and the source supports"
+            )
         callbacks = connection.execute(
             "SELECT * FROM rights_callbacks WHERE tenant_id=? AND case_id=?",
             (tenant, rights_case.case_id),
@@ -4534,6 +4566,13 @@ class PrivacyRightsOrchestrationStore:
 
     @staticmethod
     def product_boundaries() -> Mapping[str, object]:
+        """Declare what this store does, not what a configured runtime does.
+
+        ``network_io`` and ``provider_writes`` are false because the store only
+        records intent; the source worker and adapters perform the provider
+        calls, and the dashboard status reports those from the source runtime.
+        """
+
         return {
             "provider_neutral": True,
             "network_io": False,

@@ -48,6 +48,22 @@
       inline(inner, el, doc);
       parent.appendChild(el);
     }
+    // A valid opening **, __ or ~~ that finds no closing marker in the rest
+    // of the text cannot find one from any later position either. Each kind
+    // is therefore searched to the end of the text at most once: a long run
+    // of unclosed markers would otherwise cost one full scan apiece.
+    var unclosed = {};
+    // Links get the same treatment. A "[label" or "![alt" can only end at the
+    // next "]", and whether a "(target)" follows that bracket does not depend
+    // on where the label began. So the next "]" is looked up once per stretch
+    // of text and a bracket whose target did not parse is not tried again; an
+    // autolink is not tried when no ">" is left. A long run of unclosed "[",
+    // "![" or "<http://" would otherwise cost one scan to the end apiece.
+    var closeAt = -2, closeBad = false, gtAt = -2;
+    function closes(from) {
+      if (closeAt !== -1 && closeAt < from) { closeAt = text.indexOf(']', from); closeBad = false; }
+      return closeAt !== -1 && !closeBad && text[closeAt + 1] === '(';
+    }
     var i = 0, n = text.length, m, rest;
     while (i < n) {
       var ch = text[i];
@@ -65,7 +81,7 @@
           i += m[0].length; continue;
         }
       }
-      if (ch === '!' && text[i + 1] === '[') {
+      if (ch === '!' && text[i + 1] === '[' && closes(i + 2)) {
         m = /^!\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"]*")?\)/.exec(rest);
         if (m) {
           // Never fetch a remote image on the model's say-so; show it as a link.
@@ -75,8 +91,10 @@
           else buf += alt;
           i += m[0].length; continue;
         }
+        closeBad = true;
       }
-      if (ch === '[') {
+      // closeAt > i + 1: a link label is never empty.
+      if (ch === '[' && closes(i + 1) && closeAt > i + 1) {
         m = /^\[([^\]]+)\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+"[^"]*")?\)/.exec(rest);
         if (m) {
           var href = safeHref(m[2]);
@@ -90,9 +108,11 @@
           }
           i += m[0].length; continue;
         }
+        closeBad = true;
       }
-      if (ch === '<') {
-        m = /^<(https?:\/\/[^\s>]+|mailto:[^\s>]+)>/.exec(rest);
+      if (ch === '<' && gtAt !== -1) {
+        if (gtAt < i) gtAt = text.indexOf('>', i);
+        m = gtAt !== -1 && /^<(https?:\/\/[^\s>]+|mailto:[^\s>]+)>/.exec(rest);
         if (m) {
           var ahref = safeHref(m[1]);
           if (ahref) { flush(); parent.appendChild(link(doc, ahref, m[1])); }
@@ -109,10 +129,11 @@
       }
       if (ch === '*' || ch === '_') {
         var dbl = ch + ch;
-        if (rest.indexOf(dbl) === 0) {
+        if (text[i + 1] === ch && !unclosed[dbl]) {
           m = ch === '*' ? /^\*\*(?=\S)([\s\S]+?)(?<=\S)\*\*/.exec(rest)
                          : /^__(?=\S)([\s\S]+?)(?<=\S)__(?![A-Za-z0-9])/.exec(rest);
           if (m) { wrap('strong', m[1]); i += m[0].length; continue; }
+          if (i + 2 < n && /\S/.test(text[i + 2])) unclosed[dbl] = true;
         }
         var prev = i > 0 ? text[i - 1] : ' ';
         var okStart = ch === '*' || !/[A-Za-z0-9]/.test(prev);
@@ -122,9 +143,10 @@
           if (m) { wrap('em', m[1]); i += m[0].length; continue; }
         }
       }
-      if (ch === '~' && rest.indexOf('~~') === 0) {
+      if (ch === '~' && text[i + 1] === '~' && !unclosed['~~']) {
         m = /^~~(?=\S)([\s\S]+?)(?<=\S)~~/.exec(rest);
         if (m) { wrap('del', m[1]); i += m[0].length; continue; }
+        if (i + 2 < n && /\S/.test(text[i + 2])) unclosed['~~'] = true;
       }
       buf += ch; i += 1;
     }

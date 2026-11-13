@@ -1534,6 +1534,9 @@ class AIGovernanceLoopStore:
         authorization = _digest(authorization_sha256, "authorization_sha256")
 
         def mutate(_connection: sqlite3.Connection, row: dict[str, object], now: float) -> str:
+            # Replay restarts reconciliation; it must not undo a revocation.
+            if row.get("state") == "revoked":
+                raise AIGovernanceLoopConflict("a revoked case cannot be replayed")
             row["state"] = "recovery_pending"
             row["limitations_json"] = self._safe_json(["reconciliation_pending"])
             row["work_pending"] = 1

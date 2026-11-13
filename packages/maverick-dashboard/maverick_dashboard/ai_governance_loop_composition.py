@@ -704,6 +704,8 @@ def install_ai_governance_loop_composition(app: Any) -> None:
     No store is opened and no authority is read at install time.  A deployment
     may replace ``ai_governance_loop_authority_reader_factory`` with its own
     validated source adapter; the default reads the native retained authorities.
+    The enabled probe and the runtime, worker and trigger-callback factories
+    are likewise kept when a deployment set them before this runs.
     """
 
     state = getattr(app, "state", None)
@@ -758,10 +760,14 @@ def install_ai_governance_loop_composition(app: Any) -> None:
 
         state.ai_governance_loop_authority_reader_factory = factory
 
-    state.ai_governance_loop_enabled_probe = ai_governance_loop_capability_enabled
-    state.ai_governance_loop_runtime_factory = runtime_factory
-    state.ai_governance_loop_worker_factory = worker_factory
-    state.ai_governance_loop_trigger_callback_factory = trigger_callback_factory
+    for name, default in (
+        ("ai_governance_loop_enabled_probe", ai_governance_loop_capability_enabled),
+        ("ai_governance_loop_runtime_factory", runtime_factory),
+        ("ai_governance_loop_worker_factory", worker_factory),
+        ("ai_governance_loop_trigger_callback_factory", trigger_callback_factory),
+    ):
+        if getattr(state, name, None) is None:
+            setattr(state, name, default)
     setattr(state, marker, True)
 
 

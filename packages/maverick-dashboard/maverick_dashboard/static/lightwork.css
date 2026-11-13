@@ -958,6 +958,11 @@
     .mv-error-summary:focus { outline: 3px solid var(--brand); outline-offset: 2px; }
     .mv-error-summary__title { margin: 0 0 var(--space-2); font-size: var(--text-md, 1rem); }
     .mv-error-summary__body { margin: 0 0 var(--space-2); }
+    /* Guided forms (lightwork-guided-actions.js) write their own summary and
+       per-field errors; the Knowledge access page labels a record's lineage. */
+    .guided-error-summary, .guided-field-error { color: var(--danger); }
+    .guided-field-error { font-size: var(--text-sm); margin: var(--space-1) 0 0; }
+    .ka-lineage-label { color: var(--muted); font-size: var(--text-sm); font-weight: var(--font-medium); margin: var(--space-2) 0 var(--space-1); }
     .mv-error-summary__list { margin: 0; padding-inline-start: var(--space-4); }
     .mv-error-summary__list a { color: var(--danger, #dc2626); font-weight: var(--font-medium); }
     .mv-keep-note { flex-basis: 100%; margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--muted); display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }

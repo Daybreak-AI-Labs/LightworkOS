@@ -1298,6 +1298,38 @@ class ThirdPartyContractStore:
             if linked.record_kind != "contract" or linked.vendor_id != vendor_id:
                 raise ThirdPartyContractConflict("linked contracts must belong to the exact vendor")
 
+    def _live_references(
+        self,
+        connection: sqlite3.Connection,
+        record: ThirdPartyRecord,
+    ) -> tuple[str, ...]:
+        """Return the mutable records that still name this contract.
+
+        Deleting such a contract would leave a reference that fails
+        :meth:`_validate_relationships` on every later update or archive of
+        the referencing record. Archived records are immutable and are never
+        re-validated, so they do not hold a contract back.
+        """
+
+        if record.record_kind != "contract":
+            return ()
+        rows = connection.execute(
+            "SELECT record_json FROM third_party_contract_records "
+            "WHERE tenant_sha256=? AND vendor_id=? AND status<>? AND record_id<>? "
+            "ORDER BY record_id",
+            (self._tenant_sha256, record.vendor_id, ARCHIVED_STATUS, record.record_id),
+        ).fetchall()
+        referencing: list[str] = []
+        for row in rows:
+            other = self._row_record(row)
+            if other.record_kind == "contract":
+                references: tuple[object, ...] = (other.lifecycle["parent_contract_id"],)
+            else:
+                references = tuple(other.lifecycle["linked_contract_ids"])  # type: ignore[arg-type]
+            if record.record_id in references:
+                referencing.append(other.record_id)
+        return tuple(referencing)
+
     def _create(
         self,
         tenant_id: str,
@@ -1891,6 +1923,11 @@ class ThirdPartyContractStore:
             if not self._authority_matches(current, authority):
                 raise ThirdPartyContractConflict("persisted vendor authority metadata no longer matches")
             self._verify_record_history(connection, current)
+            if self._live_references(connection, current):
+                raise ThirdPartyContractConflict(
+                    "contract is still linked from an Engagement or a child Contract; "
+                    "remove the link or archive that record first"
+                )
             tombstone = self._delete_in_connection(
                 connection,
                 record=current,
@@ -1949,6 +1986,10 @@ class ThirdPartyContractStore:
             for row in rows:
                 record = self._row_record(row)
                 self._verify_record_history(connection, record)
+                if self._live_references(connection, record):
+                    # Still linked from a live record; it stays due and is
+                    # purged once the link is removed.
+                    continue
                 self._delete_in_connection(connection, record=record, actor=actor, now=now)
                 removed += 1
             connection.commit()

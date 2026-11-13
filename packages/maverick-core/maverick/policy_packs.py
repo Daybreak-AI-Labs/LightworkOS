@@ -1072,20 +1072,20 @@ def _origin(url: str) -> tuple[str, str, int]:
 
 
 def _default_transport(url: str, maximum: int) -> FetchResponse:
-    from urllib.request import Request
+    # The SSRF-pinned client never follows redirects, so a 3xx comes back to
+    # fetch_update, which refuses an off-origin Location before any request
+    # is made to it.
+    from .tools._ssrf import safe_client
 
-    from .tools.http_fetch import guarded_urlopen
-
-    request = Request(
+    chunks = bytearray()
+    with safe_client(url, timeout=30.0) as client, client.stream(
+        "GET",
         url,
         headers={
             "Accept": "application/json",
             "User-Agent": "Lightwork-Policy-Pack-Updater/1.0",
         },
-        method="GET",
-    )
-    chunks = bytearray()
-    with guarded_urlopen(request, timeout=30.0) as response:
+    ) as response:
         content_length = response.headers.get("content-length")
         if content_length is not None:
             try:
@@ -1093,16 +1093,13 @@ def _default_transport(url: str, maximum: int) -> FetchResponse:
                     raise PolicyPackUpdateRefused("policy-pack update is oversized")
             except ValueError:
                 raise PolicyPackUpdateRefused("update Content-Length is invalid") from None
-        while True:
-            chunk = response.read(min(65_536, maximum + 1 - len(chunks)))
-            if not chunk:
-                break
+        for chunk in response.iter_bytes():
             chunks.extend(chunk)
             if len(chunks) > maximum:
                 raise PolicyPackUpdateRefused("policy-pack update is oversized")
         return FetchResponse(
-            url=str(response.geturl()),
-            status_code=int(response.status),
+            url=str(response.url),
+            status_code=int(response.status_code),
             headers=dict(response.headers),
             body=bytes(chunks),
         )

@@ -36,7 +36,7 @@ def settings_snapshot(request, _selection):
                 {"name": "currency", "label": "Labor currency", "kind": "select", "required": True, "value": value["currency"],
                  "choices": [{"value": currency, "label": currency} for currency in ("USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF", "INR")]},
                 {"name": "completion_confirmation", "label": "Offer optional completion confirmation (never execution evidence)",
-                 "kind": "checkbox", "value": value["completion_confirmation"]}])
+                 "kind": "boolean", "value": value["completion_confirmation"]}])
 
 
 def settings_prepare(request, _selection, arguments):

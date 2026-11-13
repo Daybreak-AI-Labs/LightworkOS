@@ -77,7 +77,9 @@ def format_money(amount: float, *, currency: str = "USD", locale: str = "en-US",
     if frac_str:
         num = num + loc.decimal + frac_str
     gap = " " if loc.space else ""
-    body = f"{symbol}{gap}{num}" if loc.symbol_prefix else f"{num}{gap}{symbol}"
+    # An unknown currency's symbol is "CODE " (the space separates it from the
+    # number it precedes); after the number that space would trail.
+    body = f"{symbol}{gap}{num}" if loc.symbol_prefix else f"{num}{gap}{symbol.rstrip()}"
     return ("-" + body) if neg else body
 
 

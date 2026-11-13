@@ -457,7 +457,7 @@ EVENT_TYPE_CATALOG = (
         "administration.document_attachment.delivery_grant_failed",
         "administration",
         "document_attachment",
-        "A reserved token use failed closed before a grant could be returned.",
+        "A reserved token use ended without a grant being returned.",
     ),
     # The remaining entries expose the fixed normalized action vocabulary used
     # by the six-suite unified-audit contract.  Discovery does not assert that
@@ -1616,7 +1616,15 @@ class DocumentAccessStore:
         claim_id: str,
         issued: bool,
         grant_sha256: str | None,
+        restore_use: bool = False,
     ) -> None:
+        """Close a pending claim as issued or failed.
+
+        ``restore_use`` gives the reserved use back on a failed claim. It is
+        for an issuer that failed before issuing anything; a token that was
+        revoked, invalidated or has expired meanwhile stays as it is.
+        """
+
         now = _clock_value(self._clock)
         with self._transaction() as connection:
             row = connection.execute(
@@ -1651,6 +1659,32 @@ class DocumentAccessStore:
             if result.rowcount != 1:
                 raise DocumentAccessConflict("document_access_claim_already_finalized")
             token = self._get_record_on(connection, token_id=str(row["token_id"]))
+            detail: dict[str, object] = {
+                "claim_id_sha256": _text_sha256(claim_id),
+                "grant_sha256": selected_digest or GENESIS_SHA256,
+            }
+            if (
+                restore_use
+                and not issued
+                and token.state in {"active", "exhausted"}
+                and token.claim_count > 0
+                and now < token.expires_at
+            ):
+                restored = _record_with_digest(
+                    replace(
+                        token,
+                        state="active",
+                        revision=token.revision + 1,
+                        uses_remaining=token.uses_remaining + 1,
+                        claim_count=token.claim_count - 1,
+                        retired_at=None,
+                        retained_until=None,
+                    )
+                )
+                self._write_record_on(connection, restored, expected_revision=token.revision)
+                detail["use_restored"] = True
+                detail["new_revision"] = restored.revision
+                detail["uses_remaining"] = restored.uses_remaining
             self._append_audit_on(
                 connection,
                 event_type=(
@@ -1661,10 +1695,7 @@ class DocumentAccessStore:
                 token_id=token.token_id,
                 actor_sha256=token.principal_sha256,
                 resource_sha256=token.document_sha256,
-                detail={
-                    "claim_id_sha256": _text_sha256(claim_id),
-                    "grant_sha256": selected_digest or GENESIS_SHA256,
-                },
+                detail=detail,
                 occurred_at=now,
             )
 
@@ -2169,8 +2200,10 @@ class DocumentAccessService:
             authority_sha256=authority.authority_sha256,
             grant_expires_at=grant_deadline,
         )
+        grant_returned = False
         try:
             issued = self._delivery_grant_issuer(claim)
+            grant_returned = True
             if type(issued) is not DeliveryGrant:
                 raise DocumentAccessConfigError("document_access_delivery_grant_invalid")
             opaque = _delivery_grant(issued.grant)
@@ -2181,7 +2214,16 @@ class DocumentAccessService:
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as exc:
-            self.store.finalize_claim(claim_id=claim_id, issued=False, grant_sha256=None)
+            # The use is given back only when the issuer itself raised, so
+            # nothing was issued and a transient outage does not exhaust the
+            # token. A returned grant that fails validation may be live, so
+            # that use stays consumed.
+            self.store.finalize_claim(
+                claim_id=claim_id,
+                issued=False,
+                grant_sha256=None,
+                restore_use=not grant_returned,
+            )
             if isinstance(exc, DocumentAccessError):
                 raise
             raise DocumentAccessConfigError("document_access_delivery_issuer_unavailable") from exc

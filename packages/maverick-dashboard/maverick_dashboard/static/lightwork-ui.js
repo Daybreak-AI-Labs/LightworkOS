@@ -2591,6 +2591,19 @@ window.mvBulk = function (opts) {
   return {refresh: function () { decorate(); if (filterInput) applyFilter(); }, bar: bar, report: report, selected: function () { return selected().map(itemOf); }};
 };
 
+// A fresh random identifier in UUID form, for operation and request ids.
+// crypto.randomUUID exists only in secure contexts (HTTPS or localhost); a
+// dashboard opened over plain HTTP on another address builds the same shape
+// from crypto.getRandomValues, which every context has.
+window.mvNewId = function () {
+  var source = window.crypto;
+  if (source && typeof source.randomUUID === 'function') return source.randomUUID();
+  var bytes = source.getRandomValues(new Uint8Array(16)), hex = '';
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  for (var i = 0; i < bytes.length; i++) hex += ('0' + bytes[i].toString(16)).slice(-2);
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
+};
+
 // Request references and idempotency keys are protocol plumbing, not something
 // a person should type. Inputs marked data-auto-reference are hidden by their
 // pages and filled here: one fresh reference per operation, kept unchanged

@@ -350,7 +350,10 @@ class DROPAuthorityProposalStore:
         """Claim apply authority; stale/replayed claims return only the same proposal."""
 
         self._gate()
-        proposal = str(uuid.UUID(str(proposal_id)))
+        try:
+            proposal = str(uuid.UUID(str(proposal_id)))
+        except ValueError as exc:  # no proposal has an id of that shape
+            raise DROPManagementNotFound("DROP proposal was not found") from exc
         if expected_revision != 1:
             raise DROPManagementConflict("DROP proposal revision changed")
         reviewer = _ref(reviewer_ref, "reviewer_ref")

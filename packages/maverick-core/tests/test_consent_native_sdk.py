@@ -620,6 +620,51 @@ def test_registry_capacity_and_audit_tampering_are_detected(tmp_path) -> None:
         registry.verify_integrity()
 
 
+def test_request_capacity_is_reclaimed_once_claims_can_no_longer_be_replayed(tmp_path) -> None:
+    clock, authority, registry, private, device = _enrolled(tmp_path, max_requests=1)
+    calls: list[str] = []
+
+    def handler(_app, _device, _operation, _payload, request_id):
+        calls.append(request_id)
+        return {"receipt_id": "CP-RCP-one", "profile_revision": 1, "status": "accepted"}
+
+    gateway = NativeConsentGateway(
+        registry,
+        client_authority_resolver=lambda _digest_value: _client(authority),
+        handler=handler,
+        receipt_signer=_Signer(Ed25519PrivateKey.generate()),
+    )
+
+    def envelope(request_id: str, counter: int):
+        return build_envelope(
+            authority,
+            device,
+            request_id=request_id,
+            counter=counter,
+            operation="record_preferences",
+            payload=_preference_payload(),
+            signer=_Signer(private),
+            issued_at=clock(),
+            ttl_seconds=300,
+        )
+
+    first = envelope("request-one", 1)
+    gateway.dispatch(first)
+    # The first envelope is still acceptable, so its claim must stay.
+    clock.value += 300
+    with pytest.raises(NativeConsentCapacityError, match="request registry"):
+        gateway.dispatch(envelope("request-two", 2))
+    assert gateway.dispatch(first).payload["request_id"] == "request-one"
+
+    clock.value += 121
+    gateway.dispatch(envelope("request-three", 2))
+    assert calls == ["request-one", "request-three"]
+    # The reclaimed claim cannot be replayed into a second execution.
+    with pytest.raises(NativeConsentDenied, match="freshness"):
+        gateway.dispatch(first)
+    assert calls == ["request-one", "request-three"]
+
+
 def test_non_ascii_stored_digests_are_integrity_errors_not_type_errors(tmp_path) -> None:
     # Edited digests must not raise TypeError from hmac.compare_digest in the
     # shared comparison helper instead of the registry's integrity refusal.

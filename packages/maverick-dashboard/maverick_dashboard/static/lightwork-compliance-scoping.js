@@ -409,7 +409,9 @@
     R.call('POST', API + '/scopes/' + encodeURIComponent(s.scope_id) + '/report', { idempotency_key: R.newKey() })
       .then(function () { say('Report created. Use Download to save it.'); return load(); })
       .catch(function (f) {
-        if (f && f.status === 403) { say('Report signing is not set up yet. Ask the person who installed Lightwork to add the report signing key.'); return; }
+        // A missing permission or a turned-off module is also a 403; only the
+        // server's signing-key refusal means signing is not set up.
+        if (f && f.status === 403 && /signing/i.test(typeof f.detail === 'string' ? f.detail : '')) { say('Report signing is not set up yet. Ask the person who installed Lightwork to add the report signing key.'); return; }
         fail(f, 'create the report');
       });
   }

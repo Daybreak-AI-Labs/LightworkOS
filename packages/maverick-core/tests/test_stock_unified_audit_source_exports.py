@@ -159,6 +159,6 @@ def test_hash_chained_suite_stores_export_verified_source_records(tmp_path) -> N
         connection.commit()
     lifecycle_records = lifecycle.unified_audit_records("tenant-a")
     _assert_chain(lifecycle_records)
-    assert lifecycle_records[0].action == "risk_changed"
+    assert lifecycle_records[0].action == "record_created"
     assert "vendor-private" not in repr(lifecycle_records)
     assert "not-exported" not in repr(lifecycle_records)

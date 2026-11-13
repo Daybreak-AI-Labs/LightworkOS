@@ -77,6 +77,10 @@ def test_tool_summaries_drop_agent_instructions():
     assert plain_tool_summary(
         "ordoro", "Ordoro shipping/inventory REST API. ops get/post (writes need confirm). Auth: ORDORO_TOKEN."
     ).startswith("Connects to Ordoro shipping and inventory.")
+    # No write verb is named, but the text still says the tool can write.
+    assert plain_tool_summary(
+        "acme_crm", "Acme CRM. Auth: env ACME_KEY. ops get/list; writes need confirm"
+    ) == "Connects to Acme CRM. Changes it makes need a person's approval."
     assert plain_tool_summary("dom_diff", "Structural diff of two HTML snapshots (before/after). Reports x.") == (
         "Structural diff of two HTML snapshots."
     )

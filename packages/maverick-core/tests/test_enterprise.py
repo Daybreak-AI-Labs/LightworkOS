@@ -103,10 +103,14 @@ def test_extra_local_providers_cannot_allow_list_cloud_names(monkeypatch):
     monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
     monkeypatch.setattr(
         "maverick.config.load_config",
-        lambda *a, **k: {"enterprise": {"local_providers": ["openai", "claude"]}},
+        lambda *a, **k: {
+            "enterprise": {"local_providers": ["openai", "claude", "codex"]},
+        },
     )
     assert not is_local_provider("openai")
     assert not is_local_provider("anthropic")
+    # The Codex CLI runs locally but sends prompts to a cloud subscription.
+    assert not is_local_provider("codex_cli")
     with pytest.raises(EgressBlocked) as exc:
         assert_provider_allowed("openai")
     assert exc.value.provider == "openai"

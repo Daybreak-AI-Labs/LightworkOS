@@ -298,6 +298,34 @@ def test_interrupted_dsar_is_reserved_and_recovers_without_duplicate_case(tmp_pa
     assert calls[0][2].startswith("global-opt-out-")
 
 
+def test_reserved_submission_cannot_be_completed_after_its_ttl(tmp_path, monkeypatch):
+    _admin, public_store, clock, _application, public, _intake, submitted, _active = (
+        _fixture(tmp_path, monkeypatch)
+    )
+    configuration = public_store.get_public_configuration(public[0])
+    request = {
+        "configuration_version": configuration["configuration_version"],
+        "configuration_sha256": configuration["configuration_sha256"],
+        "authority_revision": configuration["authority_revision"],
+        "authority_sha256": configuration["authority_sha256"],
+        "idempotency_key": "expired-public-opt-out",
+    }
+    working = public_store._privacy_rights_submitter  # noqa: SLF001
+
+    def unavailable(*_args):
+        raise RuntimeError("provider detail must not escape")
+
+    public_store._privacy_rights_submitter = unavailable  # noqa: SLF001
+    with pytest.raises(goo.GlobalOptOutDSARUnavailable):
+        public_store.submit(public[0], **request)
+    public_store._privacy_rights_submitter = working  # noqa: SLF001
+
+    clock[0] += 301
+    with pytest.raises(goo.GlobalOptOutConflict, match="reservation has expired"):
+        public_store.submit(public[0], **request)
+    assert submitted == []
+
+
 def test_disabled_integrity_and_retention_paths_are_closed(tmp_path, monkeypatch):
     admin, _public_store, clock, _application, _public, _intake, _submitted, active = (
         _fixture(tmp_path, monkeypatch)

@@ -2172,7 +2172,7 @@ class ComplianceScopingStore:
                 self._get_questionnaire(connection, tenant, row[0], int(row[1]))
                 for row in connection.execute(
                     "SELECT questionnaire_id, version FROM scope_questionnaires "
-                    "WHERE tenant_id=? ORDER BY questionnaire_id, version DESC LIMIT ?",
+                    "WHERE tenant_id=? ORDER BY rowid DESC LIMIT ?",
                     (tenant, bounded),
                 ).fetchall()
             )

@@ -16,6 +16,32 @@ _MAX_RULES = 256
 _LEVELS = {"informational": 20, "low": 30, "medium": 50, "high": 75, "critical": 95}
 _SEVERITIES = {"informational": "low", "low": "low", "medium": "medium", "high": "high", "critical": "critical"}
 
+# Customer regex ("re") is deliberately unsupported: untrusted catastrophic
+# backtracking must not become a sensor denial-of-service primitive.
+_MODIFIERS = frozenset({"contains", "startswith", "endswith", "cidr", "all", "gte"})
+
+
+def _validate_selector(selector: object) -> None:
+    """Refuse a selector the matcher cannot evaluate, when the rule is loaded.
+
+    A selector that silently evaluates to "no match" is not safe to keep:
+    ``not <selector>`` then matches every event.
+    """
+    items = selector if isinstance(selector, list) else [selector]
+    if not items or not all(isinstance(item, dict) for item in items):
+        raise ValueError("Sigma selector must be a mapping or a list of mappings")
+    for item in items:
+        for expression, expected in item.items():
+            for modifier in str(expression).split("|")[1:]:
+                if modifier.lower() not in _MODIFIERS:
+                    raise ValueError(
+                        "Sigma rule uses an unsupported modifier: "
+                        + redact_credential_text(modifier, limit=60)
+                    )
+            values = expected if isinstance(expected, list) else [expected]
+            if any(isinstance(value, (dict, list)) for value in values):
+                raise ValueError("Sigma selector values must be scalars or lists of scalars")
+
 
 class SigmaRule:
     def __init__(self, value: dict[str, Any]):
@@ -35,6 +61,9 @@ class SigmaRule:
             raise ValueError("Sigma rule id or condition is too long")
         if credential_text_detected(rule_id) or credential_text_detected(condition):
             raise ValueError("Sigma rule identity and condition cannot contain credentials")
+        for name, selector in detection.items():
+            if name != "condition":
+                _validate_selector(selector)
         self.id = rule_id.strip()
         self.title = redact_credential_text(title.strip(), limit=300)
         self.description = redact_credential_text(value.get("description", ""), limit=4000)
@@ -98,7 +127,13 @@ def _string_match(actual: object, expected: object, modifiers: set[str]) -> bool
         text = str(candidate).lower()
         for raw in expected_values:
             wanted = str(raw).lower()
-            if "contains" in modifiers:
+            if "gte" in modifiers:
+                # Numeric threshold; a value that is not a number never matches.
+                try:
+                    comparisons.append(float(text) >= float(wanted))
+                except ValueError:
+                    comparisons.append(False)
+            elif "contains" in modifiers:
                 comparisons.append(wanted in text)
             elif "startswith" in modifiers:
                 comparisons.append(text.startswith(wanted))
@@ -124,10 +159,6 @@ def _selector_matches(event: TelemetryEvent, selector: object) -> bool:
         parts = str(expression).split("|")
         field = parts[0]
         modifiers = {part.lower() for part in parts[1:]}
-        if "re" in modifiers:
-            # Customer regex is deliberately unsupported: untrusted catastrophic
-            # backtracking must not become a sensor denial-of-service primitive.
-            return False
         if not _string_match(_event_value(event, field), expected, modifiers):
             return False
     return True
@@ -305,6 +336,14 @@ def _parse_block(
                 value, index = _parse_block(lines, index + 1, lines[index + 1][0])
                 container.append(value)
                 continue
+            if item[0] not in "'\"[{" and (": " in item or item.endswith(":")):
+                # "- key: value" opens a mapping; its further keys align with
+                # the first one, so re-read this line as that mapping's start.
+                column = indent + len(content) - len(content[2:].lstrip())
+                lines[index] = (column, item)
+                value, index = _parse_block(lines, index, column)
+                container.append(value)
+                continue
             container.append(_parse_scalar(item))
             index += 1
             continue
@@ -424,7 +463,7 @@ _CURATED = (
         "description": "Endpoint telemetry recorded a large outbound transfer.",
         "logsource": {"product": "edr"},
         "detection": {
-            "selection": {"action": ["network_connection", "upload"], "bytes_out": "10485760"},
+            "selection": {"action": ["network_connection", "upload"], "bytes_out|gte": "10485760"},
             "condition": "selection",
         },
         "tags": ["attack.t1041", "attack.t1567"],

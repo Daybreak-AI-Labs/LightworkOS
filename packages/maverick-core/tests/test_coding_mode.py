@@ -1379,6 +1379,12 @@ class TestPytestSummaryAnchored:
         assert p == 3
         assert f == 2  # failed + errored
 
+    def test_error_after_passed_is_not_a_clean_pass(self):
+        from maverick.coding_mode import _parse_pytest
+        # pytest's real ordering puts errors after "passed".
+        out = "===== 3 passed, 1 error in 0.50s =====\n"
+        assert _parse_pytest(out) == (3, 1, True)
+
 
 # ---- Parser dispatch for non-pytest runners ----
 
@@ -1425,6 +1431,13 @@ class TestCommandBuilding:
         )
         assert isinstance(cmd, str)
         assert cmd.endswith("'./...; touch /tmp/pwned #'")
+
+    def test_gotest_quotes_test_names(self):
+        import shlex
+
+        from maverick.coding_mode import _cmd_for
+        cmd = _cmd_for("gotest", ["./pkg::TestA'; touch /tmp/x; echo '"])
+        assert len(shlex.split(cmd)) == 6  # go test -count=1 -run <pattern> <pkg>
 
 
 # ---- repo_map cache + token cap ----

@@ -889,9 +889,11 @@ def regulatory_feed_staleness(evidence_id: str | None, limit: int) -> None:
         click.echo("no active regulatory staleness.")
         return
     for row in rows:
+        evidence = ", ".join(str(v) for v in row.get("stale_evidence_ids") or []) or "-"
+        controls = ", ".join(str(v) for v in row.get("control_ids") or []) or "-"
         click.echo(f"  {row['id']}  rev {row.get('revision')}  "
-                   f"evidence {row.get('evidence_id')}  "
-                   f"control {row.get('control_id')}  {row.get('created_at')}")
+                   f"evidence {evidence}  "
+                   f"controls {controls}  {row.get('created_at')}")
 
 
 @regulatory_feed.command("resolve")
@@ -912,7 +914,7 @@ def regulatory_feed_resolve(staleness_id: str, revision: int,
         )
     except (KeyError, ValueError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
-    click.echo(f"{row['id']} {row.get('status')}")
+    click.echo(f"{row['id']} {row.get('state') or 'unknown'}")
 
 
 @regulatory_feed.command("notices")
@@ -928,7 +930,8 @@ def regulatory_feed_notices(limit: int) -> None:
         click.echo("no regulatory customer notices.")
         return
     for row in rows:
-        click.echo(f"  {row['id']}  {row.get('status'):10s} rev "
+        status = str((row.get("delivery") or {}).get("status") or "unknown")
+        click.echo(f"  {row['id']}  {status:10s} rev "
                    f"{row.get('revision')}  {row.get('title')}")
 
 
@@ -944,7 +947,8 @@ def regulatory_feed_deliver(notice_id: str, revision: int, actor: str) -> None:
         row = deliver_notice(notice_id, expected_revision=revision, actor=actor)
     except (KeyError, ValueError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
-    click.echo(f"{row['id']} {row.get('status')}")
+    status = (row.get("delivery") or {}).get("status") or "unknown"
+    click.echo(f"{row['id']} {status}")
 
 
 @main.group("ai-inventory")
@@ -2563,9 +2567,15 @@ def explainability_fairness(data_file, threshold, asset_id, source_id,
     if report is None:
         raise click.ClickException(
             "need at least two groups with outcomes to measure disparity")
+    if report.get("indeterminate"):
+        verdict = "INDETERMINATE (not a pass): no selections in any group"
+    elif report["passed"]:
+        verdict = "PASS"
+    else:
+        verdict = "FAIL: " + ", ".join(report["failing_groups"])
     click.echo(f"min impact ratio {report['min_impact_ratio']:.3f}  "
                f"parity diff {report['demographic_parity_diff']:.3f}  "
-               f"{'PASS' if report['passed'] else 'FAIL: ' + ', '.join(report['failing_groups'])}")
+               f"{verdict}")
     if asset_id:
         if not actor:
             raise click.ClickException("--by is required to record evidence")

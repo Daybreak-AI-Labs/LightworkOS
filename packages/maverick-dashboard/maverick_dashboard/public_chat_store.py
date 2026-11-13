@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 KEY_PREFIX = "lwpk_"
 SESSION_PREFIX = "lwps_"
-# A visitor session lasts at most one hour; the widget asks for a fresh one.
+# A visitor session lasts 30 minutes; the widget asks for a fresh one.
 SESSION_TTL_SECONDS = 1_800
 MAX_ORIGINS = 20
 MAX_SITES_PER_TENANT = 50

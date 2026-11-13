@@ -70,6 +70,7 @@
         <label class="cw-wide">Or choose the notice document from your computer
           <input class="input" id="cp-notice-file" type="file" accept=".pdf,.html,.htm,.txt,.md,.doc,.docx">
         </label>
+        <p class="muted cw-wide">Only a fingerprint of the notice document is recorded. The file itself is not stored, so keep your own copy.</p>
         <input type="hidden" name="notice_sha256">
         <div class="cw-actions">
           <button class="btn btn--primary" type="submit" id="cp-policy-publish"{% if not cp_admin %} disabled{% endif %}>Publish policy</button>

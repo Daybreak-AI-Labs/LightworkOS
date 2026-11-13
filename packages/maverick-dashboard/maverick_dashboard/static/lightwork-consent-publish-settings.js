@@ -281,8 +281,15 @@
     const select = element("publish-settings-property-id");
     try {
       const catalog = CW.client("/api/v1/consent/publishing");
-      const data = await catalog("/catalog/properties?limit=50");
-      state.properties = (data.items || []).filter((item) => item.kind === "web");
+      // The catalog pages 50 at a time; read every page, as the publishing
+      // page does, so a website past the first page is still offered.
+      const all = [];
+      for (let i = 0, offset = 0; i < 20 && offset !== null; i++) {
+        const data = await catalog("/catalog/properties?limit=50&offset=" + offset);
+        all.push(...(data.items || []));
+        offset = Number.isInteger(data.next_offset) ? data.next_offset : null;
+      }
+      state.properties = all.filter((item) => item.kind === "web");
       CW.fill(select, state.properties.map((item) => ({ value: item.property_id, label: human(item.property_id) })),
         state.properties.length ? "" : "Add a website on the Banner and preference center page first");
       if (state.properties.length) await loadVersions();

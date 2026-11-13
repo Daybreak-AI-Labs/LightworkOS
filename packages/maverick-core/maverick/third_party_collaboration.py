@@ -2768,10 +2768,13 @@ class ThirdPartyCollaborationStore:
         """Purge retained payloads while preserving operation and hash-chain evidence."""
 
         tenant = _tenant(tenant_id)
-        cutoff = _timestamp(before, "before")
+        requested = _timestamp(before, "before")
         actor = self._actor()
         now = _timestamp(self._clock(), "current time")
-        request = {"action": "purge_expired", "before": cutoff, "actor_ref": actor}
+        # A cutoff in the future must not delete invitations before their
+        # retention ends: nothing later than the current time is purged.
+        cutoff = min(now, requested)
+        request = {"action": "purge_expired", "before": requested, "actor_ref": actor}
         with cross_process_lock(self.path, strict=True), contextlib.closing(self._connect()) as connection, connection:
             self._begin(connection)
             operation_sha, request_sha, operation = self._operation(

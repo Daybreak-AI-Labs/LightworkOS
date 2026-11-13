@@ -66,7 +66,6 @@ _MAX_SEARCH_RESULTS = 100
 _MAX_RETENTION_SECONDS = 10 * 365 * 24 * 60 * 60
 _MIN_RETENTION_SECONDS = 24 * 60 * 60
 _MAX_LEASE_SECONDS = 60 * 60
-_MAX_RETRIES = 20
 _MAX_BACKOFF_SECONDS = 7 * 24 * 60 * 60
 
 _ALLOWED_USES = frozenset(
@@ -488,6 +487,18 @@ class SearchHit:
     content_sha256: str
     evidence_sha256: str
     citations: tuple[Citation, ...]
+    # True when ``effective_date`` is later than the date searched. ``None``
+    # only on a hit read back from a report stored before the flag existed.
+    not_yet_effective: bool | None = None
+
+
+def _hit_payload(hit: SearchHit) -> dict[str, Any]:
+    values = asdict(hit)
+    values["citations"] = [asdict(citation) for citation in hit.citations]
+    if values["not_yet_effective"] is None:
+        # Keep a report stored before the flag existed byte-identical.
+        del values["not_yet_effective"]
+    return values
 
 
 @dataclass(frozen=True)
@@ -499,6 +510,8 @@ class ResearchAnswer:
     citations: tuple[Citation, ...]
     disclaimer: str
     evidence_sha256: str
+    # True when the answer is grounded only in law that is not yet in effect.
+    not_yet_effective: bool = False
 
     @property
     def abstained(self) -> bool:
@@ -616,13 +629,7 @@ class EvidenceReport:
             "query": self.query,
             "jurisdictions": list(self.jurisdictions),
             "status": self.status,
-            "evidence": [
-                {
-                    **asdict(hit),
-                    "citations": [asdict(citation) for citation in hit.citations],
-                }
-                for hit in self.evidence
-            ],
+            "evidence": [_hit_payload(hit) for hit in self.evidence],
             "citations": [asdict(citation) for citation in self.citations],
             "disclaimer": self.disclaimer,
             "created_by": self.created_by,
@@ -1544,7 +1551,11 @@ class PrivacyRegulatoryIntelligenceStore:
         limit: int = 20,
         as_of: str | None = None,
     ) -> tuple[SearchHit, ...]:
-        """Search latest approved versions and return digest-bound evidence."""
+        """Search latest approved versions and return digest-bound evidence.
+
+        A published text that takes effect after ``as_of`` is still returned,
+        with ``not_yet_effective`` set on its hit.
+        """
 
         tenant = _tenant(tenant_id)
         query_value = _query(query)
@@ -1620,6 +1631,7 @@ class PrivacyRegulatoryIntelligenceStore:
                 "matched_tokens": matched,
                 "citation_ids": [item.citation_id for item in citations],
             }
+            effective_date = document_payload["effective_date"]
             hits.append(
                 SearchHit(
                     document_id=document_payload["document_id"],
@@ -1630,12 +1642,15 @@ class PrivacyRegulatoryIntelligenceStore:
                     authority=document_payload["authority"],
                     document_type=document_payload["document_type"],
                     publication_date=document_payload["publication_date"],
-                    effective_date=document_payload["effective_date"],
+                    effective_date=effective_date,
                     score=len(matched),
                     excerpt=self._excerpt(content, matched),
                     content_sha256=document_payload["content_sha256"],
                     evidence_sha256=_sha256(evidence),
                     citations=citations,
+                    not_yet_effective=(
+                        effective_date is not None and effective_date > as_of_value
+                    ),
                 )
             )
         hits.sort(key=lambda hit: (-hit.score, hit.publication_date, hit.document_id))
@@ -1678,6 +1693,7 @@ class PrivacyRegulatoryIntelligenceStore:
                 if citation.citation_id not in seen:
                     citations.append(citation)
                     seen.add(citation.citation_id)
+        not_yet_effective = False
         if len(hits) < minimum_evidence:
             status = "abstained"
             answer = (
@@ -1687,9 +1703,22 @@ class PrivacyRegulatoryIntelligenceStore:
         else:
             status = "grounded"
             parts = [
-                f"[{hit.citations[0].citation_id}] {hit.excerpt}" for hit in hits[:10]
+                f"[{hit.citations[0].citation_id}] "
+                + (
+                    f"(not yet in effect; takes effect {hit.effective_date}) "
+                    if hit.not_yet_effective
+                    else ""
+                )
+                + hit.excerpt
+                for hit in hits[:10]
             ]
             answer = "Grounded evidence excerpts: " + " ".join(parts)
+            not_yet_effective = all(hit.not_yet_effective for hit in hits)
+            if not_yet_effective:
+                answer = (
+                    "None of this evidence is in effect yet on the date searched. "
+                    + answer
+                )
         evidence_payload = {
             "query": query_value,
             "status": status,
@@ -1711,6 +1740,7 @@ class PrivacyRegulatoryIntelligenceStore:
             citations=tuple(citations),
             disclaimer=_DISCLAIMER,
             evidence_sha256=_sha256(evidence_payload),
+            not_yet_effective=not_yet_effective,
         )
 
     def compare_jurisdictions(
@@ -1900,6 +1930,12 @@ class PrivacyRegulatoryIntelligenceStore:
             if int(payload["revision"]) != expected:
                 raise PrivacyRegulatoryIntelligenceConflict(
                     "collection expected revision does not match"
+                )
+            # The owner is the only principal who can manage the collection;
+            # replacing that role would leave it with nobody who can.
+            if payload["acl"].get(principal) == "owner":
+                raise PrivacyRegulatoryIntelligenceConflict(
+                    "the collection owner's role cannot be changed"
                 )
             payload["acl"][principal] = role
             payload["revision"] = expected + 1
@@ -2883,13 +2919,7 @@ class PrivacyRegulatoryIntelligenceStore:
                 "query": query_value,
                 "jurisdictions": list(jurisdiction_values),
                 "status": answer.status,
-                "evidence": [
-                    {
-                        **asdict(hit),
-                        "citations": [asdict(citation) for citation in hit.citations],
-                    }
-                    for hit in answer.evidence
-                ],
+                "evidence": [_hit_payload(hit) for hit in answer.evidence],
                 "citations": [asdict(citation) for citation in answer.citations],
                 "disclaimer": answer.disclaimer,
                 "created_by": actor,

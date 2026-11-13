@@ -106,9 +106,9 @@ SUPPORTED_AGGREGATION_METHODS = frozenset(
 SUPPORTED_NOISE_MECHANISMS = frozenset(
     {"discrete_gaussian", "gaussian", "laplace"}
 )
-SUPPORTED_SIGNATURE_ALGORITHMS = frozenset(
-    {"ECDSA-P256-SHA256", "Ed25519", "RSA-PSS-SHA256"}
-)
+# Only what the configured trust-root verifier can check. A wider set would
+# admit reports that are schema-valid and can never pass verification.
+SUPPORTED_SIGNATURE_ALGORITHMS = frozenset({"Ed25519"})
 METHODOLOGY_VERSION = "benchmark-aggregate-v1"
 
 _CONTRIBUTIONS = GovernedRecordStore(

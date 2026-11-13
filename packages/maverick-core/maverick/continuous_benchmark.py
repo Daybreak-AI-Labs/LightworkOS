@@ -41,7 +41,10 @@ def record_result(history: list[dict], name: str, score: float,
 
 
 def _scores_for(history: list[dict], name: str) -> list[float]:
-    return [h["score"] for h in history if h.get("name") == name]
+    # load_history accepts any JSON list: skip rows that are not a result.
+    return [h["score"] for h in history
+            if isinstance(h, dict) and h.get("name") == name
+            and isinstance(h.get("score"), (int, float))]
 
 
 def detect_regression(history: list[dict], name: str, *,
@@ -134,7 +137,8 @@ def _run(args: dict) -> str:
                     f"baseline={r['baseline_mean']}, drop={r['drop_pct']:.1%}, "
                     f"n={r['n']})")
         if op == "history":
-            rows = [h for h in history if not name or h.get("name") == name]
+            rows = [h for h in history
+                    if not name or (isinstance(h, dict) and h.get("name") == name)]
             return json.dumps(rows, indent=2) if rows else "(no history)"
     except ValueError as e:
         return f"ERROR: {e}"

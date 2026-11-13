@@ -33,6 +33,7 @@ from .data_use_governance import (
     DataUseValidationError,
     data_use_limits,
 )
+from .paths import canonical_tenant_id
 
 CONTROL_IR_SCHEMA = "lightwork.data-use.control-ir.v1"
 COMPILER_VERSION = "data-use-compiler/1"
@@ -136,6 +137,15 @@ def _identifier(value: object, label: str) -> str:
     if _SQLISH_RE.search(value):
         raise DataUseCompilationValidationError(f"{label} contains prohibited syntax")
     return value
+
+
+def _tenant_id(value: str) -> str:
+    """Canonicalise a tenant with the rule the governance store applies."""
+
+    try:
+        return canonical_tenant_id(value)
+    except ValueError as exc:
+        raise DataUseCompilationValidationError("tenant_id is invalid") from exc
 
 
 def _timestamp(value: object, label: str) -> float:
@@ -826,7 +836,7 @@ class DataUsePolicyCompiler:
     ) -> Mapping[str, Any]:
         """Compile one decision, rejecting any stale or unsafe authority."""
 
-        tenant = _identifier(tenant_id, "tenant_id")
+        tenant = _tenant_id(tenant_id)
         identity = _identifier(decision_id, "decision_id")
         try:
             bundle = self._store.resolve_compilation_authority(tenant, identity)

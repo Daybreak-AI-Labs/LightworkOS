@@ -953,13 +953,14 @@ def sync_reviewed_alerts(
         impact = result.get("impact")
         if impact is None:
             continue
+        staleness = result.get("staleness") or {}
         notice = result.get("notice") or {}
         rows.append({
             "alert_id": getattr(alert, "alert_id", "?"),
             "impact_id": impact.get("id"),
-            "stale_evidence": len(result.get("staleness") or []),
+            "stale_evidence": len(staleness.get("stale_evidence_ids") or []),
             "notice_id": notice.get("id"),
-            "notice_status": notice.get("status"),
+            "notice_status": (notice.get("delivery") or {}).get("status"),
         })
     return {"alerts": len(alerts), "bridged": rows, "failures": failures}
 

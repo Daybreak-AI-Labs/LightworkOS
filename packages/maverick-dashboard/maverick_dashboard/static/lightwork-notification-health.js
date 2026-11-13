@@ -43,7 +43,7 @@
     finally { setBusy(false); }
   }
   test.addEventListener('click', function () {
-    if (!requestId) requestId = crypto.randomUUID();
+    if (!requestId) requestId = (window.mvNewId ? window.mvNewId() : crypto.randomUUID());
     request('/api/v1/notifications/test', {request_id:requestId});
   });
   refresh.addEventListener('click', function () { request('/api/v1/notifications/delivery-status'); });

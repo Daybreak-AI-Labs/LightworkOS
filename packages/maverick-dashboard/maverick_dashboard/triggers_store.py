@@ -268,7 +268,9 @@ def set_trigger(
     """Create or replace a trigger (by slugified name). Raises ValueError on a
     name that can't be made into a valid slug. ``owner`` records the principal
     that registered it so the dashboard can scope the list per tenant. Exactly
-    one of ``template`` / ``flow`` should be set (the API layer enforces it)."""
+    one of ``template`` / ``flow`` should be set (the API layer enforces it).
+    Raises RuntimeError, writing nothing, when the existing file cannot be
+    parsed: saving over it would drop every other trigger."""
     slug = slugify(name)
     if not _NAME_RE.match(slug):
         raise ValueError("trigger name must contain a letter or digit (a-z, 0-9, -)")
@@ -296,7 +298,8 @@ def set_trigger(
     }
     with _locked():
         kept = [
-            t for t in list_triggers(include_snapshot=True) if t["name"] != slug
+            t for t in list_triggers(include_snapshot=True, strict=True)
+            if t["name"] != slug
         ]
         kept.append(rec)
         _write(kept)
@@ -308,9 +311,10 @@ def delete_trigger(name: str, owner: str | None = None) -> bool:
     trigger belongs to that owner (returns False otherwise) -- the ownership
     check and removal happen under one lock, so there is no read-then-delete
     race and only a single file read. ``owner=None`` (admin / auth-off) deletes
-    regardless of owner."""
+    regardless of owner. Like ``set_trigger`` it raises RuntimeError rather
+    than rewrite a file it could not parse."""
     with _locked():
-        triggers = list_triggers(include_snapshot=True)
+        triggers = list_triggers(include_snapshot=True, strict=True)
         match = next((t for t in triggers if t["name"] == name), None)
         if match is None or (owner is not None and match.get("owner", "") != owner):
             return False

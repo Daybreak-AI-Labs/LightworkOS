@@ -943,6 +943,35 @@ def test_inventory_adapter_rejects_unknown_unreviewed_and_revoked_items(tmp_path
         adapter()
 
 
+def test_inventory_adapter_accepts_observe_only_review_without_second_reviewer(tmp_path) -> None:
+    seeded = _seed_adapter_inventory(tmp_path, second_finding_unreviewed=True)
+    observed = _inventory_finding("unreviewed")
+    seeded["inventory"].review_tracker(
+        seeded["binding"].tenant_id,
+        seeded["binding"].property_id,
+        observed.tracker_key,
+        classification="not_a_tracker",
+        registry_action="observe_only",
+        reviewer_sha256=REVIEWER_A,
+        evidence_sha256=REVIEW_EVIDENCE,
+        report_id=seeded["report"]["report_id"],
+        valid_until=ADAPTER_NOW + 1_000,
+        expected_version=0,
+        idempotency_key="observe-only-review",
+    )
+    adapter = ConsentScanInventorySnapshotAdapter(
+        seeded["inventory"],
+        binding_resolver=lambda: seeded["binding"],
+        revoked_review_resolver=tuple,
+        clock=lambda: ADAPTER_NOW,
+    )
+    classes = {item.tracker_key: item.classification for item in adapter().discoveries}
+    assert classes == {
+        seeded["primary"].tracker_key: "analytics",
+        observed.tracker_key: "not_a_tracker",
+    }
+
+
 def test_inventory_adapter_rejects_stale_review_and_binding_drift(tmp_path) -> None:
     seeded = _seed_adapter_inventory(tmp_path)
     adapter = ConsentScanInventorySnapshotAdapter(

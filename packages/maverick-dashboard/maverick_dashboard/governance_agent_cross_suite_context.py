@@ -733,15 +733,20 @@ class StockCrossSuiteSourceReaders:
         store = self._intelligence_store(tenant)
         if store is None:
             raise context.SourceUnavailable("store_absent")
-        counts = store.context_record_counts(tenant)
         groups = 6
         per_kind = max(1, limit // groups)
-        sources = store.list_sources(tenant, limit=per_kind)
-        snapshots = store.list_source_snapshots(tenant, limit=per_kind)
-        vendors = store.list_vendors(tenant, limit=per_kind)
-        runs = store.list_screening_runs(tenant, limit=per_kind)
-        decisions = store.list_risk_decisions(tenant, limit=per_kind)
-        cases = store.list_edd_cases(tenant, limit=per_kind)
+        try:
+            counts = store.context_record_counts(tenant)
+            sources = store.list_sources(tenant, limit=per_kind)
+            snapshots = store.list_source_snapshots(tenant, limit=per_kind)
+            vendors = store.list_vendors(tenant, limit=per_kind)
+            runs = store.list_screening_runs(tenant, limit=per_kind)
+            decisions = store.list_risk_decisions(tenant, limit=per_kind)
+            cases = store.list_edd_cases(tenant, limit=per_kind)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            raise context.SourceUnavailable("integrity_unverified") from exc
         records: list[context.AuthoritativeContextRecord] = []
         for row in sources:
             records.append(
@@ -893,10 +898,15 @@ class StockCrossSuiteSourceReaders:
         store = self._intelligence_store(tenant)
         if store is None:
             raise context.SourceUnavailable("store_absent")
-        counts = store.context_record_counts(tenant)
         per_kind = max(1, limit // 2)
-        monitors = store.list_monitors(tenant, limit=per_kind)
-        alerts = store.list_monitoring_alerts(tenant, limit=per_kind)
+        try:
+            counts = store.context_record_counts(tenant)
+            monitors = store.list_monitors(tenant, limit=per_kind)
+            alerts = store.list_monitoring_alerts(tenant, limit=per_kind)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            raise context.SourceUnavailable("integrity_unverified") from exc
         records: list[context.AuthoritativeContextRecord] = []
         for row in monitors:
             records.append(

@@ -2522,6 +2522,8 @@ _REQUIRES_ANY: dict[str, tuple[str, ...]] = {
 _ORDERED: tuple[tuple[str, str], ...] = (
     ("administration_document_access.default_ttl_seconds",
      "administration_document_access.max_ttl_seconds"),
+    ("administration_document_access.delivery_grant_ttl_seconds",
+     "administration_document_access.max_ttl_seconds"),
     ("local_runtime.min_replicas", "local_runtime.max_replicas"),
     # Ekko counts a pattern only on days it still keeps.
     ("ekko.min_distinct_days", "ekko.retention_days"),
@@ -2645,6 +2647,10 @@ def _coerce_value(setting: Setting, value: object) -> object:  # noqa: C901 - on
         number = shown * setting.scale
         if setting.scale != 1.0 and abs(number - round(number)) < 1e-6:
             number = float(round(number))
+        elif setting.scale < 1.0:
+            # The page shows four decimal places; the stored value needs those
+            # plus the scale's own (57 percent is 0.57, not 0.5700000000000001).
+            number = round(number, 4 + math.ceil(-math.log10(setting.scale)))
         if setting.integer:
             if number != int(number):
                 raise SettingError(f"{label}: enter a whole number.")

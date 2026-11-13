@@ -152,10 +152,12 @@ def _score_candidates(
         raw = raw.strip()
     try:
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("critic reply is not a JSON object")
         scores = [float(s) for s in (data.get("scores") or [])]
         winner = int(data.get("winner", 0))
         reason = str(data.get("reason", ""))
-    except (ValueError, TypeError, json.JSONDecodeError) as e:
+    except (ValueError, TypeError, OverflowError, json.JSONDecodeError) as e:
         log.warning("ToT critic returned malformed JSON: %s", e)
         # Fallback: pick the longest plan (richer = better, naively).
         scores = [float(len(c.text)) for c in candidates]
@@ -180,8 +182,10 @@ def plan_tree_of_thought(
     """Generate N candidate plans, score them, return the winner.
 
     ``budget`` is shared across the N+1 calls; the function honors it.
-    If budget exhausts mid-flight, we return the best plan generated
-    so far (or a synthesized fallback if even the first call failed).
+    If the budget is exhausted while drafting or scoring, ``BudgetExceeded``
+    propagates to the caller; no partial result is returned. Any other
+    failure of a candidate skips that candidate, and if none succeeds a
+    synthesized fallback plan is returned.
     """
     if n < 1:
         raise ValueError("n must be >= 1")

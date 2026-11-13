@@ -96,7 +96,7 @@
     const current=generation;lock(true);error.textContent='';
     try {
       const confirmed=window.mvConfirm?await window.mvConfirm('Freeze these original values and expected answers, and authorize their reuse for this exact local comparison and independent release review? Each version uses the included workflows shown here. No AI or connected action starts.',{okText:'Compare saved rules'}):window.confirm('Freeze the cases and compare saved rules locally?');if(!confirmed||current!==generation||!state)return;
-      const operation=crypto.randomUUID().replace(/-/g,'');pending='FCP-'+operation;unconfirmed=true;
+      const operation=(window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g,'');pending='FCP-'+operation;unconfirmed=true;
       const body={context:state.context,confirm:true,authorize_case_use:form.elements.case_use.checked,operation,flow_id:state.flow_id,version:state.version,revision:state.revision,baseline_release:state.baseline_release,bundle:state.bundle,output:output.value,cases:selected.map(item=>({run_id:item.source.run_id,source_version:item.source.version,expected:item.kind==='boolean'?item.expected.value==='true':item.expected.value}))};
       const recorded=await request('',body);if(current!==generation)return;render(recorded);history.appendChild(new Option(date(recorded.summary.when)+' · original request',recorded.id));history.value=recorded.id;status.textContent='The original comparison result was read from native records. No publication changed.';
     }catch(failure){if(current===generation){error.textContent=failure.message;if(pending){history.appendChild(new Option('Original request · check saved result',pending));history.value=pending;}}}finally{if(current===generation)lock(false);}

@@ -510,13 +510,29 @@ def embedding_centroid_drift(
     }
 
 
+def _is_finite_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
+def _same_outcome(prediction: object, label: object) -> bool:
+    """Numbers compare by value (``1.0`` matches ``1``); anything else by text."""
+
+    if _is_finite_number(prediction) and _is_finite_number(label):
+        return prediction == label
+    return _token(prediction, "prediction") == _token(label, "ground truth")
+
+
 def _accuracy(predictions: Sequence[object], labels: Sequence[object]) -> dict[str, Any]:
     if len(predictions) != len(labels) or not predictions:
         raise ValueError("predictions and ground_truth must have the same non-zero length")
     if len(predictions) > _MAX_SAMPLES:
         raise ValueError("performance sample count exceeds the operational limit")
     matches = sum(
-        _token(prediction, "prediction") == _token(label, "ground truth")
+        _same_outcome(prediction, label)
         for prediction, label in zip(predictions, labels, strict=True)
     )
     return {

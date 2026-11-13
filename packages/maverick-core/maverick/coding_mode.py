@@ -1296,7 +1296,7 @@ def _cmd_for(
         names = "|".join(re.escape(i.split("::", 1)[1]) for i in ids if "::" in i)
         if not names:
             names = "."
-        return f"go test -count=1 -run '^({names})$' " + " ".join(q(p) for p in (pkgs or ["./..."]))
+        return f"go test -count=1 -run {q(f'^({names})$')} " + " ".join(q(p) for p in (pkgs or ["./..."]))
     if runner == "rspec":
         return "bundle exec rspec --format documentation " + " ".join(q(i) for i in ids)
     if runner == "gradle":
@@ -1326,19 +1326,21 @@ def _parse_pytest(out: str) -> tuple[int, int, bool]:
     # pytest is re-invoked in the same shell call (e.g. tox).
     out = _strip_ansi(out)
     summary_re = re.compile(
-        r"=+\s*"
-        r"(?:(?P<failed>\d+)\s+failed,?\s*)?"
-        r"(?:(?P<errored>\d+)\s+error[s]?,?\s*)?"
-        r"(?:(?P<passed>\d+)\s+passed,?\s*)?"
-        r"(?:.*?in\s+[\d.]+\s*s)",
+        r"=+\s*(?P<counts>.*?)in\s+[\d.]+\s*s",
         re.IGNORECASE,
     )
     matches = list(summary_re.finditer(out))
     if matches:
         m = matches[-1]
-        p = int(m.group("passed") or 0)
-        f = int(m.group("failed") or 0)
-        e = int(m.group("errored") or 0)
+        # Read each count wherever it sits on the summary line: pytest orders
+        # the parts "failed, passed, skipped, ..., error", so "3 passed, 1
+        # error" must not read as zero failures.
+        counts = {"passed": 0, "failed": 0, "error": 0}
+        for num, kind in re.findall(
+            r"(\d+)\s+(passed|failed|error)s?\b", m.group("counts"), re.IGNORECASE,
+        ):
+            counts[kind.lower()] = int(num)
+        p, f, e = counts["passed"], counts["failed"], counts["error"]
         # pytest emits
         # "no tests ran in Ns" when the requested node IDs don't
         # exist (typo, refactor, test_patch reshuffled). The summary

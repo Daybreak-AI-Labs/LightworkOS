@@ -76,7 +76,7 @@ def snapshot_for(kind):
         if kind == "decision":
             fields += [{"name": "decision", "label": "Your decision", "kind": "select", "required": True,
                 "choices": [{"value": value, "label": label} for value, label in (("defer", "Defer"), ("decline", "Keep current process"), ("reopen", "Reopen"), ("adjust", "Adjust manual steps"))]},
-                {"name": "keep_preparation_manual", "label": "Also retain preparation as a manual step", "kind": "checkbox"}]
+                {"name": "keep_preparation_manual", "label": "Also retain preparation as a manual step", "kind": "boolean"}]
         disabled = kind == "confirm" and not native.settings.settings()["completion_confirmation"]
         return Snapshot(digest([(row["id"], row["revision"]) for row in rows]), "Current owned work and opportunity records",
             "Inspect and confirm this change. Source evidence is preserved; drafts never activate themselves.",

@@ -38,6 +38,14 @@ def test_shape_code_block_without_file_summarized():
     assert "x = 1" not in out
 
 
+def test_shape_code_block_does_not_claim_a_write_to_a_non_file():
+    # Any dotted token above a fence used to be spoken as a written file:
+    # "I wrote 2 lines to e.g." / "I wrote 1 line to 2.0."
+    for lead in ("Use a loop, e.g.", "This needs version 2.0", "See https://example.com/app.py"):
+        out = shape_for_speech(lead + "\n```\nx = 1\n```")
+        assert "I wrote" not in out and "a code block of 1 line" in out
+
+
 def test_shape_strips_markdown():
     text = "# Result\n\n**Bold claim** with [a link](https://example.com) and `inline()`.\n- first\n- second"
     out = shape_for_speech(text)

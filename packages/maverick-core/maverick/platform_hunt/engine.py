@@ -317,7 +317,10 @@ def _budget_and_rate(events: tuple[HuntEvent, ...], baseline: BaselineProfile) -
                 f"Observed {len(matches)} {kind} events in an hour; baseline threshold is {threshold:g}",
                 ("T1496", "T1499"), matches,
                 containment="Rate-limit the principal and review the cited burst.",
-                score=min(95, 70 + int(25 * len(matches) / max(threshold, 1))),
+                # 70 just over the threshold, rising linearly with the excess
+                # to the 95 cap at twice the threshold:
+                # 70 + 25 * (count - threshold) / threshold, bounded to [70, 95].
+                score=min(95, 70 + int(25 * (len(matches) - threshold) / max(threshold, 1))),
             ))
     return findings
 
@@ -399,15 +402,16 @@ def _quorum_abuse(events: tuple[HuntEvent, ...], _baseline: BaselineProfile) -> 
 
 
 def _goal_anomaly(events: tuple[HuntEvent, ...], baseline: BaselineProfile) -> list[Finding]:
-    starts: dict[tuple[str, int], list[HuntEvent]] = defaultdict(list)
+    starts: dict[tuple[str, str, int], list[HuntEvent]] = defaultdict(list)
     for event in events:
         if event.kind in {"goal_start", "goal"} and event.outcome.lower() not in {
             "succeeded", "completed",
         }:
-            starts[(event.actor, int(event.observed_at // 3600))].append(event)
+            starts[(event.actor, event.kind, int(event.observed_at // 3600))].append(event)
     findings = []
-    for (actor, _hour), matches in sorted(starts.items()):
-        history = baseline.hourly_counts.get(f"{actor}|goal_start", ())
+    for (actor, kind, _hour), matches in sorted(starts.items()):
+        # Same key build_baseline writes: one hourly history per actor and kind.
+        history = baseline.hourly_counts.get(f"{actor}|{kind}", ())
         threshold = _rate_threshold(history)
         if len(matches) > threshold:
             findings.append(_finding(

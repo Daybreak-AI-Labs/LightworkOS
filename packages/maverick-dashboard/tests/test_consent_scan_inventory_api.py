@@ -364,43 +364,41 @@ def test_server_derived_review_evidence_and_two_reviewer_bridge(environment) -> 
         == 422
     )
 
-    second = hashlib.sha256(b"independent-reviewer").hexdigest()
-    reviewed = _ok(
-        client.post(
-            f"{API}/properties/primary-web/discoveries/{finding.tracker_key}/review",
-            json={
-                "classification": "analytics",
-                "registry_action": "approved",
-                "report_id": report_id,
-                "valid_until": NOW + 86_400,
-                "expected_version": 0,
-                "idempotency_key": "review-approved-v1",
-                "second_reviewer_sha256": second,
-                "tracker_id": "tracker-analytics",
-                "vendor_id": "vendor-analytics",
-                "purpose_ids": ["analytics"],
-                "authority_expected_revision": 0,
-            },
-        )
-    )
-    assert reviewed["evidence_sha256"] == finding.evidence_sha256
-    assert reviewed["reviewer_sha256"] != second
-    assert reviewed["primary_reviewer_bound_to_request_principal"] is True
-    assert reviewed["second_reviewer_independently_authenticated_by_api"] is False
-    strict = client.post(
-        f"{API}/properties/primary-web/discoveries/{finding.tracker_key}/review",
+    people = _two_person_client()
+    requested = people.post(
+        f"{API}/properties/primary-web/discoveries/{finding.tracker_key}/review-requests",
+        headers={"x-test-user": "alice"},
         json={
             "classification": "analytics",
             "registry_action": "approved",
             "report_id": report_id,
             "valid_until": NOW + 86_400,
-            "expected_version": 1,
-            "idempotency_key": "review-forged-evidence",
-            "second_reviewer_sha256": second,
+            "expected_version": 0,
             "tracker_id": "tracker-analytics",
             "vendor_id": "vendor-analytics",
             "purpose_ids": ["analytics"],
             "authority_expected_revision": 0,
+        },
+    )
+    assert requested.status_code == 201, requested.text
+    reviewed = _ok(
+        people.post(
+            f"{API}/review-requests/{requested.json()['request_id']}/approve",
+            headers={"x-test-user": "bob"},
+        )
+    )
+    assert reviewed["evidence_sha256"] == finding.evidence_sha256
+    assert reviewed["reviewer_sha256"] != reviewed["second_reviewer_sha256"]
+    assert reviewed["primary_reviewer_bound_to_request_principal"] is True
+    strict = client.post(
+        f"{API}/properties/primary-web/discoveries/{finding.tracker_key}/review",
+        json={
+            "classification": "analytics",
+            "registry_action": "observe_only",
+            "report_id": report_id,
+            "valid_until": NOW + 86_400,
+            "expected_version": 1,
+            "idempotency_key": "review-forged-evidence",
             "evidence_sha256": "0" * 64,
         },
     )
@@ -591,3 +589,49 @@ def test_registry_review_needs_a_different_signed_in_approver(environment) -> No
         f"{API}/review-requests", headers={"x-test-user": "bob"}
     ).json()["items"][0]["status"] == "approved"
 
+
+def test_direct_review_never_takes_a_typed_second_reviewer(environment) -> None:
+    client, inventory, scanner, _tracker, _clock, _config = environment
+    _seed_authority(client)
+    scan_report, finding = _report("primary-web", label="direct")
+    scanner.outcomes.append(scan_report)
+    report_id = _ok(client.post(f"{API}/properties/primary-web/scan-now"))["outcomes"][0][
+        "report_id"
+    ]
+    url = f"{API}/properties/primary-web/discoveries/{finding.tracker_key}/review"
+    registry = {
+        "classification": "analytics",
+        "registry_action": "approved",
+        "report_id": report_id,
+        "valid_until": NOW + 86_400,
+        "expected_version": 0,
+        "idempotency_key": "direct-approved-v1",
+        "tracker_id": "tracker-analytics",
+        "vendor_id": "vendor-analytics",
+        "purpose_ids": ["analytics"],
+    }
+    typed = client.post(
+        url,
+        json={**registry, "second_reviewer_sha256": hashlib.sha256(b"anyone").hexdigest()},
+    )
+    assert typed.status_code == 422
+    refused = client.post(url, json=registry)
+    assert refused.status_code == 409
+    assert "review-requests" in refused.json()["detail"]
+    assert inventory.list_reviews("tenant-a", "primary-web", finding.tracker_key)["items"] == []
+
+    recorded = _ok(
+        client.post(
+            url,
+            json={
+                "classification": "analytics",
+                "registry_action": "observe_only",
+                "report_id": report_id,
+                "valid_until": NOW + 86_400,
+                "expected_version": 0,
+                "idempotency_key": "direct-observe-v1",
+            },
+        )
+    )
+    assert recorded["registry_action"] == "observe_only"
+    assert recorded["second_reviewer_sha256"] is None

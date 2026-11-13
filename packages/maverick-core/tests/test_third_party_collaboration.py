@@ -821,6 +821,17 @@ def test_retention_legal_hold_history_and_integrity_tamper_detection(
         store.verify_integrity("tenant-a")
 
 
+def test_future_purge_cutoff_does_not_delete_invitations_before_retention_ends(
+    authority: tuple[ThirdPartyCollaborationStore, ThirdPartyLifecycleStore, Clock, Principal],
+) -> None:
+    store, _, clock, _ = authority
+    issue(store)
+    assert store.purge_expired(
+        "tenant-a", before=clock() + DAY * 3650, idempotency_key="purge-future"
+    ) == {"invitations": 0, "drafts": 0}
+    assert store.get_invitation("tenant-a", "invite-1")["status"] != "purged"
+
+
 def test_evidence_is_measured_from_the_file_itself_and_its_bytes_are_not_kept(
     authority: tuple[ThirdPartyCollaborationStore, ThirdPartyLifecycleStore, Clock, Principal],
 ) -> None:

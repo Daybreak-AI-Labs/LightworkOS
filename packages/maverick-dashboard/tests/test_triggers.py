@@ -479,6 +479,21 @@ def test_store_slugifies_and_round_trips(monkeypatch, tmp_path):
         ts.set_trigger("!!!", "weekly-report", {})          # un-sluggable name
 
 
+def test_mutations_refuse_to_overwrite_an_unparseable_file(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    from maverick_dashboard import triggers_store as ts
+    ts.set_trigger("alpha", "weekly-report")
+    path = ts._path()
+    corrupt = path.read_text(encoding="utf-8") + "[[broken\n"
+    path.write_text(corrupt, encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        ts.set_trigger("gamma", "weekly-report")
+    with pytest.raises(RuntimeError):
+        ts.delete_trigger("alpha")
+    assert path.read_text(encoding="utf-8") == corrupt
+
+
 def test_concurrent_set_trigger_does_not_lose_triggers(monkeypatch, tmp_path):
     """set_trigger does a load-modify-save; without the lock concurrent creates
     clobber each other. All N distinct triggers must survive."""

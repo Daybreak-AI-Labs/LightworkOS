@@ -942,6 +942,21 @@ class ThirdPartyFeedRuntimeStore:
                             "updated_at": now,
                         }
                     )
+                elif int(payload["attempt"]) >= int(payload["maximum_attempts"]):
+                    # A lease that expired on the last allowed attempt (the
+                    # worker crashed without reporting) must not be leased
+                    # again: fail_job enforces the same limit.
+                    payload.update(
+                        {
+                            "state": "dead_letter",
+                            "next_attempt_at": now,
+                            "lease_token": None,
+                            "lease_until": None,
+                            "last_error_code": "attempts_exhausted",
+                            "revision": int(payload["revision"]) + 1,
+                            "updated_at": now,
+                        }
+                    )
                 else:
                     token = hashlib.sha256(
                         f"{tenant}:{payload['job_id']}:{worker}:{self._token_factory()}".encode()

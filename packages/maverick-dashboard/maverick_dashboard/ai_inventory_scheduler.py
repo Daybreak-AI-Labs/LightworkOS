@@ -67,7 +67,12 @@ def _tenant_cycle(actor: str) -> dict[str, Any]:
     }
 
 
-def scheduler_cycle(actor: str) -> bool:
+def _cycle(actor: str) -> tuple[bool, float | None]:
+    """Run one cycle; also return the interval the config now asks for.
+
+    The interval is ``None`` when the config is unreadable or the feature is
+    off, so the caller keeps the one it has.
+    """
     from maverick.config import config_source_errors, load_global_config
 
     from .automation_queue import _run_for_active_tenants
@@ -75,21 +80,29 @@ def scheduler_cycle(actor: str) -> bool:
     config = load_global_config() or {}
     if config_source_errors(include_tenant=False):
         log.warning("AI inventory scheduler skipped: global config is unreadable")
-        return False
+        return False, None
     section = _section(config)
     if section.get("enable") is not True:
-        return False
-    _poll_seconds(section)
-    return _run_for_active_tenants(
+        return False, None
+    poll_seconds = _poll_seconds(section)
+    ran = _run_for_active_tenants(
         "AI inventory reconciliation",
         lambda: _tenant_cycle(actor),
     )
+    return ran, poll_seconds
+
+
+def scheduler_cycle(actor: str) -> bool:
+    return _cycle(actor)[0]
 
 
 def _scheduler_loop(stop: threading.Event, actor: str, poll_seconds: float) -> None:
     while not stop.is_set():
         try:
-            scheduler_cycle(actor)
+            # A changed ``poll_seconds`` applies to the next wait, no restart.
+            _ran, current = _cycle(actor)
+            if current is not None:
+                poll_seconds = current
         except Exception as exc:  # failure-policy: visible_degradation
             log.warning("AI inventory scheduler failed safely: %s", type(exc).__name__)
         stop.wait(poll_seconds)

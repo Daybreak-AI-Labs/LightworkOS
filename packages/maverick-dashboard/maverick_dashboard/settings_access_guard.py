@@ -11,11 +11,16 @@ leave saved records unreadable. Before such a save is written this module:
 * evaluates the settings as they would be after the save (the same layers
   and precedence the kernel uses, environment still winning);
 * refuses the save with one plain sentence when that person would lose their
-  way in or their administrator role and no working replacement is proven,
-  or when Lightwork would refuse to start;
-* otherwise asks for confirmation (the page shows the sentence) whenever the
-  person will be signed out or must sign in a new way. A provider connection
-  check is not proof that a person can sign in again.
+  administrator role, when Lightwork would refuse to start, or when they
+  would lose their way in and none of the three ways back below applies;
+* asks for confirmation (the page shows the sentence) when the person will be
+  signed out but has a way back Lightwork can be sure of: this computer
+  opening without sign-in, the owner account's email and passphrase, or the
+  guarded move to company sign-in (``company_signin_migration``).
+
+A company sign-in that is only configured never counts as a way back: a
+provider connection check is not proof that a person can sign in again, so a
+change that relies on it alone is refused, not confirmed.
 
 The server's access token set in the environment is the break-glass way in:
 a person using it can never be locked out by a change here, because nothing
@@ -364,20 +369,13 @@ def _stays_admin(principal: str, after: Access) -> bool:
     return _is_admin_role(after.default_role)
 
 
-def _someone_is_admin(after: Access) -> bool:
-    if after.admins:
-        return True
-    from . import rbac
-
-    try:
-        return any(_is_admin_role(rbac.get_stored_role(p)) for p in rbac.list_users())
-    except Exception:
-        return False
-
-
 # ------------------------------------------------------------------- review
-def _proven_sign_in(after: Access, values: dict) -> tuple[bool, str]:
-    """Provider checks cannot prove that a human can sign in after this save."""
+def _unproven_sign_in(after: Access, values: dict) -> str:
+    """Why the company sign-in after this save is not a proven way back.
+
+    Provider checks cannot prove that a human can sign in, so this never
+    reports success: it returns the sentence to show ("" when no company
+    sign-in would be on)."""
     from . import settings_tests
 
     failure = ""
@@ -389,7 +387,7 @@ def _proven_sign_in(after: Access, values: dict) -> tuple[bool, str]:
         outcome = settings_tests.check_saml_login(values)
         failure = failure or ("Provider metadata is reachable, but no person has completed a "
                               "sign-in through this configuration yet." if outcome.ok else outcome.message)
-    return False, failure
+    return failure
 
 
 def _unproven_message(route: str, after: Access, failure: str) -> str:
@@ -420,7 +418,7 @@ def _unproven_message(route: str, after: Access, failure: str) -> str:
 
 def _way_back(request, route: str, principal: str | None, after_cfg: dict, after: Access,
               values: dict) -> str:
-    """How the person gets back in once their current way in ends ("" = none)."""
+    """How the person gets back in once their current way in ends; refused when there is no way."""
     if route != "local" and after.anonymous_ok and _is_this_computer(request):
         return ("You will be signed out. On this computer Lightwork will open again without "
                 "sign-in.")
@@ -432,14 +430,7 @@ def _way_back(request, route: str, principal: str | None, after_cfg: dict, after
     migration = guarded_transition(request, after_cfg)
     if migration:
         return migration
-    proven, failure = _proven_sign_in(after, values)
-    if proven:
-        if not (principal and _stays_admin(principal, after)) and not _someone_is_admin(after):
-            raise Refused("After this change nobody would be an administrator. Add yourself to "
-                          "the administrators list first.")
-        return ("You will be signed out of Lightwork and will need to sign in again with your "
-                "company sign-in. Make sure you are on the administrators list.")
-    raise Refused(_unproven_message(route, after, failure))
+    raise Refused(_unproven_message(route, after, _unproven_sign_in(after, values)))
 
 
 def review_sign_in(request, changes: list[dict], layers: dict[str, Any], writes: dict,

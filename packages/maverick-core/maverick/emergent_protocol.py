@@ -73,10 +73,17 @@ def learn(messages, *, max_codes: int = 128, min_count: int = 2,
                 counts[" ".join(words[i:i + n])] += 1
 
     code_len = len(_code(0))
+    # A phrase that itself contains a sentinel bracket cannot be coded safely:
+    # encode() doubles every literal ``_OPEN`` *before* replacing phrases, so
+    # the phrase no longer matches as written, and a phrase holding ``_CLOSE``
+    # can match across the end of a code already placed -- either way decode()
+    # no longer returns the original. Drop such phrases (the same rule as
+    # ``emergent_tokens.learn``): degrade to no compression, never corruption.
     scored = [
         (phrase, cnt * (len(phrase) - code_len))
         for phrase, cnt in counts.items()
         if cnt >= min_count and len(phrase) > code_len
+        and _OPEN not in phrase and _CLOSE not in phrase
     ]
     scored.sort(key=lambda kv: (kv[1], len(kv[0])), reverse=True)
 

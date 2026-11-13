@@ -101,12 +101,13 @@ def synthetic_gradient() -> list[tuple[int, int, int]]:
 
 # --- Native fast path (optional) -------------------------------------------
 # A Rust implementation (the ``maverick_native`` extension, built from
-# ``rust/mvk-scan``) moves the per-pixel luma loop into Rust on the
-# computer-use hot path (every screenshot is hashed). It is OPTIONAL: when the
-# wheel isn't installed the pure-Python functions above are used unchanged, so
-# behaviour is identical either way -- the native module is a drop-in
-# accelerator, never a new dependency. The ``hasattr`` guards keep an older
-# ``maverick_native`` (built before these symbols existed) from breaking.
+# ``rust/mvk-scan``) moves the per-pixel luma loop into Rust. No kernel code
+# calls these hash functions yet (``installation_info`` only reports whether
+# the native module is present), so this is not on a hot path today. It is
+# OPTIONAL: when the wheel isn't installed the pure-Python functions above are
+# used unchanged, so behaviour is identical either way -- the native module is
+# a drop-in accelerator, never a new dependency. The ``hasattr`` guards keep an
+# older ``maverick_native`` (built before these symbols existed) from breaking.
 try:  # pragma: no cover - import guard
     import maverick_native as _native
 except Exception:  # pragma: no cover

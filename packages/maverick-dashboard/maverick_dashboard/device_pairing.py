@@ -3,6 +3,15 @@
 Credentials never authorize general dashboard routes. The encrypted installation
 registry is deliberately independent of a browser's selected workspace; each
 approved record contains the exact tenant and principal that must be rebound.
+
+The registry keeps a credential as its hash. The one exception is the short
+window in which a device collects a credential it has not seen yet: the clear
+token waits in the approved pairing request for at most 60 seconds, and after
+a renewal for at most ``RENEWAL_RETRY`` seconds so a device whose reply was
+lost can ask once more. It is removed when the device collects it (the
+successful poll, the repeated renewal, or the first request made with the
+renewed credential). One that is never collected is removed by the next device
+request or registry write after its window: nothing runs on a timer here.
 """
 from __future__ import annotations
 
@@ -26,6 +35,7 @@ PREFIX = "lwdev1_"
 PAIR_PREFIX = "lwpair1_"
 PAIR_TTL = 300
 ENROLLMENT_TTL = 30 * 86400
+RENEWAL_RETRY = 60
 READ_PATHS = re.compile(r"^/api/v1/(?:goals(?:/search|/[1-9][0-9]*(?:/events|/open_questions)?)?|oversight/active|spend|glance|goal-tree|offline/bundle)$")
 
 
@@ -77,8 +87,20 @@ def _load():
         raise HTTPException(503, "The device registry could not be verified.") from exc
 
 
+def _forget_uncollected(value, now):
+    """Drop clear credentials whose collection window has passed; say whether any was dropped."""
+    pending = {key: row for key, row in value["pending"].items() if "token" not in row or row["expires_at"] > now}
+    stale = [row for row in value["devices"].values() if "renewal" in row and row["renewal"].get("until", 0) <= now]
+    for row in stale:
+        del row["renewal"]
+    dropped = bool(stale) or len(pending) != len(value["pending"])
+    value["pending"] = pending
+    return dropped
+
+
 def _save(value, *, effect_guard=None):
     now = time.time()
+    _forget_uncollected(value, now)
     value["pending"] = {key: row for key, row in value["pending"].items() if row["expires_at"] > now}
     value["devices"] = {key: row for key, row in value["devices"].items() if row.get("work_attempts") or (row["enrollment_expires_at"] > now and not row.get("revoked"))}
     protected = seal(json.dumps(value, separators=(",", ":")).encode())
@@ -203,6 +225,9 @@ def poll(token):
             _current(device["principal"], device["issued_at"])
         finally:
             reset_tenant(pin)
+        # Collected: the request and its clear token go, the device row keeps the hash.
+        del state["pending"][ident]
+        _save(state)
         return {"status": "approved", "token": row["token"], "device": _public(device)}
 
 
@@ -234,7 +259,8 @@ def _scope(method, path, row, policy):
 def authenticate(token, method, path):
     ident, secret = _split(token, PREFIX)
     with _locked():
-        row = _load()["devices"].get(ident)
+        state = _load()
+        row = state["devices"].get(ident)
         now = time.time()
         secret_hash = _hash(secret)
         renewal = (row or {}).get("renewal", {})
@@ -257,6 +283,15 @@ def authenticate(token, method, path):
             _scope(method, path, row, policy)
         finally:
             reset_tenant(pin)
+        # A device using its renewed credential has collected it.
+        collected = bool(renewal) and not recovery
+        if collected:
+            del row["renewal"]
+        if _forget_uncollected(state, now) or collected:
+            try:
+                _save(state)
+            except OSError:
+                pass  # the next registry write removes it; a valid device is not refused for this
         return VerifiedPrincipal(sub=row["principal"][5:], issuer="lightwork:paired-device", audience="lightwork:companion",
                                  claims={"device_id": ident, "tenant": row["tenant"], "iat": row["issued_at"],
                                          "new_tasks": row.get("new_tasks") is True, "approvals": row.get("approvals") is True})
@@ -321,6 +356,9 @@ def renew(token, generation):
             raise HTTPException(401, "This device connection was removed or expired.")
         previous = row.get("renewal", {})
         if previous.get("generation") == generation and previous.get("until", 0) > now:
+            # The one repeat of a renewal whose reply was lost: collected now.
+            del row["renewal"]
+            _save(state)
             return {"token": previous["token"], "device": _public(row)}
         if row["generation"] != generation or not hmac.compare_digest(row["secret_hash"], _hash(secret)):
             raise HTTPException(409, "This device connection changed. Pair again if the saved renewal is unavailable.")
@@ -328,7 +366,7 @@ def renew(token, generation):
         new_secret = secrets.token_urlsafe(32)
         new_token = PREFIX + ident + "." + new_secret
         _audit(principal.principal, "renewed", ident)
-        row["renewal"] = {"generation": generation, "previous_hash": row["secret_hash"], "token": new_token, "until": now + 60}
+        row["renewal"] = {"generation": generation, "previous_hash": row["secret_hash"], "token": new_token, "until": now + RENEWAL_RETRY}
         row.update(secret_hash=_hash(new_secret), generation=generation + 1, issued_at=now,
                    expires_at=min(now + policy["ttl"], row["enrollment_expires_at"]))
         _save(state)

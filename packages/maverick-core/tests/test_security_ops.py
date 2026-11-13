@@ -964,6 +964,44 @@ def test_incident_closure_resolves_clocks_and_closed_state_is_immutable():
     assert security_ops.get_incident(incident["id"])["revision"] == closed_snapshot["revision"]
 
 
+def test_incident_clock_keeps_its_anchor_breach_and_a_way_back_to_notifiable():
+    incident = security_ops.open_incident(
+        "Late notification",
+        clock_ids=["nis2_early_24h", "gdpr_eu_72h"],
+        reported_by="incident-commander",
+    )
+    anchor = time.time() - 30 * 3600  # the 24h deadline has already passed
+    running = security_ops.start_incident_clock(
+        incident["id"], "nis2_early_24h", anchor, "legal", incident["revision"]
+    )
+    with pytest.raises(security_ops.SecurityTransitionError, match="cannot be started again"):
+        security_ops.start_incident_clock(
+            incident["id"], "nis2_early_24h", time.time(), "legal", running["revision"]
+        )
+    notify = security_ops.decide_incident_notification(
+        incident["id"], "nis2_early_24h", True, "Counsel: notifiable.", "legal", running["revision"]
+    )
+    # Decided before it was ever started, then the determination changes.
+    documented = security_ops.decide_incident_notification(
+        incident["id"], "gdpr_eu_72h", False, "Counsel: not applicable.", "legal", notify["revision"]
+    )
+    restarted = security_ops.start_incident_clock(
+        incident["id"], "gdpr_eu_72h", time.time(), "legal", documented["revision"]
+    )
+    security_ops.decide_incident_notification(
+        incident["id"], "gdpr_eu_72h", True, "Counsel: notifiable after all.", "legal",
+        restarted["revision"],
+    )
+
+    listed = security_ops.get_incident(incident["id"])
+    clocks = {clock["key"]: clock for clock in listed["regulatory_clocks"]}
+    assert clocks["nis2_early_24h"]["anchor_at"] == anchor
+    assert clocks["nis2_early_24h"]["clock_breached"] is True  # the late decision stays breached
+    assert clocks["gdpr_eu_72h"]["state"] == "notify"
+    assert clocks["gdpr_eu_72h"]["clock_breached"] is False  # decided inside its 72 hours
+    assert listed["clock_breached"] is True
+
+
 def test_incident_closure_requires_a_chronologically_complete_response():
     base = time.time() - 300
     incident = security_ops.open_incident(

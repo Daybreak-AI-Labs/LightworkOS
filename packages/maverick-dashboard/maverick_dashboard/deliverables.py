@@ -8,10 +8,9 @@ rather than the same undifferentiated stream.
 
 Pure and presentation-only: the route gathers the pack contracts (specs) and
 the recent runs per domain; this shapes them into the view model. A run is
-"awaiting sign-off" when its pack declares a gate and the run has finished
-(``done``) -- the human review the gate calls for hasn't been recorded yet.
-The real approval linkage lands with the governed-handoff step; until then this
-is the honest signal we can compute from a run's status.
+"awaiting sign-off" when its pack declares a gate, the run has finished
+(``done``) and no sign-off decision is recorded for it; a recorded decision
+(approved or rejected) takes the run out of the waiting list.
 """
 from __future__ import annotations
 

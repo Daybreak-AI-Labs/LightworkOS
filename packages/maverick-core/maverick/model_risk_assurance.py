@@ -23,6 +23,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
+from datetime import date
 from itertools import islice
 from pathlib import Path
 from typing import Any
@@ -590,6 +591,17 @@ def citation_is_current(
     )
 
 
+def _iso_date(value: object, label: str) -> str:
+    text = _required_text(value, label, 64)
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            raise ValueError(text)
+        date.fromisoformat(text)
+    except ValueError:
+        raise ValueError(f"{label} must be a calendar date (YYYY-MM-DD)") from None
+    return text
+
+
 def _eu_assertion(value: object, *, actor: str, now: float) -> dict[str, Any]:
     raw = {} if value is None else value
     if not isinstance(raw, Mapping):
@@ -615,7 +627,7 @@ def _eu_assertion(value: object, *, actor: str, now: float) -> dict[str, Any]:
         "category": category,
         "asserted_by": asserted_by,
         "asserted_at": asserted_at,
-        "as_of": _required_text(raw.get("as_of"), "EU AI Act assertion as_of", 64),
+        "as_of": _iso_date(raw.get("as_of"), "EU AI Act assertion as_of"),
         "source_ref": _required_text(raw.get("source_ref"), "EU AI Act source_ref", 1000),
         "rationale": _required_text(raw.get("rationale"), "EU AI Act rationale", 4000),
         "human_reviewed": True,

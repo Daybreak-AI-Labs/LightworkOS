@@ -45,3 +45,24 @@ def test_export_json_scrubs_secret_and_stays_valid(tmp_path, monkeypatch):
     assert _SECRET not in text
     assert "REDACTED" in text
     json.loads(text)  # still valid JSON after scrubbing
+
+
+def test_export_json_with_numeric_fields_is_valid_json(tmp_path, monkeypatch):
+    # A float epoch ``ts`` reads as a phone number to the PII detector.
+    events = [{
+        "kind": "observation", "ts": 1717027200.5, "goal_id": 1,
+        "content": "mail john@example.com", "card": 4111111111111111,
+    }]
+    monkeypatch.setattr(
+        rx,
+        "load_goal_events",
+        lambda gid, files=None: (
+            events,
+            {"status": "unsigned", "anchors": "unavailable_unsigned", "files": []},
+        ),
+    )
+    out = tmp_path / "replay.json"
+    rx.export_json(1, out)
+    event = json.loads(out.read_text(encoding="utf-8"))["events"][0]
+    assert event["ts"] == 1717027200.5
+    assert "john@example.com" not in event["content"]

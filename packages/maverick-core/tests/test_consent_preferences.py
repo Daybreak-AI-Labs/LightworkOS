@@ -231,6 +231,15 @@ def test_profile_contract_rejects_raw_or_unbounded_identity_values(
         store.create_profile("tenant-a", profile_id, "known", subject, "idem-1")
 
 
+def test_expired_newest_policy_does_not_revive_a_superseded_version(store):
+    for version, effective, expiry in [(1, NOW - 20, None), (2, NOW - 10, NOW + 5)]:
+        store.publish_policy("tenant-a", "notice", version, {"analytics": "consent"},
+                             DIGEST_A, effective, expires_at=expiry,
+                             expected_current_version=version - 1)
+    assert store.get_active_policy("tenant-a", "notice", at=NOW)["version"] == 2
+    assert store.get_active_policy("tenant-a", "notice", at=NOW + 5) is None
+
+
 def test_policy_versions_are_append_only_and_compare_and_swap(
     store: ConsentPreferenceStore,
 ) -> None:

@@ -43,6 +43,27 @@ def _sanitize(text: str) -> str:
     return _pii_redact(scrub(text))[0]
 
 
+def _sanitize_strings(value):
+    """Copy a JSON-ready value with every string (keys included) sanitized.
+
+    Redacting the serialized text instead also rewrites bare numbers (an epoch
+    ``ts`` reads as a phone number) into unquoted placeholders, which is not
+    JSON. Numbers therefore pass through unchanged.
+    """
+    if isinstance(value, str):
+        return _sanitize(value)
+    if isinstance(value, dict):
+        return {
+            (_sanitize(key) if isinstance(key, str) else key): _sanitize_strings(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_strings(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _sanitize(str(value))
+
+
 # Compatibility override: existing tests/operators monkeypatch ``_AUDIT_DIR``.
 # While untouched, the actual path is resolved for the active tenant per call.
 _INITIAL_AUDIT_DIR = data_dir("audit")
@@ -365,12 +386,9 @@ def export_html(goal_id: int, out_path: Path) -> int:
 def export_json(goal_id: int, out_path: Path) -> int:
     """Atomically publish matching events and their proof posture as JSON."""
     events, proof = load_goal_events(goal_id)
-    payload = _sanitize(
-        json.dumps(
-            {"goal_id": goal_id, "proof": proof, "events": events},
-            indent=2,
-            default=str,
-        )
+    payload = json.dumps(
+        _sanitize_strings({"goal_id": goal_id, "proof": proof, "events": events}),
+        indent=2,
     )
     _publish_text(Path(out_path), payload)
     return len(events)

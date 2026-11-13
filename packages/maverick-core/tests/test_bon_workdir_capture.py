@@ -13,6 +13,7 @@ import tempfile
 from maverick.orchestrator import (
     _capture_workdir_diff,
     _reset_workdir_to_head,
+    _single_attempt_only,
     _strip_binary_diff_sections,
 )
 
@@ -231,3 +232,13 @@ def test_reset_works_on_blobless_partial_clone(tmp_path):
 
     _reset_workdir_to_head(repo)
     assert (repo / "a.txt").read_bytes() == b"orig\n"  # reset actually happened
+
+
+def test_best_of_n_is_skipped_when_the_workdir_has_uncommitted_work(tmp_path):
+    # Each attempt starts with a hard reset; that must never wipe a user's edits.
+    repo = tmp_path / "repo"
+    _init_repo(repo, {"a.py": b"x = 1\n"})
+    assert _single_attempt_only(4, True, repo) is False
+    (repo / "a.py").write_bytes(b"x = 2\n")
+    assert _single_attempt_only(4, True, repo) is True
+    assert (repo / "a.py").read_bytes() == b"x = 2\n"

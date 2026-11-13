@@ -68,7 +68,7 @@ def _prepare_source(path: Path) -> None:
         )
 
 
-def _store(path: Path, *, tenant: str = TENANT) -> ConsentCustomIndexStore:
+def _store(path: Path, *, tenant: str = TENANT, now: float = NOW) -> ConsentCustomIndexStore:
     return ConsentCustomIndexStore(
         path,
         key_resolver=lambda resolved_tenant, version: (
@@ -76,11 +76,17 @@ def _store(path: Path, *, tenant: str = TENANT) -> ConsentCustomIndexStore:
         ),
         config_gate=lambda: None,
         principal_resolver=lambda: "admin-1",
-        clock=lambda: NOW,
+        clock=lambda: now,
     )
 
 
-def _write_value(path: Path, profile_id: str, value: str, revision: int = 1) -> None:
+def _write_value(
+    path: Path,
+    profile_id: str,
+    value: str,
+    revision: int = 1,
+    expires_at: float | None = None,
+) -> None:
     payload = {
         "tenant_id": TENANT,
         "profile_id": profile_id,
@@ -88,7 +94,7 @@ def _write_value(path: Path, profile_id: str, value: str, revision: int = 1) -> 
         "status": "active",
         "value": value,
         "revision": revision,
-        "expires_at": None,
+        "expires_at": expires_at,
     }
     with sqlite3.connect(path) as connection:
         connection.execute(
@@ -163,6 +169,33 @@ def test_index_lifecycle_exact_search_staleness_and_rebuild(tmp_path: Path) -> N
         "profile-a",
     )
     assert store.verify_integrity(TENANT)["ok"] is True
+
+
+def test_search_drops_values_that_expired_after_the_index_was_built(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.sqlite3"
+    _prepare_source(path)
+    store = _store(path)
+    store.create_index(
+        TENANT,
+        index_id="loyalty-index",
+        element_name="loyalty-tier",
+        key_version=1,
+        retention_seconds=86_400,
+        idempotency_key="create-index-0001",
+    )
+    _write_value(path, "profile-a", "gold", expires_at=NOW + 60)
+    _write_value(path, "profile-b", "gold")
+    store.build_index(
+        TENANT, "loyalty-index", expected_revision=1, idempotency_key="build-index-0001"
+    )
+    assert store.search(TENANT, "loyalty-index", value="gold").profile_ids == (
+        "profile-a",
+        "profile-b",
+    )
+
+    later = _store(path, now=NOW + 61).search(TENANT, "loyalty-index", value="gold", limit=1)
+    assert later.profile_ids == ("profile-b",)
+    assert later.next_cursor is None
 
 
 def test_index_idempotency_revoke_and_closed_inputs(tmp_path: Path) -> None:

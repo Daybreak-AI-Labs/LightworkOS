@@ -10,7 +10,8 @@ not already allow. The page adds:
 * ownership: a session belongs to the person who opened it and to one task,
   and every route first applies the task page's own access check;
 * the task's limits: each step counts as one tool call against the configured
-  per-task limits (tool calls and running time), checked before it runs;
+  per-task limits, checked before it runs. The time limit is wall time since
+  the session was opened (idle minutes included), not time spent running code;
 * bounds: code size, returned output, open sessions per person and task and
   in total; sessions close after 30 idle minutes and when Lightwork stops;
 * where statements would run directly on this computer (no isolated

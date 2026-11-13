@@ -3,7 +3,7 @@
   const root=document.getElementById('bundle-root');if(!root)return;
   const $=id=>document.getElementById('bundle-'+id),base='/api/v1/deliverable-bundles',context=root.dataset.context;
   const goal=Number(root.dataset.goal)||null;let reviewed=null,selected=null,busy=false,pendingShare=null,responseAttempt=null;
-  const id=()=>crypto.randomUUID().replaceAll('-','');
+  const id=()=>(window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replaceAll('-','');
   function say(text){window.mvStatus($('status'),text);}
   function clearPrivate(){root.querySelectorAll('input,textarea').forEach(el=>{el.value='';});for(const name of ['inbox','items','preview-content','detail-files'])$(name).replaceChildren();$('source').hidden=true;$('detail').hidden=true;$('preview').hidden=true;reviewed=null;selected=null;pendingShare=null;}
   async function call(path,body){

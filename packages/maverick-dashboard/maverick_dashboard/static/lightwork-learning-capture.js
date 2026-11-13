@@ -286,7 +286,6 @@
   $('original-read').addEventListener('click', () => run(readOriginal));
   ['review-reason', 'grant-reason', 'grant-until', 'grant-copies'].forEach(name => $(name).addEventListener('input', () => { reviewed = null; $('decision-review').replaceChildren(); }));
   window.addEventListener('lightwork:context-changed', forgetPrivate);
-  document.addEventListener('lightwork:workspace-changing', forgetPrivate);
   document.addEventListener('lightwork:copilot-context-changed', event => {
     if (event.detail && event.detail.reason === 'selection') { reviewed = null; $('decision-review').replaceChildren(); run(async () => { const value = await decisionApi(''); if (value.context !== scope) forgetPrivate(); }); }
     else forgetPrivate();

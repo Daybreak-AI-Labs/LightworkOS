@@ -180,7 +180,9 @@ def deliver_alert_batch(
             )
         except Exception as error:  # noqa: BLE001 - sanitize at transport boundary
             code = _safe_error_code(error)
-            exponent = max(0, item.attempt - 1)
+            # ``item.attempt`` counts the failures before this one, so the
+            # first failure waits the base interval and each later one doubles.
+            exponent = max(0, item.attempt)
             backoff = min(
                 float(maximum_backoff_seconds),
                 float(base_backoff_seconds) * (2**exponent),

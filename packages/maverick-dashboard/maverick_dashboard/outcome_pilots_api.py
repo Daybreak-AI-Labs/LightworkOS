@@ -274,10 +274,9 @@ async def release_status(request: Request, response: Response, pilot_id: str):
 
 @router.post("/api/v1/outcome-pilots/prepared-tasks")
 async def prepare_task(request: Request, response: Response, body: PreparedTaskIn):
-    from .app import check_goal_rate_limit
-
+    # The goal rate limit is charged once, in execute_native, which every
+    # route to a new prepared task passes through.
     _context(request, mutation=True)
-    check_goal_rate_limit(request)
     response.headers["Cache-Control"] = "private, no-store"
     return await _call(_legacy_mutation, request, "prepare", body)
 

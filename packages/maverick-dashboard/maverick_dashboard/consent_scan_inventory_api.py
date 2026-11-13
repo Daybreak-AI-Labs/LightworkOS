@@ -133,7 +133,6 @@ class ReviewIn(_StrictModel):
     valid_until: float = Field(gt=0, lt=100_000_000_000.0)
     expected_version: int = Field(ge=0, le=2**31 - 1)
     idempotency_key: IdempotencyKey
-    second_reviewer_sha256: Digest | None = None
     tracker_id: OpaqueId | None = None
     vendor_id: OpaqueId | None = None
     purpose_ids: list[OpaqueId] = Field(default_factory=list, max_length=128)
@@ -666,10 +665,25 @@ async def review_discovery(
     tracker_key: DigestPath,
     body: ReviewIn,
 ) -> dict[str, Any]:
-    """Record a review using server-derived primary reviewer and finding evidence."""
+    """Record a review that needs no second reviewer.
+
+    The primary reviewer and the finding evidence are server-derived. A
+    registry-changing review needs a second reviewer, and this route never
+    takes one from the caller: it goes through the review-requests flow,
+    where a different signed-in administrator approves.
+    """
 
     require_global_permission(request, "admin")
     ops, tenant, inventory = _authority()
+    if body.registry_action != "observe_only":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "this review needs a second reviewer; file it with "
+                "POST .../discoveries/{tracker_key}/review-requests so a "
+                "different administrator can approve it"
+            ),
+        )
     evidence = await _finding_evidence(
         ops, tenant, inventory, property_id, tracker_key, body.report_id
     )

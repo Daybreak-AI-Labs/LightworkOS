@@ -53,10 +53,17 @@ class RegistryProbeIn(RegistryNameIn):
 
 
 def _registry_spec(name: str):
-    from maverick.mcp_registry import install_mcp_from_registry
+    from maverick import mcp_registry
     try:
-        return install_mcp_from_registry(name)
-    except Exception as exc:  # noqa: BLE001 -- missing or unsafe entries read the same
+        return mcp_registry.install_mcp_from_registry(name)
+    except Exception as exc:  # noqa: BLE001 -- unsafe and unreadable entries read the same
+        try:
+            listed = any(entry.name == name for entry in mcp_registry.load_mcp_registry())
+        except Exception:  # noqa: BLE001 -- an unreadable registry is not "not found"
+            listed = True
+        if not listed:
+            raise HTTPException(409, "That server was not found in the registry. Show the available "
+                                     "servers again and choose one from the list.") from exc
         raise HTTPException(409, "Registry server installation is unavailable until publisher "
                                  "authentication is implemented. Independently review and configure the server.") from exc
 

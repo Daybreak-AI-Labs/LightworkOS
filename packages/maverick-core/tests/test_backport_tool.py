@@ -113,6 +113,18 @@ def test_plan_skips_cherry_picked_twin():
     assert [f.subject for f in todo] == ["fix(security): ssrf"]
 
 
+def test_plan_skips_cherry_picked_twin_at_a_shifted_offset():
+    # The same change lands lower in the file on the LTS branch, so only the
+    # hunk header's line numbers differ. It is still the same fix.
+    body = " ctx\n-old()\n+scrub()\n"
+    head = "diff --git a/s.py b/s.py\n--- a/s.py\n+++ b/s.py\n"
+    sec = (*_SEC[:4], head + "@@ -10,3 +10,3 @@ def f():\n" + body)
+    twin_sha = "d" * 40
+    git = FakeGit([sec], lts_shas=[twin_sha])
+    git.diffs[twin_sha] = head + "@@ -42,3 +42,3 @@ def f():\n" + body
+    assert plan("lts/1.0", "v1.0", git=git) == []
+
+
 def test_plan_empty_when_all_ported():
     t1, t2 = "d" * 40, "e" * 40
     git = FakeGit([_SEC, _SEC2], lts_shas=[t1, t2])

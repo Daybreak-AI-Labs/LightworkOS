@@ -1258,6 +1258,10 @@ class PostgresWorldModel:
                 "Postgres world model requires MAVERICK_PG_DSN or "
                 "[world_model] dsn in config.toml."
             )
+        # There is no rebinding migration for this backend, so values sealed
+        # before column binding existed must stay readable.
+        from ..world_model import _UNREBOUND_BACKENDS
+        _UNREBOUND_BACKENDS.add("postgres")
         from ..postgres_io import BoundedConnection, postgres_io_timeout_seconds
 
         self._rls = _rls_enabled()

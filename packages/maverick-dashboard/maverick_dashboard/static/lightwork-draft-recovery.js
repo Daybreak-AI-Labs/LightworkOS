@@ -256,7 +256,7 @@
     async function persist(payload) {
       if (running || disposed) return false;
       running = true; controls();
-      var operation = pendingOperation || {expected_revision:revision, operation_id:root.crypto.randomUUID(), payload:payload};
+      var operation = pendingOperation || {expected_revision:revision, operation_id:(root.mvNewId ? root.mvNewId() : root.crypto.randomUUID()), payload:payload};
       pendingOperation = operation;
       try {
         var data = await call('PUT', operation);

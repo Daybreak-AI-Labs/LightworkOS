@@ -273,6 +273,9 @@ class Draft1040:
     carried: list[tuple[str, float, str]] = field(default_factory=list)
     # carried figures (mortgage interest, retirement, ...) -- extracted for
     # the preparer, NOT summed into the computation above
+    # the year of the constants that computed this draft (a signed bundle can
+    # carry another year than the built-in table)
+    tax_year: int = TY2025["year"]
 
 
 @dataclass
@@ -287,6 +290,7 @@ class StateDraft:
     withholding: float = 0.0
     balance: float = 0.0             # negative = refund (computed states only)
     open_items: list[str] = field(default_factory=list)
+    tax_year: int = STATE_TY2025["year"]  # year of the constants used
 
 
 def classify(text: str) -> str:
@@ -719,6 +723,7 @@ def compute_first_pass(wp: Workpaper, *, constants: dict = TY2025) -> Draft1040:
         open_items=open_items + list(wp.notes),
         lines=lines,
         carried=carried_figures(wp),
+        tax_year=int(constants["year"]),
     )
     return draft
 
@@ -768,6 +773,7 @@ def compute_state_first_pass(wp: Workpaper, state: str, *,
     CCH Axcess / GoSystem connectors).
     """
     state = (state or "").upper()
+    year = int(constants["year"])
     status = normalize_filing_status(wp.filing_status)
     status = status if status in FILING_STATUSES else "single"
     withholding = round(sum(
@@ -789,14 +795,14 @@ def compute_state_first_pass(wp: Workpaper, state: str, *,
     if state not in STATE_CODES:
         return StateDraft(
             state=state or "??", filing_status=status, computed=False,
-            withholding=withholding,
+            withholding=withholding, tax_year=year,
             open_items=open_items + [
                 "resident state not determined -- set it on the workpaper "
                 "(or --state) so the state return can be drafted"])
 
     if state in constants["no_tax"]:
         return StateDraft(state=state, filing_status=status, computed=True,
-                          withholding=withholding,
+                          withholding=withholding, tax_year=year,
                           balance=round(-withholding, 2),
                           open_items=open_items)
 
@@ -805,7 +811,7 @@ def compute_state_first_pass(wp: Workpaper, state: str, *,
     if flat is None and graduated is None:
         return StateDraft(
             state=state, filing_status=status, computed=False,
-            withholding=withholding,
+            withholding=withholding, tax_year=year,
             open_items=open_items + [
                 f"{state} has a graduated/credit-structured income tax with no "
                 "bracket table loaded -- first pass not computed; PREPARER MUST "
@@ -836,12 +842,12 @@ def compute_state_first_pass(wp: Workpaper, state: str, *,
         state=state, filing_status=status, computed=True,
         rate=rate, state_taxable=round(taxable, 2), tax=tax,
         withholding=withholding, balance=round(tax - withholding, 2),
-        open_items=open_items,
+        open_items=open_items, tax_year=year,
     )
 
 
 def _render_state(out: list[str], sd: StateDraft) -> None:
-    out += ["", f"DRAFT {sd.state} STATE RETURN (TY{STATE_TY2025['year']}) "
+    out += ["", f"DRAFT {sd.state} STATE RETURN (TY{sd.tax_year}) "
                 "— first pass",
             "-" * 52]
     if not sd.computed:
@@ -872,7 +878,7 @@ def render_review_package(draft: Draft1040,
     triage = (f"REVIEW SUMMARY: {n_open} open item(s) for the preparer"
               if n_open else "REVIEW SUMMARY: no open items flagged")
     out = [DISCLAIMER, "", triage, "",
-           f"DRAFT FORM 1040 (TY{TY2025['year']}) — first pass",
+           f"DRAFT FORM 1040 (TY{draft.tax_year}) — first pass",
            "=" * 52,
            f"Filing status        : {draft.filing_status.upper()}"]
     for desc, amount, source in draft.lines:
@@ -927,7 +933,7 @@ def review_package_dict(draft: Draft1040,
     the text package remains the human-facing artifact."""
     data: dict = {
         "disclaimer": DISCLAIMER,
-        "tax_year": TY2025["year"],
+        "tax_year": draft.tax_year,
         "filing_status": draft.filing_status,
         "is_draft": True,
         "federal": {

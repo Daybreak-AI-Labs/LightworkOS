@@ -69,6 +69,7 @@
           <textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" placeholder="For example: Customer table in the sales database, owned by the data team"></textarea>
         </label>
         <label class="cw-wide">Or attach its description<input class="input" type="file" name="evidence_file"></label>
+        <p class="muted cw-wide">Only a fingerprint of the note or file is recorded. The text or file itself is not stored, so keep your own copy.</p>
         <div class="cw-actions">
           <button class="btn" type="submit">Save</button>
           <button class="btn btn--ghost" type="button" data-dug-close="dug-catalog">Cancel</button>
@@ -109,6 +110,7 @@
         <label>Valid until<input class="input" type="date" name="fresh_until" required></label>
         <label class="cw-wide">Supporting note<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" placeholder="Who confirmed this and where it is written down"></textarea></label>
         <label class="cw-wide">Or attach the supporting document<input class="input" type="file" name="evidence_file"></label>
+        <p class="muted cw-wide">Only a fingerprint of the note or document is recorded. The text or document itself is not stored, so keep your own copy.</p>
         <details class="cw-wide"><summary>More options</summary>
           <label>Version of the source record<input class="input" type="number" name="source_revision" min="1" value="1"></label>
         </details>
@@ -151,6 +153,7 @@
           </select>
         </label>
         <label class="cw-wide">What it means<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" placeholder="Email addresses of customers and prospects"></textarea></label>
+        <p class="muted cw-wide">Only a fingerprint of this note is recorded. The text itself is not stored, so keep your own copy.</p>
         <div class="cw-actions">
           <button class="btn" type="submit">Save label</button>
           <button class="btn btn--ghost" type="button" data-dug-close="dug-label">Cancel</button>
@@ -167,6 +170,7 @@
         <label>Data set<select class="select" name="asset_id" required></select></label>
         <label>Field<select class="select" name="field_id" required></select></label>
         <label class="cw-wide">Why this field gets the label<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000"></textarea></label>
+        <p class="muted cw-wide">Only a fingerprint of this note is recorded. The text itself is not stored, so keep your own copy.</p>
         <div class="cw-actions">
           <button class="btn" type="submit">Label field</button>
           <button class="btn btn--ghost" type="button" data-dug-close="dug-assign">Cancel</button>
@@ -257,6 +261,7 @@
         <label data-effect="mask" hidden>How to hide it<select class="select" name="mask_method"></select></label>
         <label>Ends on<input class="input" type="date" name="expires_at" required></label>
         <label class="cw-wide">Why it is needed<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" required></textarea></label>
+        <p class="muted cw-wide">Only a fingerprint of this note is recorded. The text itself is not stored, so keep your own copy.</p>
         <div class="cw-actions">
           <button class="btn" type="submit">Send for approval</button>
           <button class="btn btn--ghost" type="button" data-dug-close="dug-exception">Cancel</button>
@@ -293,6 +298,7 @@
         <fieldset class="cw-wide"><legend>Fields needed</legend><div class="cw-checks" id="dug-request-fields"></div></fieldset>
         <fieldset class="cw-wide"><legend>Purpose</legend><div class="cw-checks" id="dug-request-purposes"></div></fieldset>
         <label class="cw-wide">Why the project needs it<textarea class="textarea" name="evidence_note" rows="2" maxlength="2000" required></textarea></label>
+        <p class="muted cw-wide">Only a fingerprint of this note is recorded. The text itself is not stored, so keep your own copy.</p>
         <div class="cw-actions">
           <button class="btn" type="submit">Send request</button>
           <button class="btn btn--ghost" type="button" data-dug-close="dug-request">Cancel</button>

@@ -602,6 +602,15 @@ def test_parser_rejects_unsafe_or_uncited_input(tmp_path):
     )
     with pytest.raises(FeedParseError, match="DTD"):
         engine.ingest(source, b"<!DOCTYPE rss><rss/>", fetched_at=_FETCHED_AT)
+    # The refusal must not depend on the payload encoding: UTF-16 carries no
+    # ASCII "<!DOCTYPE" byte run, and its entity would otherwise be expanded.
+    utf16 = (
+        '<?xml version="1.0" encoding="UTF-16"?>'
+        '<!DOCTYPE rss [<!ENTITY a "expanded">]>'
+        "<rss><channel><item><guid>1</guid><title>&a;</title></item></channel></rss>"
+    ).encode("utf-16")
+    with pytest.raises(FeedParseError, match="DTD"):
+        engine.ingest(source, utf16, fetched_at=_FETCHED_AT)
 
     json_source = FeedSource(
         key="strict-json",

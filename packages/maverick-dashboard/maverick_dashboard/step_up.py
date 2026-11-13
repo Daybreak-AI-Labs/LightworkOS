@@ -21,7 +21,7 @@ this list in one place: it is what the security overview documents.
 """
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import HTTPException, Request
 
@@ -52,13 +52,37 @@ class StepUpRequired(HTTPException):
         self.reauthenticate = reauthenticate
 
 
+def _referring_page(request: Request) -> str:
+    """The same-origin page a request was sent from, or ``/``."""
+    from .oidc_login import _safe_return_to
+
+    try:
+        referer = urlsplit(request.headers.get("referer") or "")
+    except ValueError:
+        return "/"
+    if not referer.netloc or referer.netloc != request.url.netloc:
+        return "/"
+    page = referer.path or "/"
+    if referer.query:
+        page = f"{page}?{referer.query}"
+    return _safe_return_to(page)
+
+
 def reauthenticate_url(request: Request | None) -> str:
-    """Where to send the person to sign in again and come back."""
+    """Where to send the person to sign in again and come back.
+
+    A GET comes back to itself. Any other method comes back to the page that
+    sent it: its own path often has no GET route (a form's POST target), so
+    returning there would end on an error page after signing in again.
+    """
     return_to = "/"
     if request is not None:
-        return_to = request.url.path
-        if request.method == "GET" and request.url.query:
-            return_to = f"{return_to}?{request.url.query}"
+        if request.method == "GET":
+            return_to = request.url.path
+            if request.url.query:
+                return_to = f"{return_to}?{request.url.query}"
+        else:
+            return_to = _referring_page(request)
     encoded = quote(return_to, safe="")
     try:
         from maverick.oidc import login_enabled

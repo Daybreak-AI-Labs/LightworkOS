@@ -63,7 +63,6 @@ def test_store_factory_binds_request_principal_and_private_custody(
 ) -> None:
     app = FastAPI()
     request = request_for(app)
-    monkeypatch.setattr(composition, "caller_principal", lambda _request: "user:operator")
     monkeypatch.setattr(composition, "has_global_permission", lambda _request, _permission: True)
     monkeypatch.setattr(
         composition,

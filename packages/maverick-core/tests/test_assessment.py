@@ -135,6 +135,27 @@ def test_risky_answers_score_findings_and_roll_up():
     assert r.answered == 3  # yes/no/na count; unknown does not
 
 
+def test_every_builtin_template_records_and_scores_including_critical():
+    from maverick.assessment import (
+        AssessmentSession,
+        list_templates,
+        render_result_text,
+    )
+
+    for tpl in list_templates():
+        s = AssessmentSession(type=tpl.type, subject="Acme Corp")
+        for q in tpl.questions:
+            s.record(q.id, q.risk_answer)  # verifies the pinned snapshot each time
+        r = s.evaluate()
+        assert len(r.findings) == len(tpl.questions), tpl.type
+        assert {f.kind for f in r.findings} == {"risk"}, tpl.type
+        if tpl.type == "texas_traiga":
+            # A critical finding outranks high and is never scored as low.
+            assert r.risk_rating == "high"
+            first_finding = render_result_text(r).split("Findings")[1].splitlines()[1]
+            assert first_finding.lstrip().startswith("[CRITICAL]")
+
+
 def test_inherent_vs_residual_risk_pair():
     """Inherent = every applicable risk area (before crediting controls);
     residual = what the findings leave open. A control in place lowers

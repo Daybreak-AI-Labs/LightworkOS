@@ -120,6 +120,19 @@ def principal_mfa(principal) -> tuple[bool, float | None]:
         return True, None
 
 
+def _issued_by_a_signed_in_person(principal) -> bool:
+    """True for an API key or a paired device.
+
+    Neither can present a second factor. Both are issued only from an
+    interactive sign-in, which this policy has already checked, so the
+    requirement is met when the credential is issued. Without this, turning
+    the requirement on would refuse every service account.
+    """
+    claims = getattr(principal, "claims", None) or {}
+    return (claims.get("via") == "api_key"
+            or getattr(principal, "issuer", "") == "lightwork:paired-device")
+
+
 def enforce_session_policy(principal) -> None:
     """Refuse an established named identity that lacks a required second factor.
 
@@ -128,6 +141,8 @@ def enforce_session_policy(principal) -> None:
     before the requirement was turned on.
     """
     if principal is None or not require_mfa():
+        return
+    if _issued_by_a_signed_in_person(principal):
         return
     proved, _when = principal_mfa(principal)
     if not proved:

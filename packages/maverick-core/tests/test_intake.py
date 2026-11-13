@@ -188,6 +188,20 @@ class TestRunIntake:
         assert prof.knowledge_sources == ["theta_inc"]
         assert not kb.search("theta_inc", "paid leave", k=3)
 
+    def test_llm_draft_without_a_budget_gets_one_from_config(self):
+        from maverick.budget import Budget
+        from maverick.intake import run_intake
+
+        seen = []
+
+        class _RecordingLLM(_StubLLM):
+            def complete(self, system, messages, **kw):
+                seen.append(kw.get("budget"))
+                return super().complete(system, messages, **kw)
+
+        run_intake(IntakeSpec(name="Theta Inc"), llm=_RecordingLLM("{}"))
+        assert len(seen) == 1 and isinstance(seen[0], Budget)
+
     def test_attach_docs_uses_isolated_pending_collection(self, tmp_path):
         from maverick.intake import run_intake
         from maverick_knowledge import DeterministicEmbedder, KnowledgeBase

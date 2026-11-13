@@ -2904,9 +2904,13 @@ class PrivacyNoticeGovernanceStore:
         idempotency_key: str,
     ) -> Mapping[str, int]:
         tenant = _tenant(tenant_id)
-        moment = _timestamp(cutoff, "cutoff")
+        requested = _timestamp(cutoff, "cutoff")
         actor = self._actor()
-        request = {"action": "purge_expired", "cutoff": moment, "actor_ref": actor}
+        now = _timestamp(self._clock(), "current time")
+        # A cutoff in the future must not delete records before their
+        # retention ends: nothing later than the current time is purged.
+        moment = min(now, requested)
+        request = {"action": "purge_expired", "cutoff": requested, "actor_ref": actor}
         with self._connect() as connection:
             self._begin(connection)
             request_sha, operation = self._operation(
@@ -2969,7 +2973,7 @@ class PrivacyNoticeGovernanceStore:
                     "proposals": proposals,
                     "releases": len(candidates),
                 },
-                moment,
+                now,
             )
             return {
                 "exports": exports,

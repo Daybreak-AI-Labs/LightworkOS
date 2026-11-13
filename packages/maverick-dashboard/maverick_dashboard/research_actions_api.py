@@ -1,6 +1,6 @@
 """Helpers behind the Research lab's plain controls.
 
-``POST /research-files/fingerprint`` reads an uploaded file as a stream and
+``POST /api/v1/research-files/fingerprint`` reads an uploaded file as a stream and
 returns its SHA-256, so the page records a fingerprint from a chosen file
 instead of asking anyone to type one. The file is never stored. Same
 ``operate`` permission as the research workspace it serves.

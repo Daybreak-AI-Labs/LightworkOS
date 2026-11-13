@@ -34,6 +34,7 @@ from .env_setting import env_or_config as _env_or_config
 from .llm import model_for_role
 from .run_outcome import GoalCancelled, cancellation_message, owned_task, task_stop
 from .swarm import SwarmContext
+from .swarm import verifier_confidence as _verifier_confidence
 from .tools import ToolRegistry, base_registry
 from .tools.agent_bus_tool import delegate_to_agent, recv_from_agent, send_to_agent
 from .tools.spawn import (
@@ -3107,9 +3108,7 @@ class Agent:
             _av = autonomy.gate_tool(
                 name,
                 disagreement=float(getattr(self.ctx, "last_disagreement", 0.0) or 0.0),
-                verifier_confidence=float(
-                    getattr(self.ctx, "last_verifier_confidence", 1.0) or 1.0
-                ),
+                verifier_confidence=_verifier_confidence(self.ctx),
                 configured_max_risk=getattr(cap, "max_risk", None),
             )
         except Exception:  # pragma: no cover -- autonomy gate must never break the loop

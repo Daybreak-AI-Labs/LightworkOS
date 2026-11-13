@@ -2,7 +2,7 @@
 
 This module is a local publication authority, not evidence of live external
 publication or customer acceptance.  It stores immutable, versioned plain-text
-policy artifacts; exposes one stable opaque link per policy family; and moves an
+policy artifacts; exposes stable opaque links for a policy family; and moves an
 exact current-version pointer only through CAS-protected operations.  Private
 links use high-entropy bearer capabilities whose raw value is returned once and
 never persisted.
@@ -1350,6 +1350,8 @@ class PolicyPublicationStore:
     ) -> dict[str, Any]:
         """Create one stable public or private policy-family link.
 
+        A policy family can have several links (a public one and a private
+        one, say); each is stable for its own life.
         A private capability is present only on the first successful return.
         Idempotent retries return the stable link metadata but never replay the
         raw capability.
@@ -2650,7 +2652,8 @@ class PolicyPublicationStore:
 
         All authorization failures use the same exception type.  The access log
         records only whether a credential was presented, never its raw value or
-        a digest derived from it.
+        a digest derived from it.  Requests for a link id that does not exist
+        are refused without an access event.
         """
 
         self._require_enabled()
@@ -2719,16 +2722,18 @@ class PolicyPublicationStore:
                             "current policy content is unavailable"
                         )
                     outcome = "granted"
-            self._access(
-                connection,
-                tenant=tenant,
-                link_id=link,
-                output_format=output_format,
-                outcome=outcome,
-                credential_present=capability is not None,
-                request_context_sha256=request_context_sha256,
-                now=now,
-            )
+                # Only requests for a link that exists are logged: a caller
+                # guessing link ids must not be able to grow the access log.
+                self._access(
+                    connection,
+                    tenant=tenant,
+                    link_id=link,
+                    output_format=output_format,
+                    outcome=outcome,
+                    credential_present=capability is not None,
+                    request_context_sha256=request_context_sha256,
+                    now=now,
+                )
             if outcome == "granted" and row is not None and artifact is not None:
                 assert content_row is not None
                 content = _loads(content_row["content_json"], "policy content")

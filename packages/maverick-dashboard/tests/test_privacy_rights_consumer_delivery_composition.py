@@ -390,3 +390,28 @@ def test_package_key_and_config_drift_fail_closed(runtime) -> None:
             retained_until=NOW + 500,
             idempotency_key="mint-delivery-key-drift",
         )
+
+
+def test_stock_key_resolution_refuses_vault_and_secret_references(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Without an installed resolver only env: resolves; the other schemes
+    # must not be read as if they named an environment variable.
+    monkeypatch.setenv("DELIVERY_KEY", "k" * 40)
+    app = SimpleNamespace(state=SimpleNamespace())
+    for ref in ("vault:DELIVERY_KEY", "secret:DELIVERY_KEY"):
+        with pytest.raises(
+            composition.PrivacyRightsConsumerDeliveryCompositionError,
+            match="not supported",
+        ):
+            composition._resolve_key(
+                app, tenant_id="tenant-a", key_ref=ref, expected_ref=ref, purpose="digest"
+            )
+        assert composition._reference_ready(app, ref, "digest") is False
+    assert composition._resolve_key(
+        app,
+        tenant_id="tenant-a",
+        key_ref="env:DELIVERY_KEY",
+        expected_ref="env:DELIVERY_KEY",
+        purpose="digest",
+    ) == b"k" * 40

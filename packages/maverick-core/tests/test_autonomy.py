@@ -358,3 +358,12 @@ class TestVerifyFinalRouting:
         await v.verify_final("b", "p", object(), None, force_ensemble=False)
         assert called["single"] is True
         assert called["ensemble"] is False and called["structured"] is False
+
+
+def test_a_recorded_zero_confidence_is_not_read_as_full_confidence():
+    from types import SimpleNamespace
+
+    from maverick.swarm import verifier_confidence
+
+    assert verifier_confidence(SimpleNamespace(last_verifier_confidence=0.0)) == 0.0
+    assert verifier_confidence(SimpleNamespace()) == 1.0

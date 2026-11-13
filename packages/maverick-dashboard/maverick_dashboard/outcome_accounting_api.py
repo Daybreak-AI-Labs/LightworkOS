@@ -1,4 +1,9 @@
-"""Read-only in-app projection of complete outcome accounting records."""
+"""In-app projection of complete outcome accounting records.
+
+Not read-only: the GET routes first reconcile each pilot-backed record with
+its current source, which can write, and the POST routes record a baseline,
+commercial terms and costs.
+"""
 from __future__ import annotations
 
 import hashlib

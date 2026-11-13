@@ -1145,20 +1145,30 @@ def repair_default_workspace() -> None:
 async def _lifespan(app: FastAPI):
     """Application lifespan: run startup tasks, then yield to serve.
 
-    Replaces the deprecated ``@app.on_event("startup")`` handlers. The two
-    startup steps (orphan-goal reclaim, queue-dispatcher install) run in their
-    original registration order; their bodies each guard with try/except so a
-    failure never blocks startup.
+    Replaces the deprecated ``@app.on_event("startup")`` handlers. Startup
+    runs in the order written below: the deploy gates, the control-plane
+    lease, the auth-configuration check, the database pools and goal
+    admission, then orphan-goal reclaim, the queue dispatcher and the
+    background schedulers, and last the automation scheduler.
+
+    Most optional steps (the schedulers wrapped in try/except, the proxy
+    warning, the voice warm-up) are guarded, so their failure never blocks
+    startup. The rest are not guarded and abort startup when they raise:
+
+    - the recovery-mode check, and three deploy gates that are each a no-op
+      unless the deployment opted in, so the default fail-open posture is
+      unchanged (kernel rule 1): the mandatory enterprise boundary
+      (MAVERICK_REQUIRE_ENTERPRISE=1 / ``[enterprise] require = true``), the
+      residency pin and the supply-chain pin check;
+    - the restart check, a bad shutdown timeout, the control-plane lease (a
+      second writer on one data root must not start), the dashboard auth
+      check, the database pools and goal admission;
+    - the scheduler starters that are called without a try/except, and the
+      runtime-configuration receipt just before serving.
 
     All owned and composed schedulers share a shutdown supervisor: close goal
     admission, signal every component, then join/drain against one deadline.
     Partial startup and exceptional lifespan exit run the same cleanup.
-
-    One exception to "never blocks startup": when the deployment has opted into
-    a mandatory enterprise boundary (MAVERICK_REQUIRE_ENTERPRISE=1 /
-    ``[enterprise] require = true``), the preflight is allowed to raise and abort
-    startup -- that is the point of a deploy gate. It is a silent no-op
-    otherwise, so the default fail-open posture is unchanged (kernel rule 1).
     """
     from maverick.installation_recovery import assert_normal_start_allowed
 
@@ -1831,8 +1841,13 @@ def _compress_enabled() -> bool:
     return True
 
 
-# Versioned static assets get the long cache; then gzip (outermost, so it
-# compresses every response including the static bundles). Starlette's
+# Versioned static assets get the long cache; then gzip, added after it and
+# so outside it: it compresses every route's response including the static
+# bundles. It is not the outermost layer. Everything added later wraps it
+# (the size limit below, the function middlewares defined further down, the
+# request memo and activity count), so a response one of those produces by
+# itself (a 401/403 from bearer_auth, the IP-allowlist refusal, an extension
+# preflight, a 413) is not compressed. Starlette's
 # middleware skips text/event-stream and already-compressed media types.
 # Level 6 (zlib's default) instead of Starlette's 9: on the rendered pages
 # it halves the per-response CPU cost for a 1-3% larger body.
@@ -1841,8 +1856,10 @@ if _compress_enabled():
     from starlette.middleware.gzip import GZipMiddleware
 
     app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
-# Outermost: refuse an over-size request before any parser (the multipart
-# form parser spools uploads to disk) reads it.
+# Outside gzip and every route: refuse an over-size request before any route's
+# parser (the multipart form parser spools uploads to disk) reads it. The
+# function middlewares defined below wrap this one, so those that read a body
+# themselves (the ``bound_*`` ones) do so first, each under its own cap.
 from .request_size import RequestSizeLimitMiddleware  # noqa: E402
 
 app.add_middleware(RequestSizeLimitMiddleware)
@@ -2984,12 +3001,18 @@ def _webhook_duplicate_delivery(route: str, payload: dict) -> bool:
     given, so id-less callers keep the current at-least-once behaviour. The id
     is namespaced per ``route`` so a /webhook/start id can't mask a /webhook/run
     one. Never raises -- a degraded dedup store must not drop a webhook."""
-    delivery_id = str(payload.get("id") or "").strip()[:200]
-    if not delivery_id:
+    key = _webhook_delivery_key(route, payload)
+    if not key:
         return False
     from maverick.webhooks import _default_max_age
 
-    return _issue_webhook_replay_seen(f"webhook-{route}:{delivery_id}", _default_max_age())
+    return _issue_webhook_replay_seen(key, _default_max_age())
+
+
+def _webhook_delivery_key(route: str, payload: dict) -> str:
+    """The dedup key for a signed webhook's delivery ``id`` ("" when it has none)."""
+    delivery_id = str(payload.get("id") or "").strip()[:200]
+    return f"webhook-{route}:{delivery_id}" if delivery_id else ""
 
 
 # Safe methods skip the CSRF check (browsers send Origin/Referer
@@ -3123,7 +3146,14 @@ def _api_key_bearer_present(request: Request) -> bool:
 
 @app.middleware("http")
 async def http_metrics(request: Request, call_next):
-    """Count every request into the always-on runtime metrics registry.
+    """Count each request that reaches this layer into the always-on runtime
+    metrics registry.
+
+    A request refused by a middleware outside this one (the bearer and
+    same-origin check, the IP allowlist, the extension preflight) never gets
+    here and is not counted; sign-in refusals have their own counter,
+    ``maverick_auth_failures_total``. An error nothing handled is counted as
+    status 500, which is what the caller receives.
 
     Route TEMPLATES, never raw paths, keep label cardinality bounded;
     a request that matches no route counts under "unmatched"."""
@@ -3132,19 +3162,27 @@ async def http_metrics(request: Request, call_next):
     from maverick import runtime_metrics
 
     started = _time.monotonic()
-    response = await call_next(request)
-    route = request.scope.get("route")
-    template = getattr(route, "path", None) or "unmatched"
-    runtime_metrics.increment(
-        "lightwork_http_requests_total", method=request.method,
-        route=template, status=str(response.status_code),
-        help_text="Dashboard HTTP requests by route template",
-    )
-    runtime_metrics.increment(
-        "lightwork_http_request_seconds_total", route=template,
-        amount=_time.monotonic() - started,
-        help_text="Total request wall time by route template",
-    )
+
+    def count(status: int) -> None:
+        route = request.scope.get("route")
+        template = getattr(route, "path", None) or "unmatched"
+        runtime_metrics.increment(
+            "lightwork_http_requests_total", method=request.method,
+            route=template, status=str(status),
+            help_text="Dashboard HTTP requests by route template",
+        )
+        runtime_metrics.increment(
+            "lightwork_http_request_seconds_total", route=template,
+            amount=_time.monotonic() - started,
+            help_text="Total request wall time by route template",
+        )
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        count(500)
+        raise
+    count(response.status_code)
     return response
 
 
@@ -3659,10 +3697,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 error["input"] = "[redacted]"
     try:
         return JSONResponse({"detail": errors}, status_code=422)
-    except UnicodeEncodeError:
-        # The error echoes the rejected input, and a lone surrogate in a JSON
-        # string cannot be written as UTF-8: escape it instead of answering 500.
-        return Response(json.dumps({"detail": errors}), status_code=422, media_type="application/json")
+    except ValueError:
+        # The error echoes the rejected input. A lone surrogate in a JSON string
+        # cannot be written as UTF-8 (UnicodeEncodeError) and a non-finite number
+        # (NaN, Infinity) is not JSON at all: escape the first and name the
+        # second as a string instead of answering 500.
+        safe = json.loads(json.dumps({"detail": errors}), parse_constant=str)
+        return Response(json.dumps(safe), status_code=422, media_type="application/json")
 
 
 @app.exception_handler(TaskLimitConfigError)
@@ -3993,8 +4034,9 @@ def _allowed_extension_origin(request: Request) -> str | None:
 async def extension_cors(request: Request, call_next):
     """CORS for the bundled WebExtension only (opt-in; see above).
 
-    Registered after the other middlewares, so it is OUTERMOST: preflights
-    are answered before bearer_auth (a preflight carries no Authorization
+    Registered after bearer_auth, so it runs OUTSIDE it (only tenant_pinning,
+    the request memo, the activity count and tracing are further out):
+    preflights are answered before bearer_auth (a preflight carries no Authorization
     header by design and grants nothing by itself), and the CORS header is
     added to every response for an allowed origin — including 401s, so the
     popup can read the error instead of a blocked-by-CORS blank.
@@ -4388,8 +4430,7 @@ def workforce_page(request: Request) -> HTMLResponse:
         deployed_fleets = list_fleets()
     except Exception:
         deployed_fleets = []
-    if owner is not None:
-        deployed_fleets = [fleet for fleet in deployed_fleets if fleet.owner == owner]
+    deployed_fleets = [fleet for fleet in deployed_fleets if fleet.owner == owner]
     deployed_specialists = sum(
         1
         for fleet in deployed_fleets
@@ -4634,7 +4675,7 @@ def project_detail(request: Request, project_id: int, tab: str = "") -> HTMLResp
     project = w.get_project(project_id)
     # Owner-scoped like goals: a project you don't own 404s rather than leaks.
     owner = goal_owner_filter(request)
-    if project is not None and owner is not None and project["owner"] != owner:
+    if project is not None and project["owner"] != owner:
         project = None
     if tab == "plan":
         return _project_plan_tab(request, project_id, project)
@@ -4672,7 +4713,7 @@ def goal_set_project(
     if pid is not None:
         project = w.get_project(pid)
         owner = goal_owner_filter(request)
-        if project is None or (owner is not None and project["owner"] != owner):
+        if project is None or project["owner"] != owner:
             raise HTTPException(status_code=404, detail="no such project")
     w.set_goal_project(goal_id, pid)
     return RedirectResponse(f"/chat/goal/{goal_id}", status_code=303)
@@ -5112,8 +5153,9 @@ def spend_page(request: Request) -> HTMLResponse:
     # The burn/outcome/top-goal charts render client-side from
     # GET /api/v1/dashboards/spend; the page keeps the episode table + hero.
     # Scope both reads to the caller (matches /api/v1/spend and the on-page
-    # charts) so a non-admin never sees the whole tenant's spend/episodes.
-    # goal_owner_filter returns None for admins / auth-off, preserving that view.
+    # charts) so no caller sees the whole tenant's spend/episodes.
+    # goal_owner_filter returns the caller's own principal, for an administrator
+    # too, and "" (unowned work only) for a caller with no named account.
     from .value_views import value_scope
 
     owner = goal_owner_filter(request)
@@ -7686,7 +7728,10 @@ def replay_page(request: Request, tab: str = "") -> HTMLResponse:
     from .navigation_api import areas_on
 
     raw = (request.query_params.get("goal") or "").strip()
-    goal_id = int(raw) if raw.isdigit() else None
+    try:
+        goal_id = int(raw) if raw.isdigit() else None
+    except ValueError:  # isdigit() admits "²" and digit runs past int()'s length limit
+        goal_id = None
     tabs = _replay_tabs(request, goal_id)
     if tab in ("branches", "video"):
         if tab not in {key for key, _label, _href in tabs}:
@@ -8622,15 +8667,14 @@ def _run_tree_context(request: Request) -> dict:
 
     owner_filter = goal_owner_filter(request)
     rows = session_tree.roots(limit=200)
-    if owner_filter is not None:
-        rows = [r for r in rows if r["owner"] == owner_filter]
+    rows = [r for r in rows if r["owner"] == owner_filter]
     selected = request.query_params.get("goal")
     try:
         goal_id = int(selected) if selected else (rows[0]["goal_id"] if rows else 0)
     except (TypeError, ValueError):
         goal_id = 0
     tree = session_tree.tree(goal_id) if goal_id else {}
-    if tree and owner_filter is not None and tree.get("owner") != owner_filter:
+    if tree and tree.get("owner") != owner_filter:
         tree = {}
     try:
         from maverick.config import get_session_tree
@@ -10182,10 +10226,10 @@ def fleets_page(request: Request) -> HTMLResponse:
         fleets = list_fleets()
     except Exception:  # pragma: no cover - never 500 the console if the registry errors
         fleets = []
-    # Owner-scope the roster to the caller (auth-off/admin -> all).
+    # Owner-scope the roster to the caller (an administrator too; a caller
+    # with no named account sees only unowned fleets).
     owner = goal_owner_filter(request)
-    if owner is not None:
-        fleets = [f for f in fleets if f.owner == owner]
+    fleets = [f for f in fleets if f.owner == owner]
     # Saved teams can outlive a specialist's department setting or pack file.
     # Show the current check beside the task form, rather than discovering a
     # missing required action after the person has already assigned work.
@@ -10932,23 +10976,21 @@ def cost_anomalies(
     above mean + threshold_sigma * stdev (min 3 goals before anything can
     flag). The data behind a dashboard alert badge.
 
-    Owner-scoped: an authenticated non-admin sees anomalies only among their own
-    goals (auth-off / admin see all), so other tenants' goal ids and exact spend
-    don't leak -- the same scoping ``/api/v1/cost/by-tag`` applies."""
+    Owner-scoped: every caller, an administrator included, sees anomalies only
+    among their own goals (a caller with no named account: unowned goals), so
+    other tenants' goal ids and exact spend don't leak -- the same scoping
+    ``/api/v1/cost/by-tag`` applies."""
     import statistics
 
     w = _world()
     limit = max(1, min(int(limit), 10_000))
-    owner = goal_owner_filter(request)
-    owned: set[int] | None = None
-    if owner is not None:
-        owned = _owned_goal_ids(w, owner)
+    owned = _owned_goal_ids(w, goal_owner_filter(request))
     by_goal: dict[int, float] = {}
     for ep in w.list_episodes(limit=limit):
         gid = getattr(ep, "goal_id", None)
         if gid is None:
             continue
-        if owned is not None and gid not in owned:
+        if gid not in owned:
             continue
         by_goal[gid] = by_goal.get(gid, 0.0) + float(getattr(ep, "cost_dollars", 0) or 0)
     spends = [s for s in by_goal.values() if s > 0]
@@ -11340,14 +11382,12 @@ def cost_by_tag_api(
     limit = max(1, min(int(limit), 10_000))
     w = _world()
     owner = goal_owner_filter(request)
-    if owner is not None and hasattr(w, "episodes_for_owner_goals"):
+    if hasattr(w, "episodes_for_owner_goals"):
         # One owner-scoped query: the newest goals' runs, no per-goal reads.
         rows = gather(w, tag_field=tag_field,
                       episodes=w.episodes_for_owner_goals(owner, limit=limit))
     else:
-        goal_ids = None
-        if owner is not None:
-            goal_ids = [g.id for g in w.list_goals(owner=owner, limit=10_000, order="desc")]
+        goal_ids = [g.id for g in w.list_goals(owner=owner, limit=10_000, order="desc")]
         rows = gather(w, tag_field=tag_field, limit=limit, goal_ids=goal_ids)
     buckets = split_by_tag(rows)
     return JSONResponse({"tag_field": tag_field, "buckets": buckets})
@@ -11950,7 +11990,8 @@ async def webhook_start(request: Request, bg: BackgroundTasks) -> JSONResponse:
     if _webhook_duplicate_delivery("start", payload):
         raise HTTPException(status_code=409, detail="duplicate delivery id (already processed)")
 
-    check_goal_rate_limit(request, source="webhook")
+    with _issue_webhook_admission(_webhook_delivery_key("start", payload)):
+        check_goal_rate_limit(request, source="webhook")
     w = _world()
     # HMAC webhooks carry no OIDC principal, so this resolves to "" (unowned):
     # reachable only by no-auth/admin callers, never another tenant.
@@ -12212,60 +12253,63 @@ async def webhook_run(request: Request, bg: BackgroundTasks) -> JSONResponse:  #
         # resume enqueues by varying the timestamp/body.
         if _webhook_duplicate_delivery("run", payload):
             raise HTTPException(status_code=409, detail="duplicate delivery id (already processed)")
-        from maverick import flow as flow_mod
+        # Nothing below starts work until the continuation is enqueued, so a
+        # refusal releases the delivery id for the sender's retry.
+        with _issue_webhook_admission(_webhook_delivery_key("run", payload)):
+            from maverick import flow as flow_mod
 
-        if not flow_mod.enabled():
-            raise HTTPException(status_code=409, detail="the flow engine is off")
-        from maverick.flow import store as flow_store
+            if not flow_mod.enabled():
+                raise HTTPException(status_code=409, detail="the flow engine is off")
+            from maverick.flow import store as flow_store
 
-        # The webhook HMAC covers the full payload, so an explicit tenant claim
-        # is authenticated.  Scope lookup and the queued continuation to that
-        # same tenant; without it a tenant run must never fall through to a
-        # same-id object in the shared namespace.
-        resume_tenant = str(payload.get("tenant") or "").strip()
-        tenant_token = None
-        if resume_tenant:
-            from maverick.tenant.registry import TenantRegistryError, assert_tenant_active
+            # The webhook HMAC covers the full payload, so an explicit tenant claim
+            # is authenticated.  Scope lookup and the queued continuation to that
+            # same tenant; without it a tenant run must never fall through to a
+            # same-id object in the shared namespace.
+            resume_tenant = str(payload.get("tenant") or "").strip()
+            tenant_token = None
+            if resume_tenant:
+                from maverick.tenant.registry import TenantRegistryError, assert_tenant_active
+
+                try:
+                    assert_tenant_active(resume_tenant)
+                except (KeyError, PermissionError, ValueError) as exc:
+                    raise HTTPException(status_code=404, detail="Workspace unavailable. No workflow continuation was started.") from exc
+                except TenantRegistryError as exc:
+                    raise HTTPException(status_code=503, detail="Workspace access could not be verified. No workflow continuation was started.") from exc
+                from maverick.paths import set_tenant
+
+                tenant_token = set_tenant(resume_tenant)
+            try:
+                run = flow_store.load_run(resume_id)
+            finally:
+                if tenant_token is not None:
+                    from maverick.paths import reset_tenant
+
+                    reset_tenant(tenant_token)
+            if run is None:
+                raise HTTPException(status_code=404, detail="no such run")
+            if run.status != "paused_event":
+                raise HTTPException(
+                    status_code=409, detail=f"run is not waiting for an event (status {run.status})"
+                )
+            check_goal_rate_limit(request, source="webhook")
+            inbound_evt = payload.get("data")
+            inputs = (
+                {str(k): v for k, v in inbound_evt.items()} if isinstance(inbound_evt, dict) else {}
+            )
+            from maverick_dashboard import automation_queue as aq
 
             try:
-                assert_tenant_active(resume_tenant)
-            except (KeyError, PermissionError, ValueError) as exc:
-                raise HTTPException(status_code=404, detail="Workspace unavailable. No workflow continuation was started.") from exc
-            except TenantRegistryError as exc:
-                raise HTTPException(status_code=503, detail="Workspace access could not be verified. No workflow continuation was started.") from exc
-            from maverick.paths import set_tenant
-
-            tenant_token = set_tenant(resume_tenant)
-        try:
-            run = flow_store.load_run(resume_id)
-        finally:
-            if tenant_token is not None:
-                from maverick.paths import reset_tenant
-
-                reset_tenant(tenant_token)
-        if run is None:
-            raise HTTPException(status_code=404, detail="no such run")
-        if run.status != "paused_event":
-            raise HTTPException(
-                status_code=409, detail=f"run is not waiting for an event (status {run.status})"
-            )
-        check_goal_rate_limit(request, source="webhook")
-        inbound_evt = payload.get("data")
-        inputs = (
-            {str(k): v for k, v in inbound_evt.items()} if isinstance(inbound_evt, dict) else {}
-        )
-        from maverick_dashboard import automation_queue as aq
-
-        try:
-            aq.enqueue_flow_resume(
-                run.flow_id,
-                run.run_id,
-                owner=run.owner,
-                inputs=inputs,
-                tenant=resume_tenant,
-            )
-        except flow_store.FlowSnapshotError as exc:
-            raise HTTPException(status_code=409, detail="run release is no longer active") from exc
+                aq.enqueue_flow_resume(
+                    run.flow_id,
+                    run.run_id,
+                    owner=run.owner,
+                    inputs=inputs,
+                    tenant=resume_tenant,
+                )
+            except flow_store.FlowSnapshotError as exc:
+                raise HTTPException(status_code=409, detail="run release is no longer active") from exc
         return JSONResponse({"run_id": run.run_id, "status": "resuming"}, status_code=202)
 
     name = str(payload.get("trigger") or "").strip()
@@ -12281,11 +12325,14 @@ async def webhook_run(request: Request, bg: BackgroundTasks) -> JSONResponse:  #
 
     from maverick_dashboard import triggers_store
 
-    trig = triggers_store.get_trigger(name)
-    if trig is None:
-        raise HTTPException(status_code=404, detail="unknown trigger")
+    # Every refusal below is raised before the goal or flow run is created, so
+    # it releases the delivery id for the sender's retry.
+    with _issue_webhook_admission(_webhook_delivery_key("run", payload)):
+        trig = triggers_store.get_trigger(name)
+        if trig is None:
+            raise HTTPException(status_code=404, detail="unknown trigger")
 
-    return _fire_stored_trigger(request, bg, payload, name, trig)
+        return _fire_stored_trigger(request, bg, payload, name, trig)
 
 
 def _flow_approve_page(
@@ -13002,8 +13049,9 @@ async def webhook_gitlab(request: Request, bg: BackgroundTasks) -> JSONResponse:
     if _issue_webhook_replay_seen(f"gitlab:{delivery}", replay_window_seconds()):
         raise HTTPException(status_code=409, detail="duplicate webhook delivery")
 
-    require_provider_or_400()
-    check_goal_rate_limit(request, source="webhook:gitlab")
+    with _issue_webhook_admission(f"gitlab:{delivery}"):
+        require_provider_or_400()
+        check_goal_rate_limit(request, source="webhook:gitlab")
     w = _world()
     title = f"{event.issue_id}: {event.title}".strip()
     goal_id = w.create_goal(title[:200], build_brief(event)[:8000], owner="")
@@ -13057,8 +13105,7 @@ async def webhook_stripe(request: Request) -> JSONResponse:
                                 action="stripe_payment_notice", actor="stripe",
                                 event_id=event_id, event_type=event_type))
     except AuditRefused as exc:
-        with _issue_webhook_seen_lock:
-            _issue_webhook_seen.pop(f"stripe:{event_id}", None)
+        await run_in_threadpool(_issue_webhook_release, f"stripe:{event_id}")
         raise HTTPException(status_code=503, detail=(
             "This notice could not be added to the activity record. Stripe will send it "
             "again.")) from exc
@@ -13124,6 +13171,36 @@ def _issue_webhook_replay_seen(signature: str, ttl_seconds: int) -> bool:
             ]:
                 _issue_webhook_seen.pop(k, None)
         return False
+
+
+def _issue_webhook_release(signature: str) -> None:
+    """Forget a delivery ``_issue_webhook_replay_seen`` recorded, for one that
+    was refused before any work started, so the sender's retry is not answered
+    as a duplicate. Clears the shared store and the in-process window (the mark
+    is in the latter when the shared store was unavailable). Never raises."""
+    if not signature:
+        return
+    try:
+        from maverick.world_model_backends import is_postgres_configured
+
+        if is_postgres_configured():
+            _world().release_processed_message(_ISSUE_WEBHOOK_CHANNEL, signature)
+    except Exception:
+        log.warning("issue webhook dedup: shared store unavailable, delivery not released")
+    with _issue_webhook_seen_lock:
+        _issue_webhook_seen.pop(signature, None)
+
+
+@contextmanager
+def _issue_webhook_admission(signature: str):
+    """Run the checks that can still refuse a delivery already recorded as
+    seen. A refusal (``HTTPException``) releases the record; a delivery that
+    passes them stays recorded, so replay protection is unchanged."""
+    try:
+        yield
+    except HTTPException:
+        _issue_webhook_release(signature)
+        raise
 
 
 async def _handle_issue_webhook(
@@ -13192,8 +13269,9 @@ async def _handle_issue_webhook(
     if _issue_webhook_replay_seen(dedup_signature, replay_window_seconds()):
         raise HTTPException(status_code=409, detail="duplicate webhook delivery")
 
-    require_provider_or_400()
-    check_goal_rate_limit(request, source=f"webhook:{provider}")
+    with _issue_webhook_admission(dedup_signature):
+        require_provider_or_400()
+        check_goal_rate_limit(request, source=f"webhook:{provider}")
     w = _world()
     title = f"{event.issue_id}: {event.title}".strip()
     # Webhook-driven goal: no authenticated principal -> unowned ("").
@@ -13672,9 +13750,9 @@ def _shared_goal_in_scope(request: Request, token: str) -> HTMLResponse:
     w = _world()
     goal_id = w.resolve_share_link(token)
     if goal_id is None:
-        raise HTTPException(
-            status_code=404, detail="this share link is invalid, revoked, or expired"
-        )
+        # The same answer as every other failure below, so the reply does not
+        # tell an unknown token from a known one, or one token format from another.
+        raise HTTPException(status_code=404, detail="not found")
     g = w.get_goal(goal_id)
     if g is None:  # pragma: no cover -- link resolved but goal gone
         raise HTTPException(status_code=404, detail="not found")
@@ -13961,10 +14039,10 @@ def cost_csv(request: Request, month: str | None = None) -> StreamingResponse:
     import io as _io
 
     w = _world()
-    # Owner-scope the export: an authenticated non-admin gets only their own
-    # episodes (auth-off / admin get everything, the historical behaviour), so
-    # this chargeback CSV can't leak every tenant's spend ledger. Mirrors the
-    # owner scoping on /api/v1/cost/by-tag.
+    # Owner-scope the export: every caller, an administrator included, gets
+    # only their own episodes (a caller with no named account: unowned work),
+    # so this chargeback CSV can't leak every tenant's spend ledger. Mirrors
+    # the owner scoping on /api/v1/cost/by-tag.
     owner = goal_owner_filter(request)
     start_ts: float | None = None
     end_ts: float | None = None
@@ -15214,7 +15292,7 @@ def automations_page(request: Request) -> HTMLResponse:
             1
             for j in JobQueue().list(status="pending")
             if (j.payload or {}).get("__cron__")
-            and (owner is None or (j.payload or {}).get("owner") == owner)
+            and (j.payload or {}).get("owner") == owner
         )
     except Exception:  # pragma: no cover - the hero count is best-effort
         pass
@@ -15224,7 +15302,7 @@ def automations_page(request: Request) -> HTMLResponse:
         trigger_count = sum(
             1
             for t in triggers_store.list_triggers()
-            if owner is None or t.get("owner", "") == owner
+            if t.get("owner", "") == owner
         )
     except Exception:  # pragma: no cover - the hero count is best-effort
         pass
@@ -15237,7 +15315,7 @@ def automations_page(request: Request) -> HTMLResponse:
         event_trigger_count = sum(
             1
             for t in event_triggers_store.list_triggers()
-            if t.get("tenant", "") == tenant and (owner is None or t.get("owner", "") == owner)
+            if t.get("tenant", "") == tenant and t.get("owner", "") == owner
         )
     except Exception:  # pragma: no cover - the hero count is best-effort
         pass
@@ -15600,13 +15678,23 @@ async def readyz() -> JSONResponse:
     )
 
 
+def _metrics_user_spend_allowed(request: Request) -> bool:
+    """Whether this scrape may carry spend by named account.
+
+    Yes when authentication is off, for the static dashboard token (the usual
+    Prometheus scraper) and for an installation administrator. Any other named
+    caller gets the deployment totals only.
+    """
+    return has_global_permission(request, "admin")
+
+
 @app.get("/metrics", response_class=PlainTextResponse)
 async def metrics(request: Request) -> PlainTextResponse:
     """Prometheus text format. Gated by the same bearer as /api/v1."""
     return await _metrics_response(
         request,
         world_provider=_world,
-        owner_filter=goal_owner_filter,
+        user_spend_allowed=_metrics_user_spend_allowed,
     )
 
 
@@ -15695,8 +15783,11 @@ app.add_middleware(RequestActivityMiddleware)
 # here, once; with tracing off nothing is added and a request pays nothing for it.
 request_spans.install(app)
 
-# The 13 consecutive function middlewares above run as one layer (about 2 ms
-# of task groups and streams per request); order and isolation are unchanged.
+# The 13 consecutive function middlewares above (persist_theme out to
+# tenant_pinning) run as one layer (about 2 ms of task groups and streams per
+# request); order and isolation are unchanged. _shutdown_admission and the
+# practice-mode gate are function middlewares too, but class middlewares sit
+# between them and that run, so they stay separate layers.
 from .middleware_chain import merge_function_middleware  # noqa: E402
 
 merge_function_middleware(app)

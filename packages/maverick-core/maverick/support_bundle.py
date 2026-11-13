@@ -2,10 +2,13 @@
 
 Filing a ticket previously meant hand-running ``version`` + ``doctor`` + ``diag``
 + ``logs`` and manually redacting config. This assembles one structured,
-**secret-redacted** snapshot (versions, runtime, client binding, readiness, a
-redacted config, and a recent-failures summary) so an operator can attach a
-single file. Best-effort: every section is independently guarded, so a failure
-in one never blocks the rest.
+**secret-redacted** snapshot (versions, runtime, client binding, readiness, the
+shape of the config, and a recent-failures summary) so an operator can attach a
+single file. The config section (``config_redacted``) carries no setting names
+or values: each key is a SHA-256 hash, each text value is ``[SET]`` or empty,
+and only booleans, numbers and collection sizes are kept as they are.
+Best-effort: every section is independently guarded, so a failure in one never
+blocks the rest.
 """
 from __future__ import annotations
 

@@ -814,6 +814,42 @@ def test_signed_export_retention_tamper_and_no_raw_content_or_secrets(authority)
     store.verify_integrity("tenant-a")
 
 
+def test_future_purge_cutoff_does_not_delete_before_retention_ends(authority) -> None:
+    store, actor, clock = authority
+    create_policy(store)
+    release = publish_release(
+        store,
+        actor,
+        clock,
+        create_release(store, clock),
+        suffix="future-cutoff",
+    )
+    exported = store.export_notice(
+        "tenant-a",
+        release.notice_id,
+        "notice-export",
+        signing_key_ref="vault:notice-key-v1",
+        retained_until=clock() + 100,
+        idempotency_key="export",
+    )
+    purged_at = clock()
+    purged = store.purge_expired(
+        "tenant-a", cutoff=clock() + 10_000_000, idempotency_key="purge-future"
+    )
+    assert purged == {"exports": 0, "proposals": 0, "releases": 0}
+    assert store.get_export("tenant-a", exported.export_id) == exported
+    assert store.get_release("tenant-a", release.notice_id, release.version)
+    with sqlite3.connect(store.path) as connection:
+        row = connection.execute(
+            "SELECT payload_json FROM notice_audit_events WHERE tenant_id=? "
+            "ORDER BY sequence DESC LIMIT 1",
+            ("tenant-a",),
+        ).fetchone()
+    event = json.loads(row[0])
+    assert event["action"] == "notice_retention_purged"
+    assert event["occurred_at"] == purged_at
+
+
 def test_honest_boundaries() -> None:
     assert notice.PrivacyNoticeGovernanceStore.product_boundaries() == {
         "provider_neutral": True,

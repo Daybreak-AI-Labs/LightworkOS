@@ -44,7 +44,8 @@ def test_imds_is_not_local_and_is_denied_under_enterprise(monkeypatch):
     # treated as a local service that bypasses the egress lock.
     _enterprise(monkeypatch)
     for url in ("http://169.254.169.254/latest/meta-data/",
-                "http://[fd00:ec2::254]/", "https://169.254.169.254/"):
+                "http://[fd00:ec2::254]/", "https://169.254.169.254/",
+                "http://[::ffff:169.254.169.254]/"):
         assert egress_permitted(url) is False, url
         assert enterprise_egress_denial(url) is not None, url
     # A non-IMDS link-local (APIPA) host is still treated as local (no regression).

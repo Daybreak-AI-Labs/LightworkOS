@@ -273,6 +273,12 @@ def test_historical_search_survives_newer_publication(store) -> None:
     # metadata, not permission to hide a publicly available publication.
     assert store.search("tenant-a", "access", as_of="2025-01-10")[0].version == 1
     assert store.search("tenant-a", "access", as_of="2025-05-01")[0].version == 2
+    # ...but a hit that takes effect after the date searched says so.
+    assert past[0].not_yet_effective is False
+    early = store.research("tenant-a", "access", as_of="2025-01-10")
+    assert early.status == "grounded" and early.not_yet_effective is True
+    assert early.evidence[0].not_yet_effective is True
+    assert "not yet in effect; takes effect 2025-02-01" in early.answer
 
 
 def test_immutable_versioning_supersession_and_cas(store) -> None:
@@ -421,6 +427,41 @@ def test_collections_enforce_acl_share_scope_and_revocation(store, clock) -> Non
     store.revoke_share("tenant-a", share.share_id, actor_ref="alice")
     with pytest.raises(intelligence.PrivacyRegulatoryIntelligenceNotFound):
         store.redeem_share(share.token)
+
+
+def test_collection_owner_cannot_demote_themselves(store) -> None:
+    collection = store.create_collection(
+        "tenant-a",
+        collection_id="owner-research",
+        title="Owner research",
+        description="",
+        owner_ref="alice",
+        jurisdictions=["EU"],
+        idempotency_key="create-owner-collection",
+    )
+    with pytest.raises(
+        intelligence.PrivacyRegulatoryIntelligenceConflict, match="owner's role"
+    ):
+        store.grant_collection_access(
+            "tenant-a",
+            collection.collection_id,
+            principal_ref="alice",
+            role="viewer",
+            expected_revision=collection.revision,
+            actor_ref="alice",
+            idempotency_key="grant-self-view",
+        )
+    # The owner can still manage the collection afterwards.
+    granted = store.grant_collection_access(
+        "tenant-a",
+        collection.collection_id,
+        principal_ref="bob",
+        role="viewer",
+        expected_revision=collection.revision,
+        actor_ref="alice",
+        idempotency_key="grant-bob-after-refusal",
+    )
+    assert granted.acl == {"alice": "owner", "bob": "viewer"}
 
 
 def test_saved_query_tracker_alert_outbox_retry_ack_and_revocation(store, clock) -> None:

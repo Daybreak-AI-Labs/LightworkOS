@@ -1368,11 +1368,13 @@ def resume(identifier: str) -> str:
         if ((active is not None and active.get("id") != identifier)
                 or active is None and original_status != "prepared"
                 or original_status not in {
-            "prepared", "applying", "incomplete", "upgraded", "rolled_back",
-            "repaired", "repair_recovered",
+            "prepared", "applying", "incomplete", "upgraded", "upgrade_recovered",
+            "rolled_back", "repaired", "repair_recovered",
         }):
             raise MaintenanceError("This installation has no unfinished reviewed operation to resume.")
-        if original_status in {"upgraded", "rolled_back", "repaired", "repair_recovered"}:
+        if original_status in {
+            "upgraded", "upgrade_recovered", "rolled_back", "repaired", "repair_recovered",
+        }:
             if original_status not in _TERMINAL_BY_OPERATION[operation]:
                 raise MaintenanceError(
                     "The installation completion receipt does not match its reviewed operation."

@@ -825,6 +825,7 @@ class ConsentCustomIndexStore:
         page_size = _integer(limit, "limit", 1, _MAX_PAGE_SIZE)
         after = "" if cursor is None else _id(cursor, "cursor")
         query_value = _query_value(value)
+        now = _timestamp(self._clock(), "current time")
         with self._connect() as connection:
             connection.execute("BEGIN")  # One consistent index/source/history read.
             _, index = self._get_row(connection, tenant, index_key)
@@ -840,38 +841,76 @@ class ConsentCustomIndexStore:
             key = _key(self._key_resolver(tenant, index.key_version))
             tokens = self._query_tokens(connection, key, tenant, index.element_name, query_value)
             placeholders = ",".join("?" for _ in tokens)
-            rows = connection.execute(
-                "SELECT * FROM consent_custom_index_entries "
-                f"WHERE tenant_id=? AND index_id=? AND value_token IN ({placeholders}) AND profile_id>? "
-                "ORDER BY profile_id LIMIT ?",
-                (tenant, index_key, *tokens, after, page_size + 1),
-            ).fetchall()
-            for row in rows:
-                body = {
-                    "tenant_id": row["tenant_id"],
-                    "index_id": row["index_id"],
-                    "value_token": row["value_token"],
-                    "profile_id": row["profile_id"],
-                    "source_integrity_sha256": row["source_integrity_sha256"],
-                }
-                if _sha256(body) != row["integrity_sha256"]:
-                    raise ConsentCustomIndexIntegrityError(
-                        "custom-index entry failed integrity verification"
-                    )
-            visible = rows[:page_size]
+            # Entries are built once, so a value that has expired since then is
+            # dropped here; keep reading until the page holds live profiles.
+            profile_ids: list[str] = []
+            scan_after = after
+            while len(profile_ids) <= page_size:
+                rows = connection.execute(
+                    "SELECT * FROM consent_custom_index_entries "
+                    f"WHERE tenant_id=? AND index_id=? AND value_token IN ({placeholders}) AND profile_id>? "
+                    "ORDER BY profile_id LIMIT ?",
+                    (tenant, index_key, *tokens, scan_after, page_size + 1),
+                ).fetchall()
+                for row in rows:
+                    body = {
+                        "tenant_id": row["tenant_id"],
+                        "index_id": row["index_id"],
+                        "value_token": row["value_token"],
+                        "profile_id": row["profile_id"],
+                        "source_integrity_sha256": row["source_integrity_sha256"],
+                    }
+                    if _sha256(body) != row["integrity_sha256"]:
+                        raise ConsentCustomIndexIntegrityError(
+                            "custom-index entry failed integrity verification"
+                        )
+                scanned = [str(row["profile_id"]) for row in rows]
+                live = self._live_profiles(
+                    connection, tenant, index.element_name, scanned, now
+                )
+                profile_ids.extend(item for item in scanned if item in live)
+                if len(rows) <= page_size:
+                    break
+                scan_after = scanned[-1]
+            visible = profile_ids[:page_size]
             return CustomDataElementSearchPage(
                 tenant_id=tenant,
                 index_id=index.index_id,
                 element_name=index.element_name,
                 index_revision=index.revision,
-                profile_ids=tuple(str(row["profile_id"]) for row in visible),
+                profile_ids=tuple(visible),
                 next_cursor=(
-                    str(visible[-1]["profile_id"])
-                    if len(rows) > page_size and visible
-                    else None
+                    visible[-1] if len(profile_ids) > page_size and visible else None
                 ),
                 source_fresh=True,
             )
+
+    def _live_profiles(
+        self,
+        connection: sqlite3.Connection,
+        tenant: str,
+        element_name: str,
+        profile_ids: list[str],
+        now: float,
+    ) -> set[str]:
+        """Profiles whose source value is still active and unexpired at ``now``."""
+        if not profile_ids:
+            return set()
+        placeholders = ",".join("?" for _ in profile_ids)
+        rows = connection.execute(
+            "SELECT * FROM profile_values WHERE tenant_id=? AND preference_id=? "
+            f"AND profile_id IN ({placeholders})",
+            (tenant, element_name, *profile_ids),
+        ).fetchall()
+        live: set[str] = set()
+        for row in rows:
+            payload = self._payload(row, "profile value")
+            expires_at = payload.get("expires_at")
+            if payload.get("status") == "active" and not (
+                isinstance(expires_at, (int, float)) and float(expires_at) <= now
+            ):
+                live.add(str(row["profile_id"]))
+        return live
 
     @staticmethod
     def _query_tokens(connection, key, tenant: str, element: str, value) -> tuple[str, ...]:

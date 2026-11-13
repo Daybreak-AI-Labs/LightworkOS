@@ -82,6 +82,16 @@ def _new_bus_namespace() -> str:
     return secrets.token_hex(16)
 
 
+def verifier_confidence(ctx: Any) -> float:
+    """The latest verifier confidence on ``ctx``; 1.0 only when none is set.
+
+    A recorded 0.0 is the lowest confidence there is. Reading it with
+    ``value or 1.0`` turned it into full confidence, so the autonomy gate and
+    the fan-out narrowing did nothing after the worst possible verdict."""
+    value = getattr(ctx, "last_verifier_confidence", None)
+    return 1.0 if value is None else float(value)
+
+
 @dataclass
 class SwarmContext:
     llm: LLM

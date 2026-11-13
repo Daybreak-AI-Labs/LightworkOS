@@ -37,6 +37,8 @@ def test_rate_conversion():
 def test_unknown_currency_generic():
     out = format_money(5, currency="XYZ")
     assert out.startswith("XYZ ") and "5.00" in out
+    # After the number (suffix-symbol locales) the code has no trailing space.
+    assert format_money(1234.56, currency="SEK", locale="de-DE") == "1.234,56 SEK"
 
 
 def test_unknown_locale_falls_back_to_en_us_style():

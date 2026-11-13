@@ -70,8 +70,8 @@
         const diff=node('pre');diff.style.whiteSpace='pre-wrap';
         if(!version.diff.length)copy(diff,'No content changes.');
         else {diff.lang='und';diff.dir='auto';diff.dataset.userContent='';for(const line of version.diff){const span=node(line.startsWith('+')?'ins':line.startsWith('-')?'del':'span',line+'\n',true);diff.append(span);}}box.append(diff);
-        const copy=field(box,'Name for a new copy','');
-        const clone=control('Clone as new draft',()=>mutate(clone,'/restore',{version:version.version,expected_generation:data.generation,new_name:copy.value},result=>{location.assign('/workflow-builder?edit='+encodeURIComponent(result.name));}));
+        const copyName=field(box,'Name for a new copy','');
+        const clone=control('Clone as new draft',()=>mutate(clone,'/restore',{version:version.version,expected_generation:data.generation,new_name:copyName.value},result=>{location.assign('/workflow-builder?edit='+encodeURIComponent(result.name));}));
         const restore=control('Restore as draft',async()=>{
           if(!await mvConfirm('Restore this content as a new draft? The published version and existing schedules stay pinned.',{okText:'Restore draft',productCopy:true}))return;
           mutate(restore,'/restore',{version:version.version,expected_generation:data.generation},result=>location.assign('/workflow-builder?edit='+encodeURIComponent(result.name)));

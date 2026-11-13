@@ -50,9 +50,13 @@ class Frame:
 
 @dataclass
 class RenderResult:
+    """``frame_dir``, ``concat_path`` and ``command`` name the private staging
+    files, so they are set only when ``render(retain_staging=True)`` kept them;
+    otherwise staging is already deleted and they are ``None``/empty."""
+
     frames: int
-    frame_dir: Path
-    concat_path: Path
+    frame_dir: Path | None
+    concat_path: Path | None
     command: list[str]
     encoded: bool
     detail: str
@@ -322,12 +326,17 @@ def render(
             )
             ensure_private_file(concat_path)
             command = ffmpeg_command(concat_path, staged_output, fps=rate)
+            # Staging is deleted on the way out unless retained, so only a
+            # retained run reports where it is and the command that reads it.
+            kept_dir = staging if retain_staging else None
+            kept_concat = concat_path if retain_staging else None
+            kept_command = command if retain_staging else []
             if not frames:
                 return RenderResult(
                     0,
-                    staging,
-                    concat_path,
-                    command,
+                    kept_dir,
+                    kept_concat,
+                    kept_command,
                     False,
                     "no events recorded for this goal; staging cleaned"
                     if not retain_staging
@@ -342,9 +351,9 @@ def render(
             if not rendered:
                 return RenderResult(
                     len(frames),
-                    staging,
-                    concat_path,
-                    command,
+                    kept_dir,
+                    kept_concat,
+                    kept_command,
                     False,
                     "Pillow is unavailable; staging cleaned"
                     if not retain_staging
@@ -359,9 +368,9 @@ def render(
             except Exception:
                 return RenderResult(
                     len(frames),
-                    staging,
-                    concat_path,
-                    command,
+                    kept_dir,
+                    kept_concat,
+                    kept_command,
                     False,
                     "ffmpeg is unavailable; staging cleaned"
                     if not retain_staging
@@ -371,9 +380,9 @@ def render(
             if code != 0 or not staged_output.exists():
                 return RenderResult(
                     len(frames),
-                    staging,
-                    concat_path,
-                    command,
+                    kept_dir,
+                    kept_concat,
+                    kept_command,
                     False,
                     "ffmpeg did not produce a valid staged output; staging cleaned"
                     if not retain_staging
@@ -390,9 +399,9 @@ def render(
             ensure_private_file(output)
             return RenderResult(
                 len(frames),
-                staging,
-                concat_path,
-                command,
+                kept_dir,
+                kept_concat,
+                kept_command,
                 True,
                 f"encoded {len(frames)} frames",
                 proof_status,

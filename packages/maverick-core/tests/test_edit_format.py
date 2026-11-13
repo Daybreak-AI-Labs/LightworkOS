@@ -289,6 +289,20 @@ class TestApplyBlocks:
         assert (repo / "src" / "a.py").read_text() == "a = 1\n"
         assert (repo / "src" / "b.py").read_text() == "b = 2\n"
 
+    def test_atomic_rollback_never_touches_paths_outside_workspace(self, tmp_path):
+        """A refused traversal block must not get its target rewritten by the
+        rollback."""
+        from maverick.edit_format import SearchReplaceBlock, apply_blocks
+        repo = _make_git_repo(tmp_path / "repo")
+        outside = tmp_path / "outside.txt"
+        outside.write_text("keep\n")
+        os.utime(outside, (1_000_000_000, 1_000_000_000))
+        blk = SearchReplaceBlock(path="../outside.txt", search="keep\n", replace="x\n")
+        summary = apply_blocks([blk], repo, atomic=True)
+        assert not summary.ok
+        assert outside.read_text() == "keep\n"
+        assert outside.stat().st_mtime == 1_000_000_000
+
     def test_crlf_blocks_apply_to_lf_file(self, tmp_path):
         """Model output with CRLF line endings applies cleanly to an LF file."""
         from maverick.edit_format import apply_blocks, parse_blocks

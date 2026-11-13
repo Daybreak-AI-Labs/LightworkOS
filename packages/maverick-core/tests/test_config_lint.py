@@ -243,6 +243,11 @@ def test_inline_secret_suffix_keys_warn():
     assert {"client_secret", "webhook_token"} <= keys
 
 
+def test_sealed_at_rest_token_is_not_an_inline_secret():
+    cfg = {"llm_gateway": {"gateway_token": "MVKAR1:abcdef"}}  # pragma: allowlist secret
+    assert [f for f in lint_config(cfg) if "inline secret" in f.message] == []
+
+
 def test_non_secret_key_not_flagged():
     cfg = {"sandbox": {"backend": "local"}, "models": {"orchestrator": "anthropic:x"}}
     assert [f for f in lint_config(cfg) if "inline secret" in f.message] == []

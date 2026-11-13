@@ -1386,7 +1386,11 @@ window.mraFailure = response => {
     if (source && typeof window.mvCopy === "function") window.mvCopy(source.textContent);
   }));
   const portalRefresh = document.getElementById("ai-vendor-portal-refresh");
-  if (portalRefresh) { portalRefresh.addEventListener("click", loadVendorPortal); loadVendorPortal(); }
+  if (portalRefresh) {
+    portalRefresh.addEventListener("click", loadVendorPortal);
+    // The shell's helpers (lightwork-ui.js) load after the page content.
+    if (window.mvFetchJSON) loadVendorPortal(); else document.addEventListener("DOMContentLoaded", loadVendorPortal);
+  }
 
   // ---- Drift ----
   // A CSV with a header row becomes {column: [numbers]}; text cells are refused.

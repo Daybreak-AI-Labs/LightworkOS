@@ -7,9 +7,9 @@ Beyond a depth budget the subtree is collapsed to a single ``▸ +N collapsed``
 count line so a deep swarm still fits in a sidebar.
 
 Pure render over Goal rows: it only *reads* the world model via the locked
-``get_goal``/``subgoals`` helpers (the same ones the monitor uses) and wires
-into nothing — callers (the dashboard minimap endpoint, future TUI panes)
-decide where the text goes.
+``get_goal``/``subgoals`` helpers (the same ones the monitor uses). The
+dashboard serves it at ``GET /api/v1/goals/{goal_id}/minimap``; any other
+caller (a future TUI pane) decides where the text goes.
 """
 from __future__ import annotations
 

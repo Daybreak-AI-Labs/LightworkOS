@@ -64,7 +64,10 @@ def test_render_empty_goal(tmp_path):
     assert result.frames == 0 and not result.encoded
     assert "no events" in result.detail
     assert "cleaned" in result.detail
-    assert not result.frame_dir.exists()
+    # Staging is gone, so the result must not point at it or offer its command.
+    assert result.frame_dir is None and result.concat_path is None
+    assert result.command == []
+    assert not list(tmp_path.glob(".replay-video-*"))
 
 
 def test_render_encodes_when_ffmpeg_present(tmp_path, monkeypatch):
@@ -86,4 +89,5 @@ def test_render_encodes_when_ffmpeg_present(tmp_path, monkeypatch):
     assert result.encoded is True and out.exists()
     # Successful publication removes private staging rather than leaving run
     # screenshots and manifests behind.
-    assert not result.frame_dir.exists()
+    assert result.frame_dir is None
+    assert not list(tmp_path.glob(".replay-video-*"))

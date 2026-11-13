@@ -43,12 +43,21 @@ def _run(args: dict[str, Any]) -> str:
         priority = "default"
     category = (args.get("category") or "agent").strip()
     try:
-        from ..notifications import notify
+        from ..notifications import configured_backends, notify
     except ImportError as e:
         return f"ERROR: notifications module unavailable: {e}"
     # notify() backends use low/default/high/max; the tool exposes "urgent".
     backend_priority = "max" if priority == "urgent" else priority
+    states: list[str] = []
     try:
+        # notify() counts a backend it queued even when that backend has no
+        # destination, and returns 0 for an item held for a batched digest, so
+        # the count alone cannot say whether a backend is configured.
+        if not configured_backends():
+            return (
+                "no notification backend is configured. "
+                "Set [notifications] backend in ~/.maverick/config.toml."
+            )
         # notify() returns an int (count of backends fired) and takes the
         # message as `body` with a separate `title` keyword. The old call
         # jammed title+body into the positional body and then did len() on
@@ -59,14 +68,14 @@ def _run(args: dict[str, Any]) -> str:
             title=title,
             priority=backend_priority,
             category=category,
+            outcomes=states,
         )
     except Exception as e:
         return f"ERROR: notify failed: {type(e).__name__}: {e}"
+    if "batched" in states:
+        return "held for the next batched digest; delivery not yet confirmed"
     if not count:
-        return (
-            "no notification backend is configured. "
-            "Set [notifications] backend in ~/.maverick/config.toml."
-        )
+        return "not sent: the notification was not accepted for delivery"
     return f"queued; delivery not yet confirmed ({count} backend{'s' if count != 1 else ''})"
 
 

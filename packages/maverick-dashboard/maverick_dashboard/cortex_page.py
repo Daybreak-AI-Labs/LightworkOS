@@ -10,6 +10,7 @@ page is at the registry's ``view`` floor.
 
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from typing import Any
@@ -23,6 +24,8 @@ from starlette.concurrency import run_in_threadpool
 from .auth import has_global_permission, has_permission, require_permission
 from .cortex_api import DEFAULT_K, MAX_K, MAX_QUERY
 from .identity_format import humanize, humanize_principal
+
+log = logging.getLogger(__name__)
 
 PAGE_PATH = "/cortex"
 API_BASE = "/api/v1/cortex"
@@ -101,9 +104,13 @@ def _safe_status() -> dict[str, Any]:
     brain is unreachable beats a 500 that says nothing."""
     try:
         return _status()
-    except Exception as exc:
+    except Exception:
+        # The exception text can name paths, tables or hosts; the page is
+        # open to any viewer, so it gets a plain sentence and the log the rest.
+        log.exception("cortex status could not be loaded")
         return {"enabled": False, "tenant": None, "sources": {},
-                "encryption": {}, "isolation": {}, "error": str(exc)}
+                "encryption": {}, "isolation": {},
+                "error": "Knowledge status could not be loaded right now."}
 
 
 def _int(value: Any) -> int:

@@ -33,14 +33,25 @@ def _store_path():
     return data_dir("registers") / "licenses.json"
 
 
-def _load() -> list[dict]:
+def _load(*, strict: bool = False) -> list[dict]:
+    """The register rows. Mutations pass ``strict``: a register that exists but
+    cannot be read is refused, because saving over it would drop its rows."""
     p = _store_path()
     if not p.exists():
         return []
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
+        rows = json.loads(p.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        if strict:
+            raise LicenseRegistryError(
+                "the license register could not be read; refusing to overwrite it"
+            ) from exc
         return []
+    if strict and not isinstance(rows, list):
+        raise LicenseRegistryError(
+            "the license register could not be read; refusing to overwrite it"
+        )
+    return rows
 
 
 def _save(rows: list[dict]) -> None:
@@ -112,7 +123,7 @@ def add_license(*, name: str, jurisdiction: str, authority: str,
         "history": [{"at": now, "event": "registered", "by": added_by}],
     }
     with _locked():
-        rows = _load()
+        rows = _load(strict=True)
         prior = copy.deepcopy(rows)
         existed_before = _store_path().exists()
         rows.append(rec)
@@ -167,7 +178,7 @@ def attach_evidence(license_id: str, *, note: str, filename: str = "",
     """File an evidence note (renewal confirmation, filing receipt name)
     against the license. Returns the updated record or None."""
     with _locked():
-        rows = _load()
+        rows = _load(strict=True)
         prior = copy.deepcopy(rows)
         existed_before = _store_path().exists()
         for rec in rows:
@@ -195,7 +206,7 @@ def renew(license_id: str, *, note: str = "", by: str = "local") -> dict | None:
     filing date), set status active, and keep the history. The register
     records that a human renewed; it never files with the authority."""
     with _locked():
-        rows = _load()
+        rows = _load(strict=True)
         prior = copy.deepcopy(rows)
         existed_before = _store_path().exists()
         for rec in rows:
@@ -228,7 +239,7 @@ def set_status(license_id: str, status: str, *, by: str = "local") -> dict | Non
     if status not in _STATUSES:
         raise ValueError(f"status must be one of {_STATUSES}")
     with _locked():
-        rows = _load()
+        rows = _load(strict=True)
         prior = copy.deepcopy(rows)
         existed_before = _store_path().exists()
         for rec in rows:

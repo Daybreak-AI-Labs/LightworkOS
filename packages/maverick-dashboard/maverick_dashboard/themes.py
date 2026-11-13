@@ -108,7 +108,7 @@ def _valid_theme(name: str, values: dict) -> bool:
     keys = {str(k) for k in values}
     if not keys <= _ALLOWED_KEYS or not set(REQUIRED_KEYS) <= keys:
         return False
-    return all(isinstance(v, str) and _HEX.match(v) for v in values.values())
+    return all(isinstance(v, str) and _HEX.fullmatch(v) for v in values.values())
 
 
 def custom_themes() -> dict[str, dict[str, str]]:
@@ -135,7 +135,7 @@ def theme_color(theme: str, themes: dict[str, dict[str, str]] | None = None) -> 
     if theme in _BUILTIN_CANVAS:
         return _BUILTIN_CANVAS[theme]
     background = ((themes or {}).get(theme) or {}).get("bg", "")
-    return background if _HEX.match(background) else _BUILTIN_CANVAS["dark"]
+    return background if _HEX.fullmatch(background) else _BUILTIN_CANVAS["dark"]
 
 
 def theme_css(themes: dict[str, dict[str, str]]) -> str:

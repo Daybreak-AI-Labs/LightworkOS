@@ -792,8 +792,20 @@ def _write_state(denied: set[str], models: dict[str, str] | None,
 
 
 def _toml_string(value: str) -> str:
+    """Render ``value`` as an ASCII TOML basic string.
+
+    JSON and TOML share the quote, backslash and short control escapes, but
+    JSON writes a character outside the BMP as a surrogate pair, which TOML
+    rejects; TOML spells it ``\\UXXXXXXXX``.
+    """
     import json
-    return json.dumps(value)
+    quoted = json.dumps(value, ensure_ascii=False)
+    return "".join(
+        ch if " " <= ch < "\x7f"
+        else f"\\u{ord(ch):04x}" if ord(ch) <= 0xFFFF
+        else f"\\U{ord(ch):08x}"
+        for ch in quoted
+    )
 
 
 def _validate_tool_name(name: str) -> str:

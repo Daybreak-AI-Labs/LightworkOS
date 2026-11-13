@@ -829,6 +829,32 @@ def test_case_revocation_is_terminal_until_a_new_explicit_trigger(
     assert revoked["provider_mutation_performed"] is False
 
 
+def test_replay_of_a_revoked_case_is_refused(
+    store: loop.AIGovernanceLoopStore,
+    clock: Clock,
+) -> None:
+    reader = Reader(snapshot(clock))
+    enqueue(store, clock)
+    current = coordinator(store, reader).run_once(worker_id="worker")
+    revoked = store.revoke_case(
+        ASSET,
+        revocation_sha256=digest("case-revocation"),
+        expected_revision=current["revision"],
+        idempotency_key="case-revocation",
+    )
+    with pytest.raises(loop.AIGovernanceLoopConflict, match="revoked case cannot be replayed"):
+        store.replay(
+            ASSET,
+            authorization_sha256=digest("replay-authorization"),
+            expected_revision=revoked["revision"],
+            idempotency_key="replay-after-revocation",
+        )
+    after = store.get_case(ASSET)
+    assert after["state"] == "revoked"
+    assert after["work_pending"] is False
+    assert after["revision"] == revoked["revision"]
+
+
 def test_history_and_projection_tampering_is_detected(
     store: loop.AIGovernanceLoopStore,
     clock: Clock,

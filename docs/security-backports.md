@@ -24,7 +24,7 @@ prints plans; cherry-picks and pushes stay the maintainer's reviewed acts.
 
 - `scan <since-ref>` lists the marked security fixes on `main` since a ref.
 - `plan <branch> <since-ref>` lists the marked fixes that are not yet on the
-  branch (matched by patch-id, so a fix cherry-picked under a different SHA is
+  branch (matched by the changed lines, so a fix cherry-picked under a different SHA is
   recognised), as an ordered cherry-pick plan.
 - `check <branch> <since-ref>` exits non-zero when a marked fix older than
   seven days (`SLA_DAYS`) is missing from the branch, so it can run as a CI

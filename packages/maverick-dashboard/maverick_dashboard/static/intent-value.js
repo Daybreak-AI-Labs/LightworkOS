@@ -144,12 +144,15 @@
   }
   async function openWork(id) {
     openDialog('Work explanation'); $('iv-detail-status').textContent = 'Loading current evidence…';
-    const version = detailGeneration;
+    let version = detailGeneration;
     try {
       const received = await request('/work/' + encodeURIComponent(id) + '?scope=' + $('iv-scope').value);
       if (!$('iv-detail').open || version !== detailGeneration) return;
       detail = received;
-      openDialog(detail.label); const body = $('iv-detail-body'), last = detail.estimates.at(-1), input = last.assumptions;
+      // openDialog starts a new generation; follow it so an error while
+      // rendering below is still reported for this dialog.
+      openDialog(detail.label); version = detailGeneration;
+      const body = $('iv-detail-body'), last = detail.estimates.at(-1), input = last.assumptions;
       body.append(node('p', detail.classification.reason + ' Confidence: ' + detail.classification.confidence + '.'), node('p', detail.grouping),
         node('p', 'Current estimate version ' + last.version + ': ' + money(last.gross, input.currency) + ' gross; ' + (last.avoided_minutes ?? 'unknown') + ' estimated avoided minutes. ' + input.manual_work),
         node('p', input.hourly_rate + ' ' + input.currency + ' per hour · ' + input.labor_provenance), node('h3', 'Execution evidence'));

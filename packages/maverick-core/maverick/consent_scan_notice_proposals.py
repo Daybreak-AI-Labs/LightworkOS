@@ -446,8 +446,13 @@ class ConsentScanInventorySnapshotAdapter:
             review_sha = _digest(review.get("record_sha256"), "review_sha256")
             review_evidence = _digest(review.get("evidence_sha256"), "review evidence_sha256")
             reviewer = _digest(review.get("reviewer_sha256"), "reviewer_sha256")
-            second_reviewer = _digest(
-                review.get("second_reviewer_sha256"), "second_reviewer_sha256"
+            # The inventory never records a second reviewer for an
+            # observe-only review, which carries no registry authority.
+            raw_second = review.get("second_reviewer_sha256")
+            second_reviewer = (
+                None
+                if raw_second is None and review.get("registry_action") == "observe_only"
+                else _digest(raw_second, "second_reviewer_sha256")
             )
             review_version = _revision(review.get("version"), "review version", positive=True)
             review_valid_until = _timestamp(review.get("valid_until"), "review valid_until")
@@ -472,7 +477,7 @@ class ConsentScanInventorySnapshotAdapter:
             review.get("report_id") != binding.report_id
             or review_valid_until <= now
             or review_sha in revoked_reviews
-            or _same(reviewer, second_reviewer)
+            or (second_reviewer is not None and _same(reviewer, second_reviewer))
         ):
             raise NoticeProposalConflict(
                 "review is stale, revoked, not report-bound, or not independently approved"

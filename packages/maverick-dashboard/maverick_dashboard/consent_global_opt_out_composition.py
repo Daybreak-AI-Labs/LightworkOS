@@ -19,10 +19,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from maverick import consent_global_opt_out as opt_out
 from maverick.paths import canonical_tenant_id, tenant_scope
 
+from ._shared import authenticated_subject
 from .auth import has_global_permission
 from .consent_public_api import (
     PublicClientBinding,
@@ -75,14 +76,18 @@ def _request_for(app: FastAPI, request: object) -> Request:
 
 
 def _principal_ref(request: Request, tenant_id: str) -> str:
-    verified = getattr(request.state, "principal", None)
-    subject = getattr(verified, "principal", None) or getattr(verified, "sub", None)
-    if not isinstance(subject, str) or not subject.strip() or len(subject) > 512:
+    # The API's own subject resolution, so the local single-user operator and
+    # a static dashboard token resolve to the same reference on both sides.
+    try:
+        subject = authenticated_subject(
+            request, error_detail="authenticated Global Opt-Out principal is unavailable",
+        )
+    except HTTPException as exc:
         raise opt_out.GlobalOptOutPermissionDenied(
             "authenticated Global Opt-Out principal is unavailable"
-        )
+        ) from exc
     digest = hashlib.sha256(
-        f"lightwork.global-opt-out.identity.v1:{tenant_id}:{subject.strip()}".encode()
+        f"lightwork.global-opt-out.identity.v1:{tenant_id}:{subject}".encode()
     ).hexdigest()
     return f"global-opt-out-admin-{digest[:32]}"
 

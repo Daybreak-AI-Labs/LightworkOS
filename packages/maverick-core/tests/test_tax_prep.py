@@ -599,6 +599,22 @@ class TestReviewPackage:
         assert "OPEN ITEMS FOR PREPARER" in text
         assert "PREPARER MUST COMPLETE" in text
 
+    def test_package_states_the_year_of_the_constants_that_computed_it(self):
+        import copy
+        federal = copy.deepcopy(tax_prep.TY2025)
+        states = copy.deepcopy(tax_prep.STATE_TY2025)
+        federal["year"] = states["year"] = 2026
+        wp = Workpaper(filing_status="single", state="PA", docs=[
+            SourceDoc("W-2", "W-2 — Acme", wages=85000.0, state="PA")])
+        draft = compute_first_pass(wp, constants=federal)
+        state = tax_prep.compute_state_first_pass(
+            wp, "PA", federal=draft, constants=states)
+        text = render_review_package(draft, state)
+        assert "DRAFT FORM 1040 (TY2026)" in text
+        assert "DRAFT PA STATE RETURN (TY2026)" in text
+        assert "TY2025" not in text
+        assert tax_prep.review_package_dict(draft, state)["tax_year"] == 2026
+
     def test_report_sanitizes_untrusted_labels_and_open_items(self):
         malicious = "evil_w2]\nFORGED REPORT LINE\x1b[31m\n[tail.txt"
         wp = Workpaper(filing_status="single", docs=[

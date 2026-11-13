@@ -2,7 +2,7 @@
 
 Fixed context bounds tuned for a ~200k-window model (the last 10 turns at
 300 chars each, a 1500-token compaction target, long-context sharding above
-a hard 200k, ~100 KB tool results, 4096 output tokens per turn) would not
+a hard 200k, 32 KB tool results, 4096 output tokens per turn) would not
 grow with a 1M-window model, and with a 32k model the router would never
 fire before overflow.
 

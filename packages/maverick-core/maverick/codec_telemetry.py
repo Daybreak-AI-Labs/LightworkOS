@@ -82,13 +82,14 @@ _stats_lock = threading.Lock()
 
 def record(original: str, encoded: str) -> None:
     """Tally one rendered coordination block and its compressed form. Cheap: bytes
-    are ``len``; tokens only when a counter is registered."""
+    are the UTF-8 length; tokens only when a counter is registered."""
     ot = _count(original)
     et = _count(encoded)
     with _stats_lock:
         _stats.n_blocks += 1
-        _stats.original_bytes += len(original)
-        _stats.encoded_bytes += len(encoded)
+        # UTF-8 bytes, not characters: a sentinel is 3 characters and 7 bytes.
+        _stats.original_bytes += len(original.encode("utf-8", "replace"))
+        _stats.encoded_bytes += len(encoded.encode("utf-8", "replace"))
         if ot is not None and et is not None:
             _stats.original_tokens += ot
             _stats.encoded_tokens += et

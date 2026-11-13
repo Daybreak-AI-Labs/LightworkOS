@@ -241,8 +241,11 @@ def write_record(
     """Persist a record to the local outbox, with scrubbing.
 
     Returns the written path, or None if donations are disabled OR the
-    record doesn't pass the selection gate. Never raises -- a bug in
-    the donor must not affect the actual goal execution.
+    record doesn't pass the selection gate. A failed write is logged and
+    returns None. The gates, the text stripping and the scrubbing before the
+    write are not guarded, so an error there propagates: the caller must
+    contain it (the orchestrator does) so a bug in the donor cannot affect
+    the actual goal execution.
     """
     if not _donations_enabled():
         return None
@@ -335,7 +338,7 @@ def write_record(
 
 
 def list_pending(outbox: Path | None = None) -> list[Path]:
-    """Return the outbox files awaiting upload, for `maverick donate-status`."""
+    """Return the outbox files awaiting upload, for `maverick donate status`."""
     out_dir = outbox or _default_outbox()
     if not out_dir.exists():
         return []

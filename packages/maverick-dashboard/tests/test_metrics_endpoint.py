@@ -46,3 +46,21 @@ def test_metrics_respect_the_dashboard_bearer(monkeypatch):
     ok = anon.get("/metrics",
                   headers={"Authorization": "Bearer metrics-bearer-1"})
     assert ok.status_code == 200
+
+
+def test_an_unhandled_error_is_counted_as_a_500(monkeypatch):
+    import maverick_dashboard.app as app_mod
+    from maverick import runtime_metrics
+
+    async def broken(**_kwargs):
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr(app_mod, "_readiness_response", broken)
+    failing = TestClient(app, base_url="http://127.0.0.1", raise_server_exceptions=False)
+    assert failing.get("/readyz").status_code == 500
+    counted = [
+        line for line in runtime_metrics.render().splitlines()
+        if line.startswith("lightwork_http_requests_total{") and 'route="/readyz"' in line
+    ]
+    assert len(counted) == 1 and 'status="500"' in counted[0]
+    assert 'lightwork_http_request_seconds_total{route="/readyz"}' in runtime_metrics.render()

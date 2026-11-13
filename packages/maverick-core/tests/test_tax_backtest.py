@@ -84,6 +84,14 @@ class TestBatchReport:
         assert "OUT OF SCOPE" in bt.render_backtest(rep)
         assert "Δ $999.00" in bt.render_backtest(rep)
 
+    def test_no_in_scope_returns_is_not_rendered_as_a_perfect_score(self):
+        oos = bt.ReturnDiff("c", in_scope=False,
+                            out_of_scope_reasons=["itemized"])
+        rep = bt.BatchReport([oos])
+        assert rep.accuracy == 1.0                 # documented numeric value
+        text = bt.render_backtest(rep)
+        assert "100.0%" not in text and "In-scope accuracy   : n/a" in text
+
 
 class TestBacktestJson:
     def test_backtest_dict_is_serializable_and_complete(self):

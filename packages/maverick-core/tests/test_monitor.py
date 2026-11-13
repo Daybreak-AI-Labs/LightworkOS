@@ -108,3 +108,25 @@ def test_monitor_render_shows_children(world_with_history):
     rendered = render(state)
     assert "Plan tree" in rendered
     assert "Spin up Postgres" in rendered
+
+
+def test_monitor_render_shows_bracketed_text_literally(tmp_path):
+    """Agent names and event text are data, not Rich markup: ``[coder]`` used
+    to vanish as an unknown tag and ``[/tmp/out]`` raised MarkupError."""
+    pytest.importorskip("rich")
+    from maverick.monitor import _plain, render, snapshot
+    from maverick.world_model import WorldModel
+    from rich.text import Text
+
+    world = WorldModel(tmp_path / "wm.sqlite")
+    try:
+        goal_id = world.create_goal("Tidy [bold] list[int] hints", "see [/red] notes\\")
+        world.append_event(goal_id, "coder", "tool", "wrote [/tmp/out]")
+        rendered = render(snapshot(world, goal_id))
+    finally:
+        world.close()
+    for shown in (Text.from_markup(rendered).plain, _plain(rendered)):
+        assert "Tidy [bold] list[int] hints" in shown
+        assert "see [/red] notes\\" in shown
+        assert "[coder] tool: wrote [/tmp/out]" in shown
+        assert "[dim]" not in shown

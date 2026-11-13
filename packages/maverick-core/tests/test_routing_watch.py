@@ -134,6 +134,23 @@ class TestWatchMode:
         assert matches[0].marker == ":"
         assert "refactor" in matches[0].text
 
+    def test_markers_inside_strings_and_docstrings_are_not_goals(self):
+        text = (
+            '"""Usage notes.\n'
+            "\n"
+            "    # AI? this line documents the marker\n"
+            '"""\n'
+            'print(" # AI! delete everything")\n'
+            "url = 'https://example.test/page#AI:anchor'\n"
+            'label = "it\'s done"  # AI: rename label\n'
+        )
+        matches = list(scan_text(text))
+        assert [(m.line_number, m.marker, m.text) for m in matches] == [
+            (7, ":", "rename label")]
+        # The module documents its own markers in its docstring.
+        import maverick.watch_mode as watch_mode
+        assert list(scan_file(Path(watch_mode.__file__))) == []
+
     def test_to_goal_renders_context(self):
         text = "def foo():\n    # AI? add input validation"
         match = next(iter(scan_text(text, path=Path("foo.py"))))

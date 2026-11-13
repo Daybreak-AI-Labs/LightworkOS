@@ -630,9 +630,11 @@ def notify(
     straight through, and with batching unconfigured this is a no-op. When an
     item is queued for a later batch, the call returns 0 (fired *now*).
 
-    ``outcomes`` (synchronous sends only) receives one final state per
+    ``outcomes`` receives, on a synchronous send, one final state per
     dispatched backend: ``delivered`` (accepted), ``failed`` (definitely not
-    sent) or ``unknown`` (it may have been sent; never replay it blindly).
+    sent) or ``unknown`` (it may have been sent; never replay it blindly). An
+    item held for a later batch adds the single state ``batched``, which
+    tells that 0 apart from "nothing was sent".
     """
     from . import practice
 
@@ -654,8 +656,11 @@ def notify(
         from .notification_batcher import shared as _shared_batcher
         batcher = _shared_batcher()
         if batcher is not None:
-            return batcher.submit(body, title=title, priority=priority,
-                                  category=category)
+            fired = batcher.submit(body, title=title, priority=priority,
+                                   category=category, backends=backends)
+            if not fired and outcomes is not None:
+                outcomes.append("batched")
+            return fired
 
     event = delivery_key or uuid.uuid4().hex
     receipts, admitted = _admit(cfg, requested, event, delivery_kind, retry)

@@ -223,7 +223,8 @@ def begin_run(specialist: str, model: str, instruction_hash: str, cases: list[di
         if len(db["runs"]) >= _MAX_RUNS:
             # Retain the newest history, including every unfinished operation.
             finished = sorted((r for r in db["runs"].values()
-                               if r["state"] != "running" and not r.get("comparison", {}).get("draft_profile")
+                               if r["state"] not in {"running", "prepared"}
+                               and not r.get("comparison", {}).get("draft_profile")
                                and time.time() - r["started_at"] > 600),
                               key=lambda r: r["started_at"])
             if not finished:

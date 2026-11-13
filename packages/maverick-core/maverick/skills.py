@@ -389,7 +389,7 @@ def load_builtin_skills() -> list[Skill]:
     the enablement check is applied by :func:`available_skills`.
 
     Parsed once while no file in it changed (keyed by each file's name, size
-    and modification time): every agent build read and parsed all 514 files,
+    and modification time): every agent build read and parsed every built-in file,
     about 15-25 ms per chat turn. Each call gets its own copies. A library
     holding learned (auto-distilled) entries, whose readability depends on
     the caller, is loaded afresh every time."""
@@ -492,19 +492,53 @@ def _decay_weights(names: list[str]) -> dict[str, float]:
         return dict.fromkeys(names, 1.0)
 
 
+# Words that carry no subject: articles, prepositions, conjunctions, auxiliary
+# verbs and pronouns. Lexical recall ignores them (and any single character),
+# otherwise a goal and an unrelated skill "match" on "the" and "of". Two-letter
+# subject words such as "ci", "pr", "db" and "s3" still count.
+_STOP_WORDS = frozenset("""
+a an the
+of in on at to for from by with into onto over under about per via as than up
+between against before after during through within without
+and or but nor so if then that because while no not
+is are was were be been being am do does did done have has had having
+can could will would shall should may might must
+i we you he she it they me us him her them my our your his its their
+this these those what which who whom whose how when where why there here
+""".split())
+
+
+def _content_words(tokens: list[str]) -> set[str]:
+    return {w for w in tokens if len(w) > 1 and w not in _STOP_WORDS}
+
+
 def _relevant_skills_lexical(goal: str, all_skills: list[Skill], max_n: int = 3,
                              min_score: float = 0.0) -> list[Skill]:
-    goal_lower = goal.lower()
-    goal_words = set(re.findall(r"\w+", goal_lower))
+    """Score each skill by the wording its triggers share with ``goal``.
+
+    +2 for each content word of the goal found in the skill's best-matching
+    trigger, +5 for each trigger that appears in the goal as a whole phrase on
+    word boundaries. Stop words and single characters never count
+    as shared words, the same word repeated across triggers counts once, and a
+    trigger made only of stop words earns no phrase bonus. The default gate of
+    4 therefore means two content words shared with one trigger, or one phrase
+    match.
+    """
+    goal_tokens = re.findall(r"\w+", goal.lower())
+    goal_words = _content_words(goal_tokens)
+    goal_phrase = " " + " ".join(goal_tokens) + " "
     weights = _decay_weights([s.name for s in all_skills])
     scored: list[tuple[float, Skill]] = []
     for s in all_skills:
         score = 0
+        best = 0
         for trig in s.triggers:
-            trig_words = set(re.findall(r"\w+", trig.lower()))
-            score += len(trig_words & goal_words) * 2
-            if trig.lower() in goal_lower:
+            trig_tokens = re.findall(r"\w+", trig.lower())
+            best = max(best, len(_content_words(trig_tokens) & goal_words))
+            if (any(w not in _STOP_WORDS for w in trig_tokens)
+                    and " " + " ".join(trig_tokens) + " " in goal_phrase):
                 score += 5
+        score += best * 2
         # Relevance gate on the RAW score (before decay): a single shared common
         # word (score 2) is noise, and injecting weakly-relevant memory HURTS the
         # agent (the research is unambiguous). Require >= min_score so noise is

@@ -123,8 +123,9 @@ def measure(messages: Iterable[str], codebook: Codebook, *,
         e = encode(m, codebook)
         orig_tok += count_tokens(m)
         enc_tok += count_tokens(e)
-        orig_b += len(m)
-        enc_b += len(e)
+        # UTF-8 bytes, not characters: a sentinel is 3 characters and 7 bytes.
+        orig_b += len(m.encode("utf-8", "replace"))
+        enc_b += len(e.encode("utf-8", "replace"))
     return TokenDelta(
         n_messages=len(msgs),
         original_tokens=orig_tok, encoded_tokens=enc_tok,

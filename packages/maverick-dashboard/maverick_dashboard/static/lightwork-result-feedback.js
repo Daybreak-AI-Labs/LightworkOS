@@ -28,7 +28,7 @@
         if (!current || !current.eligible) { say(msg, 'This result cannot be rated here. Open it to give feedback.'); return; }
         var attempt = pending();
         if (!attempt || attempt.rating !== rating || attempt.revision !== current.revision) {
-          attempt = {id: window.crypto.randomUUID().replace(/-/g, ''), rating: rating, revision: current.revision};
+          attempt = {id: (window.mvNewId ? window.mvNewId() : window.crypto.randomUUID()).replace(/-/g, ''), rating: rating, revision: current.revision};
         }
         keep(attempt);
         var value = await window.mvFetchJSON(url, {method: 'POST', cache: 'no-store', body: {rating: rating, note: '', reason: '',

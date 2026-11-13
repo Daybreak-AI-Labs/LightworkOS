@@ -97,7 +97,8 @@ def test_current_generation_uses_adaptive_thinking_not_enabled():
     # per https://platform.claude.com/docs/en/about-claude/models/overview).
     from maverick.providers.anthropic_provider import AnthropicClient
     client = AnthropicClient.__new__(AnthropicClient)
-    for mid in ("claude-opus-5", "claude-sonnet-5", "claude-fable-5-1"):
+    for mid in ("claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-5-5",
+                "claude-mythos-5-2", "claude-haiku-5-5"):
         kwargs = client._build_request(
             system="sys",
             messages=[{"role": "user", "content": "hi"}],

@@ -219,6 +219,9 @@ def erase_notes(
                     except json.JSONDecodeError:
                         kept.append(raw)
                         continue
+                    if not isinstance(d, dict):
+                        kept.append(raw)
+                        continue
                     if d.get("channel") == channel and d.get("user_id") in targets:
                         removed += 1
                         continue

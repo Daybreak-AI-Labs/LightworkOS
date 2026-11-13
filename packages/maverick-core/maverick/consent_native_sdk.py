@@ -100,6 +100,13 @@ _MAX_ATTESTATION_BYTES = 64 * 1024
 _MAX_CLOCK_SKEW_SECONDS = 120.0
 _MAX_ENVELOPE_TTL_SECONDS = 300.0
 _MAX_COUNTER_JUMP = 10_000
+# A signed request is claimed only while ``issued_at <= now + skew`` and
+# ``expires_at >= now``, and its lifetime is capped. A claim older than this
+# therefore belongs to an envelope that has expired: without the claim row it
+# is refused as outside its freshness window, and its counter is behind the
+# device's. Attestation nonces have no such horizon (the evidence timestamps
+# around a nonce are not signed), so nonce rows are kept.
+_REQUEST_REPLAY_HORIZON_SECONDS = _MAX_CLOCK_SKEW_SECONDS + _MAX_ENVELOPE_TTL_SECONDS
 _MAX_DEVICE_ATTESTATION_SECONDS = 31 * 24 * 60 * 60
 
 _RECEIPT_FIELDS = frozenset(
@@ -1988,6 +1995,16 @@ class NativeConsentDeviceRegistry:
                 count = connection.execute(
                     "SELECT COUNT(*) AS count FROM native_consent_requests"
                 ).fetchone()
+                if count is not None and int(count["count"]) >= self.max_requests:
+                    # Reclaim room only when the bound is reached, so stored
+                    # receipts stay available to retries for as long as they fit.
+                    connection.execute(
+                        "DELETE FROM native_consent_requests WHERE created_at < ?",
+                        (now - _REQUEST_REPLAY_HORIZON_SECONDS,),
+                    )
+                    count = connection.execute(
+                        "SELECT COUNT(*) AS count FROM native_consent_requests"
+                    ).fetchone()
                 if count is None or int(count["count"]) >= self.max_requests:
                     raise NativeConsentCapacityError("native request registry reached its bound")
                 last_counter = int(device_row["last_counter"])

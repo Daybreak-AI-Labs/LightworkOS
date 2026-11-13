@@ -65,10 +65,14 @@ def code_sync(name) -> None:
     """Fetch new upstream commits into the vault."""
     vault = _guard()
     try:
-        repo = vault.sync(name)
+        report = vault.sync(name)  # per-branch outcome lists, not a Repo
+        repo = vault.get(name)
     except vault.VaultError as exc:
         _fail(exc)
-    click.echo(f"{repo.name} now at {repo.head[:12]}")
+    updated = len(report.get("fast_forwarded", [])) + len(report.get("merged", []))
+    kept = len(report.get("kept_ahead", [])) + len(report.get("diverged_kept", []))
+    click.echo(f"{repo.name} now at {repo.head[:12]} ({updated} updated, "
+               f"{len(report.get('added', []))} new, {kept} kept)")
 
 
 @code_group.command("feature")

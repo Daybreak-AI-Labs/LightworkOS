@@ -1,7 +1,15 @@
 """Tests for the notify tool (maverick.tools.notify)."""
 from __future__ import annotations
 
+import pytest
+
 # ---------- notify tool ----------
+
+
+@pytest.fixture(autouse=True)
+def _a_backend_is_configured(monkeypatch):
+    monkeypatch.setattr("maverick.notifications.configured_backends", lambda *a, **k: ["ntfy"])
+
 
 def test_notify_requires_title():
     from maverick.tools.notify import notify_tool
@@ -29,14 +37,27 @@ def test_notify_sanitizes_priority(monkeypatch):
 
 
 def test_notify_no_backend_configured(monkeypatch):
-    # notify() returns 0 when no backend fires.
+    # notify() counts a queued backend even when it has no destination, so the
+    # tool asks whether one is configured instead of reading the count.
+    monkeypatch.setattr("maverick.notifications.configured_backends", lambda *a, **k: [])
     monkeypatch.setattr(
         "maverick.notifications.notify",
-        lambda *a, **k: 0,
+        lambda *a, **k: 1,
     )
     from maverick.tools.notify import notify_tool
     out = notify_tool().fn({"title": "hello"})
     assert "no notification backend" in out
+
+
+def test_notify_held_for_a_batch_is_not_reported_as_unconfigured(monkeypatch):
+    # With batching on, notify() returns 0 while the item waits in the batcher.
+    monkeypatch.setattr(
+        "maverick.notifications.notify",
+        lambda *a, outcomes=None, **k: outcomes.append("batched") or 0,
+    )
+    from maverick.tools.notify import notify_tool
+    out = notify_tool().fn({"title": "hello"})
+    assert out == "held for the next batched digest; delivery not yet confirmed"
 
 
 def test_notify_reports_count(monkeypatch):

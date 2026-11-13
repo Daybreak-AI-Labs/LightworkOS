@@ -316,28 +316,6 @@
     var fieldKey = field ? field.dataset.guidedField : '';
     var inputLabel = element('label', fieldKey ? label(fieldKey) : (schema.title || 'List item'));
     inputLabel.htmlFor = input.id; host.append(inputLabel, input);
-    if (root.mvConsentPicker) {
-      var path = guidedPath(input), key = path[path.length-1];
-      var names = {purpose_id:'purposes',theme_token_id:'themes',translation_catalog_id:'translations',notice:'notices',template:'templates',purposes:'purposes',topics:'topics',custom_preferences:'custom-preferences'};
-      var parentKey = typeof path[path.length-2] === 'number' ? path[path.length-3] : path[path.length-2];
-      var resourceKind = names[key] || (key === 'id' ? names[parentKey] : null);
-      var form = input.closest('form'), rawPayload = form && form.querySelector('textarea[data-guided-selector]');
-      if (resourceKind && rawPayload) root.mvConsentPicker.attach(host, {kind:resourceKind,title:'Choose a saved ' + label(resourceKind).toLowerCase() + ' version',
-        snapshot:function () { return rawPayload.value; }, apply:function (record) {
-          var payload = JSON.parse(rawPayload.value), location = guidedPath(input), parent = payload;
-          location.slice(0,-1).forEach(function (part) { parent = parent[part]; });
-          var fieldName = location[location.length-1]; parent[fieldName] = record.resource_id;
-          if (fieldName === 'id') parent.version = record.version;
-          if (fieldName === 'purpose_id') parent.purpose_version = record.version;
-          if (fieldName === 'theme_token_id') parent.theme_token_version = record.version;
-          if (fieldName === 'translation_catalog_id') {
-            parent.translation_versions = Object.assign({}, parent.translation_versions || {}, {[record.locale]:record.version});
-            parent.locales = Array.from(new Set((parent.locales || []).concat(record.locale)));
-            if (!parent.default_locale) parent.default_locale = record.locale;
-          }
-          rawPayload.value = JSON.stringify(payload);rawPayload.dispatchEvent(new Event('change',{bubbles:true}));rawPayload.dispatchEvent(new Event('input',{bubbles:true}));
-        }});
-    }
     var autoReference = false;
     if (fieldKey === 'idempotency_key' && allowsRequestReference(schema)) {
       // A request reference is plumbing, not something a person types: fill

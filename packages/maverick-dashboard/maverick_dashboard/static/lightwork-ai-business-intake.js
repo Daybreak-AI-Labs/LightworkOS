@@ -66,7 +66,7 @@
   function isDirty(){return !!contract&&canonical(readAnswers())!==savedAnswers;}
   function ask(message,okText){return window.mvConfirm?window.mvConfirm(message,{okText}):Promise.resolve(window.confirm(message));}
   async function confirmReplace(){return !isDirty()||await ask('Discard your unsaved intake answers and open a different draft?','Discard changes');}
-  function operation(kind,payload){const signature=canonical(payload);let ref=references.get(kind);if(!ref||ref.signature!==signature){ref={signature,id:crypto.randomUUID()};references.set(kind,ref);}return ref.id;}
+  function operation(kind,payload){const signature=canonical(payload);let ref=references.get(kind);if(!ref||ref.signature!==signature){ref={signature,id:(window.mvNewId ? window.mvNewId() : crypto.randomUUID())};references.set(kind,ref);}return ref.id;}
   function render(row){if(!row||!/^ABI-[a-f0-9]{24}$/.test(row.id)||!Number.isSafeInteger(row.revision)||row.revision<1||!['draft','submitting','pending_review'].includes(row.status)||!Array.isArray(row.progress?.missing_fields))throw new Error('The saved intake could not be verified. Open it again before continuing.');
     current=row;conflicted=false;const answers=row.submission||{};build(answers);savedAnswers=canonical(readAnswers());el('current').textContent=(row.use_case_name||'Untitled intake')+' · '+(row.status==='draft'?'Draft':row.status==='pending_review'?'Awaiting independent review':'Submission in progress');
     const labels=new Map(contract.fields.map(field=>[field.path,field.label]));el('missing').replaceChildren();for(const name of row.progress.missing_fields)el('missing').append(node('li',labels.get(name)||name.replace(/[_\.]/g,' ')));

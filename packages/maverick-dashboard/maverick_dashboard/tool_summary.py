@@ -77,8 +77,10 @@ def plain_tool_summary(name: str, description: str | None) -> str:
         vendor = vendor.strip(" ,;:.")
         vendor = vendor[:1].upper() + vendor[1:]
         if vendor and len(vendor) <= 120 and not _TECHNICAL.search(vendor):
-            if _READ_ONLY.search(text) and not re.search(r"\bwrites? need confirm", text) \
-                    or not _WRITE_OPS.search(text):
+            # A description that says writes need confirmation is never read-only,
+            # whether or not it also names a write verb.
+            if not re.search(r"\bwrites? need confirm", text) \
+                    and (_READ_ONLY.search(text) or not _WRITE_OPS.search(text)):
                 return f"Reads information from {vendor}."
             return (
                 f"Connects to {vendor}. Changes it makes need a person's approval."

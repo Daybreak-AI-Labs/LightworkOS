@@ -903,6 +903,20 @@ def _strict_reads() -> bool:
     return strict_at_rest() or auto_strict_at_rest()
 
 
+# Backends with no rebinding migration (Postgres). Values sealed there before
+# column binding existed are still unbound, so an unbound value is not
+# evidence of tampering in a process that reads one.
+_UNREBOUND_BACKENDS: set[str] = set()
+
+
+def _unbound_is_tampering() -> bool:
+    """True when every store this process reads was rebound by ``maverick
+    encryption migrate`` (the marker records it), so a sealed column can only
+    hold a value bound to that column. An unbound sealed value there was copied
+    in from somewhere else: the corpus, a webhook secret, a sealed file."""
+    return auto_strict_at_rest() and not _UNREBOUND_BACKENDS
+
+
 # Returned in strict mode when a sealed column holds an unsealed value (legacy
 # plaintext that wasn't migrated, or tampering) -- never the real plaintext.
 _UNSEALED_WITHHELD = "‹withheld: unsealed value in an encrypted store›"
@@ -924,7 +938,9 @@ def _dec_field(text: str | None, *, at_rest: bool | None = None,
     ``context`` is the column being read (``"goals.title"``). A bound token
     that says it belongs elsewhere is withheld as an integrity failure: a
     value moved between cells never decrypts in its new place. Without a
-    context the token's own (authenticated) context opens it.
+    context the token's own (authenticated) context opens it. Once every store
+    is migrated, an unbound token read from a named column is withheld too
+    (see :func:`_unbound_is_tampering`).
 
     ``at_rest`` lets a caller that already resolved :func:`at_rest_enabled`
     for a whole result set pass it down: the policy check walks the compliance
@@ -958,6 +974,10 @@ def _dec_field(text: str | None, *, at_rest: bool | None = None,
         if embedded is not None and embedded != context:
             log.error("at-rest: withholding a sealed value bound to %s read from %s "
                       "(moved between columns or records)", embedded, context)
+            return _UNSEALED_WITHHELD
+        if embedded is None and is_sealed_str(text) and _unbound_is_tampering():
+            log.error("at-rest: withholding an unbound sealed value read from %s "
+                      "(a migrated store holds only column-bound values)", context)
             return _UNSEALED_WITHHELD
     if is_sealed_str(text):
         try:
@@ -1023,6 +1043,11 @@ def _dec_fields(texts: list[str | None],
             if embedded is not None and embedded != want:
                 log.error("at-rest: withholding a sealed value bound to %s read from %s "
                           "(moved between columns or records)", embedded, want)
+                out.append(_UNSEALED_WITHHELD)
+                continue
+            if embedded is None and is_sealed_str(text) and _unbound_is_tampering():
+                log.error("at-rest: withholding an unbound sealed value read from %s "
+                          "(a migrated store holds only column-bound values)", want)
                 out.append(_UNSEALED_WITHHELD)
                 continue
         if not is_sealed_str(text):

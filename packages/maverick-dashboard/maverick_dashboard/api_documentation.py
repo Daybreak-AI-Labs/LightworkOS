@@ -1,4 +1,14 @@
-"""Self-hosted API reference using FastAPI's supported Swagger UI renderer."""
+"""API reference pages, using FastAPI's supported renderers.
+
+``/docs`` (Swagger UI) is self-hosted: its script and stylesheet are vendored
+under ``static/`` and nothing is fetched from another host.
+
+``/redoc`` is not self-hosted. No ReDoc bundle is vendored, so FastAPI's
+renderer loads the ReDoc script from the jsDelivr CDN, and the page also asks
+for a Google Fonts stylesheet and FastAPI's favicon. That page therefore needs
+internet access and gets its own content-security policy (``_DOCS_CSP`` in
+``app.py``, which allows the CDN script and does not allow the font stylesheet).
+"""
 from __future__ import annotations
 
 from pathlib import Path

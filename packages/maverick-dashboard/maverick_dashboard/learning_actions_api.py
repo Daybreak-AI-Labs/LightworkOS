@@ -109,6 +109,8 @@ async def remove_guidance(request: Request, body: GuidanceLineIn) -> dict:
                                       domain=(body.domain or None))
     if not removed:
         raise HTTPException(status_code=404, detail="That guidance was already removed.")
+    await run_in_threadpool(lambda: _record(request, "guidance_remove", model_id=body.model_id,
+                                            domain=(body.domain or None), line=body.line))
     return {"removed": True}
 
 
@@ -117,6 +119,9 @@ async def retire_guidance(request: Request, body: RetireIn) -> dict:
     require_global_permission(request, "admin")
     from maverick.self_harness import retire_stale
     n = await run_in_threadpool(lambda: retire_stale(older_than_days=float(body.older_than_days)))
+    if n:
+        await run_in_threadpool(lambda: _record(request, "guidance_retire",
+                                                older_than_days=body.older_than_days, retired=int(n)))
     return {"retired": int(n)}
 
 
@@ -125,7 +130,11 @@ async def review_probation(request: Request, body: ModelIn) -> dict:
     require_global_permission(request, "admin")
     from maverick.self_harness import review_canaries
     res = await run_in_threadpool(review_canaries, body.model_id)
-    return {"kept": len(res.get("graduated") or []), "removed": len(res.get("demoted") or [])}
+    kept, removed = len(res.get("graduated") or []), len(res.get("demoted") or [])
+    if kept or removed:
+        await run_in_threadpool(lambda: _record(request, "probation_review", model_id=body.model_id,
+                                                kept=kept, removed=removed))
+    return {"kept": kept, "removed": removed}
 
 
 @router.get("/learning/snapshots")

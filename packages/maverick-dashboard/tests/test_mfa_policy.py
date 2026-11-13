@@ -222,3 +222,16 @@ def test_reauthenticate_url_asks_saml_for_a_fresh_sign_in(monkeypatch):
     url = step_up.reauthenticate_url(
         SimpleNamespace(url=SimpleNamespace(path="/users", query=""), method="GET"))
     assert url == "/saml/login?fresh=1&return_to=%2Fusers"
+
+
+def test_required_second_factor_does_not_refuse_api_keys(monkeypatch):
+    # A key cannot present a second factor; it was issued from a checked sign-in.
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("MAVERICK_MFA_REQUIRE", "1")
+    key = SimpleNamespace(claims={"via": "api_key"}, issuer="lightwork")
+    mfa_policy.enforce_session_policy(key)
+    browser = SimpleNamespace(claims={"via": "session"}, issuer="lightwork")
+    with pytest.raises(Exception) as refused:
+        mfa_policy.enforce_session_policy(browser)
+    assert getattr(refused.value, "status_code", None) == 403

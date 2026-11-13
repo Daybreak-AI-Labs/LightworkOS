@@ -44,7 +44,7 @@
       if (busy || !current()) return;
       if (!await mvConfirm('Read the practice questions for ' + plugin.name + ' / ' + plugin.version + ' once in the reviewed restricted image? No tool action runs, no image downloads, and network, credentials and host writes remain unavailable.', {okText: 'Read these questions'})) return;
       if (!current()) return;
-      var operation = crypto.randomUUID().replace(/-/g, '');
+      var operation = (window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g, '');
       try { remember(context, plugin.fingerprint, {inspection: operation}); }
       catch (_) { status.textContent = 'The original request could not be saved in this browser. Nothing was submitted. Allow site storage before continuing.'; return; }
       busy = true; controls.querySelectorAll('button').forEach(function (el) { el.disabled = true; });
@@ -70,7 +70,7 @@
         if (!valid()) { messages.textContent = 'Complete the highlighted answers before reviewing this check.'; return; }
         var original = remembered(context, plugin.fingerprint);
         if (original && original.check) { messages.textContent = 'Read the original saved check before starting another one.'; return; }
-        var reviewed = {context: context, fingerprint: plugin.fingerprint, operation_id: crypto.randomUUID().replace(/-/g, ''), confirm: true,
+        var reviewed = {context: context, fingerprint: plugin.fingerprint, operation_id: (window.mvNewId ? window.mvNewId() : crypto.randomUUID()).replace(/-/g, ''), confirm: true,
                         contract: descriptor.receipt, contract_revision: descriptor.revision, tool: selected.name, sample: JSON.parse(JSON.stringify(draft.params)), expected: JSON.parse(JSON.stringify(answer.params.answer)), mode: mode.value};
         fields.querySelectorAll('section.panel').forEach(function (previous) { previous.remove(); });
         var review = node('section', undefined, fields); review.className = 'panel'; node('h4', 'Review this exact practice check', review);

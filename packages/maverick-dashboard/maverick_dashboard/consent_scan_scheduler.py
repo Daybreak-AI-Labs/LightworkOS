@@ -515,6 +515,15 @@ class ConsentScanScheduler:
         settings: SchedulerSettings,
         stop: threading.Event | None,
     ) -> dict[str, int]:
+        """Run one tenant under the installation bounds and its own config.
+
+        A tenant's configuration can opt the tenant out and can lower
+        ``enqueue_limit`` and ``claim_limit``.  ``poll_seconds`` and
+        ``tenant_limit`` describe the one supervisor loop, so only the
+        installation values apply; a tenant's values for them are validated
+        and otherwise ignored.
+        """
+
         with _tenant_context(tenant_id):
             tenant_settings = scheduler_settings(self._tenant_config_loader())
             if tenant_settings is None:
@@ -526,10 +535,10 @@ class ConsentScanScheduler:
                     "recovered": 0,
                 }
             effective_settings = SchedulerSettings(
-                poll_seconds=min(settings.poll_seconds, tenant_settings.poll_seconds),
+                poll_seconds=settings.poll_seconds,
                 enqueue_limit=min(settings.enqueue_limit, tenant_settings.enqueue_limit),
                 claim_limit=min(settings.claim_limit, tenant_settings.claim_limit),
-                tenant_limit=min(settings.tenant_limit, tenant_settings.tenant_limit),
+                tenant_limit=settings.tenant_limit,
             )
             inventory = self._inventory_factory(tenant_id)
             enqueued = inventory.enqueue_due(

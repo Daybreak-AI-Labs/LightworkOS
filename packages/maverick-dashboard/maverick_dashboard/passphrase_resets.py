@@ -39,7 +39,9 @@ that there is no passphrase to remove.
 Store: ``~/.maverick/dashboard-passphrase-resets.json`` (0600). Any
 unreadable or malformed store fails closed. Each new reset replaces the
 person's earlier link; a reset whose link expired or was refused stays listed
-until the person has a passphrase again, so the owner can issue another.
+until the person has a passphrase again, so the owner can issue another. Once
+they have one, the next reset issued here removes that record; a completed
+reset is kept for 30 days.
 """
 from __future__ import annotations
 
@@ -294,9 +296,14 @@ def _first_passphrase_tenant(email: str) -> str | None:
     return "" if stored is not None or not memberships else next(iter(memberships))
 
 
-def _prune(resets: dict[str, dict], now: float) -> None:
+def _prune(resets: dict[str, dict], now: float, current: set[str]) -> None:
+    """Drop completed resets past the keep period, and any reset whose link
+    expired or was refused once its person (``current``: everyone with a
+    passphrase) has a passphrase again and so is no longer listed as waiting."""
     for key in [key for key, row in resets.items()
-                if row["outcome"] == "set" and row["used_at"] < now - _KEEP_SECONDS]:
+                if (row["outcome"] == "set" and row["used_at"] < now - _KEEP_SECONDS)
+                or (row["outcome"] != "set" and row["email"] in current
+                    and (row["outcome"] or row["expires_at"] <= now))]:
         del resets[key]
 
 
@@ -321,6 +328,7 @@ def issue(request: Request, email: str) -> tuple[str, dict]:
             raise HTTPException(403, ONLY_OWNER)
         resets = _read()
         now = time.time()
+        current = set(local_passphrases.emails())  # read before revoke() holds that store
         record = {"email": email, "tenant": "", "binding": _binding(email), "created_by": caller,
                   "created_at": now, "expires_at": now + RESET_TTL_SECONDS, "used_at": None, "outcome": "",
                   "first": False}
@@ -340,7 +348,7 @@ def issue(request: Request, email: str) -> tuple[str, dict]:
                 record["tenant"], record["first"] = tenant, True
             for key in earlier:  # the earlier link stops working
                 del resets[key]
-            _prune(resets, now)
+            _prune(resets, now, current)
             if len(resets) >= _MAX_RECORDS:
                 raise HTTPException(409, "Too many passphrase resets are waiting. Try again later.")
             resets[_digest(token)] = record

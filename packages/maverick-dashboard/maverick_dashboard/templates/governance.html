@@ -881,7 +881,12 @@
         {expected_revision: friaRecord.revision});
       done("Assessment marked complete.");
     } catch (error) {
-      say("fria-editor-status", error.status === 422 || error.status === 409 ? new Error("Answer and save all six questions first.") : error, "mark it complete");
+      // A 409 means either unanswered questions or a record someone else
+      // changed after it was opened here; the saved answers tell which.
+      const answered = Object.keys(FRIA_ELEMENTS).every(key => (friaRecord.elements || {})[key]);
+      const plain = error.status === 409 && answered ? "This assessment changed after you opened it. Reload the page and try again."
+        : error.status === 422 || error.status === 409 ? "Answer and save all six questions first." : "";
+      say("fria-editor-status", plain ? new Error(plain) : error, "mark it complete");
     }
   });
   const friaOutdate = document.getElementById("fria-outdate");

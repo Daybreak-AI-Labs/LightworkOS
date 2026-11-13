@@ -581,8 +581,13 @@ def apply_blocks(blocks: list[SearchReplaceBlock], workdir: Path,
     # Snapshot original file contents for rollback.
     snapshots: dict[Path, bytes] = {}
     created: set[Path] = set()
+    root = workdir.resolve()
     for blk in blocks:
         target = (workdir / blk.path).resolve()
+        if not target.is_relative_to(root):
+            # _apply_one refuses this block. Never read, and on rollback never
+            # rewrite or unlink, a path outside the workspace.
+            continue
         if target.exists() and target not in snapshots:
             try:
                 snapshots[target] = target.read_bytes()

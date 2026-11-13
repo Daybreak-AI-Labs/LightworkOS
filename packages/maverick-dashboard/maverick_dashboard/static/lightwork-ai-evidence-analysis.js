@@ -245,7 +245,7 @@ function renderAnalyses() {
       wrap.appendChild(button("Withdraw", () => revoke(record), "btn btn--danger"));
     }
     if (can.audit) {
-      wrap.appendChild(button("History", () => history(record), "btn btn--ghost"));
+      wrap.appendChild(button("History", () => showHistory(record), "btn btn--ghost"));
     }
     actions.appendChild(wrap);
     tr.appendChild(actions);
@@ -337,7 +337,9 @@ async function revoke(record) {
   });
 }
 
-async function history(record) {
+// Not named "history": a top-level function in a classic script becomes a
+// window property, and that name would replace the browser's window.history.
+async function showHistory(record) {
   await run("Loading history", async () => {
     const payload = await apiRequest(`/analyses/${encodeURIComponent(record.analysis_id)}/history`, {}, "load the history");
     const items = Array.isArray(payload.items) ? payload.items : [];

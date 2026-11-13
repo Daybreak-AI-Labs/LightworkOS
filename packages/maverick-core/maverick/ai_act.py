@@ -55,7 +55,7 @@ _HIGH_RISK: tuple[str, ...] = (
 def _safe(fn, default):
     try:
         return fn()
-    except BaseException:  # noqa: BLE001 -- never crash on a posture probe
+    except Exception:  # noqa: BLE001 -- never crash on a posture probe
         return default
 
 

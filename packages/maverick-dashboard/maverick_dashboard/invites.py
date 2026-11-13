@@ -13,9 +13,10 @@ customer postures:
   ``user:<email>``, minted with a locally-held secret. The link IS the
   credential (a magic link), so treat it like a password reset email.
 
-Defaults to whether the local owner has been claimed, unless
-``[dashboard] invites`` or ``MAVERICK_DASHBOARD_INVITES`` explicitly overrides
-it. Every route 404s while disabled. Tokens are stored **hashed** (sha256) — the store
+**On by default once this installation's owner account is claimed**, off
+before that. ``MAVERICK_DASHBOARD_INVITES`` (or ``LIGHTWORK_DASHBOARD_INVITES``)
+and then ``[dashboard] invites`` override that in either direction. Fail-closed:
+every route 404s while disabled. Tokens are stored **hashed** (sha256) — the store
 never contains a usable link — and consumption is atomic under the same
 cross-process lock discipline as the RBAC roster, so a link can't be redeemed
 twice. The accept flow is GET-shows-confirmation / POST-consumes, so a mail
@@ -149,10 +150,11 @@ def _locked(path: Path):
 # ---- feature gate ------------------------------------------------------------
 
 def invites_enabled() -> bool:
-    """Use an explicit environment/config setting, else the owner-claimed state.
-
-    Off → every invite route 404s and the local-session path never runs.
-    """
+    """Whether invitations are on. The environment flag
+    (``MAVERICK_DASHBOARD_INVITES``, then ``LIGHTWORK_DASHBOARD_INVITES``)
+    wins, then ``[dashboard] invites``; with neither set, invitations are on
+    once the owner account is claimed and off before. Off → every invite
+    route 404s and the local-session path never runs."""
     from maverick.config import env_flag
     v = env_flag("MAVERICK_DASHBOARD_INVITES")
     if v is None:

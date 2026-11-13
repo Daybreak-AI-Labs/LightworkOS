@@ -1,8 +1,9 @@
 """Weaviate vector store adapter.
 
 Embedding-backed memory using Weaviate. Mirrors the Chroma / Qdrant adapter API
-(``add(docs)``, ``query(text, top_k)``, ``delete(ids)``, ``count()``) so callers
-swap one for another with no code change.
+(``add(docs)``, ``upsert_one(doc, id=...)``, ``query(text, top_k)``,
+``delete(ids)``, ``count()``) so callers swap one for another with no code
+change.
 
 Uses Weaviate's embedded mode by default (no separate server) and a remote
 cluster when configured:
@@ -30,6 +31,7 @@ fast; set ``vectorizer="none"`` only if you supply your own vectors (then
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid as _uuid
 from typing import Any
@@ -38,6 +40,11 @@ from urllib.parse import urlparse
 from ._provider_accounting import BestEffortTransportError, metered_transport_call
 
 log = logging.getLogger(__name__)
+
+# Weaviate object ids are UUIDs derived from the caller's id, so the caller's
+# own id is kept as a property and handed back by query(); delete() can then
+# take a returned id as is.
+_DOC_ID_KEY = "maverick_doc_id"
 
 
 def _active_tenant() -> str | None:
@@ -105,6 +112,11 @@ class WeaviateStore:
 
         # Weaviate collection names are capitalized GraphQL classes.
         self._collection = collection[:1].upper() + collection[1:]
+        self.recall_identity = hashlib.sha256(
+            f"{url or 'embedded'}:{self._collection}".encode()).hexdigest()
+        # With no server-side vectorizer the caller must supply every vector.
+        self.requires_precomputed_embeddings = (
+            self._vectorizer.strip().lower() == "none")
         self._ensure_collection()
 
     @staticmethod
@@ -200,12 +212,22 @@ class WeaviateStore:
                 f"weaviate: could not ensure collection {self._collection!r}"
             ) from e
 
+    def upsert_one(self, document: str, *, id: str, metadata: dict,
+                   embedding: list[float] | None = None) -> None:
+        """Replace one record. A batch import overwrites an object that has the
+        same UUID, so this is one write, not a delete followed by an insert."""
+        from ..skill.embeddings import validate_vectors
+
+        embeddings = None if embedding is None else validate_vectors([embedding], 1)
+        self.add([document], ids=[id], metadatas=[metadata], embeddings=embeddings)
+
     def add(
         self,
         documents: list[str],
         *,
         ids: list[str] | None = None,
         metadatas: list[dict] | None = None,
+        embeddings: list[list[float]] | None = None,
     ) -> None:
         if not documents:
             return
@@ -216,6 +238,9 @@ class WeaviateStore:
         if metadatas is not None and len(metadatas) != len(documents):
             raise ValueError(
                 f"metadatas length {len(metadatas)} != documents length {len(documents)}")
+        if embeddings is not None and len(embeddings) != len(documents):
+            raise ValueError(
+                f"embeddings length {len(embeddings)} != documents length {len(documents)}")
         tenant_id = _active_tenant()
         def dispatch() -> None:
             coll = self._client.collections.get(self._collection)
@@ -232,10 +257,14 @@ class WeaviateStore:
                     # another tenant's documents.
                     if tenant_id is not None:
                         props["_tenant"] = tenant_id
-                    batch.add_object(
-                        properties=props,
-                        uuid=_uuid_for(_stored_id(ids[i], tenant_id)),
-                    )
+                    props[_DOC_ID_KEY] = ids[i]
+                    obj: dict[str, Any] = {
+                        "properties": props,
+                        "uuid": _uuid_for(_stored_id(ids[i], tenant_id)),
+                    }
+                    if embeddings is not None:
+                        obj["vector"] = embeddings[i]
+                    batch.add_object(**obj)
             failed_objects = getattr(batch_api, "failed_objects", None)
             if isinstance(failed_objects, (list, tuple)) and failed_objects:
                 raise RuntimeError(
@@ -257,18 +286,30 @@ class WeaviateStore:
         from weaviate.classes.query import Filter
         return Filter.by_property("_tenant").equal(tenant_id)
 
-    def query(self, text: str, *, top_k: int = 5) -> list[dict]:
-        if not text:
+    def query(self, text: str | None = None, *, top_k: int = 5,
+              embedding: list[float] | None = None) -> list[dict]:
+        """Top-k similarity search. Returns list of
+        {id, document, score, distance, metadata}; ``id`` is the id the caller
+        gave to ``add``/``upsert_one``, so it can be passed to ``delete``.
+
+        Pass ``embedding`` (a precomputed query vector) to search by vector
+        rather than by ``text``."""
+        if embedding is None and not text:
             return []
-        near_kwargs: dict = {"query": text, "limit": max(1, min(top_k, 100))}
+        near_kwargs: dict = {"limit": max(1, min(top_k, 100))}
         tfilter = self._tenant_filter(_active_tenant())
         if tfilter is not None:
             near_kwargs["filters"] = tfilter
+
+        def dispatch():
+            search = self._client.collections.get(self._collection).query
+            if embedding is not None:
+                return search.near_vector(near_vector=embedding, **near_kwargs)
+            return search.near_text(query=text, **near_kwargs)
+
         res = metered_transport_call(
             "weaviate",
-            lambda: self._client.collections.get(self._collection).query.near_text(
-                **near_kwargs
-            ),
+            dispatch,
             hosted=self._remote,
             category="retrieval",
         )
@@ -276,12 +317,15 @@ class WeaviateStore:
         for obj in getattr(res, "objects", []) or []:
             props = dict(getattr(obj, "properties", {}) or {})
             document = props.pop("document", "") or ""
+            # Objects written before the id property existed fall back to the
+            # Weaviate UUID.
+            doc_id = props.pop(_DOC_ID_KEY, None) or getattr(obj, "uuid", "")
             meta = getattr(obj, "metadata", None)
             distance = getattr(meta, "distance", None) if meta else None
             dist_f = float(distance) if isinstance(distance, (int, float)) else None
             score = (1.0 - dist_f) if dist_f is not None else None
             out.append({
-                "id": str(getattr(obj, "uuid", "")),
+                "id": str(doc_id),
                 "document": document,
                 "score": score,
                 "distance": dist_f,

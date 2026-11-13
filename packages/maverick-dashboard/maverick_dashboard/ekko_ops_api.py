@@ -188,7 +188,14 @@ def _import_activity_file(request: Request, body: ImportIn) -> dict:
 
 @router.post("/api/v1/ekko/recording/watch", status_code=202)
 def watch_active_app(request: Request, body: WatchIn) -> dict:
-    """Record recognized desktop apps until the native device's Pause or Stop."""
+    """Refused in this build: always answers 409 with the CLI instruction.
+
+    ``recording_options`` reports ``active_app=False`` for every request,
+    because a dashboard request cannot prove its sender owns the server's
+    desktop. The recorder code below that check is kept for a device-bound
+    agent that can; until then desktop recording starts with
+    ``maverick ekko run``.
+    """
     try:
         return _watch_active_app(request, body)
     except HTTPException as exc:

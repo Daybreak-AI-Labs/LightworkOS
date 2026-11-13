@@ -25,11 +25,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from maverick import ai_entity_tasks as tasks
 from maverick import ai_inventory as inventory
 from maverick.paths import canonical_tenant_id, data_dir, tenant_scope
 
+from ._shared import authenticated_subject
 from .auth import has_global_permission
 
 _HEX_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -216,21 +217,21 @@ def _request_for(app: Any, request: object) -> Request:
 
 
 def _principal_ref_from_request(request: Request, tenant_id: str) -> str:
-    """Independently reproduce the API's opaque tenant-bound principal ref."""
+    """Reproduce the API's opaque tenant-bound principal ref."""
 
-    verified = getattr(request.state, "principal", None)
-    subject = getattr(verified, "principal", None) or getattr(verified, "sub", None)
-    if (
-        not isinstance(subject, str)
-        or not subject.strip()
-        or len(subject) > 512
-    ):
+    # The API's own subject resolution, so the local single-user operator and
+    # a static dashboard token resolve to the same reference on both sides.
+    try:
+        subject = authenticated_subject(
+            request, error_detail="authenticated principal authority is unavailable",
+        )
+    except HTTPException as exc:
         raise tasks.AIEntityTaskPermissionDenied(
             "authenticated principal authority is unavailable"
-        )
+        ) from exc
     tenant = canonical_tenant_id(tenant_id)
     digest = hashlib.sha256(
-        f"lightwork.ai-entity-task.identity.v1:{tenant}:{subject.strip()}".encode()
+        f"lightwork.ai-entity-task.identity.v1:{tenant}:{subject}".encode()
     ).hexdigest()
     return f"ai-task-principal-{digest[:32]}"
 

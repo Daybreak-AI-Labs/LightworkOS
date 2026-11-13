@@ -81,6 +81,10 @@ def test_anthropic_clamps_forced_choice_on_fable_5_1_with_an_instruction():
     assert last["content"][-1]["text"] == "Respond by calling the `get_weather` tool."
     # ``auto``/``none`` are fine on Fable 5.1 and untouched.
     assert _anthropic_request(model="claude-fable-5-1", tool_choice={"type": "none"})["tool_choice"] == {"type": "none"}
+    # The later models that reject a forced choice are clamped the same way.
+    for model in ("claude-fable-5-2", "claude-mythos-5-2", "claude-opus-5-5", "claude-sonnet-5-5"):
+        assert _anthropic_request(model=model, tool_choice={"type": "any"})["tool_choice"] == {"type": "auto"}
+    assert _anthropic_request(model="claude-opus-5", tool_choice={"type": "any"})["tool_choice"] == {"type": "any"}
 
 
 def test_anthropic_clamps_forced_choice_under_manual_thinking():

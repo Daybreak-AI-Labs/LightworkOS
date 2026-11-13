@@ -44,6 +44,14 @@ DEFAULT_STOP_PHRASES = ("stop listening", "exit voice mode", "goodbye maverick")
 
 _FENCE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 _FILEISH = re.compile(r"[A-Za-z0-9_./~-]+\.[A-Za-z0-9]{1,8}\b")
+# Only a token ending in one of these is spoken as a file name. Any dotted
+# token used to count, so "e.g." and "version 2.0" were read out as files.
+_FILE_EXTENSIONS = frozenset({
+    "bash", "c", "cc", "cfg", "conf", "cpp", "cs", "css", "csv", "env", "go", "h", "hpp",
+    "htm", "html", "ini", "java", "js", "json", "jsx", "kt", "lock", "lua", "md", "php",
+    "pl", "ps1", "py", "r", "rb", "rs", "rst", "scss", "sh", "sql", "swift", "tf", "toml",
+    "ts", "tsx", "txt", "vue", "xml", "yaml", "yml", "zsh",
+})
 _LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _INLINE_CODE = re.compile(r"`([^`]*)`")
 _HEADER = re.compile(r"^\s{0,3}#{1,6}\s*", re.MULTILINE)
@@ -62,19 +70,25 @@ def voice_only_enabled() -> bool:
 
 
 def _describe_code_block(body: str, context_before: str) -> str:
-    """Spoken summary of a fenced code block: line count + target file if one
-    is mentioned just above the fence."""
+    """Spoken summary of a fenced code block: line count + target file if a
+    file name (a path with a known extension) is mentioned just above the
+    fence. Without one the block is described, with no claim of a write."""
     lines = [ln for ln in body.split("\n") if ln.strip()]
     n = len(lines)
     noun = "line" if n == 1 else "lines"
-    # Look for a file-ish token in the last couple of lines before the fence.
+    # Look for a file name in the last couple of lines before the fence.
     tail = "\n".join(context_before.rstrip().split("\n")[-2:])
-    # keep the last (closest) match before the fence, if any
-    matches = list(_FILEISH.finditer(tail))
-    m = matches[-1] if matches else None
-    if m:
-        return f"I wrote {n} {noun} to {m.group(0)}."
+    names = [m.group(0) for m in _FILEISH.finditer(tail) if _is_file_name(m.group(0))]
+    if names:
+        # keep the last (closest) match before the fence
+        return f"I wrote {n} {noun} to {names[-1]}."
     return f"(a code block of {n} {noun})"
+
+
+def _is_file_name(token: str) -> bool:
+    stem, _, extension = token.rpartition(".")
+    return (extension.lower() in _FILE_EXTENSIONS and "//" not in token
+            and any(ch.isalnum() for ch in stem))
 
 
 def _summarize_tables(text: str) -> str:
