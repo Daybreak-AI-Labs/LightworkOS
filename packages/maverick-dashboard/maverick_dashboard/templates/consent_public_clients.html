@@ -98,7 +98,9 @@
     document.querySelectorAll("[data-pcc-close]").forEach(function (b) { b.addEventListener("click", function () { $(b.dataset.pccClose).hidden = true; }); });
     function snippet(key) {
       var origin = window.location.origin;
-      return '<div id="consent-root"></div>\n<script src="' + origin + '/api/v1/public/consent/sdk.js"><\/script>\n<script>\n  const consent = new LightworkConsent({\n    endpoint: "' + origin + '/api/v1/public/consent",\n    clientCredential: "' + (key || "YOUR-KEY") + '"\n  });\n  consent.renderBanner(document.querySelector("#consent-root"));\n<\/script>';
+      // The second opener is split so this page has no bare inline script tag;
+      // the customer's copy must not carry this dashboard's nonce.
+      return '<div id="consent-root"></div>\n<script src="' + origin + '/api/v1/public/consent/sdk.js"><\/script>\n<' + 'script>\n  const consent = new LightworkConsent({\n    endpoint: "' + origin + '/api/v1/public/consent",\n    clientCredential: "' + (key || "YOUR-KEY") + '"\n  });\n  consent.renderBanner(document.querySelector("#consent-root"));\n<\/script>';
     }
     $("pcc-snippet").textContent = snippet("");
     $("pcc-copy-example").addEventListener("click", function () { window.mvCopy(snippet("")); });
