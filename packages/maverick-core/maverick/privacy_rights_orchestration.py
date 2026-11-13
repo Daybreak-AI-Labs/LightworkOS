@@ -3,7 +3,10 @@
 This module coordinates local control-plane state only.  It performs no
 network I/O, provider writes, response delivery, identity verification, or
 legal-compliance determination.  Provider work is represented by a durable
-callback outbox and must be performed by separately governed adapters.
+callback outbox and must be performed by separately governed adapters.  Those
+adapters and the source worker that drives them do call providers, including
+provider deletes, once a deployment configures them; the statements above and
+``product_boundaries()`` describe this store, not that composed runtime.
 
 The capability is closed unless both gates are explicitly enabled::
 
@@ -13,8 +16,10 @@ The capability is closed unless both gates are explicitly enabled::
     enable = true
 
 Raw subject identifiers and external request references are accepted only long
-enough to derive tenant-keyed HMAC digests.  They are never persisted or
-returned.  Sources contain opaque adapter and credential *references*, never
+enough to derive HMAC digests.  The default key is one deployment-wide secret
+(``MAVERICK_PRIVACY_RIGHTS_DIGEST_KEY``), not a key per tenant; the tenant is
+bound into the digested message instead.  The raw values are never persisted
+or returned.  Sources contain opaque adapter and credential *references*, never
 credentials, URLs, origins, or provider payloads.
 """
 
@@ -4036,18 +4041,40 @@ class PrivacyRightsOrchestrationStore:
     ) -> None:
         if rights_case.status != "open" or rights_case.identity_status != "verified":
             raise PrivacyRightsConflict("case is not open with verified identity")
-        tasks = connection.execute(
-            "SELECT * FROM rights_tasks WHERE tenant_id=? AND case_id=?",
-            (tenant, rights_case.case_id),
-        ).fetchall()
+        tasks = tuple(
+            self._task(self._payload(row, "source task"), row["integrity_sha256"])
+            for row in connection.execute(
+                "SELECT * FROM rights_tasks WHERE tenant_id=? AND case_id=?",
+                (tenant, rights_case.case_id),
+            ).fetchall()
+        )
         if not tasks:
             raise PrivacyRightsConflict("case has no planned source tasks")
-        if any(
-            self._task(self._payload(row, "source task"), row["integrity_sha256"]).state
-            != "complete"
-            for row in tasks
-        ):
+        if any(task.state != "complete" for task in tasks):
             raise PrivacyRightsConflict("all planned source tasks must be complete")
+        # Completed work is not enough: every enrolled source needs every phase
+        # the requested rights require and the source can perform, or closure
+        # would hide skipped work.  A phase a source has no capability for
+        # cannot be planned, so it is handled outside this store.
+        planned = {(task.source_id, task.phase) for task in tasks}
+        required = self._required_phases(rights_case.rights)
+        sources = tuple(
+            self._source(self._payload(row, "source"), row["integrity_sha256"])
+            for row in connection.execute(
+                "SELECT * FROM rights_sources WHERE tenant_id=?",
+                (tenant,),
+            ).fetchall()
+        )
+        if any(
+            (source.source_id, phase) not in planned
+            for source in sources
+            for phase in required
+            if phase in source.capabilities
+        ):
+            raise PrivacyRightsConflict(
+                "every enrolled source must complete every phase the requested "
+                "rights require and the source supports"
+            )
         callbacks = connection.execute(
             "SELECT * FROM rights_callbacks WHERE tenant_id=? AND case_id=?",
             (tenant, rights_case.case_id),
@@ -4539,6 +4566,13 @@ class PrivacyRightsOrchestrationStore:
 
     @staticmethod
     def product_boundaries() -> Mapping[str, object]:
+        """Declare what this store does, not what a configured runtime does.
+
+        ``network_io`` and ``provider_writes`` are false because the store only
+        records intent; the source worker and adapters perform the provider
+        calls, and the dashboard status reports those from the source runtime.
+        """
+
         return {
             "provider_neutral": True,
             "network_io": False,

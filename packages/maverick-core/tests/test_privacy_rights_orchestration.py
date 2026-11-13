@@ -1276,6 +1276,39 @@ def test_access_package_closure_four_eyes_export_integrity_and_purge(authority) 
     store.verify_integrity("tenant-a")
 
 
+def test_closure_is_refused_until_every_required_phase_is_planned(authority) -> None:
+    store, actor, clock = authority
+    enroll_all(store, "tenant-a", "crm", key="source")
+    case = open_verified(store, clock, "tenant-a", "case-partial", ["erasure"])
+    tasks = store.plan_source_tasks(
+        "tenant-a",
+        case.case_id,
+        "crm",
+        phases=["discover"],
+        expected_case_revision=case.revision,
+        idempotency_key="plan",
+    )
+    complete_callback_phase(
+        store, "tenant-a", case.case_id, "crm", tasks[0], suffix="partial"
+    )
+    store.build_completeness_manifest(
+        "tenant-a",
+        case.case_id,
+        "manifest:partial",
+        expected_case_revision=case.revision + 1,
+        idempotency_key="manifest",
+    )
+    actor["value"] = "closure-approver"
+    with pytest.raises(rights.PrivacyRightsConflict, match="every phase"):
+        store.approve_case_closure(
+            "tenant-a",
+            case.case_id,
+            expected_revision=case.revision + 2,
+            idempotency_key="closure-approval",
+        )
+    assert store.get_case("tenant-a", case.case_id).closure_approved_by is None
+
+
 def test_integrity_verification_detects_tampering(authority) -> None:
     store, _actor, _clock = authority
     enroll_all(store, "tenant-a", "crm", key="source")
