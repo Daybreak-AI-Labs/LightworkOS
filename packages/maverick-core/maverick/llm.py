@@ -1611,18 +1611,38 @@ _PROVIDER_SNAPSHOT_RETRIES = 3
 _CLIENT_CACHE_MAX = 32
 
 
+# Providers whose client signs in with an ambient cloud identity (Google ADC,
+# an AWS role or profile) that no variable here reveals: a workspace endpoint
+# for them could always receive the deployment's credential.
+_AMBIENT_IDENTITY_PROVIDERS = frozenset({"vertex", "bedrock"})
+# Credentials a client reads beyond PROVIDER_CREDENTIAL_ENV_MAP.
+_EXTRA_CREDENTIAL_ENV = {
+    "anthropic": ("ANTHROPIC_AUTH_TOKEN",),
+    "bedrock": ("AWS_BEARER_TOKEN_BEDROCK",),
+}
+
+
 def _refuse_deployment_key_for_workspace_endpoint(
     provider: str, base_url: str | None, key: str | None,
+    environment: Mapping[str, str],
 ) -> None:
-    """Never send the deployment's key to an endpoint a workspace chose."""
-    if base_url is None or not key:
+    """Never send the deployment's credential to an endpoint a workspace chose.
+
+    A workspace overlay that sets ``base_url`` must bring its own ``api_key``
+    (or a per-workspace BYOK key) unless no deployment credential of any kind
+    would be sent: a keyless local endpoint such as Ollama keeps working."""
+    if base_url is None:
         return
     from .config import (
+        PROVIDER_CREDENTIAL_ENV_MAP,
         tenant_provider_api_key,
         tenant_sets_provider_endpoint_without_key,
     )
-    if (tenant_sets_provider_endpoint_without_key(provider)
-            and not tenant_provider_api_key(provider)):
+    if not tenant_sets_provider_endpoint_without_key(provider) or tenant_provider_api_key(provider):
+        return
+    names = (*PROVIDER_CREDENTIAL_ENV_MAP.get(provider, ()), *_EXTRA_CREDENTIAL_ENV.get(provider, ()))
+    if (key or provider in _AMBIENT_IDENTITY_PROVIDERS
+            or any(environment.get(name, "").strip() for name in names)):
         raise ValueError(
             f"providers.{provider}.base_url in the workspace configuration "
             "needs the workspace's own api_key"
@@ -2021,7 +2041,7 @@ class LLM:
         raw_base_url = pcfg.get("base_url")
         if isinstance(raw_base_url, str) and raw_base_url.strip():
             base_url = raw_base_url.strip()
-        _refuse_deployment_key_for_workspace_endpoint(provider, base_url, key)
+        _refuse_deployment_key_for_workspace_endpoint(provider, base_url, key, environment)
         if base_url is None:
             for env_name in _PROVIDER_BASE_URL_ENV_MAP.get(provider, ()):
                 value = environment.get(env_name, "").strip()

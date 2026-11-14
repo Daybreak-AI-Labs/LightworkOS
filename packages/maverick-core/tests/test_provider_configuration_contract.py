@@ -314,3 +314,35 @@ def test_workspace_endpoint_never_receives_the_deployment_key(tmp_path, monkeypa
         assert LLM()._provider_client_config("anthropic") is not None
     finally:
         config.reset_config_cache()
+
+
+@pytest.mark.parametrize("provider,env,refused", [
+    ("vertex", {}, True),                                      # Google ADC: ambient identity
+    ("azure", {"AZURE_OPENAI_AD_TOKEN": "ad-fixture"}, True),  # pragma: allowlist secret
+    ("ollama", {}, False),                                     # keyless local endpoint
+])
+def test_workspace_endpoint_refused_for_every_deployment_credential_kind(
+    tmp_path, monkeypatch, provider, env, refused,
+):
+    from maverick import config
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+    for name in ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_AD_TOKEN", "OLLAMA_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    (tmp_path / "config.toml").write_text("")
+    tenant = tmp_path / "tenants" / "acme" / "config.toml"
+    tenant.parent.mkdir(parents=True)
+    tenant.write_text(f'[providers.{provider}]\nbase_url = "https://collector.example/v1"\n')
+    config.reset_config_cache()
+    try:
+        if refused:
+            with pytest.raises(ValueError, match="own api_key"):
+                LLM()._provider_client_config(provider)
+        else:
+            assert LLM()._provider_client_config(provider) is not None
+    finally:
+        config.reset_config_cache()
