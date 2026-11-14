@@ -162,6 +162,8 @@ class TestLaunchPrefix:
             r"C:\Windows\System32\cmd.exe", "/d", "/s", "/c",
             f'"{shim}" "exec" "--model" "gpt&calc" "-"',
         ]
+        with pytest.raises(RuntimeError, match="cmd.exe"):
+            client._launch_cmd("exec", "--model", "gpt%PATH%")
 
     def test_windows_real_exe_launched_directly(self, monkeypatch, tmp_path):
         # An operator pointing [providers.codex_cli] binary straight at the

@@ -340,6 +340,14 @@ class CodexCLIClient:
         path = self._binary_path
         if os.name == "nt" and path.lower().endswith((".cmd", ".bat")):
             comspec = self._environment.get("COMSPEC") or "cmd.exe"
+            # cmd.exe still expands %VAR% (and !VAR!) inside quotes, and an
+            # embedded quote toggles its quote state, so no quoting is safe.
+            if any(ch in part for part in (path, *args) for ch in '%"^!\r\n'):
+                raise RuntimeError(
+                    "Codex CLI arguments contain a character that cmd.exe cannot "
+                    "pass safely (% \" ^ ! or a line break); point "
+                    "[providers.codex_cli] binary at codex.exe instead of the shim."
+                )
             command = " ".join(self._cmd_quote(part) for part in (path, *args))
             return [comspec, "/d", "/s", "/c", command]
         return [path, *args]
