@@ -7,7 +7,8 @@ dict / a list of dicts) its field names, so the pills can offer nested keys.
 
 Only bounded ASCII identifier-shaped key names and types are stored, never
 values. This excludes email addresses and other non-identifier data used as
-keys; retained names can still carry business meaning. Shapes accumulate
+keys, keys that read as record ids, and every key of an object that is mostly
+keyed by such ids; retained names can still carry business meaning. Shapes accumulate
 across runs, so an occasionally-missing optional field still shows up.
 """
 from __future__ import annotations
@@ -19,11 +20,35 @@ from typing import Any
 _MAX_KEYS = 60          # cap fields recorded per output (bound the hint size)
 _MAX_OUTPUTS = 200      # cap distinct output keys tracked per flow
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
+_DIGIT_RUN = re.compile(r"\d{5}")
+_LETTER_DIGIT_TURN = re.compile(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
+
+
+def _data_shaped(key: str) -> bool:
+    """An identifier-shaped key that reads as a record id, not a field name:
+    a long digit run (``u_48213``), or a random-looking token segment
+    (``cus_NffrFeUfNV2Hib``, ``5f3a9c2e1b7d``)."""
+    if _DIGIT_RUN.search(key):
+        return True
+    for part in key.split("_"):
+        if part.isdigit() and len(part) >= 3:
+            return True
+        if len(part) < 8 or not any(c.isdigit() for c in part):
+            continue
+        upper = sum(c.isupper() for c in part)
+        if any(c.islower() for c in part) and upper / len(part) >= 0.3:
+            return True
+        if len(_LETTER_DIGIT_TURN.findall(part)) >= 3:
+            return True
+    return False
 
 
 def _field_names(keys: Iterable) -> list[str]:
-    return sorted({key for key in keys
-                   if isinstance(key, str) and _IDENTIFIER.fullmatch(key)})[:_MAX_KEYS]
+    names = {key for key in keys if isinstance(key, str) and _IDENTIFIER.fullmatch(key)}
+    data = {key for key in names if _data_shaped(key)}
+    if 2 * len(data) > len(names):
+        return []  # Keyed by data (e.g. by customer id): its other keys are data too.
+    return sorted(names - data)[:_MAX_KEYS]
 
 
 def _clean_shape(shape: dict) -> dict:
