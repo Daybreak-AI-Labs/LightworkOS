@@ -2393,7 +2393,17 @@ class GovernedRecordStore:
                 **guarded,
             )
         if saved is None:
-            if not self._archivable(backend) or not backend.restore(str(record_id or "")):
+            if not self._archivable(backend):
+                return None
+            archived = backend.load_archived(str(record_id or ""))
+            if (archived is not None and expected_revision is not None
+                    and archived.get("revision") != expected_revision):
+                # A stale update must not bring the record back as a side effect.
+                raise RecordConflict(
+                    "governed record changed "
+                    f"(expected revision {expected_revision}, found {archived.get('revision')})"
+                )
+            if not backend.restore(str(record_id or "")):
                 return None
             return self.update(record_id, mutate, expected_revision=expected_revision, action=action,
                                actor=actor, fence=fence, effect_guard=effect_guard)

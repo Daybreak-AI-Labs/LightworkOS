@@ -473,6 +473,11 @@ def test_local_full_namespace_archives_its_oldest_record_instead_of_refusing(mon
     kept = store.get(first["id"])
     assert kept["status"] == "closed" and kept["revision"] == first["revision"] + 1
     assert any(row.get("action") == "governed_record_archived" for row in events)
+    # A stale revision is refused and leaves the record archived.
+    with pytest.raises(RecordConflict):
+        store.update(first["id"], lambda row: row.update(note="stale"),
+                     expected_revision=first["revision"], action="note", actor="operator")
+    assert [row["id"] for row in store.list_archived()] == [first["id"]]
     # Archived records stay updatable by id with ordinary compare-and-swap.
     changed = store.update(first["id"], lambda row: row.update(note="reopened"),
                            expected_revision=kept["revision"], action="note", actor="operator")
