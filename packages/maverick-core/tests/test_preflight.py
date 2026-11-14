@@ -65,7 +65,7 @@ def test_shipped_model_ids_keep_their_window_unless_they_extend_a_table_id():
             assert context_limit(model) == original(model), model
 
 
-
+def test_preflight_estimate_tokens_zero_for_empty():
     from maverick.preflight import estimate_tokens
     assert estimate_tokens("") == 0
 
