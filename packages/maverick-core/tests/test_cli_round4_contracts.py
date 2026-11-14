@@ -153,6 +153,24 @@ def test_unknown_active_tenant_refused_before_world_creation(monkeypatch, tmp_pa
     assert invoke("halt", "--help").exit_code == 0
 
 
+def test_halt_under_deleted_tenant_runs_unscoped(monkeypatch, tmp_path, local_audit_key_custody):
+    from maverick import killswitch
+    from maverick.tenant.registry import create_tenant, delete_tenant
+    monkeypatch.setenv("MAVERICK_SECURE_DEFAULT", "1")  # signed audit mints keys
+    create_tenant("acme")
+    create_tenant("acmee")
+    assert delete_tenant("acmee", purge=True)
+    monkeypatch.setenv("MAVERICK_TENANT", "acmee")
+    result = invoke("halt", "--reason", "x")
+    assert result.exit_code == 0, result.output
+    assert killswitch.is_active()
+    assert not (tmp_path / "home" / "tenants" / "acmee").exists()
+    result = invoke("unhalt", "--reason", "x")
+    assert result.exit_code == 0, result.output
+    assert not killswitch.is_active()
+    assert not (tmp_path / "home" / "tenants" / "acmee").exists()
+
+
 @pytest.mark.parametrize("binding", ["MAVERICK_CLIENT_ID", "MAVERICK_TENANT"])
 @pytest.mark.parametrize("args", [
     ["status"], ["dashboard", "--help"], ["halt", "--help"], ["unhalt", "--help"],

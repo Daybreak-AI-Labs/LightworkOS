@@ -344,6 +344,20 @@ def _require_known_cli_tenant(tenant: str | None) -> None:
         raise SystemExit(2)
 
 
+def _unbind_deleted_env_tenant() -> None:
+    """Run the emergency stop unscoped under a deleted MAVERICK_TENANT, so its
+    audit never recreates state (or signing keys) for the retired tenant."""
+    from ..tenant.registry import tenant_retired
+
+    tenant = os.environ.get("MAVERICK_TENANT", "").strip()
+    try:
+        retired = bool(tenant) and tenant_retired(tenant)
+    except ValueError:
+        retired = False
+    if retired:
+        os.environ.pop("MAVERICK_TENANT", None)
+
+
 def _maybe_start_progress_poller(world_path, goal_id, stop_poll):
     """Start the background goal-events poller, or return None when it should
     stay quiet: output isn't a TTY (don't litter piped logs), MAVERICK_NO_PROGRESS
@@ -493,6 +507,8 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
         from ..paths import current_tenant_id_strict
 
         _require_known_cli_tenant(current_tenant_id_strict())
+    elif ctx.invoked_subcommand in {"halt", "unhalt"}:
+        _unbind_deleted_env_tenant()
     # Default the world DB to the ACTIVE TENANT's world.db (selected via
     # MAVERICK_TENANT) so one business's run history / goals / facts never pool
     # into another's -- the same isolation the channel server already gets via
