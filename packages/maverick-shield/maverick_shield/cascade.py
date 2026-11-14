@@ -207,10 +207,20 @@ class CascadedShield:
         base layer blocks. That is fixed here.
         """
         probe = self._probe(text)
+        # ``deep_threshold`` alone decides: OR-ing in ``probe.flagged`` (score
+        # >= 0.3) made any threshold above 0.3 a no-op.
         if base_verdict.allowed and deep_scan is not None and (
-            probe.flagged or probe.score >= self.deep_threshold
+            probe.score >= self.deep_threshold
         ):
             verdict = deep_scan(text)
+            # Keep a scan error the base recorded (a detector outage under a
+            # fail-open policy); the deep verdict must not erase it.
+            if getattr(base_verdict, "scan_error", False):
+                try:
+                    verdict.scan_error = True
+                    verdict.reasons = list(base_verdict.reasons) + list(verdict.reasons)
+                except Exception:  # pragma: no cover
+                    pass
         else:
             verdict = base_verdict
         if probe.reasons and getattr(verdict, "reasons", None) is not None:

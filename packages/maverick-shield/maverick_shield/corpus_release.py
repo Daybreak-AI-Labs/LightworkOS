@@ -70,6 +70,14 @@ def validate(rows: list[dict]) -> list[str]:
 _ALLOWED_INDICATOR_KINDS = {"ipv4", "ipv6"}
 
 
+def _scan_available() -> bool:
+    try:
+        from maverick.safety import pii_detector, secret_detector  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def provenance_scan(rows: list[dict]) -> list[str]:
     """No real secrets or identity PII may ship in a released corpus.
 
@@ -124,9 +132,13 @@ def build_release(rows: list[dict] | None = None) -> dict:
         "sha256": digest,
         "license": LICENSE,
         "intended_use": INTENDED_USE,
-        "provenance": ("hand-authored test fixtures; no user data; secret/PII-"
-                       "scanned at release (technical indicators like fixture "
-                       "IPs allowed and intrinsic to attack samples)"),
+        "provenance": (
+            "hand-authored test fixtures; no user data; secret/PII-scanned at "
+            "release (technical indicators like fixture IPs allowed and "
+            "intrinsic to attack samples)"
+            if _scan_available() else
+            "hand-authored test fixtures; no user data; NOT secret/PII-scanned "
+            "(the kernel detectors were not installed at release)"),
     }
 
 
