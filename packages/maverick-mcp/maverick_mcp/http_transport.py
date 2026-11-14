@@ -57,6 +57,7 @@ from .http_sessions import (
     _caller_scope,
     _MCPAuthorization,
     _quota_scope,
+    _request_owner,
     _resource_session_id,
     _ResourceSession,
     _session_plan,
@@ -778,7 +779,6 @@ def build_app(server) -> FastAPI:
             raise HTTPException(status_code=400, detail="params must be a JSON object")
         accepts_sse = "text/event-stream" in (request.headers.get("accept") or "")
         supplied_sid = _supplied_session_id(request, caller_scope)
-        execution_owner = f"{caller_scope}:{supplied_sid or '<without-session>'}"
         resource_sid = _resource_session_id(
             supplied_sid,
             resource_sessions,
@@ -810,6 +810,7 @@ def build_app(server) -> FastAPI:
             method=method,
             is_task_request=is_task_request,
         )
+        execution_owner = _request_owner(request, response_sid, caller_scope)
 
         # Streamable HTTP: when the client accepts SSE and this is a real
         # request (not a fire-and-forget notification), stream progress

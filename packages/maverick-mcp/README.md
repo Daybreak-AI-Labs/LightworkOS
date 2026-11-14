@@ -47,10 +47,12 @@ MCP servers menu.
 Each MCP start or resume attempt defaults to a $2 spend cap and a 1,800-second
 wall-clock cap when no operator ceiling is configured. Operators can set
 `MAVERICK_MCP_MAX_DOLLARS` and `MAVERICK_MCP_MAX_WALL_SECONDS` (or the
-corresponding `[mcp]` settings); a stricter configured budget also applies.
+corresponding `[mcp]` settings); stricter configured and authenticated-agent
+trust-registry budgets also apply.
 
 Network MCP callers, including clients using the shared HTTP bearer, cannot
-read or write the tenant-wide fact store. Facts remain available to local
+read or write the tenant-wide fact store, and those tools are omitted from their
+tool listings. Facts remain available to local
 operator integrations; network callers' goals also do not receive those facts
 as standing context.
 These are per-attempt limits, not a shared limit across concurrent calls or
@@ -80,6 +82,10 @@ Minimal JSON-RPC 2.0 over stdio (`lightwork mcp`) or streamable HTTP
 (`lightwork mcp --http`), matching the MCP 2025-11-25 spec (with a
 2024-11-05 fallback). Stdio has no external dependencies; the HTTP
 transport needs the `[http]` extra (FastAPI + uvicorn).
+HTTP initialization returns a caller-bound `Mcp-Session-Id`; clients should send
+it on subsequent requests so request IDs and cancellation remain scoped to that
+client across connections. Without a session, request IDs are scoped to the
+socket peer connection, independently of other clients using the same bearer.
 Failed HTTP bearer attempts are limited per network peer. Callers behind the
 same proxy share that failure budget; configure an upstream limiter when they
 need independent quotas. Lightwork's launcher preserves the socket peer; an

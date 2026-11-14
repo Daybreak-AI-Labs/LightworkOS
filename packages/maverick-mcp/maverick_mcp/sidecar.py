@@ -922,7 +922,9 @@ class GovernedMCPGateway:
 
     def _scan_payload(self, payload: bytes) -> GateDecision | None:
         try:
-            text = payload.decode("utf-8")
+            # Canonical audit bytes escape Unicode; scanners must see the
+            # decoded characters that the upstream/client will actually use.
+            text = json.dumps(json.loads(payload.decode("utf-8")), ensure_ascii=False)
             from maverick.memory_guard import injection_markers
             from maverick.safety.secret_detector import redact
 
@@ -1213,9 +1215,22 @@ def build_app(gateway: GovernedMCPGateway):
         principal = gateway.authenticate(authorization[len(prefix):].strip())
         if principal is None:
             return JSONResponse(_rpc_error(None, -32000, "sidecar bearer denied", "authentication"), status_code=401)
-        body = await request.body()
-        if len(body) > gateway.config.max_body_bytes:
-            return JSONResponse(_rpc_error(None, -32600, "request exceeds sidecar byte cap", "request_size"), status_code=413)
+        cap = gateway.config.max_body_bytes
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                length = int(declared)
+                if length < 0:
+                    raise ValueError
+            except ValueError:
+                return JSONResponse(_rpc_error(None, -32600, "invalid Content-Length", "request_size"), status_code=400)
+            if length > cap:
+                return JSONResponse(_rpc_error(None, -32600, "request exceeds sidecar byte cap", "request_size"), status_code=413)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > cap:
+                return JSONResponse(_rpc_error(None, -32600, "request exceeds sidecar byte cap", "request_size"), status_code=413)
+            body.extend(chunk)
         try:
             message = json.loads(body.decode("utf-8"))
         except (UnicodeError, ValueError):

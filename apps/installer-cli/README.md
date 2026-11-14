@@ -27,7 +27,7 @@ A standalone `maverick-init` entry point is also exposed (same flags).
 ## Flags
 
 ```bash
-maverick init --fast     # skip every prompt; write recommended defaults
+maverick init --fast     # recommended defaults, including $2 and 30 minutes per task
 maverick init --resume   # resume an advanced run from the last unanswered question
 ```
 

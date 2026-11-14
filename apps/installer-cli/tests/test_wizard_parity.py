@@ -702,16 +702,14 @@ def test_write_config_emits_tools_output_cache(tmp_path: Path, monkeypatch):
 
 
 def test_write_config_tools_block_coexists(tmp_path: Path, monkeypatch):
-    # deferred_loading + output_cache + hardware_sensors share a single [tools] table.
+    # output_cache + hardware_sensors share a single [tools] table.
     parsed = _write_full_config(
         tmp_path, monkeypatch,
         advanced={
-            "deferred_tools": True,
             "output_cache": True,
             "hardware_sensors": True,
         },
     )
-    assert parsed["tools"]["deferred_loading"] is True
     assert parsed["tools"]["output_cache"] is True
     assert parsed["tools"]["hardware_sensors"] is True
 
@@ -1030,16 +1028,17 @@ def test_write_config_omits_finance_when_off(tmp_path: Path, monkeypatch):
     assert "screening" not in parsed
 
 
-def test_write_config_finance_no_thresholds(tmp_path: Path, monkeypatch):
-    # require_human_above=0 means "pause all" -> rely on require_human_min_risk,
-    # no [governance.require_human_above] sub-table emitted.
-    parsed = _write_full_config(
+def test_write_config_finance_zero_pauses_all_without_a_hard_ceiling(tmp_path: Path, monkeypatch):
+    from maverick import config
+
+    _write_full_config(
         tmp_path, monkeypatch,
         finance={"enable": True, "regimes": ["sox"],
                  "require_human_above": 0, "deny_above": 0, "sdn_path": ""},
     )
+    parsed = config.load_config(tmp_path / "config.toml")
     assert parsed["governance"]["require_human_min_risk"] == "high"
-    assert "require_human_above" not in parsed["governance"]
+    assert parsed["governance"]["require_human_above"] == {"*": 0}
     assert "screening" not in parsed
 
 

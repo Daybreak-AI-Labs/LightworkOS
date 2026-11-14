@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from ._common import _append_nested_product_config, _emit_kv, _safe_int
+from ._common import _append_nested_product_config, _emit_kv, _safe_int, _valid_config_name
 from ._seams import _q_checkbox, _q_confirm, _q_select, _q_text, console
 
 
@@ -693,10 +693,11 @@ def _pick_notice_publication_binding() -> dict[str, Any]:
         ).strip()
         or "default"
     )
-    binding_id = (
-        _q_text("  Publication binding name", default="primary").strip()
-        or "primary"
-    )
+    while True:
+        binding_id = _q_text("  Publication binding name", default="primary").strip()
+        if _valid_config_name(binding_id):
+            break
+        console.print("[yellow]Use 1–128 letters/digits/._:-, starting with a letter or digit.[/yellow]")
     return {
         "binding_id": binding_id,
         "tenant_id": binding_tenant,

@@ -248,9 +248,11 @@ class TaskStore:
 
     def _resolve_ttl(self, task_param: dict) -> int:
         raw = (task_param or {}).get("ttl")
+        if isinstance(raw, bool):
+            raise TaskError(_INVALID_PARAMS, "ttl must not be a boolean")
         try:
             ttl = int(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             ttl = self._default_ttl_ms
         if ttl <= 0:
             ttl = self._default_ttl_ms

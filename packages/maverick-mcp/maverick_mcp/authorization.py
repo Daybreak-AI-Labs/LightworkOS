@@ -16,8 +16,17 @@ log = logging.getLogger(__name__)
 _CREDENTIAL_FINGERPRINT_KEY = secrets.token_bytes(32)
 
 
-def credential_fingerprint(credential: str) -> str:
-    """Return a stable-in-process, non-reusable fingerprint for a bearer."""
+def credential_fingerprint(credential: str, *, stored_agent_token: bool = False) -> str:
+    """Fingerprint the same verifier form for raw and at-rest agent tokens.
+
+    Shared credentials are always raw, even if their literal value starts with
+    ``sha256:``; otherwise rotating a shared token to that text would alias the
+    old credential. Only Agent Trust's stored form recognizes the prefix.
+    """
+    from maverick.agent_trust import hash_token
+
+    if not (stored_agent_token and credential.startswith("sha256:")):
+        credential = hash_token(credential)
     return hmac.new(
         _CREDENTIAL_FINGERPRINT_KEY,
         credential.encode("utf-8"),
@@ -221,7 +230,7 @@ def refresh_task_capability(context: _TaskExecutionContext, *, setting, fingerpr
                 enforced=enforced,
             )
         credential_matches = bool(current_credential) and hmac.compare_digest(
-            fingerprint(current_credential),
+            fingerprint(current_credential, stored_agent_token=context.credential_kind == "agent"),
             context.credential_fingerprint,
         )
         if not credential_matches:
