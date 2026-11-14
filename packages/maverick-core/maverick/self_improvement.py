@@ -2376,7 +2376,7 @@ class PromotionLedger:
         _assert_regular_file(projection, label="promotion ledger projection")
         _assert_regular_file(journal, label="promotion ledger journal")
         if journal.exists():
-            records, transactions, head = self._read_journal_state_locked()
+            records, transactions, head = self._read_journal_state_locked(repair_tail=True)
             repair_reason = ""
             try:
                 if not projection.exists():
@@ -2417,15 +2417,57 @@ class PromotionLedger:
         records, _transactions, head = self._read_journal_state_locked()
         return records, head
 
-    def _read_journal_state_locked(self) -> tuple[
+    def _read_journal_state_locked(self, *, repair_tail: bool = False) -> tuple[
         dict[str, PromotionRecord], dict[str, PromotionTransaction], str,
     ]:
         journal = self._journal_path
         try:
-            text = journal.read_text(encoding="utf-8")
+            raw = journal.read_bytes()
+            if repair_tail and raw and not raw.endswith(b"\n"):
+                return self._repair_journal_tail_locked(raw)
+            text = raw.decode("utf-8")
         except (OSError, UnicodeError) as exc:
             raise PromotionLedgerError("cannot read promotion ledger journal") from exc
         return self._replay_journal_text(text)
+
+    def _repair_journal_tail_locked(self, raw: bytes) -> tuple[
+        dict[str, PromotionRecord], dict[str, PromotionTransaction], str,
+    ]:
+        """Repair a torn final write only after verification and durable audit.
+
+        A complete final JSON value must pass the full replay checks; it cannot
+        be discarded as a partial write. If only its delimiter was lost, keep
+        the event. With no verified prefix, a partial first event stays refused.
+        """
+        prefix, separator, tail = raw.rpartition(b"\n")
+        try:
+            json.loads(tail)
+        except (ValueError, UnicodeError):
+            repaired = prefix + separator
+            repair = "truncate_partial_event"
+        else:
+            repaired = raw + b"\n"
+            repair = "restore_event_delimiter"
+        state = self._replay_journal_text(repaired.decode("utf-8"))
+        try:
+            audited = _default_audit_fn(
+                action="promotion_journal_tail_repair", status="prepared",
+                repair=repair, verified_head_sha256=state[2],
+                before_sha256=hashlib.sha256(raw).hexdigest(),
+                after_sha256=hashlib.sha256(repaired).hexdigest(),
+                removed_bytes=max(0, len(raw) - len(repaired)),
+            )
+        except Exception as exc:
+            raise PromotionLedgerError("cannot audit promotion journal tail repair") from exc
+        if audited is not True:
+            raise PromotionLedgerError("cannot audit promotion journal tail repair")
+        from .file_lock import atomic_write_text
+
+        atomic_write_text(self._journal_path, repaired.decode("utf-8"), mode=0o600)
+        _sync_file(self._journal_path)
+        _sync_directory(self._journal_path.parent)
+        log.warning("repaired promotion ledger journal tail (%s)", repair)
+        return state
 
     def _replay_journal_text(self, text: str) -> tuple[
         dict[str, PromotionRecord], dict[str, PromotionTransaction], str,

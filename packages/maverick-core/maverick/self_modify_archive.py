@@ -504,17 +504,24 @@ class CodeArchive:
         if not self.candidates or k <= 0:
             return []
         chosen = [max(self.candidates, key=lambda c: c.score)]
-        pool = [c for c in self.candidates if c.id != chosen[0].id]
+        # Index the cache by position, not candidate id: selection returns the
+        # original objects and preserves the pool's order when scores tie.
+        tokens = [_added_line_tokens(c.patch) for c in self.candidates]
+        pool = [i for i, c in enumerate(self.candidates) if c.id != chosen[0].id]
+        distances = dict.fromkeys(pool, 1.0)
+        last = next(i for i, c in enumerate(self.candidates) if c is chosen[0])
         while pool and len(chosen) < k:
+            for i in pool:
+                distances[i] = min(distances[i], self._token_distance(
+                    self.candidates[i], self.candidates[last], tokens[i], tokens[last],
+                ))
             nxt = max(
                 pool,
-                key=lambda c: (
-                    min(self.patch_distance(c, s) for s in chosen),
-                    c.score,
-                ),
+                key=lambda i: (distances[i], self.candidates[i].score),
             )
-            chosen.append(nxt)
+            chosen.append(self.candidates[nxt])
             pool.remove(nxt)
+            last = nxt
         return chosen
 
     def _evict_if_needed(self) -> None:
@@ -531,6 +538,13 @@ class CodeArchive:
         if a.patch_sha256 and a.patch_sha256 == b.patch_sha256:
             return 0.0
         ta, tb = _added_line_tokens(a.patch), _added_line_tokens(b.patch)
+        return CodeArchive._token_distance(a, b, ta, tb)
+
+    @staticmethod
+    def _token_distance(a: CodeCandidate, b: CodeCandidate,
+                        ta: frozenset[str], tb: frozenset[str]) -> float:
+        if a.patch_sha256 and a.patch_sha256 == b.patch_sha256:
+            return 0.0
         union = ta | tb
         if not union:
             return 0.0 if a.patch_sha256 == b.patch_sha256 else 1.0

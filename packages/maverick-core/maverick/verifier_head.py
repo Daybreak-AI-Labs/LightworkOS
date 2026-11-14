@@ -1231,6 +1231,8 @@ def train_and_evaluate(examples: list[dict], *, split: float = 0.3, seed: int = 
     the held-out result.
     """
     ex = list(examples)
+    if len(ex) < 2:
+        raise ValueError("held-out evaluation requires at least two examples")
     has_identity = [
         any(key in row for key in ("task_id", "goal_id", "episode_id",
                                    "outcome_verified_at"))
@@ -1244,8 +1246,8 @@ def train_and_evaluate(examples: list[dict], *, split: float = 0.3, seed: int = 
     else:
         rng = random.Random(seed)
         rng.shuffle(ex)
-        cut = max(1, int(len(ex) * (1.0 - split))) if len(ex) > 1 else 1
-        train_ex, test_ex = ex[:cut], ex[cut:] or ex[:1]
+        cut = min(len(ex) - 1, max(1, int(len(ex) * (1.0 - split))))
+        train_ex, test_ex = ex[:cut], ex[cut:]
         split_mode = "legacy_random"
     train_groups = len({str(row.get("task_id", row.get("goal_id"))) for row in train_ex})
     test_groups = len({str(row.get("task_id", row.get("goal_id"))) for row in test_ex})
