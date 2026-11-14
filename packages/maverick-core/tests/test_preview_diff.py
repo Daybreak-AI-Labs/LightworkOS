@@ -94,3 +94,35 @@ def test_preview_diff_disables_ext_diff_and_textconv(tmp_path):
     cmd = run_mock.call_args.args[0]
     assert "--no-ext-diff" in cmd
     assert "--no-textconv" in cmd
+
+
+def test_preview_diff_ignores_repo_fsmonitor_and_keeps_the_head_through_a_sandbox(tmp_path):
+    """A workspace .git/config could name a core.fsmonitor command that git
+    diff ran; and a sandbox (which keeps only the stdout tail) used to hand
+    back the end of a long diff with no marker."""
+    if not _git_available():
+        pytest.skip("git not installed")
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.preview_diff import preview_diff
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "t@t.t")
+    git("config", "user.name", "t")
+    git("config", "commit.gpgsign", "false")
+    (tmp_path / "a.txt").write_text("".join(f"old {i}\n" for i in range(3000)))
+    git("add", "-A")
+    git("commit", "-q", "-m", "init")
+    marker = tmp_path / "fsmonitor-ran"
+    hook = tmp_path / "hook.sh"
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(0o755)
+    git("config", "core.fsmonitor", str(hook))
+    (tmp_path / "a.txt").write_text("".join(f"new {i}\n" for i in range(3000)))
+
+    out = preview_diff(LocalBackend(workdir=tmp_path)).fn({})
+    assert out.startswith("diff --git")
+    assert "[... truncated" in out
+    assert not marker.exists()
