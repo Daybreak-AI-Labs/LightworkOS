@@ -12,6 +12,7 @@ exporter opens via ``world_for_tenant`` lives under the test's sandbox.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -171,3 +172,29 @@ def test_dsar_export_json_flag_is_compact_single_line():
     assert bundle["subject"]["user_id"] == "alice"
     # Compact form: a single JSON line (click.echo adds one trailing newline).
     assert result.output.strip().count("\n") == 0
+
+
+def test_dsar_export_unknown_tenant_fails_without_creating_it():
+    from maverick.paths import tenant_namespace_reserved
+
+    _seed_world_at(data_dir("world.db", tenant="acme"), "acme message")
+    known = CliRunner().invoke(main, ["dsar", "export", "--user", "alice", "--tenant", "acme"])
+    assert known.exit_code == 0, known.output
+
+    typo = CliRunner().invoke(main, ["dsar", "export", "--user", "alice", "--tenant", "acmee"])
+    assert typo.exit_code != 0
+    assert "no such tenant" in typo.output
+    assert not tenant_namespace_reserved("acmee")
+
+
+def test_dsar_export_output_is_private_even_over_an_existing_file(tmp_path):
+    _seed_world()
+    output = tmp_path / "export.json"
+    output.write_text("old", encoding="utf-8")
+    output.chmod(0o644)
+    result = CliRunner().invoke(
+        main, ["dsar", "export", "--user", "alice", "--output", str(output)])
+    assert result.exit_code == 0, result.output
+    assert json.loads(output.read_text(encoding="utf-8"))["subject"]["user_id"] == "alice"
+    if os.name != "nt":
+        assert output.stat().st_mode & 0o777 == 0o600

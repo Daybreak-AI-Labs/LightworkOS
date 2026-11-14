@@ -6,7 +6,6 @@ __init__ so the @main.group/@main.command decorators fire on package import.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -107,9 +106,10 @@ def ropa_cmd(fmt: str, output) -> None:
     payload = render_ropa_json(record) if fmt == "json" else render_ropa_text(record)
     if output:
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
+            from ..file_lock import atomic_write_text
+            # Atomic replace: a new 0600 file even over an existing
+            # file or a symlink, never its old mode or target.
+            atomic_write_text(output, payload + "\n", mode=0o600)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"wrote {output}")
@@ -294,9 +294,10 @@ def dpia_cmd(fmt: str, output) -> None:
     payload = render_dpia_json(dpia) if fmt == "json" else render_dpia_text(dpia)
     if output:
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
+            from ..file_lock import atomic_write_text
+            # Atomic replace: a new 0600 file even over an existing
+            # file or a symlink, never its old mode or target.
+            atomic_write_text(output, payload + "\n", mode=0o600)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"wrote {output}")
@@ -571,6 +572,15 @@ def dsar_export(user_id: str, tenant: str | None, output, compact: bool) -> None
     import json as _json
 
     from ..dsar import export_subject_data
+    from ..paths import tenant_namespace_reserved
+    # Opening an unknown tenant creates an empty data plane, so a typo would
+    # read as "we hold nothing on this subject".
+    try:
+        known = tenant is None or tenant_namespace_reserved(tenant)
+    except ValueError as exc:
+        raise click.ClickException(f"invalid tenant {tenant!r}") from exc
+    if not known:
+        raise click.ClickException(f"no such tenant {tenant!r}; no export was created.")
     try:
         bundle = export_subject_data(user_id, tenant=tenant, strict=True)
     except RuntimeError as exc:
@@ -588,9 +598,10 @@ def dsar_export(user_id: str, tenant: str | None, output, compact: bool) -> None
         # co-tenant can't read it, and fail cleanly instead of dumping a
         # traceback on a bad/unwritable path.
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
+            from ..file_lock import atomic_write_text
+            # Atomic replace: a new 0600 file even over an existing
+            # file or a symlink, never its old mode or target.
+            atomic_write_text(output, payload, mode=0o600)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"exported to {output}")
@@ -1242,9 +1253,10 @@ def ai_literacy_export(output) -> None:
         raise click.ClickException(str(e)) from e
     if output:
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
+            from ..file_lock import atomic_write_text
+            # Atomic replace: a new 0600 file even over an existing
+            # file or a symlink, never its old mode or target.
+            atomic_write_text(output, payload + "\n", mode=0o600)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"wrote {output}")
