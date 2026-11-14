@@ -261,7 +261,7 @@ def test_docs_connector_counts_match_the_specs():
 # pyproject.toml quote it, and the house rule is that new code stays under the
 # cap, so this may only go down. Lower it when you remove a waiver; never raise
 # it without an explicit review of why a new function needs one.
-COMPLEXITY_WAIVER_CEILING = 165
+COMPLEXITY_WAIVER_CEILING = 160
 
 
 def test_complexity_waivers_do_not_grow():

@@ -972,7 +972,49 @@ def export_custody_test(identifier: str, report_id: str, *, actor: str) -> bytes
         return (json.dumps(report, allow_nan=False, indent=2) + "\n").encode("utf-8")
 
 
-def install_retained_keys(  # noqa: C901 - crash-safe exact-key transaction
+def _install_and_verify_retained_keys(
+    destinations: dict[str, Path], keys: dict[str, bytes], key_hashes: dict[str, str]
+) -> None:
+    for name, path in sorted(destinations.items()):
+        expected_text = keys[name].hex()
+        if os.path.lexists(path):
+            try:
+                file_lock.ensure_private_file(path)
+                existing_text = file_lock.atomic_read_text(path).strip()
+            except OSError as exc:
+                raise RecoveryError(
+                    "An installed encryption key cannot be authenticated. Remain in recovery mode."
+                ) from exc
+            if not text_equals(existing_text.casefold(), expected_text):
+                raise RecoveryError(
+                    "An installed encryption key differs from the reviewed custody copy. "
+                    "Bootstrap recovery never replaces key custody."
+                )
+            continue
+        file_lock.ensure_private_directory(path.parent)
+        file_lock.atomic_create_text(path, expected_text)
+
+    # Re-read every byte before converting the recoverable installing
+    # receipt into the durable installed receipt.
+    for name, path in sorted(destinations.items()):
+        try:
+            file_lock.ensure_private_file(path)
+            raw = file_lock.atomic_read_text(path).strip()
+        except OSError as exc:
+            raise RecoveryError(
+                "The retained key installation is incomplete. Remain in recovery mode and retry it."
+            ) from exc
+        if (not re.fullmatch(r"[0-9a-fA-F]{64}", raw)
+                or not hmac.compare_digest(
+                    hashlib.sha256(bytes.fromhex(raw)).hexdigest(),
+                    key_hashes[name],
+                )):
+            raise RecoveryError(
+                "The installed encryption-key set differs from the reviewed custody copy."
+            )
+
+
+def install_retained_keys(
     identifier: str,
     custody: bytes,
     *,
@@ -1111,43 +1153,7 @@ def install_retained_keys(  # noqa: C901 - crash-safe exact-key transaction
                     "Local encryption custody contains keys outside the reviewed copy. "
                     "Bootstrap recovery never replaces or combines key sets."
                 )
-            for name, path in sorted(destinations.items()):
-                expected_text = keys[name].hex()
-                if os.path.lexists(path):
-                    try:
-                        file_lock.ensure_private_file(path)
-                        existing_text = file_lock.atomic_read_text(path).strip()
-                    except OSError as exc:
-                        raise RecoveryError(
-                            "An installed encryption key cannot be authenticated. Remain in recovery mode."
-                        ) from exc
-                    if not text_equals(existing_text.casefold(), expected_text):
-                        raise RecoveryError(
-                            "An installed encryption key differs from the reviewed custody copy. "
-                            "Bootstrap recovery never replaces key custody."
-                        )
-                    continue
-                file_lock.ensure_private_directory(path.parent)
-                file_lock.atomic_create_text(path, expected_text)
-
-            # Re-read every byte before converting the recoverable installing
-            # receipt into the durable installed receipt.
-            for name, path in sorted(destinations.items()):
-                try:
-                    file_lock.ensure_private_file(path)
-                    raw = file_lock.atomic_read_text(path).strip()
-                except OSError as exc:
-                    raise RecoveryError(
-                        "The retained key installation is incomplete. Remain in recovery mode and retry it."
-                    ) from exc
-                if (not re.fullmatch(r"[0-9a-fA-F]{64}", raw)
-                        or not hmac.compare_digest(
-                            hashlib.sha256(bytes.fromhex(raw)).hexdigest(),
-                            key_hashes[name],
-                        )):
-                    raise RecoveryError(
-                        "The installed encryption-key set differs from the reviewed custody copy."
-                    )
+            _install_and_verify_retained_keys(destinations, keys, key_hashes)
 
             now = time.time()
             retained = {
@@ -1612,7 +1618,328 @@ def _blocked_authority_item(
     )
 
 
-def _reconcile_additional_json_authorities(  # noqa: C901, PLR0912, PLR0915
+def _reconcile_external_agent_records(
+    record: dict, relative: str, items: list[dict], *, now: float
+) -> bool:
+    changed = False
+    if len(record) > MAX_RECONCILIATION_ITEMS or any(
+        not isinstance(value, dict) for value in record.values()
+    ):
+        raise RecoveryError(
+            "The restored external-agent authority is malformed. Nothing was restored."
+        )
+    for agent_id, metadata in sorted(record.items()):
+        before = _record_sha256(metadata)
+        if metadata.get("contained") is not True:
+            metadata["contained"] = True
+            changed = True
+            items.append(_reconciliation_item(
+                "external_agent", relative, agent_id,
+                prior_state="enrolled",
+                content_sha256=before,
+                safe_state="contained_reenrollment_required",
+                requires_external_readback=False,
+                resolved=True,
+            ))
+        executions = metadata.get("executions") or {}
+        if not isinstance(executions, dict):
+            raise RecoveryError(
+                "The restored external-agent execution ledger is malformed. Nothing was restored."
+            )
+        for execution_id, execution in sorted(executions.items()):
+            if not isinstance(execution, dict):
+                raise RecoveryError(
+                    "The restored external-agent execution ledger is malformed. Nothing was restored."
+                )
+            prior = str(execution.get("status") or "unknown")
+            if prior not in {"pending", "executing"}:
+                continue
+            needs_readback = prior == "executing"
+            digest = _record_sha256(execution)
+            execution["status"] = "failed" if needs_readback else "denied"
+            execution["finished_at"] = now
+            execution["bootstrap_recovery_hold"] = True
+            execution.pop("digest", None)
+            changed = True
+            items.append(_reconciliation_item(
+                "external_agent_execution", relative, execution_id,
+                prior_state=prior,
+                content_sha256=digest,
+                safe_state=execution["status"],
+                requires_external_readback=needs_readback,
+                resolved=not needs_readback,
+            ))
+
+    return changed
+
+
+def _reconcile_execution_json_authority(
+    policy: str, record: dict, relative: str, record_id: str,
+    original_sha256: str, items: list[dict], *, now: float
+) -> bool:
+    changed = False
+    active_flow_states = {
+        "queued", "claimed", "running", "resuming", "paused_approval",
+        "paused_delay", "paused_event", "indeterminate",
+    }
+    if policy == "flow_run":
+        prior = str(record.get("status") or "unknown")
+        if prior in active_flow_states:
+            needs_readback = prior != "queued"
+            record["status"] = "indeterminate" if needs_readback else "failed"
+            record["resume_at"] = None
+            record["human"] = {}
+            record["decided_by"] = ""
+            record["error"] = (
+                "Restored execution may have crossed an external boundary; "
+                "authoritative readback is required before a new request."
+                if needs_readback else
+                "Restored queued execution was retired before publication."
+            )
+            changed = True
+            items.append(_reconciliation_item(
+                "flow_run", relative, record.get("run_id") or record_id,
+                prior_state=prior,
+                content_sha256=original_sha256,
+                safe_state=record["status"],
+                requires_external_readback=needs_readback,
+                resolved=not needs_readback,
+            ))
+
+    elif policy == "external_agents":
+        changed = _reconcile_external_agent_records(record, relative, items, now=now)
+    elif policy == "federation_outbox":
+        queued = record.get("items")
+        dropped = record.get("dropped", 0)
+        if (not isinstance(queued, list)
+                or isinstance(dropped, bool) or not isinstance(dropped, int)
+                or dropped < 0 or len(queued) > MAX_RECONCILIATION_ITEMS):
+            raise RecoveryError(
+                "The restored federation outbox is malformed. Nothing was restored."
+            )
+        if queued:
+            record["items"] = []
+            record["bootstrap_retired"] = len(queued)
+            changed = True
+            items.append(_reconciliation_item(
+                "federation_outbox", relative, "restored-outbox",
+                prior_state=f"queued:{len(queued)}",
+                content_sha256=original_sha256,
+                safe_state="discarded_before_publication",
+                requires_external_readback=True,
+            ))
+
+    elif policy in {"llm_team_budget", "mcp_call_budget"}:
+        rows = record.get("rows")
+        if not isinstance(rows, dict) or len(rows) > MAX_RECONCILIATION_ITEMS:
+            raise RecoveryError(
+                "A restored egress budget ledger is malformed. Nothing was restored."
+            )
+        for value in rows.values():
+            if not isinstance(value, dict):
+                raise RecoveryError(
+                    "A restored egress budget ledger is malformed. Nothing was restored."
+                )
+            value["window_started"] = now
+            if policy == "llm_team_budget":
+                value["requests"] = 2**63 - 1
+                value["prompt_tokens"] = 2**63 - 1
+                value["completion_tokens"] = 2**63 - 1
+            else:
+                value["count"] = 2**63 - 1
+            changed = True
+        if rows:
+            record["bootstrap_recovery_hold"] = True
+            items.append(_reconciliation_item(
+                "egress_budget", relative, policy,
+                prior_state="restored_counter_floor",
+                content_sha256=original_sha256,
+                safe_state="conservative_window_exhausted",
+                requires_external_readback=True,
+            ))
+
+    return changed
+
+
+def _reconcile_identity_json_authority(
+    policy: str, record: dict, relative: str, record_id: str,
+    original_sha256: str, items: list[dict], *, now: float
+) -> bool:
+    changed = False
+    if policy == "identity_change_delivery":
+        deliveries = record.get("deliveries")
+        if not isinstance(deliveries, dict):
+            raise RecoveryError(
+                "A restored identity-governance delivery is malformed. Nothing was restored."
+            )
+        held = False
+        for sink, delivery in sorted(deliveries.items()):
+            if not isinstance(delivery, dict):
+                raise RecoveryError(
+                    "A restored identity-governance delivery is malformed. Nothing was restored."
+                )
+            prior = str(delivery.get("status") or "unknown")
+            if prior == "delivered":
+                continue
+            attempts = delivery.get("attempts", 0)
+            if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
+                raise RecoveryError(
+                    "A restored identity-governance delivery is malformed. Nothing was restored."
+                )
+            needs_readback = attempts > 0 or prior in {"delivering", "failed"}
+            delivery["status"] = (
+                "bootstrap_reconciliation_required" if needs_readback
+                else "bootstrap_reauthorization_required"
+            )
+            delivery["last_error_type"] = "BootstrapRecoveryHold"
+            held = True
+            items.append(_reconciliation_item(
+                "identity_change_delivery", relative, f"{record_id}:{sink}",
+                prior_state=prior,
+                content_sha256=original_sha256,
+                safe_state=delivery["status"],
+                requires_external_readback=needs_readback,
+                resolved=not needs_readback,
+            ))
+        if held:
+            record["status"] = "bootstrap_reconciliation_required"
+            record["health"] = "degraded"
+            changed = True
+
+    elif policy == "identity_purview_writeback":
+        prior = str(record.get("status") or "unknown")
+        attempts = record.get("attempts", 0)
+        compensation_attempts = record.get("compensation_attempts", 0)
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 0
+               for value in (attempts, compensation_attempts)):
+            raise RecoveryError(
+                "A restored Purview writeback intent is malformed. Nothing was restored."
+            )
+        active = prior in {"prepared", "failed", "applying", "compensation_failed", "compensating"}
+        if active:
+            needs_readback = (
+                prior in {"applying", "compensation_failed", "compensating"}
+                or attempts > 0 or compensation_attempts > 0
+            )
+            record["status"] = (
+                "bootstrap_reconciliation_required" if needs_readback
+                else "bootstrap_reauthorization_required"
+            )
+            record["operation_claim"] = None
+            record["provider_write_state"] = "unknown" if needs_readback else "not_attempted"
+            record["health"] = "degraded"
+            record["last_error_type"] = "BootstrapRecoveryHold"
+            changed = True
+            items.append(_reconciliation_item(
+                "identity_purview_writeback", relative, record_id,
+                prior_state=prior,
+                content_sha256=original_sha256,
+                safe_state=record["status"],
+                requires_external_readback=needs_readback,
+                resolved=not needs_readback,
+            ))
+
+    elif policy == "identity_authority_registry":
+        if record.get("status") == "active":
+            prior_payload_sha = str(record.get("payload_sha256") or original_sha256)
+            tombstone = {
+                "tenant_sha256": record.get("tenant_sha256"),
+                "restored_payload_sha256": prior_payload_sha,
+                "purged_at": now,
+                "reason": "bootstrap_reenrollment_required",
+            }
+            record["status"] = "purged"
+            record["payload"] = tombstone
+            record["payload_sha256"] = _record_sha256(tombstone)
+            record["live_acceptance_verified"] = False
+            changed = True
+            items.append(_reconciliation_item(
+                "identity_authority", relative, record_id,
+                prior_state="active",
+                content_sha256=original_sha256,
+                safe_state="purged_reenrollment_required",
+                requires_external_readback=False,
+                resolved=True,
+            ))
+
+    elif policy == "identity_change_request":
+        prior = str(record.get("status") or "unknown")
+        if prior == "pending_human_or_service_assessment":
+            attempted = record.get("provider_write_performed") is True
+            record["status"] = "bootstrap_reauthorization_required"
+            record["risk_score_generated"] = False
+            record["provider_write_performed"] = False
+            record["live_acceptance_verified"] = False
+            changed = True
+            items.append(_reconciliation_item(
+                "identity_change_request", relative, record_id,
+                prior_state=prior,
+                content_sha256=original_sha256,
+                safe_state="bootstrap_reauthorization_required",
+                requires_external_readback=attempted,
+                resolved=not attempted,
+            ))
+
+    return changed
+
+
+def _reconcile_red_team_json_authority(
+    policy: str, record: dict, relative: str, record_id: str,
+    original_sha256: str, items: list[dict], *, now: float
+) -> bool:
+    changed = False
+    if policy == "red_team_schedule":
+        prior = str(record.get("status") or "unknown")
+        pending_run = record.get("pending_run")
+        if prior == "active" or pending_run is not None:
+            record["status"] = "cancelled"
+            record["pending_run"] = None
+            record["bootstrap_cancelled_at"] = now
+            changed = True
+            items.append(_reconciliation_item(
+                "red_team_schedule", relative, record_id,
+                prior_state="run_claimed" if pending_run is not None else prior,
+                content_sha256=original_sha256,
+                safe_state="cancelled",
+                requires_external_readback=pending_run is not None,
+                resolved=pending_run is None,
+            ))
+
+    elif policy == "red_team_campaign":
+        prior = str(record.get("status") or "unknown")
+        if prior in {"running", "finalizing"}:
+            leases = record.get("case_leases") or {}
+            if not isinstance(leases, dict):
+                raise RecoveryError(
+                    "A restored red-team campaign has malformed leases. Nothing was restored."
+                )
+            for lease in leases.values():
+                if not isinstance(lease, dict):
+                    raise RecoveryError(
+                        "A restored red-team campaign has malformed leases. Nothing was restored."
+                    )
+                if lease.get("completed_at") is None:
+                    lease["cancelled_at"] = now
+            record["status"] = "cancelled"
+            record["cancelled"] = {
+                "actor": "system:bootstrap-recovery",
+                "rationale": "Restored campaign retired before normal startup.",
+                "cancelled_at": now,
+            }
+            record["case_leases"] = leases
+            changed = True
+            items.append(_reconciliation_item(
+                "red_team_campaign", relative, record_id,
+                prior_state=prior,
+                content_sha256=original_sha256,
+                safe_state="cancelled",
+                requires_external_readback=True,
+            ))
+
+    return changed
+
+
+def _reconcile_additional_json_authorities(
     stage: Path, *, now: float
 ) -> tuple[set[str], list[dict], set[str]]:
     """Quarantine every non-legacy authority named by the canonical registry."""
@@ -1654,10 +1981,6 @@ def _reconcile_additional_json_authorities(  # noqa: C901, PLR0912, PLR0915
         "flow_publication_history",
         "red_team_result",
         "usage_ledger",
-    }
-    active_flow_states = {
-        "queued", "claimed", "running", "resuming", "paused_approval",
-        "paused_delay", "paused_event", "indeterminate",
     }
     discard_derived_policies = {
         "compaction_prompt_state_authority",
@@ -1744,129 +2067,11 @@ def _reconcile_additional_json_authorities(  # noqa: C901, PLR0912, PLR0915
         record_id = str(record.get("id") or path.stem)
         changed = False
 
-        if policy == "flow_run":
-            prior = str(record.get("status") or "unknown")
-            if prior in active_flow_states:
-                needs_readback = prior != "queued"
-                record["status"] = "indeterminate" if needs_readback else "failed"
-                record["resume_at"] = None
-                record["human"] = {}
-                record["decided_by"] = ""
-                record["error"] = (
-                    "Restored execution may have crossed an external boundary; "
-                    "authoritative readback is required before a new request."
-                    if needs_readback else
-                    "Restored queued execution was retired before publication."
-                )
-                changed = True
-                items.append(_reconciliation_item(
-                    "flow_run", relative, record.get("run_id") or record_id,
-                    prior_state=prior,
-                    content_sha256=original_sha256,
-                    safe_state=record["status"],
-                    requires_external_readback=needs_readback,
-                    resolved=not needs_readback,
-                ))
-
-        elif policy == "external_agents":
-            if len(record) > MAX_RECONCILIATION_ITEMS or any(
-                not isinstance(value, dict) for value in record.values()
-            ):
-                raise RecoveryError(
-                    "The restored external-agent authority is malformed. Nothing was restored."
-                )
-            for agent_id, metadata in sorted(record.items()):
-                before = _record_sha256(metadata)
-                if metadata.get("contained") is not True:
-                    metadata["contained"] = True
-                    changed = True
-                    items.append(_reconciliation_item(
-                        "external_agent", relative, agent_id,
-                        prior_state="enrolled",
-                        content_sha256=before,
-                        safe_state="contained_reenrollment_required",
-                        requires_external_readback=False,
-                        resolved=True,
-                    ))
-                executions = metadata.get("executions") or {}
-                if not isinstance(executions, dict):
-                    raise RecoveryError(
-                        "The restored external-agent execution ledger is malformed. Nothing was restored."
-                    )
-                for execution_id, execution in sorted(executions.items()):
-                    if not isinstance(execution, dict):
-                        raise RecoveryError(
-                            "The restored external-agent execution ledger is malformed. Nothing was restored."
-                        )
-                    prior = str(execution.get("status") or "unknown")
-                    if prior not in {"pending", "executing"}:
-                        continue
-                    needs_readback = prior == "executing"
-                    digest = _record_sha256(execution)
-                    execution["status"] = "failed" if needs_readback else "denied"
-                    execution["finished_at"] = now
-                    execution["bootstrap_recovery_hold"] = True
-                    execution.pop("digest", None)
-                    changed = True
-                    items.append(_reconciliation_item(
-                        "external_agent_execution", relative, execution_id,
-                        prior_state=prior,
-                        content_sha256=digest,
-                        safe_state=execution["status"],
-                        requires_external_readback=needs_readback,
-                        resolved=not needs_readback,
-                    ))
-
-        elif policy == "federation_outbox":
-            queued = record.get("items")
-            dropped = record.get("dropped", 0)
-            if (not isinstance(queued, list)
-                    or isinstance(dropped, bool) or not isinstance(dropped, int)
-                    or dropped < 0 or len(queued) > MAX_RECONCILIATION_ITEMS):
-                raise RecoveryError(
-                    "The restored federation outbox is malformed. Nothing was restored."
-                )
-            if queued:
-                record["items"] = []
-                record["bootstrap_retired"] = len(queued)
-                changed = True
-                items.append(_reconciliation_item(
-                    "federation_outbox", relative, "restored-outbox",
-                    prior_state=f"queued:{len(queued)}",
-                    content_sha256=original_sha256,
-                    safe_state="discarded_before_publication",
-                    requires_external_readback=True,
-                ))
-
-        elif policy in {"llm_team_budget", "mcp_call_budget"}:
-            rows = record.get("rows")
-            if not isinstance(rows, dict) or len(rows) > MAX_RECONCILIATION_ITEMS:
-                raise RecoveryError(
-                    "A restored egress budget ledger is malformed. Nothing was restored."
-                )
-            for value in rows.values():
-                if not isinstance(value, dict):
-                    raise RecoveryError(
-                        "A restored egress budget ledger is malformed. Nothing was restored."
-                    )
-                value["window_started"] = now
-                if policy == "llm_team_budget":
-                    value["requests"] = 2**63 - 1
-                    value["prompt_tokens"] = 2**63 - 1
-                    value["completion_tokens"] = 2**63 - 1
-                else:
-                    value["count"] = 2**63 - 1
-                changed = True
-            if rows:
-                record["bootstrap_recovery_hold"] = True
-                items.append(_reconciliation_item(
-                    "egress_budget", relative, policy,
-                    prior_state="restored_counter_floor",
-                    content_sha256=original_sha256,
-                    safe_state="conservative_window_exhausted",
-                    requires_external_readback=True,
-                ))
-
+        if policy in {"flow_run", "external_agents", "federation_outbox",
+                      "llm_team_budget", "mcp_call_budget"}:
+            changed = _reconcile_execution_json_authority(
+                policy, record, relative, record_id, original_sha256, items, now=now
+            )
         elif policy == "identity_scheduler":
             pending = record.get("pending_changes") or []
             if not isinstance(pending, list):
@@ -1890,168 +2095,15 @@ def _reconcile_additional_json_authorities(  # noqa: C901, PLR0912, PLR0915
             ))
             continue
 
-        elif policy == "identity_change_delivery":
-            deliveries = record.get("deliveries")
-            if not isinstance(deliveries, dict):
-                raise RecoveryError(
-                    "A restored identity-governance delivery is malformed. Nothing was restored."
-                )
-            held = False
-            for sink, delivery in sorted(deliveries.items()):
-                if not isinstance(delivery, dict):
-                    raise RecoveryError(
-                        "A restored identity-governance delivery is malformed. Nothing was restored."
-                    )
-                prior = str(delivery.get("status") or "unknown")
-                if prior == "delivered":
-                    continue
-                attempts = delivery.get("attempts", 0)
-                if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
-                    raise RecoveryError(
-                        "A restored identity-governance delivery is malformed. Nothing was restored."
-                    )
-                needs_readback = attempts > 0 or prior in {"delivering", "failed"}
-                delivery["status"] = (
-                    "bootstrap_reconciliation_required" if needs_readback
-                    else "bootstrap_reauthorization_required"
-                )
-                delivery["last_error_type"] = "BootstrapRecoveryHold"
-                held = True
-                items.append(_reconciliation_item(
-                    "identity_change_delivery", relative, f"{record_id}:{sink}",
-                    prior_state=prior,
-                    content_sha256=original_sha256,
-                    safe_state=delivery["status"],
-                    requires_external_readback=needs_readback,
-                    resolved=not needs_readback,
-                ))
-            if held:
-                record["status"] = "bootstrap_reconciliation_required"
-                record["health"] = "degraded"
-                changed = True
-
-        elif policy == "identity_purview_writeback":
-            prior = str(record.get("status") or "unknown")
-            attempts = record.get("attempts", 0)
-            compensation_attempts = record.get("compensation_attempts", 0)
-            if any(isinstance(value, bool) or not isinstance(value, int) or value < 0
-                   for value in (attempts, compensation_attempts)):
-                raise RecoveryError(
-                    "A restored Purview writeback intent is malformed. Nothing was restored."
-                )
-            active = prior in {"prepared", "failed", "applying", "compensation_failed", "compensating"}
-            if active:
-                needs_readback = (
-                    prior in {"applying", "compensation_failed", "compensating"}
-                    or attempts > 0 or compensation_attempts > 0
-                )
-                record["status"] = (
-                    "bootstrap_reconciliation_required" if needs_readback
-                    else "bootstrap_reauthorization_required"
-                )
-                record["operation_claim"] = None
-                record["provider_write_state"] = "unknown" if needs_readback else "not_attempted"
-                record["health"] = "degraded"
-                record["last_error_type"] = "BootstrapRecoveryHold"
-                changed = True
-                items.append(_reconciliation_item(
-                    "identity_purview_writeback", relative, record_id,
-                    prior_state=prior,
-                    content_sha256=original_sha256,
-                    safe_state=record["status"],
-                    requires_external_readback=needs_readback,
-                    resolved=not needs_readback,
-                ))
-
-        elif policy == "identity_authority_registry":
-            if record.get("status") == "active":
-                prior_payload_sha = str(record.get("payload_sha256") or original_sha256)
-                tombstone = {
-                    "tenant_sha256": record.get("tenant_sha256"),
-                    "restored_payload_sha256": prior_payload_sha,
-                    "purged_at": now,
-                    "reason": "bootstrap_reenrollment_required",
-                }
-                record["status"] = "purged"
-                record["payload"] = tombstone
-                record["payload_sha256"] = _record_sha256(tombstone)
-                record["live_acceptance_verified"] = False
-                changed = True
-                items.append(_reconciliation_item(
-                    "identity_authority", relative, record_id,
-                    prior_state="active",
-                    content_sha256=original_sha256,
-                    safe_state="purged_reenrollment_required",
-                    requires_external_readback=False,
-                    resolved=True,
-                ))
-
-        elif policy == "identity_change_request":
-            prior = str(record.get("status") or "unknown")
-            if prior == "pending_human_or_service_assessment":
-                attempted = record.get("provider_write_performed") is True
-                record["status"] = "bootstrap_reauthorization_required"
-                record["risk_score_generated"] = False
-                record["provider_write_performed"] = False
-                record["live_acceptance_verified"] = False
-                changed = True
-                items.append(_reconciliation_item(
-                    "identity_change_request", relative, record_id,
-                    prior_state=prior,
-                    content_sha256=original_sha256,
-                    safe_state="bootstrap_reauthorization_required",
-                    requires_external_readback=attempted,
-                    resolved=not attempted,
-                ))
-
-        elif policy == "red_team_schedule":
-            prior = str(record.get("status") or "unknown")
-            pending_run = record.get("pending_run")
-            if prior == "active" or pending_run is not None:
-                record["status"] = "cancelled"
-                record["pending_run"] = None
-                record["bootstrap_cancelled_at"] = now
-                changed = True
-                items.append(_reconciliation_item(
-                    "red_team_schedule", relative, record_id,
-                    prior_state="run_claimed" if pending_run is not None else prior,
-                    content_sha256=original_sha256,
-                    safe_state="cancelled",
-                    requires_external_readback=pending_run is not None,
-                    resolved=pending_run is None,
-                ))
-
-        elif policy == "red_team_campaign":
-            prior = str(record.get("status") or "unknown")
-            if prior in {"running", "finalizing"}:
-                leases = record.get("case_leases") or {}
-                if not isinstance(leases, dict):
-                    raise RecoveryError(
-                        "A restored red-team campaign has malformed leases. Nothing was restored."
-                    )
-                for lease in leases.values():
-                    if not isinstance(lease, dict):
-                        raise RecoveryError(
-                            "A restored red-team campaign has malformed leases. Nothing was restored."
-                        )
-                    if lease.get("completed_at") is None:
-                        lease["cancelled_at"] = now
-                record["status"] = "cancelled"
-                record["cancelled"] = {
-                    "actor": "system:bootstrap-recovery",
-                    "rationale": "Restored campaign retired before normal startup.",
-                    "cancelled_at": now,
-                }
-                record["case_leases"] = leases
-                changed = True
-                items.append(_reconciliation_item(
-                    "red_team_campaign", relative, record_id,
-                    prior_state=prior,
-                    content_sha256=original_sha256,
-                    safe_state="cancelled",
-                    requires_external_readback=True,
-                ))
-
+        elif policy in {"identity_change_delivery", "identity_purview_writeback",
+                        "identity_authority_registry", "identity_change_request"}:
+            changed = _reconcile_identity_json_authority(
+                policy, record, relative, record_id, original_sha256, items, now=now
+            )
+        elif policy in {"red_team_schedule", "red_team_campaign"}:
+            changed = _reconcile_red_team_json_authority(
+                policy, record, relative, record_id, original_sha256, items, now=now
+            )
         if changed:
             _write_stage_json(path, record, now=now)
         if len(items) > MAX_RECONCILIATION_ITEMS:
@@ -2075,7 +2127,50 @@ def _reconcile_additional_json_authorities(  # noqa: C901, PLR0912, PLR0915
     return removed, items, classified
 
 
-def _quarantine_bootstrap_records(  # noqa: C901 - linear closed policy matrix
+def _quarantine_vendor_operation(
+    record: dict, relative: str, record_id: object, items: list[dict]
+) -> bool:
+    changed = False
+    operation = record.get("operation")
+    if isinstance(operation, dict):
+        prior = str(operation.get("state") or "unknown")
+        attempts = operation.get("attempts", 0)
+        attempted = isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0
+        digest = hashlib.sha256(json.dumps(
+            operation, sort_keys=True, separators=(",", ":"), default=str
+        ).encode()).hexdigest()
+        if prior in {"prepared", "approved"} and not attempted:
+            history = list(record.get("operation_history") or [])
+            history.append(dict(operation, state="invalidated",
+                                invalidated_reason="bootstrap_reauthorization_required"))
+            record["operation"] = None
+            record["operation_history"] = history[-100:]
+            record["stage"] = "review_approved"
+            changed = True
+            items.append(_reconciliation_item(
+                "vendor_operation", relative, record_id,
+                prior_state=prior, content_sha256=digest,
+                safe_state="invalidated", requires_external_readback=False,
+                resolved=True,
+            ))
+        elif prior in {"executing", "reconciliation_required"} or attempted:
+            record["operation"] = dict(
+                operation,
+                state="reconciliation_required",
+                bootstrap_recovery_hold=True,
+            )
+            record["stage"] = "reconciliation_required"
+            changed = True
+            items.append(_reconciliation_item(
+                "vendor_operation", relative, record_id,
+                prior_state=prior, content_sha256=digest,
+                safe_state="reconciliation_required",
+                requires_external_readback=True,
+            ))
+    return changed
+
+
+def _quarantine_bootstrap_records(
     stage: Path, *, now: float
 ) -> list[dict]:
     """Put known local external authorities into an intrinsically held state."""
@@ -2103,42 +2198,7 @@ def _quarantine_bootstrap_records(  # noqa: C901 - linear closed policy matrix
         record_id = record.get("id", path.stem)
         changed = False
         if namespace == "vendor_onboarding":
-            operation = record.get("operation")
-            if isinstance(operation, dict):
-                prior = str(operation.get("state") or "unknown")
-                attempts = operation.get("attempts", 0)
-                attempted = isinstance(attempts, int) and not isinstance(attempts, bool) and attempts > 0
-                digest = hashlib.sha256(json.dumps(
-                    operation, sort_keys=True, separators=(",", ":"), default=str
-                ).encode()).hexdigest()
-                if prior in {"prepared", "approved"} and not attempted:
-                    history = list(record.get("operation_history") or [])
-                    history.append(dict(operation, state="invalidated",
-                                        invalidated_reason="bootstrap_reauthorization_required"))
-                    record["operation"] = None
-                    record["operation_history"] = history[-100:]
-                    record["stage"] = "review_approved"
-                    changed = True
-                    items.append(_reconciliation_item(
-                        "vendor_operation", relative, record_id,
-                        prior_state=prior, content_sha256=digest,
-                        safe_state="invalidated", requires_external_readback=False,
-                        resolved=True,
-                    ))
-                elif prior in {"executing", "reconciliation_required"} or attempted:
-                    record["operation"] = dict(
-                        operation,
-                        state="reconciliation_required",
-                        bootstrap_recovery_hold=True,
-                    )
-                    record["stage"] = "reconciliation_required"
-                    changed = True
-                    items.append(_reconciliation_item(
-                        "vendor_operation", relative, record_id,
-                        prior_state=prior, content_sha256=digest,
-                        safe_state="reconciliation_required",
-                        requires_external_readback=True,
-                    ))
+            changed = _quarantine_vendor_operation(record, relative, record_id, items)
         elif namespace == "grc_sync_outbound":
             prior = str(record.get("status") or "unknown")
             if prior not in {"delivered", "delivered_unconfirmed"}:
@@ -2569,14 +2629,12 @@ def _bind_reconciliation_sources(stage: Path, items: list[dict]) -> None:
             )
 
 
-def _reconcile_bootstrap_stage(  # noqa: C901 - one fail-closed staged transaction
-    stage: Path,
-    *,
-    decryptor: Callable[[bytes, str | None, Path], bytes] | None = None,
-    tenant: str | None = None,
-) -> tuple[set[str], dict]:
-    """Make restored queued work non-claimable before transactional publication."""
-    stage = backup._filesystem_path(stage)
+def _inventory_bootstrap_stage(
+    stage: Path, *, decryptor: Callable[[bytes, str | None, Path], bytes] | None, tenant: str | None
+) -> tuple[
+    set[str], list[dict], list[tuple[str, Path, str, int]],
+    dict[str, list[tuple[str, str, int]]], list[tuple[str, str, int]],
+]:
     removed: set[str] = set()
     preserved_credentials: list[dict] = []
     wrapped_deks: list[tuple[str, Path, str, int]] = []
@@ -2624,31 +2682,13 @@ def _reconcile_bootstrap_stage(  # noqa: C901 - one fail-closed staged transacti
             continue
         if backup._accounting_file(relative, path):
             protected.append((relative, backup._sha256(path), path.stat().st_size))
+    return removed, preserved_credentials, wrapped_deks, retired_task_files, protected
 
-    job_counts: Counter[str] = Counter()
-    items = []
-    from .channel_recovery import stage_authorities
 
-    channel_items, channel_classified = stage_authorities(
-        stage, decryptor=decryptor, tenant=tenant, now=time.time(), make_item=_reconciliation_item,
-        blocked_item=lambda relative, namespace, digest: _reconciliation_item(
-            "unclassified_protected_authority", relative, Path(relative).stem,
-            prior_state=f"unreadable_{namespace}", content_sha256=digest,
-            safe_state="global_start_blocked", requires_external_readback=True),
-    )
-    items.extend(channel_items)
-    for credential in preserved_credentials:
-        items.append(_reconciliation_item(
-            "credential_custody",
-            credential["path"],
-            credential["kind"],
-            prior_state="retained_key_ciphertext",
-            content_sha256=credential["sha256"],
-            safe_state="preserved_exact_authenticated",
-            requires_external_readback=False,
-            resolved=True,
-            resolved_disposition="preserved_exact_authenticated",
-        ))
+def _reconcile_bootstrap_wrapped_keys(
+    wrapped_deks: list[tuple[str, Path, str, int]], preserved_credentials: list[dict],
+    removed: set[str], items: list[dict], *, decryptor: Callable[[bytes, str | None, Path], bytes] | None
+) -> int:
     authenticated_wrapped_deks = 0
     for relative, path, digest, _size in wrapped_deks:
         # A successful tenant-AEAD record validation proves that this exact
@@ -2696,26 +2736,48 @@ def _reconcile_bootstrap_stage(  # noqa: C901 - one fail-closed staged transacti
             resolved=True,
             resolved_disposition="fresh_rotation_required",
         ))
-    for source, files in sorted(retired_task_files.items()):
-        digest = hashlib.sha256(json.dumps(
-            sorted(files), separators=(",", ":")
-        ).encode()).hexdigest()
-        items.append(_reconciliation_item(
-            "task_file_recovery", source, source.rsplit("/", 1)[-1],
-            prior_state="restored_copy", content_sha256=digest,
-            safe_state="discarded_before_publication",
-            requires_external_readback=False, resolved=True,
-        ))
-    additional_removed, additional_items, additional_classified = (
-        _reconcile_additional_json_authorities(stage, now=time.time())
-    )
-    removed.update(additional_removed)
-    items.extend(additional_items)
-    items.extend(_quarantine_bootstrap_records(stage, now=time.time()))
-    classified_sources = {
-        str(item["source"]) for item in items
-        if isinstance(item.get("source"), str)
-    } | additional_classified | channel_classified
+    return authenticated_wrapped_deks
+
+
+def _reconcile_bootstrap_reservations(spend: dict, items: list[dict]) -> None:
+    reservations = spend.get("__provider_reservations_v1__", {})
+    if not isinstance(reservations, dict):
+        raise RecoveryError(
+            "The restored provider accounting inventory is malformed. Nothing was restored."
+        )
+    for period, providers in sorted(reservations.items()):
+        if not isinstance(providers, dict):
+            raise RecoveryError(
+                "The restored provider accounting inventory is malformed. Nothing was restored."
+            )
+        for provider, rows in sorted(providers.items()):
+            if not isinstance(rows, dict):
+                raise RecoveryError(
+                    "The restored provider accounting inventory is malformed. Nothing was restored."
+                )
+            for request_id, row in sorted(rows.items()):
+                if not isinstance(row, dict) or row.get("state") == "settled":
+                    continue
+                digest = hashlib.sha256(json.dumps(
+                    row, sort_keys=True, separators=(",", ":"), default=str
+                ).encode()).hexdigest()
+                item = _reconciliation_item(
+                    "provider_reservation",
+                    "provider_spend.json",
+                    request_id,
+                    prior_state=str(row.get("state") or "unknown"),
+                    content_sha256=digest,
+                    safe_state="held",
+                    requires_external_readback=True,
+                )
+                item["provider"] = str(provider)[:64]
+                item["period"] = str(period)[:16]
+                items.append(item)
+
+
+def _reconcile_bootstrap_spending_records(
+    stage: Path, items: list[dict], classified_sources: set[str]
+) -> None:
     indexed_marker = stage / "provider_spend.sqlite3.active"
     if indexed_marker.exists() and not (
         (stage / "provider_spend.sqlite3").exists()
@@ -2741,39 +2803,7 @@ def _reconcile_bootstrap_stage(  # noqa: C901 - one fail-closed staged transacti
                 requires_external_readback=True,
             ))
         else:
-            reservations = spend.get("__provider_reservations_v1__", {})
-            if not isinstance(reservations, dict):
-                raise RecoveryError(
-                    "The restored provider accounting inventory is malformed. Nothing was restored."
-                )
-            for period, providers in sorted(reservations.items()):
-                if not isinstance(providers, dict):
-                    raise RecoveryError(
-                        "The restored provider accounting inventory is malformed. Nothing was restored."
-                    )
-                for provider, rows in sorted(providers.items()):
-                    if not isinstance(rows, dict):
-                        raise RecoveryError(
-                            "The restored provider accounting inventory is malformed. Nothing was restored."
-                        )
-                    for request_id, row in sorted(rows.items()):
-                        if not isinstance(row, dict) or row.get("state") == "settled":
-                            continue
-                        digest = hashlib.sha256(json.dumps(
-                            row, sort_keys=True, separators=(",", ":"), default=str
-                        ).encode()).hexdigest()
-                        item = _reconciliation_item(
-                            "provider_reservation",
-                            "provider_spend.json",
-                            request_id,
-                            prior_state=str(row.get("state") or "unknown"),
-                            content_sha256=digest,
-                            safe_state="held",
-                            requires_external_readback=True,
-                        )
-                        item["provider"] = str(provider)[:64]
-                        item["period"] = str(period)[:16]
-                        items.append(item)
+            _reconcile_bootstrap_reservations(spend, items)
     required_path = stage / "provider_spend.json.required"
     if required_path.exists():
         classified_sources.add("provider_spend.json.required")
@@ -2816,6 +2846,67 @@ def _reconcile_bootstrap_stage(  # noqa: C901 - one fail-closed staged transacti
             prior_state="restored", content_sha256=backup._sha256(marker),
             safe_state="isolated_review_required", requires_external_readback=True,
         ))
+
+
+def _reconcile_bootstrap_jobs(
+    connection: sqlite3.Connection, relative: str, items: list[dict],
+    job_counts: Counter[str], *, now: float
+) -> None:
+    tables = _sqlite_tables(connection)
+    if "jobs" not in tables:
+        raise RecoveryError(
+            "The restored job database has an unsupported schema. Nothing was restored."
+        )
+    columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")
+    }
+    required = {
+        "id", "kind", "payload", "run_at", "status", "attempts",
+        "last_error", "created_at", "updated_at",
+    }
+    if not required.issubset(columns):
+        raise RecoveryError(
+            "A restored job database has an unsupported schema. Nothing was restored."
+        )
+    rows = connection.execute(
+        "SELECT id, kind, payload, status FROM jobs "
+        "WHERE status IN ('pending','running') ORDER BY id"
+    ).fetchall()
+    for job_id, kind, payload, state in rows:
+        payload_sha256 = hashlib.sha256(str(payload).encode()).hexdigest()
+        item = _reconciliation_item(
+            "queued_work",
+            relative,
+            int(job_id),
+            prior_state=str(state),
+            content_sha256=payload_sha256,
+            safe_state="reconciliation_required",
+            requires_external_readback=str(state) == "running",
+        )
+        item["kind"] = str(kind)[:128]
+        items.append(item)
+        job_counts[str(state)] += 1
+    connection.execute(
+        "UPDATE jobs SET status='reconciliation_required', last_error=?, updated_at=? "
+        "WHERE status='pending'",
+        (
+            "Restored queued work is held. Retire it in Workspace recovery before creating a new request.",
+            now,
+        ),
+    )
+    connection.execute(
+        "UPDATE jobs SET status='reconciliation_required', last_error=?, updated_at=? "
+        "WHERE status='running'",
+        (
+            "Restored running work may have crossed an external boundary. Record authoritative readback in Workspace recovery.",
+            now,
+        ),
+    )
+
+
+def _reconcile_bootstrap_databases(
+    stage: Path, items: list[dict], classified_sources: set[str], job_counts: Counter[str]
+) -> int:
     job_database_count = 0
     now = time.time()
     for db in sorted(item for item in stage.rglob("*") if item.is_file()):
@@ -2828,57 +2919,8 @@ def _reconcile_bootstrap_stage(  # noqa: C901 - one fail-closed staged transacti
             policy = authority_policy(relative, is_sqlite=True)
             connection.execute("BEGIN IMMEDIATE")
             if policy == "jobs":
-                tables = _sqlite_tables(connection)
-                if "jobs" not in tables:
-                    raise RecoveryError(
-                        "The restored job database has an unsupported schema. Nothing was restored."
-                    )
-                columns = {
-                    str(row[1]) for row in connection.execute("PRAGMA table_info(jobs)")
-                }
-                required = {
-                    "id", "kind", "payload", "run_at", "status", "attempts",
-                    "last_error", "created_at", "updated_at",
-                }
-                if not required.issubset(columns):
-                    raise RecoveryError(
-                        "A restored job database has an unsupported schema. Nothing was restored."
-                    )
+                _reconcile_bootstrap_jobs(connection, relative, items, job_counts, now=now)
                 job_database_count += 1
-                rows = connection.execute(
-                    "SELECT id, kind, payload, status FROM jobs "
-                    "WHERE status IN ('pending','running') ORDER BY id"
-                ).fetchall()
-                for job_id, kind, payload, state in rows:
-                    payload_sha256 = hashlib.sha256(str(payload).encode()).hexdigest()
-                    item = _reconciliation_item(
-                        "queued_work",
-                        relative,
-                        int(job_id),
-                        prior_state=str(state),
-                        content_sha256=payload_sha256,
-                        safe_state="reconciliation_required",
-                        requires_external_readback=str(state) == "running",
-                    )
-                    item["kind"] = str(kind)[:128]
-                    items.append(item)
-                    job_counts[str(state)] += 1
-                connection.execute(
-                    "UPDATE jobs SET status='reconciliation_required', last_error=?, updated_at=? "
-                    "WHERE status='pending'",
-                    (
-                        "Restored queued work is held. Retire it in Workspace recovery before creating a new request.",
-                        now,
-                    ),
-                )
-                connection.execute(
-                    "UPDATE jobs SET status='reconciliation_required', last_error=?, updated_at=? "
-                    "WHERE status='running'",
-                    (
-                        "Restored running work may have crossed an external boundary. Record authoritative readback in Workspace recovery.",
-                        now,
-                    ),
-                )
             elif policy == "world":
                 items.extend(_reconcile_world_database(connection, relative, now=now))
             elif policy == "provider_spend_sqlite":
@@ -2942,6 +2984,71 @@ def _reconcile_bootstrap_stage(  # noqa: C901 - one fail-closed staged transacti
             raise
         finally:
             connection.close()
+    return job_database_count
+
+
+def _reconcile_bootstrap_stage(
+    stage: Path,
+    *,
+    decryptor: Callable[[bytes, str | None, Path], bytes] | None = None,
+    tenant: str | None = None,
+) -> tuple[set[str], dict]:
+    """Make restored queued work non-claimable before transactional publication."""
+    stage = backup._filesystem_path(stage)
+    removed, preserved_credentials, wrapped_deks, retired_task_files, protected = (
+        _inventory_bootstrap_stage(stage, decryptor=decryptor, tenant=tenant)
+    )
+    job_counts: Counter[str] = Counter()
+    items = []
+    from .channel_recovery import stage_authorities
+
+    channel_items, channel_classified = stage_authorities(
+        stage, decryptor=decryptor, tenant=tenant, now=time.time(), make_item=_reconciliation_item,
+        blocked_item=lambda relative, namespace, digest: _reconciliation_item(
+            "unclassified_protected_authority", relative, Path(relative).stem,
+            prior_state=f"unreadable_{namespace}", content_sha256=digest,
+            safe_state="global_start_blocked", requires_external_readback=True),
+    )
+    items.extend(channel_items)
+    for credential in preserved_credentials:
+        items.append(_reconciliation_item(
+            "credential_custody",
+            credential["path"],
+            credential["kind"],
+            prior_state="retained_key_ciphertext",
+            content_sha256=credential["sha256"],
+            safe_state="preserved_exact_authenticated",
+            requires_external_readback=False,
+            resolved=True,
+            resolved_disposition="preserved_exact_authenticated",
+        ))
+    authenticated_wrapped_deks = _reconcile_bootstrap_wrapped_keys(
+        wrapped_deks, preserved_credentials, removed, items, decryptor=decryptor
+    )
+    for source, files in sorted(retired_task_files.items()):
+        digest = hashlib.sha256(json.dumps(
+            sorted(files), separators=(",", ":")
+        ).encode()).hexdigest()
+        items.append(_reconciliation_item(
+            "task_file_recovery", source, source.rsplit("/", 1)[-1],
+            prior_state="restored_copy", content_sha256=digest,
+            safe_state="discarded_before_publication",
+            requires_external_readback=False, resolved=True,
+        ))
+    additional_removed, additional_items, additional_classified = (
+        _reconcile_additional_json_authorities(stage, now=time.time())
+    )
+    removed.update(additional_removed)
+    items.extend(additional_items)
+    items.extend(_quarantine_bootstrap_records(stage, now=time.time()))
+    classified_sources = {
+        str(item["source"]) for item in items
+        if isinstance(item.get("source"), str)
+    } | additional_classified | channel_classified
+    _reconcile_bootstrap_spending_records(stage, items, classified_sources)
+    job_database_count = _reconcile_bootstrap_databases(
+        stage, items, classified_sources, job_counts
+    )
 
     for relative, digest, _size in protected:
         if relative in classified_sources:
@@ -3627,24 +3734,49 @@ def prepare_restore(identifier: str, *, isolated: bool, actor: str) -> dict:
                 "protected_changes": comparison["protected_changes"]}
 
 
-def apply_restore(  # noqa: C901 - staged fail-closed recovery transaction
+def _reset_bootstrap_after_failed_restore(bootstrap: dict) -> None:
+    try:
+        live = _live_state()
+        if (live["file_count"] == 0
+                and live["state_sha256"] == bootstrap["empty_state_sha256"]):
+            retry = {
+                **{key: value for key, value in bootstrap.items()
+                   if key not in {"authentication", "snapshot", "archive_sha256",
+                                  "safety_snapshot", "review", "restore_pending_at",
+                                  "reconciliation", "expected_live_state",
+                                  "stage_prepared_at"}},
+                "state": "prepared",
+            }
+            _write_bootstrap(retry)
+    except BaseException:
+        pass
+
+
+def _read_restore_review(
+    review_path: Path, review_id: str, expected_target: str, *, actor: str
+) -> dict:
+    try:
+        review = json.loads(file_lock.atomic_read_text(review_path))
+        with backup.recovery_scope(_root(), current_tenant_id_strict(), _key(), max_expanded_bytes=MAX_EXPANDED_BYTES):
+            backup._verify_authentication(review, allow_unsigned=False, label="recovery review")
+    except (OSError, ValueError, backup.BackupError) as exc:
+        raise RecoveryError("The restore review is unavailable. Prepare a new review.") from exc
+    if (not hmac.compare_digest(str(review.get("review", "")), review_id)
+            or review.get("target") != target() or not hmac.compare_digest(target(), expected_target)
+            or review.get("actor") != actor
+            or review.get("application_version") != version() or review.get("expires_at", 0) < time.time()):
+        raise RecoveryError("The workspace, version or restore review changed. Prepare a new review.")
+    return review
+
+
+def apply_restore(
     review_id: str, expected_target: str, *, isolated: bool, actor: str
 ) -> dict:
     with _locked():
         if not isolated or restore_blockers():
             raise RecoveryError("Restore requires isolated local recovery mode with no external stores or independent workers.")
         review_path = _store() / "review.json"
-        try:
-            review = json.loads(file_lock.atomic_read_text(review_path))
-            with backup.recovery_scope(_root(), current_tenant_id_strict(), _key(), max_expanded_bytes=MAX_EXPANDED_BYTES):
-                backup._verify_authentication(review, allow_unsigned=False, label="recovery review")
-        except (OSError, ValueError, backup.BackupError) as exc:
-            raise RecoveryError("The restore review is unavailable. Prepare a new review.") from exc
-        if (not hmac.compare_digest(str(review.get("review", "")), review_id)
-                or review.get("target") != target() or not hmac.compare_digest(target(), expected_target)
-                or review.get("actor") != actor
-                or review.get("application_version") != version() or review.get("expires_at", 0) < time.time()):
-            raise RecoveryError("The workspace, version or restore review changed. Prepare a new review.")
+        review = _read_restore_review(review_path, review_id, expected_target, actor=actor)
         selected = _inspect(review["snapshot"])
         if selected["compatibility"] != "compatible":
             raise RecoveryError(selected["compatibility"])
@@ -3759,21 +3891,7 @@ def apply_restore(  # noqa: C901 - staged fail-closed recovery transaction
             if bootstrap is not None:
                 # If the transaction restored the exact empty target, retry is
                 # safe. Any uncertainty retains restore_pending and blocks work.
-                try:
-                    live = _live_state()
-                    if (live["file_count"] == 0
-                            and live["state_sha256"] == bootstrap["empty_state_sha256"]):
-                        retry = {
-                            **{key: value for key, value in bootstrap.items()
-                               if key not in {"authentication", "snapshot", "archive_sha256",
-                                              "safety_snapshot", "review", "restore_pending_at",
-                                              "reconciliation", "expected_live_state",
-                                              "stage_prepared_at"}},
-                            "state": "prepared",
-                        }
-                        _write_bootstrap(retry)
-                except BaseException:
-                    pass
+                _reset_bootstrap_after_failed_restore(bootstrap)
             raise
         if bootstrap is not None:
             persisted = _read_bootstrap(actor=actor)
