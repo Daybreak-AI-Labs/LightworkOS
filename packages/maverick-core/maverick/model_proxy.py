@@ -117,9 +117,9 @@ def config_from_env() -> ProxyConfig | None:
         cfg = (load_config() or {}).get("model_proxy") or {}
         if not isinstance(cfg, dict):
             cfg = {}
+        listen = listen or str(cfg.get("listen") or "").strip()
         if not upstream or not auth_style or not client_token or not allowed_routes:
             upstream = upstream or str(cfg.get("upstream") or "").strip()
-            listen = listen or str(cfg.get("listen") or "").strip()
             auth_style = auth_style or str(cfg.get("auth_style") or "").strip().lower()
             client_token = client_token or str(cfg.get("client_token") or "").strip()
             if not allowed_routes:

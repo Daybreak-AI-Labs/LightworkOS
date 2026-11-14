@@ -166,6 +166,16 @@ def test_config_from_env(monkeypatch):
     assert cfg.allowed() == frozenset({"api.openai.com"})
 
 
+def test_config_listen_applies_when_everything_else_comes_from_env(monkeypatch):
+    monkeypatch.setenv("MAVERICK_PROXY_UPSTREAM", "https://api.openai.com")
+    monkeypatch.setenv("MAVERICK_PROXY_AUTH_STYLE", "bearer")
+    monkeypatch.setenv("MAVERICK_PROXY_CLIENT_TOKEN", "client-secret")
+    monkeypatch.setenv("MAVERICK_PROXY_ALLOWED_ROUTES", "GET /v1/models")
+    monkeypatch.delenv("MAVERICK_PROXY_LISTEN", raising=False)
+    monkeypatch.setattr(mp, "load_config", lambda: {"model_proxy": {"listen": "127.0.0.1:9100"}})
+    assert mp.config_from_env().listen_port == 9100
+
+
 def test_config_from_env_none_when_unset(monkeypatch):
     for k in ("MAVERICK_PROXY_UPSTREAM", "MAVERICK_PROXY_KEY",
               "MAVERICK_PROXY_LISTEN", "MAVERICK_PROXY_AUTH_STYLE",
