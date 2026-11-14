@@ -55,16 +55,31 @@ def _config(config: dict | None) -> dict:
     if config is not None:
         return config
     try:
-        from ..config import load_config
-        return load_config() or {}
+        from ..config import config_source_errors, load_config
+        cfg = load_config() or {}
+        # load_config() returns defaults for a config file it cannot parse, so
+        # the posture the operator wrote may be lost: block rather than open.
+        if config_source_errors(include_tenant=True):
+            log.warning("configuration is unreadable; blocking network access")
+            return {"security": {"network_policy": "?"}}
+        return cfg
     except Exception:  # an unreadable config fails closed below
         return {"security": {"network_policy": "?"}}
 
 
+def _setting(section: object, key: str) -> str:
+    """The raw text of ``key``; a non-string value (``false``, ``0``) reads as unknown."""
+    if not isinstance(section, dict):
+        return "?"
+    value = section.get(key)
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else "?"
+
+
 def network_posture(config: dict | None = None) -> str:
     """``"open"``, ``"allowlist"`` or ``"deny-all"`` from ``[security] network_policy``."""
-    section = _config(config).get("security") or {}
-    raw = str((section.get("network_policy") if isinstance(section, dict) else "?") or "")
+    raw = _setting(_config(config).get("security") or {}, "network_policy")
     value = raw.strip().lower()
     if value in _OPEN:
         return "open"
@@ -90,8 +105,7 @@ def work_area_offline(config: dict | None = None) -> bool:
     cfg = _config(config)
     if network_posture(cfg) != "open":
         return True
-    sandbox = cfg.get("sandbox") or {}
-    raw = str((sandbox.get("network_policy") if isinstance(sandbox, dict) else "?") or "")
+    raw = _setting(cfg.get("sandbox") or {}, "network_policy")
     value = raw.strip().lower()
     if value in _OPEN:
         return False
@@ -153,7 +167,9 @@ def host_allowed(tool: str, host: str, policy: dict | None = None) -> bool:
     pol = policy if policy is not None else load_policy()
     rule = (pol or {}).get(tool) or {}
     if not isinstance(rule, dict):
-        return True
+        # ``shell = "deny"`` instead of a table: the intent is unknown, so deny.
+        log.warning("malformed [sandbox.tool.%s] egress rule; blocking egress", tool)
+        return False
     if _matches(host, rule.get("deny_egress")):
         return False
     allow = rule.get("allow_egress")
@@ -168,6 +184,8 @@ def describe(tool: str, policy: dict | None = None) -> str:
     rule = (pol or {}).get(tool) or {}
     if not rule:
         return f"{tool}: egress unrestricted"
+    if not isinstance(rule, dict):
+        return f"{tool}: malformed rule, egress blocked"
     parts = []
     if rule.get("allow_egress"):
         parts.append(f"allow={list(rule['allow_egress'])}")
