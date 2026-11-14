@@ -127,6 +127,7 @@ _CONTRACT_FIELDS = frozenset(
         "suite",
         "catalog_sha256",
         "runner_sha256",
+        "scorer_sha256",
         "manifest_verifier_sha256",
         "metric_fields",
         "ranking",
@@ -685,6 +686,9 @@ def current_suite_contract() -> dict[str, Any]:
         "runner_sha256": _canonical_source_sha256(
             ROOT / "benchmarks" / "eval_governance_frontier.py"
         ),
+        "scorer_sha256": _canonical_source_sha256(
+            ROOT / "benchmarks" / "_common" / "governance_metrics.py"
+        ),
         "manifest_verifier_sha256": _canonical_source_sha256(RESULTS_DIR / "verify_manifest.py"),
         "metric_fields": sorted(_METRIC_FIELDS),
         "ranking": list(_RANKING),
@@ -714,6 +718,7 @@ def validate_suite_contract(value: Mapping[str, Any] | object) -> dict[str, Any]
         "suite": SUITE,
         "catalog_sha256": _digest(contract["catalog_sha256"], "suite contract.catalog_sha256"),
         "runner_sha256": _digest(contract["runner_sha256"], "suite contract.runner_sha256"),
+        "scorer_sha256": _digest(contract["scorer_sha256"], "suite contract.scorer_sha256"),
         "manifest_verifier_sha256": _digest(
             contract["manifest_verifier_sha256"],
             "suite contract.manifest_verifier_sha256",
