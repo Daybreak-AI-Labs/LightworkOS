@@ -93,6 +93,12 @@ values are decrypted and rebound) and requires at-rest encryption to be enabled 
 
 The command uses the configured world backend. On **Postgres**, run it in each
 workspace's tenant context (`MAVERICK_TENANT=<tenant> maverick encryption migrate`).
+`MAVERICK_TENANT` also selects the directory of the key file (below), so with a
+file key that run would seal under `tenants/<tenant>/keys/at_rest.key`, a key the
+dashboard does not use unless it runs with the same `MAVERICK_TENANT`. For a
+per-workspace migration, supply the deployment key with `MAVERICK_ENCRYPTION_KEY`
+(the same value the services use), or run with the `MAVERICK_TENANT` the services
+run with.
 It binds the same content columns to their column and tenant, including the
 `facts.value` binding for fact history. A named tenant never migrates another
 tenant's rows or legacy rows with `NULL` ownership. Migrate legacy rows separately
@@ -134,7 +140,10 @@ Key resolution (first match wins):
 1. `MAVERICK_ENCRYPTION_KEY` — a 32-byte key as hex or base64, e.g. injected from a
    KMS / secrets manager so it never touches disk.
 2. `~/.maverick/keys/at_rest.key` — generated on first use, `chmod 600` inside a
-   `chmod 700` directory.
+   `chmod 700` directory. When the process has `MAVERICK_TENANT` set, or a bound
+   client (`MAVERICK_CLIENT_ID`), the file is
+   `~/.maverick/tenants/<that id>/keys/at_rest.key` instead, so every process
+   that reads the same data must resolve the same id.
 
 **Fail-closed:** if encryption is enabled but the `cryptography` backend or the key is
 unavailable, a write *errors* rather than silently storing plaintext.
