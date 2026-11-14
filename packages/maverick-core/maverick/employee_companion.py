@@ -104,6 +104,17 @@ class CompanionPolicyDenied(CompanionError):
     """The current policy does not permit this companion operation."""
 
 
+class CompanionHistoryHeld(CompanionError, LegalHoldApplies):
+    """Every stored exchange is under legal hold, so no new one can be saved.
+
+    A ``LegalHoldApplies`` too, so callers that report a legal hold as itself
+    show this message instead of a generic conflict."""
+
+
+_HISTORY_HELD = ("This conversation's history is under legal hold and is full, so no further "
+                 "messages can be stored. Refreshing will not help; ask your administrator.")
+
+
 def _identity(value: object) -> str:
     if (not isinstance(value, str) or not value.startswith("user:")
             or not value[5:].strip() or value != value.strip() or len(value) > 320
@@ -636,7 +647,7 @@ class EmployeeCompanionStore:
         with self._locked():
             state = self._read(owner)
             now = self._prepare_turns(state)
-            self._prune_history(state)
+            history = self._prune_history(state)
             if (issued_at < now - REQUEST_FRESH_SECONDS
                     or issued_at > now + REQUEST_CLOCK_SKEW_SECONDS):
                 raise CompanionConflictError("Companion request identifier expired; start a new message")
@@ -649,6 +660,9 @@ class EmployeeCompanionStore:
                     or state["history_generation"] != expected_history_generation):
                 raise CompanionConflictError("Companion conversation changed; refresh before sending")
             self._require_draft_policy(state["policy"])
+            if state["policy"]["retention_days"]:
+                # Refuse before the paid model call, not when its reply is saved.
+                self._room_for_one(state, history)
             if any(turn["state"] == "pending" for turn in state["turns"]):
                 raise CompanionConflictError("Your companion is still replying; wait before sending again")
             if len(state["turns"]) >= MAX_TURN_RECEIPTS:
@@ -690,9 +704,7 @@ class EmployeeCompanionStore:
         while len(history) >= MAX_HISTORY:
             victim = next((item for item in history if item["id"] not in held), None)
             if victim is None:
-                raise CompanionConflictError(
-                    "Companion history is full of exchanges a legal matter holds; "
-                    "the reply cannot be saved until the hold is released")
+                raise CompanionHistoryHeld(_HISTORY_HELD)
             history.remove(victim)
         return history
 
