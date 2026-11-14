@@ -12,11 +12,23 @@ from __future__ import annotations
 
 import os
 
-from .openai_provider import OpenAIClient
+from .openrouter_provider import _GatewayClient
 
 
-class XaiClient(OpenAIClient):
+class XaiClient(_GatewayClient):
     DEFAULT_MODEL = "grok-4.5"
+    # Official USD input/cached prices, checked 2026-11-14:
+    # https://docs.x.ai/developers/pricing
+    CACHE_READ_MULTIPLIERS = {
+        "grok-4.7": 0.50 / 2.00,
+        "grok-4.6": 0.50 / 2.00,
+        "grok-4.5": 0.30 / 2.00,
+        "grok-build-0.1": 0.20 / 1.00,
+        "grok-4.3": 0.20 / 1.25,
+        "grok-4.20-multi-agent-0309": 0.20 / 1.25,
+        "grok-4.20-0309-reasoning": 0.20 / 1.25,
+        "grok-4.20-0309-non-reasoning": 0.20 / 1.25,
+    }
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None, *, environment=None):
         env = os.environ if environment is None else environment

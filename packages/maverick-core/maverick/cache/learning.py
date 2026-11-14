@@ -93,7 +93,13 @@ def enabled() -> bool:
 
 def normalize(task: str) -> str:
     """Canonical task text: lowercase, collapse whitespace, strip edge punctuation."""
-    collapsed = " ".join((task or "").lower().split())
+    text = task or ""
+    owner, separator, body = text.partition("\n")
+    if separator and owner.startswith("owner:"):
+        # Owners are opaque, case-sensitive identities; normalize only the task.
+        normalized_body = " ".join(body.lower().split()).strip(string.punctuation + string.whitespace)
+        return owner + "\n" + normalized_body
+    collapsed = " ".join(text.lower().split())
     return collapsed.strip(string.punctuation + string.whitespace)
 
 

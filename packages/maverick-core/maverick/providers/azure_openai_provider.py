@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from functools import partial
 
 from .openai_provider import OpenAIClient
 
@@ -126,7 +127,7 @@ class AzureOpenAIClient(OpenAIClient):
     DEFAULT_MODEL = "azure-deployment"
 
     @staticmethod
-    def _wants_max_completion(model: str) -> bool:
+    def _wants_max_completion(model: str, *, environment: Mapping[str, str] | None = None) -> bool:
         """Whether to send ``max_completion_tokens`` instead of ``max_tokens``.
 
         Azure routes to a free-form *deployment* name, so the base class's
@@ -136,9 +137,10 @@ class AzureOpenAIClient(OpenAIClient):
         fall back to the base name heuristic (works when the deployment is named
         after the model).
         """
-        env = os.environ.get("AZURE_OPENAI_USE_MAX_COMPLETION")
-        if env is not None and env.strip():
-            return env.strip().lower() in ("1", "true", "yes", "on")
+        env = os.environ if environment is None else environment
+        override = env.get("AZURE_OPENAI_USE_MAX_COMPLETION")
+        if override is not None and override.strip():
+            return override.strip().lower() in ("1", "true", "yes", "on")
         return OpenAIClient._wants_max_completion(model)
 
     def __init__(
@@ -156,7 +158,10 @@ class AzureOpenAIClient(OpenAIClient):
             raise ImportError(
                 "openai SDK not installed. Run: python -m pip install -e './packages/maverick-core[openai]'"
             ) from e
-        env = os.environ if environment is None else environment
+        env = dict(os.environ if environment is None else environment)
+        # Preserve the class-level compatibility helper while bound clients
+        # retain the environment that authorized their request configuration.
+        self._wants_max_completion = partial(type(self)._wants_max_completion, environment=env)
         endpoint = (
             base_url
             or env.get("AZURE_OPENAI_ENDPOINT")

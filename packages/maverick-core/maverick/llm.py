@@ -932,7 +932,7 @@ def _provider_failure_flag(exc: BaseException) -> bool:
     return _is_provider_transport_failure(exc) if isinstance(exc, Exception) else True
 
 
-def _feed_circuit(provider: str, error: bool) -> None:
+def _feed_circuit(provider: str, error: bool, probe: object | None = None) -> None:
     """Record a provider call's outcome on its circuit breaker so repeated
     failures trip it (observable via ``maverick diag circuits``). This is the
     recorder half; ``_enforce_circuit`` admits the call and owns any probe.
@@ -940,21 +940,22 @@ def _feed_circuit(provider: str, error: bool) -> None:
     try:
         from .circuit_breaker import get
         br = get(f"llm:{provider}")
-        br.record_failure() if error else br.record_success()
+        br.record_failure(probe=probe) if error else br.record_success(probe=probe)
     except Exception:  # pragma: no cover -- breaker never blocks a call
         pass
 
 
 def _observe_provider_result(provider, model_id, latency_ms, dollars, error, exception, circuit_scope=None, probe=False,
-                             routing_credit=None):
+                             routing_credit=None, *, attempt_started=True):
     from .circuit_breaker import CircuitOpen
     from .circuit_breaker import get as get_circuit
 
     # A local accounting refusal is neither provider failure nor success.
-    if _local_provider_accounting_refusal(exception) or isinstance(exception, ProviderDispatchDenied):
+    if (not attempt_started or _local_provider_accounting_refusal(exception)
+            or isinstance(exception, ProviderDispatchDenied)):
         if probe:
             try:
-                get_circuit(f"llm:{circuit_scope or provider}").release_probe()
+                get_circuit(f"llm:{circuit_scope or provider}").release_probe(probe)
             except Exception:  # pragma: no cover -- health bookkeeping stays best effort
                 pass
         return
@@ -968,10 +969,13 @@ def _observe_provider_result(provider, model_id, latency_ms, dollars, error, exc
     # A non-transient 4xx need not mark a provider unhealthy, but the logical
     # call still failed. Never turn that health classification into a reward.
     _note_bandit(provider, model_id, error or exception is not None, dollars, routing_credit)
-    _feed_circuit(circuit_scope or provider, error)
+    if probe:
+        _feed_circuit(circuit_scope or provider, error, probe)
+    else:
+        _feed_circuit(circuit_scope or provider, error)
 
 
-def _enforce_circuit(provider: str) -> bool:
+def _enforce_circuit(provider: str) -> object | None:
     """Fast-fail BEFORE dispatch when this provider's breaker is OPEN.
 
     Raises ``CircuitOpen`` -- a transient provider signal the failover chain
@@ -989,7 +993,7 @@ def _enforce_circuit(provider: str) -> bool:
     except CircuitOpen:
         raise
     except Exception:  # pragma: no cover -- bookkeeping cannot stop a healthy call
-        return False
+        return None
 
 
 def _safe_cap_projection(model_id, system, messages, tools, max_tokens,
@@ -1804,6 +1808,39 @@ def _estimate_call_cost(model_id, system, messages, tools, max_tokens,
     return (chars / 4 / 1_000_000) * in_rate + (max_tokens / 1_000_000) * out_rate
 
 
+def _check_recorded_budget(budget):
+    if budget is not None:
+        budget.check()  # canceled hedge cleanup may have recorded an overrun
+
+
+def _charge_cancelled_attempt(tracker, error, model, system, messages, tools, max_tokens, thinking_budget, *, hedged):
+    import asyncio
+
+    budget = tracker.budget
+    if not hedged or not isinstance(error, asyncio.CancelledError) or not tracker.attempt_started or budget is None:
+        return
+    # A sent laggard can still be billed after cancellation. Retain its
+    # reserved estimate independently of the winner and provider ledger.
+    estimated_in, estimated_out = _estimate_call_tokens(
+        model, system, messages, tools, max_tokens, thinking_budget,
+    )
+    with _attempt_price_scope(lambda _budget, _model: tracker.initial_ticket.quote):
+        budget.record_tokens(estimated_in, estimated_out, model=tracker.metered_model,
+                             cost_dollars=tracker.projected)
+
+
+def _estimate_call_tokens(model_id, system, messages, tools, max_tokens, thinking_budget=None):
+    from .providers.anthropic_limits import effective_max_tokens
+
+    chars = len(system or "")
+    for message in messages or []:
+        content = message.get("content") if isinstance(message, dict) else message
+        chars += len(content) if isinstance(content, str) else len(str(content))
+    chars += sum(len(str(tool)) for tool in tools or [])
+    return ((chars + 3) // 4,
+            effective_max_tokens(str(model_id or ""), max_tokens, thinking_budget))
+
+
 def _openai_cached_tokens(usage) -> int:
     """Cached-prompt token count from an OpenAI-family usage object.
 
@@ -1823,6 +1860,31 @@ def _openai_cached_tokens(usage) -> int:
         return max(0, int(n or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _gateway_response_cost(model, usage, quote):
+    provider, model_id = _parse_spec(model)
+    if provider not in {"openrouter", "xai", "moonshot"} or usage is None:
+        return None
+    from .providers.moonshot_provider import MoonshotClient
+    from .providers.openrouter_provider import OpenRouterClient, _gateway_usage
+    from .providers.xai_provider import XaiClient
+
+    adapter = {"openrouter": OpenRouterClient, "xai": XaiClient, "moonshot": MoonshotClient}[provider]
+    incoming, outgoing, read, write = _gateway_usage(usage)
+    read_mult, write_mult, cost = adapter._cache_pricing(model_id, usage)
+    quote = quote if quote is not None else _lookup_price_quote(model, estimate_only=True)
+    operator_ceiling = quote.rate_card_version == "operator-ceiling-v1"
+    if cost is not None and not operator_ceiling:
+        return cost
+    if write and write_mult is None and cost is None:
+        raise UsageAccountingError("Gateway cache-write pricing is unavailable; cannot account for spend")
+    if operator_ceiling:
+        read_mult = max(read_mult, 1.0)
+    input_rate, output_rate = quote.rates
+    estimated = ((incoming + read * read_mult + write * (write_mult if write_mult is not None else 1.25)) * input_rate
+                 + outgoing * output_rate) / 1_000_000
+    return max(estimated, cost) if cost is not None else estimated
 
 
 def _response_call_cost(model_id, resp, cache_read_mult: float | None = None,
@@ -1869,6 +1931,9 @@ def _response_call_cost(model_id, resp, cache_read_mult: float | None = None,
         # Physical-attempt observers see the SDK response before the provider
         # adapter builds LLMResponse (for example prompt-cache prewarm).
         usage = getattr(resp, "usage", None)
+    gateway_cost = _gateway_response_cost(model_id, usage, quote)
+    if gateway_cost is not None:
+        return gateway_cost
 
     def _u(*names) -> int:
         for n in names:
@@ -2430,7 +2495,9 @@ class LLM:
                 _observe_provider_result(provider, model_id, _dt_ms, _spent, _err, _provider_error, _circuit_scope, _provider_probe,
                                          _provider_sequence.routing_credit if (
                                              _provider_tracker is not None and _provider_tracker.attempt_started
-                                         ) else None)
+                                         ) else None, attempt_started=(
+                                             _provider_tracker is not None and _provider_tracker.attempt_started
+                                         ))
             try:
                 from .observability import record_metric as _rm
                 _rm("llm_calls", labels={"provider": provider, "model": model_id})
@@ -2612,10 +2679,15 @@ class LLM:
                         record_dispatch(_price_spec, system)
                         return response
                     finally:
+                        error = sys.exc_info()[1]
                         try:
-                            tracker.finalize(response, sys.exc_info()[1])
+                            tracker.finalize(response, error)
                         finally:
                             _provider_attempted = _provider_attempted or tracker.attempt_started
+                            _charge_cancelled_attempt(
+                                tracker, error, _price_spec, system, messages, tools,
+                                max_tokens, thinking_budget, hedged=hedge is not None,
+                            )
 
                 hedge = (
                     None if _provider_sequence.max_physical_attempts == 1
@@ -2658,6 +2730,7 @@ class LLM:
                     _resp = await race_first_success(
                         [_call, _backup], budget_ms=race_budget_ms
                     )
+                    _check_recorded_budget(budget)
                     return _resp
                 except AllAttemptsFailed as e:
                     # Both the primary and the hedge failed: surface the real
@@ -2680,7 +2753,8 @@ class LLM:
             _spent = _call_spend(_price_spec, _resp, budget, _d0,
                                  getattr(client, "CACHE_READ_MULT", None), quote=_admitted_quote)
             _observe_provider_result(provider, model_id, _dt_ms, _spent, _err, _provider_error, _circuit_scope, _provider_probe,
-                                     _provider_sequence.routing_credit if _provider_attempted else None)
+                                     _provider_sequence.routing_credit if _provider_attempted else None,
+                                     attempt_started=_provider_attempted)
             try:
                 from .observability import record_metric as _rm
                 _rm("llm_calls", labels={"provider": provider, "model": model_id})

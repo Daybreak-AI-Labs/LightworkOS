@@ -16,11 +16,26 @@ from __future__ import annotations
 
 import os
 
-from .openai_provider import OpenAIClient
+from .openrouter_provider import _GatewayClient
 
 
-class MoonshotClient(OpenAIClient):
+class MoonshotClient(_GatewayClient):
     DEFAULT_MODEL = "kimi-k2"
+    # Official model-specific cached-input ratios, checked 2026-11-14:
+    # https://platform.kimi.ai/docs/pricing/chat
+    CACHE_READ_MULTIPLIERS = {
+        "kimi-k3.1-pro": 0.20 / 2.00,
+        "kimi-k3.1-pro-highspeed": 0.20 / 4.00,
+        "kimi-k3": 0.30 / 3.00,
+        "kimi-k2.7-code": 0.19 / 0.95,
+        "kimi-k2.7-code-highspeed": 0.38 / 1.90,
+        "kimi-k2.6": 0.16 / 0.95,
+    }
+    # This adapter sends no TTL override; K3's default 5m writes cost 1x.
+    # Unknown models/writes remain unpriced instead of borrowing Anthropic's 1.25x.
+    CACHE_WRITE_MULTIPLIERS = {
+        "kimi-k3.1-pro": 1.0, "kimi-k3.1-pro-highspeed": 1.0, "kimi-k3": 1.0,
+    }
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None, *, environment=None):
         env = os.environ if environment is None else environment
