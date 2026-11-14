@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .governed_records import GovernedRecordStore
+from .privacy_ops import _actor_label
 
 _STORE = GovernedRecordStore("evidence_graph", "EGN", "evidence_graph_node")
 _SCHEMA = "lightwork.evidence-graph-node.v1"
@@ -549,6 +550,41 @@ def ingest(
     )
 
 
+def _ingesters(record: dict[str, Any]) -> set[str]:
+    """Who ingested this node, casefolded.
+
+    Nodes written before ``created_by`` existed carry their ingest actor only in
+    the store's ingest audit receipt (still pending on the record, or delivered
+    to the audit log). Every recorded ingest actor for the node id counts, so a
+    re-created node can never be reviewed by any of its ingesters.
+    """
+    created_by = str(record.get("created_by") or "").strip()
+    if created_by:
+        return {created_by.casefold()}
+    found = {
+        str(pending.get("actor") or "").strip().casefold()
+        for pending in record.get("_audit_pending") or ()
+        if isinstance(pending, dict) and pending.get("action") == "ingest"
+    }
+    created_at = record.get("created_at")
+    if isinstance(created_at, int | float) and math.isfinite(created_at):
+        from datetime import datetime, timezone
+
+        from .audit import iter_events
+
+        since = datetime.fromtimestamp(created_at, timezone.utc).strftime("%Y-%m-%d")
+        found.update(
+            str(event.get("actor") or "").strip().casefold()
+            for event in iter_events(since=since)
+            if event.get("kind") == "governed_record_changed"
+            and event.get("record_type") == _STORE.record_type
+            and event.get("record_id") == record.get("id")
+            and event.get("action") == "ingest"
+        )
+    found.discard("")
+    return found
+
+
 def decide(
     node_id: str,
     *,
@@ -564,9 +600,13 @@ def decide(
     human = _required(reviewer, "reviewer", 4096)
 
     def _mutate(record: dict[str, Any]) -> None:
-        if not str(record.get("created_by") or "").strip():
-            raise ValueError("The original evidence ingester is unavailable; submit new evidence for review")
-        if str(record.get("created_by") or "").strip().casefold() == human.casefold():
+        ingesters = _ingesters(record)
+        if not ingesters:
+            raise ValueError(
+                "There is no record of who added this evidence, so an independent review "
+                "cannot be confirmed; submit the evidence again for review"
+            )
+        if {human.casefold(), _actor_label(human).casefold()} & ingesters:
             raise ValueError("A different reviewer must assess the evidence")
         inherited_from = str(
             (record.get("review") or {}).get("inherited_from") or ""
