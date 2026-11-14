@@ -242,7 +242,10 @@ def _run_sql_query(args: dict[str, Any], sandbox) -> str:
 
     if read_only:
         return _execute_sqlite_query(p, query, params, read_only, max_rows, response_format)
-    preview, _ = redact(" ".join(query.split())[:160])
+    review = _write_review_items(query, params)
+    if review is None:
+        return ("ERROR: write statement is too long or contains material that would be "
+                "hidden from the reviewer; split it or remove secrets before retrying")
     parameters = {"database": str(p.resolve()), "query": query, "params": params,
                   "max_rows": max_rows, "response_format": response_format}
     try:
@@ -252,8 +255,7 @@ def _run_sql_query(args: dict[str, Any], sandbox) -> str:
             parameters=parameters,
             detail=f"Run one write-enabled SQL statement on {p.name}.",
             effect="The statement may change rows or schema in the selected database.",
-            review_items=[f"Query (truncated, redacted): {preview}",
-                          "Bind values are included in the exact-operation digest."],
+            review_items=review,
             parameters_provider=lambda: {"database": str(p.resolve()), "query": query,
                                          "params": params, "max_rows": max_rows,
                                          "response_format": response_format},
@@ -267,6 +269,34 @@ def _run_sql_query(args: dict[str, Any], sandbox) -> str:
             return _execute_sqlite_query(p, query, params, read_only, max_rows, response_format)
     except ApprovalCardError:
         return "ERROR: SQL, database target, or approval authority changed; review it again"
+
+
+_REVIEW_CHUNK = 450
+_MAX_REVIEW_CHARS = 3800
+
+
+def _write_review_items(query: str, params: Any) -> list[str] | None:
+    """Show the whole write statement and its bind values to the reviewer.
+
+    Returns None when the statement cannot be shown in full: too long for the
+    approval card, or containing text the card's redaction would mask.
+    """
+    import json
+
+    shown = [("Query", " ".join(query.split()))]
+    if params:
+        shown.append(("Bind values", json.dumps(params, default=str)))
+    if sum(len(text) for _, text in shown) > _MAX_REVIEW_CHARS:
+        return None
+    items = []
+    for name, text in shown:
+        if redact(text)[0] != text:
+            return None
+        chunks = [text[i:i + _REVIEW_CHUNK] for i in range(0, len(text), _REVIEW_CHUNK)]
+        for n, chunk in enumerate(chunks, start=1):
+            part = f" (part {n} of {len(chunks)})" if len(chunks) > 1 else ""
+            items.append(f"{name}{part}: {chunk}")
+    return items
 
 
 def sql_query(sandbox=None) -> Tool:

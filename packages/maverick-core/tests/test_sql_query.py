@@ -147,6 +147,32 @@ def test_denied_write_leaves_rows_unchanged(tmp_path, monkeypatch):
         assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 3
 
 
+def test_write_review_shows_whole_statement_and_bind_values(tmp_path, monkeypatch):
+    import importlib
+
+    from maverick.safety import ConsentDenied
+
+    seen = {}
+
+    def deny(*args, **kwargs):
+        seen["items"] = kwargs["review_items"]
+        raise ConsentDenied("sql_query.write")
+
+    module = importlib.import_module("maverick.tools.sql_query")
+    monkeypatch.setattr(module, "request_execution_consent", deny)
+    db = _mkdb(tmp_path)
+    tool = sql_query(SimpleNamespace(workdir=tmp_path))
+    query = "UPDATE users SET name = ? WHERE " + " OR ".join(["id = 1"] * 60) + " OR id = 2"
+    tool.fn({"database": str(db), "query": query, "params": ["zed"], "read_only": False})
+    shown = "".join(item.split(": ", 1)[1] for item in seen["items"])
+    assert "OR id = 2" in shown and '"zed"' in shown
+
+    seen.clear()
+    out = tool.fn({"database": str(db), "query": "DELETE FROM users WHERE " + "1=1 AND " * 600 + "1=1",
+                   "read_only": False})
+    assert out.startswith("ERROR") and "too long" in out and not seen
+
+
 def test_write_mode_authorizer_blocks_attach_outside_workspace(tmp_path):
     db = _mkdb(tmp_path)
     outside = tmp_path.parent / "outside-write-attach.db"
