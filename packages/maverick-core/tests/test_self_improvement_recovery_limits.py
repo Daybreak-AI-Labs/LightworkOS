@@ -164,3 +164,50 @@ def test_verifier_refuses_training_without_a_held_out_example(count):
     example = {"features": [0.0] * 12, "promise": 1.0, "progress": 0.0}
     with pytest.raises(ValueError):
         verifier_head.train_and_evaluate([example] * count)
+
+
+def test_torn_legacy_migration_never_drops_projection_only_records(tmp_path, monkeypatch):
+    legacy = [si.PromotionRecord(
+        id=f"r{i}", rung="config", summary=f"legacy {i}", baseline_score=0.1,
+        candidate_score=0.5, promoted_at=float(i + 1),
+        rolled_back=i == 1, rolled_back_at=5.0 if i == 1 else None,
+    ).to_dict() for i in range(3)]
+    reference = tmp_path / "reference" / "promotions.json"
+    reference.parent.mkdir()
+    reference.write_text(json.dumps(legacy), encoding="utf-8")
+    si.PromotionLedger(path=reference)  # a complete one-time migration
+    events = Path(f"{reference}.journal").read_bytes().splitlines(keepends=True)
+    assert len(events) == 4
+
+    path = tmp_path / "promotions.json"
+    projection = json.dumps(legacy)
+    path.write_text(projection, encoding="utf-8")
+    journal = Path(f"{path}.journal")
+    torn = events[0] + events[1][:20]
+    journal.write_bytes(torn)
+    monkeypatch.setattr(si, "_default_audit_fn", lambda **_: True)
+    with pytest.raises(si.PromotionLedgerError, match="incomplete"):
+        si.PromotionLedger(path=path)
+    assert path.read_text(encoding="utf-8") == projection
+    assert journal.read_bytes() == torn
+    # A torn migration that ended on an event boundary is refused as well.
+    journal.write_bytes(events[0])
+    with pytest.raises(si.PromotionLedgerError, match="incomplete"):
+        si.PromotionLedger(path=path)
+    assert path.read_text(encoding="utf-8") == projection
+
+    # The migration itself is all-or-nothing: a failed write leaves no journal.
+    journal.unlink()
+    from maverick import file_lock as locks
+
+    def fail(*_args, **_kwargs):
+        raise OSError("simulated crash")
+
+    monkeypatch.setattr(locks, "atomic_write_text", fail)
+    with pytest.raises(si.PromotionLedgerError):
+        si.PromotionLedger(path=path)
+    assert not journal.exists()
+    monkeypatch.undo()
+    migrated = si.PromotionLedger(path=path)
+    assert sorted(rec.id for rec in migrated.all()) == ["r0", "r1", "r2"]
+    assert migrated.get("r1").rolled_back
