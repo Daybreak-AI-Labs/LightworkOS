@@ -503,3 +503,12 @@ def test_best_of_n_ladder_and_per_attempt_allowance():
     assert _remaining_allowance(100, 70) == 30
     assert _remaining_allowance(100, 120) == 0
     assert _remaining_allowance(None, 5) is None
+
+
+def test_persisted_prompt_text_is_redacted_before_it_is_cut():
+    from maverick.orchestrator import _sanitize_persisted_prompt_text
+
+    key = "AKIA" + "ABCDEFGHIJKLMNOP"  # pragma: allowlist secret
+    text = "x" * 990 + " key " + key
+    out = _sanitize_persisted_prompt_text(text, max_chars=1000)
+    assert "AKIA" not in out and len(out) <= 1000

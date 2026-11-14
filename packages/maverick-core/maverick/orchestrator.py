@@ -144,12 +144,15 @@ def _sanitize_persisted_prompt_text(
     single_line: bool = False,
 ) -> str:
     """Redact, scan, and bound persisted user-controlled prompt material."""
-    safe = str(text or "")[:max_chars]
+    # Redact before the final cut, so a secret straddling ``max_chars`` is still
+    # recognised whole; the margin bounds the text the detector scans.
+    safe = str(text or "")[:max_chars + 512]
     try:
         from .safety.secret_detector import redact as _redact
         safe, _ = _redact(safe)
     except Exception:  # pragma: no cover
         pass
+    safe = safe[:max_chars]
     if shield is not None:
         try:
             verdict = shield.scan_input(safe)
