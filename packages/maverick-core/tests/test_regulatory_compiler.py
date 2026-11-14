@@ -537,3 +537,17 @@ async def test_governance_policy_outage_returns_unavailable_profile_provenance(
     assert refusal and "DENIED" in refusal
     assert profiles is None
     assert observed == [None]
+
+
+def test_cli_rejects_unknown_regulation_keys_instead_of_dropping_them():
+    from click.testing import CliRunner
+    from maverick.cli import main
+
+    runner = CliRunner()
+    ok = runner.invoke(main, ["regulatory", "verify", "--ci", "--profiles", "gdpr,eu_ai_act"])
+    assert ok.exit_code == 0, ok.output
+    typo = runner.invoke(main, ["regulatory", "verify", "--ci", "--profiles", "gdpr,eu_ai_actx"])
+    assert typo.exit_code == 2
+    assert "eu_ai_actx" in typo.output
+    check = runner.invoke(main, ["regulatory", "check", "send_email", "--profiles", "nonsense"])
+    assert check.exit_code == 2
