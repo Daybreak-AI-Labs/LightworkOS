@@ -1,8 +1,10 @@
-"""Lossless supported import predicates, or an explicit repair requirement.
+"""Supported import predicates, or an explicit repair requirement.
 
 Boolean trees become branch graphs. No clause is discarded and NOT swaps
 destinations, including when an operand is missing, rather than guessing an
 inverse comparison. Source expressions are data; they are never evaluated.
+WDL ``contains`` uses the runtime's string-substring comparison, including for
+arrays and objects; its fidelity must be reported as approximated.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..flow.ir import NODE_BRANCH, FlowNode
+from .ir import _complete_text
 
 _PATH = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\Z")
 _N8N_OPS = {
@@ -35,11 +38,22 @@ def repair(reason: str) -> ValueError:
     return ValueError(f"Imported condition requires repair before execution: {reason}")
 
 
+def _checked_operand(value):
+    if isinstance(value, str) and _complete_text(value) != value:
+        raise repair("credential-bearing operand needs an explicit data binding")
+    return value
+
+
 @dataclass(frozen=True)
 class Predicate:
     kind: str
     text: str = ""
     children: tuple[Predicate, ...] = ()
+    approximated: bool = False
+
+    @property
+    def has_approximation(self) -> bool:
+        return self.approximated or any(child.has_approximation for child in self.children)
 
 
 # The flow runtime splits conditions on these words, so a field with this
@@ -151,7 +165,7 @@ def n8n_predicate(node: dict) -> Predicate:
 
 
 def make_predicate(route: dict) -> Predicate | None:
-    """Retain Make's complete OR-of-AND route filter using native branches."""
+    """Retain a Make module or route's OR-of-AND filter using native branches."""
     if "filter" not in route:
         return None  # An explicitly unfiltered route runs unconditionally.
     filt = route["filter"]
@@ -174,7 +188,8 @@ def make_predicate(route: dict) -> Predicate | None:
             left, operator, right = clause["a"], clause["o"], clause["b"]
             if not isinstance(left, str) or not isinstance(operator, str):
                 raise repair("Make comparison needs a data field and supported operator")
-            left = _path(left.strip())
+            left = _path(_checked_operand(left).strip())
+            right = _checked_operand(right)
             family, separator, op = operator.lower().partition(":")
             if not separator or op not in _MAKE_OPS:
                 raise repair("unsupported Make comparison operator")
@@ -276,7 +291,8 @@ def wdl_predicate(expr: Any, _depth: int = 0, _remaining: list[int] | None = Non
     if op not in _WDL_OPS or not isinstance(args, list) or len(args) != 2:
         raise repair("unsupported WDL comparison")
     right = _wdl_value(args[1]) if from_string else args[1]
-    return Predicate("atom", f"{wdl_key(args[0])} {_WDL_OPS[op]} {_literal(right)}")
+    return Predicate("atom", f"{wdl_key(args[0])} {_WDL_OPS[op]} {_literal(right)}",
+                     approximated=op == "contains")
 
 
 def branches(predicate: Predicate, node_id: str, yes: str | None, no: str | None,
