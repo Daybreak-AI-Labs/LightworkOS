@@ -3265,7 +3265,7 @@ class Agent:
             ifc.record(decision, agent=self.name, goal_id=goal_id, outcome="allowed_by_grant",
                        tracker=tracker)
             return None
-        labels = ", ".join(sorted(decision.labels))
+        labels = ifc.describe_labels(decision.labels)
         if decision.mode == "audit":
             ifc.record(decision, agent=self.name, goal_id=goal_id, outcome="recorded",
                        tracker=tracker)

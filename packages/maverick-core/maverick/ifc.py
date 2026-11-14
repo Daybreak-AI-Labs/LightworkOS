@@ -467,20 +467,32 @@ def _load(key: str) -> set[str]:
     an append) loses that line only; a file that cannot be read at all yields a
     label of its own, so the run is gated as if it held the data."""
     try:
-        text = _labels_path(key).read_text(encoding="utf-8")
+        raw = _labels_path(key).read_bytes()
     except FileNotFoundError:
         return set()
-    except (OSError, ValueError):
+    except OSError:
         return {UNREADABLE_LABELS}
     labels: set[str] = set()
-    for line in text.splitlines():
-        try:
-            row = json.loads(line)
+    for line in raw.splitlines():
+        try:  # per line: a crash mid-character spoils that line only
+            row = json.loads(line.decode("utf-8"))
         except ValueError:
             continue
         if isinstance(row, dict) and "label" in row:
             labels.add(str(row["label"]))
     return labels
+
+
+def describe_labels(labels: Iterable[str]) -> str:
+    """Labels for a person: the restored-but-unreadable marker becomes a
+    plain sentence instead of an internal name."""
+    labels = set(labels)
+    named = ", ".join(sorted(labels - {UNREADABLE_LABELS}))
+    if UNREADABLE_LABELS not in labels:
+        return named
+    note = ("earlier runs of this task (Earlier information-flow labels for this "
+            "task could not be read)")
+    return f"{named} and {note}" if named else note
 
 
 def _persist(keys: tuple[str, ...], labels: Iterable[str]) -> None:
