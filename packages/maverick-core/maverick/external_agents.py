@@ -86,6 +86,9 @@ BUDGET_PERIODS = ("monthly", "total")
 #: rather than growing the sidecar without bound.
 _MAX_PENDING_EXECUTIONS = 20
 _EXECUTION_TTL_SECONDS = 24 * 3600
+#: Most of an agent's pending, goal-less approvals ``screen`` reads when it
+#: counts the live screening backlog (newest first, stopping at expired ones).
+_SCREEN_BACKLOG_SCAN = 200
 #: Recovery scan for the newest approvals after a process dies between the
 #: approval transaction and the sidecar binding write.  The approval is born
 #: during that exact window, so a bounded newest-first scan is sufficient
@@ -1317,18 +1320,20 @@ def screen(
         if approval_card is None:  # pragma: no cover - encoder contract
             raise ExternalAgentsError("screen approval binding was not encoded")
         # The count and insert share the execution/enrollment lock across
-        # processes. Query the agent before LIMIT so another agent's queue
-        # cannot hide this backlog. Existing unattached execution approvals
-        # also consume capacity for new screening requests.
+        # processes. Only this agent's screening approvals that can still be
+        # acted on count; execution approvals have their own cap.
         with _sidecar_locked():
             try:
                 world = open_world()
-                pending = world.pending_unattached_approval_ids(
-                    f"agent:{agent_id}", limit=_MAX_PENDING_EXECUTIONS)
+                pending = _live_screening_approvals(
+                    world, agent_id,
+                    window=float(approval_card["expires_at"]) - time.time())
             except Exception:
+                pending = None
+            if pending is None:
                 return _screen_verdict(agent_id, tool, False, "approval_unavailable",
                     "Pending approvals could not be checked; this action remains blocked.")
-            if len(pending) >= _MAX_PENDING_EXECUTIONS:
+            if pending >= _MAX_PENDING_EXECUTIONS:
                 return _screen_verdict(agent_id, tool, False, "approval_backlog",
                     f"{_MAX_PENDING_EXECUTIONS} approvals already await decisions "
                     "for this agent; wait for a human decision before trying again.")
@@ -1350,6 +1355,39 @@ def screen(
         out["approval_binding_sha256"] = approval_card["binding_sha256"]
         return out
     return _screen_verdict(agent_id, tool, True, "allow", "within ceilings")
+
+
+def _live_screening_approvals(world: Any, agent_id: str, *, window: float) -> int | None:
+    """Count this agent's pending screening approvals that can still be
+    acted on: ``approval_status`` refuses one once its card expires, and no
+    sweep ever moves such a row out of ``pending``. Rows are read newest
+    first and the scan stops at the first one requested more than ``window``
+    seconds ago (a screening card's lifespan), so old rows cost nothing.
+    Returns ``None`` when the scan bound runs out before that point, so the
+    caller can stay blocked instead of guessing."""
+    from .approval_cards import ApprovalCardError, decode_approval_detail
+
+    owner = f"agent:{agent_id}"
+    prefix = f"external:{agent_id}:"
+    now = time.time()
+    ids = world.pending_unattached_approval_ids(owner, limit=_SCREEN_BACKLOG_SCAN + 1)
+    live = 0
+    for approval_id in ids[:_SCREEN_BACKLOG_SCAN]:
+        approval = world.get_approval(int(approval_id))
+        if approval is None:
+            continue
+        if float(approval.requested_at or 0) <= now - window:
+            return live
+        if (approval.provenance != "external_agents"
+                or not str(approval.action).startswith(prefix)):
+            continue
+        try:
+            card = decode_approval_detail(approval.detail)
+        except ApprovalCardError:
+            continue
+        if card is not None and float(card["expires_at"]) > now:
+            live += 1
+    return live if len(ids) <= _SCREEN_BACKLOG_SCAN else None
 
 
 def _screen_admission(
