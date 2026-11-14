@@ -1781,8 +1781,11 @@ def _handle_flow_resume(job=None) -> None:  # noqa: C901
 
                 refusal = retry_approval_refusal(flow, prior)
                 if refusal:
-                    # The run stays failed; record why the retry was refused.
-                    prior.error = refusal[:500]
+                    # The run stays failed; keep its failure and say why the
+                    # retry was refused.
+                    prior.error = (
+                        f"{prior.error[:1500]} | {refusal}" if prior.error else refusal
+                    )
                     store.save_run(prior)
                     return
             owner = prior.owner

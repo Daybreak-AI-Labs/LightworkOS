@@ -76,10 +76,9 @@ def retry_approval_refusal(flow: Flow, prior: store.FlowRun) -> str:
     A retry carries no decision, so it must not re-send a high-risk action that
     itself failed.  A hold before dispatch (a budget limit) or a failure of other
     work inside a gated container resumes where it stopped, without repeating
-    completed items.
+    completed items.  A budget hold is judged the same way: a concurrent branch
+    may have stopped at its own failed high-risk action while another was held.
     """
-    if prior.status == STATUS_BUDGET_LIMITED:
-        return ""
     node = flow.node(prior.cursor) if prior.cursor else None
     if node is None:
         return ""

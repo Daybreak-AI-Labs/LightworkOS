@@ -2912,6 +2912,7 @@ def test_retry_of_a_failed_gated_action_is_refused_visibly(monkeypatch, tmp_path
     _drain(aq)
     run = store.load_run("rg")
     assert run.status == "failed" and "without a new review" in run.error
+    assert run.error.startswith("refused | ")
     assert sent == []
 
 
