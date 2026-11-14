@@ -5,7 +5,8 @@ Linux board over a serial/USB-serial line (``/dev/ttyUSB0``, ``COM3``, …) via
 ``pyserial`` (the ``[serial]`` extra). Covers the serial leg of
 embedded-device access; JTAG/I2C are bus-specific and out of scope here.
 
-Safety: the port is validated to be a real serial device path (``/dev/tty*`` /
+Safety: the port is validated to be a real serial device path (``/dev/ttyS*``,
+``/dev/ttyUSB*``, ``/dev/ttyACM*`` /
 ``/dev/cu.*`` / ``COM<n>`` / ``/dev/serial/by-id/*``), so this tool can't be
 turned into an arbitrary-file opener. It commands hardware, so it is not a
 low-risk tool.
@@ -32,7 +33,7 @@ _SERIAL_SCHEMA: dict[str, Any] = {
         "data": {"type": "string"},
         "baud": {"type": "integer", "description": "baud rate (default 115200)"},
         "bytes": {"type": "integer", "description": "max bytes to read (default 256)"},
-        "timeout": {"type": "number", "description": "read timeout seconds (default 1.0)"},
+        "timeout": {"type": "number", "description": "read/write timeout seconds (default 1.0, maximum 5.0)"},
         "eol": {"type": "string", "description": "line terminator appended on write (default '\\n')"},
     },
     "required": ["op"],
@@ -57,9 +58,12 @@ def _need_serial():
 
 
 def _valid_port(port: str) -> bool:
-    if _PORT_RE.match(port or ""):
+    port = port or ""
+    if port.startswith("/dev/tty") and not re.fullmatch(r"/dev/tty(?:S|USB|ACM)[0-9]+", port):
+        return False
+    if _PORT_RE.fullmatch(port or ""):
         return True
-    if not _SERIAL_BY_ID_RE.match(port or ""):
+    if not _SERIAL_BY_ID_RE.fullmatch(port or ""):
         return False
     name = port.rsplit("/", 1)[-1]
     return name not in {".", ".."}
@@ -74,10 +78,10 @@ def _baud(args: dict) -> int:
 
 def _timeout(args: dict) -> float:
     # inf would block a read forever; refuse non-finite and non-positive values.
-    timeout = float(args.get("timeout") or 1.0)
+    timeout = float(args.get("timeout") if args.get("timeout") is not None else 1.0)
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a positive, finite number of seconds")
-    return timeout
+    return min(timeout, 5.0)
 
 
 def _op_list_ports() -> str:
@@ -101,6 +105,7 @@ def _op_write(args: dict) -> str:
     payload = (str(data) + (eol or "")).encode("utf-8", errors="replace")
     timeout = _timeout(args)
     with serial.Serial(port, _baud(args), timeout=timeout) as ser:
+        ser.write_timeout = timeout
         n = ser.write(payload)
     return f"wrote {n} byte(s) to {port}"
 
@@ -113,6 +118,7 @@ def _op_read(args: dict) -> str:
     n = max(1, min(int(args.get("bytes") or 256), 65536))
     timeout = _timeout(args)
     with serial.Serial(port, _baud(args), timeout=timeout) as ser:
+        ser.write_timeout = timeout
         raw = ser.read(n)
     return raw.decode("utf-8", errors="replace") if raw else "(no data)"
 
@@ -129,6 +135,7 @@ def _op_query(args: dict) -> str:
     n = max(1, min(int(args.get("bytes") or 256), 65536))
     timeout = _timeout(args)
     with serial.Serial(port, _baud(args), timeout=timeout) as ser:
+        ser.write_timeout = timeout
         ser.write(payload)
         raw = ser.read(n)
     return raw.decode("utf-8", errors="replace") if raw else "(no reply)"

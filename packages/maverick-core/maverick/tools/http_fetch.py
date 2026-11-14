@@ -448,27 +448,11 @@ def _check_robots(url: str, user_agent: str = "Maverick") -> bool:
             return True
     except Exception:
         return True
-    # Very small parser: handles 'User-agent: *' + 'Disallow:' rules. We
-    # don't implement the full spec; for that, use the browser tool with
-    # a real Playwright context.
-    body = resp.text
-    in_section = False
-    allowed = True
-    for raw in body.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip().lower()
-        value = value.strip()
-        if key == "user-agent":
-            in_section = value == "*" or value.lower() == user_agent.lower()
-        elif key == "disallow" and in_section:
-            if value and parsed.path.startswith(value):
-                allowed = False
-    return allowed
+    from urllib.robotparser import RobotFileParser
+
+    rules = RobotFileParser(robots_url)
+    rules.parse(resp.text.splitlines())
+    return rules.can_fetch(user_agent, url)
 
 
 def _preflight_fetch(url: str, parsed: Any) -> str | None:

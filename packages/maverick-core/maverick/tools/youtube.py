@@ -54,6 +54,9 @@ def _normalize_id(raw: str) -> str:
 def _fetch_transcript(video_id: str, lang: str) -> list[dict]:
     from youtube_transcript_api import YouTubeTranscriptApi
     try:
+        if callable(getattr(YouTubeTranscriptApi, "fetch", None)):
+            return YouTubeTranscriptApi().fetch(video_id, languages=[lang, "en"]).to_raw_data()
+        # The declared extra also supports 0.6, whose API predates fetch().
         return YouTubeTranscriptApi.get_transcript(video_id, languages=[lang, "en"])
     except Exception as e:
         raise RuntimeError(f"transcript fetch failed: {e}") from e

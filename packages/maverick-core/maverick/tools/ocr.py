@@ -45,7 +45,7 @@ _OCR_SCHEMA: dict[str, Any] = {
         "backend": {
             "type": "string",
             "enum": ["tesseract", "hf"],
-            "description": "Override default backend.",
+            "description": "Select local OCR, or hf when the operator enabled OCR_BACKEND=hf.",
         },
         "hf_model": {
             "type": "string",
@@ -100,6 +100,8 @@ def _run_hf(path: str, model: str) -> str:
     tok = os.environ.get("HUGGINGFACE_API_TOKEN", "").strip()
     if not tok:
         return "ERROR: backend=hf requires HUGGINGFACE_API_TOKEN."
+    if os.environ.get("OCR_BACKEND", "").strip().lower() != "hf":
+        return "ERROR: Hugging Face OCR is not enabled by the operator; set OCR_BACKEND=hf to enable uploads."
     try:
         if Path(path).stat().st_size > _MAX_IMAGE_BYTES:
             return "ERROR: HF OCR input exceeds the 50 MiB limit"
@@ -246,7 +248,7 @@ def ocr(sandbox=None) -> Tool:
             "Extract text from images. ops: extract (local path), "
             "extract_url (remote image). backend = tesseract "
             "(default; requires binary on PATH) | hf "
-            "(HUGGINGFACE_API_TOKEN, default model "
+            "(operator-enabled OCR_BACKEND=hf and HUGGINGFACE_API_TOKEN, default model "
             "microsoft/trocr-base-printed). lang accepts "
             "tesseract codes like 'eng' / 'eng+deu'."
         ),
