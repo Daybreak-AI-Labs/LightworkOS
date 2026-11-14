@@ -16,10 +16,11 @@ from . import main
 
 
 def _actor() -> str:
-    import getpass
     try:
-        return f"cli:{getpass.getuser()}"
-    except Exception:  # pragma: no cover -- no passwd entry (containers)
+        import os
+        import pwd
+        return f"cli:{pwd.getpwuid(os.getuid()).pw_name}"
+    except (ImportError, AttributeError, KeyError, OSError):  # pragma: no cover -- no UID database
         return "cli"
 
 
