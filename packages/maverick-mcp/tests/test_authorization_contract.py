@@ -54,9 +54,11 @@ def test_queued_task_rechecks_rotated_shared_credential(monkeypatch):
         caller_identity="", trust_principal="mcp", credential_kind="shared",
         credential_fingerprint=credential_fingerprint("old"), capability=None,
     )
-    with pytest.raises(PermissionError, match="no longer valid"):
-        refresh_task_capability(context, setting=lambda *_args: "new", fingerprint=credential_fingerprint)
-    assert denied[0]["rule"] == "credential_rotated"
+    for replacement in ("new", agent_trust.hash_token("old")):
+        with pytest.raises(PermissionError, match="no longer valid"):
+            refresh_task_capability(context, setting=lambda *_args, value=replacement: value,
+                                    fingerprint=credential_fingerprint)
+    assert all(event["rule"] == "credential_rotated" for event in denied)
 
 
 def test_queued_task_cannot_gain_new_capabilities(monkeypatch):
@@ -97,3 +99,29 @@ def test_waiting_task_is_reauthorized_and_denial_is_recorded():
     current[0] = "revoked"
     assert authorize("maverick_status") is False
     assert denied == [("revoked", "alice", "maverick_status")]
+
+
+def test_hashed_agent_bearer_survives_reauthorization_but_not_rotation(monkeypatch):
+    from dataclasses import replace
+
+    from maverick import agent_trust
+    from maverick_mcp.http_transport import _authorization_for_bearer
+
+    raw = "minted-agent-credential"
+    agent = agent_trust.TrustedAgent(id="alice", direction="inbound", mcp_token=agent_trust.hash_token(raw))
+    registry = {"alice": agent}
+    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (True, registry))
+    monkeypatch.setattr("maverick_mcp.http_transport.mcp_setting", lambda *args: "")
+    caller = _authorization_for_bearer("Bearer " + raw)
+    assert caller is not None and caller.caller_identity == "alice"
+    context = task_execution_context(
+        caller_identity=caller.caller_identity, trust_principal=caller.trust_principal,
+        credential_kind=caller.credential_kind, credential_fingerprint=caller.credential_fingerprint,
+        capability=caller.capability,
+    )
+    assert raw not in repr(context)
+    refreshed = refresh_task_capability(context, setting=lambda *_args: "", fingerprint=credential_fingerprint)
+    assert refreshed.principal == "agent:alice"
+    registry["alice"] = replace(agent, mcp_token=agent_trust.hash_token("rotated-agent-credential"))
+    with pytest.raises(PermissionError, match="no longer valid"):
+        refresh_task_capability(context, setting=lambda *_args: "", fingerprint=credential_fingerprint)

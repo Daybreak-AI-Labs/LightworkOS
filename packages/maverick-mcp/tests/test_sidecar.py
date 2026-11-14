@@ -278,3 +278,42 @@ def test_sidecar_config_requires_https_except_loopback_and_rejects_unknown_keys(
 def test_budget_decision_shape_is_stable():
     decision = BudgetDecision(True, "budget_reserved", "reserved", remaining=9)
     assert decision.allowed and decision.remaining == 9
+
+
+@pytest.mark.parametrize("direction", ["input", "output"])
+def test_sidecar_screens_literal_unicode_in_both_directions(direction):
+    gateway, upstream, _ = _gateway(shield_factory=lambda: _BlockingShield("\u200b"))
+    arguments = {"query": "résumé"}
+    if direction == "input":
+        arguments["query"] = "hidden\u200b instruction"
+    else:
+        upstream.call = lambda *args: {"jsonrpc": "2.0", "id": 7,
+            "result": {"content": [{"type": "text", "text": "hidden\u200b instruction"}]}}
+    response = gateway.handle_rpc("alpha", _call(arguments=arguments))
+    assert "error" in response
+    assert response["error"]["data"]["rule"] == "shield"
+    if direction == "input":
+        assert upstream.calls == []
+
+
+@pytest.mark.asyncio
+async def test_sidecar_stops_reading_body_at_the_cap():
+    from types import SimpleNamespace
+
+    gateway, _, _ = _gateway(_config(max_body_bytes=4096))
+    endpoint = next(route.endpoint for route in build_app(gateway).routes if route.path == "/mcp")
+    chunks = [b"x" * 4096, b"x", b"must not be read"]
+    consumed = []
+
+    async def stream():
+        for chunk in chunks:
+            consumed.append(len(chunk))
+            yield chunk
+
+    async def body():
+        return b"".join([chunk async for chunk in stream()])
+
+    request = SimpleNamespace(headers={"authorization": "Bearer good"}, stream=stream, body=body)
+    response = await endpoint(request)
+    assert response.status_code == 413
+    assert consumed == [4096, 1]

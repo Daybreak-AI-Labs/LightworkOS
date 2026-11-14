@@ -805,3 +805,22 @@ class TestResourceSubscriptions:
         assert out["isError"] is True
         s._flush_resource_updates()
         assert sent == []
+
+
+def test_task_budget_applies_authenticated_agent_registry_ceilings(monkeypatch):
+    from maverick import agent_trust
+    from maverick.connections import bind_principal
+    from maverick_mcp.server import _task_budget
+
+    registry = {"alice": agent_trust.TrustedAgent(id="alice", max_dollars=0.25, max_wall_seconds=5)}
+    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (False, registry))
+    monkeypatch.setattr("maverick.config.get_budget_overrides", dict)
+    monkeypatch.setenv("MAVERICK_MCP_MAX_DOLLARS", "100")
+    monkeypatch.setenv("MAVERICK_MCP_MAX_WALL_SECONDS", "1000")
+    with bind_principal("agent:alice"):
+        bounded = _task_budget({"max_dollars": 50, "max_wall_seconds": 500})
+        assert (bounded.max_dollars, bounded.max_wall_seconds) == (0.25, 5)
+        tighter = _task_budget({"max_dollars": 0, "max_wall_seconds": 1})
+        assert (tighter.max_dollars, tighter.max_wall_seconds) == (0, 1)
+    with bind_principal("user:alice"):
+        assert _task_budget({"max_dollars": 1}).max_dollars == 1

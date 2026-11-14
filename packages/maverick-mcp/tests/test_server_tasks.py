@@ -621,3 +621,16 @@ def test_run_loop_pushes_status_notification(monkeypatch):
     finally:
         if s._tasks is not None:
             s._tasks.shutdown()
+
+
+@pytest.mark.parametrize("ttl", [float("inf"), True])
+def test_task_ttl_handles_infinity_and_refuses_boolean(ttl):
+    store = TaskStore(lambda *_args: {})
+    try:
+        if isinstance(ttl, bool):
+            with pytest.raises(TaskError, match="ttl"):
+                store._resolve_ttl({"ttl": ttl})
+        else:
+            assert store._resolve_ttl({"ttl": ttl}) == store._default_ttl_ms
+    finally:
+        store.shutdown()

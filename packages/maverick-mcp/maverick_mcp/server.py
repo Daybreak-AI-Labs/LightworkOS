@@ -190,6 +190,14 @@ def _task_budget(args: dict):
         if ceiling is None:
             ceiling = DEFAULT_MAX_DOLLARS if key == "max_dollars" else DEFAULT_MAX_WALL_SECONDS
         overrides[key] = clamp_task_limit(limits[0], ceiling)
+    from maverick.agent_trust import clamp_budget, load_trust_state
+    from maverick.connections import current_principal
+
+    principal = current_principal() or ""
+    if principal.startswith("agent:"):
+        _, registry = load_trust_state()
+        agent = registry.get(principal.removeprefix("agent:"))
+        overrides["max_dollars"], overrides["max_wall_seconds"] = clamp_budget(agent, **overrides)
     return budget_from_config(**overrides)
 
 
@@ -236,14 +244,17 @@ def _elicit_allowed_hosts() -> frozenset[str]:
 def _elicit_host_allowed(url: str, allowed: frozenset[str]) -> bool:
     """True if ``url``'s host is in ``allowed`` (exact or a subdomain). An empty
     allowlist means no restriction."""
-    if not allowed:
-        return True
+    if "\\" in url:
+        return False
     from urllib.parse import urlparse
     try:
-        host = (urlparse(url).hostname or "").lower().rstrip(".")
+        parsed = urlparse(url)
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        host = (parsed.hostname or "").lower().rstrip(".")
     except Exception:
         return False
-    return bool(host) and any(host == a or host.endswith("." + a) for a in allowed)
+    return not allowed or (bool(host) and any(host == a or host.endswith("." + a) for a in allowed))
 
 
 def _tool_supports_tasks(tool_spec: ToolSpec) -> bool:
@@ -367,10 +378,14 @@ class MCPServer:
         """List only tools the authenticated caller can actually invoke."""
         if not self._principal_permits(caller_trust_principal):
             return {"tools": []}
+        principal = (self._connector_principal(None, caller_trust_principal, capability)
+                     or self._current_object_principal() or "")
         return {
             "tools": [
                 tool for tool in TOOLS
                 if self._capability_permits(capability, tool["name"])
+                and not (principal.startswith("agent:")
+                         and tool["name"] in {"maverick_fact_set", "maverick_facts_get"})
             ]
         }
 

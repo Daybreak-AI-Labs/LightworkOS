@@ -153,7 +153,6 @@ def test_low_risk_agent_cannot_list_or_invoke_mutating_tools(monkeypatch):
         "maverick_status",
         "maverick_skills_list",
         "maverick_fleet_recall",
-        "maverick_facts_get",
     } <= listed
     assert {
         "maverick_start",
@@ -161,6 +160,7 @@ def test_low_risk_agent_cannot_list_or_invoke_mutating_tools(monkeypatch):
         "maverick_answer",
         "maverick_skill_install",
         "maverick_fact_set",
+        "maverick_facts_get",
         "maverick_fleet_ingest",
     }.isdisjoint(listed)
 
@@ -250,7 +250,7 @@ def test_disengaged_shared_bearer_remains_explicitly_unscoped(monkeypatch):
     listed = _tool_names(_rpc(client, headers, "tools/list"))
     assert "maverick_status" in listed
     assert "maverick_start" in listed
-    assert "maverick_fact_set" in listed
+    assert "maverick_fact_set" not in listed
     invoked = []
     server._dispatch_tool = lambda name, _arguments: invoked.append(name) or "ok"
     server._structured_result = lambda _name: None
@@ -1968,3 +1968,15 @@ def test_exhausted_peer_budget_never_locks_out_a_valid_bearer(monkeypatch):
     ok = client.post("/mcp", headers={"Authorization": "Bearer known"}, json={})
     assert ok.status_code != 429, ok.text
     assert ok.status_code != 401
+
+
+def test_http_tools_list_omits_operator_only_fact_tools(monkeypatch):
+    client, server, headers = _client(monkeypatch, registry={}, token="shared", shared=True, enforced=False)
+    try:
+        names = _tool_names(_rpc(client, headers, "tools/list"))
+        assert names.isdisjoint({"maverick_fact_set", "maverick_facts_get"})
+        assert "maverick_status" in names
+        local = {tool["name"] for tool in server.handle_tools_list({})["tools"]}
+        assert {"maverick_fact_set", "maverick_facts_get"} <= local
+    finally:
+        server.shutdown()
