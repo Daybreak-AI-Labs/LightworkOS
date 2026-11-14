@@ -133,17 +133,23 @@ def _env_flag(name: str) -> bool | None:
     return is_truthy(raw)
 
 
-def _load_oidc_section() -> dict:
-    """Read the ``[auth.oidc]`` table from config, tolerating a missing or
-    unreadable config (the kernel runs without one)."""
+def _load_oidc_section() -> dict | None:
+    """Read the ``[auth.oidc]`` table from config.
+
+    A missing config gives ``{}`` (the kernel runs without one). An unreadable
+    config source gives ``None``: the sign-in settings may have been lost, so
+    the caller must not read that as "sign-in is off".
+    """
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
 
         auth = (load_config() or {}).get("auth") or {}
+        if config_source_errors(include_tenant=True):
+            return None
         section = auth.get("oidc") or {}
         return section if isinstance(section, dict) else {}
     except Exception:
-        return {}
+        return None
 
 
 def _normalize_algorithms(value: Any) -> list[str]:
@@ -177,10 +183,18 @@ def load_oidc_config() -> OIDCConfig:
 
 
 def _load_oidc_config() -> OIDCConfig:
-    section = _load_oidc_section()
+    loaded = _load_oidc_section()
+    section = loaded if loaded is not None else {}
 
     enabled_env = _env_flag("MAVERICK_OIDC_ENABLED")
-    enabled = enabled_env if enabled_env is not None else bool(section.get("enabled", False))
+    if enabled_env is not None:
+        enabled = enabled_env
+    elif loaded is None:
+        # Unreadable sign-in settings keep sign-in enforced; with no issuer or
+        # audience every token then fails verification (deny, not legacy trust).
+        enabled = True
+    else:
+        enabled = bool(section.get("enabled", False))
 
     issuer = os.environ.get("MAVERICK_OIDC_ISSUER") or str(section.get("issuer", "") or "")
     audience = os.environ.get("MAVERICK_OIDC_AUDIENCE") or str(section.get("audience", "") or "")
@@ -235,7 +249,9 @@ def _load_oidc_config() -> OIDCConfig:
 def oidc_enabled() -> bool:
     """Opt-in, off by default. ``MAVERICK_OIDC_ENABLED=1`` or
     ``[auth.oidc] enabled = true`` turns on OIDC ID-token verification for the
-    serving surface. Off -> no token is required and behaviour is unchanged."""
+    serving surface. Off -> no token is required and behaviour is unchanged.
+    When the env does not decide and a config source is unreadable, this is
+    True (fail closed): the setting may have been lost with the file."""
     return load_oidc_config().enabled
 
 
