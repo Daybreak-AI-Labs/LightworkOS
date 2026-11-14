@@ -116,7 +116,10 @@ def _op_sql(statement: str, warehouse_id: str, catalog: str, schema: str,
         # the id and error so a confirmed write is checked, not re-run blind.
         err = status.get("error") or {}
         detail = f" error={err.get('message', err)}" if err else ""
-        return f"state={state} statement_id={data.get('statement_id')}{detail}"
+        # FAILED/CANCELED did not run; PENDING/RUNNING (or any other state)
+        # is unfinished and may still commit.
+        prefix = "ERROR" if state in ("FAILED", "CANCELED") else "INDETERMINATE"
+        return f"{prefix}: state={state} statement_id={data.get('statement_id')}{detail}"
     cols = [c.get("name") for c in
             (((data.get("manifest") or {}).get("schema") or {}).get("columns") or [])]
     rows = (data.get("result") or {}).get("data_array") or []

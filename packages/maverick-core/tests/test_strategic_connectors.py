@@ -129,6 +129,24 @@ def test_databricks_requires_config(monkeypatch):
     assert "ERROR" in out and "DATABRICKS" in out
 
 
+def test_databricks_unfinished_or_failed_statement_is_not_success(monkeypatch):
+    monkeypatch.setenv("DATABRICKS_HOST", "https://w.cloud.databricks.com")
+    monkeypatch.setenv("DATABRICKS_TOKEN", "t")
+    from maverick.tool_results import ToolResultState, classify_tool_result
+    from maverick.tools import databricks_tool as mod
+    for state, err, want in (
+        ("PENDING", None, ToolResultState.INDETERMINATE),
+        ("FAILED", {"message": "boom"}, ToolResultState.FAILED),
+        ("CANCELED", None, ToolResultState.FAILED),
+    ):
+        status = {"state": state, **({"error": err} if err else {})}
+        monkeypatch.setattr(mod, "_req", lambda *a, _s=status, **k: (
+            200, {"statement_id": "st_1", "status": _s}))
+        out = mod.databricks_tool().fn({"op": "sql", "statement": "DELETE FROM t",
+                                        "warehouse_id": "wh", "confirm": True})
+        assert classify_tool_result(out) is want and "st_1" in out, (state, out)
+
+
 def test_databricks_jobs_list(monkeypatch):
     monkeypatch.setenv("DATABRICKS_HOST", "https://w.cloud.databricks.com")
     monkeypatch.setenv("DATABRICKS_TOKEN", "t")
