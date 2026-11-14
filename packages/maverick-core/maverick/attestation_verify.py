@@ -274,6 +274,12 @@ def _check_envelope(bundle: dict, observed: list[str] | None) -> ClaimResult:
     if not env:
         return ClaimResult("policy_envelope", INDETERMINATE,
                            "the bundle declares no policy envelope")
+    if env.get("policy_source") == "unavailable":
+        # The issuer could not read its policy: an empty envelope then records
+        # a load failure, not an open policy.
+        error = str(env.get("policy_error") or "no detail recorded")[:200]
+        return ClaimResult("policy_envelope", INDETERMINATE,
+                           f"the issuer could not load its policy ({error})")
     notes: list[str] = []
     deny = {str(a) for a in env.get("deny_actions") or []}
     floor = env.get("deny_min_risk")
@@ -704,7 +710,10 @@ def _reread_evidence(bundle: dict, root: Path,
 
     ledger = _as_dict(bundle.get("commitments")).get("ledger")
     if isinstance(ledger, dict) and ledger.get("path_name"):
-        path = root / str(ledger["path_name"])
+        # The ledger sits in the data directory, the parent of the documented
+        # ``--evidence ~/.maverick/audit``; accept it in either place.
+        name = str(ledger["path_name"])
+        path = root / name if (root / name).exists() else root.parent / name
         if path.exists():
             raw = path.read_bytes()
             if hashlib.sha256(raw).hexdigest() != str(ledger.get("sha256")):
