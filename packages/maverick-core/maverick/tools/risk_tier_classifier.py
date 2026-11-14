@@ -13,7 +13,8 @@ ops:
 
 Signals (all optional booleans; missing = absent):
   irreversible?, moves_money?, touches_pii?, network_egress?, affects_many?
-A numeric ``custom_weight`` may be added on top of the matched factor weights.
+A non-negative integer ``custom_weight`` may be added on top of the matched
+factor weights; it cannot lower the tier the signals give.
 
 Weights (points) and thresholds are fixed so the same signals always map to the
 same tier: HIGH at >= 6, MEDIUM at >= 3, else LOW.
@@ -60,6 +61,9 @@ def _score(signals: dict[str, Any]) -> str:
             extra = int(signals["custom_weight"])
         except (TypeError, ValueError, OverflowError):
             return "ERROR: custom_weight must be an integer"
+        if extra < 0:
+            # Adds risk on top of the signals; it may not cancel them out.
+            return "ERROR: custom_weight must be >= 0"
         if extra:
             total += extra
             sign = "+" if extra >= 0 else ""
@@ -97,7 +101,7 @@ _SCHEMA: dict[str, Any] = {
                 "touches_pii?": {"type": "boolean"},
                 "network_egress?": {"type": "boolean"},
                 "affects_many?": {"type": "boolean"},
-                "custom_weight": {"type": "integer"},
+                "custom_weight": {"type": "integer", "minimum": 0},
             },
         },
     },
@@ -111,7 +115,7 @@ def risk_tier_classifier() -> Tool:
         description=(
             "Score a goal/action as LOW/MEDIUM/HIGH risk from boolean signals. "
             "op=score with 'signals' ({irreversible?, moves_money?, touches_pii?, "
-            "network_egress?, affects_many?} + optional integer custom_weight). "
+            "network_egress?, affects_many?} + optional non-negative integer custom_weight). "
             "Deterministic weighted sum (irreversible/money +4, PII/blast +3, "
             "egress +2); HIGH>=6, MEDIUM>=3, else LOW. Returns the tier, the "
             "numeric score, and the contributing factors. General goal-risk "
