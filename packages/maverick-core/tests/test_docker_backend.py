@@ -86,6 +86,28 @@ def test_read_only_paths_fail_closed_on_unsafe_or_missing_entries(
         DockerBackend(workdir=tmp_path, read_only_paths=[configured])
 
 
+def test_read_only_path_swapped_between_execs_fails_closed(monkeypatch, tmp_path):
+    """A command may rename the protected folder and recreate it; the next
+    exec must not mount the replacement read-only and leave the original writable."""
+    monkeypatch.setattr(DockerBackend, "_verify_docker", lambda self: None)
+    protected = tmp_path / "context"
+    protected.mkdir()
+    backend = DockerBackend(workdir=tmp_path, read_only_paths=["context"])
+    calls: list = []
+
+    class _R:
+        stdout = stderr = ""
+        returncode = 0
+
+    monkeypatch.setattr(subprocess, "run", lambda args, **k: calls.append(args) or _R())
+    assert backend.exec("echo hi").exit_code == 0
+    protected.rename(tmp_path / "context2")
+    protected.mkdir()
+    with pytest.raises(ValueError, match="read_only_paths"):
+        backend.exec("echo hi")
+    assert len(calls) == 1
+
+
 def test_timeout_cleanup_failure_surfaced(monkeypatch, tmp_path):
     """If reaping the orphaned container fails, the leak is reported in stderr
     rather than swallowed under a bare except."""

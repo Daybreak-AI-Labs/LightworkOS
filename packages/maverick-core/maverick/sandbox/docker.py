@@ -88,7 +88,7 @@ class DockerBackend:
         ):
             raise ValueError("read_only_paths must be a list of relative paths")
         workspace = self.workdir.resolve()
-        validated: list[tuple[Path, str]] = []
+        validated: list[tuple[Path, str, tuple[int, int]]] = []
         normalized: list[str] = []
         for raw in self.read_only_paths:
             if not isinstance(raw, str) or not raw.strip():
@@ -103,7 +103,10 @@ class DockerBackend:
                 raise ValueError(
                     f"read_only_paths entry escapes or is missing: {raw!r}"
                 ) from exc
-            validated.append((source, f"/workspace/{contained.as_posix()}"))
+            stat = source.stat()
+            validated.append(
+                (source, f"/workspace/{contained.as_posix()}", (stat.st_dev, stat.st_ino))
+            )
             normalized.append(contained.as_posix())
         self.read_only_paths = tuple(normalized)
         self._read_only_mounts = tuple(validated)
@@ -141,7 +144,9 @@ class DockerBackend:
         # helper tolerant of legacy/unpickled instances (and focused timeout
         # tests) that predate that private cache; the public default is no
         # read-only overlays, so an absent cache is equivalent to ``()``.
-        for source, destination in getattr(self, "_read_only_mounts", ()):
+        for entry in getattr(self, "_read_only_mounts", ()):
+            source, destination = entry[0], entry[1]
+            self._recheck_read_only_mount(source, destination, entry[2] if len(entry) > 2 else None)
             flags.extend(["-v", f"{source}:{destination}:ro"])
         if self.runtime:
             flags.extend(["--runtime", str(self.runtime)])
@@ -157,6 +162,34 @@ class DockerBackend:
         if not self.allow_network:
             flags.extend(["--network", "none"])
         return flags
+
+    def _recheck_read_only_mount(
+        self, source: Path, destination: str, identity: tuple[int, int] | None
+    ) -> None:
+        """Refuse when a protected path was moved, replaced or relinked.
+
+        A command can rename a protected folder and create a new one in its
+        place. Mounting the stored host path again would protect the
+        replacement and leave the renamed original writable.
+        """
+        workspace = self.workdir.resolve()
+        relative = destination[len("/workspace/"):]
+        try:
+            current = (workspace / relative).resolve(strict=True)
+            current.relative_to(workspace)
+            stat = current.stat()
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"read_only_paths entry {relative!r} was moved or removed; "
+                "the command was not run"
+            ) from exc
+        if current != Path(source) or (
+            identity is not None and (stat.st_dev, stat.st_ino) != identity
+        ):
+            raise ValueError(
+                f"read_only_paths entry {relative!r} was replaced since the "
+                "sandbox started; the command was not run"
+            )
 
     def exec(self, cmd: str, timeout: float | None = None) -> ExecResult:
         with operation_lease(self):
