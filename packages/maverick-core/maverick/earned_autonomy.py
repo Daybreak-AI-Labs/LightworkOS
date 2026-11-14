@@ -106,6 +106,11 @@ class _ChainedLog:
         self._rows: list[dict] = []
         self._size = -1
         self._lock = threading.RLock()
+        # Fingerprint of the evidence file and its signed namespace at the
+        # last full verification (or our own anchored append after it), and
+        # the row count of the day-file our last signed head went to.
+        self._verified: tuple | None = None
+        self._day_count: tuple[Path, int] | None = None
         if self.path is not None:
             with self._lock:
                 self._refresh_unlocked()
@@ -207,39 +212,84 @@ class _ChainedLog:
             return False
 
     def _record_anchor(self, head: str, count: int, **extra: object) -> bool:
-        from .audit import AuditEvent, AuditLog, EventKind
-        from .audit.signing import _append_anchor, _segment_text, verify_chain
-        from .file_lock import cross_process_lock
+        from .audit import AuditEvent, EventKind, signing
 
         identity, directory = self._anchor_location()
-        # This evidence always requires signing, including legacy deployments
-        # whose general-purpose audit sink permits unsigned events. The native
-        # strict writer still enforces custody policy and key authority.
-        sink = AuditLog(audit_dir=directory, sign=True)
-        if not sink.record_strict_signed(AuditEvent(
+        day = signing._today_utc()
+        path = directory / f"{day}.ndjson"
+        # Always signed, with the audit signer itself, so key custody policy
+        # (an off-host key requirement) applies. The namespace was verified
+        # under the evidence lock just before this (fully, or as the unchanged
+        # state of the last full check), so re-walking every signature of the
+        # day here would only make each append cost grow with the history.
+        signer = signing.AuditSigner(path)
+        event = AuditEvent(
             ts=time.time(), kind=EventKind.AUTONOMY_GRADUATION,
             agent="earned_autonomy", payload={
                 "decision": "chain_head", "store_id": identity,
                 "head": head, "row_count": count, **extra,
             },
-        )):
+        ).to_dict()
+        cached, self._day_count = self._day_count, None
+        if not signer.write(event):
             return False
-        path = sink._current_path
-        if path is None:
-            return False
+        tip = signer._last_hash
+        if cached is not None and cached[0] == path:
+            rows = cached[1] + 1
+        else:
+            file_tip, rows = signing._file_tip_and_count(path)
+            if file_tip != tip:
+                return False
         # Seal the current signed tip immediately, including the first day.
         # Otherwise the first verification after midnight requires a day-ledger
-        # that AuditLog only creates on its next write, which verification then
-        # prevents. Verify exact bytes before extending the signed anchor; never
-        # manufacture a baseline during a read or repair an unverified history.
-        with cross_process_lock(path, strict=True):
-            segment = _segment_text(path)
-            if verify_chain(path, segment=segment):
-                return False
-            rows = [json.loads(line) for line in segment.splitlines() if line.strip()]
-            if not rows or rows[-1].get("head") != head or rows[-1].get("row_count") != count:
-                return False
-            return _append_anchor(directory, path.stem, rows[-1]["hash"], len(rows))
+        # that would only be created on the next write, which verification then
+        # prevents.
+        if not signing._append_anchor(directory, day, tip, rows):
+            return False
+        self._day_count = (path, rows)
+        return True
+
+    def _fingerprint_unlocked(self) -> tuple | None:
+        """Cheap identity of the evidence file and its signed namespace.
+
+        Stats only, no reads. ``st_ctime_ns`` changes on every content or
+        timestamp change and, unlike mtime, cannot be set back by a writer.
+        ``None`` (never equal to a cached value) when anything is unreadable.
+        """
+        _identity, directory = self._anchor_location()
+        try:
+            names = sorted(name for name in os.listdir(directory)
+                           if name.endswith(".ndjson") or name.startswith(".anchors"))
+        except FileNotFoundError:
+            names = []
+        except OSError:
+            return None
+        stamps = []
+        for path in (self.path, *(directory / name for name in names)):
+            try:
+                st = os.stat(path)
+            except FileNotFoundError:
+                stamps.append(None)
+                continue
+            except OSError:
+                return None
+            stamps.append((st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
+        return (tuple(names), tuple(stamps))
+
+    def _writable_status_unlocked(self) -> str:
+        """``verify()``, skipped while nothing changed since it last passed.
+
+        Keeps an append's cost independent of the history's length: the full
+        check of every link, signed head and anchor runs again only after the
+        evidence file or its signed namespace changed outside this object
+        (another writer, an edit, a deletion). ``verify()`` itself always runs
+        the full check.
+        """
+        fingerprint = self._fingerprint_unlocked()
+        if fingerprint is not None and fingerprint == self._verified:
+            return f"VALID: {len(self._rows)} link(s) (unchanged since verified)"
+        self._day_count = None
+        return self.verify()
 
     def _adopt_unlocked(self) -> bool:
         """Anchor never-anchored legacy evidence at its current, intact head.
@@ -263,7 +313,7 @@ class _ChainedLog:
         if self.path is None:
             return self._write_row_unlocked(fields, force=force) is not None
         try:
-            status = self.verify()
+            status = self._writable_status_unlocked()
             if status == f"BROKEN: {_UNANCHORED}":
                 status = ("VALID: adopted" if self._adopt_unlocked()
                           else "BROKEN: legacy evidence could not be anchored")
@@ -294,6 +344,7 @@ class _ChainedLog:
             log.debug("earned-autonomy anchor failed", exc_info=True)
             anchored = False
         if anchored:
+            self._verified = self._fingerprint_unlocked()
             return True
         # A row whose signed head was not recorded never stays behind as
         # evidence: one failed audit write must neither wedge the ledger
@@ -320,7 +371,9 @@ class _ChainedLog:
             os.truncate(self.path, size)
         except OSError:
             log.exception("earned-autonomy: could not withdraw an unanchored row")
+            self._verified = None
             return False
+        self._verified = None
         self._rows.pop()
         self._size = size
         head = self._rows[-1]["hash"] if self._rows else _GENESIS
@@ -352,6 +405,7 @@ class _ChainedLog:
         except OSError:
             log.debug("earned-autonomy tail check failed", exc_info=True)
         self._size = -1
+        self._verified = None
         row = self._write_row_unlocked(
             {**fields, "unverified_ledger": _safe_text(status, max_len=200)}, force=True)
         if row is None:
@@ -422,6 +476,7 @@ class _ChainedLog:
         with self._lock:
             if self.path is None:
                 return self._verify_rows_unlocked()
+            self._verified = None
             try:
                 # Match append's lock order and verify exact fresh bytes, even
                 # after a same-size rewrite. Unreadable/torn rows fail closed.
@@ -437,7 +492,10 @@ class _ChainedLog:
                         return "BROKEN: malformed evidence rows"
                     self._rows = rows
                     self._size = len(text.encode("utf-8"))
-                    return self._verify_rows_unlocked()
+                    status = self._verify_rows_unlocked()
+                    self._verified = (self._fingerprint_unlocked()
+                                      if status.startswith("VALID:") else None)
+                    return status
             except AuditRefused:
                 raise
             except Exception:

@@ -230,6 +230,32 @@ def test_failed_signed_head_withdraws_the_row_and_keeps_the_ledger_usable(tmp_pa
     assert ledger.verify().startswith("VALID: 3")
 
 
+def test_append_does_not_reverify_earlier_signed_heads(tmp_path, monkeypatch):
+    from maverick.audit import signing
+
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    for i in range(3):
+        assert ledger.record_event("hit", "deploy", card_id=f"a{i}", ts=float(i))
+    calls = []
+    for name in ("verify_chain", "verify_anchors", "_segment_text"):
+        real = getattr(signing, name)
+        monkeypatch.setattr(signing, name, lambda *a, _real=real, _name=name, **k: (
+            calls.append(_name), _real(*a, **k))[1])
+    for i in range(5):
+        assert ledger.record_event("hit", "deploy", card_id=f"b{i}", ts=10.0 + i)
+    assert calls == []
+    # An explicit verify() still runs the full check.
+    assert ledger.verify().startswith("VALID: 8")
+    assert "verify_anchors" in calls and "verify_chain" in calls
+    # A change made outside this object brings the full check back to append.
+    lines = path.read_text().splitlines(keepends=True)
+    path.write_text("".join(lines[:-1]))
+    calls.clear()
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=20.0)
+    assert "verify_anchors" in calls
+
+
 # -- the enable gate -------------------------------------------------------
 
 
