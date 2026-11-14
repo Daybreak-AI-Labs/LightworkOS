@@ -195,6 +195,35 @@ def test_repo_map_signature_tracks_hidden_entries(tmp_path):
         assert name + "/" not in tool.fn({})
 
 
+def test_repo_map_signature_walks_hidden_directories_only_to_rendered_depth(monkeypatch, tmp_path):
+    from maverick.cache import file as file_cache
+    from maverick.tools.repo_map import _IGNORE_DIRS
+
+    assert file_cache._SIG_SKIP_DIRS == _IGNORE_DIRS
+    deep = tmp_path / ".gradle" / "caches" / "8.5" / "fileHashes"
+    deep.mkdir(parents=True)
+    (deep / "hashes.bin").write_text("x")
+    (tmp_path / "src" / ".next" / "cache").mkdir(parents=True)
+    (tmp_path / "src" / "pkg").mkdir()
+    (tmp_path / ".vscode" / "sub").mkdir(parents=True)
+    visits = []
+    real_walk = os.walk
+
+    def counting_walk(top, *args, **kwargs):
+        for item in real_walk(top, *args, **kwargs):
+            visits.append(Path(item[0]).relative_to(tmp_path).as_posix())
+            yield item
+
+    monkeypatch.setattr(file_cache.os, "walk", counting_walk)
+    before = file_cache._workdir_signature(tmp_path)
+    assert sorted(visits) == [".", ".gradle", "src", "src/pkg"]
+    (deep / "more.bin").write_text("build cache write")
+    (deep.parent / "transforms").mkdir()
+    assert file_cache._workdir_signature(tmp_path) == before
+    (tmp_path / ".gradle" / "shown").write_text("rendered child")
+    assert file_cache._workdir_signature(tmp_path) != before
+
+
 def test_quorum_assigns_only_first_role_per_person():
     from maverick.tools.quorum_approval import quorum_approval
 
