@@ -86,3 +86,8 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "retention_check" in names
+
+
+def test_infinite_day_counts_return_an_error():
+    assert _c([{"id": "a", "category": "c", "age_days": float("inf")}], {"c": 1}).startswith("ERROR")
+    assert _c([{"id": "a", "category": "c", "age_days": 1}], {"c": float("inf")}).startswith("ERROR")

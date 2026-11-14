@@ -22,6 +22,8 @@ Measurements: ``[{"t", "value"}]`` (most recent last).
 """
 from __future__ import annotations
 
+import math
+
 from typing import Any
 
 from . import Tool
@@ -41,6 +43,8 @@ def _check(slo: dict, measurements: list) -> str:
         threshold = float(slo.get("threshold"))
     except (TypeError, ValueError):
         return "ERROR: slo.threshold (number) is required"
+    if not math.isfinite(threshold):
+        return "ERROR: slo.threshold must be a finite number"
     try:
         window = int(slo.get("window"))
     except (TypeError, ValueError, OverflowError):
@@ -56,6 +60,9 @@ def _check(slo: dict, measurements: list) -> str:
             value = float(mm.get("value"))
         except (TypeError, ValueError):
             return "ERROR: each measurement needs a numeric value"
+        if math.isnan(value):
+            # NaN compares false both ways, so it would never breach.
+            return "ERROR: measurement values must not be NaN"
         parsed.append((mm.get("t"), value))
 
     # Evaluate the most recent `window` measurements (window tail).
