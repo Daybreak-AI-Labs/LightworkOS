@@ -182,10 +182,13 @@ def _amount_table(value: object) -> dict[str, float]:
 def _policy_config_snapshot() -> dict:
     """Load one trusted config snapshot for every live policy overlay."""
     try:
-        from .config import config_source_errors, load_config
+        from .config import config_source_errors, load_config, single_read
 
-        snapshot = load_config()
-        source_errors = config_source_errors()
+        # One decision: errors this read met stay reported even if another
+        # thread's clean read clears the process-wide record in between.
+        with single_read(fresh=True):
+            snapshot = load_config()
+            source_errors = config_source_errors()
     except Exception as exc:
         raise GovernancePolicyError(
             "governance policy source is unavailable"
