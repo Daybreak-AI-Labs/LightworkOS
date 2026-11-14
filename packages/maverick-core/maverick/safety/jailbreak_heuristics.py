@@ -29,16 +29,16 @@ class _Pat:
 
 
 # ``curl ... | sh``: a fetch command and a pipe into a shell in the same
-# pipeline stage. Searched per stage (from the previous pipe or newline to the
-# pipe), so each character is scanned once however long the URL is.
+# pipeline stage. Searched per stage (from the previous pipe to this one, so a
+# line continuation does not end it), so each character is scanned once
+# however long the URL is.
 _PIPE_TO_SHELL = re.compile(r"\|\s*(?:sh|bash)", re.IGNORECASE)
 _SHELL_FETCH = re.compile(r"\b(?:curl|wget|nc|bash|sh)\s", re.IGNORECASE)
 
 
 def _pipes_fetch_to_shell(text: str) -> bool:
     for m in _PIPE_TO_SHELL.finditer(text):
-        pipe = text.rfind("|", 0, m.start())
-        start = max(pipe, text.rfind("\n", pipe + 1, m.start())) + 1
+        start = text.rfind("|", 0, m.start()) + 1
         if _SHELL_FETCH.search(text, start, m.start()):
             return True
     return False
@@ -106,12 +106,13 @@ _PATTERNS: list[_Pat] = [
          ), 1.0),
     _Pat("admin_override",
          re.compile(
-             r"\[(?:ADMIN|SYSTEM|INST|OVERRIDE|SUDO|MAINTENANCE|START|END)"
-             # One nested bracket level ("[SYSTEM [x]]"); possessive, so a
-             # failed scan is not retried at every split.
-             r"\b(?:[^\[\]]++|\[[^\[\]]*+\])*+\]",
+             r"\[(?:ADMIN|SYSTEM|INST|OVERRIDE|SUDO|MAINTENANCE|START|END)\b",
              re.IGNORECASE,
-         ), 1.8),
+         ), 1.8,
+         # The tag needs a closing bracket anywhere after it (the first one
+         # closes it, as "[^\]]*\]" did); two searches instead of a rescan
+         # from every tag keep this linear.
+         then=re.compile(r"\]")),
     _Pat("api_key_extraction",
          re.compile(
              r"\b(?:reveal|print|share|output|show|tell|give|return|"
