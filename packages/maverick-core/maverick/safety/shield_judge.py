@@ -19,8 +19,9 @@ ordinary shield allowed):
   shield is required (``shield_policy.shield_required``), in which case the
   text is blocked as a scan error.
 * The text is data for the model, never instructions: it is fenced with a
-  random per-call tag and bounded (an over-long text is judged by its head
-  and its tail), and only a well-formed JSON verdict is accepted.
+  random per-call tag and bounded (an over-long text is judged in one call
+  by its head, its tail and up to three windows around the spots the cheap
+  probe flagged), and only a well-formed JSON verdict is accepted.
 """
 from __future__ import annotations
 
@@ -79,14 +80,53 @@ def _parse(text: str) -> tuple[bool, str, str]:
     return verdict == "block", severity, reason
 
 
+_FLAGGED_WINDOWS = 3  # windows centred on probe hits, besides head and tail
+_SEGMENT = MAX_JUDGED_CHARS // (_FLAGGED_WINDOWS + 2)
+
+
+def _flagged_positions(text: str) -> list[int]:
+    """Offsets the cascade's cheap probe flags in ``text`` (raw text only).
+
+    Uses the shield's own probe patterns when the shield package is
+    installed; without it (kernel rule 1) there are none and only the head
+    and the tail are judged.
+    """
+    try:
+        from maverick_shield.cascade import _INVISIBLE_RE, _PROBE_REGEX, _TAG_RE
+    except Exception:  # noqa: BLE001 -- the kernel runs without the shield
+        return []
+    hits = [m.start() for pattern in (_PROBE_REGEX, _TAG_RE, _INVISIBLE_RE)
+            for m in pattern.finditer(text)]
+    return sorted(set(hits))
+
+
 def _bounded(text: str) -> str:
-    """The head and the tail of an over-long text, so a payload placed after a
-    long benign prefix still reaches the judge."""
+    """The text, or for an over-long text its head, its tail and up to three
+    windows around the spots the cheap probe flagged, all in one call.
+
+    Text between those segments is not shown to the judge; each gap is marked
+    with the number of characters left out.
+    """
     if len(text) <= MAX_JUDGED_CHARS:
         return text
-    half = MAX_JUDGED_CHARS // 2
-    omitted = len(text) - 2 * half
-    return f"{text[:half]}\n[... {omitted} characters omitted ...]\n{text[-half:]}"
+    spans = [(0, _SEGMENT), (len(text) - _SEGMENT, len(text))]
+    for pos in _flagged_positions(text):
+        if len(spans) >= _FLAGGED_WINDOWS + 2:
+            break
+        if any(lo <= pos < hi for lo, hi in spans):
+            continue
+        lo = max(0, min(pos - _SEGMENT // 2, len(text) - _SEGMENT))
+        spans.append((lo, lo + _SEGMENT))
+    parts: list[str] = []
+    cursor = 0
+    for lo, hi in sorted(spans):
+        lo = max(lo, cursor)
+        if lo > cursor:
+            parts.append(f"[... {lo - cursor} characters omitted ...]")
+        if hi > lo:
+            parts.append(text[lo:hi])
+        cursor = max(cursor, hi)
+    return "\n".join(parts)
 
 
 def _required() -> bool:
