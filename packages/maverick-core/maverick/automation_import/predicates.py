@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..flow.ir import NODE_BRANCH, FlowNode
+from .ir import _complete_text
 
 _PATH = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\Z")
 _N8N_OPS = {
@@ -35,6 +36,12 @@ _MAKE_OPS = {
 def repair(reason: str) -> ValueError:
     # Never echo external expressions: they can contain credentials.
     return ValueError(f"Imported condition requires repair before execution: {reason}")
+
+
+def _checked_operand(value):
+    if isinstance(value, str) and _complete_text(value) != value:
+        raise repair("credential-bearing operand needs an explicit data binding")
+    return value
 
 
 @dataclass(frozen=True)
@@ -181,7 +188,8 @@ def make_predicate(route: dict) -> Predicate | None:
             left, operator, right = clause["a"], clause["o"], clause["b"]
             if not isinstance(left, str) or not isinstance(operator, str):
                 raise repair("Make comparison needs a data field and supported operator")
-            left = _path(left.strip())
+            left = _path(_checked_operand(left).strip())
+            right = _checked_operand(right)
             family, separator, op = operator.lower().partition(":")
             if not separator or op not in _MAKE_OPS:
                 raise repair("unsupported Make comparison operator")

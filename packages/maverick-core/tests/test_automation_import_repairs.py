@@ -123,6 +123,25 @@ def test_make_invalid_router_route_is_not_dropped():
         ]}))
 
 
+def test_make_filter_refuses_credentials_without_changing_literal_semantics():
+    def imported(left, right):
+        return make.translate({"name": "filter", "flow": [
+            {"module": "gateway:CustomWebHook"},
+            {"module": "audit:Log", "filter": {"conditions": [[
+                {"a": left, "o": "text:equal", "b": right},
+            ]]}},
+        ]})
+
+    for left, right in [("status", "sk-" + "a" * 48), ("AKIA" + "A" * 16, "ready")]:
+        with pytest.raises(ValueError, match="repair") as error:
+            to_flow_with_report(imported(left, right))
+        assert left not in str(error.value) and right not in str(error.value)
+    value = "Research and Development"
+    flow, _ = to_flow_with_report(imported("status", value))
+    branch = next(node for node in flow.nodes.values() if node.kind == NODE_BRANCH)
+    assert eval_condition(branch.condition, {"status": value})
+
+
 def test_uipath_conditions_are_single_complete_comparisons():
     def imported(condition):
         return ImportedAutomation("uipath", "1", "condition", ImportedTrigger(), raw={
@@ -133,6 +152,7 @@ def test_uipath_conditions_are_single_complete_comparisons():
     for condition in [
         'invoiceTotal > 1000 AndAlso customerRegion = "EU" AndAlso approved = True',
         'Dept = "sk-' + "a" * 48 + '"',
+        'amount = threshold', 'amount <> threshold', 'amount > threshold',
     ]:
         with pytest.raises(ValueError, match="repair"):
             to_flow_with_report(imported(condition))
@@ -140,6 +160,12 @@ def test_uipath_conditions_are_single_complete_comparisons():
     flow, _ = to_flow_with_report(imported(f'Dept = "{value}"'))
     branch = next(node for node in flow.nodes.values() if node.kind == NODE_BRANCH)
     assert eval_condition(branch.condition, {"Dept": value})
+    for condition, data in [("amount = 10", {"amount": 10}),
+                            ("approved = True", {"approved": True}),
+                            ("done != yes", {"done": "no"})]:
+        flow, _ = to_flow_with_report(imported(condition))
+        branch = next(node for node in flow.nodes.values() if node.kind == NODE_BRANCH)
+        assert eval_condition(branch.condition, data)
 
 
 @pytest.mark.parametrize("interval", [
@@ -148,13 +174,18 @@ def test_uipath_conditions_are_single_complete_comparisons():
     {"field": "hours", "hoursInterval": 5},
     {"field": "months", "monthsInterval": 5},
     {"field": "minutes", "minutesInterval": 7},
+    [{"field": "minutes", "minutesInterval": 15}, {"field": "weeks", "weeksInterval": 2}],
+    [{"field": "weeks", "weeksInterval": 2}, {"field": "minutes", "minutesInterval": 15}],
+    [{"field": "minutes", "minutesInterval": 15}, {"field": "days", "triggerAtHour": 9}],
 ])
 def test_n8n_inexact_intervals_require_repair(interval):
-    with pytest.raises(ValueError, match="repair"):
-        n8n.translate({"name": "cadence", "nodes": [{
-            "name": "Schedule", "type": "n8n-nodes-base.scheduleTrigger",
-            "parameters": {"rule": {"interval": [interval]}},
-        }]})
+    rules = interval if isinstance(interval, list) else [interval]
+    for extra in ({}, {"cronExpression": "0 9 * * *"}):
+        with pytest.raises(ValueError, match="repair"):
+            n8n.translate({"name": "cadence", "nodes": [{
+                "name": "Schedule", "type": "n8n-nodes-base.scheduleTrigger",
+                "parameters": {"rule": {"interval": rules}, **extra},
+            }]})
 
 
 def test_wdl_contains_fidelity_reports_runtime_approximation():

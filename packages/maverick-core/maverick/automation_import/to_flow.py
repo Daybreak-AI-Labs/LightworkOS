@@ -54,12 +54,12 @@ from ..flow.ir import (
 from .ir import (
     ImportedAutomation,
     ImportedStep,
-    _complete_text,
     _safe_line,
     operational_inputs,
     operational_params,
 )
 from .predicates import (
+    _checked_operand,
     _literal,
     _path,
     branches,
@@ -294,12 +294,6 @@ def _n8n_to_flow(automation: ImportedAutomation) -> Flow | None:
 
 
 # ---- Power Automate (WDL) graph capture --------------------------------------
-
-def _checked_operand(value):
-    if isinstance(value, str) and _complete_text(value) != value:
-        raise repair("credential-bearing operand needs an explicit data binding")
-    return value
-
 
 def _pa_operand(v) -> str:
     """Keep complete trigger data paths; never guess a producer output binding."""
@@ -665,7 +659,9 @@ def _uipath_condition(value) -> str:
         right = float(right) if "." in right else int(right)
     elif right.lower() in {"true", "false"}:
         right = right.lower() == "true"
-    elif not re.fullmatch(r"[A-Za-z_]\w*", right):
+    # Explicit native-style ==/!= retain their bareword literal compatibility.
+    # VB comparisons with an identifier on the right need a variable binding.
+    elif op not in {"==", "!="} or not re.fullmatch(r"[A-Za-z_]\w*", right):
         raise repair("UiPath condition must be a single comparison with a literal")
     op = {"=": "==", "<>": "!="}.get(op, op)
     return f"{_path(left)} {op} {_literal(right)}"

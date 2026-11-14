@@ -114,20 +114,24 @@ def _extract_cron(params: dict) -> str | None:
     Inexact calendar intervals require repair. Sub-minute or unknown rules
     retain their existing import without an auto-created schedule."""
     # Classic cron node: parameters.cronExpression, or triggerTimes.item[].mode.
+    rule = params.get("rule")
+    intervals = (rule.get("interval", []) or []) if isinstance(rule, dict) else []
+    if not isinstance(intervals, list) or len(intervals) > 1:
+        raise ValueError("n8n import needs repair: multiple or malformed schedule rules need an explicit mapping")
     expr = params.get("cronExpression")
     if isinstance(expr, str) and expr.strip():
+        if intervals:
+            raise ValueError("n8n import needs repair: multiple schedule rules need an explicit mapping")
         return expr.strip()
-    rule = params.get("rule")
-    if isinstance(rule, dict):
-        for interval in rule.get("interval", []) or []:
-            if not isinstance(interval, dict):
-                continue
-            ce = interval.get("cronExpression") or interval.get("expression")
-            if isinstance(ce, str) and ce.strip():
-                return ce.strip()
-            synthesized = _cron_from_interval(interval)
-            if synthesized:
-                return synthesized
+    for interval in intervals:
+        if not isinstance(interval, dict):
+            continue
+        ce = interval.get("cronExpression") or interval.get("expression")
+        if isinstance(ce, str) and ce.strip():
+            return ce.strip()
+        synthesized = _cron_from_interval(interval)
+        if synthesized:
+            return synthesized
     return None
 
 
