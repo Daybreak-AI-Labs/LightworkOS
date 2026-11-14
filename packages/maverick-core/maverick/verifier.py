@@ -576,9 +576,13 @@ def _combine(verdicts: list[VerifierVerdict], *, weighted: bool) -> VerifierVerd
         return verdicts[0]
 
     if weighted:
-        # Weighted by each voter's own confidence.
+        # ``confidence`` is each voter's confidence that the ANSWER is right,
+        # so it measures the strength of an accept, and (1 - confidence) the
+        # strength of a reject. Weighting rejects by their raw confidence let
+        # one accept outvote failed members (reject() is confidence 0.0) and
+        # ordinary rejects (0.0-0.4), contrary to the fail-closed contract.
         accept_weight = sum(v.confidence for v in verdicts if v.accepts)
-        reject_weight = sum(v.confidence for v in verdicts if not v.accepts)
+        reject_weight = sum(1.0 - v.confidence for v in verdicts if not v.accepts)
         accepts = accept_weight > reject_weight
     else:
         accepts = sum(1 for v in verdicts if v.accepts) > len(verdicts) / 2
