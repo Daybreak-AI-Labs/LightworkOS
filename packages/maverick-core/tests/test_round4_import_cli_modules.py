@@ -214,13 +214,16 @@ def test_run_tree_strips_terminal_controls_from_display(monkeypatch):
 
 
 @pytest.mark.parametrize("value", ["x", None, 1, [1], [1, {"id": "kept"}]])
-def test_import_file_envelope_requires_a_list_of_definitions(tmp_path, value):
+def test_import_file_envelope_requires_a_list_of_definitions(tmp_path, value, caplog):
     from maverick.cli._import_groups import _load_raws
 
     path = tmp_path / "export.json"
     path.write_text(json.dumps({"data": value}))
     if isinstance(value, list):
         assert _load_raws(str(path), "n8n") == [row for row in value if isinstance(row, dict)]
+        omitted = sum(not isinstance(row, dict) for row in value)
+        if omitted:
+            assert f"Skipped {omitted} import record(s) that are not JSON objects" in caplog.text
     else:
         with pytest.raises(click.ClickException, match="array|list"):
             _load_raws(str(path), "n8n")

@@ -7,6 +7,7 @@ Registered by importing this module at the end of the package __init__ so the
 from __future__ import annotations
 
 import json as _json
+import logging
 
 import click
 
@@ -57,7 +58,13 @@ def _load_raws(from_file: str | None, source: str) -> list[dict]:
             if not isinstance(data, list):
                 raise click.ClickException("--from-file data must contain a JSON array")
         if isinstance(data, list):
-            return [d for d in data if isinstance(d, dict)]
+            definitions = [d for d in data if isinstance(d, dict)]
+            omitted = len(data) - len(definitions)
+            if omitted:
+                logging.getLogger(__name__).warning(
+                    "Skipped %d import record(s) that are not JSON objects", omitted,
+                )
+            return definitions
         raise click.ClickException("--from-file must contain a JSON object or array")
     return get_importer(source).fetch()
 
