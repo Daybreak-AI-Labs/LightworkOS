@@ -233,3 +233,17 @@ def test_provider_cost_cap_uses_shared_store_when_postgres(world, monkeypatch):
         pcc.period_from_config(), "anthropic",
     )
     assert world.get_provider_spend(period, "anthropic") == 3.0
+
+
+def test_fail_closed_read_does_not_reuse_a_failed_fail_open_read(world):
+    with mock.patch(
+        "maverick.world_model_backends.is_postgres_configured", return_value=True
+    ), mock.patch(
+        "maverick.world_model.open_world", side_effect=RuntimeError("db down")
+    ):
+        killswitch._last_shared_check_ts = 0.0
+        killswitch._shared_world = None
+        assert killswitch._shared_halt_active(min_interval=1000.0) is None
+        with pytest.raises(killswitch.Halted) as exc:
+            killswitch._shared_halt_active(min_interval=1000.0, fail_closed=True)
+        assert exc.value.source == "shared-error"
