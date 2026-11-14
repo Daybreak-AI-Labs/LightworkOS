@@ -201,6 +201,35 @@ def test_forced_revoke_lands_on_unverified_evidence_without_laundering_it(tmp_pa
     assert not ledger.record_event("hit", "deploy", card_id="c6", ts=6.0)
 
 
+def test_failed_signed_head_withdraws_the_row_and_keeps_the_ledger_usable(tmp_path, monkeypatch):
+    from maverick.audit import signing
+
+    ledger = ea.TrustLedger(path=tmp_path / "trust.ndjson")
+    assert ledger.record_event("hit", "deploy", card_id="a", ts=1.0)
+    real_anchor = ledger._log._record_anchor
+    monkeypatch.setattr(ledger._log, "_record_anchor", lambda *a, **k: False)
+    assert not ledger.record_event("hit", "deploy", card_id="b", ts=2.0)
+    assert ledger.state("deploy").hits == 1 and "b" not in ledger.scored_ids()
+    monkeypatch.setattr(ledger._log, "_record_anchor", real_anchor)
+    assert ledger.verify().startswith("VALID: 1")
+    # Fail after the signed head landed (the anchor-ledger write): the row is
+    # withdrawn and the restored head re-recorded, so nothing stays wedged.
+    calls = []
+    real_append = signing._append_anchor
+
+    def flaky(*args):
+        calls.append(args)
+        return False if len(calls) == 1 else real_append(*args)
+
+    monkeypatch.setattr(signing, "_append_anchor", flaky)
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=3.0)
+    assert ledger.state("deploy").hits == 1 and "c" not in ledger.scored_ids()
+    assert ledger.verify().startswith("VALID: 1")
+    assert ledger.record_event("hit", "deploy", card_id="d", ts=4.0)
+    assert ledger.record_event("demote", "deploy", ts=5.0)
+    assert ledger.verify().startswith("VALID: 3")
+
+
 # -- the enable gate -------------------------------------------------------
 
 

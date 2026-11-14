@@ -276,18 +276,58 @@ class _ChainedLog:
                 log.warning("earned-autonomy append refused: prior evidence is not verified")
                 return False
             return self._append_unverified_unlocked(fields, status)
+        try:
+            size = self.path.stat().st_size
+        except FileNotFoundError:
+            size = 0
         row = self._write_row_unlocked(fields, force=force)
         if row is None:
             return False
         try:
-            if not self._record_anchor(row["hash"], len(self._rows)):
-                log.warning("earned-autonomy append refused: signed head was not recorded")
-                return False
+            anchored = self._record_anchor(row["hash"], len(self._rows))
         except AuditRefused:
-            raise
-        except Exception:  # pragma: no cover -- best-effort persistence
+            if not force:
+                self._withdraw_unlocked(size)
+                raise
+            anchored = False
+        except Exception:
             log.debug("earned-autonomy anchor failed", exc_info=True)
+            anchored = False
+        if anchored:
+            return True
+        # A row whose signed head was not recorded never stays behind as
+        # evidence: one failed audit write must neither wedge the ledger
+        # (head one row ahead of its anchor) nor count a refused row.
+        if not self._withdraw_unlocked(size):
+            return force
+        if force:
+            return self._append_unverified_unlocked(
+                fields, "BROKEN: signed audit head was not recorded")
+        log.warning("earned-autonomy append refused: signed head was not recorded")
+        return False
+
+    def _withdraw_unlocked(self, size: int) -> bool:
+        """Remove the row just written because its signed head was not recorded.
+
+        Truncating back to the verified, anchored length is used instead of
+        accepting a ledger one row ahead of its anchor: that tolerance would
+        let anyone append one unanchored row, but it could never re-admit a
+        deleted one. A failure after the signed head itself landed would leave
+        that head one row ahead, so the restored head is re-recorded (best
+        effort: the audit sink has just failed once).
+        """
+        try:
+            os.truncate(self.path, size)
+        except OSError:
+            log.exception("earned-autonomy: could not withdraw an unanchored row")
             return False
+        self._rows.pop()
+        self._size = size
+        head = self._rows[-1]["hash"] if self._rows else _GENESIS
+        try:
+            self._record_anchor(head, len(self._rows), withdrawn=True)
+        except Exception:
+            log.debug("earned-autonomy: restored head not re-recorded", exc_info=True)
         return True
 
     def _append_unverified_unlocked(self, fields: dict, status: str) -> bool:
