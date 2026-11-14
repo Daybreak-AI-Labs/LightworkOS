@@ -15,7 +15,6 @@ from pathlib import Path
 from .paths import current_tenant_id_strict
 from .task_file_recovery import RecoveryConflict, _lease
 
-
 log = logging.getLogger(__name__)
 
 
