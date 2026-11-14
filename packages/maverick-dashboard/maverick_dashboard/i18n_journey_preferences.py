@@ -117,4 +117,56 @@ ROWS = [
 ('Job-named areas','Espaces nommés par métier','Nach Aufgaben benannte Bereiche','業務名のエリア','按工作命名的区域'),
 ('Same as everyone','Comme tout le monde','Wie bei allen anderen','全員と同じ','与其他人相同'),
 ('Sidebar','Barre latérale','Seitenleiste','サイドバー','侧边栏'),
+('These AI defaults belong to your account in this workspace. They prefill a new Chat task; your entered '
+ 'task choices take precedence. Running tasks and specialist AI settings stay unchanged.',
+ 'Ces paramètres d’IA par défaut appartiennent à votre compte dans cet espace de travail. Ils '
+ 'préremplissent une nouvelle tâche Chat ; les choix que vous saisissez pour la tâche sont prioritaires. '
+ 'Les tâches en cours et les paramètres d’IA des spécialistes restent inchangés.',
+ 'Diese KI-Standardwerte gehören zu Ihrem Konto in diesem Arbeitsbereich. Sie füllen eine neue '
+ 'Chat-Aufgabe vorab aus; Ihre eingegebenen Aufgabeneinstellungen haben Vorrang. Laufende Aufgaben und die '
+ 'KI-Einstellungen der Spezialisten bleiben unverändert.',
+ 'これらのAIの既定値は、このワークスペースのあなたのアカウントに適用されます。新しいChatタスクにあらかじめ設定されますが、タスクで入力した選択が優先されます。実行中のタスクとスペシャリストのAI設定は変わりません。',
+ '这些 AI 默认设置属于您在此工作区中的账户。它们会预填到新的 Chat 任务中；您为任务输入的选项优先。正在运行的任务和专家的 AI 设置保持不变。'),
+('Default Chat specialist',
+ 'Spécialiste Chat par défaut',
+ 'Standardspezialist für Chat',
+ 'Chatの既定のスペシャリスト',
+ '默认 Chat 专家'),
+('New Chat tasks use this published specialist unless you choose a different team. Publication, permitted '
+ 'actions and required approvals stay separate from this preference.',
+ 'Les nouvelles tâches Chat utilisent ce spécialiste publié, sauf si vous choisissez une autre équipe. La '
+ 'publication, les actions autorisées et les approbations requises restent indépendantes de cette '
+ 'préférence.',
+ 'Neue Chat-Aufgaben verwenden diesen veröffentlichten Spezialisten, sofern Sie kein anderes Team wählen. '
+ 'Veröffentlichung, erlaubte Aktionen und erforderliche Genehmigungen bleiben von dieser Einstellung '
+ 'unabhängig.',
+ '別のチームを選ばない限り、新しいChatタスクはこの公開済みのスペシャリストを使います。公開、許可される操作、必要な承認は、この設定とは別に管理されます。',
+ '除非您选择其他团队，否则新的 Chat 任务会使用此已发布的专家。发布、获准操作和所需审批仍与此偏好分开管理。'),
+('Default Chat model', 'Modèle Chat par défaut', 'Standardmodell für Chat', 'Chatの既定のモデル', '默认 Chat 模型'),
+('Default thinking depth', 'Profondeur de réflexion par défaut', 'Standard-Denktiefe', '既定の思考の深さ', '默认思考深度'),
+('Check the original preference save',
+ 'Vérifier l’enregistrement initial des préférences',
+ 'Ursprünglichen Speichervorgang der Einstellungen prüfen',
+ '設定の最初の保存を確認',
+ '检查最初的偏好保存操作'),
+('A missing reply does not mean the save failed. Read its original result before saving again. Only the '
+ 'latest save in each scope can be confirmed; older results stay unconfirmed.',
+ 'L’absence de réponse ne signifie pas que l’enregistrement a échoué. Consultez son résultat initial avant '
+ 'd’enregistrer à nouveau. Seul le dernier enregistrement de chaque portée peut être confirmé ; les '
+ 'résultats plus anciens restent non confirmés.',
+ 'Eine fehlende Antwort bedeutet nicht, dass das Speichern fehlgeschlagen ist. Lesen Sie das ursprüngliche '
+ 'Ergebnis, bevor Sie erneut speichern. Nur der letzte Speichervorgang in jedem Geltungsbereich kann '
+ 'bestätigt werden; ältere Ergebnisse bleiben unbestätigt.',
+ '応答がないことは、保存の失敗を意味しません。再び保存する前に、最初の結果を確認してください。各適用範囲で確認できるのは最新の保存のみで、古い結果は未確認のままです。',
+ '未收到回复并不表示保存失败。再次保存前，请读取最初的结果。只能确认每个范围内最近一次的保存；较早的结果仍保持未确认状态。'),
+('Check original save',
+ 'Vérifier l’enregistrement initial',
+ 'Ursprünglichen Speichervorgang prüfen',
+ '最初の保存を確認',
+ '检查最初的保存操作'),
+('Start a fresh review',
+ 'Commencer une nouvelle vérification',
+ 'Neue Prüfung beginnen',
+ '新たな確認を開始',
+ '开始新的审核'),
 ]
