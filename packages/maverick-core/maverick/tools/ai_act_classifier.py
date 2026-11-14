@@ -51,10 +51,34 @@ _OBLIGATIONS = {
 }
 
 
+def _search(pattern: str, text: str) -> bool:
+    """``re.search(pattern, text)``, with ``A.*B`` patterns matched part by part.
+
+    Run directly, ``A.*B`` rescans to the end of the line from every ``A``, so
+    a long description repeating ``A`` without ``B`` costs quadratic time. The
+    earliest match of each part, searched after the previous one, finds the
+    same answer in linear time; ``.`` never crosses a newline, so per line.
+    """
+    parts = pattern.split(".*")
+    if len(parts) == 1:
+        return re.search(pattern, text) is not None
+    compiled = [re.compile(part) for part in parts]
+    for line in text.split("\n"):
+        pos = 0
+        for rx in compiled:
+            m = rx.search(line, pos)
+            if m is None:
+                break
+            pos = m.end()
+        else:
+            return True
+    return False
+
+
 def _matches(desc: str, groups: list[tuple[str, list[str]]]) -> list[str]:
     hits = []
     for label, patterns in groups:
-        if any(re.search(p, desc) for p in patterns):
+        if any(_search(p, desc) for p in patterns):
             hits.append(label)
     return hits
 
