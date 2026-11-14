@@ -547,6 +547,13 @@ def _record_import_phase(
         ) is True
     except AuditRefused:
         return False
+    except Exception:
+        # Any other audit failure (an OSError writing the row, say) is also
+        # an unrecorded phase: before publication it must release the replay
+        # claim, not be mistaken for an uncertain insight write.
+        log.warning("insight import: the %s audit row could not be written", phase,
+                    exc_info=True)
+        return False
 
 
 def _verify_bundle(
