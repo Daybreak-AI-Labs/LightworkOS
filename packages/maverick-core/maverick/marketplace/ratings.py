@@ -58,6 +58,10 @@ class RatingsLedger:
         # ledger and the second save clobbers the first's rating otherwise.
         with self._lock, self._cplock():
             data = self._load()
+            if not data and self.path.exists():
+                # Unreadable or empty ledger: keep the operator's old file
+                # aside instead of overwriting it with this one rating.
+                self.path.replace(self.path.with_name(f"{self.path.name}.corrupt-{int(time.time())}"))
             data.setdefault(kind, {})[name] = entry
             self._save(data)
         return entry

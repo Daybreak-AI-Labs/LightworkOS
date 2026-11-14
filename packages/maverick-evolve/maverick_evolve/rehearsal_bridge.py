@@ -32,6 +32,15 @@ def _completed(output: str) -> bool:
         )
 
 
+def _evidence(row: dict) -> int:
+    """The row's evidence count; 1 when absent or not an integer (a bad row
+    must not abort loading every case)."""
+    try:
+        return int(row.get("evidence", 1) or 1)
+    except (TypeError, ValueError, OverflowError):
+        return 1
+
+
 def cases_from_rehearsals(
     path: str | Path | None = None, *, max_cases: int = 10,
 ) -> list[EvalCase]:
@@ -70,12 +79,12 @@ def cases_from_rehearsals(
                     rows.append(d)
     except OSError:
         return []
-    rows.sort(key=lambda r: -int(r.get("evidence", 1) or 1))
+    rows.sort(key=lambda r: -_evidence(r))
     return [
         EvalCase(
             prompt=str(r["prompt"]),
             check=_completed,
-            weight=float(max(1, int(r.get("evidence", 1) or 1))),
+            weight=float(max(1, _evidence(r))),
         )
         for r in rows[:max(1, max_cases)]
     ]
