@@ -54,6 +54,12 @@ def test_card_commits_sensitive_values_without_persisting_them():
     assert card["consequences"]["unresolved_assumptions"]
 
 
+def test_labels_drop_bidirectional_and_zero_width_characters():
+    card = _card(summary="Delete \u202etxt.exe", target_label="report\u200b.pdf")
+    assert "\u202e" not in json.dumps(card, ensure_ascii=False)
+    assert "\u200b" not in json.dumps(card, ensure_ascii=False)
+
+
 def test_tamper_and_authoritative_expiry_fail_closed():
     card = _card(expires_at=200.0)
     tampered = json.loads(json.dumps(card))
