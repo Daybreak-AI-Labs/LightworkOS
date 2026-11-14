@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from .budget import Budget
+from .killswitch import Halted
 from .sandbox.research import (
     ResearchContainerError,
     ResearchContainerRunner,
@@ -581,7 +582,8 @@ def isolation_problems(
 
 def _read_attempts(
     sandbox: ResearchContainerCandidate,
-) -> tuple[list[BoundaryAttempt], bool]:
+) -> tuple[list[BoundaryAttempt], bool, BaseException | None]:
+    """Boundary attempts, whether the audit failed, and any interrupt to re-raise."""
     try:
         reported = sandbox.read_boundary_attempts()
         if (not isinstance(reported, (tuple, list))
@@ -589,9 +591,21 @@ def _read_attempts(
                 or any(not isinstance(value, BoundaryAttempt) for value in reported)):
             raise EvaluationIsolationError(
                 "candidate boundary attempt readback is invalid")
-        return list(reported), False
-    except BaseException:
-        return [BoundaryAttempt("error_message", "audit-unavailable")], True
+        return list(reported), False, None
+    except BaseException as exc:
+        return ([BoundaryAttempt("error_message", "audit-unavailable")], True,
+                exc if _must_propagate(exc) else None)
+
+
+def _must_propagate(error: BaseException | None) -> bool:
+    """Interrupts, exits and the operator halt are recorded, never swallowed."""
+    return error is not None and (isinstance(error, Halted) or not isinstance(error, Exception))
+
+
+def _propagate_interrupt(error: BaseException | None) -> None:
+    """Re-raise an interrupt once the spent query has been finalized."""
+    if _must_propagate(error):
+        raise error
 
 
 def _collect_artifacts(
@@ -757,6 +771,7 @@ class IsolatedEvaluator:
 
         execution = None
         execution_failed = False
+        interrupted: BaseException | None = None
         try:
             with provider_operation_scope(
                 operation_id=f"self-harness.candidate:{operation_digest}",
@@ -765,9 +780,10 @@ class IsolatedEvaluator:
             ):
                 execution = sandbox.run_candidate(
                     payload, environment={}, timeout=float(protocol.timeout_seconds))
-        except BaseException:
+        except BaseException as exc:
             execution_failed = True
-        attempts, audit_failed = _read_attempts(sandbox)
+            interrupted = exc
+        attempts, audit_failed, audit_interrupt = _read_attempts(sandbox)
         execution_failed = execution_failed or audit_failed
         if execution_failed or not isinstance(execution, CandidateExecution):
             receipt = self.ledger.finalize_evaluation(
@@ -775,6 +791,9 @@ class IsolatedEvaluator:
                 public_result={"status": "candidate_error", **receipt_context},
                 denied_attempts=tuple(attempts),
                 actual_cost=permit.declared_cost)
+            # The spent query is recorded; an interrupt still stops the run.
+            _propagate_interrupt(interrupted)
+            _propagate_interrupt(audit_interrupt)
             return IsolatedEvaluationResult(
                 status="candidate_error", accepted=None, artifacts=(),
                 boundary_sha256=boundary_sha256, receipt=receipt)
@@ -837,12 +856,13 @@ class IsolatedEvaluator:
             if (not isinstance(verdict, EvaluatorVerdict)
                     or not isinstance(verdict.accepted, bool)):
                 raise EvaluationIsolationError("evaluator verdict is invalid")
-        except BaseException:
+        except BaseException as exc:
             receipt = self.ledger.finalize_evaluation(
                 permit, outcome="evaluator_error",
                 public_result={"status": "evaluator_error", **receipt_context},
                 denied_attempts=tuple(attempts),
                 actual_cost=permit.declared_cost)
+            _propagate_interrupt(exc)
             return IsolatedEvaluationResult(
                 status="evaluator_error", accepted=None, artifacts=(),
                 boundary_sha256=boundary_sha256, receipt=receipt)
