@@ -38,7 +38,7 @@ def _safe_connector():
         major = int(version("websockets").split(".", 1)[0])
     except (ValueError, TypeError):
         raise RuntimeError("installed websockets version is unsupported") from None
-    if not 12 <= major < 17 or not hasattr(Connect, "handle_redirect"):
+    if not 12 <= major < 18 or not hasattr(Connect, "handle_redirect"):
         raise RuntimeError("installed websockets version cannot enforce redirect policy")
 
     class NoRedirectConnect(Connect):

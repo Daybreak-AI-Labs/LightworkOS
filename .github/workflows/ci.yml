@@ -84,7 +84,7 @@ jobs:
         with:
           python-version: "3.12.13"
       - name: Install ruff
-        run: python -m pip install 'ruff==0.17.3'
+        run: python -m pip install 'ruff==0.17.4'
       - name: Lint
         # Also enforces the C901 cyclomatic-complexity ceiling (max 20, see
         # pyproject [tool.ruff.lint.mccabe]). Functions already over it carry
@@ -566,7 +566,7 @@ jobs:
         # the release-runtime inventory.
         run: |
           set -euo pipefail
-          python -I -m pip install 'cyclonedx-bom==7.6.0'
+          python -I -m pip install 'cyclonedx-bom==8.0.1'
           SBOM_ENV="$RUNNER_TEMP/lightwork-ci-release-runtime"
           python -m venv "$SBOM_ENV"
           "$SBOM_ENV/bin/python" -I -m pip install --upgrade \
@@ -1175,8 +1175,8 @@ jobs:
           # boundary tests need the dashboard package importable.
           pip install -e ./packages/maverick-dashboard
           pip install \
-            'psycopg==3.3.7' 'psycopg-binary==3.3.7' \
-            'psycopg-pool==3.3.3' 'sqlalchemy==2.0.55'
+            'psycopg==3.3.8' 'psycopg-binary==3.3.8' \
+            'psycopg-pool==3.3.3' 'sqlalchemy==2.0.57'
           pip install pytest pytest-asyncio pytest-timeout
           python -m pip check
           python scripts/verify_constraint_closure.py
