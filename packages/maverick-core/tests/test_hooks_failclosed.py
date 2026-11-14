@@ -116,3 +116,67 @@ async def test_hook_env_omits_secrets(tmp_path, monkeypatch):
     # Non-secret vars + the hook metadata still pass through.
     assert "keep-me" in dumped
     assert "MAVERICK_HOOK_EVENT=PostToolUse" in dumped
+
+
+@pytest.mark.asyncio
+async def test_unreadable_config_blocks_guarded_events(monkeypatch):
+    import maverick.config as cfg
+
+    monkeypatch.setattr(cfg, "load_config", dict)
+    monkeypatch.setattr(cfg, "config_source_errors",
+                        lambda **_k: {"config.toml": "parse error"})
+    hooks.load_from_config()
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is False
+    assert await _dispatch(HookEvent.POST_TOOL_USE, tool_name="shell") is True
+
+
+@pytest.mark.asyncio
+async def test_malformed_entry_does_not_drop_later_guard(monkeypatch):
+    import maverick.config as cfg
+
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
+    monkeypatch.setattr(cfg, "load_config", lambda: {"hooks": [
+        {"event": "PostToolUse", "command": "true", "timeout_ms": "5s"},
+        "not-a-table",
+        {"event": "PreToolUse", "matcher": "shell", "command": "/bin/false"},
+    ]})
+    hooks.load_from_config()
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is False
+
+
+@pytest.mark.asyncio
+async def test_shell_hook_gets_extra_and_expands_home_in_arguments(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "gate.py").write_text(
+        "import json, sys\n"
+        "sys.exit(0 if json.load(sys.stdin)['extra'].get('prompt') == 'ok' else 1)\n"
+    )
+    hooks.register(HookEvent.USER_PROMPT_SUBMIT,
+                   f"{shlex.quote(sys.executable)} ~/gate.py")
+    assert await _dispatch(HookEvent.USER_PROMPT_SUBMIT, extra={"prompt": "ok"}) is True
+    assert await _dispatch(HookEvent.USER_PROMPT_SUBMIT, extra={"prompt": "no"}) is False
+
+
+def test_concurrent_ensure_loaded_waits_for_the_first_load(monkeypatch):
+    import asyncio
+    import threading
+
+    started = threading.Event()
+
+    def slow_load():
+        started.set()
+        threading.Event().wait(0.2)
+        hooks.register(HookEvent.PRE_TOOL_USE, lambda _c: False)
+
+    monkeypatch.setattr(hooks, "load_from_config", slow_load)
+    monkeypatch.setattr(hooks, "load_from_entry_points", lambda: None)
+    first = threading.Thread(target=lambda: asyncio.run(hooks.ensure_loaded()))
+    first.start()
+    started.wait(5)
+
+    async def second():
+        await hooks.ensure_loaded()
+        return await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell")
+
+    assert asyncio.run(second()) is False
+    first.join(5)

@@ -40,6 +40,7 @@ import fnmatch
 import logging
 import os
 import shlex
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -123,34 +124,48 @@ def clear() -> None:
     _loaded = False
 
 
+def _config_unavailable(_ctx: HookContext) -> bool:
+    """Blocking stand-in for guard hooks that could not be read."""
+    return False
+
+
 def load_from_config() -> None:
     """Read [[hooks]] entries from ~/.maverick/config.toml and register
     each one. Safe to call multiple times; clear() first if you don't
-    want duplicates."""
-    try:
-        from .config import load_config
-        cfg = load_config()
-    except Exception as e:  # pragma: no cover
-        log.debug("hook config load failed: %s", e)
+    want duplicates.
+
+    An unreadable config source may hold guard hooks, so every blocking
+    event is refused (fail-closed) until the process is restarted with a
+    readable config. A malformed entry is skipped with a warning; the
+    remaining entries still load.
+    """
+    from .config import config_source_errors, load_config
+    cfg = load_config()
+    if config_source_errors(include_tenant=True):
+        log.error(
+            "hooks: config source unreadable; blocking PreToolUse and "
+            "UserPromptSubmit until it is fixed and Lightwork restarts",
+        )
+        register(HookEvent.PRE_TOOL_USE, _config_unavailable)
+        register(HookEvent.USER_PROMPT_SUBMIT, _config_unavailable)
         return
     for entry in cfg.get("hooks", []) or []:
         try:
             event = HookEvent(entry["event"])
-        except (KeyError, ValueError):
-            log.warning("invalid hook event: %s", entry)
+            cmd = entry.get("command")
+            matcher = str(entry.get("matcher", "*"))
+            timeout_ms = int(entry.get("timeout_ms", 5000))
+        except (KeyError, ValueError, TypeError, AttributeError):
+            log.warning("invalid hook entry skipped: %s", entry)
             continue
-        cmd = entry.get("command")
         if not cmd:
             log.warning("hook missing command: %s", entry)
             continue
-        register(
-            event, cmd,
-            matcher=entry.get("matcher", "*"),
-            timeout_ms=int(entry.get("timeout_ms", 5000)),
-        )
+        register(event, cmd, matcher=matcher, timeout_ms=timeout_ms)
 
 
 _loaded = False
+_load_lock = threading.Lock()
 
 
 async def ensure_loaded() -> None:
@@ -169,17 +184,24 @@ async def ensure_loaded() -> None:
     global _loaded
     if _loaded:
         return
-    _loaded = True
-    try:
-        load_from_config()
-    except Exception:  # pragma: no cover -- fail-open per kernel rule 1
-        log.debug("hooks: load_from_config failed", exc_info=True)
-    try:
-        load_from_entry_points()
-    except Exception:  # pragma: no cover
-        log.debug("hooks: load_from_entry_points failed", exc_info=True)
-    import atexit
-    atexit.register(_emit_session_end)
+    # Concurrent callers (dashboard warm-up thread, goal threads) wait for the
+    # first load instead of dispatching against a half-built registry.
+    with _load_lock:
+        if _loaded:
+            return
+        try:
+            load_from_config()
+        except Exception:
+            log.exception("hooks: load_from_config failed; blocking guarded events")
+            register(HookEvent.PRE_TOOL_USE, _config_unavailable)
+            register(HookEvent.USER_PROMPT_SUBMIT, _config_unavailable)
+        try:
+            load_from_entry_points()
+        except Exception:  # pragma: no cover
+            log.warning("hooks: load_from_entry_points failed", exc_info=True)
+        import atexit
+        atexit.register(_emit_session_end)
+        _loaded = True
     await emit(HookEvent.SESSION_START)
 
 
@@ -264,9 +286,10 @@ async def _run_one(spec: HookSpec, ctx: HookContext, *, is_blocking: bool = Fals
         "tool_result": ctx.tool_result,
         "goal_id": ctx.goal_id,
         "agent_role": ctx.agent_role,
-    })
+        "extra": ctx.extra,
+    }, default=str)
     try:
-        cmd = shlex.split(os.path.expanduser(spec.command))
+        cmd = [os.path.expanduser(part) for part in shlex.split(spec.command)]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
