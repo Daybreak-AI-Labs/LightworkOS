@@ -351,11 +351,17 @@ class VoiceChannel(Channel):
             journal = DeliveryJournal()
             row = journal.get(_record_id(self.name, account, identity))
             if row is not None:
-                # An original read never resumes a received, running or unknown
-                # execution. Changed input cannot borrow its retained identity.
+                # An original read never resumes a running or unknown execution.
+                # Changed input cannot borrow its retained identity.
                 material, _ = _payload(message, row["id"])
                 if row["fingerprint"] not in (_digest([material, route]), _earlier_fingerprint(material, route)):
                     raise ValueError("The function identity belongs to a different request.")
+                if row["execution"] == "received":
+                    # Never claimed (its shared activity stripe stayed busy).
+                    # The revision-checked claim still allows one execution.
+                    row = await self.process_message(message, external_id=identity, account=account,
+                                                     authorize=authorize, send=offered, route=route,
+                                                     receipt=row, journal=journal)
             else:
                 row = await self.process_message(message, external_id=identity, account=account,
                                                  authorize=authorize, send=offered, route=route,
