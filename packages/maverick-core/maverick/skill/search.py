@@ -429,7 +429,7 @@ def import_records(
         # anything that isn't a plain kebab skill id up front, before any path
         # is constructed -- the frontmatter-name check inside validate_skill_file
         # runs too late and only inspects the file body, not this stem.
-        if not isinstance(name, str) or not skills_mod._KEBAB_RE.match(name):
+        if not isinstance(name, str) or not skills_mod._KEBAB_RE.fullmatch(name):
             result["rejected"].append(
                 f"{name!r}: invalid skill name (must be kebab-case: a-z, 0-9, hyphens)"
             )

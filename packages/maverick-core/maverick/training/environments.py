@@ -1739,7 +1739,9 @@ def score_output(case: EnvironmentCase, output: str | Mapping[str, Any]) -> Rewa
     }, unordered_fields=unordered)
     matches = sum(
         1 for path, value in expected_leaves.items()
-        if path in candidate_leaves and candidate_leaves[path] == value
+        # Compare canonical JSON, not Python ``==``: True == 1 and False == 0
+        # let ``{"is_dsar": 1}`` pass for an expected ``true``.
+        if path in candidate_leaves and _canonical(candidate_leaves[path]) == _canonical(value)
     )
     correctness = matches / len(expected_leaves) if expected_leaves else 1.0
     extra_leaf_paths = sorted(set(candidate_leaves) - set(expected_leaves))

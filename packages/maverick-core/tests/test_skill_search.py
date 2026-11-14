@@ -156,6 +156,22 @@ class TestHFPull:
         from maverick.skills import validate_skill_file
         assert validate_skill_file(written).ok
 
+    def test_import_rejects_name_with_trailing_newline(self, tmp_path):
+        # "deploy-app\n" passed the kebab check ($ matches before a final
+        # newline), missed the existing deploy-app.md, and installed a second
+        # skill named deploy-app.
+        record = {
+            "description": "an imported skill",
+            "triggers": ["do the imported thing"],
+            "tools_needed": ["shell"],
+            "body": "# Steps\n\n1. Do the imported thing carefully.\n2. Verify it.\n",
+        }
+        assert import_records([{**record, "name": "deploy-app"}], tmp_path)["installed"]
+        result = import_records([{**record, "name": "deploy-app\n"}], tmp_path)
+        assert result["installed"] == []
+        assert any("invalid skill name" in r for r in result["rejected"])
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["deploy-app.md"]
+
     def test_import_rejects_record_with_embedded_secret(self, tmp_path):
         records = [{
             "name": "leaky-skill",
