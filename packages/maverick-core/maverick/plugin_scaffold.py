@@ -81,8 +81,9 @@ repo             = "https://github.com/your-org/{slug}"
 description      = "A {kind} plugin for Lightwork"
 
 [plugin.permissions]
-# Declare what your plugin actually needs. The kernel uses these to
-# warn users on install (and, eventually, to gate at runtime).
+# Declare what your plugin actually needs. The kernel refuses to load
+# the plugin unless each requested permission is granted
+# ([plugins] grant), while permission enforcement is on (the default).
 network     = {network}
 fs_write    = false
 subprocess  = false
@@ -213,7 +214,7 @@ A Lightwork **{kind}** plugin.
 ```bash
 pip install -e .
 # Then add to the kernel allowlist:
-echo '[plugins]\\nenabled = ["{slug}"]' >> ~/.maverick/config.toml
+printf '[plugins]\\nenabled = ["{slug}"]\\n' >> ~/.maverick/config.toml
 ```
 
 ## Run the test
