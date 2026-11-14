@@ -220,3 +220,19 @@ def test_blank_or_padded_secret_answers_keep_or_trim_the_value(monkeypatch):
     monkeypatch.setattr(wizard, "questionary", None)
     monkeypatch.setattr(getpass, "getpass", lambda prompt: "  pasted-value \t")
     assert q_secret("Key") == "pasted-value"
+
+
+def test_resume_reasks_saved_advanced_answers_the_writer_rejects(monkeypatch, tmp_path):
+    _advanced(monkeypatch, tmp_path)
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: False)
+    assert wizard.run() == 0  # stopped before writing; answers saved
+    state = json.loads(wizard.PARTIAL_STATE_PATH.read_text())
+    state["advanced"] = {"spending_workspace_monthly": "abc", "anonymous_logs": True}
+    wizard.PARTIAL_STATE_PATH.write_text(json.dumps(state))
+    asked = []
+    monkeypatch.setattr(wizard, "pick_advanced", lambda: asked.append(1) or {"anonymous_logs": True})
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: prompt.startswith("Write config"))
+    assert wizard.run(resume=True) == 0
+    assert asked == [1]
+    assert "advanced questions again" in wizard.console.file.getvalue()
+    assert config.load_config(wizard.CONFIG_FILE)["privacy"]["anonymous"] is True

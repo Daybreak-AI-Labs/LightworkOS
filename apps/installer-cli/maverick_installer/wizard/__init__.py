@@ -6182,6 +6182,24 @@ def show_compliance_commands(advanced: dict[str, Any]) -> None:
     )
 
 
+def _saved_advanced(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Saved advanced answers, or None when the config writer would reject them.
+
+    A resumed run reuses them without asking, so an answer saved by an older
+    wizard (or edited by hand) is checked here and the step asked again instead
+    of failing the final write."""
+    advanced = state.get("advanced")
+    if not advanced:
+        return None
+    try:
+        _cfg_advanced(advanced, list(state.get("providers") or []))
+    except ValueError as exc:
+        console.print(f"[yellow]A saved advanced setting is not valid: {escape(str(exc))} "
+                      "Answer the advanced questions again; your other answers are kept.[/yellow]")
+        return None
+    return advanced
+
+
 def _run_simple_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
     """Run the contiguous block of single-answer ``state.get(x) or pick_x()``
     steps (safety through advanced), persisting each. Returns the answers."""
@@ -6338,7 +6356,7 @@ def _run_simple_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
     monitoring, monitoring_keys = pick_monitoring()
 
     _announce()
-    advanced = state.get("advanced") or pick_advanced()
+    advanced = _saved_advanced(state) or pick_advanced()
     state["advanced"] = advanced
     _save_partial(state)
 
