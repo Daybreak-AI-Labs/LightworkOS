@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from . import store
 from .approval_resume import prepare_approval_decision
-from .ir import Flow, _contains_high_risk, _is_high_risk_action
+from .ir import Flow, FlowNode, _contains_high_risk, _is_high_risk_action
 from .resume_inputs import prepare_resume_inputs
 from .run_state import STATUS_BUDGET_LIMITED, STATUS_FAILED
 from .transitions import ResumeDecision, decide_resume
@@ -28,24 +28,72 @@ class ResumeAdmission:
     approval_expired: bool
 
 
-def _refuse_retry_past_approval(
-    flow: Flow, prior: store.FlowRun, run_id: str, not_resumable: type[ValueError],
-) -> None:
-    """A retry carries no decision, so it must not re-dispatch a gated effect.
+RETRY_NEEDS_APPROVAL = (
+    "This run stopped at a step that needed approval, and that step itself failed. "
+    "Retrying would send it again without a new review. Start a new run so a "
+    "person can review it again."
+)
 
-    Every high-risk action sits behind an approval.  That approval admitted one
-    dispatch; a retry from failure would otherwise reuse it for a later one.
+
+def _failed_leaves(flow: Flow, frame: object, depth: int = 0) -> list[FlowNode] | None:
+    """The innermost nodes a saved failure frame was executing, or None if unknown.
+
+    Each nested frame names its own graph (``flow_id``) and cursor; a finished
+    concurrent branch has no cursor and contributes nothing.
     """
+    if depth > 32 or not isinstance(frame, dict):
+        return None
+    node = flow.node(frame.get("cursor"))
+    if node is None:
+        return None
+    children = frame.get("children") or {}
+    if not isinstance(children, dict):
+        return None
+    if not children:
+        return [node]
+    graphs = ([node.body] if node.body is not None else []) + list(node.branches)
+    leaves: list[FlowNode] = []
+    for child in children.values():
+        if not isinstance(child, dict):
+            return None
+        if "cursor" in child and child["cursor"] is None:
+            continue
+        matches = [graph for graph in graphs if graph.id == child.get("flow_id")]
+        if not matches:
+            return None
+        for graph in matches:
+            found = _failed_leaves(graph, child, depth + 1)
+            if found is None:
+                return None
+            leaves.extend(found)
+    return leaves
+
+
+def retry_approval_refusal(flow: Flow, prior: store.FlowRun) -> str:
+    """Why a retry from failure would reuse an approval, or "" when it would not.
+
+    Every high-risk action sits behind an approval that admitted one dispatch.
+    A retry carries no decision, so it must not re-send a high-risk action that
+    itself failed.  A hold before dispatch (a budget limit) or a failure of other
+    work inside a gated container resumes where it stopped, without repeating
+    completed items.
+    """
+    if prior.status == STATUS_BUDGET_LIMITED:
+        return ""
     node = flow.node(prior.cursor) if prior.cursor else None
     if node is None:
-        return
-    if _is_high_risk_action(node) or any(
-        _contains_high_risk(sub) for sub in ([node.body] if node.body else []) + list(node.branches)
-    ):
-        raise not_resumable(
-            f"run {run_id!r} stopped at a step that needs approval; "
-            "start a new run so a person can review it again"
+        return ""
+    continuation = prior.continuation if isinstance(prior.continuation, dict) else {}
+    leaves = _failed_leaves(flow, continuation.get("frame")) if continuation else None
+    if leaves is None:
+        # No usable invocation history: judge the whole step, failing closed.
+        risky = _is_high_risk_action(node) or any(
+            _contains_high_risk(graph)
+            for graph in ([node.body] if node.body is not None else []) + list(node.branches)
         )
+    else:
+        risky = any(_is_high_risk_action(leaf) for leaf in leaves)
+    return RETRY_NEEDS_APPROVAL if risky else ""
 
 
 def prepare_saved_resume(
@@ -84,7 +132,9 @@ def prepare_saved_resume(
     resume = {"node_id": prior.cursor, "data": resume_data}
     actor, selected_binding, is_expired = "", "", False
     if retry:
-        _refuse_retry_past_approval(flow, prior, run_id, not_resumable)
+        refusal = retry_approval_refusal(flow, prior)
+        if refusal:
+            raise not_resumable(refusal)
         resume["rerun"] = True
         if prior.continuation:
             resume["continuation"] = prior.continuation

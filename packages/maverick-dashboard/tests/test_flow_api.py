@@ -2883,6 +2883,38 @@ def test_retry_from_failure_resumes_at_failed_node(monkeypatch, tmp_path):
     assert c.post("/api/v1/flows/runs/ry/retry?from_failure=1").status_code == 409
 
 
+def test_retry_of_a_failed_gated_action_is_refused_visibly(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    from maverick.flow import execution, store
+    from maverick_dashboard import automation_queue as aq
+    _reset_aq(monkeypatch, aq)
+    sent = []
+    monkeypatch.setattr(execution, "default_action_runner",
+                        lambda world, sandbox=None, **kwargs:
+                        lambda t, p, d: sent.append(t) or ("sent", 1.0))
+    c = _client()
+    flow = {"id": "fgate", "name": "f", "start": "a", "nodes": [
+        {"id": "a", "kind": "approval", "prompt": "ok?", "next": "b"},
+        {"id": "b", "kind": "action", "tool": "slack_bot", "params": {"text": "x"}},
+    ]}
+    assert c.post("/api/v1/flows", json={"flow": flow}).status_code == 201
+    release = _publish(c, "fgate")
+    published, metadata = store.load_published_bundle("fgate")
+    store.save_run(store.FlowRun(
+        run_id="rg", flow_id="fgate", status="failed", cursor="b", error="refused",
+        definition_digest=metadata["definition_digest"], definition_version=published.version,
+        release_id=release["published_revision"], definition_revision=published.revision,
+        subflow_digests=metadata["subflow_digests"]))
+    r = c.post("/api/v1/flows/runs/rg/retry?from_failure=1")
+    assert r.status_code == 409 and "without a new review" in r.json()["detail"]
+    # A delivery already queued records the reason instead of dropping it.
+    aq.enqueue_flow_resume("fgate", "rg", owner="", from_failure=True)
+    _drain(aq)
+    run = store.load_run("rg")
+    assert run.status == "failed" and "without a new review" in run.error
+    assert sent == []
+
+
 def test_budget_held_run_requires_explicit_larger_allowance_and_retains_work(monkeypatch, tmp_path):
     _isolate(monkeypatch, tmp_path)
     from maverick.flow import execution

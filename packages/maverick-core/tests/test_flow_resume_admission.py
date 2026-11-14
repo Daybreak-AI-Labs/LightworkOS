@@ -69,6 +69,16 @@ def test_retry_from_failure_cannot_reuse_an_approval_for_a_high_risk_action(monk
     prior = store.FlowRun(run_id="run", flow_id="f", status="failed", cursor="pay",
                           continuation={"node_id": "pay"})
     monkeypatch.setattr(store, "load_run", lambda _run_id: prior)
-    with pytest.raises(FlowNotResumable, match="needs approval"):
+    with pytest.raises(FlowNotResumable, match="without a new review"):
         _prepare(flow, from_failure=True)
     assert prior.status == "failed"
+
+
+def test_budget_hold_before_a_gated_action_resumes_with_a_larger_allowance(monkeypatch):
+    gate = FlowNode(id="gate", kind="approval", next="pay")
+    pay = FlowNode(id="pay", kind="action", tool="slack_bot", params={"text": "x"})
+    flow = Flow(id="f", name="Example", start="gate", nodes={"gate": gate, "pay": pay})
+    prior = store.FlowRun(run_id="run", flow_id="f", status="budget_limited", cursor="pay",
+                          cost_dollars=4.0, budget_limit_dollars=5.0)
+    monkeypatch.setattr(store, "load_run", lambda _run_id: prior)
+    assert _prepare(flow, from_failure=True, budget_limit_dollars=6.0).resume["rerun"] is True
