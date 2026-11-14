@@ -27,7 +27,6 @@ Registered alongside ``browser`` when that optional capability is enabled.
 """
 from __future__ import annotations
 
-import json
 import os
 import threading
 from typing import Any

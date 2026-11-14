@@ -93,6 +93,45 @@ def _stopped(reason: str, ran: int) -> str:
     )
 
 
+def _admit_declared_call(agent, name, ran: int) -> str | None:
+    """Refusal for the next declared call (halt, cancel or budget), else ``None``."""
+    from ..budget import BudgetExceeded
+
+    if reason := _stop_reason(agent):
+        return _stopped(reason, ran)
+    try:
+        agent.ctx.budget.record_tool_call()
+    except BudgetExceeded as e:
+        return f"ERROR: budget exhausted before running {name!r}: {e}"
+    return None
+
+
+def _build_script(agent, code: str, declared: list, tool_outputs: dict[str, str]) -> str:
+    """The script to run, or an ``ERROR:``/``INDETERMINATE:`` refusal."""
+    from ..tool_result_stream import ToolOutputLimit, result_bytes
+
+    if reason := _stop_reason(agent):
+        return _stopped(reason, len(declared))
+    # The complete screened outputs as a dict, then the model's code.
+    # json.dumps of a str->str dict is valid Python only without ASCII
+    # escaping: "\ud83d\ude00" would become two lone surrogates in a Python
+    # literal, not the original character.
+    preamble = (
+        "# Injected by code_exec: outputs of the tool_calls you declared,\n"
+        "# keyed by your `as` (or '<name>_<index>'). Read them via tools[...].\n"
+        "tools = " + json.dumps(tool_outputs, ensure_ascii=False) + "\n\n"
+    )
+    script = preamble + code
+    try:
+        result_bytes(script)
+    except ToolOutputLimit:
+        return (
+            "INDETERMINATE: encoded script and complete inputs exceed the 16 MiB byte quota. "
+            "Script withheld; prior calls may have executed, so do not retry blindly."
+        )
+    return script
+
+
 def _run_approved_script(agent, permit, script: str):
     with consume_operation_consent(permit):
         return sandbox_run(agent.ctx.sandbox, ["python3", "-"],
@@ -116,7 +155,6 @@ def code_exec_tool(agent) -> Tool:
                     "over data a single call returns.")
 
         from ..agent import unframe_tool_output
-        from ..budget import BudgetExceeded
         from ..tool_result_stream import (
             MAX_RESULT_BYTES,
             ToolOutputLimit,
@@ -150,12 +188,8 @@ def code_exec_tool(agent) -> Tool:
             if cargs is None:
                 cargs = call.get("input") or {}
             var = str(call.get("as") or f"{name}_{i}")
-            if reason := _stop_reason(agent):
-                return _stopped(reason, i)
-            try:
-                agent.ctx.budget.record_tool_call()
-            except BudgetExceeded as e:
-                return f"ERROR: budget exhausted before running {name!r}: {e}"
+            if refusal := _admit_declared_call(agent, name, i):
+                return refusal
             with execution_output_scope():
                 framed = await agent._run_tool(str(name), cargs)
             value = unframe_tool_output(framed)
@@ -180,26 +214,10 @@ def code_exec_tool(agent) -> Tool:
                 )
             tool_outputs[var] = value
 
-        if reason := _stop_reason(agent):
-            return _stopped(reason, len(declared))
-
-        # 2. Build the script: the complete screened outputs as a dict,
-        # then the model's code. json.dumps of a str->str dict is valid Python
-        # only without ASCII escaping: "\ud83d\ude00" would become two lone
-        # surrogates in a Python literal, not the original character.
-        preamble = (
-            "# Injected by code_exec: outputs of the tool_calls you declared,\n"
-            "# keyed by your `as` (or '<name>_<index>'). Read them via tools[...].\n"
-            "tools = " + json.dumps(tool_outputs, ensure_ascii=False) + "\n\n"
-        )
-        script = preamble + code
-        try:
-            result_bytes(script)
-        except ToolOutputLimit:
-            return (
-                "INDETERMINATE: encoded script and complete inputs exceed the 16 MiB byte quota. "
-                "Script withheld; prior calls may have executed, so do not retry blindly."
-            )
+        # 2. Build the script (complete screened outputs, then the model's code).
+        script = _build_script(agent, code, declared, tool_outputs)
+        if script.startswith(("ERROR:", "INDETERMINATE:")):
+            return script
 
         # 3. Run the script in the sandbox (off the event loop). stdin carries
         # the script to `python3 -`; only its stdout returns to the model.
