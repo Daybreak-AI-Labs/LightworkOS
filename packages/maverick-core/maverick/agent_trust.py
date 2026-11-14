@@ -57,7 +57,7 @@ import os
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # import only for type-checkers/IDEs; never at runtime
@@ -625,6 +625,11 @@ def load_registry(
             log.warning("agent_trust: malformed managed entry; registry is "
                         "empty (fail-closed)")
             return {}
+        config_agent = out.get(agent.id)
+        if config_agent is not None and config_agent.revoked and not agent.revoked:
+            # An operator's ``revoked = true`` in config.toml wins over an
+            # app-managed edit (attenuate, enroll, rotate) of the same agent.
+            agent = replace(agent, revoked=True)
         if agent.id in out or len(out) < _MAX_AGENTS:
             out[agent.id] = agent
     return out

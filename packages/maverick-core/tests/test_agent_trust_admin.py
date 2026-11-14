@@ -102,6 +102,16 @@ def test_managed_overrides_config_entry():
     assert agent_trust.load_registry(cfg)["vega"].max_risk == "high"  # managed wins
 
 
+def test_config_revocation_survives_a_managed_overlay_edit(monkeypatch):
+    from maverick import config
+    cfg = {"agent_trust": {"agents": [{"id": "vega", "max_risk": "high"}]}}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: cfg)
+    agent_trust.attenuate_agent("vega", max_risk="low")       # writes an active overlay
+    cfg["agent_trust"]["agents"][0]["revoked"] = True          # operator revokes in TOML
+    agent = agent_trust.load_registry(cfg)["vega"]
+    assert agent.revoked is True and agent.max_risk == "low"
+
+
 def test_corrupt_managed_store_invalidates_entire_registry():
     """A lost managed revocation must not expose the looser TOML entry."""
     path = agent_trust.managed_path()
