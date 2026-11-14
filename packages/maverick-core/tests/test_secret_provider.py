@@ -37,6 +37,16 @@ def test_file_backend_falls_back_to_env(monkeypatch, tmp_path):
     assert sp.get_secret("ONLY_IN_ENV") == "env-value"
 
 
+def test_an_empty_or_undecodable_secret_file_does_not_mask_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAVERICK_SECRETS_BACKEND", "file")
+    monkeypatch.setenv("MAVERICK_SECRETS_DIR", str(tmp_path))
+    monkeypatch.setenv("MY_TOKEN", "env-value")
+    (tmp_path / "MY_TOKEN").write_text("\n")
+    assert sp.get_secret("MY_TOKEN") == "env-value"
+    (tmp_path / "MY_TOKEN").write_bytes(b"\xff\xfe")
+    assert sp.get_secret("MY_TOKEN") == "env-value"
+
+
 def test_file_backend_lowercase_sibling(monkeypatch, tmp_path):
     (tmp_path / "my_token").write_text("lower")
     monkeypatch.setenv("MAVERICK_SECRETS_BACKEND", "file")

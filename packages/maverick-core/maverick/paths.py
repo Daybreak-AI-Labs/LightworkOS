@@ -395,7 +395,8 @@ def maverick_home() -> Path:
     """The base data dir (``~/.maverick``). NOT tenant-scoped; use
     :func:`data_dir` for tenant-isolated paths. ``MAVERICK_HOME`` may override
     the default for tests and custom deployments."""
-    return Path(os.environ.get("MAVERICK_HOME", "~/.maverick")).expanduser()
+    # An empty value counts as unset: Path("") is the current directory.
+    return Path(os.environ.get("MAVERICK_HOME", "").strip() or "~/.maverick").expanduser()
 
 
 def data_dir(*parts: str, tenant: str | None = "__active__") -> Path:

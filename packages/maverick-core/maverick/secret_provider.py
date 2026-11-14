@@ -112,8 +112,10 @@ def _from_file(name: str) -> str | None:
         path = base / candidate
         try:
             if path.is_file():
-                return path.read_text(encoding="utf-8").rstrip("\r\n")
-        except OSError as e:  # unreadable file: fall through to env
+                value = path.read_text(encoding="utf-8").rstrip("\r\n")
+                # An empty file holds no secret: it must not mask the env value.
+                return value or None
+        except (OSError, UnicodeDecodeError) as e:  # unreadable file: fall through to env
             log.warning("secret file %s unreadable (%s); falling back to env", path, e)
     return None
 
