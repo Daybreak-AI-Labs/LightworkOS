@@ -983,8 +983,11 @@ def _workspace_cache_scope(sandbox: Any) -> str | None:
 
     A local workdir path names one directory on this machine. A remote one
     (SSH, microVM, Modal) only means something on its host, so the host is
-    part of the scope when the backend names one; otherwise the backend
-    instance itself is, so two remote sandboxes never share entries.
+    part of the scope when the backend names one (with the SSH port when its
+    arguments set one); otherwise a random token stored on the backend
+    instance is, so two remote sandboxes never share entries. ``id()`` is not
+    used: ids repeat after garbage collection and across runs, while the
+    output cache persists on disk.
     """
     from ..sandbox.sdk import workdir_is_local
 
@@ -995,7 +998,42 @@ def _workspace_cache_scope(sandbox: Any) -> str | None:
     if workdir_is_local(sandbox):
         return scope
     host = getattr(sandbox, "host", None)
-    return f"{scope}@{host}" if host else f"{scope}@instance-{id(sandbox)}"
+    if host:
+        port = _ssh_port(getattr(sandbox, "ssh_args", None) or ())
+        return f"{scope}@{host}:{port}" if port else f"{scope}@{host}"
+    return f"{scope}@instance-{_instance_cache_token(sandbox)}"
+
+
+def _ssh_port(ssh_args: Any) -> str | None:
+    """The port an SSH argument list selects (``-p N``, ``-pN``, ``-o Port=N``)."""
+    args = [str(a) for a in ssh_args]
+    for i, arg in enumerate(args):
+        nxt = args[i + 1] if i + 1 < len(args) else ""
+        if arg == "-p" and nxt:
+            return nxt
+        if arg.startswith("-p") and len(arg) > 2:
+            return arg[2:]
+        option = nxt if arg == "-o" else (arg[2:] if arg.startswith("-o") else "")
+        key, _, value = option.partition("=")
+        if key.strip().lower() == "port" and value.strip():
+            return value.strip()
+    return None
+
+
+def _instance_cache_token(sandbox: Any) -> str:
+    """A random token kept on ``sandbox`` for the life of the instance. If
+    the instance cannot hold one, a fresh token per call means no sharing."""
+    import secrets
+
+    token = getattr(sandbox, "_maverick_cache_scope_token", None)
+    if isinstance(token, str) and token:
+        return token
+    token = secrets.token_hex(16)
+    try:
+        sandbox._maverick_cache_scope_token = token
+    except (AttributeError, TypeError):
+        pass
+    return token
 
 
 def base_registry(

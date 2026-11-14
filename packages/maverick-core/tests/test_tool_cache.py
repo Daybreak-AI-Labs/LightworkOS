@@ -367,3 +367,29 @@ def test_remote_workspaces_on_different_hosts_have_distinct_cache_scopes():
             self.host = host
 
     assert _workspace_cache_scope(Remote("a.example")) != _workspace_cache_scope(Remote("b.example"))
+
+
+def test_remote_workspace_scope_uses_a_stable_random_token_and_ssh_port():
+    from maverick.tools import _workspace_cache_scope
+
+    class NoHost:
+        workdir_is_local = False
+        workdir = "/ws"
+
+    a, b = NoHost(), NoHost()
+    scope_a = _workspace_cache_scope(a)
+    assert scope_a == _workspace_cache_scope(a)  # stable for the instance
+    assert scope_a != _workspace_cache_scope(b)
+    assert str(id(a)) not in scope_a  # ids repeat after garbage collection
+
+    class Ssh:
+        workdir_is_local = False
+        workdir = "/ws"
+        host = "box.example"
+
+        def __init__(self, ssh_args):
+            self.ssh_args = ssh_args
+
+    assert _workspace_cache_scope(Ssh(["-p", "2222"])) != _workspace_cache_scope(Ssh(["-p", "2223"]))
+    assert _workspace_cache_scope(Ssh(["-o", "Port=2222"])).endswith("@box.example:2222")
+    assert _workspace_cache_scope(Ssh([])).endswith("@box.example")
