@@ -288,7 +288,7 @@ def _translated(request, choices, raws):
                 # A condition the visual flow cannot run as written: say which
                 # repair is needed (the message never echoes the expression)
                 # and refuse the whole batch before anything is saved.
-                if not str(exc).startswith("Imported condition requires repair before execution"):
+                if not str(exc).startswith(("Imported condition requires repair before execution", "n8n import needs repair:")):
                     raise
                 raise HTTPException(422, str(exc) + ". Repair it in the other platform or import "
                                     "instruction drafts only; nothing was saved.") from exc
@@ -612,6 +612,8 @@ def native_call(function):
     except HTTPException:
         raise
     except (ValueError, PermissionError, RecordConflict) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("n8n import needs repair:"):
+            raise HTTPException(422, str(exc)) from exc
         raise HTTPException(409, "The current import, account or saved workflow could not be verified. Read the original record before reviewing another import.") from exc
     except Exception as exc:
         raise HTTPException(503, "Import information is unavailable. Entered work was kept; read the original record if a save was submitted. Nothing repeats automatically.") from exc

@@ -149,6 +149,8 @@ class WorkatoImporter:
                 if len(items) < 100:
                     break
                 page += 1
+            else:
+                raise ImporterError("Workato import reached the 10,000 recipe page limit; the inventory may be incomplete")
         return out
 
     def translate(self, raw: dict[str, Any]) -> ImportedAutomation:
