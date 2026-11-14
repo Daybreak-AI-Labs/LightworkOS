@@ -2693,7 +2693,8 @@ def get_autonomy() -> dict:
         return max(0.0, min(1.0, v))
 
     return {
-        "enable": coerce_bool(cfg.get("enable"), False),
+        "enable": (cfg.get("enable") is not None
+                   and coerce_bool(cfg.get("enable"), True)),  # protective: unrecognized keeps it on
         # Plan confirmation: show the plan and wait for a person before a task's first
         # action with an outside effect. Independent of ``enable``; off by default.
         "confirm_plan": cfg.get("confirm_plan", False) is True,
@@ -3277,7 +3278,8 @@ def get_memory_guard() -> dict:
     ``MAVERICK_MEMORY_GUARD=1``."""
     cfg = load_config().get("memory_guard", {})
     return {
-        "enable": coerce_bool(cfg.get("enable"), False),
+        "enable": (cfg.get("enable") is not None
+                   and coerce_bool(cfg.get("enable"), True)),  # protective: unrecognized keeps it on
         "min_recall_trust": int(cfg.get("min_recall_trust", 1)),
     }
 

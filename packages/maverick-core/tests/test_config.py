@@ -1722,12 +1722,16 @@ def test_string_switches_parse_as_booleans_not_truthiness(monkeypatch):
         "capabilities": {"code_exec": "false", "computer_use": "no"},
         "autonomy": {"enable": "off"},
         "skills": {"require_signed": "maybe"},
+        "memory_guard": {"enable": "enabled"},
+        "governed_connectors": {"enable": "y"},
     })
     caps = config_module.get_capabilities()
     assert caps["code_exec"] is False and caps["computer_use"] is False
     assert config_module.get_autonomy()["enable"] is False
     # An unrecognized value on a protective switch keeps the protection on.
     assert config_module.get_skills()["require_signed"] is True
+    assert config_module.get_memory_guard()["enable"] is True
+    assert config_module.get_governed_connectors()["enable"] is False  # adds tools: stays off
 
 
 def test_malformed_dashboard_reset_metadata_is_a_source_error_not_a_crash(tmp_path, monkeypatch):
