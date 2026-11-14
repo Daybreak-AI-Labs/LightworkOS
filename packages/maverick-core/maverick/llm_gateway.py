@@ -848,16 +848,63 @@ def _transform_text_leaves(
         total = 0
         for key, item in value.items():
             key_text = str(key)
-            transformed, count = _transform_text_leaves(
-                item,
-                text_keys=text_keys,
-                inherited_text=inherited_text or key_text in text_keys,
-                depth=depth + 1,
-            )
+            if not inherited_text and key_text in _TOOL_SCHEMA_KEYS:
+                transformed, count = _redact_schema(item, depth=depth + 1)
+            else:
+                transformed, count = _transform_text_leaves(
+                    item,
+                    text_keys=text_keys,
+                    inherited_text=inherited_text or key_text in text_keys,
+                    depth=depth + 1,
+                )
             out[key_text] = transformed
             total += count
         return out, total
     return value, 0
+
+
+_TOOL_SCHEMA_KEYS = frozenset({"input_schema", "parameters"})
+_SCHEMA_TEXT_KEYS = frozenset({"description", "title"})
+
+
+def _redact_schema(value: object, *, depth: int) -> tuple[object, int]:
+    """Redact a tool schema's free text only.
+
+    Only a string whose own key is ``description`` or ``title`` is rewritten.
+    Keys directly under ``properties`` are property names (a property may be
+    called ``title`` or ``content``), and enum/const/default/examples values
+    are the tool's contract, so neither is touched.
+    """
+    if depth > 32:
+        raise LLMGatewayError("the request nesting exceeds the gateway limit")
+    if isinstance(value, list):
+        out_list: list[object] = []
+        total = 0
+        for item in value:
+            transformed, count = _redact_schema(item, depth=depth + 1)
+            out_list.append(transformed)
+            total += count
+        return out_list, total
+    if not isinstance(value, Mapping):
+        return value, 0
+    out: dict[str, object] = {}
+    total = 0
+    for key, item in value.items():
+        key_text = str(key)
+        if key_text in _SCHEMA_TEXT_KEYS and isinstance(item, str):
+            transformed, count = _redact_text(item)
+        elif key_text == "properties" and isinstance(item, Mapping):
+            props: dict[str, object] = {}
+            count = 0
+            for name, prop in item.items():
+                props[str(name)], n = _redact_schema(prop, depth=depth + 2)
+                count += n
+            transformed = props
+        else:
+            transformed, count = _redact_schema(item, depth=depth + 1)
+        out[key_text] = transformed
+        total += count
+    return out, total
 
 
 def _redact_prompt(body: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
@@ -1467,22 +1514,25 @@ def _handle_completion(  # noqa: C901 - the request boundary is deliberately lin
         )
     usage = _usage_for_provider(provider, payload)
     response_redactions = 0
+    withheld: str | None = None
     try:
         response = _json_copy(payload)
         if settings["redact_completions"]:
             response, response_redactions = _redact_response(response)
+    except _ToolArgumentsWithheld as exc:
+        # A valid response with known usage that must not be relayed: settle
+        # it like any completed call, then refuse with the same non-retried
+        # status as screened content (403), so SDK retries do not pay again.
+        withheld, response = str(exc), {}
     except LLMGatewayError as exc:
         # The upstream effect is known but an unredacted response is not safe
-        # to relay.  Keep the reservation and report an explicit outage, or
-        # (sensitive tool-call arguments) a withheld response.
-        withheld = isinstance(exc, _ToolArgumentsWithheld)
+        # to relay.  Keep the reservation and report an explicit outage.
         _record_call(
-            caller=caller, team=team, model=model,
-            status="response_withheld" if withheld else "response_redaction_unavailable",
+            caller=caller, team=team, model=model, status="response_redaction_unavailable",
             prompt_sha256=prompt_sha, usage=None, now=current,
             redaction_count=prompt_redactions,
         )
-        return _provider_error(provider, 502 if withheld else 503, str(exc))
+        return _provider_error(provider, 503, str(exc))
     _TEAM_BUDGET.reconcile(
         reservation,
         prompt_tokens=usage["prompt_tokens"] if usage is not None else None,
@@ -1493,10 +1543,13 @@ def _handle_completion(  # noqa: C901 - the request boundary is deliberately lin
         now=current,
     )
     _record_call(
-        caller=caller, team=team, model=model, status="ok",
+        caller=caller, team=team, model=model,
+        status="response_withheld" if withheld else "ok",
         prompt_sha256=prompt_sha, usage=usage, now=current,
         redaction_count=prompt_redactions + response_redactions,
     )
+    if withheld:
+        return _provider_error(provider, 403, withheld)
     return 200, response
 
 

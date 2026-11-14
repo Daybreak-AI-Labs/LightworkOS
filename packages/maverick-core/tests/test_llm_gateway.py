@@ -327,7 +327,7 @@ def test_redaction_keeps_tool_contracts_and_withholds_sensitive_tool_arguments(t
     reply = {"choices": [{"message": {"role": "assistant", "tool_calls": [{
         "type": "function",
         "function": {"name": "send", "arguments": '{"to": "bob@example.com"}'}}]}}],
-        "usage": {}}
+        "usage": {"prompt_tokens": 12, "completion_tokens": 3}}
 
     def upstream(url, headers, body):
         forwarded.append(body)
@@ -335,16 +335,25 @@ def test_redaction_keeps_tool_contracts_and_withholds_sensitive_tool_arguments(t
 
     tools = [{"type": "function", "function": {
         "name": "ping", "description": "Ping 10.0.0.1 for the user",
-        "parameters": {"type": "object", "properties": {"host": {
-            "type": "string", "default": "10.0.0.1"}}}}}]
+        "parameters": {"type": "object", "properties": {
+            "host": {"type": "string", "default": "10.0.0.1"},
+            "title": {"type": "string", "default": "10.0.0.1",
+                      "description": "Write to ops@example.com"},
+            "content": {"enum": ["ops@example.com"]}}}}}]
     status, payload = gw.handle_chat_completion(
         _body(tools=tools), caller_token="gw-secret", upstream=upstream)
     sent = forwarded[0]["tools"][0]["function"]
-    assert sent["parameters"]["properties"]["host"]["default"] == "10.0.0.1"
+    props = sent["parameters"]["properties"]
+    assert props["host"]["default"] == props["title"]["default"] == "10.0.0.1"
+    assert props["content"]["enum"] == ["ops@example.com"]
+    assert "ops@example.com" not in props["title"]["description"]
     assert "10.0.0.1" not in sent["description"]
-    assert status == 502
+    assert status == 403  # not retried by SDKs, like screened content
     assert "withheld" in payload["error"]["message"]
     assert "bob@example.com" not in str(payload)
+    row = gw.list_callers(limit=1)[0]
+    assert row["last_status"] == "response_withheld"
+    assert (row["prompt_tokens"], row["completion_tokens"]) == (12, 3)
 
 
 def test_otel_spans_land_in_the_caller_ledger():
