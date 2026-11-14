@@ -150,3 +150,6 @@ def test_hunk_lines_that_look_like_headers_are_not_paths():
         "+++ b/../x\n"
     )
     assert _files_in_patch(patch) == ["q.sql", "../x"]
+    # A form feed inside an added line is not a line break for git.
+    sneaky = patch.replace("-old\n", "-old\x0c@@ -1,9 +1,9 @@\n")
+    assert _files_in_patch(sneaky) == ["q.sql", "../x"]

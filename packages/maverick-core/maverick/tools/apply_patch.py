@@ -65,16 +65,20 @@ def _header_paths(text: str) -> list[str]:
     (as ``git apply`` does)."""
     found: list[str] = []
     old = new = 0
-    for line in text.splitlines():
+    # git splits a patch on "\n" only; str.splitlines() would also split on
+    # form feeds and Unicode separators inside a line and desynchronise the
+    # hunk counts from git's.
+    for raw in text.split("\n"):
         if old > 0 or new > 0:
-            if line.startswith("\\"):  # "\ No newline at end of file"
+            if raw.startswith("\\"):  # "\ No newline at end of file"
                 continue
-            tag = line[:1]
+            tag = raw[:1]
             if tag in ("-", " ", ""):
                 old -= 1
             if tag in ("+", " ", ""):
                 new -= 1
             continue
+        line = raw.removesuffix("\r")  # CRLF patch: strip only on header lines
         if hunk := _HUNK_RE.match(line):
             old = int(hunk.group(1) or 1)
             new = int(hunk.group(2) or 1)
