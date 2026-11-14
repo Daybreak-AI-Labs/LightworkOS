@@ -14,6 +14,7 @@ import math
 import re
 import secrets
 from typing import Any
+from urllib.parse import urlsplit
 
 try:
     import tomllib  # Python 3.11+
@@ -21,8 +22,8 @@ except ModuleNotFoundError:  # pragma: no cover -- Py 3.10 CI matrix
     import tomli as tomllib  # type: ignore[no-redef]
 
 from .. import models as catalog
-from ._common import _csv_list, _emit_kv, _safe_float, _safe_int, _toml_str
-from ._seams import _q_checkbox, _q_confirm, _q_select, _q_text, config_file, console
+from ._common import _csv_list, _emit_kv, _safe_float, _safe_int, _toml_key, _toml_str
+from ._seams import _q_checkbox, _q_confirm, _q_secret, _q_select, _q_text, config_file, console
 
 
 def _prior_consent_salt() -> str:
@@ -142,18 +143,66 @@ def _pick_action_recipe_lineage() -> dict[str, Any]:
     if out["require_action_recipe_lineage"] and not enabled:
         console.print("[yellow]Lineage is required but disabled; learned recipes remain blocked until configured.[/yellow]")
     if enabled:
-        issuer = _q_text("Stable action-evidence issuer ID (letters/digits/._:-, max 128; blank keeps signing unavailable)",
-                         default="").strip()
-        if issuer and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", issuer):
-            raise ValueError("action-evidence issuer must be a bounded ASCII identifier, not a URL")
+        while True:
+            issuer = _q_text(
+                "  Stable action-evidence issuer ID (letters/digits/._:-, max 128; blank keeps signing unavailable)",
+                default="",
+            ).strip()
+            if not issuer or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", issuer):
+                break
+            console.print("[yellow]Use a bounded ASCII issuer identifier, not a URL.[/yellow]")
         out["action_evidence_issuer"] = issuer
-        raw = _q_text("Revoked action-evidence key IDs (comma-separated 16-character lowercase hex; blank = none)",
-                      default="").strip()
-        revoked = [part.strip() for part in raw.split(",")] if raw else []
-        if any(not re.fullmatch(r"[0-9a-f]{16}", key) for key in revoked) or len(set(revoked)) != len(revoked):
-            raise ValueError("revoked action-evidence keys require unique 16-character lowercase hex IDs")
+        while True:
+            raw_revoked = _q_text(
+                "  Revoked action-evidence key IDs (comma-separated 16-character lowercase hex; blank = none)",
+                default="",
+            ).strip()
+            revoked = [part.strip() for part in raw_revoked.split(",")] if raw_revoked else []
+            if all(re.fullmatch(r"[0-9a-f]{16}", key) for key in revoked) and len(set(revoked)) == len(revoked):
+                break
+            console.print("[yellow]Use unique 16-character lowercase hex key IDs.[/yellow]")
         out["action_evidence_revoked_keys"] = revoked
     return out
+
+
+def _secure_or_loopback_url(value: str) -> bool:
+    """Allow HTTPS or exact loopback HTTP origins, never hostname prefixes."""
+    if "\\" in value or any(character.isspace() or ord(character) < 32 for character in value):
+        return False
+    try:
+        url = urlsplit(value)
+        # Accessing port also rejects malformed/out-of-range ports.
+        _ = url.port
+        return bool(
+            url.hostname and url.username is None and url.password is None
+            and (url.scheme == "https" or (
+                url.scheme == "http" and url.hostname in {"localhost", "127.0.0.1", "::1"}
+            ))
+        )
+    except ValueError:
+        return False
+
+
+def _require_secure_url(value: str, label: str) -> None:
+    if not _secure_or_loopback_url(value):
+        raise ValueError(f"{label} requires an HTTPS URL (loopback HTTP allowed).")
+
+
+def _pick_oidc_value(prompt: str, *, url: bool = False) -> str:
+    while True:
+        value = _q_text(prompt, default="").strip()
+        if value and (not url or _secure_or_loopback_url(value)):
+            return value
+        console.print("[yellow]Enter an HTTPS URL (HTTP is allowed only on loopback).[/yellow]" if url
+                      else "[yellow]This value is required when OIDC is enabled.[/yellow]")
+
+
+def _pick_oidc_secret(prompt: str, *, minimum: int = 1) -> str:
+    while True:
+        value = _q_secret(prompt).strip()
+        if len(value) >= minimum:
+            return value
+        console.print(f"[yellow]Enter a secret with at least {minimum} characters.[/yellow]")
 
 
 def pick_oidc() -> dict[str, Any]:
@@ -174,18 +223,13 @@ def pick_oidc() -> dict[str, Any]:
     )
     if not _q_confirm("Enable OIDC SSO token verification?", default=False):
         return {"enabled": False}
-    issuer = _q_text(
-        "  Issuer URL (the IdP's 'iss', e.g. https://example.okta.com)",
-        default="",
-    ).strip()
-    audience = _q_text(
-        "  Audience (your app's client_id / API audience)",
-        default="",
-    ).strip()
-    jwks_uri = _q_text(
-        "  JWKS URI (the IdP's signing-key endpoint, e.g. https://example.okta.com/oauth2/v1/keys)",
-        default="",
-    ).strip()
+    issuer = _pick_oidc_value(
+        "  Issuer URL (the IdP's 'iss', e.g. https://example.okta.com)", url=True,
+    )
+    audience = _pick_oidc_value("  Audience (your app's client_id / API audience)")
+    jwks_uri = _pick_oidc_value(
+        "  JWKS URI (the IdP's signing-key endpoint, e.g. https://example.okta.com/oauth2/v1/keys)", url=True,
+    )
     result: dict[str, Any] = {
         "enabled": True,
         "issuer": issuer,
@@ -205,22 +249,15 @@ def pick_oidc() -> dict[str, Any]:
         "default.[/dim]"
     )
     if _q_confirm("  Also enable the built-in browser login flow?", default=False):
-        client_id = _q_text(
-            "    OAuth client_id (this dashboard's registered client)",
-            default="",
-        ).strip()
-        client_secret = _q_text(
-            "    OAuth client_secret",
-            default="",
-        ).strip()
-        redirect_uri = _q_text(
-            "    Redirect URI (must be <dashboard-url>/auth/callback)",
-            default="",
-        ).strip()
-        session_secret = _q_text(
-            "    Session-signing secret (a long random string; keep it secret)",
-            default="",
-        ).strip()
+        client_id = _pick_oidc_value("    OAuth client_id (this dashboard's registered client)")
+        client_secret = _pick_oidc_secret("    OAuth client_secret")
+        redirect_uri = _pick_oidc_value(
+            "    Redirect URI (must be <dashboard-url>/auth/callback)", url=True,
+        )
+        session_secret = _pick_oidc_secret(
+            "    Session-signing secret (a random string of at least 32 characters; keep it secret)",
+            minimum=32,
+        )
         result.update(
             {
                 "client_id": client_id,
@@ -536,6 +573,10 @@ def pick_advanced() -> dict[str, Any]:
         **_pick_runtime_toggles(),
     }
     _drop_self_connect_without_connections(advanced)
+    if advanced.get("encrypt_per_tenant") and not advanced.get("encrypt_at_rest"):
+        advanced["encrypt_per_tenant"] = False
+        console.print("[yellow]Per-tenant encryption keys require at-rest encryption. "
+                      "That answer was not saved. Turn on at-rest encryption to use them.[/yellow]")
     # The governed sidecar is an extension of the external-agent boundary: its
     # clients authenticate through per-agent MCP credentials and then inherit
     # the same trust/revocation/control-plane posture. Keep the deployment
@@ -1464,6 +1505,37 @@ def _pick_workflow_and_extension_toggles() -> dict[str, Any]:
     }
 
 
+def _monthly_limit(raw: Any) -> float:
+    text = str(raw).strip().removeprefix("$").strip()
+    if not re.fullmatch(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?", text):
+        raise ValueError("Enter a nonnegative dollar amount, such as $500 or 1,000.00.")
+    value = float(text.replace(",", ""))
+    if not math.isfinite(value) or value > 1_000_000_000:
+        raise ValueError("Enter a dollar amount no greater than 1,000,000,000.")
+    return value
+
+
+def _pick_monthly_limit(prompt: str, *, default: str = "0") -> float:
+    while True:
+        try:
+            return _monthly_limit(_q_text(prompt, default=default))
+        except ValueError as exc:
+            console.print(str(exc), style="yellow")
+
+
+def _pick_client_id() -> str:
+    while True:
+        value = _q_text(
+            "Client/tenant id for THIS deployment (one Lightwork per enterprise client). "
+            "All data is isolated under this id; leave blank only for a personal/single-user install. "
+            "Use 1–64 lowercase letters/digits/._-, starting with a letter or digit (e.g. acme-corp).",
+            default="",
+        ).strip()
+        if not value or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", value):
+            return value
+        console.print("[yellow]Enter a valid lowercase client/tenant id.[/yellow]")
+
+
 def _pick_enterprise_toggles() -> dict[str, Any]:
     """Capabilities, quotas, spending, tenancy, enterprise, agent trust and the control plane."""
     return {
@@ -1485,12 +1557,12 @@ def _pick_enterprise_toggles() -> dict[str, Any]:
             "(chargeback / cost governance across runs, beyond the per-run budget).",
             default=False,
         ),
-        "spending_workspace_monthly": _q_text(
+        "spending_workspace_monthly": _pick_monthly_limit(
             "Monthly spending limit for the whole workspace, in dollars "
             "(0 = no limit; you can change it any time in Admin > Spending limits)",
             default="0",
         ),
-        "spending_person_monthly": _q_text(
+        "spending_person_monthly": _pick_monthly_limit(
             "Monthly spending limit for each person, in dollars "
             "(0 = no limit; you can set different limits per person in the dashboard)",
             default="0",
@@ -1512,13 +1584,7 @@ def _pick_enterprise_toggles() -> dict[str, Any]:
             "is kept separate — recommended for multi-user servers.",
             default=False,
         ),
-        "client_id": _q_text(
-            "Client/tenant id for THIS deployment (one Lightwork per enterprise "
-            "client). All data (world DB, audit, memory, fleet) is isolated under "
-            "this id — leave blank only for a personal/single-user install. "
-            'Letters/digits/._- e.g. "acme-corp".',
-            default="",
-        ),
+        "client_id": _pick_client_id(),
         "enterprise": _q_confirm(
             "Enterprise mode (private/sensitive data)? Pin every LLM call to a "
             "local/self-hosted model so data never leaves your boundary, gate "
@@ -1664,12 +1730,6 @@ def _pick_data_protection_toggles() -> dict[str, Any]:
 def _pick_runtime_toggles() -> dict[str, Any]:
     """Tool exposure, shield updates, eBPF, local runtime, caches, effort and hedging."""
     return {
-        "deferred_tools": _q_confirm(
-            "Deferred tool loading? Show the model a small core toolset plus a "
-            "find_tools search tool, loading the long tail (80+ integrations, MCP) "
-            "on demand. Big context savings when many tools are enabled.",
-            default=False,
-        ),
         "shield_updates": _q_confirm(
             "Pull signed shield-rule updates? Fetches a publisher-signed rules "
             "bundle ([shield] update_url + update_pubkey; Ed25519-verified, "
@@ -1857,12 +1917,12 @@ def _ask_self_harness_followups(advanced: dict[str, Any]) -> None:
         if corpus:
             advanced["self_harness_eval_corpus"] = corpus
             # A live A/B spends real provider dollars unattended, so cap it by
-            # default; explicit 0 opts out.
+            # default; 0 retains the risk-limited $5 ceiling.
             advanced["self_harness_eval_budget"] = max(
                 0.0,
                 _safe_float(
                     _q_text(
-                        "    Spend cap per auto-evaluated cycle, in dollars (0 = uncapped)",
+                        "    Spend cap per auto-evaluated cycle, in dollars (0 = the risk-limited $5 ceiling)",
                         default="5",
                     ),
                     default=5.0,
@@ -2151,12 +2211,7 @@ def pick_governed_mcp_sidecar() -> dict[str, Any]:
         "  Upstream Streamable HTTP MCP URL (https; loopback http allowed for development)",
         default="",
     ).strip()
-    if not (
-        upstream.startswith("https://")
-        or upstream.startswith("http://localhost")
-        or upstream.startswith("http://127.0.0.1")
-        or upstream.startswith("http://[::1]")
-    ):
+    if not _secure_or_loopback_url(upstream):
         console.print(
             "[yellow]No valid sidecar URL supplied; leaving the sidecar disabled."
             "[/yellow]"
@@ -2501,7 +2556,7 @@ def _cfg_advanced_verification_and_rewards(advanced: dict[str, Any]) -> list[str
         lines.append("")
         lines.append("[search]")
         lines.append("enable = true")
-    if advanced.get("structured_verifier_off") or advanced.get("audit_rewards"):
+    if advanced.get("structured_verifier_off") or "audit_rewards" in advanced:
         lines.append("")
         lines.append("[reasoning_reward]")
         if advanced.get("structured_verifier_off"):
@@ -2509,11 +2564,11 @@ def _cfg_advanced_verification_and_rewards(advanced: dict[str, Any]) -> list[str
             lines.append("# scoring + safety veto); disable it to fall back to the scalar")
             lines.append("# verifier verdict (maverick.reasoning_reward).")
             lines.append("enable = false")
-        if advanced.get("audit_rewards"):
+        if "audit_rewards" in advanced:
             lines.append("# Sign each structured reward into the tamper-evident audit")
             lines.append("# chain (provable learning) -- the evidence the system learns")
             lines.append("# from, not just a mutable verdict. Enabled by default.")
-            lines.append("audit_rewards = true")
+            _emit_kv(lines, "audit_rewards", bool(advanced["audit_rewards"]))
     if advanced.get("jit_rl_off"):
         lines.append("")
         lines.append("[jit_rl]")
@@ -2751,10 +2806,8 @@ def _cfg_advanced_quotas_and_tenancy(advanced: dict[str, Any]) -> list[str]:
         # dimension. The kernel also reads MAVERICK_QUOTA_* env overrides.
         lines.append("max_dollars_per_day = 25.0")
         lines.append("max_tokens_per_day = 5000000")
-    _workspace_limit = _safe_float(advanced.get("spending_workspace_monthly") or 0, default=0.0)
-    _person_limit = _safe_float(advanced.get("spending_person_monthly") or 0, default=0.0)
-    _workspace_limit = _workspace_limit if math.isfinite(_workspace_limit) else 0.0
-    _person_limit = _person_limit if math.isfinite(_person_limit) else 0.0
+    _workspace_limit = _monthly_limit(advanced.get("spending_workspace_monthly", 0))
+    _person_limit = _monthly_limit(advanced.get("spending_person_monthly", 0))
     _alert_at = _spending_alert_at(advanced.get("spending_alert_at"))
     _min_runs = _typical_cost_min_runs(advanced.get("typical_cost_min_runs"))
     if _workspace_limit > 0 or _person_limit > 0 or _alert_at is not None or _min_runs is not None:
@@ -2782,7 +2835,7 @@ def _cfg_advanced_quotas_and_tenancy(advanced: dict[str, Any]) -> list[str]:
     if _client_id:
         lines.append("")
         lines.append("[client]")
-        lines.append(f'id = "{_client_id}"')
+        _emit_kv(lines, "id", _client_id)
         # Enforced: refuse to start unbound so this client's data can never land
         # in the shared root. Also set MAVERICK_CLIENT_ID in the service unit.
         lines.append("enforce = true")
@@ -3259,6 +3312,7 @@ def _cfg_advanced_external_agents_and_memory(advanced: dict[str, Any]) -> list[s
             lines.append("mint_approval = true")
     sidecar = advanced.get("mcp_sidecar")
     if isinstance(sidecar, dict) and sidecar.get("enable") is True:
+        _require_secure_url(str(sidecar.get("upstream_url", "")), "The MCP sidecar")
         # The wizard only emits a closed reviewed manifest.  It never writes an
         # upstream bearer value, broad CORS origin, or arbitrary forwarded
         # header; those are hand-managed deployment controls if needed.
@@ -3287,7 +3341,7 @@ def _cfg_advanced_external_agents_and_memory(advanced: dict[str, Any]) -> list[s
                 ):
                     continue
                 lines.append("")
-                lines.append(f"[mcp_sidecar.tools.{name}]")
+                lines.append(f"[mcp_sidecar.tools.{_toml_key(name)}]")
                 _emit_kv(lines, "risk", spec.get("risk", "high"))
                 _emit_kv(
                     lines,
@@ -3463,8 +3517,6 @@ def _cfg_advanced_runtime_and_tools(advanced: dict[str, Any], providers: list[st
         lines.append("[latency]")
         lines.append("hedge_ms = 1500")
     tool_lines: list[str] = []
-    if advanced.get("deferred_tools"):
-        tool_lines.append("deferred_loading = true")
     if advanced.get("tool_exposure") == "full":
         tool_lines.append('exposure = "full"')
     if advanced.get("output_cache"):
@@ -3508,6 +3560,17 @@ def _cfg_advanced_oidc(advanced: dict[str, Any]) -> list[str]:
     lines: list[str] = []
     oidc = advanced.get("oidc") or {}
     if isinstance(oidc, dict) and oidc.get("enabled"):
+        for key in ("issuer", "jwks_uri"):
+            _require_secure_url(str(oidc.get(key, "")), f"OIDC {key}")
+        if not (isinstance(oidc.get("audience"), str) and oidc["audience"].strip()):
+            raise ValueError("Enabled OIDC requires an audience.")
+        browser_fields = ("client_id", "client_secret", "redirect_uri", "session_secret")
+        if any(oidc.get(key) for key in browser_fields) and not (
+            all(isinstance(oidc.get(key), str) and oidc[key].strip() for key in browser_fields)
+            and _secure_or_loopback_url(str(oidc["redirect_uri"]))
+            and len(str(oidc["session_secret"]).strip()) >= 32
+        ):
+            raise ValueError("OIDC browser login requires all fields and a session secret of at least 32 characters.")
         # SSO ID-token verification for `maverick serve`. Its own table
         # (written once), so no duplicate-[auth.oidc] bug. The kernel reads
         # it via maverick.oidc.oidc_enabled() / load_oidc_config().
