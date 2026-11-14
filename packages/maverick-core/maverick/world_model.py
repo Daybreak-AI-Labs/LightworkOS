@@ -1,4 +1,4 @@
-"""Persistent world model. SQLite with FTS5 + per-connection WAL.
+"""Persistent world model. SQLite + per-connection WAL.
 
 Reliability:
   - PRAGMA journal_mode=WAL so the agent process (writer) and dashboard
@@ -171,8 +171,8 @@ CREATE TABLE IF NOT EXISTS signoffs (
 
 -- v18 artifacts: versioned, kind-tagged deliverable artifacts a goal produces
 -- (markdown / code / table / text), distinct from the single goal.result blob.
--- Re-emitting the same (goal_id, title) appends a new version; title + content
--- are encrypted at rest like other agent output. The render kind drives how the
+-- Re-emitting the same (goal_id, title) appends a new version; content is
+-- encrypted at rest like other agent output (the title is stored in plaintext). The render kind drives how the
 -- dashboard presents it.
 CREATE TABLE IF NOT EXISTS artifacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -987,7 +987,7 @@ def _dec_field(text: str | None, *, at_rest: bool | None = None,
         embedded = bound_str_context(text)
         if embedded is not None and embedded != context:
             log.error("at-rest: withholding a sealed value bound to %s read from %s "
-                      "(moved between columns or records)", embedded, context)
+                      "(moved between columns)", embedded, context)
             return _UNSEALED_WITHHELD
         if embedded is None and is_sealed_str(text) and _unbound_is_tampering():
             log.error("at-rest: withholding an unbound sealed value read from %s "
@@ -1072,7 +1072,7 @@ def _dec_fields(texts: list[str | None],
             embedded = bound_str_context(text)
             if embedded is not None and embedded != want:
                 log.error("at-rest: withholding a sealed value bound to %s read from %s "
-                          "(moved between columns or records)", embedded, want)
+                          "(moved between columns)", embedded, want)
                 out.append(_UNSEALED_WITHHELD)
                 continue
             if embedded is None and is_sealed_str(text) and _unbound_is_tampering():

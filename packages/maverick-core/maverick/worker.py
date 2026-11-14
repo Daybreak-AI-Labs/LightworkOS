@@ -19,7 +19,7 @@ Built-in handlers:
 Custom handlers are registered via :meth:`Worker.register`.
 
 CLI entry: ``maverick worker [--db PATH] [--idle-sleep 2.0]``
-(wired in cli.py when shipped; this module just exposes the loop).
+(this module just exposes the loop).
 """
 from __future__ import annotations
 

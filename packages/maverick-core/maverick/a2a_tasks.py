@@ -1052,8 +1052,10 @@ class TaskEngine:
         Two accepted credentials: the shared operator bearer
         (``MAVERICK_A2A_TOKEN``) and a per-caller ``[agent_trust] a2a_token``
         (which also establishes per-caller identity, see ``principal_for``).
-        Bearer required unless ``MAVERICK_A2A_ALLOW_UNAUTHENTICATED`` and no
-        token of either kind is configured."""
+        Bearer required unless ``MAVERICK_A2A_ALLOW_UNAUTHENTICATED`` is on, no
+        shared token is configured and the request presents no bearer
+        (configured per-caller tokens do not by themselves refuse an anonymous
+        request)."""
         env_token = str(_a2a_value("MAVERICK_A2A_TOKEN", "token", "") or "").strip()
         given = ""
         if authorization and authorization.startswith("Bearer "):
@@ -1123,7 +1125,8 @@ class TaskEngine:
 
     @staticmethod
     def _tenant_key() -> str:
-        """Resolve the request tenant, failing closed if policy is unreadable."""
+        """Resolve the request tenant (``""`` when none is bound); an error
+        while resolving it refuses the request."""
         try:
             from .paths import current_tenant_id
 

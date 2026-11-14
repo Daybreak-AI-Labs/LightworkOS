@@ -16,10 +16,14 @@ opt-out cannot override. Existing installs are safe to leave on -- reads are
 plaintext-tolerant, so rows written before it was enabled are returned unchanged
 until rewritten (``maverick encryption migrate`` seals them eagerly).
 
-Key resolution (first match wins):
-  1. ``MAVERICK_ENCRYPTION_KEY`` — a 32-byte key as hex or base64, so an operator
+Key resolution for sealing (first match wins):
+  1. the newest key in the rotation keyring ``~/.maverick/keys/at_rest.d/``,
+     once ``maverick encryption rotate`` has created one (refused while a key
+     is injected, so an injected key is never moved onto disk);
+  2. ``MAVERICK_ENCRYPTION_KEY`` — a 32-byte key as hex or base64, so an operator
      can inject a KMS-derived key without it ever touching disk.
-  2. ``~/.maverick/keys/at_rest.key`` — generated on first use, ``chmod 600``.
+  3. ``~/.maverick/keys/at_rest.key`` — generated on first seal, ``chmod 600``
+     (a read never generates it).
 
 Every Postgres governed authority additionally requires the injected key plus
 ``MAVERICK_ENCRYPTION_KEY_DIGEST=sha256:<full digest>``—including an explicitly
@@ -368,7 +372,7 @@ def deployment_at_rest_enabled(
 
 
 def per_tenant_at_rest() -> bool:
-    """Per-tenant envelope encryption (default: on in enterprise mode, else off).
+    """Per-tenant envelope encryption (default: off).
 
     When on **and** at-rest is enabled, new seals use the *current tenant's* own
     data key (:mod:`maverick.tenant.kms`) instead of the single process-wide key,
