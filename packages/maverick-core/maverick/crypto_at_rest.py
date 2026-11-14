@@ -1139,8 +1139,10 @@ def unseal_bound(blob: bytes, context: str,
     kind, keyid = body[:1], body[1:1 + _KEYID_BYTES]
     nonce = body[1 + _KEYID_BYTES:1 + _KEYID_BYTES + _NONCE_BYTES]
     fleet = _FORCE_EXTERNAL_FLEET_KEY.get()
-    if kind == b"T" and (fleet or _FORCE_DEPLOYMENT_KEY.get()):
-        raise EncryptionUnavailable("shared authority refuses tenant-envelope ciphertext")
+    # A shared key scope never writes kind T now, but earlier releases ignored
+    # the scope and sealed under the tenant's data key. Such a blob still opens
+    # only with the current tenant's key and tenant-bound AAD below, so data of
+    # another tenant fails authentication here as anywhere else.
     tenant = None if kind == b"D" else current_tenant_id_strict()
     cache_key = ("bound:" + ("fleet:" if fleet else "") + kind.decode("ascii", "replace") + ":" + (tenant or ""), keyid)
     cipher = key_cache.get(cache_key) if key_cache is not None else None

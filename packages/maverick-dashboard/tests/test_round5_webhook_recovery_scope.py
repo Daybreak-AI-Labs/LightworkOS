@@ -42,8 +42,8 @@ def test_existing_tenant_recovery_is_authenticated_before_migration(monkeypatch,
     with tenant_scope(tenant="alpha"):
         legacy = crypto.seal_bound(json.dumps(row).encode(), recovery._binding(row["id"]))
         atomic_write_bytes(recovery._path(row["id"]), legacy)
-        with crypto.deployment_key_scope(), pytest.raises(crypto.EncryptionUnavailable):
-            crypto.unseal_bound(legacy, recovery._binding(row["id"]))
+        with crypto.deployment_key_scope():
+            assert json.loads(crypto.unseal_bound(legacy, recovery._binding(row["id"]))) == row
     with tenant_scope(tenant="beta"), pytest.raises(crypto.EncryptionUnavailable):
         recovery._load(row["id"])
     assert recovery._path(row["id"]).read_bytes() == legacy
