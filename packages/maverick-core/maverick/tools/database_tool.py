@@ -86,7 +86,15 @@ _TOKEN_RE = re.compile(r"[a-zA-Z_]+")
 _SELECT_EFFECT_RE = re.compile(
     r"\b(?:into|for\s+(?:no\s+key\s+)?update|lock\s+in\s+share\s+mode|"
     r"pg_advisory_(?:xact_)?lock|pg_try_advisory_(?:xact_)?lock|nextval|setval|"
-    r"get_lock|release_lock|sleep|benchmark|lo_import|lo_export)\b",
+    r"get_lock|release_lock|\w*sleep|benchmark|lo_\w+|dblink\w*|"
+    r"pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_read_\w+|"
+    r"pg_ls_\w+|set_config|load_file)\b",
+    re.IGNORECASE,
+)
+# MySQL's DESC/DESCRIBE is also EXPLAIN (``DESC ANALYZE DELETE ...`` runs the
+# DELETE), so only the plain "describe one table" form counts as a read.
+_DESCRIBE_TABLE_RE = re.compile(
+    r"^\s*desc(?:ribe)?\s+[\w.`\"\[\]]+(?:\s+[\w`\"%]+)?\s*;?\s*$",
     re.IGNORECASE,
 )
 
@@ -143,7 +151,11 @@ def _is_read_sql(sql: str) -> bool:
     # Gate those known forms. Governed connector execution treats *all* SQL as
     # consequential because a generic lexical parser cannot prove stored or
     # volatile functions side-effect-free across dialects.
-    return keyword != "select" or _SELECT_EFFECT_RE.search(sql) is None
+    # VALUES (setval(...)) has the same effects, so every read keyword is
+    # checked, not only SELECT.
+    if keyword in ("desc", "describe") and not _DESCRIBE_TABLE_RE.match(sql):
+        return False
+    return _SELECT_EFFECT_RE.search(sql) is None
 
 
 def _database_allow_url_arg_enabled() -> bool:

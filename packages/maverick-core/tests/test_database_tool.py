@@ -80,6 +80,12 @@ def test_select_forms_with_known_side_effects_need_confirm(monkeypatch):
         "SELECT * FROM accounts FOR UPDATE",
         "SELECT GET_LOCK('nightly', 30)",
         "SELECT nextval('invoice_seq')",
+        # Effects behind VALUES, DESC-as-EXPLAIN and underscore-prefixed names.
+        "VALUES (setval('orders_id_seq', 1))",
+        "select pg_sleep(100000)",
+        "DESC ANALYZE DELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id",
+        "SELECT pg_terminate_backend(123)",
+        "SELECT load_file('/etc/passwd')",
     ):
         assert "DRY RUN" in database_tool().fn({"op": "query", "sql": sql}), sql
 
