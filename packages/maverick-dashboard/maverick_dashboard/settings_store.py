@@ -2301,10 +2301,11 @@ def set_flow_autonomy(*, auto_evolve: bool | None = None,
 
     Kept OFF the blanket ``set_learning`` list on purpose: autonomously rewriting
     a live workflow is a heavier consequence than the passive learning that button
-    controls, so it gets its own explicit opt-in. ``auto_apply`` only takes effect
-    while ``auto_evolve`` is on (the forward arrow needs the revert safety net);
-    only the fields passed are changed. An env var (``MAVERICK_FLOWS_AUTO``) still
-    overrides the overlay if a deployment set one."""
+    controls, so it gets its own explicit opt-in. Automatic proposal application
+    is retired: ``auto_apply`` is retained for compatibility but applies nothing;
+    proposals require human review. Only the fields passed are changed, except
+    ``auto_apply`` is cleared while ``auto_evolve`` is off. An env var
+    (``MAVERICK_FLOWS_AUTO``) still overrides the overlay if a deployment set one."""
     with _locked():
         data = _load_overlay_for_update()
         flows = data.setdefault("flows", {})

@@ -66,6 +66,8 @@ def _env_name(word: str, upper: int = 127) -> str:
 
 _ID = r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}"
 _PROVIDER_FIELD = r"[A-Za-z_][A-Za-z0-9_]{0,127}"
+# Accepted reference syntax does not imply a built-in resolver backend.
+# Privacy-rights sources need a deployment-installed resolver for non-env refs.
 _KEY_REF = r"(?:env|vault|secret):[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}"
 _WORKSPACE = r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,126}[A-Za-z0-9_-])?"
 
@@ -1001,9 +1003,10 @@ def _rights_rows(S) -> tuple:
               pattern=_optional(pattern), max_length=300, weaker="change",
               warning=f"Requests will go to a different {name} address."),
             S(section, "credential_ref", f"{name} sign-in key location",
-              "Where the sign-in key is kept, written as env, vault or secret, a colon and a "
-              "name in capitals that includes the word RIGHTS. It is stored sealed and never "
-              "shown again.", "secret", _P, "", sr, subgroup=sub,
+              "Where the sign-in key is kept: env: followed by a name in capitals that "
+              "includes RIGHTS. The built-in resolver supports only env:. The vault: and "
+              "secret: forms require your deployment to install its own credential resolver. "
+              "The reference is stored sealed and never shown again.", "secret", _P, "", sr, subgroup=sub,
               pattern=r"(?:env|vault|secret):" + _env_name("RIGHTS", 127), max_length=140),
             S(section, "capabilities", f"What Lightwork may do in {name}",
               "The actions allowed in this system.", "multiselect", _P, [], sr, subgroup=sub,

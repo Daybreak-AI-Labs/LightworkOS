@@ -129,7 +129,8 @@
   </section>
   <section class="panel">
     <h2>Result</h2>
-    <pre class="pro-output" id="pro-output" aria-live="polite">No request made.</pre>
+    <p id="pro-output-status" role="status" aria-live="polite"></p>
+    <pre class="pro-output" id="pro-output">No request made.</pre>
   </section>
 </div>
 
@@ -143,6 +144,7 @@
   var confirmation = document.getElementById("pro-confirm");
   var confirmationPanel = document.getElementById("pro-confirm-panel");
   var output = document.getElementById("pro-output");
+  var outputStatus = document.getElementById("pro-output-status");
   var highImpact = new Set([
     "identity-evidence", "legal-hold", "retention-gate",
     "destructive-approve", "callback-claim", "callback-fail", "callback-ack",
@@ -152,6 +154,7 @@
 
   function show(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    outputStatus.textContent = typeof value === "string" ? value : "Request completed. Review the result below.";
   }
   // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
   function requestProblem(status, detail) {
@@ -183,6 +186,7 @@
     });
   }
   async function run(method, path, payload) {
+    outputStatus.textContent = "Completing the request…";
     var options = {method: method, headers: {"Accept": "application/json"}};
     if (method !== "GET") {
       options.headers["Content-Type"] = "application/json";
