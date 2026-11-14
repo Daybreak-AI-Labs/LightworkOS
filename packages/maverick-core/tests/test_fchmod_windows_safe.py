@@ -27,7 +27,13 @@ def test_sealing_atomic_write_survives_no_fchmod(_no_fchmod, tmp_path):
 
 def test_learning_cache_save_survives_no_fchmod(_no_fchmod, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    from contextlib import nullcontext
+
+    from maverick.cache import learning
     from maverick.cache.learning import LearningCache
+    # The cross-process lock takes its os.name == "nt" branch on Windows,
+    # which never calls fchmod; this POSIX simulation would reach the other.
+    monkeypatch.setattr(learning, "cross_process_lock", lambda _path: nullcontext())
     cache = LearningCache(path=tmp_path / "lc.json")
     cache.put("task-x", "result-y", verified_by="verifier:t-1")
     assert (tmp_path / "lc.json").exists()

@@ -46,13 +46,15 @@ import string
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..config import env_flag
 from ..file_lock import (
     atomic_read_text,
     atomic_write_text,
+    cross_process_lock,
     ensure_private_directory,
     ensure_private_file,
 )
@@ -143,6 +145,15 @@ class LearningCache:
             log.warning("learning cache: ignoring unreadable %s (%s)", self.path, exc)
         return {}
 
+    @contextmanager
+    def _synced(self) -> Iterator[None]:
+        """Hold the thread and cross-process locks and reload from disk, so a
+        read-modify-write starts from what other processes have saved instead
+        of overwriting their entries with this instance's stale copy."""
+        with self._lock, cross_process_lock(self.path):
+            self._entries = self._load()
+            yield
+
     def _save_locked(self) -> None:
         """Atomic write (temp + rename), 0600 — entries may be sensitive."""
         try:
@@ -213,7 +224,7 @@ class LearningCache:
             entry.update(content_version=1, goal_id=source_goal_id, owner=source_owner)
             if not _source_current(entry, source_owner):
                 raise ValueError("Learning cache source authority is unavailable")
-        with self._lock:
+        with self._synced():
             if bound_source and not _source_current(entry, source_owner):
                 raise ValueError("Learning cache source authority changed before saving")
             self._entries[key] = entry
@@ -230,7 +241,7 @@ class LearningCache:
         """
         key = task_key(task)
         now = float(self._clock())
-        with self._lock:
+        with self._synced():
             entry = self._entries.get(key)
             if entry is None:
                 self._misses += 1
@@ -257,7 +268,7 @@ class LearningCache:
     def invalidate(self, task: str) -> bool:
         """Drop ``task``'s entry (e.g. the fact changed). True if one existed."""
         key = task_key(task)
-        with self._lock:
+        with self._synced():
             existed = self._entries.pop(key, None) is not None
             if existed:
                 self._save_locked()
@@ -266,12 +277,13 @@ class LearningCache:
     def prune(self) -> int:
         """Drop expired entries and enforce the LRU cap; returns entries removed."""
         now = float(self._clock())
-        with self._lock:
+        with self._synced():
             from .eviction import is_expired
             before = len(self._entries)
             self._entries = {
                 k: e for k, e in self._entries.items()
-                if not is_expired(now, e.get("expires_at", 0.0))
+                if type(expiry := e.get("expires_at", 0.0)) in (int, float)
+                and math.isfinite(expiry) and not is_expired(now, expiry)
             }
             self._evict_locked()
             removed = before - len(self._entries)

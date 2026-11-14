@@ -42,6 +42,31 @@ def test_persists_across_instances_with_0600(tmp_path, now):
     assert second.get("Repo build command")["result"] == "make build"
 
 
+def test_two_instances_on_one_file_keep_each_others_entries(tmp_path, now):
+    # Each instance loaded the file once and rewrote it whole, so the second
+    # writer (or a cache hit in a stale one) erased the first one's entries.
+    path = tmp_path / "lc.json"
+    a = lc.LearningCache(path, clock=lambda: now["t"])
+    b = lc.LearningCache(path, clock=lambda: now["t"])
+    a.put("task one", "r1", verified_by="verifier:g1")
+    b.put("task two", "r2", verified_by="verifier:g2")
+    assert a.get("task one") is not None
+    fresh = lc.LearningCache(path, clock=lambda: now["t"])
+    assert fresh.get("task one")["result"] == "r1"
+    assert fresh.get("task two")["result"] == "r2"
+
+
+def test_prune_drops_an_entry_with_a_non_numeric_expiry(tmp_path, now):
+    # get() already treated such an entry as expired; prune() raised ValueError.
+    import json
+    path = tmp_path / "lc.json"
+    lc.LearningCache(path, clock=lambda: now["t"]).put("t", "r", verified_by="v:1")
+    raw = json.loads(path.read_text())
+    next(iter(raw["entries"].values()))["expires_at"] = "soon"
+    path.write_text(json.dumps(raw))
+    assert lc.LearningCache(path, clock=lambda: now["t"]).prune() == 1
+
+
 def test_temp_file_is_restrictive_before_replace(tmp_path, now, monkeypatch):
     import maverick.file_lock as file_lock
 
