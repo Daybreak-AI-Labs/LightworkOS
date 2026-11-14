@@ -279,6 +279,28 @@ def test_status_owner_scoped_across_peers():
     assert theirs == {"status": "unknown", "result": ""}
 
 
+def test_status_result_is_screened_when_trust_plane_is_engaged(monkeypatch):
+    """A delegated run's result leaves the boundary through GoalStatus, so an
+    engaged trust plane redacts secrets in it and withholds a blocked one."""
+    from maverick import agent_trust
+
+    svc = _service()
+    token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"  # pragma: allowlist secret
+    out = svc.call("DelegateGoal", {
+        "goal_title": f"echo {token}", "correlation_id": "cs",
+        "auth_token": "tok"})
+    assert out["accepted"] is True
+    monkeypatch.setattr(agent_trust, "load_trust_state", lambda: (True, {}))
+    monkeypatch.setattr(federation, "_shield_block", lambda text: None)
+    redacted = svc.call("GoalStatus", {"goal_id": out["goal_id"], "auth_token": "tok"})
+    assert redacted["status"] == "done"
+    assert token not in redacted["result"] and "REDACTED" in redacted["result"]
+
+    monkeypatch.setattr(federation, "_shield_block", lambda text: "exfiltration")
+    blocked = svc.call("GoalStatus", {"goal_id": out["goal_id"], "auth_token": "tok"})
+    assert blocked["result"] == "result withheld: blocked by the safety screen (exfiltration)"
+
+
 # ---- capability narrowing on accept ----------------------------------------
 
 
