@@ -30,7 +30,7 @@ const SUMMARY = {
 };
 const CHOICES = { canaries: false, twin_record: true, decision_classes: ["wire_funds"], recorded_goals: [{ id: 7, title: "Pay March invoices", status: "done" }], people: [{ value: "user:amy", label: "Amy" }] };
 
-async function fixture({ confirm = true, down = false, markup = html } = {}) {
+async function fixture({ confirm = true, down = false, markup = html, summary = SUMMARY } = {}) {
   const dom = new JSDOM(markup, { url: "https://lightwork.example/immune", runScripts: "outside-only" });
   const { window } = dom;
   const calls = [];
@@ -42,7 +42,7 @@ async function fixture({ confirm = true, down = false, markup = html } = {}) {
   window.fetch = async (url, options = {}) => {
     calls.push({ url, ...options });
     if (down && url.endsWith("/summary")) return json({ detail: "unavailable" }, 503);
-    if (url.endsWith("/summary")) return json(SUMMARY);
+    if (url.endsWith("/summary")) return json(summary);
     if (url.endsWith("/choices")) return json(CHOICES);
     if (url.endsWith("/settings")) return json({ canaries: true, twin_record: true });
     if (options.method === "DELETE") return json({ deleted: true });
@@ -65,6 +65,14 @@ test("summary renders with task titles, names and plain labels", async (t) => {
   assert.match(ui.doc.getElementById("ic-twin-rows").textContent, /93%/);
   assert.equal(ui.doc.getElementById("ic-drill-person").options.length, 2);
   assert.doesNotMatch(ui.doc.body.textContent, /user:amy|data:sql_query/);
+});
+
+test("unavailable data-flow records do not claim that nothing left", async (t) => {
+  const ui = await fixture({ summary: { ...SUMMARY, ifc: { available: false, mode: "block", events: 0, recent: [] } } });
+  t.after(() => ui.window.close());
+  const table = ui.doc.getElementById("ic-ifc-rows").textContent;
+  assert.match(table, /not available right now, so this page cannot say whether any reached a tool that sends it outside/);
+  assert.doesNotMatch(table, /No sensitive data has reached/);
 });
 
 test("turning reviewer tests on asks first and saves the switch", async (t) => {
