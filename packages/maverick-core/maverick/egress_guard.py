@@ -568,8 +568,9 @@ class _PatchOnImport:
 
     ``find_spec`` delegates to the remaining finders for the real spec, then
     wraps that spec's ``exec_module`` so the patch lands immediately after the
-    module body runs. The loader instance is created per-spec, so setting the
-    attribute here does not leak into unrelated imports.
+    module body runs. A loader instance can be shared between modules
+    (``zipimport`` keeps one per archive), so the wrapper stays on that loader
+    and passes any other module straight to the real ``exec_module``.
     """
 
     __maverick_egress_guard_import_hook__ = True
@@ -595,6 +596,11 @@ class _PatchOnImport:
         real_exec = spec.loader.exec_module
 
         def exec_module(module, _real=real_exec, _name=fullname):
+            if getattr(module, "__name__", None) != _name:
+                # A loader can be shared (zipimport keeps one per archive), so
+                # this wrapper stays on it: other modules load untouched.
+                _real(module)
+                return
             # Reload executes into the existing module object. Mark readiness
             # unavailable before that object can expose freshly defined,
             # unwrapped classes to another thread.

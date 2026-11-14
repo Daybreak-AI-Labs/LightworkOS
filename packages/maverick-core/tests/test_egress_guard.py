@@ -1121,6 +1121,52 @@ else:
     assert out.stdout.strip() == "blocked"
 
 
+def test_a_shared_zipimport_loader_still_imports_other_modules() -> None:
+    """zipimport keeps one loader per archive; wrapping it for httpx2 must not
+    turn the next plain import from the same archive into a refusal."""
+    import subprocess
+    import sys
+
+    script = """
+import os
+import pathlib
+import sys
+import tempfile
+import zipfile
+
+archive = pathlib.Path(tempfile.mkdtemp()) / "bundle.zip"
+with zipfile.ZipFile(archive, "w") as bundle:
+    bundle.writestr("httpx2.py",
+        "class Client:\\n"
+        "    def _transport_for_url(self, url): return object()\\n"
+        "    def _send_single_request(self, request): return 'network'\\n"
+        "class AsyncClient:\\n"
+        "    def _transport_for_url(self, url): return object()\\n"
+        "    async def _send_single_request(self, request): return 'network'\\n")
+    bundle.writestr("othermod.py", "VALUE = 1\\n")
+sys.path.insert(0, str(archive))
+os.environ["MAVERICK_ENTERPRISE"] = "1"
+import maverick
+import httpx2
+import othermod
+assert othermod.VALUE == 1
+from maverick.enterprise import EgressBlocked
+request = type("Request", (), {"url": "https://api.example.com/x"})()
+try:
+    httpx2.Client()._send_single_request(request)
+except EgressBlocked:
+    print("blocked")
+"""
+    out = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "blocked"
+
+
 @pytest.mark.parametrize("client_name", ("httpx", "httpx2"))
 def test_reloading_a_client_family_rearms_both_module_generations(
     client_name,
