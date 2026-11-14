@@ -476,6 +476,15 @@ class SidecarCallBudget:
 
     def reserve(self, principal: str) -> BudgetDecision:
         limit = self._config.max_calls_for(principal)
+        if limit <= 0 and principal in dict(self._config.principal_max_calls):
+            # A per-principal 0 cuts that principal off; only the global 0
+            # means "no budget configured".
+            return BudgetDecision(
+                False,
+                "budget_exhausted",
+                "this principal's governed MCP call budget is set to 0, so its calls are refused",
+                remaining=0,
+            )
         if limit <= 0:
             return BudgetDecision(True, "budget_disabled", "no call budget configured")
         now = float(self._clock())
@@ -660,6 +669,9 @@ def _validated_upstream_response(message: Any, request_id: Any) -> dict[str, Any
     return message
 
 
+_SSE_LINE_END = re.compile(r"\r\n|\r|\n")
+
+
 def _read_sse_response(chunks, request_id: Any) -> dict[str, Any]:
     """Decode SSE incrementally through the matching final JSON-RPC frame."""
     import codecs
@@ -677,11 +689,13 @@ def _read_sse_response(chunks, request_id: Any) -> dict[str, Any]:
                     raise SidecarUpstreamError("upstream MCP response exceeds the byte cap")
                 total += len(chunk)
                 pending += decoder.decode(chunk)
+            pos = 0  # Scan by offset and slice once per chunk, not per line.
             while True:
-                boundary = re.search(r"\r\n|\r|\n", pending)
+                boundary = _SSE_LINE_END.search(pending, pos)
                 if boundary is None or (not finished and boundary.group() == "\r" and boundary.end() == len(pending)):
+                    pending = pending[pos:]
                     break  # A split CRLF must remain one line ending.
-                line, pending = pending[:boundary.start()], pending[boundary.end():]
+                line, pos = pending[pos:boundary.start()], boundary.end()
                 if line:
                     if line.startswith("data:"):
                         value = line[5:]
@@ -1249,6 +1263,10 @@ def build_app(gateway: GovernedMCPGateway):
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - process shell
     del argv
+    from maverick.deployment import require_enterprise_or_die
+
+    # Same start-up preflight as the stdio and HTTP MCP entry points.
+    require_enterprise_or_die()
     gateway = build_gateway_from_config()
     try:
         import uvicorn

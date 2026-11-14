@@ -707,10 +707,13 @@ class MCPServer:
         required = self._shield_required()
         if not required:
             return None
+        # ensure_ascii=False: \uXXXX escapes would hide full-width or other
+        # non-ASCII text from the scanner's normalization.
         payload = json.dumps(
             {"tool": tool_name, "arguments": arguments},
             default=str,
             sort_keys=True,
+            ensure_ascii=False,
         )
         reasons = self._shield_scan_reason(
             payload,
@@ -887,7 +890,7 @@ class MCPServer:
                 structured = None
             if structured is not None:
                 blocked = self._shield_block_or_none(
-                    json.dumps(structured, default=str, sort_keys=True)
+                    json.dumps(structured, default=str, sort_keys=True, ensure_ascii=False)
                 )
                 if blocked is not None:
                     return blocked
