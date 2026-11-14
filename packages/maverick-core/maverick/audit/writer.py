@@ -904,8 +904,12 @@ def _redact_event(payload: dict[str, Any]) -> dict[str, Any]:
         return redacted_payload
     if not anon:
         return redacted_payload
+    # The row is written as JSON anyway; normalise to that form first so a
+    # non-string dict key (which JSON writes as a string) does not trip the
+    # anonymiser and drop an otherwise valid row.
+    normalised = json.loads(json.dumps(redacted_payload, default=str))
     try:
-        return anonymize_dict(redacted_payload)
+        return anonymize_dict(normalised)
     # failure-policy: fail_closed
     except Exception as e:
         # Anonymous mode is on: writing the identifiable payload would be the

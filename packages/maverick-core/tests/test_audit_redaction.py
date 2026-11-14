@@ -165,3 +165,15 @@ def test_redaction_covers_tuples_and_dict_keys_and_anon_fails_closed(monkeypatch
                                 payload={"title": "Jane Patient"})) is False
     assert "Jane Patient" not in "".join(
         p.read_text() for p in (tmp_path / "b").glob("*.ndjson"))
+
+
+def test_anonymous_mode_keeps_rows_with_non_string_dict_keys(monkeypatch, tmp_path: Path):
+    from maverick.audit.events import AuditEvent, EventKind
+    from maverick.audit.writer import AuditLog
+
+    monkeypatch.setenv("MAVERICK_ANON", "1")
+    al = AuditLog(audit_dir=tmp_path)
+    assert al.record(AuditEvent(ts=1.0, kind=EventKind.TOOL_RESULT,
+                                payload={"counts": {1: "a", 2: "b"}})) is True
+    row = _read_first(next(tmp_path.glob("*.ndjson")))
+    assert set(row["counts"]) == {"1", "2"}
