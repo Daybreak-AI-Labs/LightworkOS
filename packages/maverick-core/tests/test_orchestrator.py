@@ -512,3 +512,39 @@ def test_persisted_prompt_text_is_redacted_before_it_is_cut():
     text = "x" * 990 + " key " + key
     out = _sanitize_persisted_prompt_text(text, max_chars=1000)
     assert "AKIA" not in out and len(out) <= 1000
+
+
+@pytest.mark.asyncio
+async def test_unbillable_enrichment_call_stops_the_goal_as_blocked(
+    tmp_path: Path, fake_llm, make_llm_response, monkeypatch,
+):
+    # Skill synthesis makes a paid call before the agent loop. A call whose
+    # usage cannot be billed must stop the run, not be skipped as enrichment.
+    from maverick import self_learning
+    from maverick.budget import UsageAccountingError
+    from maverick.skill import synthesis
+
+    monkeypatch.setattr(self_learning, "provider_egress_enabled", lambda: True)
+    monkeypatch.setattr(synthesis, "enabled", lambda: True)
+    calls = []
+    real = fake_llm.complete_async
+
+    async def unbillable_synthesis(*a, **k):
+        if k.get("system") != synthesis._SYSTEM:
+            return await real(*a, **k)
+        calls.append(1)
+        raise UsageAccountingError("usage missing from the provider response")
+
+    monkeypatch.setattr(fake_llm, "complete_async", unbillable_synthesis)
+    fake_llm.scripted = [make_llm_response(text="FINAL: the answer is 42"),
+                         make_llm_response(text='{"confidence": 0.95, "accepts": true, '
+                                                '"critique": "ok", "issues": []}'),
+                         make_llm_response(text="FINAL: (no skill)")]
+    world = WorldModel(path=tmp_path / "world.db")
+    gid = world.create_goal("compute the answer", "trivial")
+
+    out = await run_goal(llm=fake_llm, world=world, budget=Budget(max_dollars=1.0), goal_id=gid,
+                         sandbox=LocalBackend(workdir=tmp_path), max_depth=1)
+
+    assert calls and "usage accounting" in out
+    assert world.get_goal(gid).status == "blocked"

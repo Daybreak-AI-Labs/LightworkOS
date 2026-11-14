@@ -1859,6 +1859,8 @@ async def preflight(
         return acquired
 
     if provider_egress_enabled():
+        from .budget import BudgetExceeded, UsageAccountingError
+
         try:
             from .llm import model_for_role
             resp = await llm.complete_async(
@@ -1868,6 +1870,8 @@ async def preflight(
                 model=model_for_role("summarizer"),
             )
             needs = _parse_needs(resp.text or "")
+        except (BudgetExceeded, UsageAccountingError):
+            raise  # a budget or accounting stop ends the run, not just preflight
         except Exception as e:  # pragma: no cover -- preflight never blocks a run
             log.debug("self_learning preflight analysis skipped: %s", e)
             return acquired

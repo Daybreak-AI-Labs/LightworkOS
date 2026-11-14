@@ -1511,9 +1511,11 @@ class _RunLifecycle:
         if error is not None:
             cancelled = isinstance(error, asyncio.CancelledError)
             allowance_stop = isinstance(error, BudgetExceeded)
-            if cancelled or allowance_stop:
+            accounting_stop = isinstance(error, UsageAccountingError)
+            if cancelled or allowance_stop or accounting_stop:
                 self.summary = (
                     cancellation_message(error) if cancelled
+                    else _usage_accounting_message(str(error), self.goal_id) if accounting_stop
                     else _budget_stop_message(self.budget, self.goal_id, error)
                 )
                 self.outcome = "interrupted"
@@ -2942,6 +2944,11 @@ async def _run_goal_accounted(
     except BudgetExceeded as exc:
         error = exc
         return _budget_stop_message(budget, goal_id, exc)
+    except UsageAccountingError as exc:
+        # A paid call outside the agent loop could not be billed: stop and
+        # mark the goal blocked, as the in-loop path does.
+        error = exc
+        return _usage_accounting_message(str(exc), goal_id)
     except GoalCancelled as exc:
         error = exc
         return cancellation_message(exc)
