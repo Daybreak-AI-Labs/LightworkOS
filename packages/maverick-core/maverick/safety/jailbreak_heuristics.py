@@ -1,17 +1,19 @@
 """Heuristic jailbreak / prompt-injection scorer.
 
 Returns a 0..1 score for how much an input looks like a jailbreak.
-Pure regex; no ML deps. The real shield does better work; this is
-the floor we guarantee even when shield isn't installed.
+Weighted rules and bounded base64 decoding; no ML deps. The real shield does
+better work; this is the floor we guarantee even when shield isn't installed.
 
 Each pattern carries a weight. The final score is sigmoid(sum) so
 heavy hits dominate but multiple light ones still add up.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 
@@ -248,8 +250,8 @@ def _hit(p: _Pat, text: str) -> bool:
     return p.then is None or p.then.search(text, m.end()) is not None
 
 
-def score_text(text: str) -> tuple[float, list[str]]:
-    """Return (score in [0,1], list of matched pattern names)."""
+def _score_plain(text: str) -> tuple[float, list[str]]:
+    """Apply the original rules without decoding another layer."""
     if not text:
         return 0.0, []
     text = _squeeze_whitespace(text)
@@ -263,6 +265,51 @@ def score_text(text: str) -> tuple[float, list[str]]:
     # ~0.73, two medium hits yield similar. Below-threshold noise stays
     # under 0.5.
     score = 1.0 / (1.0 + math.exp(-(raw - 1.0)))
+    return score, matched
+
+
+_BASE64_RUN = re.compile(r"[A-Za-z0-9+/_=-]+")
+_MAX_BASE64_CHARS = 8192
+_MAX_DECODED_BYTES = 6144
+
+
+def _decoded_base64(text: str) -> Iterator[str]:
+    """Yield bounded UTF-8 candidates, ignoring binary and oversized runs.
+
+    Matching a complete run before checking its offsets avoids copying large
+    image payloads or decoding arbitrary windows from them. Each input character
+    is scanned once; only one bounded decoded candidate is retained at a time.
+    """
+    for match in _BASE64_RUN.finditer(text):
+        length = match.end() - match.start()
+        if not 4 <= length <= _MAX_BASE64_CHARS:
+            continue
+        token = match.group()
+        try:
+            decoded = base64.b64decode(token + "=" * (-length % 4), altchars=b"-_", validate=True)
+            if len(decoded) <= _MAX_DECODED_BYTES:
+                yield decoded.decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            continue
+
+
+def score_text(text: str) -> tuple[float, list[str]]:
+    """Return the highest plain/decoded score and all matched pattern names.
+
+    Decode one layer of complete base64 or base64url runs, up to 8192 encoded
+    characters / 6144 decoded bytes each. Binary, longer, whitespace-split and
+    nested encodings receive only their original-text score. Existing plain-text
+    matches are always retained; separate candidates do not add their weights.
+    """
+    if not text:
+        return 0.0, []
+    score, matched = _score_plain(text)
+    for decoded in _decoded_base64(text):
+        decoded_score, decoded_matched = _score_plain(decoded)
+        score = max(score, decoded_score)
+        for name in decoded_matched:
+            if name not in matched:
+                matched.append(name)
     return score, matched
 
 
