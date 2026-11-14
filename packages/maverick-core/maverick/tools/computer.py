@@ -30,9 +30,11 @@ from __future__ import annotations
 
 import base64
 import copy
+import importlib
 import io
 import logging
 import os
+import sys
 import tempfile
 import time
 from typing import Any
@@ -551,6 +553,26 @@ def _resolve_target(args: dict[str, Any]) -> str | None:
     return None
 
 
+def _trusted_xlib() -> tuple[Any, Any]:
+    """Import python-xlib excluding the workspace: this runs before consent."""
+    from .hardware_sensors import _path_in_cwd, _safe_import_path
+
+    cached = sys.modules.get("Xlib")
+    if cached is None:
+        original_path = list(sys.path)
+        try:
+            sys.path = [entry for entry in original_path if _safe_import_path(entry)]
+            importlib.import_module("Xlib")
+            importlib.import_module("Xlib.X")
+            importlib.import_module("Xlib.display")
+        finally:
+            sys.path = original_path
+    xlib = sys.modules["Xlib"]
+    if _path_in_cwd(getattr(xlib, "__file__", None)):
+        raise ImportError("Xlib resolves inside the workspace")
+    return xlib.X, xlib.display
+
+
 def _foreground_window_identity() -> dict[str, Any]:
     """Observe the input target when supported; callers persist only its hash."""
     if os.name != "nt":
@@ -564,8 +586,7 @@ def _foreground_window_identity() -> dict[str, Any]:
         if os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
             connection = None
             try:
-                from Xlib import X, display
-
+                X, display = _trusted_xlib()
                 connection = display.Display(os.environ["DISPLAY"])
                 atom = connection.intern_atom("_NET_ACTIVE_WINDOW", only_if_exists=True)
                 prop = connection.screen().root.get_full_property(atom, X.AnyPropertyType) if atom else None

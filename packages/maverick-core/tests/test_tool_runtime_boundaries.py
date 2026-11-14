@@ -312,3 +312,27 @@ def test_database_autocommit_postgres_read_uses_no_named_cursor(monkeypatch):
     module._query_connection(Connection(), "SELECT n FROM records", 10, False, "text", execution)
     # PostgreSQL rejects DECLARE outside a transaction block (autocommit).
     assert events == [("execute", "SELECT n FROM records")]
+
+
+def test_computer_approval_context_does_not_import_workspace_xlib(tmp_path, monkeypatch):
+    from maverick.tools import computer as module
+    workspace = tmp_path / "work"
+    (workspace / "Xlib").mkdir(parents=True)
+    marker = tmp_path / "xlib_executed"
+    (workspace / "Xlib" / "__init__.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n")
+    monkeypatch.chdir(workspace)
+    monkeypatch.syspath_prepend(str(workspace))
+    monkeypatch.setenv("DISPLAY", ":99")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    for name in [name for name in sys.modules if name == "Xlib" or name.startswith("Xlib.")]:
+        monkeypatch.delitem(sys.modules, name)
+    try:
+        context = module._computer_approval_context()
+        # The context is computed before the person consents; a denied action
+        # must not have run workspace code in the host process.
+        assert not marker.exists()
+        assert context["foreground_window_sha256"]
+    finally:
+        for name in [name for name in sys.modules if name == "Xlib" or name.startswith("Xlib.")]:
+            sys.modules.pop(name, None)
