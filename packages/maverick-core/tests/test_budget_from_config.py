@@ -215,3 +215,14 @@ def test_goal_defaults_preserve_config_request_and_explicit_opt_out(
     disabled = budget_from_config(defaults=goal_budget_defaults())
     assert disabled.max_dollars is None and disabled.max_wall_seconds is None
     assert budget_from_config(defaults=goal_budget_defaults(), max_dollars=0.5).max_dollars == 0.5
+
+
+def test_non_finite_task_limit_request_cannot_raise_the_ceiling():
+    from maverick.runner import clamp_task_limit
+
+    # A model-supplied NaN once passed through min() and reached Budget, whose
+    # NaN fallback is larger than the host's ceiling.
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert clamp_task_limit(bad, 0.5) == 0.5
+        assert clamp_task_limit(bad, None) is None
+    assert clamp_task_limit(0.25, 0.5) == 0.25
