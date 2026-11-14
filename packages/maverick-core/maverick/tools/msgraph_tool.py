@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import logging
 import os
-import urllib.parse
 from typing import Any
 
-from . import Tool, as_bool
+from . import Tool, as_bool, safe_path_segment
 
 log = logging.getLogger(__name__)
 
@@ -92,8 +91,11 @@ def _op_me(_args: dict) -> str:
 def _op_messages(args: dict) -> str:
     folder = (args.get("folder") or "inbox").strip()
     top = max(1, min(int(args.get("top") or 10), 50))
+    segment = safe_path_segment(folder)
+    if segment is None:
+        return "ERROR: folder must be a single mail folder name or id"
     code, data = _get(
-        f"/me/mailFolders/{urllib.parse.quote(folder)}/messages",
+        f"/me/mailFolders/{segment}/messages",
         {"$top": top, "$select": "subject,from,receivedDateTime,isRead"},
     )
     if code >= 400 or not isinstance(data, dict):
@@ -161,7 +163,10 @@ def _op_drive_list(args: dict) -> str:
     path = (args.get("path") or "").strip().strip("/")
     top = max(1, min(int(args.get("top") or 50), 200))
     if path:
-        endpoint = f"/me/drive/root:/{urllib.parse.quote(path)}:/children"
+        segments = [safe_path_segment(part) for part in path.split("/")]
+        if any(seg is None for seg in segments):
+            return "ERROR: path must be a folder path inside the drive (no empty, '.' or '..' parts)"
+        endpoint = f"/me/drive/root:/{'/'.join(segments)}:/children"
     else:
         endpoint = "/me/drive/root/children"
     code, data = _get(endpoint, {"$top": top})
