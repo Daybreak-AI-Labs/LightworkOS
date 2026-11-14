@@ -202,6 +202,19 @@ def test_vertex_generate(monkeypatch):
     assert ":generateContent" in post.call_args.args[0]
 
 
+def test_vertex_ids_cannot_leave_their_path_segment(monkeypatch):
+    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("VERTEX_PROJECT", "proj")
+    post = MagicMock(return_value=_resp(200, {"predictions": []}))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.vertex_tool import vertex_tool
+    vertex_tool().fn({"op": "generate", "model": "../../../endpoints/777:predict#", "prompt": "hi"})
+    assert "/models/..%2F..%2F..%2Fendpoints%2F777%3Apredict%23:generateContent" in post.call_args.args[0]
+    vertex_tool().fn({"op": "predict", "endpoint_id": "../x", "instances": [1]})
+    assert post.call_args.args[0].endswith("/endpoints/..%2Fx:predict")
+    assert vertex_tool().fn({"op": "predict", "endpoint_id": "..", "instances": [1]}).startswith("ERROR")
+
+
 def test_erp_and_analytics_connectors_register(tmp_path):
     from maverick.sandbox.local import LocalBackend
     from maverick.tools import base_registry
