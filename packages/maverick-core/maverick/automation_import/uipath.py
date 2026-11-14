@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 from .base import ImporterError, register
 from .ir import (
@@ -31,6 +32,30 @@ from .ir import (
 
 def _is_schedule(raw: dict) -> bool:
     return bool(raw.get("StartProcessCron") or raw.get("ReleaseName"))
+
+
+def _page_identity(url: str, endpoint: str) -> tuple[str, str]:
+    """Verify a page before reusing the original tenant's bearer credential."""
+    def origin(parts):
+        port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
+        return parts.scheme, parts.hostname, port
+
+    try:
+        parts, original = urlsplit(url), urlsplit(endpoint)
+        valid = (
+            parts.scheme in {"http", "https"}
+            and parts.hostname
+            and parts.username is None and parts.password is None
+            and origin(parts) == origin(original)
+            and parts.path == original.path
+            and "#" not in url and "\\" not in url
+            and not any(ord(c) <= 32 or ord(c) == 127 for c in url)
+        )
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ImporterError("UiPath pagination returned an unsafe page URL")
+    return parts.path, parts.query
 
 
 def translate(raw: dict[str, Any]) -> ImportedAutomation:
@@ -88,12 +113,12 @@ class UiPathImporter:
         self.base_url = ((base_url or "") if request is not None else (base_url or os.environ.get("UIPATH_BASE_URL", ""))).strip().rstrip("/")
         self.token = "" if request is not None else (token or os.environ.get("UIPATH_TOKEN", "")).strip()
 
-    def _get(self, client, path: str):
+    def _get(self, client, url: str):
         if self.request is None:
             from ..governed_http import admit_client_request
-            admit_client_request(client, f"{self.base_url}{path}")
+            admit_client_request(client, url)
         return (self.request or client.get)(
-            f"{self.base_url}{path}",
+            url,
             headers={"Authorization": f"Bearer {self.token}", "Accept": "application/json"},
         )
 
@@ -105,14 +130,35 @@ class UiPathImporter:
         except ImportError as e:  # pragma: no cover - optional dep
             raise ImporterError("httpx is required for live UiPath import") from e
         out: list[dict[str, Any]] = []
-        with httpx.Client(timeout=30.0) as client:
+        with httpx.Client(timeout=30.0, follow_redirects=False) as client:
             # Schedules carry the trigger + the release they run; releases cover
             # the on-demand processes. Both lower into one-step automations.
             for path in ("/odata/ProcessSchedules", "/odata/Releases"):
-                r = self._get(client, path)
-                r.raise_for_status()
-                body = r.json() if r.content else {}
-                out.extend([x for x in (body.get("value") or []) if isinstance(x, dict)])
+                endpoint = f"{self.base_url}{path}"
+                url = endpoint
+                seen = set()
+                for _ in range(100):
+                    page_key = _page_identity(url, endpoint)
+                    if page_key in seen:
+                        raise ImporterError("UiPath pagination repeated a page")
+                    seen.add(page_key)
+                    r = self._get(client, url)
+                    r.raise_for_status()
+                    body = r.json() if r.content else {}
+                    out.extend([x for x in (body.get("value") or []) if isinstance(x, dict)])
+                    next_link = body.get("@odata.nextLink")
+                    if next_link is None or next_link == "":
+                        break
+                    if not isinstance(next_link, str) or any(ord(c) <= 32 or ord(c) == 127 for c in next_link):
+                        raise ImporterError("UiPath pagination returned an invalid page URL")
+                    if "#" in next_link:
+                        raise ImporterError("UiPath pagination returned an unsafe page URL")
+                    try:
+                        url = urljoin(url, next_link)
+                    except ValueError as exc:
+                        raise ImporterError("UiPath pagination returned an invalid page URL") from exc
+                else:
+                    raise ImporterError("UiPath import exceeded the pagination page limit")
         return out
 
     def translate(self, raw: dict[str, Any]) -> ImportedAutomation:

@@ -529,6 +529,8 @@ def _execute_locked(session_dir: Path, source: str, digest: str, policy: dict,
     session_id = str(meta.get("session", ""))
     if meta.get("closed"):
         raise ReplError(f"repl session {session_id} is closed")
+    if goal_id != meta.get("goal_id"):
+        raise ReplError(f"repl session {session_id} is bound to a different goal")
     index = int(meta.get("statements", 0)) + 1
     if index > int(policy["max_statements"]):
         raise ReplError(f"repl session {session_id} reached its "
