@@ -59,6 +59,17 @@ def test_prerelease_allowed_before_explicit_prerelease_upper_bound():
     assert _c("2.0.0-beta.1", ">=1.2.0,<2.0.0-rc.1").startswith("SATISFIED")
 
 
+def test_partial_caret_tilde_and_spaced_operator():
+    # node-semver: ^0 <1.0.0, ^0.0 <0.1.0, ~1 <2.0.0; a prerelease lower bound
+    # keeps its prerelease; ">= 1.2.0" is one comparator.
+    assert _c("0.5.0", "^0").startswith("SATISFIED")
+    assert _c("0.0.5", "^0.0").startswith("SATISFIED")
+    assert _c("1.5.0", "~1").startswith("SATISFIED")
+    assert _c("2.0.0", "~1").startswith("UNSATISFIED")
+    assert _c("1.2.3-beta.2", "^1.2.3-beta").startswith("SATISFIED")
+    assert _c("1.3.0", ">= 1.2.0").startswith("SATISFIED")
+
+
 def test_partial_version_padding():
     # constraint and version may omit trailing components
     assert _c("1.2", ">=1.0").startswith("SATISFIED")
