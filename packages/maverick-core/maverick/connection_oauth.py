@@ -834,27 +834,39 @@ def _refresh_binding(record):
     ).encode()).hexdigest()
 
 
+class _RenewalWillRetry(PermissionError):
+    """Renewal failed before the refresh token was used; the next use retries."""
+
+
 def _refresh_not_consumed(exc) -> bool:
     """Whether a failed refresh request certainly left the refresh token unused:
     no connection was made (nothing was sent), or the token endpoint refused
     it with a throttling or unavailable status before issuing anything."""
+    import socket
+
     import httpx
 
-    if isinstance(exc, httpx.ConnectError):
+    from .tools._ssrf import BlockedHost
+
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
         return True
+    if isinstance(exc, BlockedHost) and isinstance(exc.__cause__, socket.gaierror):
+        return True  # the name did not resolve, so nothing was sent
     return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {429, 503}
 
 
-def _release_refresh(name, frozen):
-    """Return an untouched pending refresh to ``ready`` so a later use retries."""
+def _release_refresh(name, frozen) -> bool:
+    """Return an untouched pending refresh to ``ready`` so a later use retries.
+    Returns whether it did."""
     with connections._mutation_lock():
         records = connections._load()
         latest = records.get(name)
         if not latest or _refresh_binding(latest) != frozen:
-            return
+            return False
         latest["oauth"]["refresh_state"] = "ready"
         latest["oauth"].pop("refresh_lease", None)
         connections._save(records)
+        return True
 
 
 def _renew_owned(record, *, actor):
@@ -900,8 +912,11 @@ def _renew_owned(record, *, actor):
             result = _post_token(selected["provider"], {"grant_type": "refresh_token", "client_id": application["client_id"], "client_secret": application["client_secret"], "refresh_token": oauth["refresh_token"],
                 **({"scope": " ".join(selected["scopes"])} if selected["provider"] == "microsoft" else {})})
         except Exception as exc:
-            if _refresh_not_consumed(exc):
-                _release_refresh(record["name"], frozen)
+            if _refresh_not_consumed(exc) and _release_refresh(record["name"], frozen):
+                raise _RenewalWillRetry(
+                    "The account provider could not be reached. Renewal will be "
+                    "tried again on the next use; no reconnect is needed."
+                ) from exc
             raise
         access, refresh, expires, granted_scopes, scope_status = _tokens(
             result, selected["scopes"], provider=selected["provider"],
@@ -948,6 +963,8 @@ def _renew_owned(record, *, actor):
             latest["oauth"].pop("refresh_lease", None)
             connections._save(records)
             return dict(latest)
+    except _RenewalWillRetry:
+        raise
     except Exception as exc:
         raise PermissionError("Account renewal could not be confirmed. Reconnect in Connections before continuing.") from exc
 

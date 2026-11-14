@@ -216,19 +216,32 @@ def test_lost_rotating_refresh_reply_is_not_replayed(monkeypatch):
     assert connections.get_connection("evidence")["oauth"]["refresh_state"] == "pending"
 
 
-def test_refresh_that_never_reached_the_provider_can_be_retried(monkeypatch):
-    import httpx
+def _dns_failure():
+    import socket
 
+    from maverick.tools._ssrf import BlockedHost
+    try:
+        raise BlockedHost("cannot resolve") from socket.gaierror("synthetic DNS failure")
+    except BlockedHost as exc:
+        return exc
+
+
+@pytest.mark.parametrize("failure", [
+    lambda: __import__("httpx").ConnectError("synthetic connection refused"),
+    lambda: __import__("httpx").ConnectTimeout("synthetic connect timeout"),
+    _dns_failure,
+])
+def test_refresh_that_never_reached_the_provider_can_be_retried(monkeypatch, failure):
     app()
     exchange(start(), monkeypatch)
     expire()
     calls = []
     def unreachable(*args):
         calls.append(args)
-        raise httpx.ConnectError("synthetic connection refused")
+        raise failure()
     monkeypatch.setattr(oauth, "_post_token", unreachable)
     for _ in range(2):
-        with pytest.raises(PermissionError):
+        with pytest.raises(PermissionError, match="tried again"):
             oauth.renew(connections.get_connection("evidence"), actor=OWNER)
     assert len(calls) == 2
     assert connections.get_connection("evidence")["oauth"]["refresh_state"] == "ready"
