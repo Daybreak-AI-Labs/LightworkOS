@@ -217,3 +217,29 @@ def test_private_override_still_admits_rfc1918(monkeypatch):
     monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo("10.0.0.5"))
     assert _ssrf.resolve_pinned_ip("intranet.example") == "10.0.0.5"
+
+
+@pytest.mark.parametrize("ip,private_override", [
+    ("fd00:ec2::254", True),       # AWS IMDS over IPv6 (unique-local)
+    ("2002:a9fe:a9fe::1", True),   # 6to4 form of 169.254.169.254
+    ("168.63.129.16", True),       # Azure WireServer, public address space
+    ("fec0::1", False),            # deprecated IPv6 site-local
+])
+def test_platform_and_site_local_addresses_are_refused(monkeypatch, ip, private_override):
+    if private_override:
+        monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+    else:
+        monkeypatch.delenv("MAVERICK_FETCH_ALLOW_PRIVATE", raising=False)
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo(ip))
+    with pytest.raises(_ssrf.BlockedHost):
+        _ssrf.resolve_pinned_ip("metadata.test")
+
+
+def test_host_header_brackets_ipv6_and_refuses_bad_port():
+    from urllib.parse import urlparse
+
+    parsed = urlparse("http://[2606:4700:4700::1111]:8080/x")
+    assert _ssrf._host_header(parsed, parsed.hostname) == "[2606:4700:4700::1111]:8080"
+    parsed = urlparse("http://1.1.1.1:99999/")
+    with pytest.raises(_ssrf.BlockedHost):
+        _ssrf._host_header(parsed, parsed.hostname)

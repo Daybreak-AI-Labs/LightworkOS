@@ -109,6 +109,10 @@ def address_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
         or ip.is_multicast
         or ip.is_unspecified
         or (ip.version == 4 and ip in _SHARED_ADDRESS_SPACE)
+        # Deprecated IPv6 site-local fec0::/10 is neither private nor
+        # reserved to ``ipaddress``, but it is never a public destination.
+        or (ip.version == 6 and ip.is_site_local)
+        or address_is_always_blocked(ip)
     )
 
 
@@ -120,9 +124,27 @@ def _ip_is_blocked(ip_str: str) -> bool:
     return address_is_blocked(ip)
 
 
-# Cloud metadata endpoints that do not sit in a link-local range: Alibaba
-# Cloud serves instance credentials from this shared-address-space literal.
-_ALWAYS_BLOCKED_LITERALS = frozenset({ipaddress.ip_address("100.100.100.200")})
+# Cloud platform endpoints that do not sit in a link-local range: Alibaba
+# Cloud serves instance credentials from a shared-address-space literal, AWS
+# serves IMDS over IPv6 from a unique-local literal, and Azure's WireServer is
+# a host-only endpoint in public address space.
+_ALWAYS_BLOCKED_LITERALS = frozenset({
+    ipaddress.ip_address("100.100.100.200"),
+    ipaddress.ip_address("fd00:ec2::254"),
+    ipaddress.ip_address("168.63.129.16"),
+})
+_NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> ipaddress.IPv4Address | None:
+    """The IPv4 address an IPv6 address carries (mapped, 6to4 or NAT64)."""
+    if ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    if ip.sixtofour is not None:
+        return ip.sixtofour
+    if ip in _NAT64_PREFIX:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return None
 
 
 def address_is_always_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -131,10 +153,15 @@ def address_is_always_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address)
     "Let agents read addresses inside your network" means RFC 1918, loopback
     and shared address space (an intranet, a dev server, a Tailscale peer).
     It never means the cloud metadata service (169.254.169.254 on AWS, Azure,
-    GCP, OCI and DigitalOcean; fe80:: and fd00:ec2::254 on IPv6), multicast,
-    reserved or unspecified addresses: one toggled setting must not turn every
+    GCP, OCI and DigitalOcean; fe80:: and fd00:ec2::254 on IPv6, also when
+    carried inside a mapped, 6to4 or NAT64 IPv6 address), Azure's WireServer,
+    site-local, multicast, reserved or unspecified addresses: one toggled setting must not turn every
     prompt-injectable tool into an instance-credential client.
     """
+    if ip.version == 6:
+        embedded = _embedded_ipv4(ip)
+        if embedded is not None and address_is_always_blocked(embedded):
+            return True
     if ip.is_loopback:  # ::1 sits in ::/8, which ipaddress calls reserved
         return False
     return (
@@ -142,6 +169,7 @@ def address_is_always_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address)
         or ip.is_multicast
         or ip.is_reserved
         or ip.is_unspecified
+        or (ip.version == 6 and ip.is_site_local)
         or ip in _ALWAYS_BLOCKED_LITERALS
     )
 
@@ -170,6 +198,17 @@ def allow_private() -> bool:
 
 def _allow_private() -> bool:
     return allow_private()
+
+
+def _host_header(parsed: Any, host: str) -> str:
+    """``Host`` value for ``parsed``: IPv6 literals bracketed, an invalid port
+    refused as ``BlockedHost`` (``urlparse`` raises a bare ``ValueError``)."""
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise BlockedHost(f"invalid port in URL for {host!r}") from exc
+    name = f"[{host}]" if ":" in host else host
+    return name if not port else f"{name}:{port}"
 
 
 def resolve_pinned_ip(host: str, *, require_public: bool = False) -> str:
@@ -298,7 +337,7 @@ def safe_client(
     _check(url)
     host = parsed.hostname or ""
     ip = resolve_pinned_ip(host, require_public=require_public)
-    host_header = host if not parsed.port else f"{host}:{parsed.port}"
+    host_header = _host_header(parsed, host)
     if attempt_deadline is None:
         inner = httpx.HTTPTransport()
     else:
@@ -383,7 +422,7 @@ def pinned_async_transport(url: str) -> _AsyncPinnedTransport:
     _check(url)
     host = parsed.hostname or ""
     ip = resolve_pinned_ip(host)
-    host_header = host if not parsed.port else f"{host}:{parsed.port}"
+    host_header = _host_header(parsed, host)
     return _AsyncPinnedTransport(host, host_header, ip, httpx.AsyncHTTPTransport())
 
 
