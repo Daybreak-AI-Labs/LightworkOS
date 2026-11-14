@@ -314,8 +314,9 @@ def classes_in_source(source: str) -> frozenset[str]:
 
 
 def _added_lines(patch: str) -> list[str]:
-    return [ln[1:] for ln in (patch or "").splitlines()
-            if ln.startswith("+") and not ln.startswith("+++")]
+    """Every added line, read exactly as :func:`_added_lines_by_file` reads it,
+    so the propose-time screen and the differential see the same lines."""
+    return [line for lines in _added_lines_by_file(patch).values() for line in lines]
 
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
@@ -326,12 +327,15 @@ def _added_lines_by_file(patch: str) -> dict[str, list[str]]:
 
     A ``+++`` line is a file header only outside a hunk: hunk line counts are
     tracked, so an added content line that reads ``++ b/other.py`` cannot
-    switch the file its following lines are attributed to.
+    switch the file its following lines are attributed to. Lines are split on
+    ``\n`` only, as ``git apply`` splits them.
     """
+    from .self_modify import _patch_lines
+
     out: dict[str, list[str]] = {}
     current = ""
     old_left = new_left = 0
-    for ln in (patch or "").splitlines():
+    for ln in _patch_lines(patch or ""):
         if old_left > 0 or new_left > 0:
             if ln.startswith("+"):
                 new_left -= 1
