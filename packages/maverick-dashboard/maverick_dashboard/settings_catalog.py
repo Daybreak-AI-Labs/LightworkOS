@@ -1198,7 +1198,7 @@ CHANNEL_ALLOWLISTS: dict[str, tuple[str, bool, str, str, str, str, str]] = {
               r"\+[1-9][0-9]{5,14}", "a full phone number starting with + and a country code"),
     "mattermost": ("Mattermost", True, "allowed_user_ids", "Person",
                    "4xp9fdt77pncbef59f4k1qe83o",  # pragma: allowlist secret
-                   r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", "a Mattermost user id"),
+                   r"[a-z0-9]{26}", "a Mattermost user id (26 letters and digits, not a username)"),
     "teams": ("Microsoft Teams", True, "allowed_users", "Person",
               "12345678-abcd-abcd-abcd-1234567890ab", r"[0-9a-fA-F-]{36}",
               "a Microsoft Entra object ID (36 characters, from the person's Entra profile)"),
