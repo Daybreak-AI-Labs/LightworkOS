@@ -164,3 +164,39 @@ def test_fleet_rotation_reports_a_reserved_tenant_directory():
     owners, unrecognised = k.wrapped_dek_holders()
     assert "__active__" not in owners
     assert "reserved" in unrecognised["__active__"]
+
+
+@requires_crypto
+def test_slow_kms_unwrap_does_not_block_other_tenants():
+    # A hung BYOK unwrap for one tenant must not hold the process-wide DEK
+    # cache lock: another tenant's cached key stays usable meanwhile.
+    import threading
+
+    from maverick.tenant import kms as k
+
+    beta_blob = k.seal_for_tenant("beta", b"beta data")
+    k.seal_for_tenant("acme", b"warm acme key file")
+    k._clear_cache()
+    k.unseal_for_tenant("beta", beta_blob)  # beta cached again
+
+    entered, release = threading.Event(), threading.Event()
+
+    class SlowKMS(k.LocalKMS):
+        def unwrap(self, blob, *, context):
+            entered.set()
+            release.wait(10)
+            return super().unwrap(blob, context=context)
+
+    worker = threading.Thread(target=k.tenant_dek, args=("acme",), kwargs={"kms": SlowKMS()})
+    worker.start()
+    try:
+        assert entered.wait(5)
+        result: list[bytes] = []
+        reader = threading.Thread(
+            target=lambda: result.append(k.unseal_for_tenant("beta", beta_blob)))
+        reader.start()
+        reader.join(5)
+        assert result == [b"beta data"]
+    finally:
+        release.set()
+        worker.join(10)

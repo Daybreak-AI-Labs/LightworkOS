@@ -273,7 +273,11 @@ def _wrapped_dek_path(tenant_id: str | None):
 
 # (dek, expiry_monotonic). expiry is None for a permanent cache entry.
 _dek_cache: dict[str, tuple[bytes, float | None]] = {}
+# ``_dek_lock`` guards only the two dicts and is never held across a KMS call;
+# the per-tenant lock serializes one tenant's unwrap/first-use generation, so a
+# slow or hung BYOK KMS cannot block every other tenant's seal and unseal.
 _dek_lock = threading.Lock()
+_dek_tenant_locks: dict[str, threading.Lock] = {}
 
 
 def _dek_cache_ttl() -> float:
@@ -300,17 +304,15 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
     generates + wraps + persists one on first use. Cached per tenant id (bounded
     by ``[kms] dek_cache_ttl`` so a revoked KMS key takes effect)."""
     cache_key = tenant_id or "__default__"
+    dek = _cached_dek(cache_key)
+    if dek is not None:
+        return dek
     with _dek_lock:
-        cached = _dek_cache.get(cache_key)
-        if cached is not None:
-            dek, cached_at = cached
-            # TTL is evaluated against the CURRENT setting on every read, not
-            # frozen at write -- so raising the TTL (or revoking a cloud KEK)
-            # bounds even a tenant that was warmed under TTL=0.
-            ttl = _dek_cache_ttl()
-            if ttl <= 0 or cached_at + ttl > _now():
-                return dek
-            _dek_cache.pop(cache_key, None)  # lapsed -> re-unwrap below
+        tenant_lock = _dek_tenant_locks.setdefault(cache_key, threading.Lock())
+    with tenant_lock:
+        dek = _cached_dek(cache_key)  # another thread may have just loaded it
+        if dek is not None:
+            return dek
         # Per-tenant BYOK: resolve THIS tenant's KMS unless one was injected.
         resolved = kms is None
         kms = kms or get_kms(tenant_id)
@@ -330,8 +332,28 @@ def tenant_dek(tenant_id: str | None, *, kms: KMS | None = None) -> bytes:
                 raise EncryptionUnavailable(
                     "cannot create a data key: KMS configuration is unreadable")
             dek = _generate_and_persist_dek(path, context, kms)
-        _dek_cache[cache_key] = (dek, _now())
+        with _dek_lock:
+            _dek_cache[cache_key] = (dek, _now())
         return dek
+
+
+def _cached_dek(cache_key: str) -> bytes | None:
+    """The cached DEK, or None when absent or lapsed (a lapsed entry is dropped)."""
+    # TTL is evaluated against the CURRENT setting on every read, not frozen at
+    # write -- so raising the TTL (or revoking a cloud KEK) bounds even a
+    # tenant that was warmed under TTL=0.
+    with _dek_lock:
+        cached = _dek_cache.get(cache_key)
+    if cached is None:
+        return None
+    dek, cached_at = cached
+    ttl = _dek_cache_ttl()  # reads config: outside the lock
+    if ttl <= 0 or cached_at + ttl > _now():
+        return dek
+    with _dek_lock:
+        if _dek_cache.get(cache_key) == cached:
+            _dek_cache.pop(cache_key, None)  # lapsed -> re-unwrap
+    return None
 
 
 def _kms_config_unreadable(tenant_id: str | None) -> bool:
