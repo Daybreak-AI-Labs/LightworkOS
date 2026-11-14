@@ -137,3 +137,16 @@ def test_cross_host_redirect_strips_authorization(monkeypatch):
     finally:
         sink.shutdown()
         redir.shutdown()
+
+
+def test_owner_repo_cannot_retarget_the_request(monkeypatch):
+    seen: list[str] = []
+    monkeypatch.setattr(ghi, "_http_get_json", lambda url: (seen.append(url), (200, []))[1])
+    ghi.github_issues().fn(
+        {"op": "list", "owner": "acme", "repo": "private/contents/.env?ref=main&x="}
+    )
+    assert seen == [
+        "https://api.github.com/repos/acme/private%2Fcontents%2F.env%3Fref%3Dmain%26x%3D"
+        "/issues?state=open&per_page=25"
+    ]
+    assert ghi.github_issues().fn({"op": "list", "owner": "..", "repo": "r"}).startswith("ERROR")

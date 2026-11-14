@@ -35,6 +35,8 @@ def test_url_builders_encode_project_path():
     assert "state=opened" in url
     assert gli._get_url(base, "42", 7).endswith("/projects/42/issues/7")
     assert gli._create_url(base, "42").endswith("/projects/42/issues")
+    # The schema accepts an already-encoded path too: no double encoding.
+    assert "projects/group%2Frepo/issues?" in gli._list_url(base, "group%2Frepo", "opened", 25)
 
 
 def test_parse_list_and_issue():

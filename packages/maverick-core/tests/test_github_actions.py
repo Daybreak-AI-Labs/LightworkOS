@@ -75,3 +75,16 @@ def test_gha_cancel_confirmed(monkeypatch):
         "confirm": True,
     })
     assert "cancelled run 42" in out
+
+
+def test_gha_runs_list_with_in_progress_run(monkeypatch):
+    # GitHub sends conclusion=null while a run is queued or in progress.
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    body = {"workflow_runs": [
+        {"id": 222, "name": "CI", "status": "in_progress",
+         "conclusion": None, "head_branch": "main", "event": "push"},
+    ]}
+    _fake_httpx(monkeypatch, get=MagicMock(return_value=_resp(200, body)))
+    from maverick.tools.github_actions import github_actions
+    out = github_actions().fn({"op": "runs", "owner": "o", "repo": "r"})
+    assert "222" in out and "in_progress" in out and "ERROR" not in out

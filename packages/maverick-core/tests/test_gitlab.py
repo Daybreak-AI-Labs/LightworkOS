@@ -5,6 +5,8 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+import pytest
+
 # ---------- GitLab tool ----------
 
 def test_gitlab_requires_op():
@@ -124,3 +126,11 @@ def test_gitlab_pipeline_get_renders(monkeypatch):
     out = gitlab().fn({"op": "pipeline_get", "project": "g/r", "pipeline_id": 42})
     assert "success" in out and "main" in out
     assert "abc123def456"[:12] in out
+
+
+def test_gitlab_dot_segment_project_refused():
+    # httpx collapses /projects/../merge_requests to the instance-wide list.
+    from maverick.tools.gitlab import _enc
+    with pytest.raises(RuntimeError):
+        _enc("..")
+    assert _enc("group/repo") == "group%2Frepo"

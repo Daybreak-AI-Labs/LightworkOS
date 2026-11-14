@@ -21,7 +21,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from . import Tool
+from . import Tool, safe_path_segment
 
 _API = "https://api.github.com"
 
@@ -128,7 +128,12 @@ def _slug(args: dict) -> tuple[str, str] | str:
     repo = (args.get("repo") or "").strip()
     if not owner or not repo:
         return "ERROR: owner and repo are required"
-    return owner, repo
+    # Encode each as exactly one path segment: a raw "repo/contents/.env?x="
+    # would retarget the authenticated request to another endpoint.
+    owner_seg, repo_seg = safe_path_segment(owner), safe_path_segment(repo)
+    if owner_seg is None or repo_seg is None:
+        return "ERROR: invalid owner or repo"
+    return owner_seg, repo_seg
 
 
 def _op_list(args: dict) -> str:
@@ -140,7 +145,7 @@ def _op_list(args: dict) -> str:
     limit = max(1, min(int(args.get("limit") or 25), 100))
     code, data = _http_get_json(_list_url(owner, repo, state, limit))
     if code >= 400 or not isinstance(data, list):
-        return f"ERROR: list ({code}): {data}"
+        return f"ERROR: list ({code}): {str(data)[:300]}"
     return _parse_list(data)
 
 

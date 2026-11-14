@@ -86,3 +86,17 @@ class TestElasticsearchSeg:
         from maverick.tools.elasticsearch_tool import _seg
         assert _seg("../../_cluster/settings") == "..%2F..%2F_cluster%2Fsettings"
         assert _seg("my-index") == "my-index"
+
+    def test_dot_segment_and_underscore_index_refused(self, monkeypatch):
+        # doc_id=".." used to collapse /orders/_doc/.. to DELETE /orders (the
+        # delete-index API); index="_all" addressed every index.
+        monkeypatch.setenv("ES_URL", "https://es.example:9200")
+        delete = MagicMock()
+        _fake_httpx(monkeypatch, delete=delete, post=MagicMock())
+        from maverick.tools.elasticsearch_tool import elasticsearch_tool
+        out = elasticsearch_tool().fn(
+            {"op": "delete", "index": "orders", "doc_id": "..", "confirm": True}
+        )
+        assert out.startswith("ERROR") and not delete.called
+        out = elasticsearch_tool().fn({"op": "count", "index": "_all"})
+        assert out.startswith("ERROR")

@@ -225,7 +225,10 @@ def _op_export(args: dict) -> str:
     mime = (args.get("mime_type") or "text/plain").strip()
     if not fid:
         return "ERROR: export requires file_id"
-    code, text = _get_raw(f"{_API}/files/{fid}/export",
+    seg = safe_path_segment(fid)
+    if seg is None:
+        return "ERROR: export requires a valid file_id"
+    code, text = _get_raw(f"{_API}/files/{seg}/export",
                            {"mimeType": mime}, max_bytes=8192)
     if code >= 400:
         return f"ERROR: export ({code}): {text[:300]}"
