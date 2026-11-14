@@ -9,7 +9,9 @@ read-only candidate snapshot, bounded scratch/output/process resources, a fixed
 credential-free environment, no Docker socket or host control path, and
 ``--network=none``. There is no host-execution fallback.
 
-The container establishes candidate containment. It does not establish an
+The container establishes candidate containment. Bootstrap ``boundary_attempts``
+are advisory observations: candidate code shares their interpreter and can alter
+or forge them. They are not independent evidence that no boundary was attempted. It does not establish an
 independent evaluator custodian: on Windows especially, the controller, final-set
 storage, and Docker daemon remain under the same host account. Confirmatory
 qualification must request externally administered custody and fail closed until
@@ -86,6 +88,8 @@ def _field_names(values: object, *, label: str) -> tuple[str, ...]:
     return fields
 
 
+# In-process observation hooks are advisory; the container policy enforces
+# containment even when a candidate tampers with these hooks or their envelope.
 _CONTAINER_BOOTSTRAP = textwrap.dedent(
     r'''
     import builtins
@@ -332,7 +336,11 @@ class ObservationProtocol:
 
 @dataclass(frozen=True)
 class CandidateExecution:
-    """Attested candidate-sandbox result returned to the evaluator controller."""
+    """Container result returned to the evaluator controller.
+
+    In-process boundary-attempt reports are advisory and candidate-controlled;
+    containment comes from the enforced container policy.
+    """
 
     output: object
     exit_code: int = 0

@@ -128,15 +128,27 @@ def _sqlite_conn():
         conn.close()
 
 
+_pg_schema_ready: set[tuple[int, str]] = set()
+_pg_schema_lock = threading.Lock()
+
+
 @contextlib.contextmanager
 def _pg_conn():
     import psycopg  # the [postgres] extra; same dependency rule as the world
-    conn = psycopg.connect(_pg_dsn(), autocommit=False)
+    dsn = _pg_dsn()
+    conn = psycopg.connect(dsn, autocommit=False)
     try:
         from .learning_store_pg_schema import ensure_schema
 
-        with conn.cursor() as cur:
-            ensure_schema(cur)
+        binding = (os.getpid(), dsn)
+        with _pg_schema_lock:
+            if binding not in _pg_schema_ready:
+                with conn.cursor() as cur:
+                    ensure_schema(cur)
+                # Release schema locks before user reads or writes, and never
+                # memoize a failed or rolled-back initialization.
+                conn.commit()
+                _pg_schema_ready.add(binding)
         yield conn
         conn.commit()
     except BaseException:

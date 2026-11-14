@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .audit.errors import AuditRefused
 from .config import env_flag
 
 log = logging.getLogger(__name__)
@@ -84,8 +85,10 @@ class _ChainedLog:
     Multi-writer safe: every persisted append happens under the file's
     :func:`maverick.file_lock.cross_process_lock` and re-reads any rows other
     writers appended first, so the on-disk chain never forks. ``path=None``
-    keeps the chain in memory (tests / ephemeral runs). Appends never raise;
-    they return False on any persistence/lock failure. ``force=True`` lets a
+    keeps the chain in memory (tests / ephemeral runs). Appends return False
+    on incidental persistence/lock failure; explicit audit refusals propagate.
+    Persisted heads are anchored in a signed audit namespace; legacy evidence
+    without an anchor is unverified and cannot be extended automatically. ``force=True`` lets a
     safety-critical row (a demotion/revocation) through even at capacity --
     the bound is a growth guard, never a reason to keep stale authority.
     """
@@ -131,7 +134,61 @@ class _ChainedLog:
         self._rows = rows
         self._size = size
 
+    def _anchor_location(self) -> tuple[str, Path]:
+        from .paths import data_dir
+
+        identity = hashlib.sha256(os.path.normcase(
+            os.path.abspath(self.path),
+        ).encode()).hexdigest()
+        return identity, data_dir("audit") / "earned-autonomy" / identity
+
+    def _anchor_error(self, head: str) -> str | None:
+        from .audit.signing import _segment_text, day_files, verify_anchors, verify_chain
+        from .file_lock import cross_process_lock
+
+        identity, directory = self._anchor_location()
+        latest = None
+        if verify_anchors(directory):
+            return "signed audit anchor history is broken"
+        for path in day_files(directory):
+            with cross_process_lock(path, strict=True):
+                segment = _segment_text(path)
+                if verify_chain(path, segment=segment):
+                    return "signed audit head cannot be verified"
+                for line in segment.splitlines():
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    if (row.get("kind") == "autonomy_graduation"
+                            and row.get("decision") == "chain_head"
+                            and row.get("store_id") == identity):
+                        latest = row
+        if latest is None:
+            return "signed audit head is missing" if self._rows else None
+        if latest.get("head") != head or latest.get("row_count") != len(self._rows):
+            return "head does not match the signed audit record"
+        return None
+
+    def _record_anchor(self, head: str, count: int) -> bool:
+        from .audit import AuditEvent, AuditLog, EventKind
+
+        identity, directory = self._anchor_location()
+        # This evidence always requires signing, including legacy deployments
+        # whose general-purpose audit sink permits unsigned events. The native
+        # strict writer still enforces custody policy and key authority.
+        sink = AuditLog(audit_dir=directory, sign=True)
+        return sink.record_strict_signed(AuditEvent(
+            ts=time.time(), kind=EventKind.AUTONOMY_GRADUATION,
+            agent="earned_autonomy", payload={
+                "decision": "chain_head", "store_id": identity,
+                "head": head, "row_count": count,
+            },
+        ))
+
     def _append_unlocked(self, fields: dict, *, force: bool) -> bool:
+        if self.path is not None and not self.verify().startswith("VALID:"):
+            log.warning("earned-autonomy append refused: prior evidence is not verified")
+            return False
         if len(self._rows) >= self.max_rows and not force:
             log.warning("earned-autonomy log at capacity; row dropped")
             return False
@@ -148,6 +205,13 @@ class _ChainedLog:
                     "a", encoding="utf-8",
                 ) as fh:
                     fh.write(line)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                if not self._record_anchor(row["hash"], len(self._rows) + 1):
+                    log.warning("earned-autonomy append refused: signed head was not recorded")
+                    return False
+            except AuditRefused:
+                raise
             except Exception:  # pragma: no cover -- best-effort persistence
                 log.debug("earned-autonomy append failed", exc_info=True)
                 return False
@@ -165,6 +229,8 @@ class _ChainedLog:
                 with cross_process_lock(self.path):
                     self._refresh_unlocked()
                     return self._append_unlocked(fields, force=force)
+            except AuditRefused:
+                raise
             except Exception:
                 # No lock -> no unserialized write: a refused append is safe,
                 # a forked chain is not.
@@ -177,19 +243,48 @@ class _ChainedLog:
             return list(self._rows)
 
     def verify(self) -> str:
-        """Recompute the chain: ``VALID: ...`` or ``BROKEN: link i ...``."""
+        """Check links and the independently signed audit head of persisted rows."""
+        from .file_lock import cross_process_lock
+
         with self._lock:
-            self._refresh_unlocked()
-            prev = _GENESIS
-            for i, row in enumerate(self._rows):
-                fields = {k: v for k, v in row.items() if k not in ("prev", "hash")}
-                if row.get("prev") != prev:
-                    return f"BROKEN: link {i} prev_hash mismatch"
-                if row.get("hash") != self._row_hash(fields, prev):
-                    return f"BROKEN: link {i} content hash mismatch"
-                prev = row["hash"]
-            head = prev[:12] if self._rows else _GENESIS[:12]
-            return f"VALID: {len(self._rows)} link(s), head {head}"
+            if self.path is None:
+                return self._verify_rows_unlocked()
+            try:
+                # Match append's lock order and verify exact fresh bytes, even
+                # after a same-size rewrite. Unreadable/torn rows fail closed.
+                with cross_process_lock(self.path, strict=True):
+                    try:
+                        text = self.path.read_text(encoding="utf-8")
+                    except FileNotFoundError:
+                        text = ""
+                    rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+                    if (text and not text.endswith("\n")) or any(
+                        not isinstance(row, dict) or "hash" not in row for row in rows
+                    ):
+                        return "BROKEN: malformed evidence rows"
+                    self._rows = rows
+                    self._size = len(text.encode("utf-8"))
+                    return self._verify_rows_unlocked()
+            except AuditRefused:
+                raise
+            except Exception:
+                return "BROKEN: evidence or signed audit head is unavailable"
+
+    def _verify_rows_unlocked(self) -> str:
+        prev = _GENESIS
+        for i, row in enumerate(self._rows):
+            fields = {k: v for k, v in row.items() if k not in ("prev", "hash")}
+            if row.get("prev") != prev:
+                return f"BROKEN: link {i} prev_hash mismatch"
+            if row.get("hash") != self._row_hash(fields, prev):
+                return f"BROKEN: link {i} content hash mismatch"
+            prev = row["hash"]
+        if self.path is not None:
+            error = self._anchor_error(prev)
+            if error:
+                return f"BROKEN: {error}"
+        head = prev[:12]
+        return f"VALID: {len(self._rows)} link(s), head {head}"
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +412,7 @@ class TrustLedger:
     def record_event(self, kind: str, action: str, *, principal: str = "",
                      card_id: str = "", predicted: float | None = None,
                      actual: float | None = None, reason: str = "",
-                     ts: float | None = None) -> bool:
+                     ts: float | None = None, scored_card_ids: list[str] | None = None) -> bool:
         if kind not in _EVENT_KINDS:
             return False
         row = {
@@ -326,6 +421,8 @@ class TrustLedger:
             "ts": ts if ts is not None else time.time(),
             "reason": _safe_text(reason, max_len=200),
         }
+        if scored_card_ids is not None:
+            row["scored_card_ids"] = list(scored_card_ids)
         if predicted is not None:
             row["predicted"] = _clamp01(predicted)
         if actual is not None:
@@ -335,8 +432,9 @@ class TrustLedger:
     def scored_ids(self) -> frozenset[str]:
         """Card ids already consumed -- the reconcile idempotency set."""
         return frozenset(
-            r["card_id"] for r in self._log.rows()
-            if r.get("kind") in _SCORING_KINDS and r.get("card_id"))
+            card_id for row in self._log.rows() if row.get("kind") in _SCORING_KINDS
+            for card_id in [row.get("card_id"), *row.get("scored_card_ids", [])]
+            if isinstance(card_id, str) and card_id)
 
     def state(self, action: str) -> TrustState:
         return self.states().get(str(action), TrustState(action=str(action)))
@@ -723,6 +821,8 @@ class EarnedAutonomyEngine:
 
                     with cross_process_lock(self.ledger.path):
                         return self._reconcile_locked(resolve)
+                except AuditRefused:
+                    raise
                 except Exception:
                     log.warning("earned-autonomy reconcile refused (no lock)",
                                 exc_info=True)
@@ -754,6 +854,7 @@ class EarnedAutonomyEngine:
                     "hit" if hit else "miss", action, principal=principal,
                     card_id=str(row.get("id", "")),
                     predicted=row.get("predicted_outcome"), actual=actual,
+                    scored_card_ids=[str(card["id"]) for card in rows],
                     ts=self.now()):
                 # Evidence that can't be persisted is not evidence; the card
                 # stays unscored and is retried next pass. A miss still sheds
