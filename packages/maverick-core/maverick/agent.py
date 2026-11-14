@@ -2953,9 +2953,11 @@ class Agent:
 
     def _may_reset_workdir(self) -> bool:
         """Resetting is safe when blocks were applied in place (only allowed
-        on a tree that was clean at run start) or nothing predates the run."""
+        on a tree that was clean at run start), or for the agent that verifies
+        the goal's answer when nothing predates the run. Sub-agents share the
+        tree with the root and their siblings, so they never reset it."""
         return (getattr(self, "_patch_applied_in_place", False)
-                or not self._workdir_had_prior_work())
+                or (self._verifies_final() and not self._workdir_had_prior_work()))
 
     def _maybe_seal(self, quarantine, verdict) -> None:
         """Conservatively escalate a shield block to a Rung-1 seal.
@@ -5641,10 +5643,13 @@ class Agent:
         async with self.ctx.workdir_lock:
             patch, sr_summary = await asyncio.to_thread(self._extract_and_apply_patch, final)
             # Reset AFTER capturing the diff so the verifier (and downstream
-            # evaluators) see HEAD when they re-apply.
+            # evaluators) see HEAD when they re-apply. A unified diff is
+            # checked against the tree too, so it needs HEAD as well.
+            reset = ((sr_summary is not None or patch is not None)
+                     and await asyncio.to_thread(self._may_reset_workdir))
+            if reset:
+                await asyncio.to_thread(self._reset_workdir)
             if sr_summary is not None:
-                if await asyncio.to_thread(self._may_reset_workdir):
-                    await asyncio.to_thread(self._reset_workdir)
                 try:
                     self.ctx.blackboard.post(self.name, "tool_signal", "search_replace_used=1")
                 except Exception:
@@ -5700,6 +5705,11 @@ class Agent:
                 f"defensive warnings (accepted anyway): "
                 f"{def_check.warnings}",
             )
+        if sr_summary is not None and not reset:
+            # Rendered from blocks applied to a disposable HEAD worktree, so it
+            # applies to HEAD by construction; the shared tree, left as is,
+            # may hold this run's edits and would fail the check spuriously.
+            return None
         validation = validate_patch(
             patch, workdir,
             allow_checkout_eol=(

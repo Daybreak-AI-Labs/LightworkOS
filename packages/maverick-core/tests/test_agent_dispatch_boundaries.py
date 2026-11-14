@@ -282,3 +282,48 @@ async def test_post_tool_hooks_fire_with_the_withheld_notice_when_shield_withhol
         assert seen == [result]
     assert len(seen) == 1 and "withheld" in seen[0].lower()
     assert "PRIVATE-TOKEN" not in seen[0]
+
+
+def _clean_repo(agent, monkeypatch):
+    root = agent.ctx.sandbox.workdir
+    _git(root, "init")
+    (root / "x.py").write_text("value = 1\n")
+    (root / "y.py").write_text("other = 1\n")
+    _git(root, "add", "x.py", "y.py")
+    _git(root, "commit", "-m", "initial")
+    monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
+    return root
+
+
+@pytest.mark.asyncio
+async def test_sub_agent_final_never_resets_the_shared_workspace(agent, monkeypatch):
+    root = _clean_repo(agent, monkeypatch)
+    agent._open_run()
+    child = Agent(ctx=agent.ctx, role="coder", brief="edit x", depth=1, parent=agent)
+    st = child._open_run()
+    (root / "y.py").write_text("other = 2\n")  # a sibling's in-progress edit
+    (root / "x.py").write_text("value = 2\n")  # the child's own edit
+    final = "x.py\n<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE\n"
+    cfg = CodingModeConfig(enabled=True, require_apply_check=True)
+    assert await child._validate_final_patch(st, final, cfg) is None
+    assert "+value = 2" in child._final_patch
+    assert (root / "y.py").read_text() == "other = 2\n"
+    assert (root / "x.py").read_text() == "value = 2\n"
+
+
+@pytest.mark.asyncio
+async def test_root_unified_diff_final_with_its_own_edit_on_disk_verifies(agent, monkeypatch):
+    root = _clean_repo(agent, monkeypatch)
+    st = agent._open_run()
+    (root / "x.py").write_text("value = 2\n")
+    final = ("```diff\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-value = 1\n+value = 2\n```\n")
+    cfg = CodingModeConfig(enabled=True, require_apply_check=True, fail_to_pass=["test_x"])
+    applied = []
+    def tests(workdir, *_a, **_k):
+        applied.append((workdir / "x.py").read_text())
+        return SimpleNamespace(all_pass=True, score=1.0, summary=lambda: "passed")
+    monkeypatch.setattr("maverick.coding_mode.run_failing_tests", tests)
+    assert await agent._validate_final_patch(st, final, cfg) is None
+    result = await agent._verify_against_tests(st, final, cfg)
+    assert (result.verifier_confidence, result.verifier_critique) == (1.0, "passed")
+    assert applied == ["value = 2\n"] and (root / "x.py").read_text() == "value = 1\n"
