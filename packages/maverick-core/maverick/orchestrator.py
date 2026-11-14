@@ -68,6 +68,17 @@ def _remaining_allowance(cap: int | None, used: int) -> int | None:
     return None if cap is None else max(0, cap - used)
 
 
+def _attempt_allowances(budget: Budget) -> dict[str, int | None] | None:
+    """The token and tool-call caps for the next best-of-N attempt: what is
+    left of the parent's. ``None`` when any of them is used up."""
+    allowances = {
+        "max_input_tokens": _remaining_allowance(budget.max_input_tokens, budget.input_tokens),
+        "max_output_tokens": _remaining_allowance(budget.max_output_tokens, budget.output_tokens),
+        "max_tool_calls": _remaining_allowance(budget.max_tool_calls, budget.tool_calls),
+    }
+    return None if 0 in allowances.values() else allowances
+
+
 def _parse_bon_ladder(raw_ladder: str) -> list[tuple[str, float]]:
     """``model[:temperature]`` entries, comma-separated. A suffix that is not a
     temperature belongs to the model (``openai:gpt-5.5``, ``ollama:qwen3:32b``)."""
@@ -3435,6 +3446,10 @@ async def run_goal_best_of_n(
                 or (remaining_wall is not None and remaining_wall <= 0)):
             log.info("best-of-N early break: no budget left for attempt %d", i)
             break
+        allowances = _attempt_allowances(budget)
+        if allowances is None:  # a zero cap would still pay for one model call
+            log.info("best-of-N early break: token or tool-call allowance used up")
+            break
         per_attempt_dollars = (remaining_dollars / remaining_attempts
                                if remaining_dollars is not None else None)
         per_attempt_wall = (remaining_wall / remaining_attempts
@@ -3456,9 +3471,7 @@ async def run_goal_best_of_n(
             max_wall_seconds=per_attempt_wall,
             # Attempts run one after another and the parent absorbs each one,
             # so the remaining (not the full) allowance keeps the sum in the cap.
-            max_input_tokens=_remaining_allowance(budget.max_input_tokens, budget.input_tokens),
-            max_output_tokens=_remaining_allowance(budget.max_output_tokens, budget.output_tokens),
-            max_tool_calls=_remaining_allowance(budget.max_tool_calls, budget.tool_calls),
+            **allowances,
         )
         # Per-attempt sampling temperature via a ContextVar, NOT a process-
         # global env var: a concurrent goal on the same process must not inherit
