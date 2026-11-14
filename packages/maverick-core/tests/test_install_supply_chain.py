@@ -703,6 +703,9 @@ def test_cross_ecosystem_osv_gate_is_pinned_complete_and_source_verified():
     assert "releases/download/v2.3.8/osv-scanner_linux_amd64" in step
     assert "bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc" in step  # pragma: allowlist secret
     assert "--config osv-scanner.toml" in step
+    assert "--all-packages" in step
+    assert '--python-lockfile "$python_lock"' in step
+    assert '--docs-lockfile "$docs_lock"' in step
     assert "|| true" not in step
     for dependency_surface in (
         "requirements/ci.txt",
@@ -788,6 +791,8 @@ def test_osv_gate_scans_every_tracked_lockfile_or_says_why_not():
     for argument in re.findall(r"--lockfile (\S+)", step):
         variable = re.fullmatch(r'"\$(\w+)"', argument)
         scanned.add(copies[variable.group(1)] if variable else argument)
+    from scripts.check_osv_results import EXPECTED_LOCKFILES
+    assert scanned == EXPECTED_LOCKFILES
     unscanned = dict(re.findall(r"^\s*# osv-unscanned: (\S+) -- (\S.*)$", step, re.MULTILINE))
 
     assert sorted(scanned - tracked) == [], "OSV is pointed at untracked or missing files"

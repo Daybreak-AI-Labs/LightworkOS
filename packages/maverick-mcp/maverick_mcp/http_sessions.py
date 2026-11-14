@@ -65,18 +65,15 @@ def _task_owner(sid: str, caller_scope: str) -> str:
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-def _request_owner(request, sid: str | None, caller_scope: str) -> str:
-    """Scope request ids to an initialized client or the actual connection.
+def _request_owner(sid: str | None, caller_scope: str) -> str:
+    """Scope request ids to an initialized client, else to the credential.
 
-    Only the ASGI peer address is authoritative; forwarded headers and caller
-    credential alone cannot identify a connection. With no peer metadata,
-    isolate this request instead of allowing another request to cancel it.
+    An initialized client's session id keeps two clients sharing one
+    credential apart. A sessionless request falls back to the credential
+    scope: the socket peer is not a client identity (a cancel may arrive on
+    another TCP connection, and a reverse proxy multiplexes clients).
     """
-    if sid is None:
-        peer = request.scope.get("client")
-        connection = repr(tuple(peer)) if peer else secrets.token_urlsafe(24)
-        sid = "connection:" + connection
-    return _task_owner(sid, caller_scope)
+    return _task_owner(sid or "<without-session>", caller_scope)
 
 
 def _mint_session_id(caller_scope: str) -> str:

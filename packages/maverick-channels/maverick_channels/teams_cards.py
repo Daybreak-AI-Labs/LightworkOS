@@ -24,7 +24,6 @@ MAX_TEXT = 4000
 # MessageSizeTooBig) and advises staying within 80 KB
 # (https://learn.microsoft.com/microsoftteams/platform/bots/how-to/format-your-bot-messages).
 MAX_MESSAGE_BYTES = 80 * 1024
-_MENTION = re.compile(r"<at>(.*?)</at>", re.DOTALL)
 
 
 def _text(value: object, *, limit: int = MAX_TEXT) -> str:
@@ -140,7 +139,19 @@ def result_card(text: str) -> dict:
 def strip_mentions_text(text: str) -> str:
     """Turn remaining ``<at>Name</at>`` markup (other people's mentions) into
     the plain name, so the agent still sees who was named."""
-    return _MENTION.sub(lambda m: m.group(1), text or "").strip()
+    text = text or ""
+    pieces, offset = [], 0
+    while True:
+        start = text.find("<at>", offset)
+        if start < 0:
+            break
+        end = text.find("</at>", start + 4)
+        if end < 0:
+            break  # No later opener can close either; keep the remaining text.
+        pieces.extend((text[offset:start], text[start + 4:end]))
+        offset = end + 5
+    pieces.append(text[offset:])
+    return "".join(pieces).strip()
 
 
 def _bullets(items: object) -> str:

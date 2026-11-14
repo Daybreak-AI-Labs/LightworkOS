@@ -117,6 +117,7 @@ from .advanced import (
     _cfg_advanced_verification_and_rewards as _cfg_advanced_verification_and_rewards,
 )
 from .advanced import _collect_group_pairs as _collect_group_pairs
+from .advanced import _drop_per_tenant_keys_without_at_rest as _drop_per_tenant_keys_without_at_rest
 from .advanced import (
     _drop_self_connect_without_connections as _drop_self_connect_without_connections,
 )
@@ -525,7 +526,7 @@ def _q_secret(message: str) -> str:
     if questionary is None:
         import getpass
 
-        return getpass.getpass(f"{message}: ")
+        return getpass.getpass(f"{message}: ").strip()
     # Route through _ask so Ctrl-C / Ctrl-D / non-TTY (questionary returns
     # None) raises KeyboardInterrupt and aborts the wizard, like every other
     # prompt. The old `.ask() or ""` swallowed the abort into "", which
@@ -1106,7 +1107,7 @@ _ALLOWLIST_HINT = {
     "sms": "phone numbers, e.g. +14155551234",
     "whatsapp": "senders as Twilio sends them, e.g. whatsapp:+14155551234",
     "whatsapp_cloud": "bare wa_id digits, e.g. 14155551234",
-    "threads": "Threads usernames of allowed authors",
+    "threads": "numeric Threads user ids of allowed authors (not usernames)",
     "rcs": "E.164 MSISDNs, e.g. +14155551234",
 }
 
@@ -3712,7 +3713,7 @@ def _ask_credential(env_name: str, label: str) -> str:
     """Ask for a credential without showing any of an existing value."""
     current = os.environ.get(env_name, "")
     status = "set" if current else "not set"
-    value = _q_secret(f"  {label} [current: {status}] (blank = keep current)") or current
+    value = _q_secret(f"  {label} [current: {status}] (blank = keep current)").strip() or current
     return _single_line_env_value(env_name, value).strip()
 
 
@@ -5583,7 +5584,7 @@ def _consumer_api_key() -> dict[str, str]:
     )
     val = _single_line_env_value(
         "ANTHROPIC_API_KEY", _q_secret("  Paste your Anthropic API key (leave blank to skip):"),
-    )
+    ).strip()
     if not val.strip():
         console.print(
             "[yellow]Skipped.[/yellow] You can add one later in Lightwork Settings."
@@ -6182,6 +6183,40 @@ def show_compliance_commands(advanced: dict[str, Any]) -> None:
     )
 
 
+def _advanced_write_failed(exc: Exception) -> int:
+    """Report a failed final write. A file-system error is often temporary (a full
+    disk, a locked file), so its saved answers are kept for ``--resume``; any other
+    failure comes from the answers themselves, so they are cleared."""
+    show_install_failure(exc)
+    if isinstance(exc, OSError):
+        console.print(f"Your answers are kept in {PARTIAL_STATE_PATH}. Fix the problem, then run:\n"
+                      "  maverick init --resume")
+    else:
+        _clear_partial()
+    return 1
+
+
+def _saved_advanced(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Saved advanced answers, or None when the config writer would reject them.
+
+    A resumed run reuses them without asking, so an answer saved by an older
+    wizard (or edited by hand) is checked here and the step asked again instead
+    of failing the final write."""
+    advanced = state.get("advanced")
+    if not advanced:
+        return None
+    try:
+        _cfg_advanced(advanced, list(state.get("providers") or []))
+    except ValueError as exc:
+        console.print(f"[yellow]A saved advanced setting is not valid: {escape(str(exc))} "
+                      "Answer the advanced questions again; your other answers are kept.[/yellow]")
+        return None
+    # The writer drops these silently; a fresh answer is told, so tell a saved one too.
+    _drop_self_connect_without_connections(advanced)
+    _drop_per_tenant_keys_without_at_rest(advanced)
+    return advanced
+
+
 def _run_simple_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
     """Run the contiguous block of single-answer ``state.get(x) or pick_x()``
     steps (safety through advanced), persisting each. Returns the answers."""
@@ -6338,7 +6373,7 @@ def _run_simple_picks(state: dict[str, Any], _announce) -> dict[str, Any]:
     monitoring, monitoring_keys = pick_monitoring()
 
     _announce()
-    advanced = state.get("advanced") or pick_advanced()
+    advanced = _saved_advanced(state) or pick_advanced()
     state["advanced"] = advanced
     _save_partial(state)
 
@@ -6473,6 +6508,16 @@ def _web_search_step(state: dict[str, Any]) -> tuple[bool, list[str], dict[str, 
     backend = state.get("_web_search_backend")
     keys = {"MAVERICK_SEARCH_BACKEND": backend} if web_search_enabled and backend else {}
     return web_search_enabled, web_search_envs, keys
+
+
+def _runnable_search_backend(backend_keys: dict[str, str], backend_envs: list[str],
+                             keys: dict[str, str]) -> dict[str, str]:
+    """The saved backend, only when it can run. The kernel tries only a saved backend
+    (no fallback), so a keyed backend without its key would fail every search; without
+    one saved, search picks a working backend itself (DuckDuckGo needs no key)."""
+    if all(keys.get(env) or os.environ.get(env) for env in backend_envs):
+        return backend_keys
+    return {}
 
 
 def _run_short_setup_mode(resume: bool) -> int | None:
@@ -6698,7 +6743,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
     # to partial state). Editable later in the .env file.
     keys.update(pick_connectors())
     keys.update(monitoring_keys)
-    keys.update(web_search_keys)
+    keys.update(_runnable_search_backend(web_search_keys, web_search_envs, keys))
 
     suites = pick_suites()
 
@@ -6786,9 +6831,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
             protect_existing=True,
         )
     except Exception as exc:
-        _clear_partial()
-        show_install_failure(exc)
-        return 1
+        return _advanced_write_failed(exc)
     _clear_partial()
     ok = smoke_test()
     if ok:

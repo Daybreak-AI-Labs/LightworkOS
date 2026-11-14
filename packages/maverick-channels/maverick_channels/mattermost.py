@@ -10,7 +10,7 @@ Set up:
         enabled = true
         url = "https://chat.example.com"
         bot_token = "..."              # MATTERMOST_BOT_TOKEN wins when set
-        allowed_user_ids = ["alice"]    # Mattermost usernames or user ids
+        allowed_user_ids = ["..."]      # Mattermost user ids (not usernames)
 
 Uses the Mattermost REST API (v4) over HTTPS with the bot token as a bearer
 credential: it polls the channels the bot belongs to for new posts, answers
@@ -212,21 +212,24 @@ class MattermostChannel(Channel):
     async def _post(self, channel_id: str, text: str, root_id: str = "") -> str:
         import httpx
 
-        body = {"channel_id": channel_id, "message": text[:_MAX_POST_CHARS]}
-        if root_id:
-            body["root_id"] = root_id
+        result = ""
+        for index, start in enumerate(range(0, max(len(text), 1), _MAX_POST_CHARS)):
+            body = {"channel_id": channel_id, "message": text[start:start + _MAX_POST_CHARS]}
+            if root_id:
+                body["root_id"] = root_id
 
-        async def create():
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(self.base_url + _API + "/posts",
-                                             headers=self._headers(), json=body)
-            if 400 <= response.status_code < 500 and response.status_code not in {408, 429}:
-                raise DeliveryNotSent("Mattermost rejected the reply")
-            if response.status_code >= 400:
-                raise DeliveryUnknown("Mattermost reply acceptance is unconfirmed")
-            return str((response.json() or {}).get("id", ""))
+            async def create(body=body):
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(self.base_url + _API + "/posts",
+                                                 headers=self._headers(), json=body)
+                if 400 <= response.status_code < 500 and response.status_code not in {408, 429}:
+                    raise DeliveryNotSent("Mattermost rejected the reply")
+                if response.status_code >= 400:
+                    raise DeliveryUnknown("Mattermost reply acceptance is unconfirmed")
+                return str((response.json() or {}).get("id", ""))
 
-        return await send_chunk("post-0", body, create)
+            result = await send_chunk(f"post-{index}", body, create)
+        return result
 
     async def send(self, user_id: str, text: str) -> None:
         """Post ``text`` to a Mattermost channel id (the reply target)."""

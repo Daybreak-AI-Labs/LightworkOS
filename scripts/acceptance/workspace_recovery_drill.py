@@ -35,7 +35,8 @@ def main() -> None:
         store = DraftStore("a" * 64)
         slot = "b" * 64
         draft = store.save(slot, {"title": "Synthetic unfinished work"}, expected_revision=0, operation_id="initial-fixture")
-        assert crypto_at_rest._KEY_PATH.is_file(), "The fixture must use its own local encryption key"
+        if not (crypto_at_rest._KEY_PATH.is_file()):
+            raise RuntimeError("The fixture must use its own local encryption key")
         database = sqlite3.connect(root / "world.db")
         try:
             database.execute("CREATE TABLE turns(content TEXT)")
@@ -51,10 +52,12 @@ def main() -> None:
         # by test_workspace_recovery_api and the browser acceptance journey.
         review = recovery.prepare_restore(snapshot["id"], isolated=True, actor="synthetic-drill")
         restored = recovery.apply_restore(review["review"], review["target"], isolated=True, actor="synthetic-drill")
-        assert store.read(slot)["payload"]["title"] == "Synthetic unfinished work"
+        if not (store.read(slot)["payload"]["title"] == "Synthetic unfinished work"):
+            raise RuntimeError("Restored draft verification failed")
         database = sqlite3.connect(root / "world.db")
         try:
-            assert crypto_at_rest.unseal_from_str(database.execute("SELECT content FROM turns").fetchone()[0]) == "Synthetic prior conversation"
+            if not (crypto_at_rest.unseal_from_str(database.execute("SELECT content FROM turns").fetchone()[0]) == "Synthetic prior conversation"):
+                raise RuntimeError("Restored conversation verification failed")
         finally:
             database.close()
         # The controlled restore above deliberately retains its original local
@@ -62,22 +65,32 @@ def main() -> None:
         custody = Path(temporary, "separately-retained-keys.zip")
         custody.write_bytes(recovery.export_encryption_keys())
         key_path = crypto_at_rest._KEY_PATH.resolve()
-        assert key_path.is_relative_to(Path(temporary).resolve())
+        if not (key_path.is_relative_to(Path(temporary).resolve())):
+            raise RuntimeError("Fixture key location verification failed")
         key_path.unlink()
-        assert not key_path.exists()
+        if not (not key_path.exists()):
+            raise RuntimeError("Deleted fixture key verification failed")
         custody_report = recovery.test_key_custody(
             snapshot["id"], custody, expected_sha256=snapshot["sha256"], actor="synthetic-drill",
         )
-        assert not key_path.exists(), "The rehearsal must not regenerate or restore the original shared key"
+        if not (not key_path.exists()):
+            raise RuntimeError("The rehearsal must not regenerate or restore the original shared key")
         checks = {row["format"]: row for row in custody_report["checks"]}
-        assert custody_report["outcome"] == "verified_supported_formats"
-        assert custody_report["fresh_process"] is True
-        assert custody_report["key_source"] == "uploaded-custody-copy"
-        assert custody_report["coverage_complete"] is False
-        assert custody_report["sqlite_columns_scanned"] == 1
+        if not (custody_report["outcome"] == "verified_supported_formats"):
+            raise RuntimeError("Custody outcome verification failed")
+        if custody_report["fresh_process"] is not True:
+            raise RuntimeError("Custody process verification failed")
+        if not (custody_report["key_source"] == "uploaded-custody-copy"):
+            raise RuntimeError("Custody key-source verification failed")
+        if custody_report["coverage_complete"] is not False:
+            raise RuntimeError("Custody coverage verification failed")
+        if not (custody_report["sqlite_columns_scanned"] == 1):
+            raise RuntimeError("Custody SQLite coverage verification failed")
         for name in ("raw-v1", "world-text-v1"):
-            assert checks[name]["verified"] == 1
-        assert all(row["failed"] == row["unsupported"] == 0 for row in checks.values())
+            if not (checks[name]["verified"] == 1):
+                raise RuntimeError("Custody format verification failed")
+        if not (all(row["failed"] == row["unsupported"] == 0 for row in checks.values())):
+            raise RuntimeError("Custody failure-count verification failed")
         signed_custody = json.loads(recovery.export_custody_test(
             snapshot["id"], custody_report["report_id"], actor="synthetic-drill",
         ))

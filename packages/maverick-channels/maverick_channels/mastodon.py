@@ -187,20 +187,27 @@ class MastodonChannel(Channel):
         except ImportError:
             log.warning("mastodon: httpx not installed; dropping reply")
             return
-        body = {
-            "status": f"@{account.get('acct')} {text}"[:480],
-            "in_reply_to_id": parent_status.get("id"),
-            "visibility": parent_status.get("visibility", "public"),
-        }
-        async def create():
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(f"{self._base_url}/api/v1/statuses", headers=self._headers(), data=body)
-            if 400 <= resp.status_code < 500 and resp.status_code != 408:
-                raise DeliveryNotSent("Mastodon rejected the status")
-            if resp.status_code >= 400:
-                raise DeliveryUnknown("Mastodon status acceptance is unconfirmed")
-            return (resp.json() or {}).get("id", "")
-        return await send_chunk("status-0", body, create)
+        prefix = f"@{account.get('acct')} "
+        chunk_size = 480 - len(prefix)
+        if chunk_size <= 0:
+            raise DeliveryNotSent("Mastodon reply address exceeds the status bound")
+        result = ""
+        for index, start in enumerate(range(0, max(len(text), 1), chunk_size)):
+            body = {
+                "status": prefix + text[start:start + chunk_size],
+                "in_reply_to_id": parent_status.get("id"),
+                "visibility": parent_status.get("visibility", "public"),
+            }
+            async def create(body=body):
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(f"{self._base_url}/api/v1/statuses", headers=self._headers(), data=body)
+                if 400 <= resp.status_code < 500 and resp.status_code != 408:
+                    raise DeliveryNotSent("Mastodon rejected the status")
+                if resp.status_code >= 400:
+                    raise DeliveryUnknown("Mastodon status acceptance is unconfirmed")
+                return (resp.json() or {}).get("id", "")
+            result = await send_chunk(f"status-{index}", body, create)
+        return result
 
     async def _seed_cursor(self) -> None:
         """Set since_id to the newest existing notification so the first

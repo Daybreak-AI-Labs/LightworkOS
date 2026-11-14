@@ -174,9 +174,7 @@ def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollar
         "allow_tools": _split(allow_tools), "max_risk": max_risk,
         "max_dollars": max_dollars, "data_scopes": _split(data_scopes),
         "a2a_token": _at_rest(a2a_token), "grpc_token": _at_rest(grpc_token),
-        # Stored as given until the MCP task authorizer accepts the hashed
-        # form: it compares the stored credential with the presented bearer.
-        "mcp_token": mcp_token,
+        "mcp_token": _at_rest(mcp_token),
     }
     try:
         a = agent_trust.put_agent(entry)

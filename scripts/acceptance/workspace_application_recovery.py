@@ -64,9 +64,12 @@ def source(directory):
         later_goal = world.create_goal(AFTER, owner="user:recovery-fixture")
         later_acknowledged_at = time.time()
         later_acknowledgement_interval = time.perf_counter() - snapshot_completed_clock
-        assert draft.read(SLOT)["payload"]["title"] == AFTER
-        assert world.get_goal(later_goal).title == AFTER
-        assert len(world.artifacts_for_goal(goal)) == 2
+        if not (draft.read(SLOT)["payload"]["title"] == AFTER):
+            raise RuntimeError("Source draft verification failed")
+        if not (world.get_goal(later_goal).title == AFTER):
+            raise RuntimeError("Source goal verification failed")
+        if not (len(world.artifacts_for_goal(goal)) == 2):
+            raise RuntimeError("Source artifacts verification failed")
     finally:
         world.close()
     crypto._KEY_PATH.unlink()
@@ -116,7 +119,8 @@ def target(job, fixture):
                 "later_artifact_revision_absent": all(row["id"] != fixture["later_artifact"] for row in artifacts),
                 "later_draft_revision_absent": draft["revision"] != 2 and draft["payload"]["title"] != AFTER,
             }
-            assert all(checks.values())
+            if not (all(checks.values())):
+                raise RuntimeError("Restored application-reader verification failed")
         finally:
             world.close()
         request = json.loads((job / "request.json").read_text())
@@ -193,10 +197,14 @@ def _run_fixture(directory):
     key = bytes.fromhex((retained / "recovery.key").read_text())
     with backup.recovery_scope(retained, TENANT, key):
         manifest = backup.read_manifest(retained / "snapshot.tgz")
-    assert manifest["client_id"] == TENANT
-    assert manifest["recovery"]["tenant_id"] == TENANT
-    assert manifest["recovery"]["application_identity"] == fixture["application_identity"]
-    assert manifest["recovery"]["application_version"] == fixture["application_version"]
+    if not (manifest["client_id"] == TENANT):
+        raise RuntimeError("Snapshot client verification failed")
+    if not (manifest["recovery"]["tenant_id"] == TENANT):
+        raise RuntimeError("Snapshot tenant verification failed")
+    if not (manifest["recovery"]["application_identity"] == fixture["application_identity"]):
+        raise RuntimeError("Snapshot application identity verification failed")
+    if not (manifest["recovery"]["application_version"] == fixture["application_version"]):
+        raise RuntimeError("Snapshot application version verification failed")
     reports = []
     for variant in ("complete", "missing-custody", "wrong-primary"):
         job = file_lock.ensure_private_directory(directory / variant)
@@ -227,16 +235,23 @@ def _run_fixture(directory):
         child = subprocess.run([python, str(script), "--_target", str(job), "--_fixture", str(directory / "source-evidence.json")],
                                env=child_env, cwd=job, capture_output=True, timeout=90)
         launch_through_exit_seconds = time.perf_counter() - launch
-        assert child.returncode == 0, "Synthetic target process did not return evidence"
+        if not (child.returncode == 0):
+            raise RuntimeError("Synthetic target process did not return evidence")
         signed = json.loads((job / "application-result.json").read_text())
         signature = signed["authentication"]["signature"]
-        assert hmac.compare_digest(signature, hmac.new(key, backup._canonical_body(signed), hashlib.sha256).hexdigest())
-        assert (signed["outcome"] == "verified_fixture_application_reads") == (variant == "complete")
-        assert signed["application_reads_started"] == (variant == "complete")
+        if not (hmac.compare_digest(signature, hmac.new(key, backup._canonical_body(signed), hashlib.sha256).hexdigest())):
+            raise RuntimeError("Target evidence signature verification failed")
+        if not ((signed["outcome"] == "verified_fixture_application_reads") == (variant == "complete")):
+            raise RuntimeError("Target outcome verification failed")
+        if not (signed["application_reads_started"] == (variant == "complete")):
+            raise RuntimeError("Target application-read admission verification failed")
         if variant == "complete":
-            assert signed["archive_sha256"] == fixture["archive_sha256"] and signed["custody_sha256"] == fixture["custody_sha256"]
-            assert signed["application_identity"] == fixture["application_identity"]
-        assert digest_tree(home) == original_hashes and digest_tree(retained) == custody_hashes
+            if not (signed["archive_sha256"] == fixture["archive_sha256"] and signed["custody_sha256"] == fixture["custody_sha256"]):
+                raise RuntimeError("Target archive and custody verification failed")
+            if not (signed["application_identity"] == fixture["application_identity"]):
+                raise RuntimeError("Target application identity verification failed")
+        if not (digest_tree(home) == original_hashes and digest_tree(retained) == custody_hashes):
+            raise RuntimeError("Source and custody preservation verification failed")
         reports.append({"variant": variant, "parent_launch_through_exit_seconds": round(launch_through_exit_seconds, 6),
                         "signed_report": signed, "signature_verified": True})
     evidence = {"fixture": "synthetic-local-application-readers", "source": fixture,

@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.acceptance import run_governance_platform_acceptance as runner
 
 
@@ -95,6 +97,36 @@ def test_timeout_terminates_the_fixed_child_and_reports_no_raw_output():
     assert result["status"] == "timed_out"
     assert result["timed_out"] is True
     assert "sensitive timeout diagnostic" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("summary", [
+    b"1 test collected in 0.1s\n", b"1 skipped in 0.1s\n",
+    b"1 passed, 1 failed in 0.1s\n", b"1 passed, 1 error in 0.1s\n",
+])
+def test_zero_exit_without_a_successful_test_run_cannot_pass_acceptance(summary):
+    report = runner.run_acceptance(
+        categories=["audit-export"], popen_factory=lambda *_args, **_kwargs: _FakeProcess(summary),
+        source_binding_factory=_fixed_source_binding,
+    )
+    assert report["suites"][0]["status"] == "failed"
+    assert report["summary"]["all_selected_test_suites_passed"] is False
+    assert report["summary"]["all_selected_suites_passed"] is False
+
+
+def test_acceptance_child_does_not_inherit_pytest_options():
+    environments = []
+
+    def factory(*_args, **kwargs):
+        environments.append(kwargs["env"])
+        return _FakeProcess(b"1 passed in 0.1s\n")
+
+    runner.run_acceptance(
+        categories=["audit-export"], base_environment={"PYTEST_ADDOPTS": "--collect-only", "KEPT": "1"},
+        popen_factory=factory, source_binding_factory=_fixed_source_binding,
+    )
+    assert len(environments) == 1
+    assert "PYTEST_ADDOPTS" not in environments[0]
+    assert environments[0]["KEPT"] == "1"
 
 
 def test_allowlist_resolves_inside_the_repository_and_rejects_unknown_category():

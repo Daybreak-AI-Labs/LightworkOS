@@ -139,6 +139,9 @@ class BlueskyChannel(Channel):
                     self._session = {}
                 response.raise_for_status()
                 payload = response.json() or {}
+            # No early stop at the floor: indexedAt is not monotonic (see
+            # __init__), so a newer mention can follow an older page. The
+            # newest-page probe in drain() keeps fresh mentions visible.
             return PollPage(payload.get("notifications") or [], payload.get("cursor") or None)
         async def admit(item, state):
             if item.get("reason") not in {"mention", "reply"}:
@@ -159,7 +162,7 @@ class BlueskyChannel(Channel):
             while len(self._seen_order) > _MAX_SEEN_URIS:
                 self._seen_uris.discard(self._seen_order.popleft())
             return not seen
-        results = await checkpoint.drain(row, fetch, admit)
+        results = await checkpoint.drain(row, fetch, admit, refresh_head=True)
         self.poll_status = (await asyncio.to_thread(checkpoint.store.get, checkpoint.record_id))["status"]
         return results
 
@@ -208,34 +211,37 @@ class BlueskyChannel(Channel):
             "uri": parent_notif.get("uri"),
             "cid": parent_notif.get("cid"),
         }
-        body = {
-            "repo": sess.get("did"),
-            "collection": "app.bsky.feed.post",
-            "record": {
-                "$type": "app.bsky.feed.post",
-                "text": text[:300],  # 300-char limit
-                "createdAt": _now_iso_z(),
-                "reply": {
-                    "root": reply_root,
-                    "parent": {
-                        "uri": parent_notif.get("uri"),
-                        "cid": parent_notif.get("cid"),
+        result = ""
+        for index, start in enumerate(range(0, max(len(text), 1), 300)):
+            chunk = text[start:start + 300]
+            body = {
+                "repo": sess.get("did"),
+                "collection": "app.bsky.feed.post",
+                "record": {
+                    "$type": "app.bsky.feed.post",
+                    "text": chunk,
+                    "createdAt": _now_iso_z(),
+                    "reply": {
+                        "root": reply_root,
+                        "parent": {
+                            "uri": parent_notif.get("uri"),
+                            "cid": parent_notif.get("cid"),
+                        },
                     },
                 },
-            },
-        }
-        async def create():
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(f"{_API_BASE}/com.atproto.repo.createRecord",
-                    headers={"Authorization": f"Bearer {sess['accessJwt']}"}, json=body)
-            if 400 <= resp.status_code < 500 and resp.status_code != 408:
-                raise DeliveryNotSent("Bluesky rejected the reply")
-            if resp.status_code >= 400:
-                raise DeliveryUnknown("Bluesky reply acceptance is unconfirmed")
-            return (resp.json() or {}).get("uri", "")
-        # Timestamp is transport formatting; retry identity covers immutable
-        # content/routing, not a fresh clock value.
-        return await send_chunk("record-0", {"text": text[:300], "route": parent_notif}, create)
+            }
+            async def create(body=body):
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(f"{_API_BASE}/com.atproto.repo.createRecord",
+                        headers={"Authorization": f"Bearer {sess['accessJwt']}"}, json=body)
+                if 400 <= resp.status_code < 500 and resp.status_code != 408:
+                    raise DeliveryNotSent("Bluesky rejected the reply")
+                if resp.status_code >= 400:
+                    raise DeliveryUnknown("Bluesky reply acceptance is unconfirmed")
+                return (resp.json() or {}).get("uri", "")
+            # A fresh transport timestamp is not part of immutable retry identity.
+            result = await send_chunk(f"record-{index}", {"text": chunk, "route": parent_notif}, create)
+        return result
 
     async def start(self) -> None:
         self._running = True

@@ -12,8 +12,10 @@ answers (someone replied under the bot's post); the alternative mentions
 edge needs an extra permission grant and misses replies that don't
 @-mention the account, and Threads has no DM API at all. Each reply carries
 ``username``/``from`` so the *author* — not the transport — is
-allowlist-checked (default-deny), and replies authored by the configured
-account itself are skipped so the bot can never loop on its own replies.
+allowlist-checked by its numeric ``from.id`` (default-deny; a username can be
+reassigned to another account, so it never authorizes), and replies
+authored by the configured account itself are skipped so the bot can never
+loop on its own replies.
 
 Polling persists bounded continuation only after durable inbox admission.
 Execution claims remain held after an unknown outcome; saved replies retry
@@ -31,7 +33,7 @@ Config::
     enabled = true
     access_token = "${THREADS_ACCESS_TOKEN}"
     user_id      = "17841400000000000"      # numeric Threads user id
-    allowed_user_ids = ["yourhandle"]       # Threads usernames, no '@'
+    allowed_user_ids = ["17841400000000001"]  # numeric Threads user ids
     poll_seconds = 30
 
 Requires::
@@ -82,7 +84,7 @@ class ThreadsChannel(Channel):
                 "([channels.threads] or THREADS_ACCESS_TOKEN / THREADS_USER_ID env)."
             )
         # The token only proves WE can read the account; gate on the reply
-        # AUTHOR (Threads username, no '@').
+        # AUTHOR (numeric Threads user id; usernames can be reassigned).
         self.allowed_user_ids = normalize_allowlist(allowed_user_ids, "THREADS_ALLOWED_USER_IDS")
         if not self.allowed_user_ids:
             raise ValueError(
@@ -132,6 +134,10 @@ class ThreadsChannel(Channel):
                 return PollPage(items, updates={"floor": floor, "initial_page": False})
             if cursor and not state["floor"]:
                 raise ValueError("Threads pagination has no established history boundary")
+            from .polling import page_before_floor
+
+            if page_before_floor(items, "timestamp", state["floor"]):
+                cursor = None
             return PollPage(items, cursor)
         async def admit(item, state):
             if not state["initial_page"] and state["floor"]:
@@ -141,7 +147,7 @@ class ThreadsChannel(Channel):
                 if timestamp < parse_timestamp(state["floor"]):
                     return False
             return await self._admit(item) is not None
-        results = await checkpoint.drain(row, fetch, admit)
+        results = await checkpoint.drain(row, fetch, admit, refresh_head=True)
         self.poll_status = (await asyncio.to_thread(checkpoint.store.get, checkpoint.record_id))["status"]
         return results
 

@@ -304,6 +304,18 @@ def test_trust_add_stores_bearer_tokens_hashed_not_raw(tmp_path):
     assert agent_trust.lookup("peer1") is not None
 
 
+def test_trust_add_stores_the_mcp_token_hashed_and_the_raw_bearer_authenticates(tmp_path):
+    from maverick import agent_trust
+
+    added = _run("trust", "add", "peer1", "--mcp-token", "RAW-MCP-BEARER-xyz789")
+    assert added.exit_code == 0, added.output
+    stored = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("agent_trust*.json"))
+    assert stored and "RAW-MCP-BEARER-xyz789" not in stored
+    assert agent_trust.lookup("peer1").mcp_token == agent_trust.hash_token("RAW-MCP-BEARER-xyz789")
+    agent = agent_for_token("RAW-MCP-BEARER-xyz789", "mcp")
+    assert agent is not None and agent.id == "peer1"
+
+
 def test_remove_reports_its_own_failure_not_a_containment_outage(monkeypatch):
     assert _enroll_cli().exit_code == 0
 

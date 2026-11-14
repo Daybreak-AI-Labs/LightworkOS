@@ -714,11 +714,11 @@ def _entry_from_agent(agent: TrustedAgent) -> dict[str, Any]:
 
 
 def hash_overlay_tokens(entry: dict[str, Any]) -> dict[str, Any]:
-    """Replace plaintext config-file bearers in an overlay entry by their hash,
-    for every surface whose verifier (:func:`_token_matches`) accepts the hashed
-    form. ``mcp_token`` stays as it is: the MCP per-task capability refresh
-    compares the stored string with the raw bearer, so a hashed MCP token would
-    refuse every call."""
+    """Replace plaintext config-file bearers in an overlay entry by their hash.
+
+    Every surface's verifier accepts the hashed form: :func:`_token_matches`
+    for authentication, and the MCP per-task credential refresh, which
+    fingerprints the raw and the ``sha256:`` stored forms identically."""
     for name in _HASHABLE_TOKEN_ATTRS:
         token = entry.get(name)
         if isinstance(token, str) and token and not token.startswith(_TOKEN_HASH_PREFIX):
@@ -975,7 +975,7 @@ def lookup(agent_id: str, *, registry: dict[str, TrustedAgent] | None = None) ->
 
 _TOKEN_ATTRS = {"a2a": "a2a_token", "grpc": "grpc_token", "mcp": "mcp_token",
                 "rest": "rest_token"}
-_HASHABLE_TOKEN_ATTRS = ("a2a_token", "grpc_token", "rest_token")
+_HASHABLE_TOKEN_ATTRS = ("a2a_token", "grpc_token", "mcp_token", "rest_token")
 
 #: Tokens minted from the app are stored hashed; hand-edited config-file
 #: tokens stay plaintext-compatible. The prefix disambiguates the two forms.

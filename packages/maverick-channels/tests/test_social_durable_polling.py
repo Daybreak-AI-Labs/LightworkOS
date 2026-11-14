@@ -159,6 +159,56 @@ def thread_item(identity, timestamp="2026-01-02T00:00:00Z"):
     return {"id": identity, "text": identity, "username": "owner", "from": {"id": "200"}, "timestamp": timestamp}
 
 
+@pytest.mark.parametrize("adapter", ["bluesky", "threads"])
+def test_newest_mentions_are_polled_while_backlog_drains_to_floor(monkeypatch, adapter):
+    monkeypatch.setattr(polling, "MAX_PAGES", 1)
+    channel = bluesky() if adapter == "bluesky" else threads()
+    phase, calls = ["startup" if adapter == "threads" else "head"], []
+
+    def get(params):
+        cursor = params.get("cursor" if adapter == "bluesky" else "after")
+        calls.append(cursor)
+        identity, timestamp, next_cursor = phase[0], "2026-01-02T00:00:00Z", "tail"
+        if phase[0] == "startup":
+            timestamp = "2026-01-01T00:00:00Z"
+        elif cursor == "tail":
+            identity, next_cursor = "backlog", "old"
+        elif cursor == "old":
+            # Threads stops at a page wholly older than the floor; Bluesky
+            # pages to the end because its indexedAt is not monotonic.
+            identity, timestamp = "history", "2025-01-01T00:00:00Z"
+            next_cursor = "ancient" if adapter == "threads" else None
+        assert cursor != "ancient", "history older than the floor was paged"
+        if adapter == "bluesky":
+            return Response({"notifications": [bluesky_item(identity, timestamp)], "cursor": next_cursor})
+        return Response({"data": [thread_item(identity, timestamp)],
+                         "paging": {"next": "unused", "cursors": {"after": next_cursor}}})
+
+    transport(monkeypatch, get)
+
+    async def run():
+        if adapter == "threads":
+            await channel._poll_once()
+            phase[0] = "head"
+        await channel._poll_once()
+        phase[0] = "new"
+        second = await channel._poll_once()
+        identities = {item.get("uri", item.get("id")) for item in second}
+        expected = {"at://new", "at://backlog"} if adapter == "bluesky" else {"new", "backlog"}
+        assert expected <= identities
+        checkpoint = PollCheckpoint(channel.name, channel._account() if adapter == "bluesky" else channel.user_id)
+        assert checkpoint.store.get(checkpoint.record_id)["cursor"] == "old"
+        await channel._poll_once()
+        state = checkpoint.store.get(checkpoint.record_id)
+        assert state["cursor"] is None and state["status"] == "idle"
+        phase[0] = "newest"
+        latest = await channel._poll_once()
+        assert calls[-1] is None
+        assert any(item.get("uri", item.get("id")) in {"newest", "at://newest"} for item in latest)
+
+    asyncio.run(run())
+
+
 def test_threads_startup_scope_then_burst_uses_opaque_continuation(monkeypatch):
     monkeypatch.setattr(polling, "MAX_PAGES", 1)
     phase, requests = ["startup"], []
@@ -184,7 +234,7 @@ def test_threads_startup_scope_then_burst_uses_opaque_continuation(monkeypatch):
                 await channel._dispatch(item)
         assert {call.args[0].message_id for call in handler.await_args_list} == {"900", "2", "1"}
     asyncio.run(run())
-    assert requests == [None, None, "opaque"]
+    assert requests == [None, None, None, "opaque"]
 
 
 def test_threads_retries_publish_with_saved_container_and_one_execution(monkeypatch):

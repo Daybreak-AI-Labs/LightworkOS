@@ -826,8 +826,12 @@ def test_mattermost_is_set_up_on_the_channels_page_with_a_sealed_token(monkeypat
     table = _loaded()["channels"]["mattermost"]
     assert table == {"enabled": True, "url": "https://chat.example.com", "bot_token": token}
     assert token not in client.get("/channels").text
-    _set("channels.mattermost.allowed_user_ids", ["alice"])
-    assert _loaded()["channels"]["mattermost"]["allowed_user_ids"] == ["alice"]
+    # The channel authorizes by user id, so a username is refused at save time.
+    refused = _save([{"id": "channels.mattermost.allowed_user_ids", "value": ["alice"]}], confirm=True)
+    assert refused.status_code != 200
+    person = "4xp9fdt77pncbef59f4k1qe83o"  # pragma: allowlist secret
+    _set("channels.mattermost.allowed_user_ids", [person])
+    assert _loaded()["channels"]["mattermost"]["allowed_user_ids"] == [person]
     monkeypatch.setenv("MATTERMOST_BOT_TOKEN", "server-token")
     from maverick_dashboard import settings_store
 

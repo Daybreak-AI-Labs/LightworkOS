@@ -118,6 +118,7 @@ def test_web_search_backend_survives_resume_and_a_fresh_process(monkeypatch, tmp
     _advanced(monkeypatch, tmp_path)
     monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "")
     monkeypatch.delenv("MAVERICK_SEARCH_BACKEND")
+    monkeypatch.setenv("BRAVE_API_KEY", "wizard-test-value")  # pragma: allowlist secret
     confirm = wizard._q_confirm
     monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: (
         True if prompt.startswith("Enable web search") else False if prompt.startswith("Write config")
@@ -143,6 +144,16 @@ def test_advanced_write_failure_reports_and_clears_bad_resume_state(monkeypatch,
     assert wizard.run() == 1
     assert not wizard.PARTIAL_STATE_PATH.exists()
     assert "invalid saved answer" in wizard.console.file.getvalue()
+
+
+def test_temporary_write_failure_keeps_the_resume_answers(monkeypatch, tmp_path):
+    _advanced(monkeypatch, tmp_path)
+    def fail(*args, **kwargs):
+        raise OSError("No space left on device")
+    monkeypatch.setattr(wizard, "write_config", fail)
+    assert wizard.run() == 1
+    assert json.loads(wizard.PARTIAL_STATE_PATH.read_text())["providers"] == ["anthropic"]
+    assert "maverick init --resume" in wizard.console.file.getvalue()
 
 
 def test_existing_secret_prompts_never_show_any_prefix(monkeypatch):
@@ -191,3 +202,55 @@ def test_partial_state_excludes_connection_secrets_and_scrubs_legacy_files(monke
     parsed = _write(monkeypatch, tmp_path, knowledge=state["knowledge"], notifications=state["_notifications_pair"][0])
     assert parsed["knowledge"]["dsn"] == state["knowledge"]["dsn"]
     assert parsed["notifications"]["ntfy_topic"] == state["_notifications_pair"][0]["ntfy_topic"]
+
+
+def test_keyed_search_backend_without_its_key_is_not_forced(monkeypatch, tmp_path):
+    # A forced backend never falls back, so a keyless tavily answer would break search.
+    _advanced(monkeypatch, tmp_path)
+    for name in ("MAVERICK_SEARCH_BACKEND", "TAVILY_API_KEY"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    confirm = wizard._q_confirm
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: (
+        True if prompt.startswith("Enable web search") else confirm(prompt, **kw)))
+    assert wizard.run() == 0
+    monkeypatch.delenv("MAVERICK_SEARCH_BACKEND", raising=False)
+    config._load_env_file(wizard.ENV_FILE)
+    assert "MAVERICK_SEARCH_BACKEND" not in os.environ
+    assert config.load_config(wizard.CONFIG_FILE)["capabilities"]["web_search"] is True
+
+
+def test_blank_or_padded_secret_answers_keep_or_trim_the_value(monkeypatch):
+    import getpass
+
+    q_secret = wizard._q_secret
+    monkeypatch.setenv("WIZARD_TEST_SECRET", "existing-value")
+    monkeypatch.setattr(wizard, "_q_secret", lambda prompt: "   ")
+    kept = wizard.collect_api_keys([], {"WIZARD_TEST_SECRET"})
+    assert kept == {"WIZARD_TEST_SECRET": "existing-value"}  # pragma: allowlist secret
+    monkeypatch.setattr(wizard, "questionary", None)
+    monkeypatch.setattr(getpass, "getpass", lambda prompt: "  pasted-value \t")
+    assert q_secret("Key") == "pasted-value"
+
+
+def test_resume_reasks_saved_advanced_answers_the_writer_rejects(monkeypatch, tmp_path):
+    _advanced(monkeypatch, tmp_path)
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: False)
+    assert wizard.run() == 0  # stopped before writing; answers saved
+    state = json.loads(wizard.PARTIAL_STATE_PATH.read_text())
+    state["advanced"] = {"spending_workspace_monthly": "abc", "anonymous_logs": True}
+    wizard.PARTIAL_STATE_PATH.write_text(json.dumps(state))
+    asked = []
+    monkeypatch.setattr(wizard, "pick_advanced", lambda: asked.append(1) or {"anonymous_logs": True})
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: prompt.startswith("Write config"))
+    assert wizard.run(resume=True) == 0
+    assert asked == [1]
+    assert "advanced questions again" in wizard.console.file.getvalue()
+    assert config.load_config(wizard.CONFIG_FILE)["privacy"]["anonymous"] is True
+
+
+def test_resume_says_when_saved_per_tenant_keys_are_dropped(monkeypatch, tmp_path):
+    _paths(monkeypatch, tmp_path)
+    state = {"advanced": {"encrypt_per_tenant": True, "anonymous_logs": True}}
+    assert wizard._saved_advanced(state) == {"encrypt_per_tenant": False, "anonymous_logs": True}
+    assert "require at-rest encryption" in wizard.console.file.getvalue()

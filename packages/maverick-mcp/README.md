@@ -85,7 +85,8 @@ transport needs the `[http]` extra (FastAPI + uvicorn).
 HTTP initialization returns a caller-bound `Mcp-Session-Id`; clients should send
 it on subsequent requests so request IDs and cancellation remain scoped to that
 client across connections. Without a session, request IDs are scoped to the
-socket peer connection, independently of other clients using the same bearer.
+bearer credential, so sessionless clients sharing a bearer share one request-ID
+namespace and can cancel each other's requests.
 Failed HTTP bearer attempts are limited per network peer. Callers behind the
 same proxy share that failure budget; configure an upstream limiter when they
 need independent quotas. Lightwork's launcher preserves the socket peer; an

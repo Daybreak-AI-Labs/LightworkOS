@@ -115,9 +115,12 @@ def evolution_example(context, service, case, policy, now):
     rolled_back = evolution.rollback(context, activation["revision"],
                                      rationale="Exercise definition rollback without reversing a ticket.")
     fallback = evolution.run_for_case(context, service, case["id"])
-    assert before["classification"] == "human_fallback"
-    assert after["classification"] == "renewal_due"
-    assert fallback["classification"] == "human_fallback"
+    if not (before["classification"] == "human_fallback"):
+        raise RuntimeError("Pre-promotion fallback verification failed")
+    if not (after["classification"] == "renewal_due"):
+        raise RuntimeError("Promoted renewal verification failed")
+    if not (fallback["classification"] == "human_fallback"):
+        raise RuntimeError("Rollback fallback verification failed")
     return {"training_observations": len(training), "candidate_id": candidate["id"],
             "training_source_provenance": [
                 {key: observation[key] for key in (
@@ -166,7 +169,8 @@ def run_demo():
         content=(fixtures / "northstar-policy.pdf").read_bytes(), name="Synthetic Northstar policy.pdf",
         mime="application/pdf", document_date=now[0] - 86400)
     original = complete_case(service, ctx, initial)
-    assert original["assessment"]["answers"]["aiv_training_data"]["answer"] == "unknown"
+    if not (original["assessment"]["answers"]["aiv_training_data"]["answer"] == "unknown"):
+        raise RuntimeError("Initial assessment verification failed")
     improvement = evolution_example(ctx, service, original, policy, now)
     # New evidence, a separate assessment and a separate reviewed ticket.
     docs.documents[(ctx.tenant, "security-paper")] = EvidenceDocument(
@@ -191,8 +195,10 @@ def run_demo():
     tickets.timeout_after_success = True
     ambiguous = complete_case(service, ctx, service.intake(ctx, "Synthetic Harbor Document AI",
         "security-paper", "VEND", "Demonstrate a lost provider response and read-only reconciliation"))
-    assert tickets.creates == 3
-    assert ambiguous["operation"]["external_confirmation"]["reconciled"] is True
+    if not (tickets.creates == 3):
+        raise RuntimeError("Ticket count verification failed")
+    if ambiguous["operation"]["external_confirmation"]["reconciled"] is not True:
+        raise RuntimeError("Ambiguous operation reconciliation verification failed")
     report = {"status": "passed_offline_synthetic", "provider_calls": "local fake adapters only",
         "live_acceptance": "unverified", "model_calls": 0, "execution_cost_usd": 0,
         "elapsed_wall_seconds": time.perf_counter() - demo_started,

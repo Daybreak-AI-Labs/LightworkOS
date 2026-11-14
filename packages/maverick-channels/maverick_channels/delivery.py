@@ -54,6 +54,10 @@ class DeliveryNotSent(RuntimeError):
     """Provider definitively rejected this attempt before accepting a message."""
 
 
+class IntakeMessageRejected(ValueError):
+    """The message's content or identity cannot be admitted."""
+
+
 class DeliveryWithheld(DeliveryNotSent):
     """The saved reply's task or sources are not available to this person now.
 
@@ -152,23 +156,30 @@ def _legacy_cleanup_digests(record_id):
 
 
 def _payload(msg, record_id):
-    from maverick.attachments import MAX_GOAL_BYTES, validate_attachment
+    from maverick.attachments import MAX_GOAL_BYTES, AttachmentRejected, validate_attachment
 
     if not isinstance(msg.text, str) or len(msg.text) > MAX_TEXT_CHARS or len(msg.attachments) > MAX_ATTACHMENTS:
-        raise ValueError("Channel message exceeds its durable intake bound")
+        raise IntakeMessageRejected("Channel message exceeds its durable intake bound")
     files, publications, total = [], [], 0
     for item in msg.attachments:
         data = item.get("data")
         if not isinstance(data, bytes):
-            raise ValueError("Channel attachment requires admitted bytes")
+            raise IntakeMessageRejected("Channel attachment requires admitted bytes")
         filename, mime = item.get("filename"), item.get("mime")
-        sha = validate_attachment(filename, mime, data, existing_total=total)
+        try:
+            sha = validate_attachment(filename, mime, data, existing_total=total)
+        except AttachmentRejected as exc:
+            raise IntakeMessageRejected(str(exc)) from exc
         total += len(data)
         if total > MAX_GOAL_BYTES:
-            raise ValueError("Channel attachments exceed aggregate quota")
+            raise IntakeMessageRejected("Channel attachments exceed aggregate quota")
         files.append({"filename": filename, "mime": mime, "sha256": sha, "size_bytes": len(data)})
         publications.append((_blob_path(record_id, sha), data, sha))
-    payload = {"user_id": _bounded(msg.user_id, 4096, "recipient"), "sender_id": msg.sender_id,
+    try:
+        recipient = _bounded(msg.user_id, 4096, "recipient")
+    except ValueError as exc:
+        raise IntakeMessageRejected(str(exc)) from exc
+    payload = {"user_id": recipient, "sender_id": msg.sender_id,
                "provider_tenant_id": getattr(msg, "provider_tenant_id", None),
                "provider_sender_id": getattr(msg, "provider_sender_id", None),
                "channel": msg.channel, "message_id": msg.message_id,
@@ -345,7 +356,7 @@ class DeliveryJournal:
         payload, publications = _payload(msg, record_id)
         route = {} if route is None else route
         if len(json.dumps(route).encode()) > 65536:
-            raise ValueError("Channel reply routing exceeds its bound")
+            raise IntakeMessageRejected("Channel reply routing exceeds its bound")
         fingerprint = _digest([payload, route])
         row = self.get(record_id)
         if row is None:
@@ -394,7 +405,7 @@ class DeliveryJournal:
                 except RecordConflict:
                     row = self.get(record_id)
         if not row or row["fingerprint"] not in (fingerprint, _earlier_fingerprint(payload, route)):
-            raise ValueError("Channel message identity already belongs to different content or routing")
+            raise IntakeMessageRejected("Channel message identity already belongs to different content or routing")
         if row.get("restore_hold"):
             return row
         if row["execution"] == "staging":
@@ -534,11 +545,16 @@ def _earlier_fingerprint(payload, route):
 
 
 def _settled(row):
-    """Delivered, or a phone call's answer. A voice answer goes back in the
-    call's own HTTP response, so its receipt always ends "delivery unknown" and
-    no later send can confirm or repeat it; kept as unresolved, every call's
-    receipt would stay forever and fill the intake all chat apps share."""
-    return row["delivery"] == "delivered" or (row["channel"] == "voice" and row["delivery"] == "delivery_unknown")
+    """Delivered, or fully written through a transport without remote receipts."""
+    if row["delivery"] == "delivered":
+        return True
+    if row["delivery"] != "delivery_unknown":
+        return False
+    if row["channel"] == "voice":
+        return True  # The answer goes back in the call's own HTTP response.
+    written = [chunk for key, chunk in row.get("chunks", {}).items() if key != "reply"]
+    return (row["channel"] == "irc" and bool(written)
+            and all(chunk.get("state") == "delivered" for chunk in written))
 
 
 def _require_reply_source(row):

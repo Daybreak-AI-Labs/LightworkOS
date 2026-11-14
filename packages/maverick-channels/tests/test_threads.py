@@ -154,6 +154,17 @@ def test_unlisted_author_ignored(monkeypatch):
     assert not ch.send.await_count
 
 
+def test_allow_listed_username_does_not_authorize_any_account(monkeypatch):
+    """Usernames can be reassigned, so only the numeric author id is trusted."""
+    ch = _channel(allowed_user_ids=[OWNER])
+    ch.send = AsyncMock()
+    _fake_wm(monkeypatch)
+    _install_httpx(monkeypatch, [], _responder_with([_reply()]))
+    asyncio.run(_cycle(ch))
+    assert not ch.handler.await_count
+    assert not ch.send.await_count
+
+
 def test_self_authored_reply_skipped(monkeypatch):
     """The bot's own replies come back on the edge; answering them would
     loop. from.id == configured user_id is dropped before any claim."""

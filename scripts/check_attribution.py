@@ -39,22 +39,87 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: Assistants whose name in a trailer or footer marks it as AI attribution.
-#: Human co-authors and non-assistant bots (dependabot, renovate) pass.
+#: Assistants whose bare name in a trailer or footer marks it as AI
+#: attribution. A first name alone is not an assistant identity once an email
+#: address is attached (``Claude Monet <monet@example.com>`` is a person), so
+#: a name is matched only when it stands alone or the address agrees with it.
 _ASSISTANTS = (
     r"(?:claude|anthropic|copilot|chatgpt|openai|codex|gemini|cursor|devin|"
-    r"aider|windsurf)"
+    r"aider|windsurf|jules|amp|openhands|claudebot)"
 )
+_NAME_RULE = re.compile(
+    rf"(?:(?:github|google|openai|anthropic)\s+)?{_ASSISTANTS}"
+    r"(?:\s+(?:code|agent|ai|bot|assist|assistant|cli))*",
+    re.IGNORECASE,
+)
+#: Address domains that only an assistant (or its vendor) commits from.
+_VENDOR_DOMAINS = (
+    "anthropic.com", "openai.com", "cursor.com", "aider.chat", "ampcode.com",
+    "all-hands.dev", "cognition.ai", "cognition.com", "codeium.com",
+)
+#: Words of a ``[bot]`` login that make it an assistant's app rather than a
+#: dependency or CI bot (dependabot, renovate, github-actions pass).
+_ASSISTANT_TOKENS = frozenset({
+    "claude", "anthropic", "copilot", "chatgpt", "openai", "codex", "gemini",
+    "cursor", "cursoragent", "devin", "aider", "windsurf", "jules", "amp",
+    "openhands", "claudebot",
+})
+_IDENTITY = re.compile(r"(?P<name>[^<>]*?)\s*(?:<(?P<email>[^<>]*)>)?")
+_GITHUB_NOREPLY = re.compile(r"(?:\d+\+)?(?P<login>[^@]+)@users\.noreply\.github\.com",
+                             re.IGNORECASE)
+_TRAILER = re.compile(
+    r"^\s*(co-authored-by|assisted-by|generated-by|ai-assisted-by|co-developed-by):\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+_GENERATOR = re.compile(r"generated (?:with|by)\s+(.+?)\s*$", re.IGNORECASE)
+
+
+def _tokens(value: str) -> set[str]:
+    return set(re.split(r"[-_.+\s]+", value.lower()))
+
+
+def _assistant_login(login: str) -> bool:
+    """A GitHub login that belongs to an assistant: ``Copilot`` itself, or a
+    ``[bot]`` app login naming an assistant (``copilot-swe-agent[bot]``,
+    ``devin-ai-integration[bot]``, ``google-labs-jules[bot]``)."""
+    login = login.strip().lower()
+    if login in {"copilot", "claudebot", "cursoragent"}:
+        return True
+    return login.endswith("[bot]") and bool(_tokens(login[:-5]) & _ASSISTANT_TOKENS)
+
+
+def is_assistant_identity(value: str) -> bool:
+    """``Name <email>`` (or a bare name or login) that is an assistant.
+
+    An address at an assistant vendor's domain, a GitHub no-reply address of
+    an assistant login, or an assistant bot login is enough. A name is enough
+    only without an address, or when the address's local part names the same
+    kind of assistant (``Copilot <copilot@github.com>``).
+    """
+    match = _IDENTITY.fullmatch(value.strip())
+    if match is None:
+        return False
+    name = re.sub(r"\s*\([^()]*\)$", "", match.group("name")).strip()
+    email = (match.group("email") or "").strip().lower()
+    if _assistant_login(name):
+        return True
+    if not email:
+        return bool(_NAME_RULE.fullmatch(name))
+    domain = email.rpartition("@")[2]
+    if any(domain == d or domain.endswith("." + d) for d in _VENDOR_DOMAINS):
+        return True
+    noreply = _GITHUB_NOREPLY.fullmatch(email)
+    if noreply and _assistant_login(noreply.group("login")):
+        return True
+    local = re.sub(r"^\d+\+", "", email.partition("@")[0])
+    return bool(_NAME_RULE.fullmatch(name)) and bool(_tokens(local) & _ASSISTANT_TOKENS)
+
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("AI co-author trailer",
-     re.compile(rf"^\s*co-authored-by:.*\b{_ASSISTANTS}\b", re.IGNORECASE)),
     ("assistant session trailer",
      re.compile(r"^\s*claude-session:", re.IGNORECASE)),
     ("assistant session link",
-     re.compile(r"claude\.ai/code/session", re.IGNORECASE)),
-    ("generator footer",
-     re.compile(rf"generated (?:with|by)\b.*\b{_ASSISTANTS}\b", re.IGNORECASE)),
+     re.compile(r"claude\.(?:ai|com)/code/session", re.IGNORECASE)),
     ("generator footer",
      re.compile(r"\U0001F916\s*generated", re.IGNORECASE)),
     ("Anthropic no-reply trailer",
@@ -62,16 +127,23 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-#: An author/committer identity that the squash merge would turn into an AI
-#: co-author trailer. Human GitHub no-reply identities pass.
-IDENTITY_RULE = re.compile(rf"\b{_ASSISTANTS}\b|noreply@anthropic\.com", re.IGNORECASE)
+def _assistant_credit(value: str) -> bool:
+    """A trailer value or generator credit that names an assistant. Markdown
+    emphasis, a link wrapper, trailing punctuation and a trailing parenthesised
+    part (a URL or model name) are stripped first."""
+    credit = value.strip(" *_\t.,;:!")
+    link = re.fullmatch(r"\[([^\]]+)\]\([^)]+\)", credit)
+    if link:
+        credit = link.group(1)
+    credit = re.sub(r"\s*\([^()]*\)$", "", credit).strip(" *_\t.,;:!")
+    return is_assistant_identity(credit)
 
 
 def identity_findings(author: str, committer: str, source: str) -> list[str]:
     """Author/committer identities of one commit that are assistant identities."""
     out: list[str] = []
     for role, identity in (("author", author), ("committer", committer)):
-        if IDENTITY_RULE.search(identity):
+        if is_assistant_identity(identity):
             out.append(f"{source}: AI {role} identity: {identity}")
     return out
 
@@ -80,6 +152,16 @@ def findings(text: str, source: str) -> list[str]:
     """Every line of ``text`` that carries AI attribution, labelled by rule."""
     out: list[str] = []
     for number, line in enumerate(text.splitlines(), 1):
+        trailer = _TRAILER.fullmatch(line)
+        if trailer:
+            if _assistant_credit(trailer.group(2)):
+                rule = "AI co-author trailer" if trailer.group(1).lower() == "co-authored-by" else "AI attribution trailer"
+                out.append(f"{source}:{number}: {rule}: {line.strip()}")
+                continue
+        generator = _GENERATOR.search(line)
+        if generator and _assistant_credit(generator.group(1)):
+            out.append(f"{source}:{number}: generator footer: {line.strip()}")
+            continue
         for rule, pattern in RULES:
             if pattern.search(line):
                 out.append(f"{source}:{number}: {rule}: {line.strip()}")
@@ -119,8 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     inspected = 0
+    commits_inspected = 0
     problems: list[str] = []
-    if args.commits:
+    if args.commits is not None:
         try:
             records = commit_records(args.commits, args.repo)
         except subprocess.CalledProcessError as exc:
@@ -128,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"{exc.stderr.strip()}", file=sys.stderr)
             return 2
         for sha, author, committer, body in records:
+            commits_inspected += 1
             inspected += 1
             source = f"commit {sha[:12]}"
             problems.extend(identity_findings(author, committer, source))
@@ -140,9 +224,9 @@ def main(argv: list[str] | None = None) -> int:
         inspected += 1
         problems.extend(findings(sys.stdin.read(), "stdin"))
 
-    if inspected == 0:
-        print("check-attribution: ERROR -- inspected nothing (empty commit range and "
-              "no text); refusing to pass vacuously", file=sys.stderr)
+    if inspected == 0 or (args.commits is not None and commits_inspected == 0):
+        print("check-attribution: ERROR -- inspected nothing in the requested commit "
+              "range, or no input supplied; refusing to pass vacuously", file=sys.stderr)
         return 2
     if problems:
         print("check-attribution: AI attribution is not allowed in commit messages "
