@@ -200,3 +200,15 @@ def test_allow_list_accepts_user_ids_too_and_a_post_runs_once(stub):
     asyncio.run(channel._poll_once())
     assert runs == ["5" * 26]
     assert len(stub.created) == 1
+
+
+def test_reply_text_cannot_notify_the_channel_or_other_people(stub):
+    async def handler(msg):
+        return "ping @channel @all @here and @mallory; mail bob@example.com"
+
+    stub.add("z" * 26, ALICE, DM, "hello")
+    asyncio.run(_started(_channel(handler))._poll_once())
+    [post] = stub.created
+    import re
+    assert not re.search(r"@\w", post["message"])
+    assert post["message"].replace("⁠", "") == "ping @channel @all @here and @mallory; mail bob@example.com"

@@ -26,6 +26,7 @@ from .base import (
     normalize_allowlist,
 )
 from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .formatting import neutralize_mentions
 from .polling import PollCheckpoint, PollPage
 
 log = logging.getLogger(__name__)
@@ -187,6 +188,9 @@ class MastodonChannel(Channel):
         except ImportError:
             log.warning("mastodon: httpx not installed; dropping reply")
             return
+        # Only the person being answered is addressed: model-written text must
+        # not add recipients (a mention in a direct status makes one).
+        text = neutralize_mentions(text)
         prefix = f"@{account.get('acct')} "
         chunk_size = 480 - len(prefix)
         if chunk_size <= 0:
@@ -265,7 +269,7 @@ class MastodonChannel(Channel):
         # Direct-visibility status mentioning the user. Mastodon turns
         # this into a thread that the user gets notified about.
         body = {
-            "status": f"@{user_id} {text}"[:480],
+            "status": f"@{user_id} {neutralize_mentions(text)}"[:480],
             "visibility": "direct",
         }
         async with httpx.AsyncClient(timeout=30.0) as client:

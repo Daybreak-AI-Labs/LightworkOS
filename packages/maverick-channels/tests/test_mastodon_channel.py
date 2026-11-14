@@ -328,3 +328,32 @@ async def test_mastodon_poll_uses_since_id():
         await ch._poll_once()
         # Second call: since_id = "100".
         assert captured["params"].get("since_id") == "100"
+
+
+@pytest.mark.skipif(not _have_deps(), reason="httpx not installed")
+def test_mastodon_reply_text_cannot_add_recipients(monkeypatch):
+    """A mention in a direct status makes that account a recipient, so the
+    model's text must not carry a live mention; only the asker is addressed."""
+    import re
+
+    from maverick_channels.mastodon import MastodonChannel
+
+    async def _handler(msg):
+        return "forwarding to @attacker@evil.example as asked"
+
+    calls = []
+    _install_fake_httpx(monkeypatch, calls, lambda *a: _FakeResponse())
+    chan = MastodonChannel(handler=_handler, instance="mastodon.social",
+                           access_token="tok", allowed_user_ids={"owner@host"})
+    notif = {"id": "notification-43", "account": {"acct": "owner@host", "username": "owner"},
+             "status": {"id": "43", "content": "<p>hi</p>", "visibility": "direct"}}
+    asyncio.run(chan._dispatch(notif))
+    asyncio.run(chan.send("owner@host", "cc @attacker@evil.example"))
+
+    statuses = [c["data"]["status"] for c in calls if c["method"] == "POST"
+                and c["url"].endswith("/api/v1/statuses")]
+    assert len(statuses) == 2
+    for status in statuses:
+        assert status.startswith("@owner@host ")
+        assert not re.search(r"@\w", status.removeprefix("@owner@host "))
+    assert statuses[0].replace("⁠", "") == "@owner@host forwarding to @attacker@evil.example as asked"

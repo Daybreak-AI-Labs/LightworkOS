@@ -41,6 +41,7 @@ from .base import (
     normalize_allowlist,
 )
 from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .formatting import neutralize_mentions
 
 log = logging.getLogger(__name__)
 
@@ -212,6 +213,9 @@ class MattermostChannel(Channel):
     async def _post(self, channel_id: str, text: str, root_id: str = "") -> str:
         import httpx
 
+        # Model-written text must not notify anyone (@channel, @all, @here or
+        # another person); the reply already lands in the asker's thread.
+        text = neutralize_mentions(text)
         result = ""
         for index, start in enumerate(range(0, max(len(text), 1), _MAX_POST_CHARS)):
             body = {"channel_id": channel_id, "message": text[start:start + _MAX_POST_CHARS]}
