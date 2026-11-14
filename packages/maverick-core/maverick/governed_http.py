@@ -274,7 +274,8 @@ def _isolated_redirect_transport(transport: Any, *, host: str) -> Any:
     pool = transport._pool
     if type(pool) not in (httpcore.ConnectionPool, httpcore.HTTPProxy, httpcore.SOCKSProxy):
         raise ValueError("cannot safely isolate this network redirect connection pool")
-    if type(pool) is httpcore.ConnectionPool and pool._proxy is not None:
+    # ConnectionPool gained ``proxy`` in httpcore 1.0.7; httpx 0.27 allows 1.0.0.
+    if type(pool) is httpcore.ConnectionPool and getattr(pool, "_proxy", None) is not None:
         raise ValueError("cannot safely isolate this custom proxy redirect configuration")
     tls_hosts = (host,)
     if type(pool) is httpcore.HTTPProxy and pool._proxy_url.scheme == b"https":
@@ -295,8 +296,6 @@ def _isolated_redirect_transport(transport: Any, *, host: str) -> Any:
         if type(pool) is httpcore.HTTPProxy:
             options.update(proxy_url=pool._proxy_url, proxy_headers=list(pool._proxy_headers),
                            proxy_ssl_context=pool._proxy_ssl_context)
-        else:
-            options["proxy"] = pool._proxy
     isolated = copy.copy(transport)
     # CONNECT/SOCKS must address the pinned IP, but httpcore's tunnel TLS
     # paths do not all honor sni_hostname. Bind each TLS layer explicitly,

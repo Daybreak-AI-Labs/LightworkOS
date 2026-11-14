@@ -288,3 +288,27 @@ def test_direct_redirect_honors_private_network_setting(monkeypatch):
         with pytest.raises(_ssrf.BlockedHost):
             guarded_redirect_get(client.get)("https://issuer.internal/start")
     assert seen == ["https://issuer.internal/start", "https://10.0.0.5/realms/main/config"]
+
+
+def test_isolated_redirect_supports_httpcore_without_pool_proxy(monkeypatch):
+    """httpcore 1.0.0-1.0.6 (allowed by httpx 0.27) has no ConnectionPool proxy."""
+    import httpcore
+    from maverick.governed_http import _isolated_redirect_transport
+
+    real_init = httpcore.ConnectionPool.__init__
+    with httpx.HTTPTransport() as original:
+        del original._pool._proxy
+
+        def legacy_init(self, *args, **kwargs):
+            if "proxy" in kwargs:
+                raise TypeError("__init__() got an unexpected keyword argument 'proxy'")
+            real_init(self, *args, **kwargs)
+            del self._proxy
+
+        monkeypatch.setattr(httpcore.ConnectionPool, "__init__", legacy_init)
+        isolated = _isolated_redirect_transport(original, host="next.example")
+        try:
+            assert isolated._pool is not original._pool
+            assert type(isolated._pool) is httpcore.ConnectionPool
+        finally:
+            isolated.close()
