@@ -54,7 +54,23 @@ log = logging.getLogger(__name__)
 
 
 class DeliveryNotSent(RuntimeError):
-    """Provider definitively rejected this attempt before accepting a message."""
+    """Nothing was sent by this attempt; it may be retried without a duplicate."""
+
+
+class DeliveryRejected(DeliveryNotSent):
+    """The provider refused the message itself (bad recipient, too large,
+    forbidden, not found). Only this counts toward MAX_PROVIDER_ATTEMPTS;
+    throttling, disconnection and outages stay plain DeliveryNotSent."""
+
+
+# HTTP statuses that refuse the message itself. 401, 408, 409, 429 and any
+# other status are ambiguous or temporary, so they stay retryable.
+_REJECTED_STATUSES = frozenset({400, 403, 404, 410, 413, 422})
+
+
+def provider_refusal(status, message):
+    """DeliveryRejected for a definitive refusal status, else DeliveryNotSent."""
+    return (DeliveryRejected if status in _REJECTED_STATUSES else DeliveryNotSent)(message)
 
 
 class _DeliveryNotAuthorized(DeliveryNotSent):
@@ -1077,7 +1093,7 @@ class _DeliveryAttempt:
         if old and old["state"] == "delivered":
             return old.get("provider_id")
         if old and old["state"] == "delivery_failed":
-            raise DeliveryNotSent("The provider repeatedly refused this reply; review its saved receipt")
+            raise DeliveryRejected("The provider repeatedly refused this reply; review its saved receipt")
         if old and old["state"] == "sending":
             raise _DeliveryOwnedElsewhere("Another worker owns this channel delivery")
         if old and old["state"] == "delivery_unknown" and not idempotent:
@@ -1097,7 +1113,6 @@ class _DeliveryAttempt:
             raise _DeliveryOwnedElsewhere("Another worker owns this channel delivery") from exc
         if key == "reply":
             self.outer_attempt_id = attempt_id
-        provider_called = False
         try:
             _assert_work_allowed()
             if not self.authorize():
@@ -1111,12 +1126,11 @@ class _DeliveryAttempt:
                 raise DeliveryWithheld(str(exc)) from exc
             if not self.authorize():
                 raise _DeliveryNotAuthorized("Channel sender authorization changed before sending")
-            provider_called = True
             result = await call()
         except DeliveryNotSent as exc:
             withheld = isinstance(exc, DeliveryWithheld)
             await self._finish(key, attempt_id, "retryable", withheld=withheld,
-                               rejected=provider_called and not withheld and not isinstance(exc, _DeliveryNotAuthorized))
+                               rejected=isinstance(exc, DeliveryRejected))
             raise
         except BaseException:
             await self._finish(key, attempt_id, "delivery_unknown")

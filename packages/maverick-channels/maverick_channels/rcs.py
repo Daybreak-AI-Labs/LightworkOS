@@ -312,6 +312,7 @@ class RcsChannel(Channel):
             DeliveryUnknown,
             chunk_idempotency_key,
             delivery_active,
+            provider_refusal,
             send_chunk,
         )
 
@@ -335,7 +336,7 @@ class RcsChannel(Channel):
                     # a one-off id outside a saved delivery) stays unknown.
                     return chunk_idempotency_key(key)
                 if 400 <= response.status_code < 500 and response.status_code not in {408, 409}:
-                    raise DeliveryNotSent("Provider rejected the message")
+                    raise provider_refusal(response.status_code, "Provider rejected the message")
                 if response.status_code >= 400:
                     raise DeliveryUnknown("Provider acceptance could not be confirmed")
                 return chunk_idempotency_key(key)

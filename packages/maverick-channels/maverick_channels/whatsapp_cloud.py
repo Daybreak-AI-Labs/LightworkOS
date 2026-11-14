@@ -241,7 +241,7 @@ class WhatsAppCloudChannel(Channel):
     async def send(self, user_id: str, text: str) -> None:
         import httpx
         url = f"{GRAPH_BASE}/{self.api_version}/{self.phone_number_id}/messages"
-        from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+        from .delivery import DeliveryUnknown, provider_refusal, send_chunk
 
         for index, chunk in enumerate([text[i:i + 4000] for i in range(0, max(len(text), 1), 4000)]):
             async def create(chunk=chunk):
@@ -249,7 +249,7 @@ class WhatsAppCloudChannel(Channel):
                     response = await client.post(url, headers={"Authorization": f"Bearer {self.access_token}"},
                         json={"messaging_product": "whatsapp", "to": user_id, "type": "text", "text": {"body": chunk}})
                 if 400 <= response.status_code < 500 and response.status_code != 408:
-                    raise DeliveryNotSent("Provider rejected the message")
+                    raise provider_refusal(response.status_code, "Provider rejected the message")
                 if response.status_code >= 400:
                     raise DeliveryUnknown("Provider acceptance could not be confirmed")
                 payload = response.json()

@@ -46,7 +46,7 @@ def test_provider_rejections_back_off_across_restart_then_release_conversation(j
     async def send(inbound, reply, route):
         calls.append(reply.text)
         if reply.text == "first":
-            raise delivery.DeliveryNotSent("provider refused")
+            raise delivery.DeliveryRejected("provider refused")
         return "accepted"
 
     def worker():
@@ -188,7 +188,7 @@ def test_automatic_recovery_waits_but_explicit_recovery_remains_immediate(journa
     async def send(reply):
         calls.append(reply.text)
         if len(calls) == 1:
-            raise delivery.DeliveryNotSent("provider refused")
+            raise delivery.DeliveryRejected("provider refused")
         return "accepted"
 
     async def send_saved(inbound, reply, route):
@@ -243,4 +243,35 @@ def test_live_legacy_owner_without_scope_is_never_declared_abandoned(journal, mo
         finally:
             finish.set()
             await owner
+    asyncio.run(run())
+
+
+def test_temporary_not_sent_is_retried_past_the_rejection_allowance(journal):
+    """Throttled, disconnected or unavailable sends were never refused: no limit applies."""
+    assert type(delivery.provider_refusal(429, "throttled")) is delivery.DeliveryNotSent
+    assert type(delivery.provider_refusal(401, "session expired")) is delivery.DeliveryNotSent
+    assert type(delivery.provider_refusal(400, "bad request")) is delivery.DeliveryRejected
+    calls = []
+
+    async def handler(inbound):
+        return "answer"
+
+    async def send(reply):
+        calls.append(reply.text)
+        if len(calls) <= delivery.MAX_PROVIDER_ATTEMPTS + 2:
+            raise delivery.DeliveryNotSent("provider is throttling; nothing was sent")
+        return "accepted"
+
+    async def run():
+        channel = Adapter(handler)
+        for _ in range(delivery.MAX_PROVIDER_ATTEMPTS + 2):
+            row = await channel.process_message(message("busy"), external_id="busy", account="acct",
+                      authorize=lambda: True, send=send, journal=journal)
+            assert row["delivery"] == "retryable"
+            assert row["chunks"]["reply"]["attempts"] == 0
+            assert delivery.retry_delay(row) == 0
+        row = await channel.process_message(message("busy"), external_id="busy", account="acct",
+                  authorize=lambda: True, send=send, journal=journal)
+        assert row["delivery"] == "delivered"
+        assert len(calls) == delivery.MAX_PROVIDER_ATTEMPTS + 3
     asyncio.run(run())

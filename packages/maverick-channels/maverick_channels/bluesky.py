@@ -27,7 +27,7 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .delivery import DeliveryUnknown, provider_refusal, send_chunk
 from .polling import PollCheckpoint, PollPage
 from .polling import parse_timestamp as _parse_indexed_at
 from .polling import utc_timestamp as _now_iso_z
@@ -252,7 +252,7 @@ class BlueskyChannel(Channel):
                         headers={"Authorization": f"Bearer {sess['accessJwt']}"}, json=body)
                 self._drop_expired_session(resp)
                 if 400 <= resp.status_code < 500 and resp.status_code != 408:
-                    raise DeliveryNotSent("Bluesky rejected the reply")
+                    raise provider_refusal(resp.status_code, "Bluesky rejected the reply")
                 if resp.status_code >= 400:
                     raise DeliveryUnknown("Bluesky reply acceptance is unconfirmed")
                 return (resp.json() or {}).get("uri", "")
@@ -285,7 +285,7 @@ class BlueskyChannel(Channel):
                         if reply.text:
                             return await self._reply(route, reply.text)
                     try:
-                        await self.recover_messages(account=account, send=send_saved,
+                        await self.recover_messages(account=account, send=send_saved, respect_retry_at=True,
                             authorize=lambda msg, account=account: account == self._account() and is_allowed(msg.sender_id, self.allowed_user_ids))
                     except Exception:
                         log.warning("bluesky saved delivery recovery remains incomplete")

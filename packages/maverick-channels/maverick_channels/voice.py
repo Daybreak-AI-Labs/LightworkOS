@@ -457,7 +457,7 @@ class VoiceChannel(Channel):
     async def send(self, user_id: str, text: str) -> str:
         """Outbound: place a call to `user_id` (a phone number) via the
         configured provider and have the assistant deliver `text`."""
-        from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+        from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
 
         if not self.assistant_id:
             raise DeliveryNotSent("Voice outbound assistant is not configured")
@@ -469,7 +469,7 @@ class VoiceChannel(Channel):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(req["url"], headers=req["headers"], json=req["json"])
             if 400 <= response.status_code < 500 and response.status_code != 408:
-                raise DeliveryNotSent("Voice provider rejected the outbound call")
+                raise provider_refusal(response.status_code, "Voice provider rejected the outbound call")
             if response.status_code >= 300:
                 raise DeliveryUnknown("Voice outbound acceptance is unconfirmed")
             result = response.json()

@@ -18,6 +18,7 @@ import os
 from .base import Channel, IncomingMessage, normalize_allowlist
 from .delivery import (
     DeliveryNotSent,
+    DeliveryRejected,
     DeliveryUnknown,
     delivery_active,
     read_reply_file,
@@ -144,8 +145,10 @@ class TelegramChannel(Channel):
                         from telegram.error import BadRequest, Forbidden, RetryAfter
                     except ImportError:
                         raise exc from None
-                    if isinstance(exc, (BadRequest, Forbidden, RetryAfter)):
-                        raise DeliveryNotSent("Telegram rejected the file attachment") from exc
+                    if isinstance(exc, (BadRequest, Forbidden)):
+                        raise DeliveryRejected("Telegram rejected the file attachment") from exc
+                    if isinstance(exc, RetryAfter):
+                        raise DeliveryNotSent("Telegram is throttling; the file was not sent") from exc
                     raise
                 identity = getattr(result, "message_id", None)
                 if type(identity) is not int:
@@ -317,8 +320,10 @@ class TelegramChannel(Channel):
                         from telegram.error import BadRequest, Forbidden, RetryAfter
                     except ImportError:
                         raise exc from None
-                    if isinstance(exc, (BadRequest, Forbidden, RetryAfter)):
-                        raise DeliveryNotSent("Telegram rejected the reply") from exc
+                    if isinstance(exc, (BadRequest, Forbidden)):
+                        raise DeliveryRejected("Telegram rejected the reply") from exc
+                    if isinstance(exc, RetryAfter):
+                        raise DeliveryNotSent("Telegram is throttling; the reply was not sent") from exc
                     raise
                 message_id = getattr(result, "message_id", None)
                 if delivery_active() and not isinstance(message_id, int):

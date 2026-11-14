@@ -60,7 +60,7 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
 from .formatting import split_for_discord
 
 log = logging.getLogger(__name__)
@@ -383,14 +383,14 @@ class TeamsConnector:
                    "Content-Type": "application/json"}
         status, body = await self._transport(method, url, headers=headers, json_body=payload)
         if status in (401, 403, 404, 400, 413):
-            raise DeliveryNotSent(f"Teams rejected the message ({status})")
+            raise provider_refusal(status, f"Teams rejected the message ({status})")
         if status == 429:
             # Throttled before processing: nothing was posted, so it can be retried.
             raise DeliveryNotSent("Teams is throttling this bot; the message was not sent")
         if status >= 500:
             raise DeliveryUnknown(f"Teams did not confirm the message ({status})")
         if status >= 400:
-            raise DeliveryNotSent(f"Teams rejected the message ({status})")
+            raise provider_refusal(status, f"Teams rejected the message ({status})")
         return body if isinstance(body, dict) else {}
 
     async def send_activity(self, service_url: str, conversation_id: str, activity: dict, *,

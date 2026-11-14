@@ -25,7 +25,7 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
 from .formatting import neutralize_mentions
 from .polling import PollCheckpoint, PollPage
 
@@ -206,7 +206,7 @@ class MastodonChannel(Channel):
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(f"{self._base_url}/api/v1/statuses", headers=self._headers(), data=body)
                 if 400 <= resp.status_code < 500 and resp.status_code != 408:
-                    raise DeliveryNotSent("Mastodon rejected the status")
+                    raise provider_refusal(resp.status_code, "Mastodon rejected the status")
                 if resp.status_code >= 400:
                     raise DeliveryUnknown("Mastodon status acceptance is unconfirmed")
                 return (resp.json() or {}).get("id", "")
@@ -246,7 +246,7 @@ class MastodonChannel(Channel):
                     if reply.text:
                         return await self._post_reply(route["status"], route["account"], reply.text)
                 try:
-                    await self.recover_messages(account=account, send=send_saved,
+                    await self.recover_messages(account=account, send=send_saved, respect_retry_at=True,
                         authorize=lambda msg, account=account: account == self._account() and is_allowed(msg.sender_id, self.allowed_user_ids))
                 except Exception:
                     log.warning("mastodon saved delivery recovery remains incomplete")

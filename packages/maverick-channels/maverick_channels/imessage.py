@@ -132,7 +132,7 @@ class iMessageChannel(Channel):  # noqa: N801 - product spelling
         account = self._account()
         while not self._stop:
             try:
-                await self.recover_messages(account=account,
+                await self.recover_messages(account=account, respect_retry_at=True,
                     authorize=lambda msg: self._authorized(msg, account), send=self._send_saved)
             except Exception:
                 log.warning("iMessage durable recovery requires review")

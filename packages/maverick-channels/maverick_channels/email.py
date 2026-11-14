@@ -153,6 +153,16 @@ def _trim_reply_noise(body: str) -> str:
     return trimmed or text
 
 
+def _smtp_refusal(replies, message):
+    """A permanent (5xx) refusal of every recipient rejects the message;
+    a temporary (4xx) or unclassified SMTP reply leaves it retryable."""
+    from .delivery import DeliveryNotSent, DeliveryRejected
+
+    codes = [reply[0] if isinstance(reply, tuple) and reply else None for reply in replies]
+    permanent = bool(codes) and all(isinstance(code, int) and 500 <= code < 600 for code in codes)
+    return (DeliveryRejected if permanent else DeliveryNotSent)(message)
+
+
 class EmailChannel(Channel):
     name = "email"
 
@@ -464,9 +474,11 @@ class EmailChannel(Channel):
                     sending = True
                     refused = smtp.send_message(msg)
                 if refused:
-                    raise DeliveryNotSent("SMTP rejected the recipient")
-        except (smtplib.SMTPRecipientsRefused, smtplib.SMTPDataError) as exc:
-            raise DeliveryNotSent("SMTP explicitly rejected the message") from exc
+                    raise _smtp_refusal(refused.values(), "SMTP rejected the recipient")
+        except smtplib.SMTPRecipientsRefused as exc:
+            raise _smtp_refusal(exc.recipients.values(), "SMTP explicitly rejected the message") from exc
+        except smtplib.SMTPDataError as exc:
+            raise _smtp_refusal([(exc.smtp_code, b"")], "SMTP explicitly rejected the message") from exc
         except Exception as exc:
             if not sending:
                 raise DeliveryNotSent("SMTP unavailable before sending") from exc
