@@ -120,11 +120,22 @@ def test_canary_refuses_invalid_tolerance(value):
     assert result.exit_code == 2, result.output
 
 
-def test_safety_unknown_backend_is_not_isolated(monkeypatch):
-    monkeypatch.setattr("maverick.config.get_sandbox", lambda: {"backend": "dcoker"})
+@pytest.mark.parametrize("backend,require_container,expected,isolated", [
+    ("dcoker", False, "local", False), ("local", True, "docker", True),
+    ("ssh", False, "ssh", True),
+])
+def test_safety_reports_the_resolved_backend(
+    monkeypatch, tmp_path, backend, require_container, expected, isolated,
+):
+    (tmp_path / "config.toml").write_text(
+        f'[sandbox]\nbackend="{backend}"\nrequire_container={str(require_container).lower()}\n',
+    )
+    monkeypatch.setattr("maverick.sandbox._default_container_backend", lambda: "docker")
     result = invoke("safety", "--json")
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["sandbox"]["isolated"] is False
+    sandbox = json.loads(result.stdout)["sandbox"]
+    assert sandbox["backend"] == expected
+    assert sandbox["isolated"] is isolated
 
 
 def test_unknown_active_tenant_refused_before_world_creation(monkeypatch, tmp_path):
@@ -279,7 +290,7 @@ def test_run_terminal_failure_is_nonzero(command, status, tmp_path, runtime):
 @pytest.mark.parametrize("command", ["start", "resume", "facts"])
 def test_untrusted_results_cannot_emit_terminal_controls(command, tmp_path, runtime):
     args = run_args(command, tmp_path)
-    text = "safe\x1b]0;spoofed-title\x07tail"
+    text = "first\nsecond\tcolumn\nsafe\x1b]0;spoofed-title\x07tail\x1b[31mred\x1b[0m"
     if command == "facts":
         world = WorldModel(tmp_path / "world.db")
         world.upsert_fact("key", text)
@@ -291,7 +302,9 @@ def test_untrusted_results_cannot_emit_terminal_controls(command, tmp_path, runt
     result = invoke(*args)
     assert result.exit_code == 0, result.output
     assert "\x1b" not in result.output and "\x07" not in result.output
-    assert "safetail" in result.output
+    assert "safetailred" in result.output
+    expected_layout = "firstsecondcolumn" if command == "facts" else "first\nsecond\tcolumn\n"
+    assert expected_layout in result.output
 
 
 def test_result_write_does_not_mask_run_exception(monkeypatch, tmp_path, runtime):
@@ -303,8 +316,11 @@ def test_result_write_does_not_mask_run_exception(monkeypatch, tmp_path, runtime
     assert str(result.exception) == "original run failure"
 
 
-@pytest.mark.parametrize("command", ["harvest", "review", "import", "quality"])
-def test_corpus_writes_obey_learning_halt(monkeypatch, tmp_path, command):
+@pytest.mark.parametrize("command,variant", [
+    ("harvest", "--auto"), ("harvest", None), ("review", "--accept"),
+    ("review", "--reject"), ("import", "--replace"), ("quality", "--retire"),
+])
+def test_corpus_writes_obey_learning_halt(monkeypatch, tmp_path, command, variant):
     from maverick import killswitch
     monkeypatch.setattr("maverick.self_harness.settings", lambda: {"eval_corpus": "corpus"})
     monkeypatch.setattr(cli, "_corpus_key_and_path", lambda _: ("model", "corpus"))
@@ -316,8 +332,8 @@ def test_corpus_writes_obey_learning_halt(monkeypatch, tmp_path, command):
     monkeypatch.setattr(targets[command], operation)
     source = tmp_path / "source.json"
     source.write_text('{}')
-    args = {"harvest": ["--auto"], "review": ["--accept", "1"],
-            "import": [str(source), "--replace"], "quality": ["--retire"]}[command]
+    args = {"harvest": [variant] if variant else [], "review": [variant, "1"],
+            "import": [str(source), variant], "quality": [variant]}[command]
     killswitch.halt("operator stop")
     result = invoke("self-harness", "corpus", command, *args)
     assert result.exit_code != 0, result.output
@@ -325,8 +341,9 @@ def test_corpus_writes_obey_learning_halt(monkeypatch, tmp_path, command):
     assert "HALT" in result.output
 
 
-@pytest.mark.parametrize("args", [["retire", "--older-than-days", "-1", "--yes"],
-                                  ["canary", "--model", "fixture", "--graduate-after", "0"]])
+@pytest.mark.parametrize("args", [
+    ["retire", "--older-than-days", value, "--yes"] for value in ("-1", "0", "nan", "inf")
+] + [["canary", "--model", "fixture", "--graduate-after", "0"]])
 def test_harness_rejects_invalid_lifecycle_thresholds(args):
     assert invoke("self-harness", *args).exit_code == 2
 

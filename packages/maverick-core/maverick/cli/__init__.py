@@ -46,6 +46,13 @@ def _strip_terminal_control(text: str) -> str:
     return _TERMINAL_CONTROL_RE.sub("", text)
 
 
+def _strip_result_terminal_control(text: str) -> str:
+    """Remove escape sequences and unsafe controls, keeping answer layout."""
+    return _TERMINAL_CONTROL_RE.sub(
+        lambda match: match.group() if match.group() in {"\n", "\t"} else "", text,
+    )
+
+
 def _default_model(role: str = "orchestrator") -> str:
     """The configured model for ``role`` (kernel rule 2: never a hard-coded
     model). Resolves through ``model_for_role`` -- per-role overrides, the
@@ -938,7 +945,7 @@ def safety(as_json: bool) -> None:
     """
     import json as _json
 
-    from ..config import get_sandbox
+    from ..config import get_sandbox, load_config
     try:
         from maverick_shield import Shield
         shield = {"installed": True,
@@ -952,15 +959,21 @@ def safety(as_json: bool) -> None:
     backend = str(sb.get("backend", "local") or "local").strip().lower()
     from ..sandbox import (
         SandboxPolicyError,
+        _container_backend_required,
         _deployment_policy,
         _offline_policy,
         _resolve_local_under_policy,
     )
     try:
-        resolved, full = _deployment_policy(sb, sb, None, None)
+        full = load_config().get("sandbox", {})
+        resolved, full = _deployment_policy(sb, full, None, None)
         backend = str(resolved.get("backend") or "local").strip().lower()
         full = _offline_policy(full, backend)
         backend = _resolve_local_under_policy(backend, full)
+        if backend not in BUILTIN_SANDBOX_BACKENDS and not backend.startswith("ep:"):
+            if _container_backend_required(full):
+                raise SandboxPolicyError("Unknown sandbox backend cannot satisfy the container policy")
+            backend = "local"
         isolated = backend in BUILTIN_SANDBOX_BACKENDS and backend != "local"
     except (SandboxPolicyError, ValueError):
         isolated = False
@@ -1777,6 +1790,8 @@ def harness_retire(older_than_days: float, model: str | None, yes: bool) -> None
     audited.
     """
     from ..self_harness import retire_stale
+    if not math.isfinite(older_than_days) or older_than_days <= 0:
+        raise click.BadParameter("must be finite and greater than zero", param_hint="--older-than-days")
     scope = f"{model!r}" if model else "all models"
     if not yes and not click.confirm(
             f"Retire guidance older than {older_than_days} days for {scope}?"):
@@ -2014,8 +2029,7 @@ def corpus_harvest_cmd(ctx, model: str | None, auto: bool) -> None:
         raise click.ClickException("no [self_harness] eval_corpus configured.")
     # Key/path defaulting is run_corpus_harvest's job (the one owner of the
     # harvest policy) -- the CLI only supplies the operator's explicit choice.
-    if auto:
-        _learning_cli_preflight("self_harness", "corpus")
+    _learning_cli_preflight("self_harness", "corpus")
     n = runner.run_corpus_harvest(
         open_world(ctx.obj["db"]), mode=("auto" if auto else "propose"),
         key=model, raise_errors=True)
@@ -2056,8 +2070,7 @@ def corpus_review_cmd(model: str | None, accepts: tuple[int, ...],
                        f"{_strip_terminal_control(c['goal'].splitlines()[0][:70])}")
             click.echo(f"     expected: {_strip_terminal_control(c['expected'])}")
         return
-    if accepts or accept_all:
-        _learning_cli_preflight("self_harness", "corpus")
+    _learning_cli_preflight("self_harness", "corpus")
     try:
         res = ev.resolve_pending(corpus_path, key, accept=list(accepts),
                                  reject=list(rejects), accept_all=accept_all)
@@ -4105,7 +4118,7 @@ def start(
                 finally:
                     world.close()
             click.echo("")
-            click.echo(_strip_terminal_control(str(result)))
+            click.echo(_strip_result_terminal_control(str(result)))
             # Single-run keeps the exit-2-on-blocked contract (scripts/CI rely on
             # it). In repeat mode a non-clean run is EXPECTED (it's what produces
             # the worse-attempt half of a preference pair), so keep going.
@@ -5207,7 +5220,7 @@ def resume(ctx, goal_id_arg, goal_id, max_depth: int, max_dollars, max_wall_seco
         result = k.run_goal_sync(llm, world, bud, goal_id,
                                  sandbox=sandbox, max_depth=max_depth,
                                  resume=True)
-    click.echo(_strip_terminal_control(str(result)))
+    click.echo(_strip_result_terminal_control(str(result)))
     if _run_outcome_blocked(world, goal_id):
         sys.exit(2)
 
