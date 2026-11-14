@@ -5722,6 +5722,35 @@ def _persist_erasure_auxiliary_closure(
     return True, None
 
 
+def _custodian_holds_subject(custodian: str, channel: str, user: str) -> bool:
+    """Whether a matter custodian covers the erase subject ``channel:user``.
+
+    The same identity rules as matter scope: ``user:<channel>:<id>`` is a
+    channel user, ``user:<name>`` the dashboard user of that name, and a
+    linked account matches by its stored identity. The CLI family rule
+    (``local`` and ``local:<uuid>``) applies in both directions.
+    """
+    from ..ediscovery import (
+        account_user_matches,
+        conversation_user_matches,
+        is_account_custodian,
+    )
+
+    if is_account_custodian(custodian):
+        return account_user_matches(user, custodian)
+    parts = custodian.split(":", 2) if custodian.startswith("user:") else []
+    if len(parts) == 3 and parts[1] and parts[2]:
+        held_channel, held_user = parts[1], parts[2]
+    elif len(parts) == 2 and parts[1]:
+        held_channel, held_user = "dashboard", parts[1]
+    else:
+        return False
+    return held_channel == channel and (
+        conversation_user_matches(user, held_user, channel)
+        or conversation_user_matches(held_user, user, channel)
+    )
+
+
 def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
     """Refuse a subject-keyed erase while any active matter names the subject.
 
@@ -5733,9 +5762,7 @@ def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
         HOLD_UNVERIFIED_MESSAGE,
         LEGAL_HOLD_MESSAGE,
         _audit_refusal,
-        account_user_matches,
         active_matters,
-        is_account_custodian,
     )
 
     try:
@@ -5743,12 +5770,10 @@ def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
     except Exception:  # failure-policy: fail_closed -- an unreadable ledger holds everything
         message = HOLD_UNVERIFIED_MESSAGE
     else:
-        principals = {f"user:{channel}:{user}", f"user:{user}"}
         message = None
         for matter in matters:
-            custodians = [str(c) for c in matter.get("custodians") or ()]
-            if any(c in principals or (is_account_custodian(c) and account_user_matches(user, c))
-                   for c in custodians):
+            if any(_custodian_holds_subject(str(c), channel, user)
+                   for c in matter.get("custodians") or ()):
                 _audit_refusal(matter, actor="cli", conversations=0, goals=0)
                 message = LEGAL_HOLD_MESSAGE
                 break
