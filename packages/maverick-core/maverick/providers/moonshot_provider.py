@@ -25,9 +25,7 @@ class MoonshotClient(OpenAIClient):
     def __init__(self, api_key: str | None = None, base_url: str | None = None, *, environment=None):
         env = os.environ if environment is None else environment
         key = api_key or env.get("MOONSHOT_API_KEY")
-        url = base_url or env.get(
-            "MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1",
-        )
+        url = base_url or env.get("MOONSHOT_BASE_URL") or "https://api.moonshot.ai/v1"
         super().__init__(
             api_key=key,
             base_url=url,
