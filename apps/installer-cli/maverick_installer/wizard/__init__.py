@@ -6475,6 +6475,16 @@ def _web_search_step(state: dict[str, Any]) -> tuple[bool, list[str], dict[str, 
     return web_search_enabled, web_search_envs, keys
 
 
+def _runnable_search_backend(backend_keys: dict[str, str], backend_envs: list[str],
+                             keys: dict[str, str]) -> dict[str, str]:
+    """The saved backend, only when it can run. The kernel tries only a saved backend
+    (no fallback), so a keyed backend without its key would fail every search; without
+    one saved, search picks a working backend itself (DuckDuckGo needs no key)."""
+    if all(keys.get(env) or os.environ.get(env) for env in backend_envs):
+        return backend_keys
+    return {}
+
+
 def _run_short_setup_mode(resume: bool) -> int | None:
     # A saved partial state belongs to the advanced flow, not the mode picker.
     if resume:
@@ -6698,7 +6708,7 @@ def run(fast: bool = False, resume: bool = False) -> int:
     # to partial state). Editable later in the .env file.
     keys.update(pick_connectors())
     keys.update(monitoring_keys)
-    keys.update(web_search_keys)
+    keys.update(_runnable_search_backend(web_search_keys, web_search_envs, keys))
 
     suites = pick_suites()
 

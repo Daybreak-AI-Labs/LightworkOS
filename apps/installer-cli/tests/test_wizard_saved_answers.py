@@ -118,6 +118,7 @@ def test_web_search_backend_survives_resume_and_a_fresh_process(monkeypatch, tmp
     _advanced(monkeypatch, tmp_path)
     monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "")
     monkeypatch.delenv("MAVERICK_SEARCH_BACKEND")
+    monkeypatch.setenv("BRAVE_API_KEY", "wizard-test-value")  # pragma: allowlist secret
     confirm = wizard._q_confirm
     monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: (
         True if prompt.startswith("Enable web search") else False if prompt.startswith("Write config")
@@ -191,3 +192,19 @@ def test_partial_state_excludes_connection_secrets_and_scrubs_legacy_files(monke
     parsed = _write(monkeypatch, tmp_path, knowledge=state["knowledge"], notifications=state["_notifications_pair"][0])
     assert parsed["knowledge"]["dsn"] == state["knowledge"]["dsn"]
     assert parsed["notifications"]["ntfy_topic"] == state["_notifications_pair"][0]["ntfy_topic"]
+
+
+def test_keyed_search_backend_without_its_key_is_not_forced(monkeypatch, tmp_path):
+    # A forced backend never falls back, so a keyless tavily answer would break search.
+    _advanced(monkeypatch, tmp_path)
+    for name in ("MAVERICK_SEARCH_BACKEND", "TAVILY_API_KEY"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    confirm = wizard._q_confirm
+    monkeypatch.setattr(wizard, "_q_confirm", lambda prompt, **kw: (
+        True if prompt.startswith("Enable web search") else confirm(prompt, **kw)))
+    assert wizard.run() == 0
+    monkeypatch.delenv("MAVERICK_SEARCH_BACKEND", raising=False)
+    config._load_env_file(wizard.ENV_FILE)
+    assert "MAVERICK_SEARCH_BACKEND" not in os.environ
+    assert config.load_config(wizard.CONFIG_FILE)["capabilities"]["web_search"] is True
