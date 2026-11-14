@@ -432,11 +432,18 @@ def run_assessment(
     timestamps.  Re-running an assessment over old or differently configured
     judge evidence therefore cannot mint a fresh authorization receipt.  With
     both omitted, historical all-sample calibration behavior is unchanged.
+
+    A narrowed assessment (any of ``evaluator_id``, ``since``, ``sources`` or a
+    custom floor) writes the evaluator-bound receipt by default, never the
+    general verdict that :func:`learning_frozen` reads: one source's result
+    must not freeze or unfreeze tenant-wide learning.
     """
     if samples_path is None:
         samples_path = _samples_path()
     if verdict_path is None:
-        verdict_path = _verdict_path()
+        narrowed = any(value is not None for value in (
+            evaluator_id, since, sources, min_samples, min_discrimination))
+        verdict_path = _risk_verdict_path() if narrowed else _verdict_path()
     if before_effect is not None:
         before_effect()
     samples = load_samples(samples_path, strict=True) if strict else load_samples(samples_path)
