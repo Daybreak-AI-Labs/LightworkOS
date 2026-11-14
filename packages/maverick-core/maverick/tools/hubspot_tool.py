@@ -186,6 +186,7 @@ def _op_contact_create(args: dict) -> str:
         props["lastname"] = args["lastname"]
     extra = args.get("properties") if isinstance(args.get("properties"), dict) else {}
     props.update({str(k): str(v) for k, v in extra.items()})
+    props["email"] = email  # the reviewed address, not one from properties
     code, data = _post("/crm/v3/objects/contacts", {"properties": props})
     if code >= 400 or not isinstance(data, dict):
         return f"ERROR: contact_create ({code}): {data}"
@@ -247,7 +248,7 @@ def _op_deals(args: dict) -> str:
         if not rows:
             return "no deals"
         return "\n".join(
-            f"  {d.get('id')}  {(d.get('properties') or {}).get('dealname', '?'):<40}  "
+            f"  {d.get('id')}  {((d.get('properties') or {}).get('dealname') or '?'):<40}  "
             f"${(d.get('properties') or {}).get('amount', '?')}  "
             f"stage={(d.get('properties') or {}).get('dealstage', '?')}"
             for d in rows
@@ -258,7 +259,7 @@ def _op_deals(args: dict) -> str:
     if not rows:
         return "no deals"
     return "\n".join(
-        f"  {d.get('id')}  {(d.get('properties') or {}).get('dealname', '?'):<40}  "
+        f"  {d.get('id')}  {((d.get('properties') or {}).get('dealname') or '?'):<40}  "
         f"${(d.get('properties') or {}).get('amount', '?')}  "
         f"stage={(d.get('properties') or {}).get('dealstage', '?')}"
         for d in rows

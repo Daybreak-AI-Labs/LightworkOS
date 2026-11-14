@@ -61,7 +61,10 @@ def _run_factory(world, goal_id: int | None):
         op = args.get("op")
         if not op:
             return "ERROR: op is required"
-        cap = max(1, min(int(args.get("max_results") or 50), 500))
+        try:
+            cap = max(1, min(int(args.get("max_results") or 50), 500))
+        except (TypeError, ValueError, OverflowError):
+            return "ERROR: max_results must be an integer"
         if op == "set":
             user_key = (args.get("key") or "").strip()
             value = args.get("value") or ""

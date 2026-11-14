@@ -18,6 +18,7 @@ ops:
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -71,6 +72,14 @@ def _baud(args: dict) -> int:
         return 115200
 
 
+def _timeout(args: dict) -> float:
+    # inf would block a read forever; refuse non-finite and non-positive values.
+    timeout = float(args.get("timeout") or 1.0)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be a positive, finite number of seconds")
+    return timeout
+
+
 def _op_list_ports() -> str:
     import serial.tools.list_ports
     ports = list(serial.tools.list_ports.comports())
@@ -90,7 +99,7 @@ def _op_write(args: dict) -> str:
         return "ERROR: write requires data"
     eol = args.get("eol", "\n")
     payload = (str(data) + (eol or "")).encode("utf-8", errors="replace")
-    timeout = float(args.get("timeout") or 1.0)
+    timeout = _timeout(args)
     with serial.Serial(port, _baud(args), timeout=timeout) as ser:
         n = ser.write(payload)
     return f"wrote {n} byte(s) to {port}"
@@ -102,7 +111,7 @@ def _op_read(args: dict) -> str:
     if not _valid_port(port):
         return f"ERROR: invalid serial port {port!r}"
     n = max(1, min(int(args.get("bytes") or 256), 65536))
-    timeout = float(args.get("timeout") or 1.0)
+    timeout = _timeout(args)
     with serial.Serial(port, _baud(args), timeout=timeout) as ser:
         raw = ser.read(n)
     return raw.decode("utf-8", errors="replace") if raw else "(no data)"
@@ -118,7 +127,7 @@ def _op_query(args: dict) -> str:
     eol = args.get("eol", "\n")
     payload = (str(args["data"]) + (eol or "")).encode("utf-8", errors="replace")
     n = max(1, min(int(args.get("bytes") or 256), 65536))
-    timeout = float(args.get("timeout") or 1.0)
+    timeout = _timeout(args)
     with serial.Serial(port, _baud(args), timeout=timeout) as ser:
         ser.write(payload)
         raw = ser.read(n)

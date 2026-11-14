@@ -74,7 +74,7 @@ def _op_get(path: str, params: dict) -> str:
     except ValueError:
         data = (r.text or "")[:1000]
     if r.status_code >= 400:
-        return f"ERROR: get ({r.status_code}): {data}"
+        return f"ERROR: get ({r.status_code}): {str(data)[:1000]}"
     return dumps_compact(data)[:4000]
 
 
@@ -92,7 +92,7 @@ def _op_post(path: str, body: dict, confirm: bool) -> str:
     except ValueError:
         data = (r.text or "")[:1000]
     if r.status_code >= 400:
-        return f"ERROR: post ({r.status_code}): {data}"
+        return f"ERROR: post ({r.status_code}): {str(data)[:1000]}"
     return f"ok ({r.status_code}): " + dumps_compact(data)[:2000]
 
 

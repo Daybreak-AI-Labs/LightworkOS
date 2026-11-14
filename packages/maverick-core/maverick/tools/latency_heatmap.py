@@ -49,6 +49,8 @@ def _render(samples: list, pcts: tuple[float, ...]) -> str:
             ms = float(s.get("ms"))
         except (TypeError, ValueError):
             continue
+        if not math.isfinite(ms):
+            continue
         grouped.setdefault(bucket, []).append(ms)
 
     if not grouped:
