@@ -141,3 +141,17 @@ class TestModelEffortOverride:
         write_role_override("analyst", {"model": "", "effort": "", "system_addendum": ""})
         assert override_model("analyst") is None
         assert resolved_role("analyst")["is_override"] is False
+
+
+def test_unreadable_file_is_never_rewritten_from_empty(_roles_file):
+    # A malformed roles.toml loads as {} for spawns, but a save must not rewrite
+    # the file from {} (that deleted every other role's override).
+    write_role_override("orchestrator", {"system_addendum": "Lead with risk."})
+    write_role_override("coder", {"model": "tenant:m"})
+    _roles_file.write_text(_roles_file.read_text() + "[broken\n", encoding="utf-8")
+    before = _roles_file.read_text()
+    with pytest.raises(ValueError, match="cannot be read"):
+        write_role_override("researcher", {"system_addendum": "x"})
+    with pytest.raises(ValueError, match="cannot be read"):
+        remove_role_override("coder")
+    assert _roles_file.read_text() == before
