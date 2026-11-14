@@ -886,8 +886,6 @@ def _key_material_scope(relative: Path) -> tuple[str, ...] | None:
     scope: tuple[str, ...] = ()
     if len(parts) > 2 and parts[0] == "tenants":
         scope, parts = parts[:2], parts[2:]
-    if parts == ("consent.ledger.key",):
-        return scope
     if relative.suffix == ".key" and any(parts[: len(root)] == root for root in _KEY_MATERIAL_ROOTS):
         return scope
     if _is_vault_key(parts):
