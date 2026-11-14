@@ -57,6 +57,7 @@ _SEALED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("projects", "description"),
     ("fact_history", "value"),
     ("goals", "connection_selection"),
+    ("webhook_deliveries", "body"),
 )
 
 # fact_history rows are copies of fact values and are read with the facts
@@ -260,6 +261,15 @@ def _postgres_column_scope(table: str, tenant: str | None) -> tuple[str, list]:
     # Mutations require exact ownership, not compatibility reads' NULL fallback.
     if table in {"goals", "facts", "approvals", "projects", "fact_history"}:
         return "s.tenant_id IS NOT DISTINCT FROM %s", [tenant]
+    if table == "webhook_deliveries":
+        # Scoped by the raw tenant id in ``workspace`` ('' when unbound), the
+        # value webhook_subscriptions writes, not the path-encoded tenant_id.
+        from .webhook_subscriptions import workspace_id
+
+        workspace = workspace_id()
+        if (tenant is None) != (workspace == ""):
+            raise EncryptionUnavailable("the webhook workspace does not match the migrated tenant")
+        return "s.workspace = %s", [workspace]
     parent, foreign_key = (("conversations", "conversation_id") if table == "turns"
                            else ("goals", "goal_id"))
     predicate = (f"EXISTS (SELECT 1 FROM {parent} p WHERE p.id=s.{foreign_key} "

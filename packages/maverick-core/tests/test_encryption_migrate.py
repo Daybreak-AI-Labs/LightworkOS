@@ -62,6 +62,7 @@ def test_migrate_seals_existing_plaintext(monkeypatch, tmp_path):
         "signoffs.note": 0, "artifacts.content": 0,
         "projects.name": 0, "projects.description": 0,
         "fact_history.value": 0,
+        "webhook_deliveries.body": 0,
         "harness_corpus.row": 0,
     }
 
@@ -90,6 +91,7 @@ def test_migrate_seals_existing_plaintext(monkeypatch, tmp_path):
         "signoffs.note": 0, "artifacts.content": 0,
         "projects.name": 0, "projects.description": 0,
         "fact_history.value": 0,
+        "webhook_deliveries.body": 0,
         "harness_corpus.row": 0,
     }
 
@@ -415,3 +417,31 @@ def test_migrate_rebinds_legacy_sealed_rows_and_marks_the_store(monkeypatch, tmp
     # Idempotent: a second run finds nothing to do and keeps the marker.
     assert sum(migrate_world_db(db).values()) == 0
     assert migrated_marker_path(db).exists()
+
+
+@requires_crypto
+def test_migrate_seals_legacy_webhook_bodies_so_strict_reads_still_send(monkeypatch, tmp_path):
+    # Delivery bodies stored before sealing are plaintext. Once the store is
+    # migrated reads turn strict and refuse plaintext, so the migration must
+    # seal them too; the sealed row then sends.
+    from maverick import webhook_subscriptions as subs
+    from maverick.encryption_migrate import migrate_world_db
+    from maverick.world_model import WorldModel
+
+    db = tmp_path / "world.db"
+    subs._write(WorldModel(db),
+        "INSERT INTO webhook_deliveries(id, workspace, subscription_id, event_id, event_type, url,"
+        " body, status, attempts, next_attempt_at, created_at, updated_at)"
+        " VALUES('whd_legacy','','legacy-config','evt','dsar.opened','https://a.example.com/h',"
+        " '{\"x\":1}','pending',0,1,1,1)")
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    assert migrate_world_db(db)["webhook_deliveries.body"] == 1
+    stored = sqlite3.connect(str(db)).execute("SELECT body FROM webhook_deliveries").fetchone()[0]
+    assert stored.startswith("MVKBND1:") and '"x"' not in stored
+    monkeypatch.setenv("MAVERICK_ENCRYPT_STRICT", "1")
+    monkeypatch.setattr("maverick.webhooks._load_config_outbound", lambda: (["https://a.example.com/h"], None))
+    monkeypatch.setattr("maverick.enterprise.enterprise_egress_denial", lambda *a, **k: None)
+    sent = []
+    row = subs.attempt_delivery("whd_legacy", world=WorldModel(db), now=2,
+                                transport=lambda url, body, headers, timeout: sent.append(body) or (200, 1, "ok", ""))
+    assert row["status"] == "delivered" and sent == [b'{"x":1}']
