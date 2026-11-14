@@ -306,3 +306,11 @@ def test_handler_exception_returns_generic_reply(monkeypatch):
     sent_text = ch.send.await_args.args[1]
     assert sent_text == "⚠ An internal error occurred."
     assert "secret" not in sent_text and "/srv" not in sent_text  # no leak
+
+
+def test_events_for_another_phone_number_are_ignored():
+    event = _event()
+    event["entry"][0]["changes"][0]["value"]["metadata"] = {"phone_number_id": "999"}
+    assert WhatsAppCloudChannel._extract_messages(event, "1112223334445") == []
+    event["entry"][0]["changes"][0]["value"]["metadata"] = {"phone_number_id": "1112223334445"}
+    assert len(WhatsAppCloudChannel._extract_messages(event, "1112223334445")) == 1
