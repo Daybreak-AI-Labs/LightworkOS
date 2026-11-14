@@ -67,6 +67,9 @@ def load_tenant_egress(tenant: str | None = "__active__") -> dict:
 
 def _canonical_ip(host: str) -> str:
     value = host.strip().lower().removesuffix(".")
+    if value.startswith("[") and value.endswith("]"):
+        # URL-style IPv6 literal: "[::ffff:a.b.c.d]" is the same address.
+        value = value[1:-1]
     try:
         address = ipaddress.ip_address(value)
     except ValueError:

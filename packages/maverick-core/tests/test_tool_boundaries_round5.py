@@ -37,6 +37,16 @@ def test_tenant_ip_policy_applies_to_equivalent_literals():
     assert not host_allowed("api.example.com", policy={"deny": ["*.example.com"]})
 
 
+def test_tenant_ip_policy_applies_to_bracketed_ipv6_literals():
+    from maverick.tenant.egress import host_allowed
+
+    for host in ["[::ffff:93.184.216.34]", "[::FFFF:5db8:d822]"]:
+        assert not host_allowed(host, policy={"deny": ["93.184.216.34"]})
+        assert not host_allowed("93.184.216.34", policy={"deny": [host]})
+        assert not host_allowed(host, policy={"allow": ["10.0.0.1"]})
+        assert host_allowed(host, policy={"allow": ["93.184.216.34"]})
+
+
 def test_large_local_stdin_reaches_backend_without_command_size_limit(tmp_path):
     from maverick.sandbox.local import LocalBackend
     from maverick.tools import sandbox_run
