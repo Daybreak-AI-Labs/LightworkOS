@@ -87,7 +87,7 @@ def test_timeout_probe_runs_the_form_exec_uses_and_reports_why(monkeypatch, code
         calls.append(args[-1])
         if args[-1] == "true":
             return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
-        if args[-1] == "timeout --signal=KILL 1s true":
+        if args[-1] == "timeout --signal=KILL 1.000000s true":
             return subprocess.CompletedProcess(args, code, stdout=b"", stderr=stderr)
         return subprocess.CompletedProcess(args, 125, stdout=b"", stderr=b"unrecognized option")
 
@@ -97,7 +97,7 @@ def test_timeout_probe_runs_the_form_exec_uses_and_reports_why(monkeypatch, code
     else:
         with pytest.raises(RuntimeError, match=expected):
             SSHBackend(host="me@example.com")
-    assert calls == ["true", "timeout --signal=KILL 1s true"]
+    assert calls == ["true", "timeout --signal=KILL 1.000000s true"]
 
 
 def test_exec_builds_mkdir_cd_and_quotes_command(monkeypatch):

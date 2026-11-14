@@ -106,7 +106,7 @@ class SSHBackend:
             )
         # Probe with the form exec() runs, so the check matches what is used.
         check = subprocess.run(
-            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, "timeout --signal=KILL 1s true"],
+            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, "timeout --signal=KILL 1.000000s true"],
             capture_output=True, timeout=15, env=_ssh_env(),
         )
         if check.returncode != 0:
