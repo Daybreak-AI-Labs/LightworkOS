@@ -42,7 +42,7 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # (scheme://user:password@host -- postgres://, redis://, mongodb://, ...).
     # Redacts only the password segment, keeping the rest readable. The user
     # may be empty (redis://:password@host), and the password runs to the "@"
-    # whose host part (up to "/", whitespace, "," or the end) holds no "@", so
+    # whose host part (up to "/", "?", "#", whitespace, "," or the end) holds no "@", so
     # a password containing "@" is redacted whole and a following host is not.
     # The scheme run is bounded ({0,31}) instead of an open `*`: an
     # unbounded greedy class followed by the required `://` backtracks
@@ -51,7 +51,7 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # crafted long string could hang the agent). No real URL scheme is
     # anywhere near 32 chars, so the bound changes no legitimate match.
     ("url_credentials", re.compile(
-        r"([a-zA-Z][a-zA-Z0-9+.\-]{0,31}://[^\s:/@]*:)([^\s/]+?)(@)(?=[^\s/@,]*(?:[\s/,]|$))",
+        r"([a-zA-Z][a-zA-Z0-9+.\-]{0,31}://[^\s:/@]*:)([^\s/]+?)(@)(?=[^\s/@,?#]*(?:[\s/,?#]|$))",
     )),
     # Anthropic API key (sk-ant-...)
     ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
@@ -126,17 +126,20 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"(?i)([?&](?:access_token|api_key|apikey|auth_token|token|secret|"
         r"password|passwd|sig|signature|client_secret)=)([^&#\s\"']+)",
     )),
-    # Lowercase or quoted key/value pairs (password=..., api_key:..., and
-    # {"api_key": "..."}) that the uppercase env_secret pattern misses. Only
-    # the key/value shape fires: the separator is directly followed by a
-    # token, or by a quoted value (so prose such as "password: user bob" is
-    # left alone). Quotes stay around the placeholder, keeping JSON valid. A
+    # Lowercase, camelCase or quoted key/value pairs (password: hunter2,
+    # api_key = abc, {"apiKey": "..."}) that the uppercase env_secret pattern
+    # misses. A quoted value is always a value, and its quotes stay around the
+    # placeholder (JSON stays valid). An unquoted value must be a single token
+    # ending the line or followed by a quote, comma, semicolon or closing
+    # bracket, so prose such as "invalid password: user bob" is left alone.
+    # Values are bounded so a long run of key-like text cannot backtrack. A
     # value an earlier pattern already redacted is left alone.
     ("kv_secret", re.compile(
-        r"(?i)(\b(?:password|passwd|api[_-]?key|access[_-]?token|auth[_-]?token|"
-        r"client[_-]?secret|secret[_-]?key)[\"']?[^\S\n]*[:=]"
-        r"(?:[^\S\n]*([\"'])|(?=[^\s\"'])))"
-        r"(?!\[REDACTED)((?(2)(?:(?!\2)[^\n])+|[^\s,;&\"'}]+))",
+        r"(?im)((?<![A-Za-z0-9])(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|"
+        r"client[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token)"
+        r"[\"']?[^\S\n]*[:=][^\S\n]*([\"'])?)"
+        r"(?![\"']?\[REDACTED)"
+        r"((?(2)(?:(?!\2)[^\n]){1,4096}|[^\s,;\"'}\])]{1,512}(?=[^\S\n]*(?:$|[,;\"'}\])]))))",
     )),
 ]
 
