@@ -315,11 +315,24 @@ def _scan_plugin_sources(report: ModerationReport, root: Path, manifest: Any) ->
     """Scan every source file; flag undeclared capability use most sharply."""
     perms = manifest.permissions
     for src in _python_sources(root):
-        try:
-            text = src.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
         rel = src.relative_to(root) if src != root else src.name
+        try:
+            raw = src.read_bytes()
+        except OSError as e:
+            _add(report, Finding("unreadable", Severity.REJECT, f"{rel}: cannot read source: {e}"))
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # Python honours a coding cookie (``# -*- coding: latin-1 -*-``),
+            # so a non-UTF-8 source still runs. Skipping it let a reverse shell
+            # through with no finding: scan it decoded losslessly as Latin-1
+            # (the patterns are ASCII) and flag it for a human.
+            text = raw.decode("latin-1")
+            _add(report, Finding(
+                "non_utf8_source", Severity.FLAG,
+                f"{rel}: source is not UTF-8; scanned as Latin-1",
+            ))
         for finding in scan_secrets(text, where=str(rel)):
             _add(report, finding)
         for finding in scan_prohibited(text):
