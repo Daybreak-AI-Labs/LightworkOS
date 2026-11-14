@@ -1262,7 +1262,11 @@ class WorkDiscoveryStore:
                     conn, "ekko_consent_changed", {"state": "revoked"}, at=now,
                 )
             except Exception:
-                # Revocation/stop must win even when the audit/KMS path is down.
+                # Revocation/stop must win even when the audit outbox is down.
+                # This is not true of a KMS outage: re-sealing the stopped
+                # sessions above needs the KMS, so its failure rolls back this
+                # SQLite transaction. Capture still fails closed, because the
+                # revoked consent authority was written before it began.
                 pass
         return Enrollment(
             False, enrollment.policy_digest, enrollment.enrolled_at, now,
