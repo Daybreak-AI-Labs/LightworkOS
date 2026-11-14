@@ -4228,8 +4228,11 @@ class WorldModel:
         """
         finalized: tuple[str, str] | None = None
         with self._writing() as conn:
+            # A no-op write first opens the write transaction, so the reads
+            # below cannot see state another process changes before the
+            # final UPDATE (Python sqlite begins only at the first DML).
+            conn.execute("UPDATE approval_audit_outbox SET delivered_at=delivered_at WHERE event_id=?", (str(event_id),))
             if effect_guard is not None:
-                conn.execute("UPDATE approval_audit_outbox SET delivered_at=delivered_at WHERE event_id=?", (str(event_id),))
                 effect_guard()
             event = conn.execute(
                 "SELECT event_id, approval_id, status, decided_by, final_status, "

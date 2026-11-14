@@ -37,8 +37,10 @@ class AccessPolicy:
     required_attributes: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "purposes", frozenset(self.purposes))
-        object.__setattr__(self, "required_attributes", frozenset(self.required_attributes))
+        # A bare string is one name, not a set of its characters.
+        for name in ("purposes", "required_attributes"):
+            value = getattr(self, name)
+            object.__setattr__(self, name, frozenset({value} if isinstance(value, str) else value))
 
     @property
     def unrestricted(self) -> bool:
