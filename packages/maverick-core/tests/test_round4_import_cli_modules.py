@@ -14,7 +14,8 @@ from maverick.automation_import.base import ImporterError
 
 @pytest.mark.parametrize("complete", [False, True])
 def test_schedule_trigger_redacts_its_cron_text(complete):
-    secret = "sk-" + "a" * 48
+    # Synthetic credential shape exercises redaction; no credential material.
+    secret = "sk-" + "a" * 48  # pragma: allowlist secret
     cron = "0 9 * * *\n" + secret + " " + "description " * 30
     text = ir.ImportedTrigger(kind="schedule", cron=cron).render(complete=complete)
     assert secret not in text
