@@ -48,6 +48,14 @@ def test_enabled_env_wins(monkeypatch, tmp_path):
     assert containment.enabled() is False
 
 
+def test_enabled_fails_closed_on_unclear_settings(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAVERICK_CONTAINMENT", "enabled")
+    assert containment.enabled() is True
+    monkeypatch.delenv("MAVERICK_CONTAINMENT")
+    _config(monkeypatch, tmp_path, "[containment]\nenabled = true\nbroken = [\n")
+    assert containment.enabled() is True
+
+
 def test_enabled_from_config(monkeypatch, tmp_path):
     _config(monkeypatch, tmp_path, "[containment]\nenabled = true\n")
     assert containment.enabled() is True
@@ -104,6 +112,16 @@ def test_denied_tools_actually_blocked_by_registry_acl():
                       sandbox_env={})
     assert reg._acl_allows("http_fetch") is False
     assert reg._acl_allows("read_file") is True
+
+
+def test_apply_denies_deferrable_connectors():
+    reg = ToolRegistry()
+    reg.deferrable_names.add("sendgrid")
+    report = containment.apply(containment.ContainmentProfile(), registry=reg,
+                               sandbox_env={})
+    assert reg._acl_allows("sendgrid") is False
+    assert reg._acl_allows("dns_lookup") is False
+    assert "sendgrid" in report.denied_tools
 
 
 # --- apply: env hardening -----------------------------------------------------
