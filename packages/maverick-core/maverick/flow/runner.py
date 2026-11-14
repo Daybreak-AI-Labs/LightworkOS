@@ -541,6 +541,16 @@ def _invoke_recipe_action(node: FlowNode, data: dict, ctx: _Ctx):
     return parsed, outcome
 
 
+def _observe_work_result(node: FlowNode, status: str, outcome: float | None, ctx: _Ctx) -> None:
+    try:
+        ctx.on_node(node, status, outcome)
+    except Exception as exc:
+        # Dispatch has returned; a failed observer cannot prove it is safe to
+        # repeat that work, including work already known to need reconciliation.
+        # Do not call the same observer again to report this.
+        raise _Indeterminate(node.id, _safe_error_text(exc), boundary="work result") from exc
+
+
 def _run_work(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
     # Retry a failed work node up to `retries` more times -- a transient tool/agent
     # failure (outcome 0.0) OR a hard exception from the executor gets another
@@ -592,7 +602,7 @@ def _run_work(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         )
         # Ambiguity is not a grounded failure signal.  Preserve the trace status
         # but do not feed a guessed 0.0 into self-learning.
-        ctx.on_node(node, STATUS_INDETERMINATE, None)
+        _observe_work_result(node, STATUS_INDETERMINATE, None, ctx)
         raise _Indeterminate(
             node.id,
             detail[:500],
@@ -606,12 +616,7 @@ def _run_work(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         )
     if last_exc is not None:
         raise last_exc
-    try:
-        ctx.on_node(node, "done", outcome)
-    except Exception as exc:
-        # Dispatch has returned; a failed observer cannot prove it is safe to
-        # repeat that work. Do not call the same observer again to report this.
-        raise _Indeterminate(node.id, _safe_error_text(exc), boundary="completed work") from exc
+    _observe_work_result(node, "done", outcome, ctx)
     # A node that still failed routes to its on_error handler if it has one, so a
     # flow can catch and recover instead of poisoning `data` and marching on.
     # Never publish a failed connector result under its ordinary output key: it
@@ -924,6 +929,24 @@ def _sequential_item_data(node: FlowNode, data: dict, item: Any) -> dict:
     return sub
 
 
+def _branch_error(current: Exception | None, error: Exception) -> Exception:
+    """An uncertain effect must not be hidden behind a retryable sibling."""
+    if isinstance(current, _Indeterminate):
+        return current
+    return error if isinstance(error, _Indeterminate) else current or error
+
+
+def _raise_branch_error(error: Exception | None, ctx: _Ctx) -> None:
+    # A concurrent budget hold must not produce a retryable continuation when
+    # another branch has already crossed an uncertain effect boundary.
+    if isinstance(error, _Indeterminate):
+        raise error
+    if ctx.control_stop:
+        raise ctx.control_stop[0]
+    if error is not None:
+        raise error
+
+
 def _foreach_items(node: FlowNode, data: dict, ctx: _Ctx) -> list:
     if type(node.concurrency) is not int or not 0 <= node.concurrency <= _PARALLEL_MAX_WORKERS:
         raise _Reject(node, data, error="Choose Shared workflow limit or between 1 and 8 items at once.")
@@ -983,19 +1006,16 @@ def _run_foreach(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
                     try:
                         _run_chain(node.body, sub, ctx.branched(str(index)), node.body.start)
                     except Exception as e:
-                        first_error = first_error or e
+                        first_error = _branch_error(first_error, e)
                 for f in futs:
                     try:
                         f.result()
                     except Exception as e:
-                        first_error = first_error or e
+                        first_error = _branch_error(first_error, e)
         else:
             for index, sub in inline:
                 _run_chain(node.body, sub, ctx.branched(str(index)), node.body.start)
-        if ctx.control_stop:
-            raise ctx.control_stop[0]
-        if first_error is not None:
-            raise first_error
+        _raise_branch_error(first_error, ctx)
         results = subs
     else:
         for item in items[len(results):]:
@@ -1043,19 +1063,16 @@ def _run_parallel(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
                     try:
                         _run_chain(br, sub, ctx.branched(str(index)), br.start)
                     except Exception as e:
-                        first_error = first_error or e
+                        first_error = _branch_error(first_error, e)
                 for f in futs:
                     try:
-                        f.result()        # wait for all; re-raise the first error
+                        f.result()        # wait for all before choosing the error
                     except Exception as e:
-                        first_error = first_error or e
+                        first_error = _branch_error(first_error, e)
         else:
             for index, br, sub in inline:
                 _run_chain(br, sub, ctx.branched(str(index)), br.start)
-        if ctx.control_stop:
-            raise ctx.control_stop[0]
-        if first_error is not None:
-            raise first_error
+        _raise_branch_error(first_error, ctx)
     else:
         for br, sub in zip(node.branches, branch_outputs, strict=True):
             _run_chain(br, sub, ctx.nested(), br.start)

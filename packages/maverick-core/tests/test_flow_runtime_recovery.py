@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import copy
+import threading
 
 import pytest
 from maverick.flow import Flow, FlowNode, execution
+from maverick.flow.run_events import FlowBudgetExceeded
 from maverick.flow.runner import run_flow
+from maverick.killswitch import Halted
 
 
 def graph(name, *nodes):
@@ -110,16 +113,49 @@ def test_pre_dispatch_refusal_retries_its_exact_container(nested):
     assert resumed.continuation and resumed.cursor == result.cursor
 
 
-def test_post_effect_observer_failure_cannot_make_action_retryable():
-    flow = graph("effect", FlowNode(id="send", kind="action", tool="wire_transfer", output="receipt", next="after"),
+@pytest.mark.parametrize("container, stop", [
+    ("direct", "ordinary"), ("direct", "unknown"), ("parallel", "ordinary"), ("foreach", "ordinary"),
+    ("foreach_inline", "ordinary"), ("parallel", "budget"), ("foreach", "budget"),
+    ("parallel", "halt"), ("foreach", "halt"),
+])
+def test_post_effect_observer_failure_cannot_make_action_retryable(container, stop):
+    work = graph("effect", FlowNode(id="send", kind="action", tool="wire_transfer" if container == "direct" else "web_search",
+                                   params={"role": "{{role}}"}, output="receipt", next="after"),
                  FlowNode(id="after", kind="setvar", assignments={"continued": True}))
+    flow, data = work, {"role": "deliver"}
+    if container == "parallel":
+        failure = graph("failure", FlowNode(id="fail", kind="action", tool="web_search", params={"role": "fail"}))
+        flow = graph("parallel", FlowNode(id="both", kind="parallel", branches=[failure, work]))
+    elif container.startswith("foreach"):
+        inline = container == "foreach_inline"
+        flow = graph("foreach", FlowNode(id="loop", kind="foreach", body=work, items="roles", var="role",
+                                        concurrent=True, concurrency=2 if inline else 0))
+        data = {"roles": ["deliver", "fail"] if inline else ["fail", "deliver"]}
     effects = []
+    dispatched = threading.Barrier(2)
+
+    def action(_node, params, _data):
+        if params["role"] == "deliver":
+            effects.append("sent")
+        if container != "direct":
+            # Both branches have dispatched before a control stop can prevent
+            # the second branch from entering its action.
+            dispatched.wait(timeout=5)
+        if params["role"] == "fail":
+            if stop == "budget":
+                raise FlowBudgetExceeded("allowance exhausted")
+            if stop == "halt":
+                raise Halted("operator stopped this run", "test")
+            raise RuntimeError("retryable read failure")
+        if stop == "unknown":
+            return "INDETERMINATE: delivery receipt missing", 0.0
+        return "receipt", 1.0
 
     def observer(_node, status, _outcome):
-        assert status == "done"
+        assert status == ("indeterminate" if stop == "unknown" else "done")
         raise RuntimeError("observer failed after delivery")
 
-    result = run(flow, action_fn=lambda *_: (effects.append("sent"), 1.0), on_node=observer)
+    result = run(flow, data=data, action_fn=action, on_node=observer)
     assert effects == ["sent"]
     assert result.status == "indeterminate" and result.cursor == "send"
     assert not result.continuation
