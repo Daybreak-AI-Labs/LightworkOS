@@ -48,6 +48,7 @@ shipping this module changes nothing until an operator admits it.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -289,6 +290,17 @@ def transcript(session_id: str) -> list[dict]:
             if line.strip()]
 
 
+def _exec_takes_timeout(sandbox) -> bool:
+    """Whether ``sandbox.exec`` accepts ``timeout=``, decided from its
+    signature. Catching TypeError instead would re-run a statement that
+    raised TypeError after it started, a second time and with no timeout."""
+    try:
+        params = inspect.signature(sandbox.exec).parameters.values()
+    except (TypeError, ValueError):
+        return True  # not introspectable: keep the timeout
+    return any(p.name == "timeout" or p.kind is p.VAR_KEYWORD for p in params)
+
+
 def close_session(session_id: str) -> bool:
     """Close a session; return whether this call closed it.
 
@@ -300,17 +312,20 @@ def close_session(session_id: str) -> bool:
         session_dir = _session_dir(session_id)
     except ReplError:
         return False
-    meta = _read_meta(session_dir)
-    if meta.get("closed"):
-        return False
-    meta["closed"] = True
-    meta["closed_at"] = time.time()
-    _write_meta(session_dir, meta)
-    work_dir = session_dir / _WORK_NAME
-    stale = [work_dir / _STATE_NAME, work_dir / _DRIVER_NAME]
-    stale += list(work_dir.glob("stmt_*.py")) + list(work_dir.glob("res_*.json"))
-    for path in stale:
-        path.unlink(missing_ok=True)
+    from .file_lock import cross_process_lock
+    # The same lock execute() holds, so a close cannot land mid-statement.
+    with cross_process_lock(session_dir / _META_NAME):
+        meta = _read_meta(session_dir)
+        if meta.get("closed"):
+            return False
+        meta["closed"] = True
+        meta["closed_at"] = time.time()
+        _write_meta(session_dir, meta)
+        work_dir = session_dir / _WORK_NAME
+        stale = [work_dir / _STATE_NAME, work_dir / _DRIVER_NAME]
+        stale += list(work_dir.glob("stmt_*.py")) + list(work_dir.glob("res_*.json"))
+        for path in stale:
+            path.unlink(missing_ok=True)
     return True
 
 
@@ -440,9 +455,9 @@ def _run_statement(sandbox, work_dir: Path, index: int, source: str,
         ],
     )
     started = time.monotonic()
-    try:
+    if _exec_takes_timeout(sandbox):
         res = sandbox.exec(cmd, timeout=float(policy["max_seconds"]))
-    except TypeError:  # backend without a per-call timeout kwarg
+    else:  # backend without a per-call timeout kwarg
         res = sandbox.exec(cmd)
     wall = time.monotonic() - started
     exit_code = int(getattr(res, "exit_code", 1))
