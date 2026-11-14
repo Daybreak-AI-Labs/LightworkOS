@@ -1223,11 +1223,12 @@ async def remove_user_suites(request: Request, principal: str) -> Response:
 
 def _require_enabled_specialist(request: Request, domain: str) -> None:
     """Check the live inherited suite before accepting a specialist run."""
-    from maverick.domain import enabled_domains, suites_for_domain
+    from maverick.domain import enabled_domains, suites_for_domain, suites_unavailable_reason
 
     profile = enabled_domains().get(domain)
     if profile is None:
-        raise HTTPException(status_code=400, detail=f"unknown agent or specialist: {domain!r}")
+        detail = suites_unavailable_reason() or f"unknown agent or specialist: {domain!r}"
+        raise HTTPException(status_code=400, detail=detail)
     for suite in suites_for_domain(domain, profile):
         require_suite(request, suite)
 

@@ -234,3 +234,9 @@ def test_create_goal_with_unknown_domain_400(monkeypatch):
     })
     assert resp.status_code == 400
     assert "unknown agent or specialist" in resp.json()["detail"]
+
+    # When every suite is off because configuration is unreadable, say so.
+    from maverick import domain
+    monkeypatch.setattr(domain, "suites_unavailable_reason", lambda: "settings unreadable")
+    resp = client.post("/api/v1/goals", json={"title": "x", "domain": "no_such_pack_xyz"})
+    assert resp.status_code == 400 and resp.json()["detail"] == "settings unreadable"
