@@ -74,7 +74,9 @@ artifact from the current corpus (53 train / 31 held-out / 32 benign):
 posture when the SDK is absent.
 
 Evasion (held-out TPR, `defense_in_depth`): zero-width 71.0%, full-width 71.0%,
-homoglyph 71.0%, base64 100% (the base64 path de-obfuscates and re-scans).
+homoglyph 71.0%, base64 71.0%. The base64 path decodes and re-scans with the
+pattern rules; the weighted heuristics do not decode base64, so an attack only
+they catch in plain text is missed when it is encoded.
 
 ### Read this honestly
 
