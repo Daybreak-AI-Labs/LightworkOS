@@ -2355,7 +2355,7 @@ class ModelRiskAssuranceOfficer:
     ) -> bool:
         return citation_is_current(citation, record)
 
-    def _verify_promotion_authorization(  # noqa: C901 - one fail-closed authority walk
+    def _verify_promotion_authorization(
         self,
         *,
         candidate_id: str,
@@ -2413,6 +2413,13 @@ class ModelRiskAssuranceOfficer:
         if eu.get("category") in {None, "", "undetermined", "prohibited"}:
             return False, "EU AI Act applicability is undetermined or prohibits promotion", authorization
 
+        return self._verify_promotion_evidence(
+            authority, asset, risk_rung, now, authorization,
+        )
+
+    def _verify_promotion_evidence(
+        self, authority, asset, risk_rung, now, authorization,
+    ):
         bound_evidence = authority.get("evidence")
         if not isinstance(bound_evidence, list) or not bound_evidence:
             return False, "promotion has no bound assurance evidence", authorization
@@ -2420,162 +2427,11 @@ class ModelRiskAssuranceOfficer:
         training_dataset_digests: set[str] = set()
         data_assessment_scopes: set[str] = set()
         for citation in bound_evidence:
-            if not isinstance(citation, dict):
-                return False, "promotion evidence binding is malformed", authorization
-            evidence = self._evidence.get(str(citation.get("record_id") or ""))
-            if not self._citation_is_current(citation, evidence):
-                return False, "promotion evidence authority is stale", authorization
-            if evidence is None:
-                return False, "promotion evidence is missing", authorization
-            if evidence.get("asset_id") != asset:
-                return False, "promotion evidence belongs to a different asset", authorization
-            if evidence.get("status") != "approved" or evidence.get("result") != "passed":
-                return False, "promotion evidence is not approved and passing", authorization
-            if float(evidence.get("valid_until") or 0) <= now:
-                return False, "promotion evidence expired", authorization
-            if evidence.get("artifact_digest") != authority.get("artifact_digest"):
-                return False, "promotion evidence covers different artifact bytes", authorization
-            evidence_kind = str(evidence.get("evidence_kind") or "")
-            if (
-                evidence_kind == "red_team"
-                and not _red_team_review_is_independent(evidence)
-            ):
-                return (
-                    False,
-                    "red-team evidence lacks independent producer review",
-                    authorization,
-                )
-            if evidence_kind == "data_assessment":
-                data_assessment_scopes.add(str(evidence.get("scope_digest") or ""))
-            if evidence_kind in {"evaluation", "red_team"}:
-                evidence_evaluator_asset = evidence.get("evaluator_asset_id")
-                evidence_evaluator_binding = evidence.get("evaluator_binding")
-                if evidence_evaluator_asset is not None:
-                    try:
-                        evidence_evaluator = self.get_observation(
-                            str(evidence_evaluator_asset),
-                        )
-                    except (ModelRiskAssuranceError, ValueError):
-                        return (
-                            False,
-                            "promotion evidence evaluator identity is invalid",
-                            authorization,
-                        )
-                    if (
-                        not isinstance(evidence_evaluator_binding, Mapping)
-                        or not self._citation_is_current(
-                            evidence_evaluator_binding,
-                            evidence_evaluator,
-                        )
-                    ) or (
-                        evidence_evaluator is None
-                        or evidence_evaluator.get("version_digest")
-                        != evidence.get("evaluator_digest")
-                    ):
-                        return (
-                            False,
-                            "promotion evidence evaluator authority is stale",
-                            authorization,
-                        )
-                elif evidence.get("evaluator_digest") != authority.get(
-                    "evaluator_digest",
-                ):
-                    return (
-                        False,
-                        "promotion evidence covers a different evaluator",
-                        authorization,
-                    )
-            if evidence_kind == "training_run":
-                measurements = evidence.get("metrics")
-                exact_training_fields = {
-                    "training_receipt_commitment",
-                    "training_assurance_commitment",
-                }
-                raw_commitment = None
-                raw_assurance = None
-                if (
-                    isinstance(measurements, Mapping)
-                    and set(measurements) == exact_training_fields
-                ):
-                    raw_commitment = measurements.get(
-                        "training_receipt_commitment"
-                    )
-                    raw_assurance = measurements.get(
-                        "training_assurance_commitment"
-                    )
-                try:
-                    commitment = _training_commitment(raw_commitment)
-                    assurance = _training_assurance_commitment(raw_assurance)
-                except ValueError:
-                    return (
-                        False,
-                        "training-run evidence commitment is missing or malformed",
-                        authorization,
-                    )
-                if (
-                    commitment["dataset_sha256"]
-                    != assurance["dataset_sha256"]
-                    or commitment["adapter_sha256"]
-                    != assurance["adapter_sha256"]
-                    or commitment["receipt_payload_sha256"]
-                    != assurance["receipt_payload_sha256"]
-                    or evidence.get("scope_digest")
-                    != _training_evidence_scope(commitment, assurance)
-                    or evidence.get("artifact_digest") != commitment["adapter_sha256"]
-                    or evidence.get("source_id")
-                    != f"training_receipt:{commitment['receipt_payload_sha256']}"
-                ):
-                    return (
-                        False,
-                        "training-run evidence commitment is stale or mismatched",
-                        authorization,
-                    )
-                training_dataset_digests.add(commitment["dataset_sha256"])
-            node_id = str(evidence.get("evidence_node_id") or "")
-            from . import evidence_graph
-
-            raw_node = evidence_graph.get(node_id)
-            if (
-                raw_node is None
-                or raw_node.get("attributes", {}).get("evidence_payload_sha256")
-                != evidence.get("payload_sha256")
-            ):
-                return False, "promotion evidence graph citation is missing or drifted", authorization
-            approved_node = evidence_graph.get(
-                _graph_node_id(_approved_graph_source_id(evidence)),
+            failure = self._verify_promotion_evidence_item(
+                citation, authority, asset, now, authorization, kinds, training_dataset_digests, data_assessment_scopes,
             )
-            review = (approved_node or {}).get("review") or {}
-            authority_validation = (approved_node or {}).get("authority_validation") or {}
-            attributes = (approved_node or {}).get("attributes") or {}
-            if (
-                approved_node is None
-                or approved_node.get("status") != "approved"
-                or approved_node.get("freshness") != "current"
-                or authority_validation.get("status") != "current"
-                or review.get("inherited_from") != evidence.get("id")
-                or review.get("authority_revision") != evidence.get("revision")
-                or review.get("authority_schema") != EVIDENCE_SCHEMA
-                or attributes.get("evidence_payload_sha256")
-                != evidence.get("payload_sha256")
-                or attributes.get("asset_id") != asset
-                or attributes.get("artifact_digest") != authority.get("artifact_digest")
-                or (
-                    evidence_kind in {"evaluation", "red_team"}
-                    and attributes.get("evaluator_digest")
-                    != evidence.get("evaluator_digest")
-                )
-                or (
-                    evidence.get("evaluator_asset_id") is not None
-                    and attributes.get("evaluator_asset_id")
-                    != evidence.get("evaluator_asset_id")
-                )
-            ):
-                return (
-                    False,
-                    "approved evidence graph authority is missing, stale, revoked, or drifted",
-                    authorization,
-                )
-            kinds.add(evidence_kind)
+            if failure is not None:
+                return failure
         required_kinds = {"evaluation", "red_team"}
         if risk_rung == "weights":
             required_kinds.update({"training_run", "data_assessment"})
@@ -2602,6 +2458,180 @@ class ModelRiskAssuranceOfficer:
         if blocking:
             return False, f"blocking assurance findings: {', '.join(sorted(blocking))}", authorization
         return True, "exact model-risk authority is current and approved", authorization
+
+
+    def _verify_promotion_evidence_item(
+        self, citation, authority, asset, now, authorization, kinds, training_dataset_digests, data_assessment_scopes,
+    ):
+        if not isinstance(citation, dict):
+            return False, "promotion evidence binding is malformed", authorization
+        evidence = self._evidence.get(str(citation.get("record_id") or ""))
+        if not self._citation_is_current(citation, evidence):
+            return False, "promotion evidence authority is stale", authorization
+        if evidence is None:
+            return False, "promotion evidence is missing", authorization
+        if evidence.get("asset_id") != asset:
+            return False, "promotion evidence belongs to a different asset", authorization
+        if evidence.get("status") != "approved" or evidence.get("result") != "passed":
+            return False, "promotion evidence is not approved and passing", authorization
+        if float(evidence.get("valid_until") or 0) <= now:
+            return False, "promotion evidence expired", authorization
+        if evidence.get("artifact_digest") != authority.get("artifact_digest"):
+            return False, "promotion evidence covers different artifact bytes", authorization
+        evidence_kind = str(evidence.get("evidence_kind") or "")
+        if (
+            evidence_kind == "red_team"
+            and not _red_team_review_is_independent(evidence)
+        ):
+            return (
+                False,
+                "red-team evidence lacks independent producer review",
+                authorization,
+            )
+        if evidence_kind == "data_assessment":
+            data_assessment_scopes.add(str(evidence.get("scope_digest") or ""))
+        if evidence_kind in {"evaluation", "red_team"}:
+            failure = self._verify_promotion_evaluator(evidence, authority, authorization)
+            if failure is not None:
+                return failure
+        if evidence_kind == "training_run":
+            failure = self._verify_promotion_training(evidence, authorization, training_dataset_digests)
+            if failure is not None:
+                return failure
+        node_id = str(evidence.get("evidence_node_id") or "")
+        from . import evidence_graph
+
+        raw_node = evidence_graph.get(node_id)
+        if (
+            raw_node is None
+            or raw_node.get("attributes", {}).get("evidence_payload_sha256")
+            != evidence.get("payload_sha256")
+        ):
+            return False, "promotion evidence graph citation is missing or drifted", authorization
+        approved_node = evidence_graph.get(
+            _graph_node_id(_approved_graph_source_id(evidence)),
+        )
+        review = (approved_node or {}).get("review") or {}
+        authority_validation = (approved_node or {}).get("authority_validation") or {}
+        attributes = (approved_node or {}).get("attributes") or {}
+        if (
+            approved_node is None
+            or approved_node.get("status") != "approved"
+            or approved_node.get("freshness") != "current"
+            or authority_validation.get("status") != "current"
+            or review.get("inherited_from") != evidence.get("id")
+            or review.get("authority_revision") != evidence.get("revision")
+            or review.get("authority_schema") != EVIDENCE_SCHEMA
+            or attributes.get("evidence_payload_sha256")
+            != evidence.get("payload_sha256")
+            or attributes.get("asset_id") != asset
+            or attributes.get("artifact_digest") != authority.get("artifact_digest")
+            or (
+                evidence_kind in {"evaluation", "red_team"}
+                and attributes.get("evaluator_digest")
+                != evidence.get("evaluator_digest")
+            )
+            or (
+                evidence.get("evaluator_asset_id") is not None
+                and attributes.get("evaluator_asset_id")
+                != evidence.get("evaluator_asset_id")
+            )
+        ):
+            return (
+                False,
+                "approved evidence graph authority is missing, stale, revoked, or drifted",
+                authorization,
+            )
+        kinds.add(evidence_kind)
+
+
+    def _verify_promotion_evaluator(self, evidence, authority, authorization):
+        evidence_evaluator_asset = evidence.get("evaluator_asset_id")
+        evidence_evaluator_binding = evidence.get("evaluator_binding")
+        if evidence_evaluator_asset is not None:
+            try:
+                evidence_evaluator = self.get_observation(
+                    str(evidence_evaluator_asset),
+                )
+            except (ModelRiskAssuranceError, ValueError):
+                return (
+                    False,
+                    "promotion evidence evaluator identity is invalid",
+                    authorization,
+                )
+            if (
+                not isinstance(evidence_evaluator_binding, Mapping)
+                or not self._citation_is_current(
+                    evidence_evaluator_binding,
+                    evidence_evaluator,
+                )
+            ) or (
+                evidence_evaluator is None
+                or evidence_evaluator.get("version_digest")
+                != evidence.get("evaluator_digest")
+            ):
+                return (
+                    False,
+                    "promotion evidence evaluator authority is stale",
+                    authorization,
+                )
+        elif evidence.get("evaluator_digest") != authority.get(
+            "evaluator_digest",
+        ):
+            return (
+                False,
+                "promotion evidence covers a different evaluator",
+                authorization,
+            )
+
+
+    def _verify_promotion_training(self, evidence, authorization, training_dataset_digests):
+        measurements = evidence.get("metrics")
+        exact_training_fields = {
+            "training_receipt_commitment",
+            "training_assurance_commitment",
+        }
+        raw_commitment = None
+        raw_assurance = None
+        if (
+            isinstance(measurements, Mapping)
+            and set(measurements) == exact_training_fields
+        ):
+            raw_commitment = measurements.get(
+                "training_receipt_commitment"
+            )
+            raw_assurance = measurements.get(
+                "training_assurance_commitment"
+            )
+        try:
+            commitment = _training_commitment(raw_commitment)
+            assurance = _training_assurance_commitment(raw_assurance)
+        except ValueError:
+            return (
+                False,
+                "training-run evidence commitment is missing or malformed",
+                authorization,
+            )
+        if (
+            commitment["dataset_sha256"]
+            != assurance["dataset_sha256"]
+            or commitment["adapter_sha256"]
+            != assurance["adapter_sha256"]
+            or commitment["receipt_payload_sha256"]
+            != assurance["receipt_payload_sha256"]
+            or evidence.get("scope_digest")
+            != _training_evidence_scope(commitment, assurance)
+            or evidence.get("artifact_digest") != commitment["adapter_sha256"]
+            or evidence.get("source_id")
+            != f"training_receipt:{commitment['receipt_payload_sha256']}"
+        ):
+            return (
+                False,
+                "training-run evidence commitment is stale or mismatched",
+                authorization,
+            )
+        training_dataset_digests.add(commitment["dataset_sha256"])
+
 
     def verify_promotion_candidate(
         self,

@@ -435,7 +435,7 @@ async def _guarded_decision(notice, function, *args, call, guard, **kwargs):
         raise HTTPException(503, "This decision could not be confirmed. It may already be saved. Read the current notice before deciding again.") from exc
 
 
-def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
+def create_privacy_notice_governance_router(
     dependencies: PrivacyNoticeGovernanceDependencies | None = None,
 ) -> APIRouter:
     deps = dependencies or PrivacyNoticeGovernanceDependencies()
@@ -487,6 +487,24 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
                 detail="privacy-notice operation failed",
             ) from exc
 
+    _register_notice_runtime_routes(router)
+
+    _register_notice_record_routes(call, route_authority, router)
+
+    _register_notice_release_routes(call, route_authority, router)
+
+    _register_notice_publication_routes(call, route_authority, router)
+
+    _register_notice_current_routes(call, route_authority, router)
+
+    _register_notice_proposal_routes(call, route_authority, router)
+
+    _register_notice_export_routes(call, route_authority, router)
+
+    return router
+
+
+def _register_notice_runtime_routes(router):
     @router.get("/status")
     async def status(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
@@ -627,6 +645,9 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
             "live_acceptance_verified": False,
         }
 
+
+
+def _register_notice_record_routes(call, route_authority, router):
     @router.get("/records")
     async def records(request: Request) -> dict[str, Any]:
         """Approval rules, notice versions, approvals, update proposals,
@@ -748,6 +769,9 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
         notice, tenant, store = route_authority(request)
         return _without_lease(await call(notice, store.get_approval_policy, tenant, policy_id))
 
+
+
+def _register_notice_release_routes(call, route_authority, router):
     @router.put("/releases/{notice_id}/versions")
     async def create_release(
         request: Request,
@@ -835,6 +859,9 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
             )
         )
 
+
+
+def _register_notice_publication_routes(call, route_authority, router):
     @router.post("/releases/{notice_id}/versions/{version}/schedule")
     async def schedule_release(
         request: Request,
@@ -924,6 +951,9 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
             )
         )
 
+
+
+def _register_notice_current_routes(call, route_authority, router):
     @router.post("/releases/{notice_id}/versions/{version}/rollback")
     async def rollback_release(
         request: Request,
@@ -986,6 +1016,9 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
             )
         )
 
+
+
+def _register_notice_proposal_routes(call, route_authority, router):
     @router.put("/update-proposals/{proposal_id}")
     async def create_update_proposal(
         request: Request,
@@ -1036,6 +1069,9 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
             )
         )
 
+
+
+def _register_notice_export_routes(call, route_authority, router):
     @router.put("/releases/{notice_id}/exports/{export_id}")
     async def export_notice(
         request: Request,
@@ -1076,7 +1112,6 @@ def create_privacy_notice_governance_router(  # noqa: C901, PLR0915
         result["valid"] = True
         return result
 
-    return router
 
 
 router = create_privacy_notice_governance_router()

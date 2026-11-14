@@ -288,7 +288,7 @@ class PrivacyIntelligenceDependencies:
         self.store_for = store_for
 
 
-def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
+def create_privacy_intelligence_router(
     dependencies: PrivacyIntelligenceDependencies | None = None,
 ) -> APIRouter:
     deps = dependencies or PrivacyIntelligenceDependencies()
@@ -326,6 +326,26 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
                 detail="privacy intelligence operation failed",
             ) from exc
 
+    _register_intelligence_status_routes(authority, call, router)
+
+    _register_intelligence_source_routes(authority, call, router)
+
+    _register_intelligence_document_routes(authority, call, router)
+
+    _register_intelligence_collection_routes(authority, call, router)
+
+    _register_intelligence_share_routes(authority, call, router)
+
+    _register_intelligence_subscription_routes(authority, call, router)
+
+    _register_intelligence_delivery_routes(authority, call, router)
+
+    _register_intelligence_receipt_routes(authority, call, router)
+
+    return router
+
+
+def _register_intelligence_status_routes(authority, call, router):
     @router.get("/status")
     async def status(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
@@ -400,6 +420,9 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             ],
         }
 
+
+
+def _register_intelligence_source_routes(authority, call, router):
     @router.put("/sources/{source_id}")
     async def enroll_source(
         request: Request,
@@ -469,6 +492,9 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             )
         )
 
+
+
+def _register_intelligence_document_routes(authority, call, router):
     @router.put("/documents/{document_id}")
     async def ingest_document(
         request: Request,
@@ -541,6 +567,9 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             )
         )
 
+
+
+def _register_intelligence_collection_routes(authority, call, router):
     @router.put("/collections/{collection_id}")
     async def create_collection(
         request: Request,
@@ -615,6 +644,9 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             )
         )
 
+
+
+def _register_intelligence_share_routes(authority, call, router):
     @router.post("/collections/{collection_id}/shares/{share_id}")
     async def create_share(
         request: Request,
@@ -664,6 +696,9 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             )
         )
 
+
+
+def _register_intelligence_subscription_routes(authority, call, router):
     @router.put("/subscriptions/{subscription_id}")
     async def save_subscription(
         request: Request,
@@ -731,6 +766,9 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             )
         )
 
+
+
+def _register_intelligence_delivery_routes(authority, call, router):
     @router.post("/documents/{document_id}/alerts")
     async def generate_alerts(
         request: Request,
@@ -810,6 +848,9 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             ) from exc
         return _jsonable(result)
 
+
+
+def _register_intelligence_receipt_routes(authority, call, router):
     @router.post("/deliveries/{delivery_id}/fail")
     async def fail_delivery(
         request: Request,
@@ -894,7 +935,6 @@ def create_privacy_intelligence_router(  # noqa: C901 - explicit route assembly
             )
         )
 
-    return router
 
 
 router = create_privacy_intelligence_router()
