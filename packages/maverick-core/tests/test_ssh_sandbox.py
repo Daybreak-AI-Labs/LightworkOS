@@ -163,6 +163,14 @@ def test_exec_timeout_returns_124(monkeypatch):
     assert result.stderr == "TIMEOUT after 3.0s"
     assert result.stdout == "partial"
 
+    # On Windows subprocess fills the partial output as str in text mode.
+    def _exec_run_text(args, **kwargs):
+        raise subprocess.TimeoutExpired(args, kwargs.get("timeout", 0), output="partial")
+
+    monkeypatch.setattr(subprocess, "run", _exec_run_text)
+    result = backend.exec("sleep 99")
+    assert (result.exit_code, result.stdout) == (124, "partial")
+
 
 def test_factory_selects_ssh_backend(monkeypatch):
     calls = []
