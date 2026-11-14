@@ -1300,9 +1300,15 @@ def _blocked_tool_output_message(*, execution_unknown: bool, verdict: Any, reaso
     )
 
 
+def _stop_signal_name(exc: BaseException) -> str:
+    """The stop-signal class name, with budget subclasses (UnpricedModelError,
+    OrganizationBudgetExceeded) reported as the BudgetExceeded they are."""
+    return "BudgetExceeded" if isinstance(exc, BudgetExceeded) else type(exc).__name__
+
+
 def _post_effect_control_stop(exc: BaseException, execution_unknown: bool) -> bool:
     """Preserve stop signals and any uncertainty about an external effect."""
-    is_stop = type(exc).__name__ in {
+    is_stop = _stop_signal_name(exc) in {
         "BudgetExceeded", "CancelledError", "GoalCancelled", "Halted", "KeyboardInterrupt", "SystemExit",
     }
     if is_stop and execution_unknown:
@@ -3827,7 +3833,7 @@ class Agent:
                         "Halted": "halted",
                         "CancelledError": "cancelled",
                         "GoalCancelled": "cancelled",
-                    }.get(type(exc).__name__, "exception")
+                    }.get(_stop_signal_name(exc), "exception")
                     if getattr(exc, "tool_execution_unknown", False):
                         disposition = "execution_unknown"
                     record_terminal(
@@ -6000,7 +6006,13 @@ class Agent:
         _norm: list[str] = []
         _tool_stop: Exception | None = None
         for o in outputs:
-            if isinstance(o, (BudgetExceeded, killswitch.Halted, AuditRefused)):
+            if isinstance(o, asyncio.CancelledError) and not isinstance(o, GoalCancelled):
+                # gather hands back a bare CancelledError for a task that raised
+                # GoalCancelled, losing it; a sibling's effect may be unknown.
+                o = GoalCancelled("cancelled during tool execution")
+                o.tool_execution_unknown = True
+            if isinstance(o, (BudgetExceeded, UsageAccountingError, killswitch.Halted,
+                              AuditRefused, asyncio.CancelledError)):
                 # Keep budget/halt precedence over an audit refusal, but finish
                 # normalizing: every sibling already ran under gather.
                 if _tool_stop is None or (

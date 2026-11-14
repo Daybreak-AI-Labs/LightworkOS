@@ -2038,3 +2038,23 @@ async def test_tool_output_close_tag_unforgeable(tmp_path):
     attacker_close_idx = result.find("</tool_output>")
     assert attacker_close_idx >= 0
     assert attacker_close_idx < body_close_idx
+
+
+@pytest.mark.asyncio
+async def test_parallel_path_cancellation_stops_the_run_as_cancelled(tmp_path, monkeypatch):
+    from maverick.run_outcome import GoalCancelled
+
+    llm = _CapturingLLM([
+        LLMResponse(text="reading", thinking=None, stop_reason="tool_use", tool_calls=[
+            ToolCall(id="a", name="read_file", input={"path": "f.txt"}),
+            ToolCall(id="b", name="read_file", input={"path": "f.txt"}),
+        ]),
+    ])
+    agent = Agent(ctx=_ctx(tmp_path, llm), role="researcher", brief="...")
+
+    async def cancelled(name, args):
+        raise GoalCancelled("owner cancelled")
+
+    monkeypatch.setattr(agent, "_run_tool", cancelled)
+    result = await agent.run()
+    assert result.stop_kind == "cancelled" and result.tool_execution_unknown is True

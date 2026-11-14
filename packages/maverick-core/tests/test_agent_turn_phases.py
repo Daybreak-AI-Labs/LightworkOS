@@ -354,3 +354,12 @@ async def test_a_failed_ask_user_or_a_non_object_input_goes_back_to_the_model(ct
 
     assert result.blocked_on_user is False and result.final == "done"
     assert "tool input must be a JSON object" in ctx.blackboard.render(50)
+
+
+def test_budget_subclasses_are_stop_signals_after_an_effect():
+    from maverick.agent import _post_effect_control_stop
+    from maverick.budget import UnpricedModelError
+
+    exc = UnpricedModelError("no price for model")
+    assert _post_effect_control_stop(exc, True) is True
+    assert exc.tool_execution_unknown is True
