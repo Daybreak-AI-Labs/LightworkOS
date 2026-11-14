@@ -946,6 +946,29 @@ def test_get_or_create_conversation_is_idempotent(world):
     assert c3.id != c1.id
 
 
+def test_tenant_conversation_is_its_own_row_beside_a_legacy_one(world, monkeypatch):
+    # With strict isolation off, the compatibility read also matches a legacy
+    # NULL-tenant row for the same user; returning it made append_turn fail.
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    user = "conv-" + uuid.uuid4().hex
+    tenant = "convt-" + uuid.uuid4().hex
+    try:
+        with tenant_scope(tenant=None):
+            legacy = world.get_or_create_conversation("slack", user)
+        with tenant_scope(tenant=tenant):
+            own = world.get_or_create_conversation("slack", user)
+            assert own.id != legacy.id
+            assert world.get_or_create_conversation("slack", user).id == own.id
+            world.append_turn(own.id, "user", "hello")
+    finally:
+        with world._tx() as cursor:
+            cursor.execute("DELETE FROM turns WHERE conversation_id IN "
+                           "(SELECT id FROM conversations WHERE user_id=%s)", (user,))
+            cursor.execute("DELETE FROM conversations WHERE user_id=%s", (user,))
+
+
 def test_append_and_recent_turns_chronological(world):
     conv = world.get_or_create_conversation("discord", "alice")
     world.append_turn(conv.id, "user", "hello")

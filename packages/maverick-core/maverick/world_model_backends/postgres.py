@@ -5036,7 +5036,10 @@ class PostgresWorldModel:
         from ..world_records import Conversation
         now = time.time()
         tenant = _active_tenant()
-        frag, params = _tenant_scope()
+        # Exact scope: return the row the upsert below targets. The
+        # compatibility read scope also matches a legacy NULL row, which
+        # append_turn (exact scope) then rejects.
+        frag, params = _mutation_tenant_scope()
         sel = (
             "SELECT id, channel, user_id, created_at, last_seen "
             "FROM conversations WHERE channel = %s AND user_id = %s"
