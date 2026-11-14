@@ -1,9 +1,16 @@
 package ai.cday.maverick.examples;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -42,7 +49,7 @@ public final class TaggedMcpLauncher {
         McpProcessOwnership.registerStarting(registry, token, launcher);
 
         ProcessBuilder serverBuilder = new ProcessBuilder("maverick", "mcp")
-                .inheritIO();
+                .redirectInput(ProcessBuilder.Redirect.INHERIT);
         serverBuilder.environment().put(PARENT_PID_ENV, Long.toString(launcher.pid()));
         serverBuilder.environment().put(
                 PARENT_STARTED_ENV,
@@ -81,13 +88,72 @@ public final class TaggedMcpLauncher {
             throw failure;
         }
 
-        int exitCode = server.waitFor();
+        // Bound each line before the SDK's otherwise unbounded line readers.
+        AtomicReference<IOException> stderrFailure = new AtomicReference<>();
+        Thread stderr = Thread.ofPlatform().daemon(true).name("maverick-mcp-stderr")
+                .start(() -> {
+                    try {
+                        forwardLines(server.getErrorStream(), System.err, 64 * 1024, "stderr");
+                    } catch (IOException failure) {
+                        stderrFailure.set(failure);
+                        terminate(server);
+                    }
+                });
+        int exitCode;
+        try {
+            forwardLines(server.getInputStream(), System.out, 16 * 1024 * 1024, "stdout");
+            exitCode = server.waitFor();
+            stderr.join(2000);
+            if (stderr.isAlive()) {
+                throw new IOException("MCP stderr did not close after the server exited");
+            }
+            if (stderrFailure.get() != null) {
+                throw stderrFailure.get();
+            }
+        } finally {
+            terminate(server);
+            server.getInputStream().close();
+            server.getErrorStream().close();
+            stderr.interrupt();
+        }
         try {
             Runtime.getRuntime().removeShutdownHook(shutdown);
         } catch (IllegalStateException ignored) {
             // The VM is already shutting down and the hook owns termination.
         }
         System.exit(exitCode);
+    }
+
+    private static void forwardLines(
+            InputStream input, OutputStream output, int limit, String stream) throws IOException {
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        byte[] chunk = new byte[8192];
+        int count;
+        while ((count = input.read(chunk)) != -1) {
+            int start = 0;
+            for (int i = 0; i < count; i++) {
+                if (chunk[i] == '\n') {
+                    appendLine(line, chunk, start, i + 1 - start, limit, stream);
+                    line.writeTo(output);
+                    output.flush();
+                    line.reset();
+                    start = i + 1;
+                }
+            }
+            appendLine(line, chunk, start, count - start, limit, stream);
+        }
+        // Preserve the SDK's handling of a final unterminated, bounded line.
+        line.writeTo(output);
+        output.flush();
+    }
+
+    private static void appendLine(
+            ByteArrayOutputStream line, byte[] chunk, int start, int count,
+            int limit, String stream) throws IOException {
+        if (count > limit - line.size()) {
+            throw new IOException("MCP " + stream + " line exceeds the transport size limit");
+        }
+        line.write(chunk, start, count);
     }
 
     private static void awaitControlFile(
@@ -112,15 +178,39 @@ public final class TaggedMcpLauncher {
         if (server == null || !server.isAlive()) {
             return;
         }
-        server.destroy();
+        // Capture before terminating the root: otherwise its children can be
+        // re-parented before the outer client's ownership sweep sees them.
+        long deadline = System.nanoTime() + Duration.ofMillis(1500).toNanos();
+        Set<ProcessHandle> owned = new LinkedHashSet<>();
+        owned.add(server.toHandle());
+        collectDescendants(owned);
+        for (ProcessHandle process : owned) {
+            if (process.isAlive()) process.destroy();
+        }
         try {
-            if (!server.waitFor(500, TimeUnit.MILLISECONDS)) {
-                server.destroyForcibly();
-                server.waitFor(1, TimeUnit.SECONDS);
+            server.waitFor(500, TimeUnit.MILLISECONDS);
+            collectDescendants(owned);
+            for (ProcessHandle process : owned) {
+                if (process.isAlive()) process.destroyForcibly();
+            }
+            server.waitFor(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            while (owned.stream().anyMatch(ProcessHandle::isAlive)
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
             }
         } catch (InterruptedException failure) {
-            server.destroyForcibly();
+            for (ProcessHandle process : owned) {
+                if (process.isAlive()) process.destroyForcibly();
+            }
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void collectDescendants(Set<ProcessHandle> owned) {
+        for (ProcessHandle root : List.copyOf(owned)) {
+            try (var descendants = root.descendants()) {
+                owned.addAll(descendants.toList());
+            }
         }
     }
 

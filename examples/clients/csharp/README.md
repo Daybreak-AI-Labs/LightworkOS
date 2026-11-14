@@ -38,3 +38,23 @@ production launcher, use the reviewed boundary described in the
 
 The official C# MCP SDK is the [`ModelContextProtocol`](https://www.nuget.org/packages/ModelContextProtocol)
 NuGet package, pinned in `Lightwork.McpClient.Example.csproj` for reproducible CI.
+
+## Untrusted server output
+
+The example refuses tool errors and malformed `facts` results, bounds paginated
+tool metadata, and escapes terminal controls in displayed server text.
+`BoundedStdioServer` owns the child process and supplies the SDK's public
+`StreamClientTransport` with byte-limited streams: 16 MiB per stdout message and
+64 KiB per stderr line. After the read-only exchange, cleanup terminates the
+process tree before closing stdin, then waits for the child to exit. This keeps
+a cooperative parent from exiting before its children can be terminated.
+It does not contain descendants that independently detach before cleanup.
+Initialization and the read-only smoke requests share a 30-second deadline.
+
+After building, set `MCP_BOUNDARY_COMMAND` to a JSON argument array invoking the
+built executable and run `python3 -m pytest examples/clients/java/tests/test_stdio_boundaries.py`
+from the repository root.
+The shared fixture launches a disposable stdio server without model calls.
+Without `MCP_BOUNDARY_COMMAND`, generic Python test runs skip this native fixture.
+The client workflow runs the live smoke; these adversarial checks are run
+separately with a built client.

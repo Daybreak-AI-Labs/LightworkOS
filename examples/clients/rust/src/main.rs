@@ -13,30 +13,61 @@
 
 use anyhow::{bail, Context, Result};
 use rmcp::{
-    model::CallToolRequestParams,
+    model::{CallToolRequestParams, PaginatedRequestParams, Tool},
     transport::{ConfigureCommandExt, TokioChildProcess},
-    ServiceExt,
+    Peer, RoleClient, ServiceExt,
 };
+use std::{collections::HashSet, process::ExitCode, time::Duration};
 use tokio::process::Command;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {}", terminal_text(&format!("{error:#}")));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     // Spawn `maverick mcp` as a child process; rmcp wires up stdio JSON-RPC and
     // performs the MCP initialize handshake. `()` is the (no-op) client handler.
-    let client = ()
-        .serve(TokioChildProcess::new(Command::new("maverick").configure(
-            |cmd| {
-                cmd.arg("mcp");
-            },
-        ))?)
-        .await?;
+    let startup = ().serve(TokioChildProcess::new(Command::new("maverick").configure(
+        |cmd| {
+            // Initialization can fail before a RunningService exists.
+            // Its drop-time cleanup must also survive runtime shutdown.
+            cmd.arg("mcp").kill_on_drop(true);
+        },
+    ))?);
+    let client = tokio::time::timeout(Duration::from_secs(30), startup)
+        .await
+        .context("MCP initialization exceeded 30 seconds")??;
 
-    let tools = client.list_all_tools().await?;
+    let result = tokio::time::timeout(Duration::from_secs(30), check_client(&client))
+        .await
+        .context("MCP tool checks exceeded 30 seconds")
+        .and_then(|result| result);
+    // Await cleanup on refusals too, before the Tokio runtime is torn down.
+    let cleanup = client.cancel().await;
+    result?;
+    cleanup?;
+    println!("OK: Rust client drove Lightwork over MCP end-to-end");
+    Ok(())
+}
+
+async fn check_client(client: &Peer<RoleClient>) -> Result<()> {
+    let tools = list_tools_bounded(client).await?;
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     println!(
         "Lightwork exposes {} tools: {}",
         tools.len(),
-        names.join(", ")
+        names
+            .iter()
+            .map(|name| terminal_text(name))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     for expected in ["maverick_start", "maverick_status", "maverick_facts_get"] {
         if !names.contains(&expected) {
@@ -48,6 +79,9 @@ async fn main() -> Result<()> {
     let res = client
         .call_tool(CallToolRequestParams::new("maverick_facts_get"))
         .await?;
+    if res.is_error == Some(true) {
+        bail!("maverick_facts_get reported a tool error");
+    }
     if res.content.is_empty() {
         bail!("maverick_facts_get returned no content");
     }
@@ -60,12 +94,56 @@ async fn main() -> Result<()> {
         .structured_content
         .as_ref()
         .context("maverick_facts_get returned no structuredContent")?;
-    if structured.get("facts").is_none() {
-        bail!("structuredContent is missing the 'facts' key");
+    if !structured
+        .get("facts")
+        .is_some_and(|facts| facts.is_object())
+    {
+        bail!("structuredContent is missing a 'facts' object");
     }
     println!("maverick_facts_get structuredContent OK");
 
-    client.cancel().await?;
-    println!("OK: Rust client drove Lightwork over MCP end-to-end");
     Ok(())
+}
+
+async fn list_tools_bounded(client: &Peer<RoleClient>) -> Result<Vec<Tool>> {
+    let mut tools = Vec::new();
+    let mut cursors = HashSet::new();
+    let mut cursor = None;
+    let mut remaining_bytes = 16 * 1024 * 1024;
+    for _ in 0..100 {
+        let mut params = PaginatedRequestParams::default();
+        params.cursor = cursor;
+        let page = client.list_tools(Some(params)).await?;
+        if page.tools.len() > 10_000 - tools.len() {
+            bail!("MCP tool list exceeds the example's size limit");
+        }
+        let bytes = rmcp::serde_json::to_vec(&page)?.len();
+        if bytes > remaining_bytes {
+            bail!("MCP tool catalog exceeds the example's byte limit");
+        }
+        remaining_bytes -= bytes;
+        tools.extend(page.tools);
+        cursor = page.next_cursor;
+        match &cursor {
+            None => return Ok(tools),
+            Some(next) if !cursors.insert(next.clone()) => {
+                bail!("MCP tool list repeated a pagination cursor");
+            }
+            _ => {}
+        }
+    }
+    bail!("MCP tool list exceeds the example's page limit")
+}
+
+fn terminal_text(text: &str) -> String {
+    let mut characters = text.chars();
+    let mut safe: String = characters
+        .by_ref()
+        .take(4096)
+        .flat_map(char::escape_default)
+        .collect();
+    if characters.next().is_some() {
+        safe.push_str("... [display truncated]");
+    }
+    safe
 }

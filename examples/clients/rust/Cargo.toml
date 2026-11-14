@@ -10,7 +10,7 @@ description = "Runnable example + CI smoke: drive Lightwork over MCP from Rust."
 # reproducible CI. We need the client role and the child-process stdio transport;
 # neither is on by default, so enable them explicitly.
 rmcp = { version = "=3.9.0", features = ["client", "transport-child-process"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "io-util", "time"] }
 anyhow = "1"
 
 [[bin]]

@@ -76,3 +76,23 @@ armed but before `ACTIVE`, then proves no server survives.
 
 Uses the official [Java MCP SDK](https://github.com/modelcontextprotocol/java-sdk)
 (`io.modelcontextprotocol.sdk:mcp`), pinned in `pom.xml` for reproducible CI.
+
+## Untrusted server output
+
+The example refuses tool errors and malformed `facts` results. Tool enumeration
+has page, entry, and aggregate byte limits; repeated pagination cursors fail.
+The tagged launcher bounds stdout messages to 16 MiB and stderr lines to 64 KiB
+before the SDK's line readers allocate them. Oversized output terminates the
+server and its captured descendants; the pending SDK request may take its
+existing 30-second timeout to fail. This is cleanup of the owned tree, not
+containment of children that independently detach before cleanup.
+Displayed server text escapes terminal controls and marks truncated diagnostics.
+
+The shared adversarial fixture is `tests/test_stdio_boundaries.py`. Build the
+example, set `MCP_BOUNDARY_COMMAND` to a JSON argument array invoking the built
+client, and run `python3 -m pytest` on the fixture's `StdioBoundaries` and
+`PipedStreamBounds` classes from the repository root.
+It launches a disposable stdio server and requires no model provider.
+Without `MCP_BOUNDARY_COMMAND`, generic Python test runs skip this native fixture.
+The client workflow runs the live smoke and existing cleanup acceptance harness;
+these adversarial checks are run separately with a built client.
