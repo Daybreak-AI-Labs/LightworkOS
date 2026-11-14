@@ -219,6 +219,17 @@ def test_ordinary_restore_and_gateway_release_refuse_security_containment():
     released = _run("external-agents", "release", "sf-quotebot")
     assert released.exit_code == 1
     assert "security-contained" in released.output
+    # Removing the entry (then re-enrolling) must not be a way around it.
+    removed = _run("external-agents", "remove", "sf-quotebot", "--yes")
+    assert removed.exit_code == 1
+    assert "security-contained" in removed.output
+    removed = _run("trust", "rm", "sf-quotebot")
+    assert removed.exit_code == 1
+    assert "security-contained" in removed.output
+    # `security release` would lift only the revocation row and print success.
+    released = _run("security", "release", "agent:sf-quotebot")
+    assert released.exit_code == 1
+    assert "control-plane release" in released.output
 
     assert shared().revoked()["agent:sf-quotebot"] == contained
     assert agent_trust.load_registry()["sf-quotebot"].revoked is True

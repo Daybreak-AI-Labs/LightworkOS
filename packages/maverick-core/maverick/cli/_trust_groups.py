@@ -180,7 +180,22 @@ def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollar
 def trust_rm_cmd(agent_id: str) -> None:
     """Remove a managed trusted agent."""
     from .. import agent_trust
-    if agent_trust.remove_agent(agent_id):
+    from ..revocation import ProtectedRevocationError, shared
+
+    # Removing a contained agent's entry drops its revoked flag, so a later
+    # `trust add` would re-admit it without the security release.
+    try:
+        removed = shared().run_if_unprotected(
+            f"agent:{agent_id}", lambda: agent_trust.remove_agent(agent_id))
+    except ProtectedRevocationError as exc:
+        raise click.ClickException(
+            "agent is security-contained; use `maverick control-plane release`"
+        ) from exc
+    except Exception as exc:
+        raise click.ClickException(
+            "containment authority is unavailable; remove refused"
+        ) from exc
+    if removed:
         click.echo(click.style(f"removed {agent_id!r}", fg="yellow"))
     else:
         raise click.ClickException(
@@ -596,7 +611,14 @@ def security_contain_cmd(subject: str, reason: str, yes: bool) -> None:
 @click.argument("subject")
 def security_release_cmd(subject: str) -> None:
     """Undo a containment for SUBJECT."""
+    from ..agent_control_plane import is_external
     from ..agent_edr import release
+    if is_external(subject):
+        # This path lifts only the revocation row; an external agent's trust
+        # entry and gateway containment would stay in force while it printed
+        # success. The control plane releases all three together.
+        raise click.ClickException(
+            "external agents are released with `maverick control-plane release`")
     result = release(subject)
     colour = "green" if result.contained else "red"
     click.echo(click.style(f"released={result.contained}", fg=colour))
