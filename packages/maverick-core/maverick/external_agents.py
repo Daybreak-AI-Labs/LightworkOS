@@ -2936,6 +2936,24 @@ class _ExecutionEnforcement:
         return verdict
 
 
+def _abort_receipt(record_tool_lineage, goal_id, tool, receipt, principal,
+                   digest, verdict) -> None:
+    """Close an open PREPARE receipt with ABORT for a refused execution."""
+    try:
+        record_tool_lineage(
+            goal_id,
+            tool,
+            receipt,
+            actor=principal,
+            transaction_id=digest[:16],
+            phase="abort",
+            result=str(verdict.get("rule") or "denied")[:200],
+            force=True,
+        )
+    except Exception:  # pragma: no cover - no effect already assured
+        log.warning("external_agents: ABORT receipt failed", exc_info=True)
+
+
 def _perform_execution(agent_id: str, connector: str, op: str, path: str,
                        body: dict | None, *, goal_id: int | None,
                        digest: str, tool: str, approved: bool,
@@ -2990,21 +3008,8 @@ def _perform_execution(agent_id: str, connector: str, op: str, path: str,
                     "no effect occurred",
                 )
             if boundary_verdict is not None:
-                try:
-                    record_tool_lineage(
-                        goal_id,
-                        tool,
-                        receipt,
-                        actor=principal,
-                        transaction_id=digest[:16],
-                        phase="abort",
-                        result=str(boundary_verdict.get("rule") or "denied")[:200],
-                        force=True,
-                    )
-                except Exception:  # pragma: no cover - no effect already assured
-                    log.warning(
-                        "external_agents: ABORT receipt failed", exc_info=True
-                    )
+                _abort_receipt(record_tool_lineage, goal_id, tool, receipt, principal,
+                               digest, boundary_verdict)
                 return boundary_verdict
             try:
                 conn = GOVERNED_REST_FACTORIES[connector]()
@@ -3034,6 +3039,8 @@ def _perform_execution(agent_id: str, connector: str, op: str, path: str,
                 return verdict
             boundary_verdict = enforcement.prepare(final_authority)
             if boundary_verdict is not None:
+                _abort_receipt(record_tool_lineage, goal_id, tool, receipt, principal,
+                               digest, boundary_verdict)
                 return enforcement.observed(boundary_verdict, effect_started=False)
             effect_started = True
             if op == "get":
