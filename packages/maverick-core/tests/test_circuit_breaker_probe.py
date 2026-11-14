@@ -77,3 +77,44 @@ def test_half_open_probe_cancel_reopens_and_clears_flag():
     assert br.state is CircuitState.HALF_OPEN
     assert br.call(lambda: "recovered") == "recovered"
     assert br.state is CircuitState.CLOSED
+
+
+def test_slow_healthy_probes_past_lease_close_breaker(monkeypatch):
+    """A provider slower than the probe lease must still recover under traffic."""
+    import maverick.circuit_breaker as cb
+
+    clock = [100.0]
+    monkeypatch.setattr(cb.time, "monotonic", lambda: clock[0])
+    br = CircuitBreaker("slow-probe", failure_threshold=1, cooldown_seconds=30)
+    br.record_failure()
+    clock[0] += 30
+    in_flight = [br.admit()]
+    for _ in range(4):
+        clock[0] += 30  # the next caller arrives just after the lease expires
+        replacement = br.admit()
+        clock[0] += 1  # the earlier probe finishes OK after 31 s
+        br.record_success(probe=in_flight.pop())
+        in_flight.append(replacement)
+        if br.state is CircuitState.CLOSED:
+            break
+    assert br.state is CircuitState.CLOSED
+    assert br.snapshot()["total_successes"] >= 1
+
+
+def test_expired_probe_late_failure_does_not_resolve_replacement(monkeypatch):
+    import maverick.circuit_breaker as cb
+
+    clock = [100.0]
+    monkeypatch.setattr(cb.time, "monotonic", lambda: clock[0])
+    br = CircuitBreaker("slow-probe-fail", failure_threshold=1, cooldown_seconds=30)
+    br.record_failure()
+    clock[0] += 30
+    first = br.admit()
+    clock[0] += 30
+    replacement = br.admit()
+    br.record_failure(probe=first)
+    assert br.state is CircuitState.HALF_OPEN
+    with pytest.raises(CircuitOpen):
+        br.admit()
+    br.record_success(probe=replacement)
+    assert br.state is CircuitState.CLOSED

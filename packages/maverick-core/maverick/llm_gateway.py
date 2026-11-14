@@ -1229,7 +1229,9 @@ def _otel_attr(attributes: list, key: str) -> str:
     return ""
 
 
-def ingest_otel_spans(payload: object) -> dict[str, int]:
+def ingest_otel_spans(
+    payload: object, *, caller_token: str | None = None,
+) -> dict[str, int]:
     """Ingest OTLP/JSON GenAI spans into the shadow-caller ledger.
 
     Reads the OpenTelemetry GenAI semantic conventions — ``gen_ai.system``,
@@ -1239,6 +1241,10 @@ def ingest_otel_spans(payload: object) -> dict[str, int]:
     and completions are never read or stored; only the model identity and
     token counts. Any agent framework exporting standard OTel traces
     becomes governed telemetry without an SDK.
+
+    With ``caller_token`` the rows are booked to the bearer's team, as on
+    the chat path; a token that resolves to no team raises
+    ``PermissionError``. Without one the rows go to ``default``.
     """
 
     settings = get_llm_gateway_config()
@@ -1246,6 +1252,12 @@ def ingest_otel_spans(payload: object) -> dict[str, int]:
         raise LLMGatewayConfigError(
             "the LLM gateway requires [llm_gateway] enable = true"
         )
+    team = "default"
+    if caller_token is not None:
+        resolved = _team_for_token(str(caller_token), settings)
+        if resolved is None:
+            raise PermissionError("the gateway bearer is missing or wrong")
+        team = resolved
     if not isinstance(payload, Mapping):
         raise ValueError("the OTLP payload must be a JSON object")
     now = time.time()
@@ -1266,8 +1278,11 @@ def ingest_otel_spans(payload: object) -> dict[str, int]:
             resource.get("attributes") if isinstance(resource, Mapping) else [],
             "service.name",
         ) or "unknown-service"
+        # A non-default team gets its own row for the same service name, so
+        # one team's spans never land on (or relabel) another team's row.
+        service_key = service if team == "default" else f"{team}\0{service}"
         caller = hashlib.sha256(
-            f"otel-service:{service}".encode()
+            f"otel-service:{service_key}".encode()
         ).hexdigest()[:24]
         for scope_spans in list(resource_spans.get("scopeSpans") or [])[:100]:
             if not isinstance(scope_spans, Mapping):
@@ -1306,6 +1321,7 @@ def ingest_otel_spans(payload: object) -> dict[str, int]:
     for (caller, model), bucket in totals.items():
         _record_call(
             caller=caller,
+            team=team,
             model=model,
             status="otel",
             prompt_sha256="",

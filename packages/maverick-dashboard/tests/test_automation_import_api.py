@@ -384,3 +384,28 @@ def test_import_as_flows_review_previews_without_saving(monkeypatch):
     assert any("Notify" in label for label in labels)   # the visual steps are reviewed
     from maverick.flow import store
     assert store.list_flows() == []                    # previewed, not persisted
+
+
+def test_untranslatable_n8n_schedule_names_the_workflow_and_the_repair():
+    fortnightly = {"id": "9", "name": "Fortnightly report", "active": True, "nodes": [{
+        "name": "Schedule", "type": "n8n-nodes-base.scheduleTrigger",
+        "parameters": {"rule": {"interval": [{"field": "weeks", "weeksInterval": 2}]}},
+    }], "connections": {}}
+    response = _review(_client(), "n8n", [N8N_WF, fortnightly])
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "Fortnightly report" in detail
+    assert "interval cannot be represented exactly by cron" in detail
+    assert "nothing was saved" in detail
+
+
+def test_not_imported_workflow_name_has_no_control_characters():
+    named = {"id": "9", "name": "Fort\x1b]0;FORGED\x07nightly", "active": True, "nodes": [{
+        "name": "Schedule", "type": "n8n-nodes-base.scheduleTrigger",
+        "parameters": {"rule": {"interval": [{"field": "weeks", "weeksInterval": 2}]}},
+    }], "connections": {}}
+    response = _review(_client(), "n8n", [named])
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert "\x1b" not in detail and "\x07" not in detail
+    assert "Fort ]0;FORGED nightly was not imported" in detail

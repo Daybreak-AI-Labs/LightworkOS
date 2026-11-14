@@ -17,7 +17,13 @@ import logging
 import os
 
 from .base import Channel, IncomingMessage, is_allowed, normalize_allowlist
-from .delivery import DeliveryNotSent, DeliveryUnknown, delivery_active, send_chunk
+from .delivery import (
+    DeliveryNotSent,
+    DeliveryUnknown,
+    delivery_active,
+    provider_refusal,
+    send_chunk,
+)
 
 log = logging.getLogger(__name__)
 
@@ -135,7 +141,7 @@ class DiscordChannel(Channel):
                 except Exception as exc:
                     if (_HAVE_DISCORD and isinstance(exc, discord.HTTPException)
                             and 400 <= exc.status < 500 and exc.status != 408):
-                        raise DeliveryNotSent("Discord rejected the reply") from exc
+                        raise provider_refusal(exc.status, "Discord rejected the reply") from exc
                     raise
                 provider_id = getattr(result, "id", None)
                 if delivery_active() and not isinstance(provider_id, int):

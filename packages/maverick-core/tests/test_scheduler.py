@@ -134,6 +134,20 @@ def test_scheduler_next_run_is_utc():
     assert got.date() == _dt.date(2026, 6, 2)
 
 
+def test_scheduler_star_step_day_field_is_unrestricted_so_days_are_anded():
+    """Vixie cron treats a day field starting with ``*`` as unrestricted, so
+    ``0 0 */2 * 1`` fires on odd days that are also Mondays (AND), not on any
+    odd day or any Monday (OR). Two plainly restricted fields still OR."""
+    import datetime as _dt
+
+    # Monday 2026-06-01 12:00 UTC. Odd-day Mondays in June: 1, 15, 29.
+    base = _dt.datetime(2026, 6, 1, 12, 0, tzinfo=_dt.timezone.utc).timestamp()
+    got = _dt.datetime.fromtimestamp(next_run("0 0 */2 * 1", after=base), tz=_dt.timezone.utc)
+    assert got.date() == _dt.date(2026, 6, 15)
+    got = _dt.datetime.fromtimestamp(next_run("0 0 13 * 1", after=base), tz=_dt.timezone.utc)
+    assert got.date() == _dt.date(2026, 6, 8)  # a Monday, before the 13th
+
+
 def test_scheduler_schedule_cron_enqueues(tmp_path):
     import datetime as _dt
 

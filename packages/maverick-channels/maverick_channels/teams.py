@@ -60,7 +60,13 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .delivery import (
+    DeliveryNotSent,
+    DeliveryRejected,
+    DeliveryUnknown,
+    provider_refusal,
+    send_chunk,
+)
 from .formatting import split_for_discord
 
 log = logging.getLogger(__name__)
@@ -128,7 +134,7 @@ async def default_transport(method: str, url: str, *, headers: dict | None = Non
     from maverick.tools._ssrf import safe_async_client
 
     if urlsplit(url).scheme != "https":
-        raise DeliveryNotSent("Teams service URLs must be https")
+        raise DeliveryRejected("Teams service URLs must be https")
     async with safe_async_client(url, timeout=timeout) as client:
         response = await client.request(method, url, headers=headers or {}, json=json_body,
                                         data=data)
@@ -375,7 +381,7 @@ class TeamsConnector:
     def _base(service_url: str) -> str:
         parts = urlsplit(service_url or "")
         if parts.scheme != "https" or not parts.netloc:
-            raise DeliveryNotSent("Teams service URL is not https")
+            raise DeliveryRejected("Teams service URL is not https")
         return service_url.rstrip("/")
 
     async def _call(self, method: str, url: str, payload: dict) -> dict:
@@ -383,14 +389,14 @@ class TeamsConnector:
                    "Content-Type": "application/json"}
         status, body = await self._transport(method, url, headers=headers, json_body=payload)
         if status in (401, 403, 404, 400, 413):
-            raise DeliveryNotSent(f"Teams rejected the message ({status})")
+            raise provider_refusal(status, f"Teams rejected the message ({status})")
         if status == 429:
             # Throttled before processing: nothing was posted, so it can be retried.
             raise DeliveryNotSent("Teams is throttling this bot; the message was not sent")
         if status >= 500:
             raise DeliveryUnknown(f"Teams did not confirm the message ({status})")
         if status >= 400:
-            raise DeliveryNotSent(f"Teams rejected the message ({status})")
+            raise provider_refusal(status, f"Teams rejected the message ({status})")
         return body if isinstance(body, dict) else {}
 
     async def send_activity(self, service_url: str, conversation_id: str, activity: dict, *,

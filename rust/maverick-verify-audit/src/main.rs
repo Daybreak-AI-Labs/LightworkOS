@@ -9,9 +9,12 @@
 //! entirely-unsigned log is UNVERIFIABLE (exit 1), not "clean".
 
 use clap::Parser;
-use maverick_verify_audit::{verify_file, ChainBreak, KeySource};
+use maverick_verify_audit::{verify_file_report, ChainBreak, KeySource};
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+/// The library keeps at most this many breaks (its `MAX_BREAKS`).
+const MAX_REPORTED_BREAKS: usize = 1000;
 
 /// Independent Ed25519 hash-chain verifier for Lightwork audit logs.
 #[derive(Parser, Debug)]
@@ -36,7 +39,7 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     keys_dir: Option<PathBuf>,
 
-    /// Print every break, not just the first.
+    /// Print every retained break (up to 1,000), not just the first.
     #[arg(long)]
     all: bool,
 }
@@ -68,25 +71,46 @@ fn main() -> ExitCode {
         }
     };
 
-    let breaks = verify_file(&args.file, &keys);
+    let (n, breaks) = verify_file_report(&args.file, &keys);
 
     if breaks.is_empty() {
         // Match the writer's vocabulary: report rows verified.
-        let n = count_rows(&args.file);
         println!("OK: {} rows verified ({})", n, args.file.display());
         return ExitCode::SUCCESS;
+    }
+
+    // At the cap the rows past the last kept break were never examined: say so
+    // before any verdict, and never state an exact count for the whole log.
+    let limit_reached = breaks.len() >= MAX_REPORTED_BREAKS;
+    if limit_reached {
+        eprintln!(
+            "warning: failure report limit ({MAX_REPORTED_BREAKS}) reached in {}; the \
+             remaining input is not certified",
+            args.file.display()
+        );
     }
 
     // An entirely-unsigned log: one actionable line, still non-zero (parity with
     // the CLI's UNVERIFIABLE branch).
     if breaks.iter().all(|b| b.reason == "unsigned") {
-        eprintln!(
-            "UNVERIFIABLE: {} — {} unsigned row(s); these rows have no signatures. The log carries \
-             no hash chain, so it cannot be proven intact. Enable [audit] sign = true \
-             (or MAVERICK_AUDIT_SIGN=1) so future rows are tamper-evident.",
-            args.file.display(),
-            breaks.len()
-        );
+        if limit_reached {
+            eprintln!(
+                "UNVERIFIABLE: {} — at least {} unsigned row(s), and the rows past the \
+                 report limit were not examined; the log cannot be proven intact. Enable \
+                 [audit] sign = true (or MAVERICK_AUDIT_SIGN=1) so future rows are \
+                 tamper-evident.",
+                args.file.display(),
+                breaks.len()
+            );
+        } else {
+            eprintln!(
+                "UNVERIFIABLE: {} — {} unsigned row(s); these rows have no signatures. The log \
+                 carries no hash chain, so it cannot be proven intact. Enable [audit] sign = \
+                 true (or MAVERICK_AUDIT_SIGN=1) so future rows are tamper-evident.",
+                args.file.display(),
+                breaks.len()
+            );
+        }
         return ExitCode::FAILURE;
     }
 
@@ -110,12 +134,4 @@ fn report(file: &std::path::Path, breaks: &[ChainBreak], all: bool) {
             breaks.len() - 1
         );
     }
-}
-
-/// Count non-blank rows for the success message. Best-effort: the chain already
-/// verified, so a read error here only affects the printed count.
-fn count_rows(path: &std::path::Path) -> usize {
-    std::fs::read_to_string(path)
-        .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
-        .unwrap_or(0)
 }

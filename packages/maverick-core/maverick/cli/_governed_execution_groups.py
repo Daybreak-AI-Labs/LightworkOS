@@ -167,11 +167,17 @@ def refine_apply_cmd(proposal_id: str, approval_id: int | None) -> None:
 @refine_group.command("revert")
 @click.argument("proposal_id")
 @click.option("--by", "reverted_by", default="cli")
-def refine_revert_cmd(proposal_id: str, reverted_by: str) -> None:
+@click.option("--yes", is_flag=True, help="Confirm restoring the prior learned state.")
+def refine_revert_cmd(proposal_id: str, reverted_by: str, yes: bool) -> None:
     """Restore the snapshot taken when PROPOSAL_ID was applied."""
     from .. import harness_refine
-    click.echo("reverted" if harness_refine.revert(
-        proposal_id, reverted_by=reverted_by) else "nothing to revert")
+    if not yes:
+        click.confirm("Restore the learned state from this proposal's snapshot?", abort=True)
+    try:
+        reverted = harness_refine.revert(proposal_id, reverted_by=reverted_by)
+    except (harness_refine.RefineError, OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("reverted" if reverted else "nothing to revert")
 
 
 @refine_group.command("show")
@@ -222,6 +228,7 @@ def runs_fork_cmd(goal_id: int, at_event: int | None, label: str,
 def runs_tree_cmd(goal_id: int) -> None:
     """Print the fork tree rooted at GOAL_ID."""
     from .. import session_tree
+    from . import _strip_terminal_control
     try:
         root = session_tree.tree(goal_id)
     except session_tree.SessionTreeError as e:
@@ -229,9 +236,10 @@ def runs_tree_cmd(goal_id: int) -> None:
 
     def _emit(node: dict, depth: int = 0) -> None:
         label = f" [{node['label']}]" if node.get("label") else ""
-        click.echo(f"{'  ' * depth}{node.get('goal_id')}  "
-                   f"{node.get('status', '?'):<8} "
-                   f"{str(node.get('title') or '')[:60]}{label}")
+        title = _strip_terminal_control(str(node.get("title") or ""))[:60]
+        click.echo(_strip_terminal_control(
+            f"{'  ' * depth}{node.get('goal_id')}  "
+            f"{node.get('status', '?'):<8} {title}{label}"))
         for child in node.get("children") or []:
             _emit(child, depth + 1)
 

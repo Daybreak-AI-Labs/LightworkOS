@@ -228,6 +228,18 @@ def test_http_spec_rejects_bad_url():
         MCPServerSpec(name="r", url="not-a-url")
 
 
+def test_http_spec_refuses_a_credential_over_plain_http_to_a_remote_host():
+    """A static token or Authorization header must not cross the network in
+    clear text; loopback and specs without a credential stay allowed."""
+    for credential in ({"auth_token": "t"}, {"headers": {"AUTHORIZATION": "Bearer t"}}):
+        with pytest.raises(ValueError, match="change the url to https://"):
+            MCPServerSpec.from_config("r", {"url": "http://mcp.example.com/mcp", **credential})
+        for host in ("localhost", "127.0.0.5:8080", "[::1]:9000"):
+            MCPServerSpec.from_config("r", {"url": f"http://{host}/mcp", **credential})
+        MCPServerSpec.from_config("r", {"url": "https://mcp.example.com/mcp", **credential})
+    MCPServerSpec.from_config("r", {"url": "http://mcp.example.com/mcp", "headers": {"X-Trace": "1"}})
+
+
 @pytest.mark.asyncio
 async def test_start_mcp_clients_builds_http_for_url(monkeypatch):
     _install(monkeypatch, make_handler())

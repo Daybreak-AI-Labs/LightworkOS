@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -53,6 +54,12 @@ class CircuitOpen(Exception):
 
 
 T = TypeVar("T")
+
+
+class _Probe:
+    """Opaque HALF_OPEN probe owner (weak-referenceable)."""
+
+    __slots__ = ("__weakref__",)
 
 
 @dataclass
@@ -84,6 +91,12 @@ class CircuitBreaker:
         # HALF_OPEN admits exactly one probe at a time; concurrent callers
         # fast-fail until it resolves (cleared by record_success/failure).
         self._probe_in_flight = False
+        self._probe_started_mono: float | None = None
+        self._probe_owner: object | None = None
+        # Probes whose lease expired and were replaced. A late SUCCESS from one
+        # still proves the dependency healthy (a slow call outlived the lease);
+        # a late failure does not resolve the replacement.
+        self._expired_probes: weakref.WeakSet[_Probe] = weakref.WeakSet()
 
     @property
     def state(self) -> CircuitState:
@@ -102,8 +115,10 @@ class CircuitBreaker:
         ):
             self._state = CircuitState.HALF_OPEN
 
-    def record_success(self) -> None:
+    def record_success(self, *, probe: object | None = None) -> None:
         with self._lock:
+            if probe is not self._probe_owner and probe not in self._expired_probes:
+                return  # A stale non-probe call cannot resolve a live probe.
             self._stats.total_successes += 1
             self._tick()
             if self._state is CircuitState.OPEN:
@@ -113,12 +128,17 @@ class CircuitBreaker:
             self._stats.consecutive_failures = 0
             self._state = CircuitState.CLOSED
             self._probe_in_flight = False
+            self._probe_owner = None
+            self._expired_probes.clear()
 
-    def record_failure(self) -> None:
+    def record_failure(self, *, probe: object | None = None) -> None:
         with self._lock:
+            if probe is not self._probe_owner:
+                return
             now = time.time()
             now_mono = time.monotonic()
             self._probe_in_flight = False
+            self._probe_owner = None
             self._stats.consecutive_failures += 1
             self._stats.total_failures += 1
             self._stats.last_failure_at = now
@@ -133,9 +153,15 @@ class CircuitBreaker:
                 self._stats.opened_at = now
                 self._stats.opened_mono = now_mono
 
-    def admit(self) -> bool:
-        """Admit one manually observed call; return whether it owns the probe."""
-        probe_started = False
+    def admit(self) -> object | None:
+        """Admit a call; return its opaque probe owner, or None when closed.
+
+        Pass the owner to result/release methods. A timed-out probe can still
+        finish after its replacement: its late success closes the breaker (a
+        slow healthy provider must recover), but its late failure or release
+        cannot change the replacement's lease.
+        """
+        probe_owner = None
         with self._lock:
             self._tick()
             if self._state is CircuitState.OPEN:
@@ -148,32 +174,45 @@ class CircuitBreaker:
                 # Let exactly ONE caller probe the dependency; everyone else
                 # fast-fails (admitting ALL concurrent callers in HALF_OPEN
                 # would re-storm the dead service on cooldown expiry).
+                # Zero cooldown permits immediate recovery, not concurrent
+                # probes. Use the normal cooldown as its bounded probe lease.
+                # A missing timestamp is not proof that a legacy probe expired.
+                probe_timeout = self.cooldown_seconds if self.cooldown_seconds > 0 else _DEFAULT_COOLDOWN
+                if (self._probe_in_flight and self._probe_started_mono is not None
+                        and time.monotonic() - self._probe_started_mono >= probe_timeout):
+                    self._probe_in_flight = False
+                    if isinstance(self._probe_owner, _Probe):
+                        self._expired_probes.add(self._probe_owner)
                 if self._probe_in_flight:
                     raise CircuitOpen(
                         f"circuit {self.key!r} HALF_OPEN: a probe is already in flight"
                     )
                 self._probe_in_flight = True
-                probe_started = True
-        return probe_started
+                self._probe_started_mono = time.monotonic()
+                probe_owner = self._probe_owner = _Probe()
+        return probe_owner
 
-    def release_probe(self) -> None:
+    def release_probe(self, probe: object) -> None:
         """Abandon an owned probe after a local refusal, without a health result."""
         with self._lock:
+            if probe is not self._probe_owner:
+                return
             self._probe_in_flight = False
+            self._probe_owner = None
 
     def call(self, fn: Callable[[], T]) -> T:
         """Run ``fn`` if allowed; raise ``CircuitOpen`` otherwise."""
-        probe_started = self.admit()
+        probe_owner = self.admit()
         try:
             result = fn()
         except Exception:
-            self.record_failure()
+            self.record_failure(probe=probe_owner)
             raise
         except BaseException:
-            if probe_started:
-                self.record_failure()
+            if probe_owner is not None:
+                self.record_failure(probe=probe_owner)
             raise
-        self.record_success()
+        self.record_success(probe=probe_owner)
         return result
 
     def reset(self) -> None:
@@ -181,6 +220,8 @@ class CircuitBreaker:
             self._stats = _Stats()
             self._state = CircuitState.CLOSED
             self._probe_in_flight = False
+            self._probe_owner = None
+            self._expired_probes.clear()
 
     def snapshot(self) -> dict:
         with self._lock:

@@ -10,7 +10,7 @@ import aiohttp
 import pytest
 from aiohttp.base_protocol import BaseProtocol
 from maverick_channels import matrix, slack
-from maverick_channels.delivery import DeliveryNotSent
+from maverick_channels.delivery import DeliveryNotSent, DeliveryRejected
 
 
 @pytest.mark.parametrize("declared,blocks,expected", [
@@ -102,7 +102,7 @@ def test_matrix_chunk_retry_preserves_every_character_and_transaction(monkeypatc
 def test_matrix_too_large_is_definitively_not_sent():
     channel = matrix.MatrixChannel.__new__(matrix.MatrixChannel)
     channel._client = SimpleNamespace(room_send=AsyncMock(return_value=SimpleNamespace(status_code="M_TOO_LARGE")))
-    with pytest.raises(DeliveryNotSent, match="Matrix rejected"):
+    with pytest.raises(DeliveryRejected, match="Matrix rejected"):
         asyncio.run(channel.send("!room:example.test", "reply"))
 
 

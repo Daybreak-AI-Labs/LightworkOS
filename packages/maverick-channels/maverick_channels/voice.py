@@ -351,15 +351,21 @@ class VoiceChannel(Channel):
             journal = DeliveryJournal()
             row = journal.get(_record_id(self.name, account, identity))
             if row is not None:
-                # An original read never resumes a received, running or unknown
-                # execution. Changed input cannot borrow its retained identity.
+                # An original read never resumes a running or unknown execution.
+                # Changed input cannot borrow its retained identity.
                 material, _ = _payload(message, row["id"])
                 if row["fingerprint"] not in (_digest([material, route]), _earlier_fingerprint(material, route)):
                     raise ValueError("The function identity belongs to a different request.")
+                if row["execution"] == "received":
+                    # Never claimed (its shared activity stripe stayed busy).
+                    # The revision-checked claim still allows one execution.
+                    row = await self.process_message(message, external_id=identity, account=account,
+                                                     authorize=authorize, send=offered, route=route,
+                                                     receipt=row, journal=journal, wait_for_activity=True)
             else:
                 row = await self.process_message(message, external_id=identity, account=account,
                                                  authorize=authorize, send=offered, route=route,
-                                                 journal=journal)
+                                                 journal=journal, wait_for_activity=True)
             with authority_effect_fence():
                 if not authorize():
                     raise PermissionError("Current phone call settings changed.")
@@ -457,7 +463,7 @@ class VoiceChannel(Channel):
     async def send(self, user_id: str, text: str) -> str:
         """Outbound: place a call to `user_id` (a phone number) via the
         configured provider and have the assistant deliver `text`."""
-        from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+        from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
 
         if not self.assistant_id:
             raise DeliveryNotSent("Voice outbound assistant is not configured")
@@ -469,7 +475,7 @@ class VoiceChannel(Channel):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(req["url"], headers=req["headers"], json=req["json"])
             if 400 <= response.status_code < 500 and response.status_code != 408:
-                raise DeliveryNotSent("Voice provider rejected the outbound call")
+                raise provider_refusal(response.status_code, "Voice provider rejected the outbound call")
             if response.status_code >= 300:
                 raise DeliveryUnknown("Voice outbound acceptance is unconfirmed")
             result = response.json()

@@ -1,12 +1,14 @@
 //! Native port of `maverick.safety.pii_detector.scan`.
 //!
-//! Faithful reproduction: the SAME six anchored patterns (email, ssn, ipv4,
+//! Port of the six anchored patterns (email, ssn, ipv4,
 //! ipv6, phone_us, street_address) emitted in that order, then Luhn-validated
 //! credit cards, then the SAME overlap-coalescing (stable sort by
 //! `(start, -len)`, merge clusters keeping the first kind). The phone and SSN
 //! patterns check lookaround boundaries outside their linear regex candidates.
 //! We return `(kind, cp_start, cp_end)` for direct native callers. Python
 //! detection and redaction remain pure Python; parity tests compare the spans.
+//! Regex Unicode classes are not identical to Python's; the workspace README
+//! records the known compatibility limits.
 
 use crate::{byte_spans_to_char, compile_pattern, filtered_matches};
 use fancy_regex::Regex;

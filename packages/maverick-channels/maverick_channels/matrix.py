@@ -24,6 +24,7 @@ from .base import Channel, IncomingMessage, is_allowed, normalize_allowlist
 from .delivery import (
     _ACTIVE,
     DeliveryNotSent,
+    DeliveryRejected,
     DeliveryUnknown,
     _digest,
     _PrefixedAttempt,
@@ -166,11 +167,11 @@ class MatrixChannel(Channel):
             result = await self._client.room_send(**payload, tx_id=chunk_idempotency_key(key))
             # matrix-nio returns error response objects instead of raising.
             # Only explicit nonacceptance permits a non-ambiguous retry.
-            if getattr(result, "status_code", None) in {
-                "M_FORBIDDEN", "M_UNKNOWN_TOKEN", "M_MISSING_TOKEN", "M_LIMIT_EXCEEDED",
-                "M_BAD_JSON", "M_NOT_JSON", "M_INVALID_PARAM", "M_NOT_FOUND", "M_TOO_LARGE",
-            }:
-                raise DeliveryNotSent("Matrix rejected the reply")
+            status = getattr(result, "status_code", None)
+            if status in {"M_FORBIDDEN", "M_BAD_JSON", "M_NOT_JSON", "M_INVALID_PARAM", "M_NOT_FOUND", "M_TOO_LARGE"}:
+                raise DeliveryRejected("Matrix rejected the reply")
+            if status in {"M_UNKNOWN_TOKEN", "M_MISSING_TOKEN", "M_LIMIT_EXCEEDED"}:
+                raise DeliveryNotSent("Matrix did not accept the reply; it can be retried")
             provider_id = getattr(result, "event_id", None)
             if delivery_active() and not isinstance(provider_id, str):
                 raise DeliveryUnknown("Matrix reply acknowledgement has no event id")

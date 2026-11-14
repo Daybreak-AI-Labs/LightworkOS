@@ -63,7 +63,7 @@ def plan(flow, manifest, resolve):
             if child is None or key not in manifest:
                 raise ValueError("An exact included workflow is unavailable.")
             children[key] = manifest[key]
-            for entry in child.nodes.values():
+            for entry in _nested_nodes(child):
                 if entry.kind == "subflow":
                     include(entry.flow_ref)
         if node.kind == "subflow":
@@ -81,6 +81,15 @@ def plan(flow, manifest, resolve):
     if seen != set(flow.nodes):
         raise ValueError("Every root step must belong to one complete linear route for selective checking.")
     return result
+
+
+def _nested_nodes(flow):
+    for node in flow.nodes.values():
+        yield node
+        if node.body is not None:
+            yield from _nested_nodes(node.body)
+        for branch in node.branches:
+            yield from _nested_nodes(branch)
 
 
 def evaluate(flow, manifest, inputs, *, resolve, guard, budget, original, evidence=None, semantic_reuse=False):

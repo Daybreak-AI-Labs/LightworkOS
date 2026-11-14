@@ -391,7 +391,17 @@ async def draft_flow_endpoint(request: Request, payload: FlowDraftIn) -> dict:
             flow_id=payload.flow_id,
         )
 
-    flow, notes = await run_in_threadpool(_draft)
+    from maverick.budget import BudgetExceeded
+    from maverick.killswitch import Halted
+
+    try:
+        flow, notes = await run_in_threadpool(_draft)
+    except Halted as exc:
+        raise HTTPException(409, "Work is stopped because the kill switch is on, so no flow was drafted. "
+                                 "Resume work, then try again.") from exc
+    except BudgetExceeded as exc:
+        raise HTTPException(409, "The budget for drafting was used up, so no flow was drafted. "
+                                 "Nothing was saved.") from exc
     return {"flow": flow.to_dict(), "notes": notes}
 
 

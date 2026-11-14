@@ -27,7 +27,7 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
 from .polling import PollCheckpoint, PollPage
 from .polling import parse_timestamp as _parse_indexed_at
 from .polling import utc_timestamp as _now_iso_z
@@ -40,6 +40,21 @@ _POLL_INTERVAL_SEC = 30.0
 # Bound on the recently-seen notification-uri dedup set (FIFO eviction). The
 # poll window is the 50 newest notifications, so this is generous headroom.
 _MAX_SEEN_URIS = 1000
+
+
+def _reply_refusal(response):
+    """A PDS answers an expired or invalid token with 400 (see
+    ``_drop_expired_session``): the next call signs in again, so that is
+    temporary. Only statuses about the record itself reject a reply; another
+    bare 400/403 backs off without being abandoned."""
+    if response.status_code == 400:
+        try:
+            error = (response.json() or {}).get("error")
+        except Exception:  # noqa: BLE001 -- an unreadable body leaves the status to decide
+            error = None
+        if error in {"ExpiredToken", "InvalidToken"}:
+            return DeliveryNotSent("Bluesky session expired; the reply was not sent")
+    return provider_refusal(response.status_code, "Bluesky rejected the reply")
 
 
 class BlueskyChannel(Channel):
@@ -252,7 +267,7 @@ class BlueskyChannel(Channel):
                         headers={"Authorization": f"Bearer {sess['accessJwt']}"}, json=body)
                 self._drop_expired_session(resp)
                 if 400 <= resp.status_code < 500 and resp.status_code != 408:
-                    raise DeliveryNotSent("Bluesky rejected the reply")
+                    raise _reply_refusal(resp)
                 if resp.status_code >= 400:
                     raise DeliveryUnknown("Bluesky reply acceptance is unconfirmed")
                 return (resp.json() or {}).get("uri", "")
@@ -285,7 +300,7 @@ class BlueskyChannel(Channel):
                         if reply.text:
                             return await self._reply(route, reply.text)
                     try:
-                        await self.recover_messages(account=account, send=send_saved,
+                        await self.recover_messages(account=account, send=send_saved, respect_retry_at=True,
                             authorize=lambda msg, account=account: account == self._account() and is_allowed(msg.sender_id, self.allowed_user_ids))
                     except Exception:
                         log.warning("bluesky saved delivery recovery remains incomplete")

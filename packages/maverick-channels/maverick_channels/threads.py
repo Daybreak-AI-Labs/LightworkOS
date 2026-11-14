@@ -54,8 +54,9 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, send_chunk
+from .delivery import DeliveryUnknown, send_chunk
 from .polling import PollCheckpoint, PollPage, parse_timestamp, utc_timestamp
+from .whatsapp_cloud import graph_refusal
 
 log = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ class ThreadsChannel(Channel):
                     if reply.text:
                         return await self.send(msg.user_id, reply.text)
                 try:
-                    await self.recover_messages(account=account, send=send_saved,
+                    await self.recover_messages(account=account, send=send_saved, respect_retry_at=True,
                         authorize=lambda msg, account=account: account == self.user_id and is_allowed(msg.sender_id, self.allowed_user_ids))
                 except Exception:
                     log.warning("threads saved delivery recovery remains incomplete")
@@ -268,7 +269,7 @@ class ThreadsChannel(Channel):
     @staticmethod
     def _check_send(response):
         if 400 <= response.status_code < 500 and response.status_code != 408:
-            raise DeliveryNotSent("Threads rejected the request")
+            raise graph_refusal(response, "Threads rejected the request")
         if response.status_code >= 400:
             raise DeliveryUnknown("Threads request acceptance is unconfirmed")
 

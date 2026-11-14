@@ -153,6 +153,30 @@ def _trim_reply_noise(body: str) -> str:
     return trimmed or text
 
 
+def _smtp_refusal(replies, message):
+    """Reject only when every reply names the recipient or the message.
+
+    Enhanced status 5.1.x (bad destination address) or 5.3.4 (message too
+    big) is positive evidence. Sending quotas and policy throttles also use
+    5xx (5.4.5, 5.2.0, 5.7.x), so any other 5xx refusal backs off without
+    being abandoned, and a 4xx stays plainly retryable.
+    """
+    from .delivery import DeliveryNotSent, DeliveryRefusedUnclear, DeliveryRejected
+
+    def definitive(reply):
+        if not isinstance(reply, tuple) or len(reply) < 2 or not isinstance(reply[0], int):
+            return False
+        text = reply[1].decode("utf-8", "replace") if isinstance(reply[1], bytes) else str(reply[1])
+        return 500 <= reply[0] < 600 and re.match(r"\s*5\.(1\.\d{1,3}|3\.4)\b", text) is not None
+
+    replies = list(replies)
+    if replies and all(map(definitive, replies)):
+        return DeliveryRejected(message)
+    permanent = [reply for reply in replies
+                 if isinstance(reply, tuple) and reply and isinstance(reply[0], int) and 500 <= reply[0] < 600]
+    return (DeliveryRefusedUnclear if permanent else DeliveryNotSent)(message)
+
+
 class EmailChannel(Channel):
     name = "email"
 
@@ -464,9 +488,11 @@ class EmailChannel(Channel):
                     sending = True
                     refused = smtp.send_message(msg)
                 if refused:
-                    raise DeliveryNotSent("SMTP rejected the recipient")
-        except (smtplib.SMTPRecipientsRefused, smtplib.SMTPDataError) as exc:
-            raise DeliveryNotSent("SMTP explicitly rejected the message") from exc
+                    raise _smtp_refusal(refused.values(), "SMTP rejected the recipient")
+        except smtplib.SMTPRecipientsRefused as exc:
+            raise _smtp_refusal(exc.recipients.values(), "SMTP explicitly rejected the message") from exc
+        except smtplib.SMTPDataError as exc:
+            raise _smtp_refusal([(exc.smtp_code, exc.smtp_error)], "SMTP explicitly rejected the message") from exc
         except Exception as exc:
             if not sending:
                 raise DeliveryNotSent("SMTP unavailable before sending") from exc

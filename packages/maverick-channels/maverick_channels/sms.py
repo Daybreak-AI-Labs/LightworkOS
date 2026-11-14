@@ -177,7 +177,7 @@ class SMSChannel(Channel):
     async def send(self, user_id: str, text: str) -> None:
         import asyncio
 
-        from .delivery import DeliveryNotSent, send_chunk
+        from .delivery import provider_refusal, send_chunk
         from .formatting import split_utf16
 
         # Twilio rejects a body over 1,600 characters, so a long reply goes
@@ -200,7 +200,7 @@ class SMSChannel(Channel):
                     # timeouts and server failures may have accepted it upstream.
                     status = getattr(exc, "status", None)
                     if isinstance(status, int) and 400 <= status < 500 and status != 408:
-                        raise DeliveryNotSent("Provider rejected the message") from exc
+                        raise provider_refusal(status, "Provider rejected the message") from exc
                     raise
             result = await send_chunk(f"{prefix}{index}", chunk, create)
         return result

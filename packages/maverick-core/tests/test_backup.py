@@ -396,6 +396,33 @@ def test_backup_withholds_the_browser_vault_key_beside_its_ciphertext():
     assert backup.read_manifest(tar)["withheld_key_files"] == withheld
 
 
+def test_backup_withholds_the_consent_ledger_key_of_the_root_and_each_workspace(tmp_path):
+    """``consent.ledger.key`` (safety/consent.py) authenticates standing consent
+    grants; a default archive must not carry it beside the ledger it signs, at
+    the data root or under ``tenants/<id>/``. A live key survives a
+    keys-excluded restore."""
+    home = tmp_path / "wholehome"
+    _seed(home)
+    (home / "tenants" / "acme").mkdir(parents=True)
+    for folder in (home, home / "tenants" / "acme"):
+        (folder / "consent.ledger").write_text("{}\n")
+        (folder / "consent.ledger.key").write_bytes(b"\x09" * 32)
+
+    with _whole_home(home):
+        tar = backup.create_backup(tmp_path / "default.tgz")
+        withheld = ["consent.ledger.key", "tenants/acme/consent.ledger.key"]
+        assert backup.withheld_key_files() == withheld
+        assert backup.read_manifest(tar)["withheld_key_files"] == withheld
+        with tarfile.open(tar, "r:gz") as archive:
+            members = archive.getnames()
+        assert "data/consent.ledger.key" not in members
+        assert "data/tenants/acme/consent.ledger.key" not in members
+        assert "data/consent.ledger" in members
+        backup.restore_backup(tar, replace_existing=True)
+    assert (home / "consent.ledger.key").read_bytes() == b"\x09" * 32
+    assert (home / "tenants" / "acme" / "consent.ledger.key").read_bytes() == b"\x09" * 32
+
+
 def test_leftover_rollback_journal_is_not_snapshotted_so_the_backup_restores():
     from maverick.paths import data_dir
     root = data_dir()

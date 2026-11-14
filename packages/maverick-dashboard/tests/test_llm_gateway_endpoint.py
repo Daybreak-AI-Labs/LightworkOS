@@ -247,3 +247,33 @@ def test_anthropic_gateway_endpoint_uses_native_envelope(tmp_path, monkeypatch):
     assert accepted.json()["type"] == "message"
     assert seen["url"] == "https://api.anthropic.com/v1/messages"
     assert seen["headers"]["x-api-key"] == "anthropic-up-secret"
+
+
+def test_otel_ingestion_records_the_bearers_team(tmp_path, monkeypatch):
+    from maverick import llm_gateway as gw
+
+    monkeypatch.setenv("ENGINEERING_GATEWAY_TOKEN", "engineering-secret")
+    (tmp_path / "config.toml").write_text(
+        '[llm_gateway]\nenable = true\nupstream_url = "https://api.openai.com"\n'
+        'team_tokens = { engineering = "ENGINEERING_GATEWAY_TOKEN" }\n',
+        encoding="utf-8",
+    )
+    config.reset_config_cache()
+    payload = {"resourceSpans": [{
+        "resource": {"attributes": [
+            {"key": "service.name", "value": {"stringValue": "crew-planner"}},
+        ]},
+        "scopeSpans": [{"spans": [{"name": "chat", "attributes": [
+            {"key": "gen_ai.request.model", "value": {"stringValue": "gpt-5.2"}},
+        ]}]}],
+    }]}
+    accepted = client.post(
+        "/gateway/v1/otel", json=payload,
+        headers={"Authorization": "Bearer engineering-secret"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert [row["team"] for row in gw.list_callers()] == ["engineering"]
+    # A bearer that resolves to no team is refused, never booked to default.
+    with pytest.raises(PermissionError):
+        gw.ingest_otel_spans(payload, caller_token="not-a-team-secret")
+    assert [row["team"] for row in gw.list_callers()] == ["engineering"]

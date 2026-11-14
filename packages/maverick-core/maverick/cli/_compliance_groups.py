@@ -6,12 +6,21 @@ __init__ so the @main.group/@main.command decorators fire on package import.
 """
 from __future__ import annotations
 
+import math
+import re
 import sys
 from pathlib import Path
 
 import click
 
-from . import _soc2_posture_ready, main
+from . import _soc2_posture_ready, _write_private_export, main
+
+
+def _write_export(output: str | Path, text: str) -> bool:
+    try:
+        return _write_private_export(output, text)
+    except OSError as exc:
+        raise click.ClickException(f"could not write {output}: {exc}") from exc
 
 
 @main.command("soc2")
@@ -222,7 +231,7 @@ def graph_rebuild_cmd() -> None:
 @graph_group.command("dossier")
 @click.argument("vendor")
 @click.option("--as-of", "as_of", default="",
-              help="Epoch or YYYY-MM-DD: the graph as it stood on that date.")
+              help="YYYY-MM-DD (end of UTC day) or epoch:SECONDS: the graph at that time.")
 def graph_dossier_cmd(vendor: str, as_of: str) -> None:
     """Everything the graph knows about VENDOR, with record ids."""
     import json as _json
@@ -231,12 +240,22 @@ def graph_dossier_cmd(vendor: str, as_of: str) -> None:
     ts = None
     if as_of:
         try:
-            ts = float(as_of)
-        except ValueError:
-            import datetime as _dt
-            day = _dt.datetime.strptime(as_of, "%Y-%m-%d").replace(
-                tzinfo=_dt.timezone.utc)
-            ts = (day + _dt.timedelta(days=1)).timestamp()
+            if as_of.startswith("epoch:"):
+                ts = float(as_of.removeprefix("epoch:"))
+                if not math.isfinite(ts):
+                    raise ValueError("non-finite epoch")
+            elif re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", as_of):
+                import datetime as _dt
+                day = _dt.datetime.strptime(as_of, "%Y-%m-%d").replace(
+                    tzinfo=_dt.timezone.utc)
+                ts = (day + _dt.timedelta(days=1)).timestamp()
+            else:
+                raise ValueError("unsupported date format")
+        except (ValueError, OverflowError) as exc:
+            raise click.BadParameter(
+                "use YYYY-MM-DD or epoch:SECONDS with a finite number",
+                param_hint="--as-of",
+            ) from exc
     result = dossier(vendor, as_of=ts)
     click.echo(_json.dumps(result.get("summary") or result, indent=2,
                            default=str))
@@ -1092,6 +1111,8 @@ def grc_sync_run(limit: int, actor: str) -> None:
         raise click.ClickException(
             f"{result['failure_count']} record(s) failed to deliver"
         )
+    if result["blocked_count"]:
+        raise click.ClickException(f"{result['blocked_count']} record(s) blocked")
 
 
 @grc_sync_group.command("status")
@@ -1936,11 +1957,11 @@ def content_provenance_sign(content_file, asset_id, modality, receipt_id,
     except (KeyError, ValueError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
     destination = Path(out_file) if out_file else Path(f"{content_file}.provenance.json")
-    destination.write_text(
-        json_module.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8",
+    streamed = _write_export(
+        destination, json_module.dumps(manifest, indent=2, sort_keys=True),
     )
     click.echo(f"{destination} manifest {manifest['manifest_sha256'][:16]}... "
-               f"key {manifest['attestation']['key_id']}")
+               f"key {manifest['attestation']['key_id']}", err=streamed)
 
 
 @content_provenance_group.command("verify")
@@ -1989,7 +2010,6 @@ def underwriting_pack_group() -> None:
 def underwriting_pack_export(out_file, asset_id, actor) -> None:
     """Export one signed underwriting evidence pack."""
     import json as json_module
-    from pathlib import Path
 
     from .. import underwriting_pack
 
@@ -2001,13 +2021,12 @@ def underwriting_pack_export(out_file, asset_id, actor) -> None:
         )
     except (KeyError, ValueError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
-    Path(out_file).write_text(
-        json_module.dumps(pack, indent=2, sort_keys=True, default=str),
-        encoding="utf-8",
+    streamed = _write_export(
+        out_file, json_module.dumps(pack, indent=2, sort_keys=True, default=str),
     )
     summary = pack["summary"]
     click.echo(f"{out_file}  assets {summary['inventory_count']}  "
-               f"pack {summary['assurance_pack_sha256'][:16]}...")
+               f"pack {summary['assurance_pack_sha256'][:16]}...", err=streamed)
 
 
 @main.group("vendor")
@@ -2244,7 +2263,6 @@ def consent_status_command() -> None:
 def consent_export(out_file, limit) -> None:
     """Export the digest-only receipt register for audit."""
     import json as json_module
-    from pathlib import Path
 
     from .. import consent_registry as cr
 
@@ -2252,10 +2270,10 @@ def consent_export(out_file, limit) -> None:
         rows = cr.export_receipts(limit=limit)
     except (ValueError, RuntimeError) as e:
         raise click.ClickException(str(e)) from e
-    Path(out_file).write_text(
-        json_module.dumps(rows, indent=2, sort_keys=True), encoding="utf-8",
+    streamed = _write_export(
+        out_file, json_module.dumps(rows, indent=2, sort_keys=True),
     )
-    click.echo(f"{out_file}  receipts {len(rows)}")
+    click.echo(f"{out_file}  receipts {len(rows)}", err=streamed)
 
 
 @consent_group.command("import-onetrust")
@@ -2642,7 +2660,6 @@ def exports_group() -> None:
 def exports_oscal(assessment_id, out_file) -> None:
     """Export one assessment as OSCAL assessment-results JSON."""
     import json as json_module
-    from pathlib import Path
 
     from .. import assessment_exports
 
@@ -2651,13 +2668,12 @@ def exports_oscal(assessment_id, out_file) -> None:
             assessment_id)
     except KeyError as e:
         raise click.ClickException(str(e)) from e
-    Path(out_file).write_text(
-        json_module.dumps(document, indent=2, sort_keys=True),
-        encoding="utf-8",
+    streamed = _write_export(
+        out_file, json_module.dumps(document, indent=2, sort_keys=True),
     )
     results = document["assessment-results"]["results"][0]
     click.echo(f"{out_file}  observations {len(results['observations'])}  "
-               f"findings {len(results['findings'])}")
+               f"findings {len(results['findings'])}", err=streamed)
 
 
 @exports_group.command("soa")
@@ -2669,7 +2685,6 @@ def exports_oscal(assessment_id, out_file) -> None:
 def exports_soa(assessment_id, out_file, as_json) -> None:
     """Export one assessment as a Statement of Applicability."""
     import json as json_module
-    from pathlib import Path
 
     from .. import assessment_exports
 
@@ -2678,19 +2693,13 @@ def exports_soa(assessment_id, out_file, as_json) -> None:
             assessment_id)
     except KeyError as e:
         raise click.ClickException(str(e)) from e
-    if as_json:
-        Path(out_file).write_text(
-            json_module.dumps(soa, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-    else:
-        Path(out_file).write_text(
-            assessment_exports.soa_markdown(soa), encoding="utf-8",
-        )
+    text = (json_module.dumps(soa, indent=2, sort_keys=True) if as_json
+            else assessment_exports.soa_markdown(soa))
+    streamed = _write_export(out_file, text)
     counts = soa["counts"]
     click.echo(f"{out_file}  implemented {counts['implemented']}  "
                f"not implemented {counts['not_implemented']}  "
-               f"excluded {counts['excluded']}")
+               f"excluded {counts['excluded']}", err=streamed)
 
 
 @exports_group.command("ai-bom")
@@ -2700,7 +2709,6 @@ def exports_soa(assessment_id, out_file, as_json) -> None:
 def exports_ai_bom(out_file, asset_id) -> None:
     """Export the governed inventory as a CycloneDX 1.6 ML-BOM."""
     import json as json_module
-    from pathlib import Path
 
     from .. import ai_bom
 
@@ -2708,12 +2716,11 @@ def exports_ai_bom(out_file, asset_id) -> None:
         document = ai_bom.export_ai_bom(asset_id=asset_id)
     except RuntimeError as e:
         raise click.ClickException(str(e)) from e
-    Path(out_file).write_text(
-        json_module.dumps(document, indent=2, sort_keys=True),
-        encoding="utf-8",
+    streamed = _write_export(
+        out_file, json_module.dumps(document, indent=2, sort_keys=True),
     )
     click.echo(f"{out_file}  components {len(document['components'])}  "
-               f"dependencies {len(document['dependencies'])}")
+               f"dependencies {len(document['dependencies'])}", err=streamed)
 
 
 @data_map_group.command("classify-content")

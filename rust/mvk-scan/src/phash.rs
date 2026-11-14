@@ -10,7 +10,7 @@
 //!   1. gray(p) = r*299 + g*587 + b*114                (luma x1000, exact int)
 //!   2. cells   = 8x8 grid; cell (cx, cy) covers x in [cx*w/8, (cx+1)*w/8)
 //!   3. bit     = 1 iff cell_sum * total_count > total_sum * cell_count
-//!                (cross-multiplied average comparison; ties are 0)
+//!      (cross-multiplied average comparison; ties are 0)
 //!   4. pack    = row-major (cy outer), MSB first; render as 16 hex chars
 //!
 //! The cross-multiplication is done in `i128` so it never overflows for any
@@ -29,10 +29,13 @@ pub fn average_hash_from_pixels(
     if width < 8 || height < 8 {
         return Err("image must be at least 8x8".to_string());
     }
-    if pixels.len() != width * height {
+    let expected = width
+        .checked_mul(height)
+        .ok_or_else(|| "image dimensions overflow".to_string())?;
+    if pixels.len() != expected {
         return Err(format!(
             "expected {} pixels, got {}",
-            width * height,
+            expected,
             pixels.len()
         ));
     }
