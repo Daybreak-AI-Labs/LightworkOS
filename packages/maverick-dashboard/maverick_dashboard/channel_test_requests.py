@@ -81,7 +81,15 @@ def configuration(name):
         cfg[field] = (os.environ.get(key) or cfg.get(field)) if name == "mattermost" else (cfg.get(field) or os.environ.get(key))
     if not (cfg.get("bot_token") if name != "whatsapp_cloud" else cfg.get("access_token") and cfg.get("phone_number_id")):
         raise HTTPException(409, "Save the chat app's connection details first.")
+    _allowed_senders(name, cfg)
     return cfg
+
+
+def _allowed_senders(name, cfg):
+    allowed = normalize_allowlist(cfg.get("allowed_user_ids"), name.upper() + "_ALLOWED_USER_IDS")
+    if name == "mattermost" and any(not re.fullmatch(r"[a-z0-9]{26}", person) for person in allowed):
+        raise HTTPException(409, "Replace each Mattermost username in the permitted-people list with the person's 26-character user id.")
+    return allowed
 
 
 def _stamp(value):
@@ -90,7 +98,7 @@ def _stamp(value):
     return datetime.fromtimestamp(value, timezone.utc).strftime("%b %d, %Y, %H:%M UTC")
 
 
-def _source(name, cfg, record, account, *, username="", discover=False):
+def _source(name, cfg, record, account):
     if (not isinstance(record, dict) or record.get("channel") != name or record.get("account_sha256") != account or
             record.get("restore_hold") or record.get("_audit_pending") or not record.get("message")):
         raise HTTPException(409, "This exact conversation is unavailable to the current chat account.")
@@ -99,10 +107,9 @@ def _source(name, cfg, record, account, *, username="", discover=False):
     pattern = r"-?[0-9]{1,20}" if name == "telegram" else r"[0-9]{1,25}" if name in {"discord", "whatsapp_cloud"} else r"[a-z0-9]{26}"
     if not isinstance(destination, str) or not re.fullmatch(pattern, destination):
         raise HTTPException(409, "The retained conversation has no supported destination.")
-    allowed = normalize_allowlist(cfg.get("allowed_user_ids"), name.upper() + "_ALLOWED_USER_IDS")
+    allowed = _allowed_senders(name, cfg)
     chats = normalize_allowlist(cfg.get("allowed_chat_ids"), "TELEGRAM_ALLOWED_CHAT_IDS") if name == "telegram" else set()
-    pending_username = name == "mattermost" and discover and any(not re.fullmatch(r"[a-z0-9]{26}", person) for person in allowed)
-    if sender not in allowed and not (name == "mattermost" and username in allowed) and not pending_username and not (name == "telegram" and sender == destination and destination in chats):
+    if sender not in allowed and not (name == "telegram" and sender == destination and destination in chats):
         raise HTTPException(403, "The sender of this conversation is no longer permitted to message Lightwork.")
     received = record.get("created_at")
     label = "Incoming conversation retained " + _stamp(received)
@@ -162,7 +169,7 @@ def catalog(request, name, expected, cursor=""):
         scan["cursor"] = position
         record = intake().get(record_id)
         try:
-            item = _source(name, cfg, record, scan["account"], discover=True)
+            item = _source(name, cfg, record, scan["account"])
         except HTTPException:
             continue  # Other accounts, expired windows and withdrawn senders are not choices.
         if item["destination"] in destinations:
@@ -185,7 +192,7 @@ def _current(request, value):
     cfg = configuration(value["name"])
     if digest(cfg) != value["source"]:
         raise HTTPException(409, "Saved chat settings changed. Review the current connection again.")
-    selected = _source(value["name"], cfg, intake().get(value["record"]), value["account"], username=value.get("username", ""))
+    selected = _source(value["name"], cfg, intake().get(value["record"]), value["account"])
     if selected["binding"] != value["binding"]:
         raise HTTPException(409, "The selected conversation changed. Read current conversations again.")
     return cfg, selected
@@ -196,7 +203,6 @@ def review(request, choice, expected):
     value = _decode(choice)
     if value.get("context") != context:
         raise HTTPException(409, "Your account or workspace changed. Read current conversations again.")
-    _verify_sender(request, value)
     cfg, selected = _current(request, value)
     recipient = transport.reviewed_recipient(value["name"], cfg, selected["destination"], lambda: _current(request, value))
     value.update(id="CHT-" + secrets.token_hex(16), state="reviewed", recipient=recipient, destination=selected["destination"], expires=time.time() + TTL)
@@ -260,7 +266,6 @@ def apply(request, operation, expected):
         row = _owned(request, operation, expected)
         if row["state"] != "reviewed":
             return original(request, operation, expected)
-        _verify_sender(request, row)
         cfg, selected = _current(request, row)
         recipient = transport.reviewed_recipient(row["name"], cfg, selected["destination"], lambda: _current(request, row))
         if recipient != row["recipient"]:
@@ -280,24 +285,3 @@ def apply(request, operation, expected):
             # A claimed request never becomes another send, even if recording its result failed.
             pass
         return original(request, operation, expected)
-
-
-def _verify_sender(request, value):
-    if value["name"] != "mattermost":
-        return
-    authority(request, value["context"], write=True)
-    cfg = configuration(value["name"])
-    if digest(cfg) != value["source"]:
-        raise HTTPException(409, "Saved chat settings changed. Review the current connection again.")
-    source = _source(value["name"], cfg, intake().get(value["record"]), value["account"], discover=True)
-
-    def guard():
-        authority(request, value["context"], write=True)
-        if digest(configuration(value["name"])) != value["source"]:
-            raise HTTPException(409, "Saved chat settings changed. Review the current connection again.")
-        current = _source(value["name"], cfg, intake().get(value["record"]), value["account"], discover=True)
-        if current["binding"] != value["binding"] or time.time() >= value["expires"]:
-            raise HTTPException(409, "This conversation selection changed or expired. Review it again.")
-
-    value["username"] = transport.reviewed_sender(cfg, source["sender"], guard)
-    _current(request, value)

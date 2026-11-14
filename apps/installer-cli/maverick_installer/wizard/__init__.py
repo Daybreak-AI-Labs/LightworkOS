@@ -614,7 +614,7 @@ def preflight() -> bool:
                 check=True,
             )
             console.print("[green]✓[/green] Docker is running")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             console.print(
                 "[yellow]![/yellow] Docker isn't running. Simple setup will keep "
                 "file changes and program execution off until an isolated work area is available. "
@@ -2053,9 +2053,9 @@ def pick_flows() -> dict[str, Any]:
         "the dashboard needs its externally-reachable base URL. Leave blank to "
         "skip -- approvals then happen from the dashboard.[/dim]"
     )
-    url = _q_text(
-        "Public base URL for approval links (e.g. https://ops.acme.com)", default=""
-    ).strip()
+    from .advanced import _pick_approval_url
+
+    url = _pick_approval_url("Public base URL for approval links (e.g. https://ops.acme.com)")
     if url:
         out["public_url"] = url
     console.print(
@@ -3033,13 +3033,17 @@ def pick_rate_limits(channels: dict[str, Any]) -> dict[str, str]:
         ("shell", "30/60"),
         ("mcp_*", "60/60"),
     ]
+    from maverick.safety.rate_limiter import parse_limit
+
     for name, spec_default in proposed:
-        spec = _q_text(
-            f"  {name} (N/seconds, blank to skip)",
-            default=spec_default,
-        ).strip()
-        if spec:
-            limits[name] = spec
+        while True:
+            spec = _q_text(f"  {name} (N/seconds, blank to skip)", default=spec_default).strip()
+            if not spec:
+                break
+            if parse_limit(spec) is not None:
+                limits[name] = spec
+                break
+            console.print("Enter a positive call count and duration, such as 10/60, or leave blank to skip.", style="yellow")
     return limits
 
 
@@ -3561,7 +3565,7 @@ def pick_deliverable_handoff() -> tuple[dict[str, Any], list[str]]:
     url = _q_text("  System-of-record endpoint URL", default="").strip()
     if not url:
         return {}, []
-    return {"handoff_webhook": url}, []
+    return {"handoff_webhook": url}, ["MAVERICK_WEBHOOK_SECRET"]
 
 
 def pick_persona_roles() -> dict[str, Any]:
@@ -6183,12 +6187,34 @@ def show_compliance_commands(advanced: dict[str, Any]) -> None:
     )
 
 
+def _reask_failed_workspace(exc: OSError) -> None:
+    """An answer-owned path can be corrected without discarding other answers."""
+    state = _load_partial()
+    sandbox = (state or {}).get("sandbox") or {}
+    if not exc.filename or not sandbox.get("workdir") or sandbox.get("backend") == "ssh":
+        return
+    try:
+        failed = Path(exc.filename).expanduser().resolve()
+        workdir = Path(sandbox["workdir"]).expanduser().resolve()
+        if failed in {CONFIG_FILE.resolve(), ENV_FILE.resolve(), PARTIAL_STATE_PATH.resolve()}:
+            return
+        if failed != workdir and workdir not in failed.parents:
+            return
+    except (OSError, ValueError, TypeError):
+        return  # An unclassified filesystem failure must not discard answers.
+    console.print("[yellow]Workspace directory could not be used. Choose another work folder; "
+                  "your other answers are kept.[/yellow]")
+    sandbox["workdir"] = _q_text("Workspace directory", default=str(workdir)).strip()
+    _save_partial(state)
+
+
 def _advanced_write_failed(exc: Exception) -> int:
     """Report a failed final write. A file-system error is often temporary (a full
     disk, a locked file), so its saved answers are kept for ``--resume``; any other
     failure comes from the answers themselves, so they are cleared."""
     show_install_failure(exc)
     if isinstance(exc, OSError):
+        _reask_failed_workspace(exc)
         console.print(f"Your answers are kept in {PARTIAL_STATE_PATH}. Fix the problem, then run:\n"
                       "  maverick init --resume")
     else:

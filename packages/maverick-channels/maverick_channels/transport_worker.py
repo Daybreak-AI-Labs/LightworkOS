@@ -10,7 +10,7 @@ from collections import deque
 
 from . import hold_status
 from .base import IncomingMessage
-from .delivery import MAX_CONFIGURED_RECORDS, DeliveryJournal, _digest, reply_withheld
+from .delivery import MAX_CONFIGURED_RECORDS, DeliveryJournal, _digest, reply_withheld, retry_delay
 
 MAX_PENDING = 32
 RETRY_DELAY = 30.0
@@ -261,6 +261,10 @@ class TransportWorker:
         if known and isinstance(hold, dict):
             found["hints"].append((row["id"], hold.get("id"), hold.get("created_at"), known[1],
                                    hold.get("unreadable_since")))
+        delay = retry_delay(row)
+        if delay:
+            self._retry_after[row["id"]] = max(self._retry_after.get(row["id"], 0), now + delay)
+            self._retrying.add(row["id"])
         if self._retry_after.get(row["id"], 0) > now:
             return
         found["count"] += 1
@@ -550,6 +554,11 @@ class TransportWorker:
         row = await self._in_turn(row)
         if row is None:
             return
+        delay = retry_delay(row)
+        if delay:
+            self._retry_after[record_id] = time.monotonic() + delay
+            self._retrying.add(record_id)
+            return
         if not self.authorize(message):
             self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
             self._retrying.add(record_id)
@@ -559,10 +568,15 @@ class TransportWorker:
         # The status stays as now for as long as this reply is worked on.
         self._publish_status()
         result = await self.channel.process_message(message, external_id=row["external_id"], account=self.account,
-            authorize=lambda: self.authorize(message), send=send_saved, receipt=row, journal=self.journal)
-        if result["delivery"] == "retryable" and not reply_withheld(result):
-            # Refused: retried, and the conversation's newer messages wait for it.
+            authorize=lambda: self.authorize(message), send=send_saved, receipt=row, journal=self.journal,
+            provider_retry_seconds=RETRY_DELAY)
+        if result["execution"] == "received":
+            # A busy activity stripe can defer an unclaimed message safely.
             self._retry_after[record_id] = time.monotonic() + RETRY_DELAY
+            self._retrying.add(record_id)
+        elif result["delivery"] == "retryable" and not reply_withheld(result):
+            # Refused: persisted backoff survives a worker restart.
+            self._retry_after[record_id] = time.monotonic() + max(RETRY_DELAY, retry_delay(result))
             self._retrying.add(record_id)
         elif result["delivery"] == "retryable":
             # Held back by the source check (task or access changed): retried,
