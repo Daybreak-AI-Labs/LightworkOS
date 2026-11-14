@@ -49,7 +49,6 @@ _CLAIM_HISTORY_CLEANUP_BATCH = 128
 AUDIT_SCHEMA = "lightwork.privacy-rights-orchestration-audit.v1"
 MANIFEST_SCHEMA = "lightwork.privacy-rights-completeness-manifest.v1"
 EXPORT_SCHEMA = "lightwork.privacy-rights-export.v1"
-LIVE_PROVIDER_OPERATIONS = False
 LIVE_PROVIDER_ACCEPTANCE_VERIFIED = False
 RESPONSE_DELIVERY_IMPLEMENTED = False
 
@@ -1794,7 +1793,11 @@ class PrivacyRightsOrchestrationStore:
     @staticmethod
     def _required_phases(rights: Sequence[str]) -> tuple[str, ...]:
         ordered: list[str] = []
-        for right in rights:
+        # The declaration order puts access/portability before erasure even
+        # when the persisted rights are sorted alphabetically.
+        for right in _RIGHT_PHASES:
+            if right not in rights:
+                continue
             for phase in _RIGHT_PHASES[right]:
                 if phase not in ordered:
                     ordered.append(phase)
@@ -2152,7 +2155,12 @@ class PrivacyRightsOrchestrationStore:
                 or rights_case.retention_blocks_deletion
             ):
                 return False
-        phases = self._required_phases(rights_case.rights)
+        # Intake plans only supported phases. Unsupported phases cannot be
+        # prerequisites, but a supported phase must not be silently skipped.
+        phases = tuple(
+            phase for phase in self._required_phases(rights_case.rights)
+            if phase in source.capabilities
+        )
         phase_index = phases.index(callback.phase)
         for predecessor in phases[:phase_index]:
             row = connection.execute(
@@ -2160,12 +2168,13 @@ class PrivacyRightsOrchestrationStore:
                 "AND source_id=? AND phase=?",
                 (tenant_id, callback.case_id, callback.source_id, predecessor),
             ).fetchone()
-            if row is not None:
-                predecessor_task = self._task(
-                    self._payload(row, "source task"), row["integrity_sha256"]
-                )
-                if predecessor_task.state != "complete":
-                    return False
+            if row is None:
+                return False
+            predecessor_task = self._task(
+                self._payload(row, "source task"), row["integrity_sha256"]
+            )
+            if predecessor_task.state != "complete":
+                return False
         return True
 
     def claim_callbacks(
@@ -4593,7 +4602,6 @@ __all__ = [
     "DESTRUCTIVE_PHASES",
     "IDENTITY_STATUSES",
     "LIVE_PROVIDER_ACCEPTANCE_VERIFIED",
-    "LIVE_PROVIDER_OPERATIONS",
     "RESPONSE_DELIVERY_IMPLEMENTED",
     "RIGHTS",
     "TASK_PHASES",

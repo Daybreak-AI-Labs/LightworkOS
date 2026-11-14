@@ -6,6 +6,7 @@ import sqlite3
 import time
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from maverick import privacy_rights_orchestration as rights
@@ -516,6 +517,110 @@ def test_legal_hold_retention_and_four_eyes_block_destructive_dispatch(
     assert claimed[0].phase == "delete"
 
 
+def test_delete_waits_for_an_unplanned_supported_predecessor(authority):
+    store, actor, clock = authority
+    enroll_all(store, "tenant-a", "crm", key="missing-predecessor-source")
+    case = open_verified(store, clock, "tenant-a", "missing-predecessor", ["erasure"])
+    delete = store.plan_source_tasks(
+        "tenant-a", case.case_id, "crm", phases=["delete"],
+        expected_case_revision=case.revision, idempotency_key="plan-delete-first",
+    )[0]
+    actor["value"] = "approver"
+    store.approve_destructive_work(
+        "tenant-a", delete.task_id, expected_revision=delete.revision,
+        idempotency_key="approve-delete-first",
+    )
+    assert store.claim_callbacks(
+        "tenant-a", limit=10, lease_seconds=30, idempotency_key="claim-without-discover",
+    ) == ()
+    case = store.get_case("tenant-a", case.case_id)
+    discover = store.plan_source_tasks(
+        "tenant-a", case.case_id, "crm", phases=["discover"],
+        expected_case_revision=case.revision, idempotency_key="plan-missing-discover",
+    )[0]
+    complete_callback_phase(
+        store, "tenant-a", case.case_id, "crm", discover, suffix="missing-discover",
+    )
+    claimed = store.claim_callbacks(
+        "tenant-a", limit=10, lease_seconds=30, idempotency_key="claim-after-discover",
+    )
+    assert [callback.phase for callback in claimed] == ["delete"]
+
+
+def test_portability_retrieval_finishes_before_erasure(authority):
+    store, actor, clock = authority
+    enroll_all(store, "tenant-a", "crm", key="combined-rights-source")
+    case = open_verified(store, clock, "tenant-a", "combined-rights", ["erasure", "portability"])
+    tasks = store.plan_source_tasks(
+        "tenant-a", case.case_id, "crm", expected_case_revision=case.revision,
+        idempotency_key="plan-combined-rights",
+    )
+    actor["value"] = "approver"
+    delete = task_by_phase(tasks, "delete")
+    store.approve_destructive_work(
+        "tenant-a", delete.task_id, expected_revision=delete.revision,
+        idempotency_key="approve-combined-delete",
+    )
+    for phase in ("discover", "retrieve"):
+        complete_callback_phase(
+            store, "tenant-a", case.case_id, "crm", task_by_phase(tasks, phase),
+            suffix=f"combined-{phase}",
+        )
+    assert store.claim_callbacks(
+        "tenant-a", limit=10, lease_seconds=30, idempotency_key="claim-before-redaction",
+    ) == ()
+    complete_local_phase(
+        store, "tenant-a", case.case_id, "crm", task_by_phase(tasks, "redact"),
+        suffix="combined-redact",
+    )
+    claimed = store.claim_callbacks(
+        "tenant-a", limit=10, lease_seconds=30, idempotency_key="claim-after-retrieval",
+    )
+    assert [callback.phase for callback in claimed] == ["delete"]
+
+
+@pytest.mark.parametrize("planner", ["intake", "ott_ctv"])
+def test_capability_subset_plans_run_without_unsupported_predecessors(authority, planner):
+    from maverick.privacy_rights_intake import PrivacyRightsIntakeStore
+    from maverick.privacy_rights_ott_ctv import OTTCTVPrivacyRightsStore
+
+    store, actor, clock = authority
+    store.enroll_source(
+        "tenant-a", "crm", adapter_ref="provider-adapter-v1",
+        credential_ref="env:PROVIDER_RIGHTS_TOKEN",
+        capabilities=["retrieve", "delete", "verify_delete"],
+        expected_revision=0, idempotency_key="subset-source",
+    )
+    coordinator = SimpleNamespace(_rights=store)
+    if planner == "intake":
+        requested = ["erasure", "portability"]
+        plans = PrivacyRightsIntakeStore._source_plans(coordinator, "tenant-a", requested)
+        expected_phases = ["retrieve", "delete", "verify_delete"]
+    else:
+        requested = ["erasure"]
+        plans = OTTCTVPrivacyRightsStore._source_plans(coordinator, "tenant-a", "deletion")
+        expected_phases = ["delete", "verify_delete"]
+    assert len(plans) == 1 and plans[0]["source_id"] == "crm"
+    assert plans[0]["phases"] == expected_phases
+    case = open_verified(store, clock, "tenant-a", "subset-rights", requested)
+    tasks = store.plan_source_tasks(
+        "tenant-a", case.case_id, "crm", phases=plans[0]["phases"],
+        expected_case_revision=case.revision, idempotency_key="plan-subset",
+    )
+    actor["value"] = "approver"
+    delete = task_by_phase(tasks, "delete")
+    store.approve_destructive_work(
+        "tenant-a", delete.task_id, expected_revision=delete.revision,
+        idempotency_key="approve-subset-delete",
+    )
+    for phase in expected_phases:
+        task = store.get_task("tenant-a", task_by_phase(tasks, phase).task_id)
+        complete_callback_phase(
+            store, "tenant-a", case.case_id, "crm", task, suffix=f"subset-{phase}",
+        )
+    assert all(task.state == "complete" for task in store.case_work("tenant-a", case.case_id)["tasks"])
+
+
 def test_callback_progress_survives_restart_and_does_not_starve_work_behind_holds(authority, monkeypatch, record_property):
     store, actor, clock = authority
     enroll_all(store, "tenant-a", "crm", key="fair-source")
@@ -524,6 +629,16 @@ def test_callback_progress_survives_restart_and_does_not_starve_work_behind_hold
         clock.advance(1)
         actor["value"] = "planner"
         case = open_verified(store, clock, "tenant-a", f"fair-{index}", ["erasure"])
+        discover = store.plan_source_tasks(
+            "tenant-a", case.case_id, "crm", phases=["discover"],
+            expected_case_revision=case.revision,
+            idempotency_key=f"plan-discover-fair-{index}",
+        )[0]
+        complete_callback_phase(
+            store, "tenant-a", case.case_id, "crm", discover,
+            suffix=f"discover-fair-{index}",
+        )
+        case = store.get_case("tenant-a", case.case_id)
         task = store.plan_source_tasks(
             "tenant-a", case.case_id, "crm", phases=["delete"], max_attempts=3,
             expected_case_revision=case.revision, idempotency_key=f"plan-fair-{index}",
