@@ -174,6 +174,10 @@ reaches a terminal state:
 The delivery includes `Authorization: Bearer <token>` when a `token` is
 configured. Read it back with `tasks/pushNotificationConfig/get`.
 
+The webhook must be on a public host. Private and loopback addresses are
+refused unless `MAVERICK_FETCH_ALLOW_PRIVATE=1` is set (for on-premises peers
+on one network); cloud metadata and link-local addresses stay blocked.
+
 ## Capabilities
 
 The Agent Card advertises what's backed:

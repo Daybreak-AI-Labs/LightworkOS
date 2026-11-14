@@ -278,7 +278,7 @@ Config equivalents live under `[effort]` (`enabled`, `default`, `<role>`) and
 | `MAVERICK_TTS_OPENAI_MODEL` | `tts-1` | OpenAI text-to-speech model used by the voice tool. |
 | `MAVERICK_TTS_ELEVENLABS_MODEL` | `eleven_turbo_v2_5` | ElevenLabs text-to-speech model used by the voice tool. |
 | `MAVERICK_SEARCH_BACKEND` | auto (preference order) | Force a web-search backend: `tavily`, `brave`, `serpapi`, or `ddg`. |
-| `MAVERICK_FETCH_ALLOW_PRIVATE` | unset | `1` allows supported fetch tools to reach private/loopback/reserved IPs (SSRF escape hatch). Event pollers always require public addresses, including when this is enabled. |
+| `MAVERICK_FETCH_ALLOW_PRIVATE` | unset | `1` allows supported fetch tools and A2A push-notification webhooks to reach private/loopback/reserved IPs (SSRF escape hatch). Event pollers always require public addresses, including when this is enabled. |
 | `MAVERICK_PARTNER_ALLOW_TEST_ESTATE_LOOPBACK` | unset | Explicit operator opt-in for exact-IP loopback partner test-estate enrollment and probes; each API action also requires global-admin authority. |
 | `MAVERICK_FETCH_RESPECT_ROBOTS` | unset | `1` makes the fetch tool honor `robots.txt`. |
 | `MAVERICK_FETCH_NO_SCAN` | unset | `1` skips safety scanning of fetched remote content. |

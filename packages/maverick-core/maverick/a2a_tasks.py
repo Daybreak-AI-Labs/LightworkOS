@@ -1907,9 +1907,10 @@ class TaskEngine:
                 raise BlockedHost("URL credentials are not allowed")
             # Accessing .port validates malformed/out-of-range ports.
             _validated_port = parsed.port
-            # Public addresses only, whatever the fetch tool's private-network
-            # override says: the caller chooses this URL and its bearer.
-            resolve_pinned_ip(parsed.hostname or "", require_public=True)
+            # Public addresses only, unless the operator opted in to private
+            # networks for fetches (MAVERICK_FETCH_ALLOW_PRIVATE, or a scoped
+            # loopback allowance) -- on-prem peers on one LAN need that.
+            resolve_pinned_ip(parsed.hostname or "")
         except ImportError as e:  # pragma: no cover - packaged with core
             raise _RpcError(
                 _INVALID_PARAMS,
@@ -1922,7 +1923,8 @@ class TaskEngine:
             raise _RpcError(
                 _INVALID_PARAMS,
                 "pushNotificationConfig.url rejected: it must be an http(s) "
-                "URL on a public host",
+                "URL on a public host (private hosts need "
+                "MAVERICK_FETCH_ALLOW_PRIVATE)",
             ) from e
         # Retain only fields this implementation actually supports, after type
         # and byte validation, so caller mutation cannot alter stored state.
@@ -1982,9 +1984,9 @@ class TaskEngine:
 
 def _public_push_client(url: str):
     """An ``httpx.AsyncClient`` pinned to ``url``'s host, which must resolve to
-    public addresses only (``require_public``: the private-network override for
-    the fetch tool does not apply to a caller-chosen webhook). Raises
-    ``BlockedHost``."""
+    public addresses unless the operator opted in to private networks for
+    fetches (``MAVERICK_FETCH_ALLOW_PRIVATE`` or a scoped loopback allowance;
+    the metadata service stays blocked either way). Raises ``BlockedHost``."""
     from urllib.parse import urlparse
 
     import httpx
@@ -1997,7 +1999,7 @@ def _public_push_client(url: str):
         raise BlockedHost(f"scheme {parsed.scheme!r} not allowed")
     _check(url)
     host = parsed.hostname or ""
-    ip = resolve_pinned_ip(host, require_public=True)
+    ip = resolve_pinned_ip(host)
     host_header = host if not parsed.port else f"{host}:{parsed.port}"
     transport = _AsyncPinnedTransport(host, host_header, ip, httpx.AsyncHTTPTransport())
     return httpx.AsyncClient(transport=transport, timeout=15.0, follow_redirects=False)
