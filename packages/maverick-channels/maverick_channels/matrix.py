@@ -1,4 +1,4 @@
-"""Matrix channel via matrix-nio (federated, end-to-end encryptable).
+"""Matrix channel via matrix-nio (federated; encrypted rooms are not supported).
 
 Set up:
   1. Create an account on a Matrix homeserver (matrix.org, self-hosted, etc.)
@@ -29,6 +29,10 @@ from .delivery import (
 )
 
 log = logging.getLogger(__name__)
+
+# Even 4,000 astral code points escaped as JSON surrogate pairs occupy only
+# 48,000 bytes, leaving room for the envelope within Matrix's 64 KiB event bound.
+_MAX_TEXT_CHARS = 4000
 
 try:
     from nio import AsyncClient, MatrixRoom, RoomMessageText
@@ -122,22 +126,26 @@ class MatrixChannel(Channel):
             await self._client.sync_forever(timeout=30000, full_state=True)
 
     async def send(self, user_id: str, text: str) -> None:
-        payload = {"room_id": user_id, "message_type": "m.room.message",
-                   "content": {"msgtype": "m.text", "body": text}}
-        async def post():
-            result = await self._client.room_send(**payload, tx_id=chunk_idempotency_key("text-0"))
-            # matrix-nio returns error response objects instead of raising.
-            # Only explicit nonacceptance permits a non-ambiguous retry.
-            if getattr(result, "status_code", None) in {
-                "M_FORBIDDEN", "M_UNKNOWN_TOKEN", "M_MISSING_TOKEN", "M_LIMIT_EXCEEDED",
-                "M_BAD_JSON", "M_NOT_JSON", "M_INVALID_PARAM", "M_NOT_FOUND",
-            }:
-                raise DeliveryNotSent("Matrix rejected the reply")
-            provider_id = getattr(result, "event_id", None)
-            if delivery_active() and not isinstance(provider_id, str):
-                raise DeliveryUnknown("Matrix reply acknowledgement has no event id")
-            return provider_id
-        return await send_chunk("text-0", payload, post, idempotent=True)
+        receipt = None
+        for index, start in enumerate(range(0, max(1, len(text)), _MAX_TEXT_CHARS)):
+            key = "text-" + str(index)
+            payload = {"room_id": user_id, "message_type": "m.room.message",
+                       "content": {"msgtype": "m.text", "body": text[start:start + _MAX_TEXT_CHARS]}}
+            async def post(payload=payload, key=key):
+                result = await self._client.room_send(**payload, tx_id=chunk_idempotency_key(key))
+                # matrix-nio returns error response objects instead of raising.
+                # Only explicit nonacceptance permits a non-ambiguous retry.
+                if getattr(result, "status_code", None) in {
+                    "M_FORBIDDEN", "M_UNKNOWN_TOKEN", "M_MISSING_TOKEN", "M_LIMIT_EXCEEDED",
+                    "M_BAD_JSON", "M_NOT_JSON", "M_INVALID_PARAM", "M_NOT_FOUND", "M_TOO_LARGE",
+                }:
+                    raise DeliveryNotSent("Matrix rejected the reply")
+                provider_id = getattr(result, "event_id", None)
+                if delivery_active() and not isinstance(provider_id, str):
+                    raise DeliveryUnknown("Matrix reply acknowledgement has no event id")
+                return provider_id
+            receipt = await send_chunk(key, payload, post, idempotent=True)
+        return receipt
 
     async def stop(self) -> None:
         await self._client.close()
