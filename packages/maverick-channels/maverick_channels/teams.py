@@ -474,6 +474,26 @@ def _decisions():
     return approval_decisions
 
 
+def _approval_world():
+    from maverick_dashboard._shared import _world
+
+    return _world()
+
+
+def _may_see_approval(module, approval_id: int, principal: str) -> bool:
+    """Whether ``principal`` may see and decide this request now, by the
+    dashboard's own rule (``approval_decisions.eligible_approvers``: holds
+    ``operate``, is not deprovisioned, and can open the card or is a linked
+    approver it is posted to). Anything that cannot be checked counts as no."""
+    try:
+        world = _approval_world()
+        approval = world.get_approval(int(approval_id))
+        return approval is not None and principal in module.eligible_approvers(world, approval)
+    except Exception:  # noqa: BLE001 -- an unreadable rule shows nothing
+        log.warning("teams: could not check who may see approval #%s", approval_id, exc_info=True)
+        return False
+
+
 # --------------------------------------------------------------- channel
 
 
@@ -793,6 +813,11 @@ class TeamsChannel(Channel):
         principal = await self._approval_principal(parsed)
         if not principal:
             return message_response("Your Teams account isn't linked for this request. Connect it from My work.")
+        # Every card below shows the request, so first apply the dashboard's
+        # role and content-access rule; a missing request gets the same answer.
+        if not await asyncio.to_thread(_may_see_approval, module, approval_id, principal):
+            return message_response("Your Lightwork account can't open this request. Ask an administrator "
+                                    "for the operator role or for access to it.")
         view = await asyncio.to_thread(module.approval_view, approval_id)
         if view is None:
             return message_response("This request no longer exists.")

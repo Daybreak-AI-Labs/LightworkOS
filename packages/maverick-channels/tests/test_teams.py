@@ -93,6 +93,10 @@ class FakeDecisions:
         self.calls = []
         self.risk, self.card_present, self.status = risk, card, status
         self.refuse = None
+        self.eligible = {"user:alice"}
+
+    def eligible_approvers(self, world, approval):
+        return set(self.eligible)
 
     def approval_view(self, approval_id):
         card = None
@@ -128,6 +132,16 @@ class FakeDecisions:
         self.calls.append(("send_back", kw))
         return {"status": "superseded", "effective": True, "decided_by": kw["principal"],
                 "risk": self.risk, "audit": "delivered", "rationale": kw["rationale"]}
+
+
+class _FakeWorld:
+    def get_approval(self, approval_id):
+        return {"id": approval_id}
+
+
+@pytest.fixture(autouse=True)
+def _approval_world(monkeypatch):
+    monkeypatch.setattr(teams_mod, "_approval_world", _FakeWorld)
 
 
 def _channel(rsa_key, monkeypatch=None, **overrides):
@@ -536,6 +550,22 @@ def test_invoke_refusals_are_plain_messages(rsa_key):
     assert "already decided" in r["value"]
     off = _channel(rsa_key, approvals_enabled=False)
     assert "turned off" in _post(off, rsa_key, _invoke("approve")).json()["value"]
+
+
+def test_invoke_needs_the_dashboards_role_and_content_access(rsa_key):
+    """A linked person who could not open the request on the Approvals page
+    (no operate role, or no access to its content) gets no card for it, so
+    changing the number in the payload cannot read another request."""
+    _link(principal="user:mallory")
+    ch = _channel(rsa_key)
+    for verb in ("cancel", "approve", "reject", "undo"):
+        r = _post(ch, rsa_key, _invoke(verb, approval_id=99)).json()
+        assert r["type"] == "application/vnd.microsoft.activity.message"
+        assert "can't open this request" in r["value"] and "email.send" not in json.dumps(r)
+    assert not ch._decisions.calls
+    ch._decisions.eligible = {"user:mallory"}
+    r = _post(ch, rsa_key, _invoke("cancel", approval_id=99)).json()
+    assert r["type"] == "application/vnd.microsoft.card.adaptive"
 
 
 def test_invoke_from_unlinked_account_is_refused(rsa_key):
