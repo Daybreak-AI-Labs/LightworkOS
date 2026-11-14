@@ -497,6 +497,19 @@ class TestCatalogSearch:
         assert self_learning.acquire_skill("signed-skill") == "# trusted steps"
         assert [row.name for row in self_learning.history()] == ["signed-skill"]
 
+    def test_long_multiline_need_still_records_the_installed_skill(
+        self, monkeypatch, tmp_path,
+    ):
+        # Preflight passes the whole redacted goal as ``need``.
+        from maverick import skills
+
+        monkeypatch.setattr(skills, "install_from_catalog", lambda name, **kw: SimpleNamespace(
+            name=name, path=tmp_path / f"{name}.md", body="# steps"))
+        self_learning.acquire_skill("signed-skill", need="first line\nsecond " + "x" * 400)
+        (row,) = self_learning.history()
+        assert row.name == "signed-skill"
+        assert row.need.startswith("first line second x") and len(row.need) <= 300
+
     def test_installed_skill_path_follows_active_tenant(self, monkeypatch, tmp_path):
         from maverick import skills
 
@@ -993,6 +1006,12 @@ class TestGeneratedTools:
     def test_bad_name_rejected(self):
         with pytest.raises(ValueError, match="lowercase id"):
             self_learning.write_generated_tool("Bad-Name", GOOD_TOOL_SRC)
+
+    def test_trailing_newline_in_name_rejected(self):
+        # ``$`` also matches before a final newline; the name becomes a file
+        # name and a tool name, so it must match in full.
+        with pytest.raises(ValueError, match="lowercase id"):
+            self_learning.write_generated_tool("good_name\n", GOOD_TOOL_SRC)
 
     def test_load_skips_broken_file(self):
         self_learning.GENERATED_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
