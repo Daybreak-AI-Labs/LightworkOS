@@ -324,9 +324,22 @@ def _require_cli_execution_allowed() -> None:
 
 
 def _require_known_cli_tenant(tenant: str | None) -> None:
-    from ..tenant.registry import get_tenant, list_tenants
+    from ..tenant.registry import (
+        _is_implicit_default,
+        _lookup_id,
+        ensure_default_tenant_registered,
+        get_tenant,
+        list_tenants,
+        tenant_retired,
+    )
 
-    if tenant and list_tenants() and get_tenant(tenant) is None:
+    if not tenant or not list_tenants() or get_tenant(tenant) is not None:
+        return
+    # The registry admits the deployment's own tenant (MAVERICK_TENANT or the
+    # client binding) and lists it on first use, so it is never "unknown" here.
+    if not tenant_retired(tenant) and _is_implicit_default(_lookup_id(tenant)):
+        ensure_default_tenant_registered(actor="cli")
+    if get_tenant(tenant) is None:
         click.echo(f"ERROR: no such tenant {tenant!r}. Check the tenant id.", err=True)
         raise SystemExit(2)
 
@@ -475,6 +488,7 @@ def main(ctx: click.Context, db: str | None, model: str | None) -> None:
     if ctx.invoked_subcommand not in {
         "tenant", "config-lint", "doctor", "gen-stubs", "init",
         "installation-maintenance", "launch-check", "preflight", "version",
+        "halt", "unhalt",
     }:
         from ..paths import current_tenant_id_strict
 

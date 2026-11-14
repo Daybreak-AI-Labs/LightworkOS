@@ -139,8 +139,10 @@ def test_safety_reports_the_resolved_backend(
 
 
 def test_unknown_active_tenant_refused_before_world_creation(monkeypatch, tmp_path):
-    from maverick.tenant.registry import create_tenant
+    from maverick.tenant.registry import create_tenant, delete_tenant
     create_tenant("acme")
+    create_tenant("acmee")
+    assert delete_tenant("acmee", purge=True)
     monkeypatch.setenv("MAVERICK_TENANT", "acmee")
     result = invoke("status")
     assert result.exit_code == 2, result.output
@@ -148,6 +150,23 @@ def test_unknown_active_tenant_refused_before_world_creation(monkeypatch, tmp_pa
     assert not (tmp_path / "home" / "tenants" / "acmee").exists()
     assert invoke("tenant", "list").exit_code == 0
     assert invoke("version").exit_code == 0
+    assert invoke("halt", "--help").exit_code == 0
+
+
+@pytest.mark.parametrize("binding", ["MAVERICK_CLIENT_ID", "MAVERICK_TENANT"])
+@pytest.mark.parametrize("args", [
+    ["status"], ["dashboard", "--help"], ["halt", "--help"], ["unhalt", "--help"],
+    ["serve", "--help"], ["worker", "--help"],
+])
+def test_bound_deployment_tenant_is_admitted_like_the_registry(monkeypatch, binding, args):
+    from maverick.tenant.registry import assert_tenant_active, create_tenant, get_tenant
+    create_tenant("acme")
+    monkeypatch.setenv(binding, "owner-browser")
+    result = invoke(*args)
+    assert result.exit_code == 0, result.output
+    assert "no such tenant" not in result.output
+    assert_tenant_active("owner-browser")
+    assert get_tenant("owner-browser") is not None
 
 
 @pytest.mark.parametrize("kind", ["goal", "corpus"])
