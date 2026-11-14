@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 from ..fastjson import dumps_compact
 from ..governed_http import guarded_sender as _governed_sender
-from . import Tool
+from . import Tool, safe_path_segment
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +136,15 @@ def _op_image_classify(model: str, url: str) -> str:
         return f"ERROR: only http/https supported; got scheme={parsed.scheme!r}"
     if not parsed.netloc:
         return "ERROR: missing host in URL"
+    # The image URL is model-chosen, so the network posture and the tenant and
+    # per-tool egress lists apply to it as they do to http_fetch.
+    try:
+        from ..tenant.egress import egress_allowed
+        allowed = egress_allowed("huggingface", parsed.hostname or "")
+    except Exception as e:
+        return f"ERROR: egress policy could not be evaluated ({type(e).__name__}); refusing to fetch."
+    if not allowed:
+        return f"ERROR: egress policy blocks huggingface from reaching {parsed.hostname!r}."
     # safe_get pins the validated IP, closing the DNS-rebinding TOCTOU window
     # that is_blocked_host()+httpx.get() leaves open (separate resolutions).
     from ._ssrf import BlockedHost, safe_get
@@ -170,6 +179,12 @@ def _run(args: dict[str, Any]) -> str:
     model = (args.get("model") or "").strip()
     if not model:
         return "ERROR: model is required"
+    # Model ids are "name" or "owner/name"; each part is one encoded segment
+    # so a value like "../../api/whoami-v2" cannot retarget the token.
+    segments = [safe_path_segment(part) for part in model.split("/")]
+    if len(segments) > 2 or any(seg is None for seg in segments):
+        return "ERROR: model must be a Hugging Face model id like 'owner/name'"
+    model = "/".join(segments)  # type: ignore[arg-type]
     parameters = args.get("parameters") or None
     try:
         if op == "infer":

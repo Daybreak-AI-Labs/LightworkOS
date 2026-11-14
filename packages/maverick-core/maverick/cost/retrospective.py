@@ -13,10 +13,14 @@ of this structured core, but the core is what's trustworthy.)
 """
 from __future__ import annotations
 
-# Episode outcomes the kernel writes that mean "the work did not succeed", so
-# their spend is effort with no delivered result.
-_FAILURE_OUTCOMES = frozenset({"failed", "error", "aborted", "cancelled",
-                               "killed", "timeout", "budget_exceeded"})
+# Episode outcomes that mean "the work did not succeed", so their spend is
+# effort with no delivered result. The orchestrator writes ``failure`` and
+# ``blocked``; the other spellings are kept for older and external rows.
+# ``interrupted`` is left out: it also marks review checkpoints and waits for
+# the user, after which the goal may still succeed.
+_FAILURE_OUTCOMES = frozenset({"failure", "blocked", "failed", "error",
+                               "aborted", "cancelled", "killed", "timeout",
+                               "budget_exceeded"})
 
 
 def _goal_rows(world, *, limit: int) -> list[dict]:

@@ -208,3 +208,18 @@ class TestWorldModelClose:
         import sqlite3
         with pytest.raises(sqlite3.ProgrammingError):
             wm.conn.execute("SELECT 1")
+
+
+def test_an_interrupted_write_is_rolled_back_not_left_for_the_next_write(tmp_path):
+    from maverick.world_model import WorldModel
+
+    wm = WorldModel(tmp_path / "w.db")
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            with wm._writing() as conn:
+                conn.execute("INSERT INTO episodes(goal_id, started_at) VALUES (NULL, 1.0)")
+                raise KeyboardInterrupt
+        assert not wm.conn.in_transaction
+        assert wm.conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 0
+    finally:
+        wm.close()

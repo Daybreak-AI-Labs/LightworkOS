@@ -11,8 +11,9 @@ Upgrades change what config means; this is the tool that walks an existing
   section silently no-ops and the operator thinks the knob is on.
 * **Rewrites** — mechanical key renames, applied only with ``--apply`` and
   only after a timestamped backup of the config file. The rewrite table is
-  empty today — no key has been renamed yet — but the machinery (backup,
-  atomic write, stamp) is what a 2.0 rename lands on.
+  empty today — no key has been renamed yet. The writer takes a backup and
+  then rewrites the file in place (not atomically, no stamp), and handles only
+  shallow tables; harden it before the first rename lands.
 
 Dry-run is the default; nothing is written without ``--apply``, and nothing
 is ever written without a backup.

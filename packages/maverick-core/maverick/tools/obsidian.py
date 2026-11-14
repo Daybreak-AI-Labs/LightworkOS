@@ -98,8 +98,10 @@ def _op_search(vault: Path, query: str, limit: int = 50) -> str:
     for p in sorted(root.rglob("*.md")):
         rel = str(p.relative_to(root)).replace("\\", "/")
         try:
-            in_body = q in p.read_text(encoding="utf-8").lower()
-        except OSError:
+            # read refuses a symlinked note; search must not read through one.
+            in_body = not p.is_symlink() and q in p.read_text(encoding="utf-8").lower()
+        except (OSError, UnicodeDecodeError):
+            # One unreadable or non-UTF-8 note must not fail the whole search.
             in_body = False
         if q in rel.lower() or in_body:
             hits.append(rel)
@@ -118,7 +120,7 @@ def _run(args: dict[str, Any]) -> str:
         return f"ERROR: {e}"
     try:
         if op == "list":
-            return _op_list(vault, int(args.get("limit") or 50))
+            return _op_list(vault, max(1, int(args.get("limit") or 50)))
         if op == "read":
             return _op_read(vault, args.get("note") or "")
         if op == "create":
@@ -126,7 +128,7 @@ def _run(args: dict[str, Any]) -> str:
         if op == "append":
             return _op_append(vault, args.get("note") or "", args.get("text") or "")
         if op == "search":
-            return _op_search(vault, args.get("query") or "", int(args.get("limit") or 50))
+            return _op_search(vault, args.get("query") or "", max(1, int(args.get("limit") or 50)))
     except (ValueError, OSError) as e:
         return f"ERROR: {e}"
     return f"ERROR: unknown op {op!r}"

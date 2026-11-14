@@ -27,7 +27,9 @@ private key is never written to the local key dir, so the chain's trust anchor
 can be custodied in a KMS / HSM / secrets manager and injected at deploy time
 instead of generated-and-left on the host. Lightwork consumes and removes this
 environment entry the first time audit signing loads, then caches only decoded
-key material in memory; inherited startup environments are not an HSM/KMS
+key material in memory. Removal only keeps it from child processes: the
+process's initial environment stays readable to the same user through
+``/proc/<pid>/environ``, so inherited startup environments are not an HSM/KMS
 security boundary. The active public key is a verifier trust root; the writable
 on-disk marker is not. When rotating external keys, pin retired public keys in
 ``MAVERICK_AUDIT_TRUSTED_PUBLIC_KEYS`` so old history remains verifiable.
@@ -111,6 +113,11 @@ _SIG_RE = re.compile(r"^[0-9a-f]{128}$")
 # day-file is detectable (per-file verify_chain only sees within one file).
 ANCHOR_FILENAME = "anchors.ndjson"
 ANCHOR_MARKER_FILENAME = ".anchors.required"
+# Signed high-water record of the anchor ledger (row count and tip hash, plus
+# the latest anchored day). Truncating ``anchors.ndjson`` together with the
+# day-files it described leaves a self-consistent shorter ledger; this record,
+# signed with the audit key, is what shows the ledger once had more rows.
+ANCHOR_HIGHWATER_FILENAME = ".anchors.highwater.json"
 _DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
@@ -175,9 +182,12 @@ def _decode_injected_key(raw: str) -> bytes | None:
             return b
     except ValueError:
         pass
-    for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+    padded = s + "=" * (-len(s) % 4)
+    # validate=True: a mistyped key with stray characters must be rejected,
+    # not silently decoded (characters dropped) into some other key.
+    for candidate in (padded, padded.replace("-", "+").replace("_", "/")):
         try:
-            b = decoder(s + "=" * (-len(s) % 4))
+            b = base64.b64decode(candidate, validate=True)
             if len(b) == 32:
                 return b
         except (binascii.Error, ValueError):
@@ -195,9 +205,10 @@ def _injected_keypair_unlocked() -> tuple[bytes, bytes, str] | None:
     """Return (priv, pub, key_id) for an env-injected signing key, or None.
 
     Consumes :data:`_SIGNING_KEY_ENV` once, removes it from ``os.environ`` as
-    early as possible, and caches only decoded key material. This keeps local
-    shell tools from recovering the secret from the parent process environment
-    via same-user ``/proc`` reads; inherited startup environments are not an
+    early as possible, and caches only decoded key material. Removal keeps the
+    key out of child processes' environments only: the kernel's copy of the
+    initial environment (``/proc/<pid>/environ``) still holds it and stays
+    readable to the same user, so inherited startup environments are not an
     HSM/KMS boundary. The caller writes just the public key (+ an ``.injected``
     marker) for inventory; verification trusts the active in-memory public key.
     A malformed or unavailable configured key fails closed.
@@ -787,6 +798,26 @@ def _validated_tail_hash(data: object, *, operation: str, path: Path) -> str:
     return row_hash
 
 
+_CHAIN_FIELDS = ("prev_hash", "key_id", "hash", "sig")
+
+
+def _chain_safe_payload(event: dict) -> dict:
+    """The row body exactly as a verifier will re-read it.
+
+    A JSON round trip first, so the hashed bytes match what ``verify_chain``
+    re-serialises (an integer dict key sorts differently from its string
+    form). Then a caller field that shares a chain field's name moves to
+    ``payload_<name>``: it would otherwise be overwritten (``key_id``,
+    ``prev_hash``) or hashed and then replaced, leaving a row that can never
+    verify (``hash``, ``sig``).
+    """
+    payload = json.loads(json.dumps(event, default=str))
+    for name in _CHAIN_FIELDS:
+        if name in payload:
+            payload[f"payload_{name}"] = payload.pop(name)
+    return payload
+
+
 class AuditSigner:
     """Sign + chain audit log lines.
 
@@ -916,17 +947,17 @@ class AuditSigner:
                         # append a cryptographically valid but structurally
                         # forked pair of rows.
                         actual_tail = self._locked_tail_hash(f)
+                        payload = _chain_safe_payload(event)
                         if (
                             idempotency_identity is not None
                             and _locked_event_identity_exists(
                                 f,
-                                event,
+                                payload,
                                 idempotency_identity,
                             )
                         ):
                             self._last_hash = actual_tail
                             return True
-                        payload = dict(event)
                         payload["prev_hash"] = actual_tail
                         payload["key_id"] = self._key_id
                         row_bytes = json.dumps(
@@ -1320,7 +1351,165 @@ def _append_anchor(audit_dir: Path, day: str, tip_hash: str, row_count: int) -> 
     )
     if ok:
         _mark_anchor_ledger_required(audit_dir)
+        _write_anchor_highwater(audit_dir)
     return ok
+
+
+# The marker text once a high-water record has been written. From then on a
+# missing record is a break; before it (an installation upgraded from a
+# version without the record) its absence is accepted until the next anchor.
+_HIGHWATER_MARKER_TEXT = (
+    "anchors.ndjson and .anchors.highwater.json are required for audit tamper-evidence\n"
+)
+
+
+def _ledger_rows(anchor_path: Path) -> list[dict]:
+    """The anchor ledger's non-empty rows, in order (unparseable rows as ``{}``)."""
+    rows: list[dict] = []
+    with open(anchor_path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                d = {}
+            rows.append(d if isinstance(d, dict) else {})
+    return rows
+
+
+def _highwater_digest(body: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _read_highwater(path: Path) -> dict | None:
+    """Parse the high-water record; ``None`` when it is malformed."""
+    try:
+        record = json.loads(atomic_read_text(path))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    body = record.get("body")
+    if not isinstance(body, dict) or body.get("kind") != "anchor_highwater":
+        return None
+    rows = body.get("ledger_rows")
+    if not isinstance(rows, int) or isinstance(rows, bool) or rows < 1:
+        return None
+    if not isinstance(body.get("ledger_tip"), str) or not isinstance(
+        body.get("latest_day"), str
+    ):
+        return None
+    if not isinstance(record.get("key_id"), str) or not isinstance(
+        record.get("signature"), str
+    ):
+        return None
+    return record
+
+
+def _ledger_extends_highwater(rows: list[dict], record: dict | None) -> bool:
+    """Whether the ledger still holds the row the high-water record names."""
+    if record is None:
+        return False
+    expected = record["body"]["ledger_rows"]
+    return (
+        len(rows) >= expected
+        and str(rows[expected - 1].get("hash") or "") == record["body"]["ledger_tip"]
+    )
+
+
+def _write_anchor_highwater(audit_dir: Path) -> None:
+    """Sign and publish the ledger's current row count, tip and latest day.
+
+    Best effort: the anchor row is already durable, and the next anchor
+    rewrites the record. The record never moves backwards, so a ledger that
+    was cut short keeps failing verification after later anchors.
+    """
+    anchor_path = audit_dir / ANCHOR_FILENAME
+    hw_path = audit_dir / ANCHOR_HIGHWATER_FILENAME
+    try:
+        with cross_process_lock(hw_path):
+            rows = _ledger_rows(anchor_path)
+            if not rows:
+                return
+            if not _HASH_RE.fullmatch(str(rows[-1].get("hash") or "")):
+                # This lock does not exclude a concurrent ledger append, so the
+                # last line may be half-written. Recording it would pin an empty
+                # tip that later reads can never match; the next anchor retries.
+                return
+            if hw_path.exists() and not _ledger_extends_highwater(
+                rows, _read_highwater(hw_path)
+            ):
+                log.warning(
+                    "audit anchors: %s does not extend its signed high-water "
+                    "record; leaving the record in place",
+                    ANCHOR_FILENAME,
+                )
+                return
+            days = [str(r["day"]) for r in rows if r.get("kind") == "anchor" and r.get("day")]
+            body = {
+                "kind": "anchor_highwater",
+                "ledger_rows": len(rows),
+                "ledger_tip": str(rows[-1].get("hash") or ""),
+                "latest_day": max(days, default=""),
+            }
+            signed = sign_detached_digest(_highwater_digest(body))
+            record = {"body": body, "key_id": signed["key_id"], "signature": signed["signature"]}
+            atomic_write_text(hw_path, json.dumps(record, sort_keys=True) + "\n", mode=0o600)
+            atomic_write_text(_anchor_marker_path(audit_dir), _HIGHWATER_MARKER_TEXT, mode=0o600)
+    # failure-policy: best_effort
+    except Exception as e:  # noqa: BLE001 - the anchor row itself is already durable
+        log.warning("audit anchors: failed to write the high-water record: %s", e)
+
+
+def _highwater_required(audit_dir: Path) -> bool:
+    try:
+        return atomic_read_text(_anchor_marker_path(audit_dir)) == _HIGHWATER_MARKER_TEXT
+    except OSError:
+        return False
+
+
+def _verify_anchor_highwater(
+    audit_dir: Path, rows: list[dict], pubkey_hex: str | None
+) -> list[ChainBreak]:
+    """Compare the ledger with its signed high-water record.
+
+    Detects a ledger cut back to fewer rows (or rewritten below the recorded
+    tip), which the per-day checks cannot see because they only cover days
+    that still have an anchor row. An attacker holding the signing key can
+    sign a new record; one without it cannot. Deleting the record together
+    with ``.anchors.required`` is not detectable from local state alone.
+    """
+    hw_path = audit_dir / ANCHOR_HIGHWATER_FILENAME
+    if not hw_path.exists():
+        if _highwater_required(audit_dir):
+            return [ChainBreak(
+                0, "anchor_highwater_missing",
+                f"{ANCHOR_HIGHWATER_FILENAME} is missing but was previously written")]
+        return []
+    record = _read_highwater(hw_path)
+    if record is None:
+        return [ChainBreak(
+            0, "anchor_highwater_invalid", f"{ANCHOR_HIGHWATER_FILENAME} is malformed")]
+    body = record["body"]
+    public = pubkey_hex
+    if public is None:
+        public = trusted_audit_public_keys().get(record["key_id"])
+    if not public or not verify_detached_digest(
+        public, _highwater_digest(body), record["signature"]
+    ):
+        return [ChainBreak(
+            0, "anchor_highwater_invalid",
+            f"{ANCHOR_HIGHWATER_FILENAME} signature does not verify")]
+    if not _ledger_extends_highwater(rows, record):
+        return [ChainBreak(
+            0, "anchor_ledger_truncated",
+            f"{ANCHOR_FILENAME} has {len(rows)} rows and does not contain the "
+            f"{body['ledger_rows']}-row ledger the signed high-water record covers "
+            f"(latest anchored day {body['latest_day'] or 'none'})")]
+    return []
 
 
 def _today_utc() -> str:
@@ -1369,6 +1558,7 @@ def record_retention_purge(audit_dir: Path, purged: list[dict]) -> bool:
     }))
     if ok:
         _mark_anchor_ledger_required(audit_dir)
+        _write_anchor_highwater(audit_dir)
     return ok
 
 
@@ -1444,7 +1634,15 @@ def ensure_anchors(audit_dir: Path) -> int:
         day = day_file.stem
         if day >= today or day in anchored:
             continue
-        tip, count = _file_tip_and_count(day_file)
+        try:
+            tip, count = _file_tip_and_count(day_file)
+        # failure-policy: fail_soft_with_audit
+        except Exception as e:
+            # One unreadable day must not leave every later day un-anchored
+            # (and so deletable without detection). verify_chain reports the
+            # unreadable file itself.
+            log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
+            continue
         if count and _append_anchor(audit_dir, day, tip, count):
             written += 1
     return written
@@ -1487,6 +1685,7 @@ def verify_anchors(audit_dir: Path, pubkey_hex: str | None = None) -> list[Chain
             ]
         return []
     breaks = list(verify_chain(anchor_path, pubkey_hex))
+    breaks.extend(_verify_anchor_highwater(audit_dir, _ledger_rows(anchor_path), pubkey_hex))
     # A purge row only excuses a deletion when the ledger's own signed chain is
     # intact. Otherwise an attacker who can append unsigned lines could write
     # their own permission slip for the day-file they just deleted.
@@ -1557,9 +1756,9 @@ def reanchor_file(path: Path, *, force: bool = False, preverified: bool = False)
     ``prev_hash``/``hash``/``sig`` chain, so ``verify_chain()`` then reports
     breaks that are indistinguishable from tampering. This rewrites the file,
     recomputing each row's chain fields under the current key so the chain
-    verifies clean again, preserving row content and order. The caller writes
-    a signed ``erase`` marker first so a verifier holding the trusted pubkey
-    can see the cut was authorized.
+    verifies clean again, preserving row content and order. The caller also
+    records a signed ``erase`` marker (the CLI writes it after the scrub) so a
+    verifier holding the trusted pubkey can see the cut was authorized.
 
     By default, re-anchoring first verifies the existing file and refuses to
     rewrite a broken chain. Callers that just performed an authorized erase

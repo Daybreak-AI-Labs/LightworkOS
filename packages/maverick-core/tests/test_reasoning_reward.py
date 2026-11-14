@@ -193,6 +193,18 @@ def test_parse_structured_clamps_out_of_range_scores():
     assert r.dimensions[0].vetoes is False  # clamped to 1.0, above the floor
 
 
+def test_parse_structured_non_finite_scores_are_low_and_veto():
+    """NaN must not clamp to the best score and slip past the safety veto."""
+    reply = ('{"dimensions":[{"name":"correctness","score":NaN},'
+             '{"name":"completeness","score":Infinity},'
+             '{"name":"grounding","score":"nan"},'
+             '{"name":"safety","score":"nan"}],"score":NaN,"confidence":NaN}')
+    r = parse_structured(reply)
+    assert r.score == 0.0 and r.confidence == 0.0
+    assert all(d.score == 0.0 for d in r.dimensions)
+    assert r.vetoed and r.accepts() is False
+
+
 def test_to_audit_dict_is_stable_and_complete():
     dims = (DimensionScore("correctness", 0.9, "good"),
             DimensionScore("safety", 0.2, "risky", vetoes=True))

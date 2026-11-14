@@ -58,6 +58,39 @@ def _load_raws(from_file: str | None, source: str) -> list[dict]:
     return get_importer(source).fetch()
 
 
+def _active_cron_jobs(queue) -> dict[tuple[str, str], tuple[int, str]]:
+    """``(title, cron) -> (job id, goal text)`` for pending or running cron goal jobs."""
+    active: dict[tuple[str, str], tuple[int, str]] = {}
+    for job in queue.iter_pending("start_goal", include_running=True):
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        cron = payload.get("__cron__")
+        if cron:
+            active.setdefault((str(payload.get("title") or ""), str(cron)),
+                              (job.id, str(payload.get("text") or "")))
+    return active
+
+
+def _reuse_or_replace(queue, active, automation) -> tuple[int | None, str | None]:
+    """Decide what to do with an already-scheduled copy of ``automation``.
+
+    Returns ``(job id to keep, note)``. Each activation mints a new schedule,
+    so a matching job is kept rather than duplicated. Import jobs carry no
+    marker that tells them apart from a dashboard or ``schedule`` job with
+    the same title and cron, so a job whose text differs is never cancelled
+    here: it is left, and the note says so.
+    """
+    title, body = automation.render()
+    found = active.get((title[:200], automation.trigger.cron or ""))
+    if found is None:
+        return None, None
+    job_id, text = found
+    if text == body:
+        return job_id, f"schedule already active (job {job_id}); not duplicated"
+    return job_id, (f"schedule job {job_id} has the same title and cron but different "
+                    "text; it was left unchanged and no new schedule was created -- "
+                    "cancel that job and re-run the import to replace it")
+
+
 @import_group.command("run")
 @click.argument("source")
 @click.option("--from-file", "from_file", default=None,
@@ -86,13 +119,25 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
         raise click.ClickException(f"no importable automations found from {source!r}")
 
     queue = None
+    active: dict[tuple[str, str], int] = {}
     if activate_schedules and not dry_run:
         from ..job_queue import JobQueue
         queue = JobQueue()  # default queue DB path
+        active = _active_cron_jobs(queue)
 
     results = []
     for a in automations:
-        res = materialize(a, save=not dry_run, queue=queue)
+        # Each activation mints a new schedule, so a repeated import would
+        # enqueue a second copy of every recurring job.
+        existing, note = (_reuse_or_replace(queue, active, a) if queue is not None
+                          else (None, None))
+        res = materialize(a, save=not dry_run,
+                          queue=None if existing is not None else queue)
+        if existing is not None:
+            res.suggested_trigger = None
+            res.notes = [n for n in res.notes if not n.startswith("schedule recovered;")]
+        if note:
+            res.notes.append(note)
         results.append({
             "source": a.source, "name": a.name, "template": res.template_name,
             "created": res.created_template, "trigger": a.trigger.kind,

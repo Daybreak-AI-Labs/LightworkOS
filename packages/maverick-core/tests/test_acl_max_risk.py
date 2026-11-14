@@ -286,3 +286,23 @@ plugin_evil = "high"
     assert "read_file" in names
     assert "shell" not in names
     assert "plugin_evil" not in names
+
+
+def test_unapplicable_acl_stops_registry_construction(tmp_path, monkeypatch):
+    """A [security] value the ACL cannot apply must not leave an unfiltered
+    registry (shell included) behind a logged warning."""
+    import pytest
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_config(tmp_path, '''
+[security]
+allowed_tools = ["read_file"]
+denied_tools = 5
+max_risk = "low"
+''')
+    from maverick.tools import ToolAclConfigError, base_registry
+    with pytest.raises(ToolAclConfigError, match=r"\[security\] denied_tools must be a list"):
+        base_registry(world=_FakeWorld(), sandbox=_FakeSandbox())
+    _write_config(tmp_path, '[security]\nchannels = "x"\n')
+    with pytest.raises(ToolAclConfigError, match=r"\[security.channels\] must be a table"):
+        base_registry(world=_FakeWorld(), sandbox=_FakeSandbox(), channel="slack")

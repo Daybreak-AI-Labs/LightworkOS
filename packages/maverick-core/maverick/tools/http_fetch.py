@@ -8,11 +8,11 @@ Respects:
   - http(s) only (refuses file://, ftp://, etc.)
   - robots.txt when ``MAVERICK_FETCH_RESPECT_ROBOTS=1``
   - private IP ranges blocked unless ``MAVERICK_FETCH_ALLOW_PRIVATE=1``
-  - a person's approval for every request that can carry data or change
-    something at the destination: any method other than GET/HEAD, and any
+  - a person's approval for any method other than GET/HEAD and for any
     request with a body. Like ``shell``, the decision is fresh, exact and
     one-use; silent auto-approval and standing grants never authorize it, and
-    a run nobody can answer for is refused.
+    a run nobody can answer for is refused. A GET or HEAD is not reviewed,
+    although its URL query string and headers are model-chosen.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import socket
+import time
 import urllib.request
 from typing import Any
 from urllib.parse import unquote_plus, urljoin, urlparse, urlsplit, urlunsplit
@@ -80,7 +81,38 @@ _FETCH_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-_HTML_BLOCK_TAGS = re.compile(r"<(p|br|div|li|tr|h[1-6])[^>]*>", re.IGNORECASE)
+# Fetched HTML is attacker-controlled, so every pattern below runs in linear
+# time: tag bodies exclude ``<`` as well as ``>`` (so an unclosed ``<p<p<p``
+# cannot make each start rescan to the end), and paired tags go through
+# ``_sub_paired`` instead of a lazy ``<x>(.+?)</x>`` regex, which rescans the
+# rest of the document for every opening tag that has no close.
+_HTML_BLOCK_TAGS = re.compile(r"<(p|br|div|li|tr|h[1-6])[^<>]*>", re.IGNORECASE)
+_HREF = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
+
+
+def _sub_paired(text: str, open_pat: str, close_pat: str, render) -> str:
+    """Replace each ``open ... close`` pair, nearest close first, in one pass.
+
+    Matches what ``re.sub(open + "(.*?)" + close, ...)`` does, but searches
+    for a close tag at most once per pair and stops at the first opening tag
+    with no close after it (no later opening tag can have one either).
+    """
+    open_re = re.compile(open_pat, re.IGNORECASE)
+    close_re = re.compile(close_pat, re.IGNORECASE)
+    out: list[str] = []
+    pos = 0
+    while True:
+        opened = open_re.search(text, pos)
+        if opened is None:
+            break
+        closed = close_re.search(text, opened.end())
+        if closed is None:
+            break
+        out.append(text[pos:opened.start()])
+        out.append(render(opened, text[opened.end():closed.start()]))
+        pos = closed.end()
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def _strip_html_to_text(html: str) -> str:
@@ -89,12 +121,12 @@ def _strip_html_to_text(html: str) -> str:
     Not a full readability extractor -- just a cleanup: drop scripts/
     styles, render block tags as newlines, strip remaining tags.
     """
-    html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r"<!--.*?-->", " ", html, flags=re.DOTALL)
+    html = _sub_paired(html, r"<script[^<>]*>", r"</script>", lambda _m, _body: " ")
+    html = _sub_paired(html, r"<style[^<>]*>", r"</style>", lambda _m, _body: " ")
+    html = _sub_paired(html, r"<!--", r"-->", lambda _m, _body: " ")
     html = _HTML_BLOCK_TAGS.sub("\n", html)
     html = re.sub(r"</(p|div|li|tr|h[1-6])>", "\n", html, flags=re.IGNORECASE)
-    html = re.sub(r"<[^>]+>", " ", html)
+    html = re.sub(r"<[^<>]+>", " ", html)
     # Collapse whitespace.
     html = re.sub(r"[ \t]+", " ", html)
     html = re.sub(r"\n{3,}", "\n\n", html)
@@ -110,27 +142,26 @@ def _strip_html_to_text(html: str) -> str:
     return html.strip()
 
 
+def _render_link(opened: re.Match, body: str) -> str:
+    href = _HREF.search(opened.group(0))
+    if href is None:
+        return f"{opened.group(0)}{body}</a>"
+    return f"[{_strip_html_to_text(body)}]({href.group(1)})"
+
+
 def _to_markdown(html: str) -> str:
     """Cheap HTML -> markdown: preserve links + headings + lists."""
     out = html
-    out = re.sub(r"<h1[^>]*>(.+?)</h1>", r"# \1\n", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<h2[^>]*>(.+?)</h2>", r"## \1\n", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<h3[^>]*>(.+?)</h3>", r"### \1\n", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<h([4-6])[^>]*>(.+?)</h\1>", r"#### \2\n", out, flags=re.DOTALL | re.IGNORECASE)
+    for level, prefix in ((1, "#"), (2, "##"), (3, "###"), (4, "####"), (5, "####"), (6, "####")):
+        out = _sub_paired(out, rf"<h{level}[^<>]*>", rf"</h{level}>",
+                          lambda _m, body, prefix=prefix: f"{prefix} {body}\n")
     # Accept both single- and double-quoted href values; some HTML in
     # the wild uses ' instead of ".
-    out = re.sub(
-        r"""<a[^>]+href=["']([^"']+)["'][^>]*>(.+?)</a>""",
-        lambda m: f"[{_strip_html_to_text(m.group(2))}]({m.group(1)})",
-        out,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    out = re.sub(r"<li[^>]*>(.+?)</li>", r"- \1", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<strong[^>]*>(.+?)</strong>", r"**\1**", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<b[^>]*>(.+?)</b>", r"**\1**", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<em[^>]*>(.+?)</em>", r"_\1_", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<i[^>]*>(.+?)</i>", r"_\1_", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<code[^>]*>(.+?)</code>", r"`\1`", out, flags=re.DOTALL | re.IGNORECASE)
+    out = _sub_paired(out, r"<a\s[^<>]*>", r"</a>", _render_link)
+    for tag, mark in (("li", "- "), ("strong", "**"), ("b", "**"), ("em", "_"), ("i", "_"), ("code", "`")):
+        tail = "" if tag == "li" else mark
+        out = _sub_paired(out, rf"<{tag}[^<>]*>", rf"</{tag}>",
+                          lambda _m, body, mark=mark, tail=tail: f"{mark}{body}{tail}")
     return _strip_html_to_text(out)
 
 
@@ -457,8 +488,10 @@ def _preflight_fetch(url: str, parsed: Any) -> str | None:
         if not egress_allowed("http_fetch", parsed.hostname or ""):
             return (f"ERROR: egress policy blocks http_fetch from reaching "
                     f"{parsed.hostname!r} (see [egress] / [sandbox.tool.http_fetch]).")
-    except Exception:  # pragma: no cover -- policy never breaks a fetch
-        pass
+    except Exception as e:
+        # A policy that cannot be evaluated (malformed [sandbox] or [egress]
+        # config) must not turn an allowlist or deny-all posture into allow-all.
+        return f"ERROR: egress policy could not be evaluated ({type(e).__name__}); refusing to fetch."
 
     if not allow_private():
         if _is_private_ip(parsed.hostname or ""):
@@ -497,6 +530,12 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
     import httpx
 
     from ._ssrf import BlockedHost, safe_client
+    # httpx's timeout bounds each read, not the whole body: a server that
+    # trickles a byte just inside it could hold the call for hours. The body
+    # read stops once the overall budget is spent, and what was read is
+    # returned marked as cut by the deadline (an approved POST's response
+    # must not be lost, which would invite a re-send).
+    deadline = time.monotonic() + _FETCH_TIMEOUT_SECONDS
     try:
         with safe_client(url, timeout=_FETCH_TIMEOUT_SECONDS) as client:
             with client.stream(method, url, headers=headers, content=body) as resp:
@@ -505,8 +544,11 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
                 resp_url = resp.url
                 encoding = resp.encoding
                 content_type = (resp.headers.get("content-type") or "").lower()
+                # Redirects are not followed; report where they point so the
+                # caller can decide whether to fetch that URL.
+                location = resp.headers.get("location") if 300 <= status_code < 400 else None
                 buf = bytearray()
-                truncated = False
+                truncated: bool | str = False
                 # Keep one extra byte to distinguish exact-limit completion
                 # from genuinely omitted content, including chunk boundaries.
                 for chunk in resp.iter_bytes(chunk_size=min(8192, max_bytes + 1)):
@@ -514,12 +556,15 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
                     if len(buf) > max_bytes:
                         truncated = True
                         break
+                    if time.monotonic() > deadline:
+                        truncated = "deadline"
+                        break
     except BlockedHost as e:
         return f"ERROR: refusing to fetch {url!r}: {e}"
     except httpx.HTTPError as e:
         return f"ERROR: {type(e).__name__}: {e}"
     return (status_code, reason_phrase, resp_url, encoding, content_type,
-            bytes(buf[:max_bytes]), truncated)
+            bytes(buf[:max_bytes]), truncated, location)
 
 
 # A plain read: no body and a method that only asks for a resource. Anything
@@ -1405,7 +1450,7 @@ def _run_fetch(args: dict[str, Any]) -> str:
     if isinstance(streamed, str):
         return streamed
     (status_code, reason_phrase, resp_url, encoding, content_type,
-     raw_bytes, truncated) = streamed
+     raw_bytes, truncated, location) = streamed
     # Per-host egress accounting (always-on, in-memory; never breaks a fetch).
     try:
         from ..egress_accounting import record as _egress_record
@@ -1431,13 +1476,25 @@ def _run_fetch(args: dict[str, Any]) -> str:
         rendered = _to_markdown(text)
 
     size_note = f"{len(raw_bytes)}{'+' if truncated else ''} bytes"
+    if truncated == "deadline":
+        size_note += f"; body cut off: not finished within {_FETCH_TIMEOUT_SECONDS:.0f}s"
+    # The reason phrase and content type are server-chosen text outside the
+    # injection scan below, so they are cut to a short printable prefix.
     header = (
-        f"HTTP {status_code} {reason_phrase} "
-        f"({content_type or 'unknown'}; {size_note})\n"
+        f"HTTP {status_code} {_printable(reason_phrase, 64)} "
+        f"({_printable(content_type, 128) or 'unknown'}; {size_note})\n"
         f"URL: {resp_url}\n"
     )
+    if location:
+        # Server-chosen too, so it travels with the scanned content.
+        rendered = f"Redirect location (not followed): {location[:2048]}\n\n{rendered}"
     rendered, warning = _scan_fetched(rendered)
     return header + warning + "\n" + rendered
+
+
+def _printable(value: Any, limit: int) -> str:
+    text = "".join(ch for ch in str(value or "") if ch.isprintable())
+    return text[:limit]
 
 
 def _scan_fetched(rendered: str) -> tuple[str, str]:

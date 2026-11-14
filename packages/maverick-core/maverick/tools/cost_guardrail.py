@@ -13,6 +13,7 @@ Returns the decision plus the remaining headroom (limit - projected).
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from . import Tool
@@ -49,6 +50,9 @@ def _run(args: dict[str, Any]) -> str:
         limit = float(args.get("limit", 50.0))
     except (TypeError, ValueError):
         return "ERROR: limit must be a number"
+    # NaN compares false with everything, so it would read as under budget.
+    if not (math.isfinite(projected) and math.isfinite(limit)):
+        return "ERROR: projected_dollars and limit must be finite numbers"
     if limit <= 0:
         return "ERROR: limit must be > 0"
     if projected < 0:

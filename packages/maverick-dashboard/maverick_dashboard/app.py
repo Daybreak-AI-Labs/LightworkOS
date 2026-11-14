@@ -9663,10 +9663,12 @@ def _permissions_snapshot() -> dict:
     ]
     sec = cfg.get("security") or {}
     # The enforced network posture ([security] network_policy), normalized, so
-    # the page never shows a label the kernel does not apply.
-    from maverick.sandbox.network_policy import network_posture
+    # the page never shows a label the kernel does not apply. Read as the
+    # kernel reads it: an unreadable configuration blocks the network.
+    from maverick.sandbox.network_policy import network_posture, offline_reason
 
-    snap["network"] = network_posture(cfg)
+    snap["network"] = network_posture()
+    snap["network_reason"] = offline_reason()
 
     try:
         from maverick.runtime_overrides import denied_tools as _overlay
@@ -9685,7 +9687,12 @@ def _permissions_snapshot() -> dict:
     sandbox_status = "unknown"
     base_policy_allowed: set[str] = set()
     try:
-        from maverick.safety.tool_acl import apply_to_registry, filter_tools, resolve_max_risk
+        from maverick.safety.tool_acl import (
+            apply_to_registry,
+            filter_tools,
+            layer_policy,
+            resolve_max_risk,
+        )
         from maverick.safety.tool_risk import tools_exceeding
         from maverick.sandbox import build_sandbox
         from maverick.tools import base_registry
@@ -9699,8 +9706,7 @@ def _permissions_snapshot() -> dict:
             _skip_tool_acl=True,
         )
         catalog = {t.name for t in reg.all()}
-        allowed = set(sec.get("allowed_tools") or [])
-        denied = set(sec.get("denied_tools") or [])
+        allowed, denied, _layer_risk = layer_policy(sec)
         max_risk = resolve_max_risk()
         if max_risk:
             denied |= tools_exceeding(catalog, max_risk)

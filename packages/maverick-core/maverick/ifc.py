@@ -129,9 +129,12 @@ _CONTENT_KEYS = frozenset({
 })
 _KNOWN_SCHEMA_SINKS = frozenset({
     "email", "gmail", "ses", "sns", "twilio", "slack_bot", "discord_bot", "teams",
-    "notify", "calendar", "github_issues", "web_search", "web_archive", "browser",
-    "computer", "git_advanced",
+    "notify", "calendar", "github_issues", "web_search", "web_archive", "git_advanced",
 })
+# Sinks that drive a UI: what they type (``text``) can itself be the URL or the
+# recipient, and nothing about the call can be shown as "where it goes". Their
+# calls are asked every time and never remembered as a grant.
+_UI_DRIVING_SINKS = frozenset({"browser", "computer"})
 # Argument names shown to the approver as "where it goes".
 _DEST_KEYS = frozenset({
     "to", "cc", "bcc", "recipient", "recipients", "email", "address", "phone", "number",
@@ -155,7 +158,10 @@ def destination(args: object, tool: str = "") -> str:
     any other sink, the whole request. Fail-safe by construction: an argument
     this module has never heard of is part of the destination, so a grant never
     silently covers a new recipient. ``""`` means the call has no destination
-    argument at all, and such a call is never covered by a grant."""
+    argument at all (or drives a UI, see ``_UI_DRIVING_SINKS``), and such a
+    call is never covered by a grant."""
+    if tool in _UI_DRIVING_SINKS:
+        return ""
     if not isinstance(args, dict):
         return _canonical(args) if args not in (None, "") else ""
     if tool in _KNOWN_SCHEMA_SINKS:

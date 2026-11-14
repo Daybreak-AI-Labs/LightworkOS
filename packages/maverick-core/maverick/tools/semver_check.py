@@ -86,14 +86,19 @@ def _expand(token: str) -> list[tuple[str, tuple]] | str:
             if base is None:
                 return f"ERROR: bad version in {token!r}"
             major, minor, patch, _ = base
-            lower = (major, minor, patch, ())
+            lower = base  # a prerelease lower bound keeps its prerelease
+            # Components actually written: ^0 / ^0.0 / ~1 bound on the last
+            # one given (node-semver), not on a zero filled in by _parse.
+            given = token[1:].strip().split("+")[0].split("-")[0].count(".") + 1
             if prefix == "^":
-                if major > 0:
+                if major > 0 or given == 1:
                     upper = (major + 1, 0, 0, ())
-                elif minor > 0:
+                elif minor > 0 or given == 2:
                     upper = (0, minor + 1, 0, ())
                 else:
                     upper = (0, 0, patch + 1, ())
+            elif given == 1:  # ~1 := >=1.0.0 <2.0.0
+                upper = (major + 1, 0, 0, ())
             else:  # tilde: allow patch-level changes
                 upper = (major, minor + 1, 0, ())
             return [(">=", lower), ("<", upper)]
@@ -129,7 +134,9 @@ def _check(version_str: str, constraint: str) -> str:
     if version is None:
         return f"ERROR: version is not valid semver: {version_str!r}"
 
-    tokens = [t for t in re.split(r"[,\s]+", constraint.strip()) if t]
+    # ">= 1.2.0" is one comparator: attach an operator to the version after it.
+    joined = re.sub(r"(>=|<=|!=|==|>|<|=|\^|~)\s+", r"\1", constraint.strip())
+    tokens = [t for t in re.split(r"[,\s]+", joined) if t]
     comparators: list[tuple[str, tuple]] = []
     for tok in tokens:
         expanded = _expand(tok)

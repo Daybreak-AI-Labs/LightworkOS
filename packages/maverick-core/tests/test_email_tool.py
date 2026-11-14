@@ -259,3 +259,16 @@ def test_email_send_via_smtp_ssl(monkeypatch):
     assert "sent to you@example.com" in out
     fake_smtp.login.assert_called_once_with("me@example.com", "pw")
     fake_smtp.send_message.assert_called_once()
+
+
+def test_list_inbox_quotes_folder_sets_timeout_and_reads_unread_strictly(monkeypatch):
+    _creds(monkeypatch)
+    conn = _fake_imap(monkeypatch, [("OK", [b""])])
+    from maverick.tools.email_tool import _list_inbox
+    _list_inbox({"folder": "Sent Items", "unread_only": "false"})
+    conn.select.assert_called_once_with('"Sent Items"')
+    assert imaplib.IMAP4_SSL.call_args.kwargs["timeout"] == 30
+    assert conn.uid.call_args_list[0].args == ("search", None, "ALL")
+    conn.select.reset_mock()
+    _list_inbox({"folder": '"a" "b"'})
+    conn.select.assert_called_once_with('"a\\" \\"b"')

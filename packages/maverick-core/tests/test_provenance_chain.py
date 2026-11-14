@@ -71,3 +71,11 @@ def test_errors():
     assert t.fn({"op": "verify"}).startswith("ERROR")  # no links
     assert t.fn({"op": "verify", "links": []}).startswith("ERROR")  # empty
     assert t.fn({"op": "nope", "links": []}).startswith("ERROR")
+
+
+def test_separator_in_fields_is_refused_so_preimages_are_unambiguous():
+    # ("alice|approve", "x") and ("alice", "approve|x") hashed identically.
+    out = _run(links=_build([("alice|approve", "x")]))
+    assert out.startswith("BROKEN") and "'|'" in out
+    head = _h("alice", "init", _GENESIS)
+    assert _run(links=_build([("alice", "init")])).endswith(f"head {head}")

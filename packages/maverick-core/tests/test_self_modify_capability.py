@@ -194,3 +194,41 @@ class TestDynamicCodePrecision:
         for added in (django, pytest_):
             w, new = widens(_patch(added))
             assert w is False, f"{added!r} wrongly widens -> {new}"
+
+
+def test_common_spawn_apis_and_cross_file_baselines_are_caught():
+    for line in ("await asyncio.create_subprocess_shell('id')",
+                 "os.posix_spawn('/bin/sh', ['sh'], {})",
+                 "builtins.__dict__['ex' + 'ec'](code)"):
+        assert widens(_patch(line))[0] is True, line
+    # A class used only in ANOTHER baseline file does not mask its first use here.
+    w, new = widens(_patch("import subprocess"), baseline_files={"other.py": "import subprocess\n"})
+    assert w is True and new == ["process"]
+
+
+def test_added_line_that_looks_like_a_header_does_not_switch_files():
+    base = {"pkg/a.py": "x = 1\n", "pkg/b.py": "import subprocess\n"}
+    patch = ("diff --git a/pkg/a.py b/pkg/a.py\n--- a/pkg/a.py\n+++ b/pkg/a.py\n"
+             "@@ -1 +1,4 @@\n x = 1\n"
+             '+_doc = """\n'
+             "+++ b/pkg/b.py\n"
+             '+"""; import subprocess\n')
+    w, new = widens(patch, baseline_files=base)
+    assert w is True and new == ["process"]
+
+
+def test_screen_reads_added_lines_as_git_does():
+    from maverick.self_modify import capability_diff
+
+    def one_file(*added: str) -> str:
+        body = "".join(f"+{line}\n" for line in added)
+        return (f"diff --git a/pkg/a.py b/pkg/a.py\n--- a/pkg/a.py\n+++ b/pkg/a.py\n"
+                f"@@ -1 +1,{len(added) + 1} @@\n x = 1\n{body}")
+
+    # An added line beginning '++' is content inside a hunk, not a header.
+    assert capability_diff(one_file('++x; import subprocess; subprocess.run(["id"])'))[0] is True
+    # git splits only on newline, so \x1c does not end the line or the hunk.
+    assert capability_diff(one_file('_d = """\x1c"""; import subprocess'))[0] is True
+    masked = one_file('_d = """\x1cz', "++ b/pkg/b.py", '"""; import subprocess')
+    assert widens(masked, baseline_files={"pkg/a.py": "x = 1\n",
+                                          "pkg/b.py": "import subprocess\n"}) == (True, ["process"])

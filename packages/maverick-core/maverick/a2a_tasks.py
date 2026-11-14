@@ -352,11 +352,15 @@ def _a2a_capability() -> Any:
         # access even though the generic risk ceiling remains "medium".
         raise RuntimeError("A2A capability policy unavailable") from e
 
-    raw = os.environ.get("MAVERICK_A2A_MAX_RISK")
-    if raw is None:
+    # Blank counts as unset, as for every other A2A setting: a compose or unit
+    # file that passes the variable through empty must not lift the ceiling.
+    raw = os.environ.get("MAVERICK_A2A_MAX_RISK", "").strip()
+    if not raw:
         raw = cfg.get("max_risk", "medium")
     raw = str(raw).strip().lower()
-    if raw in ("none", "off", "any", "unlimited", ""):
+    if not raw:
+        raw = "medium"
+    if raw in ("none", "off", "any", "unlimited"):
         max_risk: str | None = None
     elif raw in RISK_LEVELS:
         max_risk = raw
@@ -1048,8 +1052,10 @@ class TaskEngine:
         Two accepted credentials: the shared operator bearer
         (``MAVERICK_A2A_TOKEN``) and a per-caller ``[agent_trust] a2a_token``
         (which also establishes per-caller identity, see ``principal_for``).
-        Bearer required unless ``MAVERICK_A2A_ALLOW_UNAUTHENTICATED`` and no
-        token of either kind is configured."""
+        Bearer required unless ``MAVERICK_A2A_ALLOW_UNAUTHENTICATED`` is on, no
+        shared token is configured and the request presents no bearer
+        (configured per-caller tokens do not by themselves refuse an anonymous
+        request)."""
         env_token = str(_a2a_value("MAVERICK_A2A_TOKEN", "token", "") or "").strip()
         given = ""
         if authorization and authorization.startswith("Bearer "):
@@ -1119,7 +1125,8 @@ class TaskEngine:
 
     @staticmethod
     def _tenant_key() -> str:
-        """Resolve the request tenant, failing closed if policy is unreadable."""
+        """Resolve the request tenant (``""`` when none is bound); an error
+        while resolving it refuses the request."""
         try:
             from .paths import current_tenant_id
 
@@ -1900,6 +1907,9 @@ class TaskEngine:
                 raise BlockedHost("URL credentials are not allowed")
             # Accessing .port validates malformed/out-of-range ports.
             _validated_port = parsed.port
+            # Public addresses only, unless the operator opted in to private
+            # networks for fetches (MAVERICK_FETCH_ALLOW_PRIVATE, or a scoped
+            # loopback allowance) -- on-prem peers on one LAN need that.
             resolve_pinned_ip(parsed.hostname or "")
         except ImportError as e:  # pragma: no cover - packaged with core
             raise _RpcError(
@@ -1907,8 +1917,14 @@ class TaskEngine:
                 "pushNotificationConfig.url validation unavailable",
             ) from e
         except (BlockedHost, ValueError, UnicodeError) as e:
+            # The detail (what a name resolves to) stays in the server log so
+            # the endpoint cannot be used to read the server's internal DNS.
+            log.info("a2a push URL rejected for %s: %s", task.id, e)
             raise _RpcError(
-                _INVALID_PARAMS, f"pushNotificationConfig.url rejected: {e}",
+                _INVALID_PARAMS,
+                "pushNotificationConfig.url rejected: it must be an http(s) "
+                "URL on a public host (private hosts need "
+                "MAVERICK_FETCH_ALLOW_PRIVATE)",
             ) from e
         # Retain only fields this implementation actually supports, after type
         # and byte validation, so caller mutation cannot alter stored state.
@@ -1935,14 +1951,14 @@ class TaskEngine:
         The webhook URL is supplied by the (outward-facing) A2A caller, so it
         is routed through the SSRF guard: a peer must not be able to make the
         server POST the task to ``169.254.169.254`` / ``127.0.0.1`` / other
-        internal hosts. ``safe_async_client`` resolves once, rejects any
+        internal hosts. ``_public_push_client`` resolves once, rejects any
         non-public address, and pins the connection (no rebind window).
         """
         cfg = task.push_config
         if not cfg or task.state not in TERMINAL_STATES:
             return
         try:
-            from .tools._ssrf import BlockedHost, safe_async_client
+            from .tools._ssrf import BlockedHost
         except Exception:  # pragma: no cover
             return
         url = cfg.get("url") or ""
@@ -1950,12 +1966,12 @@ class TaskEngine:
         tok = cfg.get("token")
         if tok:
             headers["Authorization"] = f"Bearer {tok}"
-        # ``safe_async_client`` resolves the host once, rejects any non-public
+        # ``_public_push_client`` resolves the host once, rejects any non-public
         # address, and pins the connection to that IP (Host/SNI preserved) --
         # so there is no second lookup to rebind. A bad scheme or non-public
         # host raises BlockedHost and we fail closed (no request sent).
         try:
-            client = safe_async_client(url, timeout=15.0)
+            client = _public_push_client(url)
         except BlockedHost as e:
             log.warning("a2a push notify blocked for %s (SSRF guard): %s", task.id, e)
             return
@@ -1964,6 +1980,29 @@ class TaskEngine:
                 await client.post(url, headers=headers, json=task.to_dict())
         except Exception as e:  # pragma: no cover
             log.warning("a2a push notify failed for %s: %s", task.id, e)
+
+
+def _public_push_client(url: str):
+    """An ``httpx.AsyncClient`` pinned to ``url``'s host, which must resolve to
+    public addresses unless the operator opted in to private networks for
+    fetches (``MAVERICK_FETCH_ALLOW_PRIVATE`` or a scoped loopback allowance;
+    the metadata service stays blocked either way). Raises ``BlockedHost``."""
+    from urllib.parse import urlparse
+
+    import httpx
+
+    from .egress_guard import _check
+    from .tools._ssrf import BlockedHost, _AsyncPinnedTransport, resolve_pinned_ip
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise BlockedHost(f"scheme {parsed.scheme!r} not allowed")
+    _check(url)
+    host = parsed.hostname or ""
+    ip = resolve_pinned_ip(host)
+    host_header = host if not parsed.port else f"{host}:{parsed.port}"
+    transport = _AsyncPinnedTransport(host, host_header, ip, httpx.AsyncHTTPTransport())
+    return httpx.AsyncClient(transport=transport, timeout=15.0, follow_redirects=False)
 
 
 # Methods that return an SSE stream rather than a single JSON response.

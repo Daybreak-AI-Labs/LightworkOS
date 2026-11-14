@@ -55,6 +55,8 @@ def test_verify_install():
         op="verify_install", declared_sha256="a" * 64, computed_sha256="b" * 64
     ).startswith("MISMATCH")
     assert _run(op="verify_install", computed_sha256=sha).startswith("ERROR")
+    # Any two equal strings used to "verify"; both must be real digests.
+    assert _run(op="verify_install", declared_sha256="x", computed_sha256="X").startswith("ERROR")
 
 
 def test_factory_contract():

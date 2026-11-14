@@ -16,14 +16,16 @@ review and configure servers. Registry-provided HTTP entries are also refused
 until their complete configuration can be authenticated by a trusted publisher.
 
 Install validates the spec through `MCPServerSpec.from_config` (the same
-subprocess-injection / url checks the kernel applies to hand-written config),
-then applies registry-specific hardening before writing it to
-``~/.maverick/config.toml`` under ``[mcp_servers.<name>]``.
+subprocess-injection / url checks the kernel applies to hand-written config)
+and registry-specific hardening, and then refuses: with both entry kinds
+refused above, no registry entry is installed into config today.
 """
 from __future__ import annotations
 
 import logging
 import re
+
+import click
 
 from . import catalog
 from .mcp_client import MCPServerSpec
@@ -200,10 +202,12 @@ def _validate_registry_spec(spec: MCPServerSpec) -> None:
 
 
 def spec_from_entry(entry: catalog.CatalogEntry) -> MCPServerSpec:
-    """Build a validated MCPServerSpec from a registry entry's inline spec.
+    """Validate a registry entry's inline spec, then refuse to install it.
 
-    Raises CatalogError if the entry has no inline spec, and ValueError if the
-    spec is malformed or violates registry-specific untrusted-input policy."""
+    Raises CatalogError if the entry has no inline spec, and ValueError in
+    every other case: a malformed spec, a registry-policy violation, or (for a
+    valid spec) because registry configuration cannot yet be authenticated.
+    It never returns today."""
     if not entry.spec:
         raise catalog.CatalogError(
             f"MCP registry entry {entry.name!r} has no inline spec to install")
@@ -224,10 +228,10 @@ def spec_from_entry(entry: catalog.CatalogEntry) -> MCPServerSpec:
 
 
 def install_mcp_from_registry(name: str, *, indexes: list[str] | None = None) -> MCPServerSpec:
-    """Resolve ``name`` in the registry and return a validated spec to install.
+    """Resolve ``name`` in the registry and validate it for install.
 
-    Pure lookup + validation; the caller writes it to config (so a dry-run /
-    preview is possible). Raises ValueError if the name isn't in the registry."""
+    Raises ValueError if the name isn't in the registry, and otherwise raises
+    from :func:`spec_from_entry`, which refuses every registry entry today."""
     entry = resolve_mcp(name, indexes=indexes)
     if entry is None:
         raise ValueError(f"no MCP server {name!r} in the registry")
@@ -319,23 +323,35 @@ def add_mcp_server_to_config(name: str, spec_dict: dict, *, path=None) -> None:
         p.write_text(block, encoding="utf-8")
 
 
+class MCPConfigEditRefused(click.ClickException, ValueError):
+    """config.toml could not be edited safely; nothing was written.
+
+    A ClickException so ``maverick mcp-registry remove`` prints a clean
+    message and exits non-zero; a ValueError for library callers."""
+
+
 def remove_mcp_server_from_config(name: str, *, path=None) -> bool:
     """Remove the ``[mcp_servers.<name>]`` table (and any subtables) from
     config.toml by text scan. Returns True if it was present and removed.
 
     Text-scan (not a full TOML round-trip) so the rest of the file — comments,
-    ordering, unrelated tables — is preserved byte-for-byte."""
+    ordering, unrelated tables — is preserved byte-for-byte. The result is
+    parsed before it is written: if the server is still declared (for example
+    inline under ``[mcp_servers]``) or the file would no longer parse, nothing
+    is written and :class:`MCPConfigEditRefused` (a ``ValueError``) asks the
+    operator to edit the file."""
     p = _config_path(path)
     if not p.exists():
         return False
     if name not in (_load_config_dict(p).get("mcp_servers") or {}):
         return False
     header_re = re.compile(r"^\s*\[")
-    # Matches [mcp_servers.<name>] and [mcp_servers.<name>.<sub>], with the name
-    # optionally quoted, tolerating inner whitespace.
+    # Matches [mcp_servers.<name>] and [mcp_servers.<name>.<sub>] (and their
+    # [[...]] array forms), with the name optionally quoted, tolerating inner
+    # whitespace.
     key = re.escape(name)
     target_re = re.compile(
-        rf'^\s*\[\s*mcp_servers\s*\.\s*(?:{key}|"{key}"|\'{key}\')\s*(?:\..*)?\]')
+        rf'^\s*\[\[?\s*mcp_servers\s*\.\s*(?:{key}|"{key}"|\'{key}\')\s*(?:\..*)?\]')
     out: list[str] = []
     skipping = False
     for line in p.read_text(encoding="utf-8").splitlines(keepends=True):
@@ -343,7 +359,21 @@ def remove_mcp_server_from_config(name: str, *, path=None) -> bool:
             skipping = bool(target_re.match(line))
         if not skipping:
             out.append(line)
-    p.write_text("".join(out), encoding="utf-8")
+    text = "".join(out)
+    try:
+        import tomllib  # 3.11+
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
+    try:
+        remaining = tomllib.loads(text).get("mcp_servers") or {}
+    except tomllib.TOMLDecodeError:
+        remaining = None
+    if remaining is None or name in remaining:
+        raise MCPConfigEditRefused(
+            f"MCP server {name!r} could not be removed automatically; "
+            f"edit {p} by hand (the file was not changed)")
+    from .file_lock import atomic_write_text
+    atomic_write_text(p, text, mode=0o600)
     return True
 
 
@@ -356,4 +386,5 @@ __all__ = [
     "install_mcp_from_registry",
     "add_mcp_server_to_config",
     "remove_mcp_server_from_config",
+    "MCPConfigEditRefused",
 ]

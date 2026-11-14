@@ -86,6 +86,14 @@ class TestOverrideLifecycle:
         assert r.status_code == 200
         assert client.get("/api/v1/roles/writer").json()["is_override"] is False
 
+    def test_delete_with_unreadable_roles_file_is_422(self, tmp_path):
+        # remove_role_override refuses to rewrite an unreadable file; the route
+        # used to turn that into a 500.
+        (tmp_path / "roles.toml").write_text("[writer\n", encoding="utf-8")
+        r = client.delete("/api/v1/roles/writer/override")
+        assert r.status_code == 422
+        assert (tmp_path / "roles.toml").read_text(encoding="utf-8") == "[writer\n"
+
 
 class TestRoleEditingAuthorization:
     def test_authenticated_non_admin_cannot_mutate_roles(self, monkeypatch):

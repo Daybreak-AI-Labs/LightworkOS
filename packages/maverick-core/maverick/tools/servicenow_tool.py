@@ -46,10 +46,11 @@ _SCHEMA: dict[str, Any] = {
 
 
 def _safe_seg(s: str) -> bool:
-    """ServiceNow table names / sys_ids are [A-Za-z0-9_.-]; reject empty, '..',
+    """ServiceNow table names / sys_ids are [A-Za-z0-9_.-]; reject empty, '.', '..',
     and any char outside that set so a model-supplied value can't reshape the
     REST path or inject query params (mirrors home_assistant_tool._safe_seg)."""
-    return bool(s) and ".." not in s and all(c.isalnum() or c in "_.-" for c in s)
+    return (bool(s) and s != "." and ".." not in s
+            and all(c.isalnum() or c in "_.-" for c in s))
 
 
 def _config() -> tuple[str, str]:

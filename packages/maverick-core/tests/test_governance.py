@@ -211,3 +211,34 @@ def test_risk_override_still_falls_through_to_classifier():
     from maverick.governance import _risk_level
     assert _risk_level("bogus") is None
     assert _risk_level("critical") is None  # not a known level; override path
+
+
+def test_from_config_keeps_its_own_read_error_after_a_concurrent_clean_read(
+    tmp_path, monkeypatch,
+):
+    import errno
+
+    from maverick import config
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    (tmp_path / "config.toml").write_text('[governance]\ndeny_actions = ["shell"]\n')
+    config.reset_config_cache()
+
+    def unreadable(_path):
+        raise OSError(errno.EMFILE, "Too many open files")
+
+    real_errors = config.config_source_errors
+
+    def after_another_thread_read_cleanly(**kwargs):
+        with config._toml_lock:
+            config._toml_errors.clear()
+        return real_errors(**kwargs)
+
+    monkeypatch.setattr(config, "atomic_read_bytes", unreadable)
+    monkeypatch.setattr(config, "config_source_errors", after_another_thread_read_cleanly)
+    try:
+        with pytest.raises(GovernancePolicyError, match="source is invalid"):
+            Policy.from_config()
+    finally:
+        config.reset_config_cache()

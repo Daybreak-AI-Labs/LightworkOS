@@ -1943,6 +1943,9 @@ class GovernedRecordStore:
         self._authority_lock = threading.Lock()
         self._postgres_backend: PostgresGovernedRecordBackend | None = None
         self._postgres_key = ""
+        # Where the next ``retry_pending`` pass resumes, so a bounded pass
+        # rotates through the whole store instead of the first ``limit`` ids.
+        self._retry_cursor = ""
 
     def _assert_backend_authority(self, selection: _BackendSelection) -> None:
         """Pin selector-backed stores before any persistence-plane I/O.
@@ -2390,7 +2393,17 @@ class GovernedRecordStore:
                 **guarded,
             )
         if saved is None:
-            if not self._archivable(backend) or not backend.restore(str(record_id or "")):
+            if not self._archivable(backend):
+                return None
+            archived = backend.load_archived(str(record_id or ""))
+            if (archived is not None and expected_revision is not None
+                    and archived.get("revision") != expected_revision):
+                # A stale update must not bring the record back as a side effect.
+                raise RecordConflict(
+                    "governed record changed "
+                    f"(expected revision {expected_revision}, found {archived.get('revision')})"
+                )
+            if not backend.restore(str(record_id or "")):
                 return None
             return self.update(record_id, mutate, expected_revision=expected_revision, action=action,
                                actor=actor, fence=fence, effect_guard=effect_guard)
@@ -2456,8 +2469,9 @@ class GovernedRecordStore:
 
         One bounded id-scan window (the iterator's rotating cursor makes
         multi-page counting ambiguous, so this is a single window and
-        ``maximum`` is the honest ceiling). Capacity checks and posture
-        tiles need the number, not thousands of parsed JSON bodies.
+        ``maximum`` is the ceiling; the Postgres backend scans at most 10,000
+        ids per window, so it cannot count past that). Capacity checks and
+        posture tiles need the number, not thousands of parsed JSON bodies.
         """
 
         return sum(
@@ -2485,10 +2499,13 @@ class GovernedRecordStore:
         )
 
     def retry_pending(self, *, limit: int = 100) -> int:
-        """Retry a bounded set of stable audit receipts."""
+        """Retry a bounded set of stable audit receipts. Each pass resumes
+        after the last record the previous pass scanned."""
         cleared = 0
         backend = self._backend()
-        for _, record_id in backend.iter_record_ids(limit=max(0, int(limit))):
+        for cursor, record_id in backend.iter_record_ids(
+                start_after=self._retry_cursor, limit=max(0, int(limit))):
+            self._retry_cursor = cursor
             before = backend.load(record_id)
             if not before or not before.get("_audit_pending"):
                 continue

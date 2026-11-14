@@ -969,16 +969,17 @@ def support(output: str | None) -> None:
         click.echo(f"support bundle written: {path}")
         # Record the export on the signed audit trail — redacted METADATA only
         # (correlation_id / basename; never bundle contents), so a CISO can see
-        # every support touch on their own log. Fail-soft: a stripped-audit
-        # build or a write error must never break the export.
+        # every support touch on their own log. A write error is logged and
+        # does not break the export; a refusal by the audit subsystem fails it.
+        from ..audit import AuditRefused, audit_event
         try:
-            from ..audit import record as _audit_record
-            _audit_record(
+            audit_event(
                 "support_bundle_exported", agent="cli",
                 correlation_id=bundle.get("correlation_id"),
                 filename=path.name)
-        except Exception:  # pragma: no cover - audit must never crash the CLI
-            pass
+        except AuditRefused as exc:
+            raise click.ClickException(
+                f"the audit trail refused to record this export: {exc}") from exc
     else:
         click.echo(text)
 
@@ -1890,7 +1891,10 @@ def harness_migrate_store() -> None:
                    + (f" ({merged} conflicting key(s) merged)" if merged else "")
                    + "; file stores renamed to *.migrated.")
     # The eval-corpus family rides the same migration when configured.
-    counts = migrate_corpus()
+    try:
+        counts = migrate_corpus()
+    except MigrationRefused as exc:
+        raise click.ClickException(str(exc)) from exc
     if counts and any(counts.values()):
         migrated_any = True
         click.echo(f"corpus: merged {counts['live']} live case(s), "
@@ -3131,13 +3135,17 @@ def tenant_quota(tenant_id: str, max_daily_dollars: float) -> None:
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
 def tenant_delete(tenant_id: str, purge: bool, yes: bool) -> None:
     """Remove a tenant from the registry (optionally purging its data)."""
-    from ..tenant.registry import delete_tenant
+    from ..tenant.registry import TenantRegistryError, delete_tenant
     if purge and not yes and not click.confirm(
         f"PURGE all data for tenant {tenant_id!r}? This cannot be undone."
     ):
         click.echo("aborted")
         return
-    if delete_tenant(tenant_id, purge=purge):
+    try:
+        deleted = delete_tenant(tenant_id, purge=purge)
+    except (ValueError, TenantRegistryError) as e:
+        raise click.ClickException(str(e)) from e
+    if deleted:
         click.echo(f"deleted {tenant_id!r}" + (" (data purged)" if purge else ""))
     else:
         click.echo(f"ERROR: no such tenant {tenant_id!r}", err=True)
@@ -3624,7 +3632,11 @@ def mcp_registry_add(name: str) -> None:
 def mcp_registry_remove(name: str) -> None:
     """Remove a configured MCP server from config."""
     from ..mcp_registry import remove_mcp_server_from_config
-    if remove_mcp_server_from_config(name):
+    try:
+        removed = remove_mcp_server_from_config(name)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    if removed:
         click.echo(f"removed: {name}")
     else:
         click.echo(f"no MCP server {name!r} in config.", err=True)
@@ -4352,7 +4364,10 @@ def schema_plan_cmd() -> None:
     structural lint.
     """
     from ..schema_migrations import current_plan, render
-    problems, _current, _target, steps = current_plan()
+    try:
+        problems, _current, _target, steps = current_plan()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     if problems:
         for pb in problems:
             click.echo(f"LINT: {pb}", err=True)
@@ -5707,6 +5722,179 @@ def _persist_erasure_auxiliary_closure(
     return True, None
 
 
+def _custodian_holds_subject(custodian: str, channel: str, user: str) -> bool:
+    """Whether a matter custodian covers the erase subject ``channel:user``.
+
+    The same identity rules as matter scope: ``user:<channel>:<id>`` is a
+    channel user, ``user:<name>`` the dashboard user of that name, and a
+    linked account matches by its stored identity. The CLI family rule
+    (``local`` and ``local:<uuid>``) applies in both directions.
+    """
+    from ..ediscovery import (
+        account_user_matches,
+        conversation_user_matches,
+        is_account_custodian,
+    )
+
+    if is_account_custodian(custodian):
+        return account_user_matches(user, custodian)
+    parts = custodian.split(":", 2) if custodian.startswith("user:") else []
+    if len(parts) == 3 and parts[1] and parts[2]:
+        held_channel, held_user = parts[1], parts[2]
+    elif len(parts) == 2 and parts[1]:
+        held_channel, held_user = "dashboard", parts[1]
+    else:
+        return False
+    return held_channel == channel and (
+        conversation_user_matches(user, held_user, channel)
+        or conversation_user_matches(held_user, user, channel)
+    )
+
+
+def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
+    """Refuse a subject-keyed erase while any active matter names the subject.
+
+    With no conversation row there is no closure for the usual hold check to
+    match, so match the subject against each matter's custodians instead: a
+    held subject's goals, chats and records are all in scope through them.
+    """
+    from ..ediscovery import (
+        HOLD_UNVERIFIED_MESSAGE,
+        LEGAL_HOLD_MESSAGE,
+        _audit_refusal,
+        active_matters,
+    )
+
+    try:
+        matters = active_matters()
+    except Exception:  # failure-policy: fail_closed -- an unreadable ledger holds everything
+        message = HOLD_UNVERIFIED_MESSAGE
+    else:
+        message = None
+        for matter in matters:
+            if any(_custodian_holds_subject(str(c), channel, user)
+                   for c in matter.get("custodians") or ()):
+                _audit_refusal(matter, actor="cli", conversations=0, goals=0)
+                message = LEGAL_HOLD_MESSAGE
+                break
+    if message:
+        ctx.obj["erase_refusal"] = message
+        click.echo(message, err=True)
+        ctx.exit(1)
+
+
+def _scrub_subject_audit(channel: str, user: str, failures: list[str]) -> int:
+    """Scrub the subject's prior audit lines; record a failure instead of raising."""
+    from .. import audit
+
+    scrubbed = 0
+    try:
+        scrubbed, _ = audit.scrub_user(channel, user, strict=True)
+    except Exception as exc:
+        failures.append(f"audit_scrub: {_erasure_failure_label(exc)}")
+    try:
+        audit.reanchor_after_erase()
+    except Exception as exc:  # pragma: no cover - defensive
+        failures.append(f"audit_reanchor: {_erasure_failure_label(exc)}")
+    return scrubbed
+
+
+def _erase_subject_knowledge_strict(channel: str, user: str, failures: list[str]) -> dict[str, int]:
+    try:
+        from .. import knowledge_admin
+        return knowledge_admin.erase_subject(channel, user)
+    except Exception as exc:
+        failures.append(f"knowledge: {_erasure_failure_label(exc)}")
+        return {}
+
+
+def _subject_residue_verification(world, channel: str, user: str, failures: list[str]) -> None:
+    """Fold residual counts and unreadable subject-keyed stores into ``failures``.
+
+    Without a receipt the goal-linked stores are always unchecked, so only the
+    stores this path erases count as a verification error.
+    """
+    from ..erasure_verify import verify_erasure
+
+    try:
+        result = verify_erasure(user, channel=channel, world=world)
+    except Exception as exc:
+        failures.append(f"verification: {_erasure_failure_label(exc)}")
+        return
+    residual = result.get("residual") or {}
+    if residual:
+        failures.append("residual data: " + ", ".join(
+            f"{store}={count}" for store, count in sorted(residual.items())
+        ))
+    errors = result.get("errors") or {}
+    unread = sorted(s for s in ("facts", "fact_history", "knowledge_chunks") if s in errors)
+    if unread:
+        failures.append("could not verify: " + ", ".join(unread))
+
+
+def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> None:
+    """Scrub the subject-keyed stores when no conversation row matches.
+
+    Exits 1 when a scrub fails or residual data remains, so a re-run after a
+    partly failed erase can finish the job and a script can tell.
+    """
+    import secrets
+    import types
+
+    from .. import audit
+
+    _refuse_subject_under_legal_hold(ctx, channel, user)
+    if not yes:
+        click.echo(f"This will erase stored facts, notes, audit lines and "
+                   f"knowledge for {channel}:{user}.")
+        click.confirm("Proceed?", abort=True)
+    scrubbed_fact_keys = world.delete_facts_matching(_fact_subject_token(channel, user))
+    removed_notes, notes_error = _erase_conversation_user_notes(
+        channel, [types.SimpleNamespace(user_id=user)]
+    )
+    failures = [f"user_notes: {notes_error}"] if notes_error else []
+    audit_scrubbed = _scrub_subject_audit(channel, user, failures)
+    knowledge_removed = _erase_subject_knowledge_strict(channel, user, failures)
+    knowledge_chunks = sum(knowledge_removed.values())
+    if isinstance(ctx.obj, dict):  # for in-process callers (the dashboard)
+        # The same list object: failures found below are reported too.
+        ctx.obj["erase_residue"] = {
+            "removed": (audit_scrubbed + len(scrubbed_fact_keys) + removed_notes
+                        + knowledge_chunks),
+            "failures": failures,
+        }
+    # The same record-of-processing marker as a conversation erase, without
+    # any identifier derived from the subject.
+    try:
+        recorded = audit.record(
+            "erase", channel=channel, erasure_id=secrets.token_hex(16),
+            durable_proof=False, auxiliary_checks_passed=not failures,
+            conversations=0, turns=0, goals=0, attachments=0,
+            audit_lines_scrubbed=audit_scrubbed,
+            facts_scrubbed=len(scrubbed_fact_keys),
+            user_notes_scrubbed=removed_notes,
+            knowledge_chunks_scrubbed=knowledge_chunks,
+        )
+        if not recorded:
+            failures.append("audit_record: audit sink did not acknowledge the erase marker")
+    except audit.AuditRefused:
+        # Deletion has already happened; a policy refusal must reach the caller.
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        failures.append(f"audit_record: {_erasure_failure_label(exc)}")
+    click.echo(
+        f"{audit_scrubbed} audit event(s) scrubbed, "
+        f"{len(scrubbed_fact_keys)} fact(s) scrubbed, "
+        f"{removed_notes} user note(s) scrubbed, "
+        f"{knowledge_chunks} knowledge chunk(s) scrubbed"
+    )
+    _print_erased_extras(knowledge_removed, scrubbed_fact_keys)
+    _subject_residue_verification(world, channel, user, failures)
+    if failures:
+        click.echo("error: erasure incomplete (" + "; ".join(failures) + ")", err=True)
+        ctx.exit(1)
+
+
 @main.command()
 @click.option("--channel", required=True, help="Channel name (e.g. telegram, sms).")
 @click.option("--user", required=True, help="The channel user_id to erase.")
@@ -5725,6 +5913,10 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     ]
     if not convs:
         click.echo(f"no conversation found for {channel}:{user}")
+        # Facts, notes, audit lines and knowledge are keyed by the subject,
+        # not by a conversation row, so they can outlive it (a subject who
+        # never chatted, or an earlier erase that failed part-way).
+        _erase_subject_residue(ctx, world, channel, user, yes)
         return
     if not yes:
         click.echo(f"This will erase {len(convs)} conversation(s) for {channel}:{user}.")
@@ -6011,6 +6203,10 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
             + (f" ({detail})" if detail else ""),
             err=True,
         )
+    _print_erased_extras(knowledge_removed, scrubbed_fact_keys)
+
+
+def _print_erased_extras(knowledge_removed, scrubbed_fact_keys) -> None:
     if knowledge_removed:
         click.echo(
             "  knowledge removed (per collection): "
@@ -6225,6 +6421,58 @@ def record_verify(capsule: str, pubkeys: tuple[str, ...], trusted_file: str | No
 
 
 
+def _write_private_export(output, text: str) -> bool:
+    """Write an export as a new 0600 file, never through a symlink.
+
+    Returns True when the output went to a stream rather than a file, so the
+    caller sends its "wrote ..." note to stderr and a redirected export stays
+    valid JSON.
+
+    ``-``, ``/dev/stdout`` and ``/dev/stderr`` are written to that stream and
+    the path is never opened. Otherwise the parent directory is resolved (a
+    symlinked parent such as ``/tmp`` on macOS is fine) and the final
+    component is opened without following links: a FIFO or character device
+    the caller owns is written in place; a symlink is refused; anything else is
+    replaced atomically with a new 0600 file.
+    """
+    import errno as _errno
+    import stat as _stat
+
+    from ..file_lock import atomic_write_text
+
+    if str(output) in ("-", "/dev/stdout", "/dev/stderr"):
+        click.echo(text, nl=False, err=str(output) == "/dev/stderr")
+        return True
+    given = Path(output)
+    target = given.parent.resolve() / given.name
+    if target.is_symlink():
+        raise OSError(_errno.ELOOP, "refusing to write through a symlink", str(target))
+    if os.name == "nt":  # no FIFOs, O_NOFOLLOW or uids: always a new file
+        atomic_write_text(target, text, mode=0o600)
+        return False
+    try:
+        # No O_CREAT/O_TRUNC: this open only finds an existing stream. Non-
+        # blocking so a FIFO with no reader fails instead of hanging.
+        fd = os.open(target, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        if exc.errno not in (_errno.ENOENT, _errno.EISDIR):
+            raise
+        fd = -1
+    if fd >= 0:
+        info = os.fstat(fd)
+        if (_stat.S_ISFIFO(info.st_mode) or _stat.S_ISCHR(info.st_mode)) \
+                and info.st_uid == os.getuid():
+            os.set_blocking(fd, True)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(text)
+            return True
+        os.close(fd)
+        if not _stat.S_ISREG(info.st_mode):
+            raise OSError(_errno.EPERM, "not a regular file or a stream you own", str(target))
+    atomic_write_text(target, text, mode=0o600)
+    return False
+
+
 @main.command("export-user")
 @click.option("--channel", required=True, help="Channel name.")
 @click.option("--user", required=True, help="The channel user_id to export.")
@@ -6297,20 +6545,18 @@ def export_user(ctx, channel: str, user: str, output) -> None:
         # co-tenant can't read it, and fail cleanly instead of dumping a
         # traceback on a bad/unwritable path.
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
+            streamed = _write_private_export(output, payload)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"exported to {output}")
+        click.echo(f"exported to {output}", err=streamed)
     else:
         click.echo(payload)
 
 
 @main.command()
-@click.option("--days", default=90, type=int,
+@click.option("--days", default=90, type=click.IntRange(min=1),
               help="Delete conversations idle longer than N days.")
-@click.option("--events-days", default=30, type=int,
+@click.option("--events-days", default=30, type=click.IntRange(min=1),
               help="Delete goal_events older than N days.")
 @click.option("--yes", is_flag=True)
 @click.pass_context
@@ -6635,6 +6881,12 @@ def audit_verify(
         anchor_dir = audit_dir
         if not paths:
             click.echo(f"no audit day-files in {audit_dir}")
+            if audit_dir.exists() and any(audit_dir.iterdir()):
+                # Keys or a ledger without any day-file: as in the default-day
+                # branch, verify today's path so a deletion reports
+                # missing_file instead of passing.
+                today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+                paths = [audit_dir / f"{today}.ndjson"]
     else:
         d = day or _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
         anchor_dir = audit_dir

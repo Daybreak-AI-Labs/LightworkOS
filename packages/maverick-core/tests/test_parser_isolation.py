@@ -170,6 +170,16 @@ def test_should_isolate_off_by_default(monkeypatch):
     assert pi.should_isolate() is True
 
 
+def test_should_isolate_stays_on_when_config_is_unreadable(monkeypatch, tmp_path):
+    monkeypatch.delenv("MAVERICK_ISOLATE_PARSERS", raising=False)
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[security]\nisolate_parsers = "false"\n', encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    assert pi.should_isolate() is False  # the string "false" is not truthy
+    cfg.write_text("[security]\nisolate_parsers = true\nx = [\n", encoding="utf-8")
+    assert pi.should_isolate() is True
+
+
 def test_inventory_renders_policy():
     out = pi.inventory()
     assert "pdf_text" in out and "ISOLATE" in out

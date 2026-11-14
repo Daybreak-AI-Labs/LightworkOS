@@ -9,15 +9,17 @@ reachable only if it passes *both* the tenant plane and the per-tool policy.
 Config:
 
     [egress]                       # default plane (all tenants without an override)
-    deny  = ["169.254.169.254"]    # block cloud metadata for everyone
+    deny  = ["169.254.169.254"]    # block cloud metadata (tenants without an override)
     allow = []                     # empty = allow-all (after deny)
 
-    [tenancy.egress.acme]          # per-tenant override (wins over [egress])
+    [tenancy.egress.acme]          # per-tenant override: REPLACES [egress], so
+                                   # repeat any default deny it must keep
     allow = ["api.acme.com", "*.acme-internal.net"]
     deny  = ["*"]
 
 Resolution: ``[tenancy.egress.<tenant>]`` if present, else ``[egress]``, else
-empty (allow-all — unchanged default). ``host_allowed`` is the pure decision
+empty (allow-all — unchanged default). An unreadable configuration source
+denies every host instead. ``host_allowed`` is the pure decision
 (deny wins; non-empty allow restricts), unit-tested in isolation.
 """
 from __future__ import annotations
@@ -33,11 +35,22 @@ def _resolve_tenant(tenant: str | None) -> str | None:
     return tenant
 
 
+#: The plane used when a configuration source cannot be read: the configured
+#: deny and allow lists may have been lost, so nothing is reachable.
+_UNREADABLE_CONFIG_PLANE = {"deny": ["*"]}
+
+
 def load_tenant_egress(tenant: str | None = "__active__") -> dict:
-    """The egress plane for ``tenant``: the per-tenant override or the default."""
+    """The egress plane for ``tenant``: the per-tenant override or the default.
+
+    ``load_config`` returns defaults for a malformed file; that must not turn a
+    configured deny list into allow-all, so an unreadable source denies all.
+    """
     try:
-        from ..config import load_config
+        from ..config import config_source_errors, load_config
         cfg = load_config() or {}
+        if config_source_errors(include_tenant=True):
+            return dict(_UNREADABLE_CONFIG_PLANE)
     except Exception:  # pragma: no cover -- config never blocks egress
         return {}
     tid = _resolve_tenant(tenant)

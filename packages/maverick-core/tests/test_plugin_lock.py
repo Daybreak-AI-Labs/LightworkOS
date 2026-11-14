@@ -233,6 +233,11 @@ def test_content_hash_covers_metadata_native_and_unrecorded_files(tmp_path, monk
     native.write_bytes(b"native-v1")
     assert pl._dist_content_hash("acme-plugin") == original
 
+    # Another distribution installed beside it is not this plugin's content.
+    (site / "unrelated").mkdir()
+    (site / "unrelated" / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    assert pl._dist_content_hash("acme-plugin") == original
+
     (pkg / "generated.py").write_text("def factory(): return 'owned'\n", encoding="utf-8")
     assert pl._dist_content_hash("acme-plugin") != original
 
@@ -244,7 +249,7 @@ def test_write_lock_leaves_no_temp_residue(tmp_path):
     assert list(tmp_path.glob("*.tmp")) == []  # unique temp + replace, no leftover
 
 
-def test_enforce_refuses_when_content_hash_is_unavailable(tmp_path, monkeypatch):
+def test_enforce_refuses_when_content_hash_is_unavailable(tmp_path, monkeypatch, caplog):
     """A pinned hash that cannot be recomputed (a RECORD-listed source removed and
     replaced by a sourceless .pyc, say) is drift, not a free pass."""
     _fake_eps(monkeypatch, [("t1", "acme-tools", "1.0.0")])
@@ -255,8 +260,25 @@ def test_enforce_refuses_when_content_hash_is_unavailable(tmp_path, monkeypatch)
     monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "enforce")
     pl.reset_warned()
     monkeypatch.setattr(pl, "_dist_content_hash", lambda d: None)
-    assert pl.dist_allowed_by_lock("acme-tools") is False
+    with caplog.at_level("WARNING", logger="maverick.plugin_lock"):
+        assert pl.dist_allowed_by_lock("acme-tools") is False
+    assert "maverick plugin lock" in caplog.text  # the refusal says how to recover
     # warn keeps loading (and says so).
     monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "warn")
     pl.reset_warned()
     assert pl.dist_allowed_by_lock("acme-tools") is True
+
+
+def test_enforce_refuses_on_malformed_lock_or_misspelt_policy(tmp_path, monkeypatch):
+    """A truncated lockfile is not "no lock", and a misspelt policy is not "off"."""
+    _fake_eps(monkeypatch, [("t1", "acme-tools", "1.0.0")])
+    lock = tmp_path / "plugins.lock.json"
+    monkeypatch.setattr(pl, "lock_path", lambda: lock)
+    monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "enforce")
+    pl.reset_warned()
+    assert pl.dist_allowed_by_lock("acme-tools") is True  # no lockfile: nothing to enforce
+    for body in ('{"pins": {"acme-tools": "1.0', '{"pins": ["acme-tools"]}'):
+        lock.write_text(body, encoding="utf-8")
+        assert pl.dist_allowed_by_lock("acme-tools") is False
+    monkeypatch.setenv("MAVERICK_PLUGIN_LOCK_POLICY", "enforced")
+    assert pl.lock_policy() == "enforce"

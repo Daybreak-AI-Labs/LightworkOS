@@ -69,3 +69,21 @@ def test_replicate_cancel_dry_run(monkeypatch):
     from maverick.tools.replicate_tool import replicate_tool
     out = replicate_tool().fn({"op": "cancel", "prediction_id": "p1"})
     assert "DRY RUN" in out
+
+
+def test_replicate_models_search_passes_the_egress_check(monkeypatch):
+    import maverick.egress_guard as egress_guard
+
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "r8_xx")
+    request = MagicMock()
+    _fake_httpx(monkeypatch, request=request)
+    checked: list[str] = []
+
+    def _deny(url):
+        checked.append(url)
+        raise RuntimeError("egress denied")
+
+    monkeypatch.setattr(egress_guard, "_check", _deny)
+    from maverick.tools.replicate_tool import replicate_tool
+    out = replicate_tool().fn({"op": "models", "query": "upscaler"})
+    assert out.startswith("ERROR") and checked and not request.called

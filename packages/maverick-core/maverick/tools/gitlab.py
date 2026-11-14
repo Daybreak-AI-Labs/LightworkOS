@@ -79,6 +79,10 @@ def _client():
 
 
 def _enc(project: str) -> str:
+    # quote() leaves a bare '..' alone and httpx collapses it, turning
+    # /projects/../merge_requests into the instance-wide /merge_requests.
+    if project.strip() in ("", ".", ".."):
+        raise RuntimeError(f"invalid project {project!r}")
     return urllib.parse.quote(project, safe="")
 
 

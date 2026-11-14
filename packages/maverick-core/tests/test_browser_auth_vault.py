@@ -132,3 +132,20 @@ def test_vault_read_modify_write_is_cross_process_serialized(tmp_path):
         assert worker.wait(timeout=30) == 0
 
     assert len(Vault(key, path).list_entries()) == 20
+
+
+def test_a_missing_key_is_not_reminted_over_existing_entries(tmp_path, monkeypatch):
+    """A default backup withholds vault/key; after restoring it elsewhere the
+    first use must not seal under a fresh key beside the old entries."""
+    from maverick import browser_auth_vault as bav
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("MAVERICK_VAULT_KEY", raising=False)
+    assert bav._run({"op": "store", "name": "github", "data": {"cookie": "c"}}).startswith("sealed entry")
+    key_file, data_file = bav._default_paths()
+    key_file.unlink()
+    out = bav._run({"op": "list"})
+    assert out.startswith("ERROR:") and "vault key is missing" in out
+    assert not key_file.exists()
+    with pytest.raises(RuntimeError, match="vault key is missing"):
+        resolve_key()

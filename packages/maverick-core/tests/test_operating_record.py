@@ -92,6 +92,26 @@ def test_owner_scoped_approvals_overfetch_past_global_limit():
     assert any(r.decided_by == "alice" for r in records)
 
 
+def test_empty_owner_reads_unowned_approvals_only():
+    def approval(i, requested_by):
+        return SimpleNamespace(decided_at=float(i), requested_at=float(i), requested_by=requested_by,
+                               claimed_by=None, decided_by="operator", action=f"act-{i}",
+                               status="approved", provenance=None)
+
+    class _FakeWorld:
+        def list_goals(self, **kw):
+            return []
+
+        def list_episodes(self, **kw):
+            return []
+
+        def list_approvals(self, *, limit):
+            return [approval(1, None), approval(2, "user:alice")]
+
+    records = orec.assemble(_FakeWorld(), owner="")
+    assert [r.subject for r in records] == ["act-1"]
+
+
 def test_capsule_roundtrip_and_tamper_detection(world, tmp_path, monkeypatch):
     pytest.importorskip("cryptography")
     import maverick.audit.signing as signing

@@ -143,6 +143,15 @@ def test_max_pending_refuses_a_new_proposal_without_evicting():
     assert len(_approvals()) == 1
 
 
+def test_denied_proposals_leave_the_pending_queue():
+    _configure("enable = true\nmax_pending = 1")
+    first = hr.propose(_observation())
+    _approve(first["approval_id"], "denied")
+    second = hr.propose(_observation(name="second-rule"))
+    assert [p["id"] for p in hr.list_proposals(status="pending")] == [second["id"]]
+    assert [p["id"] for p in hr.list_proposals(status="rejected")] == [first["id"]]
+
+
 # ---- apply ----------------------------------------------------------------
 
 def test_apply_before_approval_refuses():
@@ -239,6 +248,10 @@ def test_cli_apply_has_no_self_asserted_actor_override():
     )
     assert applied.exit_code == 0, applied.output
     assert hr.refinements()[0]["applied_by"] == "cli"
+    snapshot = hr.list_proposals()[0]["snapshot"]
+    assert snapshot and f"snapshot {snapshot}" in applied.output
+    listed = CliRunner().invoke(main, ["refine", "list"])
+    assert listed.output.startswith(proposal["id"]) and "None" not in listed.output
 
 
 def test_one_approval_cannot_apply_two_refinements():

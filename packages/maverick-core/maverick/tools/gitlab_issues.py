@@ -1,7 +1,7 @@
 """GitLab issues tool — list / get / create.
 
-Mirrors ``github_issues`` but addresses projects by id (or URL-encoded
-``group/path``) via the GitLab v4 REST API. Requires ``GITLAB_TOKEN``
+Mirrors ``github_issues`` but addresses projects by id (or ``group/path``,
+plain or URL-encoded) via the GitLab v4 REST API. Requires ``GITLAB_TOKEN``
 (personal access token, ``api`` scope) sent as the ``PRIVATE-TOKEN``
 header. Optional ``GITLAB_URL`` for self-hosted instances (default
 https://gitlab.com).
@@ -31,7 +31,12 @@ def _base() -> str:
 
 
 def _enc(project_id: str) -> str:
-    return urllib.parse.quote(str(project_id), safe="")
+    # Accept 'group/path' and the already-encoded 'group%2Fpath' alike:
+    # decode once, then encode as exactly one path segment.
+    text = urllib.parse.unquote(str(project_id)).strip()
+    if text in ("", ".", ".."):
+        raise ValueError(f"invalid project_id {project_id!r}")
+    return urllib.parse.quote(text, safe="")
 
 
 def _list_url(base: str, project_id: str, state: str, limit: int) -> str:
@@ -202,7 +207,7 @@ _SCHEMA: dict[str, Any] = {
         "op": {"type": "string", "enum": ["list", "get", "create"]},
         "project_id": {
             "type": "string",
-            "description": "Project id or URL-encoded 'group/path'.",
+            "description": "Project id or 'group/path' (plain or URL-encoded).",
         },
         "iid": {"type": "integer", "description": "Issue internal id (get)."},
         "title": {"type": "string", "description": "Issue title (create)."},
@@ -220,7 +225,7 @@ def gitlab_issues() -> Tool:
         description=(
             "GitLab issues via REST v4. ops: list (project_id, state), "
             "get (project_id, iid), create (project_id, title, body). "
-            "project_id is a numeric id or URL-encoded 'group/path'. "
+            "project_id is a numeric id or 'group/path'. "
             "Auth: GITLAB_TOKEN (PRIVATE-TOKEN). Self-hosted: GITLAB_URL."
         ),
         input_schema=_SCHEMA,

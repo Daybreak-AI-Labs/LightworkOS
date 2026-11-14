@@ -241,6 +241,17 @@ def test_caps_from_config_defaults_empty():
     assert pcc.period_from_config() == "day"
 
 
+def test_unreadable_config_refuses_admission_instead_of_dropping_caps(
+        caps_config, ledger, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(cfg.read_text(encoding="utf-8") + "x = [\n", encoding="utf-8")
+    assert pcc.caps_from_config() == {}  # display reader stays fail-soft
+    with pytest.raises(pcc.ProviderAccountingUnavailable):
+        pcc.check("anthropic", now=T0, path=ledger)
+    with pytest.raises(pcc.ProviderAccountingUnavailable):
+        pcc._reserve_provider("anthropic", 1.0, now=T0, path=ledger)
+
+
 def test_caps_from_config_rejects_nonfinite_ceiling(monkeypatch):
     monkeypatch.setattr(
         pcc,

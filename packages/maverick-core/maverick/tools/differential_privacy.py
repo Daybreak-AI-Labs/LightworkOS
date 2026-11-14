@@ -36,6 +36,8 @@ def _numeric(args: dict, key: str) -> tuple[float | None, str]:
     v = args.get(key)
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None, f"ERROR: {key} must be a number"
+    if not math.isfinite(v):
+        return None, f"ERROR: {key} must be a finite number"
     return float(v), ""
 
 
@@ -63,6 +65,9 @@ def _run(args: dict[str, Any]) -> str:
         sens = 1.0
 
     scale = sens / eps
+    if not math.isfinite(scale):
+        # A tiny epsilon (1e-320) overflows the scale to infinity.
+        return "ERROR: sensitivity/epsilon is too large; raise epsilon"
     seed = args.get("seed")
     rng = random.Random(seed if isinstance(seed, int) else None)
     noisy = value + _laplace(rng, scale)

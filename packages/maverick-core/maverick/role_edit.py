@@ -32,6 +32,7 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib  # type: ignore[no-redef]
 
+from .file_lock import atomic_write_text, cross_process_lock
 from .llm import ROLE_MODELS
 
 # The roles a client may customize -- the kernel's known roles. Anything else
@@ -66,6 +67,19 @@ def _load(path: str | Path | None = None) -> dict:
             return tomllib.load(f)
     except Exception:  # a malformed file must never break a spawn
         return {}
+
+
+def _load_for_write(p: Path) -> dict:
+    """The current tables for a read-modify-write. Unlike :func:`_load`, an
+    unreadable file raises ``ValueError``: rewriting from ``{}`` would delete
+    every other role's override."""
+    if not p.is_file():
+        return {}
+    try:
+        with open(p, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"{p} cannot be read; fix or remove it before saving: {exc}") from exc
 
 
 def _table(role: str, path: str | Path | None = None) -> dict:
@@ -132,32 +146,39 @@ def _dump(tables: dict) -> str:
 def write_role_override(role: str, patch: dict, path: str | Path | None = None) -> str:
     """Validate then persist a role's override (addendum / model / effort). The
     entry is replaced by the patch's non-empty fields; an all-empty patch clears
-    the override. Raises ``ValueError`` on a validation error. Returns the path."""
+    the override. Raises ``ValueError`` on a validation error or when the
+    existing file cannot be read. The write is atomic and serialized across
+    processes. Returns the path."""
     errors = validate_role(role, patch)
     if errors:
         raise ValueError("; ".join(errors))
     p = Path(path) if path else roles_file()
-    tables = _load(p)
     entry = {k: str(patch.get(k) or "").strip() for k in _FIELDS}
     entry = {k: v for k, v in entry.items() if v}
-    if entry:
-        tables[role] = entry
-    else:
-        tables.pop(role, None)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(_dump(tables), encoding="utf-8")
+    with cross_process_lock(p):
+        tables = _load_for_write(p)
+        if entry:
+            tables[role] = entry
+        else:
+            tables.pop(role, None)
+        atomic_write_text(p, _dump(tables))
     return str(p)
 
 
 def remove_role_override(role: str, path: str | Path | None = None) -> bool:
     """Drop a role's override, reverting it to the built-in defaults. Returns
-    whether anything was removed."""
+    whether anything was removed. Raises ``ValueError`` when the existing file
+    cannot be read."""
     p = Path(path) if path else roles_file()
-    tables = _load(p)
-    if role not in tables:
+    if not p.is_file():
         return False
-    tables.pop(role, None)
-    p.write_text(_dump(tables), encoding="utf-8")
+    with cross_process_lock(p):
+        tables = _load_for_write(p)
+        if role not in tables:
+            return False
+        tables.pop(role, None)
+        atomic_write_text(p, _dump(tables))
     return True
 
 

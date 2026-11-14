@@ -21,9 +21,29 @@ from typing import Any
 
 from . import Tool
 
-# Per-context detectors. Each value is a compiled regex; a context "hits" when
-# its pattern matches anywhere in the text.
-_PATTERNS: dict[str, re.Pattern[str]] = {
+
+class _PairedMarkers:
+    r"""``search`` is true when an opening marker is followed later by its close.
+
+    Same answer as ``re.search(r"\{\{.*?\}\}", text)`` and friends, but
+    linear: the lazy regex rescans the rest of the text for every opening
+    marker that has no close, which is quadratic on text like ``"{{" * n``.
+    """
+
+    def __init__(self, *pairs: tuple[str, str]):
+        self._pairs = pairs
+
+    def search(self, text: str) -> bool:
+        for opener, closer in self._pairs:
+            start = text.find(opener)
+            if start >= 0 and text.find(closer, start + len(opener)) >= 0:
+                return True
+        return False
+
+
+# Per-context detectors. Each value is a compiled regex (or a linear paired
+# marker check); a context "hits" when it matches anywhere in the text.
+_PATTERNS: dict[str, re.Pattern[str] | _PairedMarkers] = {
     # SQL meta: quote-or-paren followed by a boolean/terminator/comment, UNION
     # SELECT, or an inline comment / stacked-statement marker.
     "sql": re.compile(
@@ -33,12 +53,12 @@ _PATTERNS: dict[str, re.Pattern[str]] = {
     # Script/HTML: a <script ...> tag or an inline on*= event handler or
     # a javascript: URL.
     "script": re.compile(
-        r"<\s*script\b|on\w+\s*=\s*['\"]|javascript:",
+        r"<\s*script\b|\bon\w+\s*=\s*['\"]|javascript:",
         re.IGNORECASE,
     ),
     # Template syntax: {{ ... }} (Jinja/Handlebars), ${ ... } (JS/EL),
     # or <%= ... %> (ERB/JSP).
-    "template": re.compile(r"\{\{.*?\}\}|\$\{.*?\}|<%=?.*?%>", re.DOTALL),
+    "template": _PairedMarkers(("{{", "}}"), ("${", "}"), ("<%", "%>")),
     # Shell metacharacters used for command chaining / substitution.
     "shell": re.compile(r"\$\(|`[^`]+`|\|\||&&|;\s*\w+|>\s*/"),
     # Prompt-injection trigger phrases.

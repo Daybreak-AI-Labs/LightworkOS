@@ -54,7 +54,8 @@ def _authorize_url(args: dict[str, Any]) -> str:
         params["scope"] = str(args["scope"])
     if args.get("state"):
         params["state"] = str(args["state"])
-    url = f"{args['authorize_url']}?{urlencode(params)}"
+    sep = "&" if urlparse(args["authorize_url"]).query else "?"
+    url = f"{args['authorize_url']}{sep}{urlencode(params)}"
     return (f"open: {url}\n"
             f"pkce_verifier: {verifier}\n"
             "(keep the verifier private for an operator-controlled OAuth client)")

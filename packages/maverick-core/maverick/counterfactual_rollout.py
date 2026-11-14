@@ -218,9 +218,13 @@ def estimate_effect_via_rollout(
     placebo_effects: list[float] = []
     supported = 0
     for s0 in starts:
-        if model.support(s0, treated_action) >= min_support and \
-                model.support(s0, control_action) >= min_support:
-            supported += 1
+        # Only states where both actions were actually observed contribute: an
+        # unseen (state, action) scores the 0.5 prior, which would read as an
+        # effect the data never showed.
+        if model.support(s0, treated_action) < min_support or \
+                model.support(s0, control_action) < min_support:
+            continue
+        supported += 1
         y_t = mean_rollout(s0, treated_action)
         y_c = mean_rollout(s0, control_action)
         per_state_effects.append(y_t - y_c)
@@ -228,18 +232,19 @@ def estimate_effect_via_rollout(
         placebo_effects.append(mean_rollout(s0, treated_action) - y_t)
 
     n = len(per_state_effects)
-    effect = sum(per_state_effects) / n
+    effect = sum(per_state_effects) / n if n else 0.0
     var = (sum((e - effect) ** 2 for e in per_state_effects) / n / n) if n > 1 else 0.0
     half = _Z95 * math.sqrt(var) if var > 0 else 0.0
-    placebo = sum(placebo_effects) / n
-    overlap = supported / n
+    placebo = sum(placebo_effects) / n if n else 0.0
+    overlap = supported / len(starts)
 
     accuracy, n_scored = (1.0, 0)
     if holdout is not None:
         accuracy, n_scored = model.one_step_accuracy(holdout)
 
     trustworthy = (
-        overlap >= 0.5
+        n > 0
+        and overlap >= 0.5
         and abs(placebo) <= 0.05
         and (holdout is None or (n_scored > 0 and accuracy >= min_accuracy))
     )
@@ -249,7 +254,7 @@ def estimate_effect_via_rollout(
         ci_low=effect - half,
         ci_high=effect + half,
         n_used=supported,
-        n_total=n,
+        n_total=len(starts),
         strata_used=n,
         overlap=overlap,
         naive_effect=naive_effect,

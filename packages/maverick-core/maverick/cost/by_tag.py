@@ -71,7 +71,9 @@ def gather(
         cost = _num(getattr(ep, "cost_dollars", 0))
         if cost <= 0:
             continue
-        tag = getattr(ep, tag_field, None)
+        # tag_field may come from a query string: a private or dunder name
+        # (``__dict__``) would expose the row's internals as its tag.
+        tag = None if tag_field.startswith("_") else getattr(ep, tag_field, None)
         if not tag:
             gid = getattr(ep, "goal_id", None)
             if gid is not None and gid not in goal_tags:

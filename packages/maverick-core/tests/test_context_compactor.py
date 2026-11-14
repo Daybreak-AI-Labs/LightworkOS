@@ -169,3 +169,10 @@ class TestCompactorPreservesSystem:
         # And it is the same system content.
         sys_msgs = [m for m in res.messages if m.get("role") == "system"]
         assert sys_msgs and sys_msgs[0]["content"].startswith("CRITICAL SYSTEM RULES")
+
+
+def test_over_budget_tail_is_trimmed_even_when_only_system_precedes_it():
+    messages = [{"role": "system", "content": "rules"},
+                {"role": "user", "content": "a" * 40_000}]
+    result = cc.compact(messages, target_tokens=1000, preserve_tail=1)
+    assert result.tokens_after <= 1000

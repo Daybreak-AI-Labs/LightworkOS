@@ -514,6 +514,9 @@ def test_capability_probe_uses_one_fixed_read_and_persists_no_provider_payload(m
     assert calls[0][2]["follow_redirects"] is False and len(calls) == 1
     assert "must-not-persist" not in str(connections.get_connection("drive"))
     assert "file-a" not in str(receipt)
+    probe(" Drive ", "drive_file_metadata", "file-a", actor="user:a", expected_revision=saved["revision"], authorize=lambda: None)
+    assert len(connections.get_connection("drive")["capability_receipts"]) == 2
+    calls.pop()
     with pytest.raises(ValueError):
         probe("drive", "drive_file_metadata", "../different", actor="user:a", expected_revision=saved["revision"], authorize=lambda: None)
     assert len(calls) == 1

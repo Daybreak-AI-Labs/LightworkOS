@@ -87,11 +87,18 @@ def spec_for(provider: str, model_id: str) -> str:
 
 
 def discovery_enabled() -> bool:
-    """``[models] discovery`` (default on), overridden by ``MAVERICK_MODEL_DISCOVERY``."""
+    """``[models] discovery`` (default on), overridden by ``MAVERICK_MODEL_DISCOVERY``.
+
+    Off while a config source is unreadable: it may hold ``discovery = false``,
+    and discovery sends the provider key to the provider's model listing."""
     env = os.environ.get("MAVERICK_MODEL_DISCOVERY", "").strip().lower()
     if env:
         return env in {"1", "true", "yes", "on"}
+    # Load first: the error seam reflects the most recent load.
     value = _models_table().get("discovery")
+    from .config import config_source_errors
+    if config_source_errors(include_tenant=True):
+        return False
     if isinstance(value, bool):
         return value
     if isinstance(value, str):

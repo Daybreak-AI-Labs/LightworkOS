@@ -87,11 +87,13 @@ def assessment_tools(session) -> list[Tool]:
         if not session.type:
             return "ERROR: call start_assessment first."
         result = session.evaluate()
+        saved_note = ""
         try:
             save_session(session)
         except Exception as e:  # producing the result must not fail on a write error
-            return f"Scored, but could not save ({type(e).__name__}): see findings below."
-        lines = [
+            saved_note = f"Scored, but could not save ({type(e).__name__}): see findings below."
+        lines = [saved_note] if saved_note else []
+        lines += [
             f"{result.subject}: risk {result.risk_rating.upper()} "
             f"({result.answered}/{result.total} answered, "
             f"{len(result.findings)} finding(s))."

@@ -569,3 +569,11 @@ class TestImportPayloadFidelity:
         tpl = t.load_template(res.template_name)
         # the trigger's default params fill every declared slot -> render succeeds
         assert tpl.render(**res.suggested_trigger["params"]) is not None
+
+
+def test_query_secret_redaction_is_linear_on_runs_of_separators():
+    # The old pattern restarted a keyword search at every "?"/"&" and scanned
+    # to the end each time; 64 KiB of separators took minutes.
+    assert ir._safe_line("?" * 65536, max_chars=120) == "?" * 119 + "…"
+    assert ir._safe_line("https://x/y?q=1&api_key=abc") == (
+        "https://x/y?q=1&api_key=[REDACTED:automation_import_secret]")

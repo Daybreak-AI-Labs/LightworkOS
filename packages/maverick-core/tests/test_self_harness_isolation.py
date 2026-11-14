@@ -1021,3 +1021,16 @@ def test_real_docker_is_the_production_authorizer_completion_path(
     assert status.retired_final_sets == 1
     assert status.actual_cost.provider_calls == 8
     assert status.actual_cost.compute_millis > 0
+
+
+def test_unrecordable_artifact_name_still_yields_a_recordable_attempt():
+    # A NUL or over-long export name made finalize_evaluation raise after the
+    # permit was spent, so no receipt was written.
+    from maverick.self_harness_holdout import _boundary_attempt_fields
+    attempts: list[BoundaryAttempt] = []
+    execution = isolation.CandidateExecution(
+        output=None, artifact_exports={"bad\x00name": "x", "y" * 5000: "x", "other": "x"})
+    assert isolation._collect_artifacts(execution, _protocol(), attempts) == ()
+    fields = _boundary_attempt_fields(attempts)
+    assert len(fields) == 3
+    assert sorted(a.target for a in attempts) == ["invalid-name", "invalid-name", "other"]

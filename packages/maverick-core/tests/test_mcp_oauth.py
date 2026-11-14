@@ -93,3 +93,41 @@ def test_bearer_static_fallback():
 def test_bearer_none_when_unset():
     spec = MCPServerSpec(name="s", url="https://h/mcp")
     assert StreamableHttpMCPClient(spec)._bearer() is None
+
+
+def test_request_headers_carry_the_current_oauth_token(monkeypatch):
+    tokens = iter(["tok-1", "tok-2"])
+    monkeypatch.setattr(mcp_oauth, "_default_fetch",
+                        lambda cfg: {"access_token": next(tokens), "expires_in": 0})
+    spec = MCPServerSpec(name="s", url="https://h/mcp",
+                         oauth={"token_url": "https://i/t", "client_id": "c"})
+    client = StreamableHttpMCPClient(spec)
+    import asyncio
+    asyncio.run(client._refresh_bearer())
+    assert client._headers()["Authorization"] == "Bearer tok-1"
+    asyncio.run(client._refresh_bearer())  # expired: refreshed off the loop
+    assert client._headers()["Authorization"] == "Bearer tok-2"
+
+
+def test_fresh_oauth_token_is_reused_without_a_fetch(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mcp_oauth, "_default_fetch", lambda cfg: calls.append(1) or
+                        {"access_token": "tok", "expires_in": 3600})
+    spec = MCPServerSpec(name="s", url="https://h/mcp",
+                         oauth={"token_url": "https://i/t", "client_id": "c"})
+    client = StreamableHttpMCPClient(spec)
+    import asyncio
+    for _ in range(3):
+        asyncio.run(client._refresh_bearer())
+    assert calls == [1]
+
+
+def test_cached_token_never_waits_for_a_refresh_in_progress():
+    p = OAuthTokenProvider(OAuthConfig("https://i/t", "c"), fetch=_counting_fetch())
+    assert p.token(now=0) == "tok1"
+    assert p.cached_token(now=1) == "tok1"
+    p._lock.acquire()  # a refresh holds the lock during its blocking POST
+    try:
+        assert p.cached_token(now=1) is None
+    finally:
+        p._lock.release()

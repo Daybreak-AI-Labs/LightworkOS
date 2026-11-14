@@ -1,6 +1,8 @@
 """Actual plugin-kind adapters, executed only inside the reviewed container.
 
-No host discovery imports this module. Channel checks invoke the real lifecycle
+The host also imports :func:`validator`/:func:`validate` to check practice
+input against a schema the container reported, so the schema gate must not let
+that schema make the host fetch anything. Channel checks invoke the real lifecycle
 and send contract; the immutable image must supply synthetic local configuration.
 Network denial is enforced by the container, never by a monkeypatched client.
 """
@@ -20,8 +22,11 @@ def validator(schema):
     Draft202012Validator.check_schema(schema)
     def refs(value):
         if isinstance(value, dict):
-            if "$ref" in value and not str(value["$ref"]).startswith("#"):
-                raise ValueError("external schema references are unsupported")
+            # Every reference keyword resolves through the default registry,
+            # which retrieves URLs; only same-document fragments are allowed.
+            for key in ("$ref", "$dynamicRef", "$recursiveRef"):
+                if key in value and not str(value[key]).startswith("#"):
+                    raise ValueError("external schema references are unsupported")
             for child in value.values():
                 refs(child)
         elif isinstance(value, list):

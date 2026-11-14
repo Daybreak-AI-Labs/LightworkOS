@@ -7,7 +7,7 @@ from typing import Any
 
 from .run_events import FlowCredentialRefused
 
-_COND = re.compile(r"^\s*(\S+)\s*(==|!=|>=|<=|>|<|contains)\s*(.+?)\s*$")
+_COND = re.compile(r"^\s*(\S+)\s*(==|!=|>=|<=|>|<|\bcontains\b)\s*(.+?)\s*$")
 _FN_CALL = re.compile(r"^([a-zA-Z_]\w*)\s*\((.*)\)$")
 
 
@@ -84,6 +84,48 @@ _GROUP_QUANTIFIERS = frozenset("*+?")
 
 class FlowRegexRefused(ValueError):
     """A pattern cannot be evaluated within the flow's safe regex subset."""
+
+
+# A run's whole checkpoint is capped at 16 MiB, but only when it is saved; a
+# text function must not build a larger value in memory first.
+_MAX_TEXT_CHARS = 16 * 1024 * 1024
+
+
+class FlowTextLimitRefused(FlowRegexRefused):
+    """A text function would build a value larger than a run may hold.
+
+    It shares the regex refusal's handling: the step fails instead of the
+    expression quietly rendering empty.
+    """
+
+
+def _bounded_text(length: int) -> None:
+    if length > _MAX_TEXT_CHARS:
+        raise FlowTextLimitRefused("flow text function result exceeds 16 MiB")
+
+
+def _fn_concat(a: list) -> str:
+    parts = [_as_text(x) for x in a]
+    _bounded_text(sum(len(part) for part in parts))
+    return "".join(parts)
+
+
+def _fn_replace(a: list) -> str:
+    if len(a) < 3:
+        return str(a[0]) if a else ""
+    text, old, new = str(a[0]), str(a[1]), str(a[2])
+    hits = text.count(old)
+    _bounded_text(len(text) + hits * (len(new) - len(old)))
+    return text.replace(old, new)
+
+
+def _fn_join(a: list) -> str:
+    if len(a) >= 2 and isinstance(a[0], (list, tuple)):
+        parts = [_as_text(x) for x in a[0]]
+        sep = str(a[1])
+        _bounded_text(sum(len(part) for part in parts) + len(sep) * max(0, len(parts) - 1))
+        return sep.join(parts)
+    return _as_text(a[0]) if a else ""
 
 
 def _regex_is_safe(pattern: str) -> bool:
@@ -163,7 +205,7 @@ def _fn_regex(a: list) -> str:
         return ""
     if not m:
         return ""
-    return m.group(1) if m.groups() else m.group(0)
+    return (m.group(1) or "") if m.groups() else m.group(0)
 
 
 def _fn_datefmt(a: list) -> str:
@@ -226,8 +268,8 @@ _FUNCS: dict[str, Callable[[list], Any]] = {
     "trim": lambda a: str(a[0]).strip() if a else "",
     "title": lambda a: str(a[0]).title() if a else "",
     "length": lambda a: (len(a[0]) if a and hasattr(a[0], "__len__") else 0),
-    "concat": lambda a: "".join(_as_text(x) for x in a),
-    "replace": lambda a: (str(a[0]).replace(str(a[1]), str(a[2])) if len(a) >= 3 else (str(a[0]) if a else "")),
+    "concat": _fn_concat,
+    "replace": _fn_replace,
     "default": lambda a: (a[0] if (a and a[0] not in (None, "", [], {})) else (a[1] if len(a) > 1 else "")),
     "json": lambda a: (__import__("json").dumps(a[0]) if a else ""),
     # date/time (UTC): enable "due in N days" / "older than a week" workflows,
@@ -239,7 +281,7 @@ _FUNCS: dict[str, Callable[[list], Any]] = {
     "last": lambda a: (a[0][-1] if a and isinstance(a[0], (list, tuple)) and a[0] else ""),
     # string / collection transforms
     "split": lambda a: (str(a[0]).split(str(a[1])) if len(a) >= 2 else str(a[0]).split() if a else []),
-    "join": lambda a: (str(a[1]).join(_as_text(x) for x in a[0]) if len(a) >= 2 and isinstance(a[0], (list, tuple)) else (_as_text(a[0]) if a else "")),
+    "join": _fn_join,
     "slice": _fn_slice,
     "index": lambda a: (a[0][int(_num(a[1]))] if a and isinstance(a[0], (list, tuple)) and -len(a[0]) <= int(_num(a[1])) < len(a[0]) else ""),
     "regex": _fn_regex,

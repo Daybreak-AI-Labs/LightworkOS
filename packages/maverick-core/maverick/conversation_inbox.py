@@ -434,11 +434,14 @@ def _human_held(value):
     return any(session.get("state") in HELD for session in value.get("human",{}).get("sessions",{}).values())
 
 
+_MAX_INVENTORY_SCAN = 100_000
+
+
 def owned_inventory(principal):
     """Owned My Data inventory; the adapter owns verified actor admission."""
     if not isinstance(principal, str) or not principal.startswith("user:"):
         raise PermissionError("A named data owner is required")
-    result, cursor, seen = [], "", set()
+    result, cursor, seen, owned = [], "", set(), 0
     while True:
         page = list(STORE.iter_record_ids(start_after=cursor, limit=100))
         if not page:
@@ -448,10 +451,17 @@ def owned_inventory(principal):
             if record_id in seen:
                 return result
             seen.add(record_id)
-            if len(seen) > 10000:
+            if len(seen) > _MAX_INVENTORY_SCAN:
+                # The store has no owner index, so this bounds the work of one
+                # request; it sits far above the per-owner cap.
                 raise ValueError("Conversation inventory needs a narrower reviewed owner scope")
             record = STORE.get(record_id)
             if record and record.get("owner") == principal:
+                # Only this owner's records count: other people's volume
+                # must not make anyone's inventory (or erasure) fail.
+                owned += 1
+                if owned > 10000:
+                    raise ValueError("Conversation inventory needs a narrower reviewed owner scope")
                 payload = _unpack(record)
                 if any(item["state"] != "erased" for item in payload["items"]) or _human_private(payload):
                     result.append({"id": record_id, "revision": record["revision"], "owner": principal,

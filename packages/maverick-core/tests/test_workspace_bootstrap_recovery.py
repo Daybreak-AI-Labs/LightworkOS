@@ -984,3 +984,29 @@ def test_interrupted_multi_key_install_resumes_only_the_exact_reviewed_set(
     assert installed["at_rest.key"] == primary
     for material in rotation_material:
         assert installed[crypto_at_rest._key_fingerprint(material).hex() + ".key"] == material
+
+
+def test_repeat_retained_key_install_does_not_renew_expired_authorization(
+    monkeypatch, tmp_path,
+):
+    """Regression: installing the same retained keys again after the
+    bootstrap window expired extended it by another 24 hours, without a fresh
+    prepare_bootstrap and its offline attestation."""
+    exported, recovery_key, custody, _, _, _, _ = _source_snapshot(monkeypatch, tmp_path)
+    _select_home(monkeypatch, tmp_path / "target-home")
+    recovery.configure_key(imported=recovery_key)
+    imported = recovery.import_archive(exported)
+    recovery.prepare_bootstrap(isolated=True, actor="admin-a", source_offline=True)
+    report = recovery.test_key_custody(
+        imported["id"], custody,
+        expected_sha256=imported["sha256"], actor="admin-a",
+    )
+    kwargs = dict(expected_sha256=imported["sha256"], report_id=report["report_id"],
+                  isolated=True, actor="admin-a")
+    recovery.install_retained_keys(imported["id"], custody, **kwargs)
+    expires_at = recovery._read_bootstrap(actor="admin-a")["expires_at"]
+
+    monkeypatch.setattr(recovery.time, "time", lambda: expires_at + 1)
+    recovery.install_retained_keys(imported["id"], custody, **kwargs)
+
+    assert recovery._read_bootstrap(actor="admin-a")["expires_at"] == expires_at

@@ -655,6 +655,28 @@ def test_merge_preserves_operator_fields_and_unknown_keys(tmp_path):
     assert added["added_at"] > 0        # harvest stamp for the quality lifecycle
 
 
+def test_unreadable_corpus_family_is_never_rewritten_from_empty(tmp_path):
+    # A hand-edit typo made the live corpus read as {}, and the next harvest
+    # merge replaced the operator's rows with only the harvested ones.
+    import pytest
+    cand = [{"privacy_schema": "shared-unowned-sources-v1", "source_goal_ids": [0], "goal": "g", "expected": "e"}]
+    cpath = tmp_path / "corpus.json"
+    broken = '{"M": [{"goal": "live", "expected": "x", "note": "keep"},]}'
+    cpath.write_text(broken)
+    with pytest.raises(ValueError):
+        ev.merge_candidates(cpath, "M", cand)
+    with pytest.raises(ValueError):
+        ev.retire_corpus_cases(cpath, "M", ["live"])
+    assert cpath.read_text() == broken
+    cpath.write_text("{}")
+    ev.pending_corpus_path(cpath).write_text(broken)
+    with pytest.raises(ValueError):
+        ev.stage_candidates(cpath, "M", cand)
+    with pytest.raises(ValueError):
+        ev.resolve_pending(cpath, "M", accept_all=True)
+    assert ev.pending_corpus_path(cpath).read_text() == broken
+
+
 def test_corpus_quality_flags_dead_cases_and_retire_prunes_raw(tmp_path):
     # A case the baseline always passes is DEAD ground truth; one it can fail
     # is discriminative; an all-indeterminate probe stays discriminative

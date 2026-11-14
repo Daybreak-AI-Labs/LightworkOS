@@ -97,6 +97,19 @@ def test_semantic_scholar_legacy_arxiv_id(monkeypatch):
     assert "T" in out
 
 
+def test_semantic_scholar_paper_id_cannot_retarget_the_request():
+    from maverick.tools.semantic_scholar import semantic_scholar
+    fake_resp = MagicMock(status_code=200, raise_for_status=MagicMock(),
+                          json=MagicMock(return_value={"title": "T"}))
+    with patch("httpx.get", return_value=fake_resp) as mock_get:
+        out = semantic_scholar().fn(
+            {"op": "paper", "paper_id": "doi:../../../recommendations/v1/papers"})
+        assert out.startswith("ERROR")
+        mock_get.assert_not_called()
+        semantic_scholar().fn({"op": "paper", "paper_id": "10.1/x?fields=secret#f"})
+    assert mock_get.call_args.args[0].endswith("/paper/DOI:10.1/x%3Ffields%3Dsecret%23f")
+
+
 def test_semantic_scholar_404_actionable():
     from maverick.tools.semantic_scholar import semantic_scholar
     fake_resp = MagicMock()

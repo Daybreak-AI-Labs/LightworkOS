@@ -57,9 +57,19 @@ def _norm(path: str) -> str:
     return p if p.startswith("/") else "/" + p
 
 
+def _escapes_base(path: str) -> bool:
+    """True when ``path`` has a dot segment that would climb out of the
+    configured WORKDAY_BASE_URL prefix once the client normalises it."""
+    from urllib.parse import unquote
+    segments = unquote(path.split("?", 1)[0].split("#", 1)[0]).replace("\\", "/").split("/")
+    return any(seg in (".", "..") for seg in segments)
+
+
 def _op_get(path: str, params: dict) -> str:
     if not path:
         return "ERROR: get requires path"
+    if _escapes_base(path):
+        return "ERROR: path must stay under WORKDAY_BASE_URL (no . or .. segments)"
     import httpx
     base, _t = _config()
     r = _governed_sender(httpx.get)(f"{base}{_norm(path)}", headers=_headers(),
@@ -76,6 +86,8 @@ def _op_get(path: str, params: dict) -> str:
 def _op_post(path: str, body: dict, confirm: bool) -> str:
     if not path:
         return "ERROR: post requires path"
+    if _escapes_base(path):
+        return "ERROR: path must stay under WORKDAY_BASE_URL (no . or .. segments)"
     if not confirm:
         return f"DRY RUN: would POST {_norm(path)}. Re-run with confirm=true."
     import httpx

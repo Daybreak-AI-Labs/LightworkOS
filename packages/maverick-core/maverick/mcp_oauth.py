@@ -119,6 +119,23 @@ class OAuthTokenProvider:
         self._access_token: str | None = None
         self._expires_at = 0.0
 
+    def cached_token(self, *, now: float | None = None) -> str | None:
+        """The cached access token while it is fresh, else None (no network).
+
+        Never waits: token() holds the lock across the blocking token request,
+        and this runs on the event loop, so a busy lock answers None and the
+        caller awaits the off-loop token() instead.
+        """
+        now = time.time() if now is None else now
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            if self._access_token and now < self._expires_at - _EXPIRY_SKEW_S:
+                return self._access_token
+            return None
+        finally:
+            self._lock.release()
+
     def token(self, *, now: float | None = None) -> str:
         """Return a valid access token, fetching/refreshing if needed."""
         now = time.time() if now is None else now
@@ -249,6 +266,23 @@ class AuthorizationCodeProvider:
         resp = self._post(self._cfg.token_url, data)
         with self._lock:
             return self._store(resp, now=now)
+
+    def cached_token(self, *, now: float | None = None) -> str | None:
+        """The cached access token while it is fresh, else None (no network).
+
+        Never waits: token() holds the lock across the blocking token request,
+        and this runs on the event loop, so a busy lock answers None and the
+        caller awaits the off-loop token() instead.
+        """
+        now = time.time() if now is None else now
+        if not self._lock.acquire(blocking=False):
+            return None
+        try:
+            if self._access_token and now < self._expires_at - _EXPIRY_SKEW_S:
+                return self._access_token
+            return None
+        finally:
+            self._lock.release()
 
     def token(self, *, now: float | None = None) -> str:
         """A valid access token, refreshing via the refresh_token grant when

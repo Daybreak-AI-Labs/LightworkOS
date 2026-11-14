@@ -23,9 +23,14 @@ from pathlib import Path
 # material read by tenant/kms.py (MAVERICK_KMS_KEK) -- neither substring is
 # covered by KEY/SECRET/CREDENTIAL above (this key wraps every tenant's DEK,
 # so leaking it into a sandboxed shell is a full data-at-rest compromise).
+# Short secret suffixes (MYSQL_PWD, DB_PASS, GITHUB_PAT, STRIPE_SK, ...) need the
+# underscore so PWD, OLDPWD and PATH are kept; *_TO_PASS names test ids.
+# PRIVATE/SIGNING alone are not secrets (GOPRIVATE, CODESIGNING_IDENTITY);
+# *_PRIVATE_KEY and *_SIGNING_KEY are covered by KEY.
 _SECRET_ENV_RE = re.compile(
     r"(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|APIKEY|DSN|URI|URL|CONN"
-    r"|OAUTH|BEARER|HEADER|NETRC|COOKIE|AUTH|KEK|DEK)",
+    r"|OAUTH|BEARER|HEADER|NETRC|COOKIE|AUTH|KEK|DEK|PASSCOMMAND"
+    r"|MNEMONIC|_(?:PWD|PAT|SK|SALT|PEM|SIGNING)$|(?<!_TO)_PASS$)",
     re.IGNORECASE,
 )
 # Stripped explicitly even though the pattern already covers them — kept
@@ -374,6 +379,7 @@ class LocalBackend:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             env=child_env,
             # Own session (= new process group) so a timeout can reap the WHOLE
             # tree. subprocess's own timeout SIGKILLs only the direct /bin/sh

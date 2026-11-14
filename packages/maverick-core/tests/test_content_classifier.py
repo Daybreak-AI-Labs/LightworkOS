@@ -110,3 +110,12 @@ def test_roster_names_match_whole_word_case_insensitive():
     import pytest as pytest_module
     with pytest_module.raises(ValueError, match="roster"):
         classify_text("x", roster=["n"] * 5_001)
+
+
+def test_truncated_is_set_when_the_cap_drops_a_finding():
+    # Phone hits overlapping national ids are removed after collection, which
+    # brought the list under the cap while findings had been dropped.
+    from maverick.content_classifier import MAX_FINDINGS
+    report = classify_text("NHS 943 476 5919 " * 2600 + "51.5007, -0.1246")
+    assert len(report["findings"]) < MAX_FINDINGS
+    assert report["truncated"] is True

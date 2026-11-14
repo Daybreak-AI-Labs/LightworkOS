@@ -99,6 +99,19 @@ def test_schema_plan_command_runs(tmp_path, monkeypatch):
     assert "current" in r.output or "pending" in r.output
 
 
+def test_schema_plan_command_reports_an_unreadable_world(monkeypatch):
+    from click.testing import CliRunner
+    from maverick import cli as cli_mod
+    from maverick import schema_migrations
+
+    def _unreadable(world=None):
+        raise RuntimeError("world database cannot be read")
+    monkeypatch.setattr(schema_migrations, "current_plan", _unreadable)
+    r = CliRunner().invoke(cli_mod.main, ["schema-plan"])
+    assert r.exit_code == 1 and "world database cannot be read" in r.output
+    assert isinstance(r.exception, SystemExit)
+
+
 def test_ci_gate_passes_on_the_shipped_table():
     from maverick.schema_migrations import main
     assert main(["--ci"]) == 0  # the shipped migrations lint clean
@@ -111,3 +124,27 @@ def test_ci_gate_fails_on_an_unclassifiable_migration(monkeypatch):
     assert sm.main(["--ci"]) == 1
     # Without --ci it reports the problem but does not fail the build.
     assert sm.main([]) == 0
+
+
+def test_current_plan_reads_the_version_without_migrating(tmp_path, monkeypatch):
+    # Opening the world applied every pending migration, so the preview always
+    # reported "schema is current" after running the hot migrations it exists
+    # to warn about.
+    import sqlite3
+
+    from maverick import world_model
+    from maverick.schema_migrations import current_plan
+    db = tmp_path / "world.db"
+    monkeypatch.setattr(world_model, "DEFAULT_DB", db)
+    monkeypatch.delenv("MAVERICK_WORLD_BACKEND", raising=False)
+    world_model.WorldModel(db).close()
+    old = world_model.SCHEMA_VERSION - 2
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE schema_version SET version = ?", (old,))
+    conn.close()
+    problems, current, target, steps = current_plan()
+    assert problems == [] and (current, target) == (old, world_model.SCHEMA_VERSION)
+    assert {s.version for s in steps} == {old + 1, old + 2}
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == old
+    conn.close()

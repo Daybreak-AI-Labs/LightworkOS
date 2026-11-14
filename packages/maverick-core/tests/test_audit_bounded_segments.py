@@ -280,7 +280,9 @@ def test_export_receipt_canonical_dotdot_cannot_enter_audit_directory(tmp_path):
         validate_export_destination(root / ".." / "audit" / "anchors.ndjson")
 
 
-def test_rotation_preserves_framed_history_and_fleet_refuses_local_keyring():
+def test_rotation_preserves_framed_history_and_fleet_refuses_local_keyring(monkeypatch):
+    # Local rotation needs a node-local key: an injected key is rotated where it is managed.
+    monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY")
     initial = b"".join(encode_stream(io.BytesIO(b"initial"), crypto.seal))
     crypto.rotate_at_rest_key()
     rotated = b"".join(encode_stream(io.BytesIO(b"rotated"), crypto.seal))

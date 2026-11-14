@@ -74,10 +74,12 @@ def _op_track(args: dict) -> str:
         return "ERROR: track requires event and distinct_id"
     payload = {
         "event": event,
+        # The project token and distinct_id are applied last so caller
+        # properties cannot redirect the event to another project or person.
         "properties": {
+            **(args.get("properties") or {}),
             "token": _token(),
             "distinct_id": did,
-            **(args.get("properties") or {}),
         },
     }
     r = _governed_sender(httpx.post)(

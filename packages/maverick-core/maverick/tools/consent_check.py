@@ -2,8 +2,8 @@
 
 Evaluates a set of consent records and reports, per processing purpose, whether
 valid consent currently exists. A record is only VALID if it was granted, not
-withdrawn, and not expired as of ``now``; otherwise it is NOT_GRANTED, WITHDRAWN,
-or EXPIRED. When several records share a purpose the most recent (by
+withdrawn, not expired, and not granted after ``now``; otherwise it is
+NOT_GRANTED, NOT_YET_GRANTED, WITHDRAWN, or EXPIRED. When several records share a purpose the most recent (by
 ``granted_at``) governs, so a fresh re-grant supersedes an older withdrawal.
 Pure date logic — deterministic and offline. Distinct from the
 ``voice_cloning_consent`` single-purpose gate.
@@ -33,6 +33,10 @@ def _status(rec: dict, now: date) -> tuple[str, str]:
     """Return (state, detail) for one consent record."""
     if rec.get("granted") is not True:
         return "NOT_GRANTED", "consent was not granted"
+    if rec.get("granted_at"):
+        g = _parse(rec["granted_at"], "granted_at")
+        if g > now:
+            return "NOT_YET_GRANTED", f"granted_at {g.isoformat()} is after {now.isoformat()}"
     if rec.get("withdrawn_at"):
         w = _parse(rec["withdrawn_at"], "withdrawn_at")
         if w <= now:
@@ -45,8 +49,10 @@ def _status(rec: dict, now: date) -> tuple[str, str]:
 
 
 def _check(consents: list, now: date, only: str | None) -> str:
-    # Most recent grant per purpose governs.
-    latest: dict[str, dict] = {}
+    # Most recent grant at or before ``now`` per purpose governs. A record
+    # dated after ``now`` cannot hide a current grant: it is considered only
+    # when the purpose has no record at or before ``now`` (NOT_YET_GRANTED).
+    latest: dict[str, tuple[tuple[int, int], dict]] = {}
     for i, rec in enumerate(consents):
         if not isinstance(rec, dict) or "purpose" not in rec:
             return f"ERROR: consent {i} needs a 'purpose'"
@@ -54,10 +60,10 @@ def _check(consents: list, now: date, only: str | None) -> str:
         if only is not None and purpose != only:
             continue
         ga = rec.get("granted_at")
-        key = _parse(ga, f"consent {i} granted_at").toordinal() if ga else -1
+        when = _parse(ga, f"consent {i} granted_at").toordinal() if ga else -1
+        key = (0 if when > now.toordinal() else 1, when)
         prev = latest.get(purpose)
-        prev_key = prev[0] if prev else -2
-        if key >= prev_key:
+        if prev is None or key >= prev[0]:
             latest[purpose] = (key, rec)
 
     if only is not None and only not in latest:

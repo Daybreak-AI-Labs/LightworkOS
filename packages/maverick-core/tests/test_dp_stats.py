@@ -53,3 +53,9 @@ def test_zero_epsilon_errors():
 
 def test_sum_requires_clamp():
     assert dp_stats().fn({"op": "sum", "values": [1, 2]}).startswith("ERROR")
+
+
+def test_non_finite_epsilon_is_refused():
+    for eps in ("inf", "nan"):
+        out = dp_stats().fn({"op": "count", "value": 5, "epsilon": eps})
+        assert out.startswith("ERROR"), out

@@ -260,8 +260,9 @@ def _reference_key(reference: ResearchAssetRef) -> tuple[str, str, str, str]:
 class KnowledgeDocument:
     """A bounded projection from an existing content authority.
 
-    Searchable chunks are bounded to the source projector's boundary: 256 KiB
-    for most stores, and the configured max_text_kib for a saved remote source.
+    Searchable chunks are bounded to 2048 chunks and 256 KiB for every store.
+    A projector with more text (a large saved remote source) keeps the leading
+    chunks and sets ``search_coverage_complete`` to False.
     The owning store is reread on every access. The exact tenant, registry ref,
     and content digest stop a buggy adapter from crossing a tenant or version
     boundary.
@@ -986,7 +987,9 @@ class KnowledgeAccessService:
 
         Registry pages are candidate metadata only. Never release a purpose
         until the same live source, consent, lineage and principal checks used
-        for detail succeed. Storage/projection failures propagate as unavailable.
+        for detail succeed. A source whose content is unavailable (a storage or
+        projection failure) is treated like a denied source: it backs no
+        purpose, so the purpose is omitted rather than reported as an error.
         """
         canonical = canonical_tenant_id(tenant)
         found: set[str] = set()

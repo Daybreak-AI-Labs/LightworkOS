@@ -148,6 +148,48 @@ def test_migrate_store_imports_and_backs_up(world_home, monkeypatch):
     assert r.exit_code == 0 and "nothing to migrate" in r.output
 
 
+def test_migrate_store_reports_a_refused_corpus_migration(world_home, monkeypatch):
+    from maverick import learning_store_migration as mig
+    from maverick.cli import main
+
+    def _refuse():
+        raise mig.MigrationRefused("corpus file is unreadable")
+    monkeypatch.setattr(mig, "migrate_corpus", _refuse)
+    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
+    assert r.exit_code == 1 and "corpus file is unreadable" in r.output
+    assert isinstance(r.exception, SystemExit)
+
+
+def test_migrate_store_refuses_when_the_world_read_fails(world_home, monkeypatch):
+    ls.write_addenda_db({"model-a": "- keep a", "model-b": "- keep b"})
+    sh._store_path().parent.mkdir(parents=True, exist_ok=True)
+    sh._store_path().write_text(json.dumps({"model-c": "- from file"}))
+    real_rows = ls._rows
+
+    def _locked(conn, sql, params=()):
+        if sql.startswith("SELECT key, block FROM harness_addenda"):
+            raise RuntimeError("database is locked")
+        return real_rows(conn, sql, params)
+
+    monkeypatch.setattr(ls, "_rows", _locked)
+    from maverick import learning_store_migration as mig
+    with pytest.raises(RuntimeError):
+        mig.migrate_learning_files()
+    monkeypatch.setattr(ls, "_rows", real_rows)
+    assert ls.load_addenda_db() == {"model-a": "- keep a", "model-b": "- keep b"}
+
+
+def test_migrate_store_refuses_a_corrupt_file_instead_of_renaming_it(world_home):
+    from maverick import learning_store_migration as mig
+    sh._store_path().parent.mkdir(parents=True, exist_ok=True)
+    sh._store_path().write_text("{not json")
+    sh._meta_path(sh._store_path()).write_text(json.dumps({"l1": {"a": 1}}))
+    with pytest.raises(mig.LearningFileUnreadable, match="could not be read"):
+        mig.migrate_learning_files()
+    assert sh._store_path().read_text() == "{not json"
+    assert mig.preview()["unreadable"] == str(sh._store_path())
+
+
 def test_migrate_store_merges_conflicting_blocks(world_home, monkeypatch):
     from maverick.cli import main
     ctrl = _ctrl(monkeypatch, world_home / "promotion-ledger.json")
@@ -309,3 +351,22 @@ def test_migrate_store_requires_world_config(tmp_path, monkeypatch):
         "self_harness": {"enable": True}})       # store = files
     r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
     assert r.exit_code != 0 and 'store = "world"' in r.output
+
+
+def test_migrate_store_refuses_an_unreadable_corpus_file(world_corpus):
+    # An unreadable file read as {} was renamed to *.migrated and the run
+    # reported success with zero counts.
+    from maverick.cli import main
+    cpath = world_corpus
+    cpath.write_text('{"M": [,]}')
+    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
+    assert r.exit_code != 0
+    assert cpath.read_text() == '{"M": [,]}'
+    assert not cpath.with_name(cpath.name + ".migrated").exists()
+    # The callers report MigrationRefused, and can check before moving anything.
+    from maverick import self_harness_eval as ev
+    from maverick.learning_store_migration import MigrationRefused
+    with pytest.raises(MigrationRefused):
+        ev.check_corpus_files_migratable(cpath)
+    with pytest.raises(MigrationRefused):
+        ev.migrate_corpus_files(cpath)

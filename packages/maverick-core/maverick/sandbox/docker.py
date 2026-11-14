@@ -188,6 +188,7 @@ class DockerBackend:
                 args,
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=effective,
                 env=scrub_env(),
             )
@@ -247,7 +248,7 @@ class DockerBackend:
         args = ["docker", "exec", self._warm_name, "sh", "-c",
                 self._warm_command(cmd)]
         try:
-            result = subprocess.run(args, capture_output=True, text=True,
+            result = subprocess.run(args, capture_output=True, text=True, errors="replace",
                                     timeout=effective, env=scrub_env())
             return ExecResult(
                 stdout=result.stdout[-8000:],

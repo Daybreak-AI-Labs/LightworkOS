@@ -39,11 +39,14 @@ import asyncio
 import fnmatch
 import logging
 import os
+import re
 import shlex
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -70,6 +73,9 @@ class HookContext:
     agent_role: str = ""
     duration_ms: float = 0.0
     extra: dict[str, Any] = field(default_factory=dict)
+    # Set by dispatch when it refuses for a reason other than a hook's own
+    # verdict (an unreadable hooks configuration); callers may show it.
+    block_reason: str = ""
 
 
 @dataclass
@@ -120,37 +126,121 @@ def clear() -> None:
     """Drop all registered hooks. Used in tests + on session restart."""
     global _loaded
     _registry.clear()
+    _config_block.clear()
     _loaded = False
+
+
+# Raw-text evidence that an unreadable config file defines hooks: a [hooks]
+# or [[hooks]] table header, or a top-level hooks key. Bytes are searched,
+# never parsed (the file is unreadable as TOML by definition).
+_HOOKS_MENTION = re.compile(
+    rb"^(?:\xef\xbb\xbf)?[ \t]*(?:\[\[?[ \t]*([\"']?)hooks\1(?![A-Za-z0-9_-])"
+    rb"|([\"']?)hooks\2[ \t]*=)",
+    re.MULTILINE,
+)
+# Global config files that are unreadable and appear to define hooks. While
+# non-empty, blocking events are refused; it is re-evaluated on each dispatch.
+_config_block: list[str] = []
+_reported_unreadable: set[str] = set()
+
+
+def _unreadable_hook_sources() -> list[str]:
+    """Unreadable GLOBAL config sources whose raw text mentions hooks.
+
+    Tenant overlays are never consulted: one tenant's broken file must not
+    decide for every tenant sharing the process. A missing file is not an
+    error. An unreadable file with no hooks mention loads zero hooks from it
+    and is logged once.
+    """
+    from .config import config_source_errors, load_config
+    load_config()  # refresh the source-error seam before reading it
+    flagged: list[str] = []
+    for path in config_source_errors(include_tenant=False):
+        try:
+            raw = Path(path).read_bytes()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            # The bytes cannot be read at all, so the file may define hooks.
+            flagged.append(path)
+            continue
+        if _HOOKS_MENTION.search(raw):
+            flagged.append(path)
+        elif path not in _reported_unreadable:
+            _reported_unreadable.add(path)
+            log.error("hooks: %s could not be read and does not mention hooks; "
+                      "no hooks were loaded from it", path)
+    return flagged
+
+
+def config_block_reason() -> str:
+    """Why blocking events are refused, or "" when the hooks config is readable."""
+    if not _config_block:
+        return ""
+    return ("the hooks configuration could not be read ("
+            + ", ".join(_config_block)
+            + "); fix the file to resume")
+
+
+def _register_config_entries() -> None:
+    from .config import load_config
+    for entry in load_config().get("hooks", []) or []:
+        try:
+            event = HookEvent(entry["event"])
+            cmd = entry.get("command")
+            matcher = str(entry.get("matcher", "*"))
+            timeout_ms = int(entry.get("timeout_ms", 5000))
+        except (KeyError, ValueError, TypeError, AttributeError):
+            log.warning("invalid hook entry skipped: %s", entry)
+            continue
+        if not cmd:
+            log.warning("hook missing command: %s", entry)
+            continue
+        register(event, cmd, matcher=matcher, timeout_ms=timeout_ms)
 
 
 def load_from_config() -> None:
     """Read [[hooks]] entries from ~/.maverick/config.toml and register
     each one. Safe to call multiple times; clear() first if you don't
-    want duplicates."""
-    try:
-        from .config import load_config
-        cfg = load_config()
-    except Exception as e:  # pragma: no cover
-        log.debug("hook config load failed: %s", e)
+    want duplicates.
+
+    When a global config file is unreadable and its raw text mentions hooks,
+    no entries are registered and blocking events (PreToolUse,
+    UserPromptSubmit) are refused; :func:`dispatch` re-checks on every call
+    and loads the hooks as soon as the file is readable again. A malformed
+    entry is skipped with a warning; the remaining entries still load.
+    """
+    flagged = _unreadable_hook_sources()
+    if flagged:
+        _config_block[:] = flagged
+        log.error("hooks: %s", config_block_reason())
         return
-    for entry in cfg.get("hooks", []) or []:
+    _config_block.clear()
+    _register_config_entries()
+
+
+def _lift_config_block() -> bool:
+    """Re-check a config block; load the hooks once it lifts."""
+    with _load_lock:
+        if not _config_block:
+            return True
         try:
-            event = HookEvent(entry["event"])
-        except (KeyError, ValueError):
-            log.warning("invalid hook event: %s", entry)
-            continue
-        cmd = entry.get("command")
-        if not cmd:
-            log.warning("hook missing command: %s", entry)
-            continue
-        register(
-            event, cmd,
-            matcher=entry.get("matcher", "*"),
-            timeout_ms=int(entry.get("timeout_ms", 5000)),
-        )
+            flagged = _unreadable_hook_sources()
+            if not flagged:
+                _register_config_entries()
+        except Exception:
+            log.exception("hooks: configuration still cannot be loaded")
+            return False
+        if flagged:
+            _config_block[:] = flagged
+            return False
+        _config_block.clear()
+        log.warning("hooks: configuration readable again; hooks loaded")
+        return True
 
 
 _loaded = False
+_load_lock = threading.Lock()
 
 
 async def ensure_loaded() -> None:
@@ -169,17 +259,24 @@ async def ensure_loaded() -> None:
     global _loaded
     if _loaded:
         return
-    _loaded = True
-    try:
-        load_from_config()
-    except Exception:  # pragma: no cover -- fail-open per kernel rule 1
-        log.debug("hooks: load_from_config failed", exc_info=True)
-    try:
-        load_from_entry_points()
-    except Exception:  # pragma: no cover
-        log.debug("hooks: load_from_entry_points failed", exc_info=True)
-    import atexit
-    atexit.register(_emit_session_end)
+    # Concurrent callers (dashboard warm-up thread, goal threads) wait for the
+    # first load instead of dispatching against a half-built registry.
+    with _load_lock:
+        if _loaded:
+            return
+        try:
+            load_from_config()
+        except Exception:
+            log.exception("hooks: load_from_config failed; blocking guarded "
+                          "events until it loads")
+            _config_block[:] = ["config.toml (load failed)"]
+        try:
+            load_from_entry_points()
+        except Exception:  # pragma: no cover
+            log.warning("hooks: load_from_entry_points failed", exc_info=True)
+        import atexit
+        atexit.register(_emit_session_end)
+        _loaded = True
     await emit(HookEvent.SESSION_START)
 
 
@@ -207,6 +304,11 @@ async def dispatch(ctx: HookContext) -> bool:
     Pre* hook explicitly blocked the action (exit code != 0 for shell;
     falsy return for callable). Always returns True for Post* events."""
     is_blocking = ctx.event in (HookEvent.PRE_TOOL_USE, HookEvent.USER_PROMPT_SUBMIT)
+    if _config_block and not _lift_config_block() and is_blocking:
+        ctx.block_reason = config_block_reason()
+        log.warning("hooks: %s BLOCKED: %s",
+                    ctx.tool_name or ctx.event.value, ctx.block_reason)
+        return False
     allowed = True
     for spec in list(_registry):
         if not spec.matches(ctx):
@@ -264,9 +366,10 @@ async def _run_one(spec: HookSpec, ctx: HookContext, *, is_blocking: bool = Fals
         "tool_result": ctx.tool_result,
         "goal_id": ctx.goal_id,
         "agent_role": ctx.agent_role,
-    })
+        "extra": ctx.extra,
+    }, default=str)
     try:
-        cmd = shlex.split(os.path.expanduser(spec.command))
+        cmd = [os.path.expanduser(part) for part in shlex.split(spec.command)]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,

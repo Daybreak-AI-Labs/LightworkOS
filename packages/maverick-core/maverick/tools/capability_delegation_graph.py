@@ -2,9 +2,9 @@
 
 Build a directed graph of capability grants (principal -> grantee : capability)
 and analyze it for governance risks: delegation cycles (A grants to B grants
-back to A), over-broad fan-out (one principal granting to many), and privilege
-escalation paths (a low-trust principal reaching a high-trust capability via a
-chain). Deterministic and offline.
+back to A), over-broad fan-out (one principal granting to many), and direct
+holders of a capability named as ``sensitive``. Escalation through a chain of
+grants is not traced. Deterministic and offline.
 
 ops:
   - analyze(grants, [sensitive])  — grants: [{from, to, capability}].

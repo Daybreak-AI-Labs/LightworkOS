@@ -22,8 +22,10 @@ def _wire(monkeypatch, eps_by_group, manifests, cfg=None, granted=None):
                         lambda: _allow_from_cfg(cfg or {}))
     monkeypatch.setattr(plugins_mod, "_permission_policy",
                         lambda: (set(granted or []), True))
-    monkeypatch.setattr(plugins_mod, "_find_manifest",
-                        lambda ep: manifests.get(ep.name))
+    # A tuple value is ``(manifest, declared)``; a bare manifest is undeclared-safe.
+    monkeypatch.setattr(plugins_mod, "_manifest_details",
+                        lambda ep: m if isinstance(m := manifests.get(ep.name), tuple)
+                        else (m, False))
 
 
 def _allow_from_cfg(cfg):
@@ -70,6 +72,19 @@ def test_matrix_flags_ungranted_permissions(monkeypatch):
           cfg={"enabled": ["net"]}, granted=[])
     (row,) = pmx.build_matrix()
     assert row.permissions_ok is False
+
+
+def test_matrix_matches_runtime_gate_for_requires_and_unreadable_manifest(monkeypatch):
+    needs_tool = parse_dict({
+        "plugin": {"name": "p", "version": "0.1.0", "api_version": "2"},
+        "capabilities": {"requires": ["tool:web_fetch"]},
+    })
+    _wire(monkeypatch, {"maverick.tools": [_EP("needs"), _EP("broken")]},
+          {"needs": needs_tool, "broken": (None, True)},
+          cfg={"enabled": ["needs", "broken"]}, granted=[])
+    rows = {r.name: r for r in pmx.build_matrix()}
+    assert rows["needs"].permissions_ok is False
+    assert rows["broken"].compatible is False
 
 
 def test_problems_gate_only_enabled(monkeypatch):

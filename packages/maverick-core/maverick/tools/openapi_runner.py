@@ -89,7 +89,8 @@ _OAS_SCHEMA: dict[str, Any] = {
 
 
 _spec_lock = threading.Lock()
-_spec_cache: dict[str, dict] = {}
+_spec_cache: dict[Any, dict] = {}
+_SPEC_CACHE_MAX_ENTRIES = 32
 
 # Hard byte ceilings on model/user-supplied HTTP bodies. ``safe_client`` only
 # validates the host -- it does not bound the response size, so ``r.text``
@@ -153,10 +154,25 @@ def _load_spec(source: str, workdir: Path | None = None) -> dict:
     # user-provided string. Otherwise separate sandboxes using the same
     # relative name (for example, ``spec.json``) can share a process-global
     # cache entry across workdirs. URL specs remain keyed by URL.
-    cache_key = source if is_url else str(local_path)
+    # A local spec is keyed by its size and mtime too, so an edited file is
+    # re-read rather than served stale for the life of the process.
+    if is_url:
+        cache_key: Any = source
+    else:
+        stat = os.stat(local_path)
+        if stat.st_size > _SPEC_MAX_BYTES:
+            raise RuntimeError(f"spec exceeds {_SPEC_MAX_BYTES} bytes")
+        cache_key = (str(local_path), stat.st_mtime_ns, stat.st_size)
     with _spec_lock:
-        if cache_key in _spec_cache:
-            return _spec_cache[cache_key]
+        cached = _spec_cache.get(cache_key)
+    if cached is not None:
+        if is_url:
+            # The cache is process-wide: the caller's own egress policy must
+            # still allow the host, or a spec fetched for one tenant would be
+            # served to a tenant that may not reach it.
+            from ..egress_guard import _check
+            _check(source)
+        return cached
     if is_url:
         from ._ssrf import safe_client
         # safe_client validates the host and pins the connection to the
@@ -165,7 +181,9 @@ def _load_spec(source: str, workdir: Path | None = None) -> dict:
             text = _stream_text(client, "GET", source, _SPEC_MAX_BYTES)
     else:
         with open(local_path, encoding="utf-8") as f:
-            text = f.read()
+            text = f.read(_SPEC_MAX_BYTES + 1)
+        if len(text) > _SPEC_MAX_BYTES:
+            raise RuntimeError(f"spec exceeds {_SPEC_MAX_BYTES} bytes")
     # Try JSON first; fall back to YAML.
     try:
         data = json.loads(text)
@@ -181,6 +199,8 @@ def _load_spec(source: str, workdir: Path | None = None) -> dict:
     if not isinstance(data, dict) or "paths" not in data:
         raise RuntimeError("OpenAPI spec missing 'paths'")
     with _spec_lock:
+        while len(_spec_cache) >= _SPEC_CACHE_MAX_ENTRIES:
+            _spec_cache.pop(next(iter(_spec_cache)))
         _spec_cache[cache_key] = data
     return data
 
@@ -251,7 +271,9 @@ def _op_list(spec_src: str, workdir: Path | None = None) -> str:
 
 def _find_op(spec: dict, op_id: str) -> tuple[str, str, dict] | None:
     for method, path, op in _walk_ops(spec):
-        if (op.get("operationId") or "") == op_id:
+        # Match the id list_ops shows, including the synthetic one it prints
+        # for an operation without an operationId.
+        if (op.get("operationId") or f"{method.lower()}_{path}") == op_id:
             return method, path, op
     return None
 

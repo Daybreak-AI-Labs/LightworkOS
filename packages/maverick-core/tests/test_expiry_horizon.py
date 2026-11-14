@@ -72,3 +72,13 @@ def test_tls_cert_expiry_warns(tmp_path, monkeypatch):
     health._check_tls_cert_expiry()
     msgs = [(label, d) for (label, d) in captured]
     assert any(label == "tls:grpc" and "expires in" in d for (label, d) in msgs)
+
+
+def test_tls_cert_check_reads_the_section_table(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+    health, captured = _rows(monkeypatch)
+    monkeypatch.setattr(
+        "maverick.config.load_config",
+        lambda: {"grpc": {"tls": True, "tls_cert": str(tmp_path / "missing.crt")}})
+    health._check_tls_cert_expiry()
+    assert any(label == "tls:grpc" and "unreadable" in d for (label, d) in captured)

@@ -6,7 +6,6 @@ __init__ so the @main.group/@main.command decorators fire on package import.
 """
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -107,12 +106,11 @@ def ropa_cmd(fmt: str, output) -> None:
     payload = render_ropa_json(record) if fmt == "json" else render_ropa_text(record)
     if output:
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
+            from . import _write_private_export
+            streamed = _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
+        click.echo(f"wrote {output}", err=streamed)
     else:
         click.echo(payload)
 
@@ -294,12 +292,11 @@ def dpia_cmd(fmt: str, output) -> None:
     payload = render_dpia_json(dpia) if fmt == "json" else render_dpia_text(dpia)
     if output:
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
+            from . import _write_private_export
+            streamed = _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
+        click.echo(f"wrote {output}", err=streamed)
     else:
         click.echo(payload)
 
@@ -352,8 +349,27 @@ def hunt_cmd(fmt: str, since: str | None, until: str | None, strict: bool) -> No
     --strict, exits non-zero when any signal is present, so it can gate a
     monitoring job.
     """
+    from ..audit.events import is_valid_day
     from ..threat_hunt import hunt, render_report_json, render_report_text
-    report = hunt(all_days=(since is None and until is None), since=since, until=until)
+    for name, value in (("--since", since), ("--until", until)):
+        if value is not None and not is_valid_day(value):
+            raise click.BadParameter("must be a YYYY-MM-DD date", param_hint=name)
+    all_days = since is None and until is None
+    if strict:
+        # hunt() reads fail-soft: a bad date or an unreadable day-file yields
+        # an empty CLEAR report. A gate must not pass on input it never read.
+        from ..audit.export import iter_audit_events
+        try:
+            for _ in iter_audit_events(
+                all_days=all_days, since=since, until=until, strict=True,
+            ):
+                pass
+        except Exception as e:
+            raise click.ClickException(
+                f"audit log could not be read in full ({type(e).__name__}); "
+                "the hunt cannot clear it"
+            ) from e
+    report = hunt(all_days=all_days, since=since, until=until)
     click.echo(render_report_json(report) if fmt == "json" else render_report_text(report))
     if strict and report.findings:
         raise click.ClickException(
@@ -552,6 +568,15 @@ def dsar_export(user_id: str, tenant: str | None, output, compact: bool) -> None
     import json as _json
 
     from ..dsar import export_subject_data
+    from ..paths import tenant_namespace_reserved
+    # Opening an unknown tenant creates an empty data plane, so a typo would
+    # read as "we hold nothing on this subject".
+    try:
+        known = tenant is None or tenant_namespace_reserved(tenant)
+    except ValueError as exc:
+        raise click.ClickException(f"invalid tenant {tenant!r}") from exc
+    if not known:
+        raise click.ClickException(f"no such tenant {tenant!r}; no export was created.")
     try:
         bundle = export_subject_data(user_id, tenant=tenant, strict=True)
     except RuntimeError as exc:
@@ -569,12 +594,11 @@ def dsar_export(user_id: str, tenant: str | None, output, compact: bool) -> None
         # co-tenant can't read it, and fail cleanly instead of dumping a
         # traceback on a bad/unwritable path.
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
+            from . import _write_private_export
+            streamed = _write_private_export(output, payload)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"exported to {output}")
+        click.echo(f"exported to {output}", err=streamed)
     else:
         click.echo(payload)
 
@@ -1223,12 +1247,11 @@ def ai_literacy_export(output) -> None:
         raise click.ClickException(str(e)) from e
     if output:
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload + "\n")
+            from . import _write_private_export
+            streamed = _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
+        click.echo(f"wrote {output}", err=streamed)
     else:
         click.echo(payload)
 
@@ -1724,7 +1747,17 @@ def governance_alerts_due(due_soon_hours, expiring_days, as_json) -> None:
             click.echo(f"data map: {estate['unlinked_flagged_assets']} flagged "
                        "assets not yet linked to a governing record")
         click.echo(f"attention items: {report['attention_count']}")
-    if report["attention_count"]:
+    # A register that could not be read reports zero items; that is not "clear".
+    unreadable = sorted(
+        name for name, section in report["sections"].items()
+        if isinstance(section, dict) and (
+            section.get("error") or section.get("complete") is False
+            or section.get("unavailable_registers")
+        )
+    )
+    if unreadable:
+        click.echo("could not be read: " + ", ".join(unreadable), err=True)
+    if report["attention_count"] or unreadable:
         raise SystemExit(1)
 
 
@@ -2939,9 +2972,19 @@ def regulatory_group() -> None:
 
 
 def _regulatory_keys(profiles: str | None) -> list[str]:
-    from ..regulatory_compiler import active_keys
+    from ..regulatory_compiler import REGULATIONS, active_keys
     if profiles:
-        return [p.strip() for p in profiles.split(",") if p.strip()]
+        keys = [p.strip() for p in profiles.split(",") if p.strip()]
+        # The compiler ignores unknown keys, so a typo would silently narrow
+        # what is checked or verified.
+        unknown = [k for k in keys if k.lower() not in REGULATIONS]
+        if unknown:
+            raise click.BadParameter(
+                f"unknown regulation key(s): {', '.join(unknown)} "
+                f"(known: {', '.join(sorted(REGULATIONS))})",
+                param_hint="--profiles",
+            )
+        return keys
     return active_keys()
 
 
@@ -3015,6 +3058,7 @@ def regulatory_verify_cmd(ci: bool, profiles: str | None) -> None:
     from ..regulatory_compiler import main as _main
     argv: list[str] = []
     if profiles:
+        _regulatory_keys(profiles)
         argv += ["--profiles", profiles]
     if ci:
         argv.append("--ci")

@@ -337,7 +337,7 @@ def _record_swarm_disagreement(parent: Agent, children: list, results: list) -> 
     """
     finals = [
         res.final for child, res in zip(children, results, strict=False)
-        if not isinstance(res, Exception) and res.final
+        if not isinstance(res, BaseException) and res.final
         and _sealed_notice(parent.ctx, child) is None  # sealed children don't vote
     ]
     if len(finals) <= 1:
@@ -398,7 +398,7 @@ async def _swarm_credit_assignment(parent: Agent, children: list, results: list)
         contribs = {
             child.name: res.final
             for child, res in zip(children, results, strict=False)
-            if not isinstance(res, Exception) and res.final
+            if not isinstance(res, BaseException) and res.final
             and _sealed_notice(parent.ctx, child) is None
         }
         _cs = _credit._settings()
@@ -519,7 +519,7 @@ def _format_swarm_results(parent: Agent, children: list, results: list,
             "the FINAL to face stricter (ensemble) verification."
         )
     for child, res in zip(children, results, strict=False):
-        if isinstance(res, Exception):
+        if isinstance(res, BaseException):
             parts.append(f"[{child.role}/{child.name}] EXCEPTION: {res}")
             continue
         # Containment Rung 1: withhold a sealed child's answer from the
@@ -611,6 +611,10 @@ async def _run_swarm(parent: Agent, args: dict) -> str:
         + ", ".join(f"{c.role}({c.name})" for c in children),
     )
 
+    # Register before running, as _run_child_and_report does, so an existing
+    # sector seal reaches a child that answers without calling a tool.
+    for child in children:
+        _register_child_with_quarantine(parent.ctx, child)
     results = await asyncio.gather(*(c.run() for c in children), return_exceptions=True)
     _absorb_child_labels(parent, children)
 
@@ -631,15 +635,19 @@ async def _run_swarm(parent: Agent, args: dict) -> str:
         if isinstance(res, (_BE, _ks.Halted)):
             raise res
 
-    # SubagentStop hooks: one per child that completed without raising.
+    # SubagentStop hooks: one per child that completed without raising. A
+    # sealed child's final must not reach hook consumers either (Rung 1; see
+    # _run_child_and_report), so the hook gets the withhold notice instead.
     from ..hooks import HookEvent
     from ..hooks import emit as _emit_hook
     for child, res in zip(children, results, strict=False):
-        if not isinstance(res, Exception):
+        if not isinstance(res, BaseException):
+            notice = _sealed_notice(parent.ctx, child)
             await _emit_hook(
                 HookEvent.SUBAGENT_STOP,
                 goal_id=parent.ctx.goal_id, agent_role=child.role,
-                extra={"name": child.name, "final": res.final or ""},
+                extra={"name": child.name,
+                       "final": notice if notice is not None else (res.final or "")},
             )
 
     # Measure disagreement across the children's

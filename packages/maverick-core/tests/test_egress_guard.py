@@ -121,6 +121,17 @@ def test_a_urllib_request_object_is_blocked(guarded) -> None:
         urllib.request.urlopen(req, timeout=1.0)
 
 
+def test_a_wrapped_urllib_string_is_checked_on_its_real_host(unguarded_mode, monkeypatch) -> None:
+    """urllib unwraps `URL:http://h/` and `<http://h/>`; the guard must see
+    `h`, not an empty host that skips the tenant egress plane."""
+    monkeypatch.setattr("maverick.tenant.egress.host_allowed",
+                        lambda host: host != "169.254.169.254")
+    opener = urllib.request.build_opener()
+    for url in ("URL:http://169.254.169.254/latest", "<http://169.254.169.254/latest>"):
+        with pytest.raises(EgressBlocked):
+            opener.open(url, timeout=1.0)
+
+
 def test_a_raw_requests_call_is_blocked(guarded) -> None:
     requests = pytest.importorskip("requests")
     with pytest.raises(EgressBlocked):
@@ -1099,6 +1110,52 @@ except EgressBlocked:
     print("blocked")
 else:
     raise SystemExit("late httpx2 import was not guarded")
+"""
+    out = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "blocked"
+
+
+def test_a_shared_zipimport_loader_still_imports_other_modules() -> None:
+    """zipimport keeps one loader per archive; wrapping it for httpx2 must not
+    turn the next plain import from the same archive into a refusal."""
+    import subprocess
+    import sys
+
+    script = """
+import os
+import pathlib
+import sys
+import tempfile
+import zipfile
+
+archive = pathlib.Path(tempfile.mkdtemp()) / "bundle.zip"
+with zipfile.ZipFile(archive, "w") as bundle:
+    bundle.writestr("httpx2.py",
+        "class Client:\\n"
+        "    def _transport_for_url(self, url): return object()\\n"
+        "    def _send_single_request(self, request): return 'network'\\n"
+        "class AsyncClient:\\n"
+        "    def _transport_for_url(self, url): return object()\\n"
+        "    async def _send_single_request(self, request): return 'network'\\n")
+    bundle.writestr("othermod.py", "VALUE = 1\\n")
+sys.path.insert(0, str(archive))
+os.environ["MAVERICK_ENTERPRISE"] = "1"
+import maverick
+import httpx2
+import othermod
+assert othermod.VALUE == 1
+from maverick.enterprise import EgressBlocked
+request = type("Request", (), {"url": "https://api.example.com/x"})()
+try:
+    httpx2.Client()._send_single_request(request)
+except EgressBlocked:
+    print("blocked")
 """
     out = subprocess.run(
         [sys.executable, "-c", script],

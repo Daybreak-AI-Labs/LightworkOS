@@ -5,8 +5,10 @@ The work behind ``maverick self-harness migrate-store`` (for
 Idempotent and fleet-safe: existing world entries win, file-only keys import,
 and a conflicting addenda block merges line-by-line under the normal cap. The
 routed store is verified to serve every imported key before the files are
-renamed to ``*.migrated`` backups. Every write happens under the learning
-store's own read-modify-write lock, so it is safe while Lightwork is running.
+renamed to ``*.migrated`` backups. The import holds the same locks as the
+promotion writers (the in-process lock, the store file lock and the learning
+store's read-modify-write lock), so it is safe while Lightwork is running on
+this host.
 """
 from __future__ import annotations
 
@@ -19,11 +21,25 @@ class MigrationRefused(RuntimeError):
     """The move cannot run (wrong store setting) or failed its verification."""
 
 
+class LearningFileUnreadable(MigrationRefused):
+    """A learning file on this host cannot be read; ``path`` names it."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        super().__init__(
+            f"the learning file {path} could not be read; fix or move it "
+            "first (nothing was imported)")
+
+
 def _raw(path: Path, keep) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError, OSError):
+    except FileNotFoundError:
         return {}
+    except (ValueError, OSError) as exc:
+        # A corrupt file would otherwise import as empty and then be renamed
+        # to *.migrated with its entries silently left behind.
+        raise LearningFileUnreadable(path) from exc
     return {str(k): v for k, v in data.items() if keep(v)} if isinstance(data, dict) else {}
 
 
@@ -53,10 +69,15 @@ def require_world_store() -> None:
 def preview() -> dict[str, Any]:
     """What a move would import right now (read-only)."""
     from . import self_harness as sh
-    _src, addenda, meta, tried = _file_stores()
+    try:
+        _src, addenda, meta, tried = _file_stores()
+        problem = ""
+    except LearningFileUnreadable as exc:
+        addenda, meta, tried, problem = {}, {}, {}, str(exc.path)
     return {"world_store": world_store_selected(), "addenda": len(addenda),
             "provenance": len(meta), "tried": len(tried),
-            "corpus_configured": bool(sh.settings().get("eval_corpus"))}
+            "corpus_configured": bool(sh.settings().get("eval_corpus")),
+            "unreadable": problem}
 
 
 def migrate_learning_files() -> dict[str, int] | None:
@@ -70,8 +91,18 @@ def migrate_learning_files() -> dict[str, int] | None:
     if not (addenda or meta or tried):
         return None
     merged = 0
-    with learning_store.rmw_lock():
-        db_add = learning_store.load_addenda_db()
+    from .file_lock import cross_process_lock
+    # The corpus files are migrated next by the same command. Check they are
+    # readable before anything is moved, so a refusal leaves nothing half-done.
+    corpus = sh.settings().get("eval_corpus")
+    if corpus:
+        from .self_harness_eval import check_corpus_files_migratable
+        check_corpus_files_migratable(corpus)
+    # Same lock order as the promotion writers (self_harness.apply_addendum):
+    # rmw_lock alone is a no-op on SQLite. Reads are strict so a failed read
+    # never becomes an empty map that the whole-map write below would replace.
+    with sh._lock, cross_process_lock(src), learning_store.rmw_lock():
+        db_add = learning_store.load_addenda_db(strict=True)
         for k, block in addenda.items():
             if k not in db_add:
                 db_add[k] = block
@@ -84,11 +115,11 @@ def migrate_learning_files() -> dict[str, int] | None:
                 db_add[k] = cur
                 merged += 1
         learning_store.write_addenda_db(db_add)
-        db_meta = learning_store.load_line_meta_db()
+        db_meta = learning_store.load_line_meta_db(strict=True)
         for lid, rec in meta.items():
             db_meta.setdefault(lid, rec)
         learning_store.write_line_meta_db(db_meta)
-        db_tried = learning_store.load_transfer_tried_db()
+        db_tried = learning_store.load_transfer_tried_db(strict=True)
         for lid, ts in tried.items():
             db_tried.setdefault(lid, ts)
         learning_store.write_transfer_tried_db(db_tried)
@@ -115,5 +146,5 @@ def migrate_corpus() -> dict[str, int] | None:
     return ev.migrate_corpus_files(cpath)
 
 
-__all__ = ["MigrationRefused", "world_store_selected", "require_world_store", "preview",
+__all__ = ["MigrationRefused", "LearningFileUnreadable", "world_store_selected", "require_world_store", "preview",
            "migrate_learning_files", "migrate_corpus"]

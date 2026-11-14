@@ -10,7 +10,8 @@ ops:
     (base64 wrap, leetspeak, suffix injection, ...) so a caller can probe its
     own defenses with the variants.
 
-Pure stdlib: ``re`` + ``base64``.
+Stdlib ``re`` + ``base64``; probe patterns run in a killable child interpreter
+(``_regex_guard``) under one 2-second budget.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import re
 from typing import Any
 
 from . import Tool
+from ._regex_guard import PatternTimeout, RegexGuardError, guarded_search_all, pattern_error
 
 _LEET = str.maketrans({"a": "4", "e": "3", "i": "1", "o": "0", "s": "5", "t": "7"})
 
@@ -30,20 +32,39 @@ _SUFFIXES = [
 ]
 
 
+# Python's ``re`` has no match timeout and holds the GIL while it backtracks,
+# so the model-supplied patterns are searched by _regex_guard in a separate
+# interpreter that is killed when the whole probe exceeds _PROBE_TIMEOUT_S.
+# Output, pattern count and pattern length stay capped.
+_MAX_OUTPUT_CHARS = 1024
+_MAX_PATTERNS = 8
+_MAX_PATTERN_CHARS = 200
+_PROBE_TIMEOUT_S = 2.0
+
+
 def _probe(output: str, patterns: list[Any]) -> str:
-    matched: list[str] = []
+    if len(output) > _MAX_OUTPUT_CHARS:
+        return f"ERROR: output is too long to probe (max {_MAX_OUTPUT_CHARS} characters)"
+    if len(patterns) > _MAX_PATTERNS:
+        return f"ERROR: too many patterns (max {_MAX_PATTERNS})"
+    pats = [str(p) for p in patterns]
     errors: list[str] = []
-    for p in patterns:
-        pat = str(p)
-        try:
-            rx = re.compile(pat, re.IGNORECASE)
-        except re.error as e:
-            errors.append(f"{pat!r} ({e})")
-            continue
-        if rx.search(output):
-            matched.append(pat)
+    for pat in pats:
+        problem = (f"longer than {_MAX_PATTERN_CHARS} characters"
+                   if len(pat) > _MAX_PATTERN_CHARS else pattern_error(pat))
+        if problem:
+            errors.append(f"{pat!r} ({problem})")
     if errors:
         return "ERROR: invalid regex pattern(s): " + "; ".join(errors)
+    try:
+        hits = guarded_search_all(pats, output, flags=re.IGNORECASE,
+                                  timeout_s=_PROBE_TIMEOUT_S)
+    except PatternTimeout:
+        return (f"ERROR: the patterns took longer than {_PROBE_TIMEOUT_S:g}s to "
+                "evaluate; simplify them")
+    except RegexGuardError as e:
+        return f"ERROR: patterns could not be evaluated: {e}"
+    matched = [p for p, hit in zip(pats, hits, strict=True) if hit]
     if matched:
         lines = [f"FAIL: {len(matched)} pattern(s) matched"]
         lines.extend(f"- matched: {m}" for m in matched)
@@ -108,10 +129,12 @@ def adversarial_self_test() -> Tool:
         description=(
             "Adversarial self-test (red-team yourself), offline. op=probe with "
             "'output' and 'patterns' (regex strings the output must NOT emit) "
-            "returns CLEAN or FAIL with the matched patterns. op=mutate with "
+            "returns CLEAN or FAIL with the matched patterns (case-insensitive; "
+            "output up to 1024 chars, at most 8 patterns of up to 200 chars "
+            "each, all evaluated within 2 seconds or the probe returns an "
+            "ERROR). op=mutate with "
             "'seed' returns deterministic injection-style mutations (base64 "
-            "wrap, leetspeak, reversed, suffix injection) to probe defenses. "
-            "Pure stdlib re + base64."
+            "wrap, leetspeak, reversed, suffix injection) to probe defenses."
         ),
         input_schema=_SCHEMA,
         fn=_run,

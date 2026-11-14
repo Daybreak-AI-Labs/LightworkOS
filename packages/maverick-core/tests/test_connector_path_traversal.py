@@ -159,6 +159,14 @@ def test_gdrive_get_and_delete_contain_traversal(monkeypatch):
     gdrive_tool._op_delete({"file_id": TRAVERSAL, "confirm": True})
     _assert_contained("/files/", store2["path"])
 
+    store3: dict = {}
+    monkeypatch.setattr(
+        gdrive_tool, "_get_raw",
+        lambda url, params=None, max_bytes=0: (store3.setdefault("url", url), (200, ""))[1],
+    )
+    gdrive_tool._op_export({"file_id": TRAVERSAL})
+    _assert_contained("/drive/v3/files/", store3["url"].removeprefix("https://www.googleapis.com"))
+
 
 def test_gmail_get_contains_traversal(monkeypatch):
     from maverick.tools import gmail_tool

@@ -36,6 +36,32 @@ def test_category_filter():
     assert "415-555-2671" in result["text"]
 
 
+def test_nested_findings_redact_the_whole_outer_span():
+    # The nested roster name used to win and leave the rest of the e-mail visible.
+    result = redact_text("contact john.smith@example.com now", roster=["john"])
+    assert result["text"] == "contact [REDACTED:email] now"
+    assert result["redactions"] == 1
+
+
+def test_findings_beyond_the_classifier_cap_are_all_redacted():
+    # The classifier stops collecting at MAX_FINDINGS; findings past the cap
+    # (including a cap reached before overlapping phone hits are dropped) used
+    # to stay in clear.
+    from maverick.content_classifier import MAX_FINDINGS
+    text = " ".join(f"u{i}@example.com" for i in range(MAX_FINDINGS + 5))
+    result = redact_text(text)
+    assert "@example.com" not in result["text"]
+    assert result["counts"] == {"email": MAX_FINDINGS + 5}
+    # Far past the cap (the working copy used to grow until it exceeded the
+    # text limit): every finding is redacted.
+    many = redact_text("a@b.co " * 150_000)
+    assert many["counts"] == {"email": 150_000} and "@" not in many["text"]
+    filtered = redact_text(text + " 51.5007, -0.1246", categories=["location"])
+    assert "51.5007" not in filtered["text"] and "u0@example.com" in filtered["text"]
+    nhs = "NHS 943 476 5919 " * 2600 + "51.5007, -0.1246"
+    assert "51.5007" not in redact_text(nhs)["text"]
+
+
 def test_bounds():
     with pytest.raises(ValueError, match="characters"):
         redact_text("x" * 2_000_001)

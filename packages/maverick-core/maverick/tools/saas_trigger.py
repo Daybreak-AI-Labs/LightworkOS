@@ -46,6 +46,8 @@ def _verify(args: dict[str, Any]) -> str:
     if "=" in presented:
         prefix, _, rest = presented.partition("=")
         if prefix.strip().lower() in _ALGOS:
+            if prefix.strip().lower() != algo:
+                return f"INVALID: signature is {prefix.strip().lower()} but algo is {algo}"
             presented = rest.strip()
     presented = presented.lower()
 

@@ -85,6 +85,7 @@ class TestGitSafetyShared:
         assert env["GIT_CONFIG_KEY_0"] == "core.fsmonitor"
         assert env["GIT_CONFIG_VALUE_0"] == "false"
         assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+        assert env["GIT_NO_LAZY_FETCH"] == "1"
 
     def test_scrubbed_env_stops_repo_local_hooks(self, tmp_path):
         """`git reset --hard` runs `.git/hooks/reference-transaction` (and
@@ -252,6 +253,69 @@ class TestGitDirDiscovery:
         for header in ('[include]', '[include  ]', '[includeIf "gitdir:/x/"]'):
             config.write_text(original + f"{header}\n\tpath = /x\n")
             assert git_metadata_may_execute_filters(repo) is True, header
+
+    def test_promisor_transport_and_nested_repository_settings_are_flagged(self, tmp_path):
+        """Refused: a partial-clone remote whose lazy fetch would run a planted
+        transport command, and a nested repository's own filter (git checks
+        its dirtiness with a child `git status`). Allowed: ordinary transport
+        settings with no partial-clone remote, and a stale vendored `.git`
+        pointer git cannot open either."""
+        from maverick.git_safety import git_metadata_hazard, git_metadata_may_execute_filters
+        repo = self._repo(tmp_path)
+        config = repo / ".git" / "config"
+        original = config.read_text()
+        for setting in (
+            '[core]\n\tsshCommand = ssh -i ~/.ssh/work\n',
+            '[protocol]\n\tversion = 2\n',
+            '[credential]\n\thelper = store\n',
+        ):
+            config.write_text(original + setting)
+            assert git_metadata_may_execute_filters(repo) is False, setting
+        config.write_text(original)
+        stale = repo / "node_modules" / "pkg"
+        stale.mkdir(parents=True)
+        (stale / ".git").write_text("gitdir: ../../../elsewhere/.git/modules/pkg\n")
+        assert git_metadata_may_execute_filters(repo) is False
+
+        config.write_text(original + '[remote "origin"]\n\turl = /x\n\tpromisor = true\n'
+                          '\tuploadpack = id; git-upload-pack\n')
+        assert "partial-clone" in git_metadata_hazard(repo)
+        config.write_text(original)
+        sub = repo / "sub"
+        sub.mkdir()
+        _make_git_repo(sub)
+        assert git_metadata_may_execute_filters(repo) is False
+        (sub / ".git" / "info").mkdir(exist_ok=True)
+        (sub / ".git" / "info" / "attributes").write_text("* filter=x\n")
+        assert "nested repository sub" in git_metadata_hazard(repo)
+        (sub / ".git" / "info" / "attributes").write_text("")
+        sub_config = sub / ".git" / "config"
+        sub_config.write_text(sub_config.read_text() + f'[filter "x"]\n\tclean = {_FILTER_PWN}\n')
+        assert "nested repository sub" in git_metadata_hazard(repo)
+
+    def test_nested_pointer_paths_are_read_exactly_as_git_reads_them(self, tmp_path):
+        """git strips only the trailing line ending of a `.git` pointer and
+        keeps spaces in the path. A nested pointer whose path differs from a
+        whitespace-stripped reading must be followed, not skipped as stale."""
+        from maverick.git_safety import git_metadata_hazard
+        for pointer, target in (("gitdir: ../evil \n", ("evil ",)),
+                                ("gitdir:  ../evil\n", ("x", " ..", "evil"))):
+            (tmp_path / str(len(target))).mkdir()
+            repo = self._repo(tmp_path / str(len(target)))
+            sub = repo / "sub"
+            (sub / "x").mkdir(parents=True)
+            gitdir = sub.joinpath(*target)
+            subprocess.run(["git", "init", "-q", "--bare", str(gitdir)], check=True)
+            (sub / "x" / ".git").write_text(pointer)
+            with (gitdir / "config").open("a") as fh:
+                fh.write(f'[filter "pwn"]\n\tclean = {_FILTER_PWN}\n')
+            (gitdir / "info").mkdir(exist_ok=True)
+            (gitdir / "info" / "attributes").write_text("* filter=pwn\n")
+            # git itself follows this pointer.
+            found = subprocess.run(["git", "-C", str(sub / "x"), "rev-parse", "--git-dir"],
+                                   capture_output=True, text=True)
+            assert Path(found.stdout.rstrip("\n")).resolve() == gitdir.resolve(), pointer
+            assert "nested repository sub/x" in (git_metadata_hazard(repo) or ""), pointer
 
     def test_filter_attribute_such_as_git_lfs_is_refused(self, tmp_path):
         """A repository that really uses a filter (git-lfs) is refused too:

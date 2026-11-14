@@ -91,6 +91,12 @@ def test_new_destructive_version_is_rejected():
     "DROP INDEX idx_goals_status",                     # index drop
     "DROP VIEW goal_summary",                           # view drop
     "drop   table   goals",                            # lowercase + extra spaces
+    "ALTER TABLE goals DROP owner",                    # DROP without COLUMN
+    "TRUNCATE TABLE goals",
+    "DELETE FROM goals",
+    "ALTER TABLE goals ALTER COLUMN x TYPE int",
+    "DROP SCHEMA public CASCADE",
+    "DROP /* c */ TABLE goals",                        # comment between keywords
 ])
 def test_destructive_variants_are_caught(stmt):
     # Regression: these non-additive shapes slipped past the original regexes.

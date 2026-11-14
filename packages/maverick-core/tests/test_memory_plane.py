@@ -452,3 +452,20 @@ def test_the_activity_scan_is_bounded_and_says_when_it_stopped(fleet,
     bundle = mp.build(now=1767225600.0)
     assert bundle["claims"]["cross_vendor"]["records"] == 2
     assert any("lower bound" in w for w in bundle["warnings"])
+
+
+def test_rows_with_forged_signatures_are_not_counted(fleet):
+    """Field presence is not a signature: rows carrying junk sig/hash/key_id
+    must not move the cross-vendor claim."""
+    from maverick.paths import data_dir
+    root = data_dir("audit")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "2026-01-01.ndjson").write_text("\n".join(
+        json.dumps({"ts": 1.0, "kind": "learning_update", "agent": "fleet_memory",
+                    "fleet": "ingest", "source": f"{v}:agent-1",
+                    "sig": "junk", "hash": "junk", "key_id": "junk"})
+        for v in ("anthropic", "microsoft")) + "\n", encoding="utf-8")
+    fleet["roster"]("anthropic", "microsoft")
+    bundle = mp.build(now=1767225600.0)
+    assert bundle["claims"]["cross_vendor"]["records"] == 0
+    assert any("failed signature" in w for w in bundle["warnings"])

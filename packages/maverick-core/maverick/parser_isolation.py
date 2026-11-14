@@ -113,9 +113,12 @@ def should_isolate() -> bool:
     }:
         return True
     try:
-        from .config import load_config
-        return bool(((load_config() or {}).get("security") or {})
-                    .get("isolate_parsers", False))
+        from ._envparse import coerce_bool
+        from .config import config_source_errors, load_config
+        value = ((load_config() or {}).get("security") or {}).get("isolate_parsers", False)
+        # An unreadable config may have held isolate_parsers = true: keep the
+        # hardening on rather than parsing hostile input in-process.
+        return bool(config_source_errors(include_tenant=True)) or coerce_bool(value)
     except Exception:  # pragma: no cover -- config never blocks parsing
         return False
 

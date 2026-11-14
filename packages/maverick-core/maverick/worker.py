@@ -19,7 +19,7 @@ Built-in handlers:
 Custom handlers are registered via :meth:`Worker.register`.
 
 CLI entry: ``maverick worker [--db PATH] [--idle-sleep 2.0]``
-(wired in cli.py when shipped; this module just exposes the loop).
+(this module just exposes the loop).
 """
 from __future__ import annotations
 
@@ -219,6 +219,9 @@ class Worker:
             return False
         payload = dict(job.payload)
         payload[_SLOT_DEFERS_KEY] = defers + 1
+        # The occurrence has already re-armed its schedule. A copy carrying the
+        # cron marker would be enqueued as a brand-new recurring schedule.
+        payload.pop("__cron__", None)
         self.queue.enqueue(
             job.kind, payload, run_at=time.time() + _GOAL_SLOT_DEFER_SECONDS,
         )
@@ -397,7 +400,17 @@ class Worker:
         one-shot drain mode passes its start time so jobs that become due
         while an earlier long-running handler executes wait for the next
         invocation.
+
+        While the emergency stop is armed no job is claimed, so jobs that fall
+        due during a halt wait for it to be cleared instead of being consumed.
         """
+        from . import killswitch
+
+        try:
+            killswitch.check()
+        except killswitch.Halted as halted:
+            log.info("worker: halted (%s); not claiming jobs", halted)
+            return False
         job = self.queue.claim(ready_at=ready_at)
         if job is None:
             return False

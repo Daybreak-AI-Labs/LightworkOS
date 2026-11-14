@@ -125,9 +125,9 @@ def test_record_failure_from_mode_string(tmp_path, monkeypatch):
 def test_summarize_missing_and_malformed(tmp_path):
     assert ft.summarize(path=tmp_path / "absent.jsonl") == {"total": 0, "by_mode": {}}
     p = tmp_path / "f.jsonl"
-    p.write_text('{"mode": "budget"}\nnot json\n\n{"mode": "auth"}\n')
+    p.write_text('{"mode": "budget"}\nnot json\n\n{"mode": "auth"}\n5\n{"mode": ["x"]}\n')
     s = ft.summarize(path=p)
-    assert s["total"] == 2  # the malformed line is skipped
+    assert s["total"] == 2  # malformed lines (and non-object JSON) are skipped
 
 
 def test_cli_failures_empty(tmp_path, monkeypatch):

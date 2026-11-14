@@ -122,8 +122,10 @@ def _parse_date(value: Any, field: str) -> date:
 
 
 def _embargo_for(severity: str | None, policy: dict, flat: int) -> int:
-    if severity is not None and severity in policy:
-        return int(policy[severity])
+    # Case-insensitive, as the advisory op is ("High" finds {"high": 7}).
+    lowered = {str(k).lower(): v for k, v in policy.items()}
+    if severity is not None and severity.lower() in lowered:
+        return int(lowered[severity.lower()])
     if "default" in policy:
         return int(policy["default"])
     return flat
@@ -150,8 +152,11 @@ def _records_status(records: list, today: date, policy: dict, flat: int) -> str:
         elif r.get("patched"):
             d = _parse_date(r["patched"], f"record {rid} 'patched'")
             status, detail = "PATCHED", f"fixed {d.isoformat()}; disclosure permitted"
-        elif remaining < 0:
-            status, detail = "OVERDUE", f"deadline {deadline.isoformat()} passed {-remaining}d ago; disclosure permitted"
+        elif remaining <= 0:
+            # The deadline day itself ends the embargo, as in the single form
+            # (today >= disclose-on is EXPIRED).
+            when = "is due today" if remaining == 0 else f"passed {-remaining}d ago"
+            status, detail = "OVERDUE", f"deadline {deadline.isoformat()} {when}; disclosure permitted"
         elif remaining <= _DUE_SOON:
             status, detail = "DUE_SOON", f"{remaining}d to deadline {deadline.isoformat()}"
         else:

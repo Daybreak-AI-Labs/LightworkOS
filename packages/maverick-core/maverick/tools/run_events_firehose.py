@@ -49,7 +49,7 @@ def _encode(args: dict[str, Any]) -> str:
         return "ERROR: seq (a monotonic integer) is required"
     try:
         seq = int(args["seq"])
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return "ERROR: seq must be an integer"
     if seq < 0:
         return "ERROR: seq must be >= 0"

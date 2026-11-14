@@ -31,20 +31,37 @@ from urllib.parse import unquote
 # silently *stop decoding* on inputs the detectors still scan -- the prior 20k
 # bail let `"a"*20001 + base64(payload)` slip an encoded attack past the decode
 # step. The first decode layer is bounded by _MAX_LEN (and _HARD_CAP); deeper,
-# multiplicative recursion is bounded by _MAX_VARIANTS.
-# _MAX_VARIANTS bounds deeper-layer expansion. It is NOT used to cap the count of
-# first-layer decodes: a count cap there would be order-dependent, letting an
-# attacker prepend >cap benign base64 tokens to starve the real (trailing)
+# multiplicative recursion is bounded by a work budget (_DEEP_WORK_FACTOR).
+# No layer is capped by a variant COUNT: a count cap is order-dependent, letting
+# an attacker prepend >cap benign base64 tokens to starve the real (trailing)
 # payload out of the scanned set. _decode_base64 therefore grants every blob all
 # four phase alignments unconditionally (per-blob work is constant and the input
-# is bounded by _MAX_LEN), so no order-dependent budget can be starved.
-_MAX_VARIANTS = 24
+# is bounded by the scan cap), so no order-dependent budget can be starved.
+# Deeper layers (depth >= 1) may emit at most this many characters of variants
+# per layer, relative to the input length (with a floor for short inputs). The
+# frontier is decoded smallest item first, so decoys must outweigh several
+# copies of the whole input -- not merely outnumber a fixed count -- to push a
+# nested payload out.
+_DEEP_WORK_FACTOR = 4
+_DEEP_WORK_FLOOR = 65_536
 # Absolute ceiling on total variants (incl. a fully-decoded first layer) so a
 # pathological many-blob input can't exhaust memory; the first layer is bounded
 # anyway by _MAX_LEN, so this only ever trips on adversarial decode-bomb input.
 _HARD_CAP = 4096
 _MAX_LEN = 262_144
-_MAX_DEPTH = 3  # tolerate triple-nested encodings (deeper layers bounded by _MAX_VARIANTS)
+
+
+def _len_cap() -> int:
+    """Longest text the pre-pass decodes: the builtin scan cap when an operator
+    raised it (``[safety] max_scan_chars``), never below ``_MAX_LEN``. A fixed
+    256 KiB limit let a padded encoded payload through once the cap was raised."""
+    try:
+        from .builtin_rules import _max_scan_chars
+
+        return max(_MAX_LEN, _max_scan_chars())
+    except Exception:  # pragma: no cover -- never break the scan
+        return _MAX_LEN
+_MAX_DEPTH = 3  # tolerate triple-nested encodings (deeper layers bounded by _DEEP_WORK_FACTOR)
 
 # Zero-width / bidi / tag chars (mirrors cascade; combining marks added so a
 # "zalgo"-stacked payload collapses to its base letters). Written with \\uXXXX
@@ -95,7 +112,9 @@ def _maybe_text(raw: bytes) -> str | None:
         s = raw.decode("utf-8")
     except UnicodeDecodeError:
         s = raw.decode("latin-1", errors="replace")
-    if len(s) > _MAX_LEN or _printable_ratio(s) < 0.8:
+    # No length check: base64/hex decodes are shorter than their source, which
+    # decoded_variants already bounded by the scan cap.
+    if _printable_ratio(s) < 0.8:
         return None
     return s.strip() or None
 
@@ -180,7 +199,8 @@ def _decode_percent(text: str) -> str | None:
     if "%" not in text:
         return None
     decoded = unquote(text)
-    return decoded if decoded != text and len(decoded) <= _MAX_LEN else None
+    # unquote never lengthens text, and the caller bounded ``text`` already.
+    return decoded if decoded != text else None
 
 
 def _layer(text: str) -> list[str]:
@@ -201,36 +221,45 @@ def decoded_variants(text: str) -> list[str]:
     Excludes ``text`` itself and any duplicates. Recurses up to ``_MAX_DEPTH``
     (an attacker may double-encode). The FIRST decode layer is scanned in full
     (its size is already bounded by ``_MAX_LEN``) so a payload blob is never
-    starved by benign decoys preceding it -- capping the first layer by *count*
-    would be order-dependent, letting an attacker prepend >cap benign base64
-    tokens to push the real payload past the limit. Deeper layers, where an
-    attacker could otherwise multiply the work, are bounded by ``_MAX_VARIANTS``;
-    an absolute ``_HARD_CAP`` ceiling guards against a pathological first layer.
+    starved by benign decoys preceding it -- capping a layer by *count* would be
+    order-dependent, letting an attacker prepend >cap benign base64 tokens to
+    push the real payload past the limit. Deeper layers, where an attacker could
+    otherwise multiply the work, are bounded by output size (a multiple of the
+    input length), smallest item first; an absolute ``_HARD_CAP`` ceiling guards
+    against a pathological first layer.
     Never raises -- a decode failure simply yields fewer variants.
     """
-    if not isinstance(text, str) or not text or len(text) > _MAX_LEN:
+    if not isinstance(text, str) or not text or len(text) > _len_cap():
         return []
     seen = {text}
     ordered: list[str] = []
     frontier = [text]
     depth = 0
+    deep_budget = max(_DEEP_WORK_FLOOR, _DEEP_WORK_FACTOR * len(text))
     try:
         while frontier and depth < _MAX_DEPTH and len(ordered) < _HARD_CAP:
             # The first layer (depth 0) is decoded fully so a trailing payload is
-            # always scanned; from depth 1 on, stop once _MAX_VARIANTS variants
-            # have accumulated to keep recursive expansion bounded.
-            if depth >= 1 and len(ordered) >= _MAX_VARIANTS:
-                break
+            # always scanned. From depth 1 on, each layer may emit at most
+            # ``deep_budget`` characters, decoding the smallest items first.
+            budget = None if depth == 0 else deep_budget
+            if budget is not None:
+                frontier.sort(key=len)
             nxt: list[str] = []
             for item in frontier:
                 for v in _layer(item):
                     if v in seen:
                         continue
+                    if budget is not None:
+                        budget -= len(v)
+                        if budget < 0:
+                            break
                     seen.add(v)
                     ordered.append(v)
                     nxt.append(v)
                     if len(ordered) >= _HARD_CAP:
                         return ordered
+                if budget is not None and budget < 0:
+                    break
             frontier = nxt
             depth += 1
     except Exception:  # pragma: no cover -- pre-pass must never break the scan

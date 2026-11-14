@@ -110,7 +110,11 @@ def _load_config_outbound() -> tuple[list[str], str | None]:
         log.debug("webhooks: cannot load config: %s", e)
         return [], None
     section = (cfg or {}).get("webhooks") or {}
-    urls = list(section.get("outbound") or [])
+    raw = section.get("outbound") or []
+    # A single URL written as a string must not be split into characters.
+    if isinstance(raw, str):
+        raw = [raw]
+    urls = [u for u in raw if isinstance(u, str) and u.strip()] if isinstance(raw, (list, tuple)) else []
     from .secret_provider import get_secret
     secret = get_secret("MAVERICK_WEBHOOK_SECRET") or _expand_env(section.get("secret"))
     return urls, secret

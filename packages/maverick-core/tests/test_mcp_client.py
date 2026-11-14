@@ -734,3 +734,16 @@ class TestMCPPinSha256:
         # Plain command name: never a path.
         assert not _command_looks_like_path("mcp-tool", on_windows=False)
         assert not _command_looks_like_path("mcp-tool", on_windows=True)
+
+
+@pytest.mark.asyncio
+async def test_malformed_lines_do_not_fail_or_misroute_inflight_calls():
+    c, proc = _make_client(timeout=5.0)
+    task = asyncio.create_task(c._request("m1", {}))
+    await _wait_until_sent(proc, 1)
+    req_id = _id_for_method(proc, "m1")
+    assert req_id == 1
+    for line in ('[]', '{"id": [1], "result": {}}', '{"id": true, "result": {"bad": 1}}'):
+        proc.stdout.feed_data((line + "\n").encode())
+    _feed_response(proc, req_id, {"ok": True})
+    assert await asyncio.wait_for(task, timeout=1.0) == {"ok": True}

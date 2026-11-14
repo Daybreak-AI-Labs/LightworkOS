@@ -343,7 +343,8 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
     if resume_run_id and prior is not None and not approval_resume:
         # First-writer-wins claim BEFORE any downstream executor is invoked.  A
         # crash after this point leaves an indeterminate run, never the old
-        # paused row that another delivery could replay.
+        # paused row that another delivery could replay.  An approval resume is
+        # claimed by ``ApprovalDispatch`` before its first agent or action.
         prior.status = STATUS_RESUMING
         store.save_run(prior)
 
@@ -361,20 +362,26 @@ def execute(flow: Flow, *, agent_runner: AgentRunner, action_runner: ActionRunne
         with action_capture_scope(episode_capture, node), flow_scope(rid, owner, definition_revision or flow.revision):
             return dispatch_action(node, params, action_data)
 
-    res = run_flow(
-        flow,
-        run_id=rid,
-        agent_fn=lambda node, brief, d: node_trace.timed(node.id, lambda: _call_agent(
+    def _run_agent(node: FlowNode, brief: str, agent_data: dict):
+        # An approved continuation is claimed before any executor, agent steps
+        # included, so an interruption cannot leave a replayable pause behind.
+        dispatch_action.admit_agent()
+        return node_trace.timed(node.id, lambda: _call_agent(
             agent_runner,
             brief,
-            d,
+            agent_data,
             node.timeout,
             flow_id=flow.id,
             node_id=node.id,
             revision=definition_revision or flow.revision,
             cohort=evidence_cohort,
             run_id=rid,
-        )),
+        ))
+
+    res = run_flow(
+        flow,
+        run_id=rid,
+        agent_fn=_run_agent,
         action_fn=lambda node, params, d: node_trace.timed(
             node.id, lambda: _run_action(node, params, d)
         ),

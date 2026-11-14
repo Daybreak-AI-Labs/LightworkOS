@@ -91,3 +91,17 @@ async def test_disabled_is_a_noop(tmp_path, monkeypatch):
     assert "ran" in out
     assert "DENIED" not in out
     assert calls == [{}]
+
+
+def test_many_calls_inside_the_ttl_are_not_refused(tmp_path, monkeypatch):
+    # The agent mints and verifies each token in-process; that must not fill
+    # the process-wide replay cache, which refuses new tokens once full.
+    from maverick import tool_token
+
+    monkeypatch.setenv("MAVERICK_TOOL_TOKENS", "1")
+    monkeypatch.setattr("maverick.audit.audit_event", lambda *a, **k: True)
+    monkeypatch.setattr(tool_token, "_REPLAY_CACHE", tool_token._ReplayCache())
+    agent = _agent(tmp_path)
+    cap = Capability(principal="agent:coder-1")
+    denials = [agent._tool_token_denial("read_file", cap) for _ in range(4_200)]
+    assert denials == [None] * 4_200

@@ -128,6 +128,19 @@ def _no_allow_private(monkeypatch):
 
 # --- web_archive fetches go through the guarded opener ---------------
 
+def test_html_conversion_handles_unclosed_tags_without_rescanning():
+    """Each unclosed tag used to rescan the rest of the page (quadratic):
+    a few hundred KB of ``<b>`` stalled the process for hours. The paired-tag
+    pass now stops at the first opening tag that has no close."""
+    from maverick.tools.http_fetch import _strip_html_to_text, _to_markdown
+
+    for payload in ("<b>" * 200_000, "<!--" * 150_000, "<script>" * 80_000,
+                    '<a href="x">' * 50_000, "<" * 600_000):
+        _to_markdown(payload)
+    assert _to_markdown('<h2>T</h2><p>a <b>b</b> <a href="/x">l</a> <b>open') == "## T\n\na **b** [l](/x) open"
+    assert _strip_html_to_text("x<script>y</script>z<!--c-->") == "x z"
+
+
 def test_web_archive_routes_through_guarded_urlopen(monkeypatch):
     import json as _json
 
@@ -204,3 +217,19 @@ def test_guarded_urlopen_allows_redirect_to_public(monkeypatch):
         _Req(), None, 302, "Found", {}, "https://other.example.org/next",
     )
     assert out is not None
+
+
+def test_preflight_refuses_when_the_egress_policy_cannot_be_evaluated(monkeypatch):
+    """A malformed per-tool policy used to be swallowed, so an allowlist
+    posture became allow-all for http_fetch."""
+    from urllib.parse import urlparse
+
+    import maverick.tenant.egress as egress
+    from maverick.tools.http_fetch import _preflight_fetch
+
+    def _broken(*_a, **_k):
+        raise AttributeError("'str' object has no attribute 'get'")
+
+    monkeypatch.setattr(egress, "egress_allowed", _broken)
+    url = "https://example.com/"
+    assert (_preflight_fetch(url, urlparse(url)) or "").startswith("ERROR: egress policy could not be evaluated")

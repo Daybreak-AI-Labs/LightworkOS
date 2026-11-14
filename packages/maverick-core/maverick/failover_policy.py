@@ -25,6 +25,7 @@ Pure logic + an injectable clock; unit-tested without a provider.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -65,19 +66,28 @@ def classify_error(exc: BaseException) -> str:
         if status >= 500:
             return "server"
     text = f"{type(exc).__name__}: {exc}".lower()
-    if isinstance(exc, TimeoutError) or any(m in text for m in _TIMEOUT_MARKERS):
+    if isinstance(exc, TimeoutError) or _mentions(text, _TIMEOUT_MARKERS):
         return "timeout"
-    if any(m in text for m in _RATE_MARKERS):
+    if _mentions(text, _RATE_MARKERS):
         return "rate_limit"
-    if any(m in text for m in _AUTH_MARKERS):
+    if _mentions(text, _AUTH_MARKERS):
         return "auth"
-    if any(m in text for m in _SERVER_MARKERS):
+    if _mentions(text, _SERVER_MARKERS):
         return "server"
-    if isinstance(exc, (ConnectionError, OSError)) or any(m in text for m in _NETWORK_MARKERS):
+    if isinstance(exc, (ConnectionError, OSError)) or _mentions(text, _NETWORK_MARKERS):
         return "network"
-    if any(m in text for m in _BAD_REQUEST_MARKERS):
+    if _mentions(text, _BAD_REQUEST_MARKERS):
         return "bad_request"
     return "other"
+
+
+def _mentions(text: str, markers: tuple[str, ...]) -> bool:
+    """Whether ``text`` contains a marker. A status code must stand alone, so
+    "max_tokens 5000" or "request id 4012" is not a 500 or a 401."""
+    return any(
+        re.search(rf"(?<!\d){m}(?!\d)", text) if m.isdigit() else m in text
+        for m in markers
+    )
 
 
 def _policy_cfg() -> dict:
@@ -93,7 +103,9 @@ def policy_configured() -> bool:
 
 
 def failover_classes() -> frozenset[str]:
-    """Configured error classes that may fail over (default set when unset)."""
+    """Configured error classes that may fail over. Unset, empty, or with no
+    known class name, the default set applies: the dashboard setting offers
+    "none ticked" as that default, so an empty list cannot mean "never"."""
     raw = _policy_cfg().get("failover_on")
     if isinstance(raw, (list, tuple, set)):
         names = {str(c).strip().lower() for c in raw}

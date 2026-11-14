@@ -243,3 +243,99 @@ def test_diff_shows_pre_vs_now(workdir, journal_on):
     _write(workdir, "a.txt", "new line\n")
     d = wj.diff_goal()
     assert "-old line" in d and "+new line" in d
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink and mode semantics")
+def test_revert_ignores_planted_temp_symlink_and_keeps_blobs_private(
+        workdir, journal_on, tmp_path):
+    """Regression: revert wrote its temp file through a fixed
+    ``<name>.journal-revert.tmp`` path an agent could plant as a symlink, and
+    pre-image blobs were created world-readable."""
+    (workdir / "a.txt").write_text("orig")
+    _write(workdir, "a.txt", "changed")
+    blob = next(wj.goal_dir().glob("*.pre"))
+    assert blob.stat().st_mode & 0o077 == 0
+    assert wj.goal_dir().stat().st_mode & 0o077 == 0
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched")
+    (workdir / "a.txt.journal-revert.tmp").symlink_to(victim)
+
+    res = wj.revert_goal()
+
+    assert victim.read_text() == "untouched"
+    assert (workdir / "a.txt").read_text() == "orig"
+    assert not (workdir / "a.txt").is_symlink()
+    assert res["reverted"] == 1 and res["complete"] is True
+
+
+def test_revert_with_skipped_entry_is_not_complete(workdir, journal_on):
+    """Regression: an entry skipped at revert time still reported complete."""
+    (workdir / "a.txt").write_text("orig")
+    _write(workdir, "a.txt", "changed")
+    next(wj.goal_dir().glob("*.pre")).unlink()
+
+    res = wj.revert_goal()
+
+    assert res["skipped"] == 1
+    assert res["complete"] is False
+
+
+def test_skipped_revert_keeps_journal_for_retry_and_restores_mode(
+        workdir, journal_on, monkeypatch):
+    """Regression: a revert with a transient write error archived the journal,
+    so the skipped entry could never be retried; and a file deleted during the
+    run came back 0600 instead of its recorded mode."""
+    (workdir / "a.txt").write_text("orig")
+    os.chmod(workdir / "a.txt", 0o640)
+    _write(workdir, "a.txt", "changed")
+    (workdir / "a.txt").unlink()
+    real = wj._restore_bytes
+    calls = []
+
+    def flaky(target, blob, mode=None):
+        calls.append(target)
+        if len(calls) == 1:
+            raise OSError("transient")
+        return real(target, blob, mode)
+
+    monkeypatch.setattr(wj, "_restore_bytes", flaky)
+    first = wj.revert_goal()
+    assert first["skipped"] == 1 and first["complete"] is False
+    assert "archived" not in first and wj.list_entries()
+
+    second = wj.revert_goal()
+    assert second["complete"] is True and "archived" in second
+    assert (workdir / "a.txt").read_text() == "orig"
+    if os.name != "nt":
+        assert (workdir / "a.txt").stat().st_mode & 0o777 == 0o640
+
+
+def test_permanent_skip_is_reported_and_journal_still_archived(workdir, journal_on):
+    """A skip that can never succeed (here a missing pre-image) is reported,
+    but must not keep the journal: replaying it later would overwrite edits
+    made since this revert."""
+    (workdir / "a.txt").write_text("orig")
+    _write(workdir, "a.txt", "changed")
+    next(wj.goal_dir().glob("*.pre")).unlink()
+
+    res = wj.revert_goal()
+
+    assert res["complete"] is False and res["retryable"] == 0
+    assert res["skip_reasons"] == {"missing_blob": 1}
+    assert "archived" in res and wj.list_entries() == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX umask semantics")
+def test_default_mode_honours_umask_without_proc(tmp_path, monkeypatch):
+    """Off Linux (no /proc) the fallback mode follows the umask instead of a
+    fixed 0644."""
+    def no_proc(*args, **kwargs):
+        raise OSError("no /proc")
+
+    monkeypatch.setattr(wj, "open", no_proc, raising=False)
+    old = os.umask(0o077)
+    try:
+        assert wj._default_file_mode(tmp_path) == 0o600
+    finally:
+        os.umask(old)
+    assert list(tmp_path.iterdir()) == []

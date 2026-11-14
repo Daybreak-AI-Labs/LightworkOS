@@ -199,3 +199,19 @@ def test_messages_during_a_task_are_on_by_default_and_off_stays_off(monkeypatch,
     monkeypatch.setattr(module.config, "load_config", lambda: {"conversation_inbox": dict(active_table)})
     assert module.policy()["enabled"] is enabled
     assert module.policy()["modes"] == ["guidance", "queue", "independent"]
+
+
+def test_owned_inventory_is_not_capped_by_other_owners_records(monkeypatch):
+    class _Store:
+        def iter_record_ids(self, *, start_after, limit):
+            start = int(start_after or 0)
+            return [(str(n), f"r{n}") for n in range(start + 1, min(start + limit, 10_050) + 1)]
+
+        def get(self, record_id):
+            return {"owner": "user:someone-else"}
+
+    monkeypatch.setattr(module, "STORE", _Store())
+    assert module.owned_inventory("user:alice") == []
+    monkeypatch.setattr(module, "_MAX_INVENTORY_SCAN", 100)
+    with pytest.raises(ValueError, match="narrower"):
+        module.owned_inventory("user:alice")

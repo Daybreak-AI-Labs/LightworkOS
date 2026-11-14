@@ -31,10 +31,13 @@ or critical risk action may approve it themselves; the shared decision path
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from ..config_contracts import CHOICE_SETTINGS
+
+log = logging.getLogger(__name__)
 
 _RISK_ORDER = ("low", "medium", "high", "critical")
 
@@ -56,26 +59,47 @@ def _coerce_int(value: object, default: int = 1) -> int:
     return n if n >= 1 else default
 
 
+# A configured quorum that is not a positive integer ("two", 0, true) was
+# meant to change the default of one; the smallest quorum that keeps dual
+# control stands in for it rather than dropping to one approver.
+_INVALID_QUORUM = 2
+
+
+def _configured_quorum(value: object, setting: str) -> int:
+    if not isinstance(value, bool):
+        n = _coerce_int(value, 0)
+        if n:
+            return n
+    log.warning("[security] %s = %r is not a positive integer; requiring %d approvers",
+                setting, value, _INVALID_QUORUM)
+    return _INVALID_QUORUM
+
+
 def required_approvals(risk: str | None = None) -> int:
     """Quorum (N distinct approvers) required for an action at ``risk``.
 
     Resolution: ``MAVERICK_APPROVALS_REQUIRED`` env (global) wins; else
     ``[security] approvals_required`` -- an int (applies to all) or a per-risk
     table (``high``/``critical``/... with an optional ``default``). Always >= 1;
-    1 means the legacy single-approver behaviour (no dual control).
+    1 means the legacy single-approver behaviour (no dual control). A
+    configured value that is not a positive integer requires two approvers.
 
     ``[security] approvals_required_by_risk`` (a per-risk table) then raises
     the number for the levels it names: it never lowers it, so a stale row can
     only ask for more people, never fewer."""
     env = os.environ.get("MAVERICK_APPROVALS_REQUIRED")
     if env is not None and env.strip() != "":
-        return _coerce_int(env, 1)
+        n = _coerce_int(env, 0)
+        if n:
+            return n
+        # An unreadable override must not drop a configured quorum to one.
+        log.warning("ignoring MAVERICK_APPROVALS_REQUIRED=%r; it is not a positive integer", env)
     sec = _security_cfg()
     base = _base_approvals(sec.get("approvals_required"), risk)
     by_risk = sec.get("approvals_required_by_risk")
     r = str(risk or "").strip().lower()
     if isinstance(by_risk, dict) and r in by_risk:
-        return max(base, _coerce_int(by_risk[r], 1))
+        return max(base, _configured_quorum(by_risk[r], f"approvals_required_by_risk.{r}"))
     return base
 
 
@@ -83,13 +107,13 @@ def _base_approvals(val: object, risk: str | None) -> int:
     if isinstance(val, dict):
         r = str(risk or "").strip().lower()
         if r in val:
-            return _coerce_int(val[r], 1)
+            return _configured_quorum(val[r], f"approvals_required.{r}")
         if "default" in val:
-            return _coerce_int(val["default"], 1)
+            return _configured_quorum(val["default"], "approvals_required.default")
         return 1
     if val is None:
         return 1
-    return _coerce_int(val, 1)
+    return _configured_quorum(val, "approvals_required")
 
 
 def allow_self_approval() -> bool:

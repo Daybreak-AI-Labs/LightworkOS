@@ -234,9 +234,15 @@ def classify_text(
     if len(sample) > MAX_TEXT_CHARS:
         raise ValueError(f"text must be at most {MAX_TEXT_CHARS} characters")
     findings: list[dict[str, Any]] = []
+    truncated = False
 
     def add(category: str, kind: str, match_start: int, value: str) -> None:
-        if len(findings) < MAX_FINDINGS:
+        nonlocal truncated
+        if len(findings) >= MAX_FINDINGS:
+            # Flag the drop here: later filtering (phone findings that overlap
+            # a national id) can bring the list back under the cap.
+            truncated = True
+        else:
             findings.append(
                 {
                     "category": category,
@@ -276,7 +282,7 @@ def classify_text(
         "counts": counts,
         "findings": findings,
         "scanned_chars": len(sample),
-        "truncated": len(findings) >= MAX_FINDINGS,
+        "truncated": truncated,
     }
 
 

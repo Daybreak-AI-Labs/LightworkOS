@@ -45,6 +45,11 @@ def test_custom_weight_can_escalate():
     assert "custom adjustment (+5)" in bumped
 
 
+def test_negative_custom_weight_cannot_cancel_signals():
+    out = _score({"irreversible?": True, "moves_money?": True, "custom_weight": -100})
+    assert out.startswith("ERROR") and ">= 0" in out
+
+
 def test_falsey_signals_not_counted():
     # Only literal True counts; False / "true" string must not add points.
     out = _score({"irreversible?": False, "moves_money?": "true"})

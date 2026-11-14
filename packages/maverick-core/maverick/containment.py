@@ -17,7 +17,10 @@ What enforces "no egress":
   ``LocalBackend`` (which has no packet-level deny — documented in
   ``tools/shell.py``). The hard mechanism here is the registry ACL:
   :func:`apply` denies the exfil-capable tools (http_fetch, web_search,
-  browser, websocket, the send-ish connectors) via ``registry.set_acl``.
+  browser, websocket, the send-ish connectors, the named service clients in
+  :data:`DEFAULT_DENY_TOOLS` and every deferrable REST connector the registry
+  holds) via ``registry.set_acl``. The list is by name: a tool that is not
+  named and not deferrable stays allowed.
 * **Egress policy layers** (``sandbox/network_policy.py``,
   ``tenant_egress.py``, ``enterprise.py``) are *config*-driven in-process
   checks — there is no ``MAVERICK_EGRESS_*`` env var to flip. The only
@@ -52,7 +55,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ._envparse import is_truthy
+from ._envparse import coerce_bool
 from .file_lock import ensure_private_directory
 
 log = logging.getLogger(__name__)
@@ -66,13 +69,21 @@ _PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                "http_proxy", "https_proxy", "all_proxy")
 _PROXY_BYPASS_VARS = ("NO_PROXY", "no_proxy")
 
-# Obviously-exfil tools: anything whose purpose is to move bytes off-box —
-# generic HTTP/web/browser/websocket plus the send-ish messaging connectors
-# (names confirmed against the registered tool names in maverick/tools/).
+# Tools whose purpose is to reach another host: generic HTTP/web/browser/
+# websocket/DNS, the send-ish messaging connectors, and the built-in service
+# clients that are not part of the deferred connector long tail. :func:`apply`
+# also denies every name the registry marks deferrable (the REST connector
+# long tail, all of which call a remote API). A tool outside both sets is
+# allowed, so a new network tool must be added here.
 DEFAULT_DENY_TOOLS = frozenset({
     "http_fetch", "web_search", "browser", "websocket", "webrtc",
     "email", "gmail", "ses", "sns", "twilio",
     "slack_bot", "discord_bot", "teams", "notify",
+    "dns_lookup", "web_archive", "openapi_runner",
+    "github_issues", "github_search", "github_actions", "github_repo_search",
+    "gitlab", "gitlab_issues", "jira", "linear", "notion", "stripe",
+    "wikipedia", "arxiv", "semantic_scholar", "hackernews", "huggingface",
+    "youtube", "geocode", "translate", "currency",
 })
 
 _DEFAULT_MAX_WALL_SECONDS = 1800.0
@@ -111,13 +122,68 @@ def _containment_cfg() -> dict:
         return {}
 
 
+def _unreadable_containment_sources() -> list[str]:
+    """Unreadable configuration sources whose raw text mentions containment.
+
+    The fail-soft loader replaced such a file with defaults, so a
+    ``[containment]`` table it held may have been lost. Only those files are
+    evidence that containment was configured: the bytes are searched, never
+    parsed. A source whose bytes cannot be read gives no evidence.
+    """
+    try:
+        from .config import config_source_errors
+        errors = config_source_errors(include_tenant=True)
+    except Exception:
+        return []
+    found = []
+    for source in errors:
+        try:
+            raw = Path(source).read_bytes()
+        except OSError:
+            continue
+        if b"containment" in raw.lower():
+            found.append(str(source))
+    return found
+
+
+def status() -> dict:
+    """Whether containment is on and why, for status surfaces.
+
+    ``reason`` is ``"environment"``, ``"configuration"``,
+    ``"unreadable_configuration"`` (on because a source that mentions
+    containment could not be read; ``sources`` names it) or ``"off"``.
+    ``message`` is a plain sentence for people, empty when it is off.
+    """
+    env = os.environ.get("MAVERICK_CONTAINMENT", "").strip()
+    if env:
+        on = coerce_bool(env, default=True)
+        return {"enabled": on, "reason": "environment" if on else "off", "sources": [],
+                "message": "Locked-down mode is on (MAVERICK_CONTAINMENT)." if on else ""}
+    cfg = _containment_cfg()  # loads first: the loader records unreadable sources
+    sources = _unreadable_containment_sources()
+    if sources:
+        return {"enabled": True, "reason": "unreadable_configuration", "sources": sources,
+                "message": (f"Locked-down mode is on because {', '.join(sources)} could not "
+                            "be read; fix that file to restore your setting.")}
+    value = cfg.get("enabled")
+    on = False if value is None else coerce_bool(value, default=True)
+    return {"enabled": on, "reason": "configuration" if on else "off", "sources": [],
+            "message": "Locked-down mode is on ([containment] enabled)." if on else ""}
+
+
 def enabled() -> bool:
     """Opt-in, off by default. ``MAVERICK_CONTAINMENT=1`` (env wins) or
-    ``[containment] enabled = true``."""
-    env = os.environ.get("MAVERICK_CONTAINMENT", "").strip().lower()
-    if env:
-        return is_truthy(env)
-    return bool(_containment_cfg().get("enabled"))
+    ``[containment] enabled = true``.
+
+    Fails closed: an env value that is neither a recognised true nor false
+    token, a non-boolean config value, and an unreadable configuration source
+    whose text mentions containment (its table may have been lost) all turn
+    containment on. Another unreadable source leaves the readable result.
+    """
+    current = status()
+    if current["reason"] == "unreadable_configuration":
+        log.warning("%s", current["message"])
+    return bool(current["enabled"])
 
 
 def profile_from_config() -> ContainmentProfile:
@@ -178,7 +244,8 @@ def assert_no_network_env(env: dict) -> dict:
 def apply(profile: ContainmentProfile, *, registry, sandbox_env: dict) -> ContainmentReport:
     """Apply ``profile`` to a run's seams; return what was done.
 
-    * Tool surface: unions ``profile.deny_tools`` into the registry ACL.
+    * Tool surface: unions ``profile.deny_tools`` and the registry's
+      deferrable connector names into the registry ACL.
       ``set_acl`` replaces the whole ACL, so the existing allowed/denied/
       max_risk are read back first and preserved (see module docstring).
     * Network: when ``profile.no_network``, updates ``sandbox_env`` in place
@@ -188,12 +255,19 @@ def apply(profile: ContainmentProfile, *, registry, sandbox_env: dict) -> Contai
       :func:`make_ephemeral_workdir`; the report records that obligation.
     """
     preserved = frozenset(getattr(registry, "_acl_denied", set()) or set())
-    if profile.deny_tools:
+    # Why the tools are denied, for the registry's denial message; set only
+    # when containment is on because configuration could not be read.
+    current = status()
+    registry.acl_denial_note = (current["message"]
+                                if current["reason"] == "unreadable_configuration" else "")
+    connectors = frozenset(getattr(registry, "deferrable_names", set()) or set())
+    denied = frozenset(profile.deny_tools) | connectors
+    if denied:
         allowed = set(getattr(registry, "_acl_allowed", set()) or set())
         max_risk = getattr(registry, "_acl_max_risk", None)
         registry.set_acl(
             allowed=allowed,
-            denied=set(preserved) | set(profile.deny_tools),
+            denied=set(preserved) | set(denied),
             max_risk=max_risk,
         )
     env_keys: tuple[str, ...] = ()
@@ -203,7 +277,7 @@ def apply(profile: ContainmentProfile, *, registry, sandbox_env: dict) -> Contai
         sandbox_env.update(hardened)
         env_keys = tuple(sorted((*_PROXY_VARS, "MAVERICK_CONTAINMENT")))
     report = ContainmentReport(
-        denied_tools=frozenset(profile.deny_tools),
+        denied_tools=denied,
         preserved_denials=preserved,
         no_network=profile.no_network,
         env_keys_set=env_keys,
@@ -265,6 +339,7 @@ __all__ = [
     "active_profile",
     "enabled",
     "profile_from_config",
+    "status",
     "apply",
     "assert_no_network_env",
     "make_ephemeral_workdir",

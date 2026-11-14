@@ -1216,7 +1216,14 @@ class UnifiedAuditStore:
                     "history_tip_sha256": GENESIS_SHA256,
                     "sweep_generation": "0",
                 }
-                if metadata and metadata != expected:
+                # Only the schema and tenant binding are fixed at open. The
+                # history and sweep counters advance with every write and are
+                # verified against the history chain by _verified_snapshot.
+                if metadata and (
+                    set(metadata) != set(expected)
+                    or metadata["schema_version"] != expected["schema_version"]
+                    or not hmac.compare_digest(metadata["tenant_sha256"], self.tenant_sha256)
+                ):
                     raise UnifiedAuditIntegrityError("unified-audit authority metadata is invalid")
                 if not metadata:
                     connection.executemany(

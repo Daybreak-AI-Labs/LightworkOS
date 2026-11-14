@@ -88,3 +88,14 @@ def test_tenant_list_flags_over_quota():
     acme_line = next(ln for ln in res.output.splitlines() if ln.strip().startswith("acme"))
     beta_line = next(ln for ln in res.output.splitlines() if ln.strip().startswith("beta"))
     assert "OVER QUOTA" in acme_line and "OVER QUOTA" not in beta_line
+
+
+def test_tenant_delete_reports_a_refusal_as_a_message(monkeypatch):
+    from maverick.tenant import registry as tr
+
+    def _refuse(tenant_id, *, purge=False):
+        raise tr.TenantRegistryError("an active legal hold covers this tenant")
+    monkeypatch.setattr(tr, "delete_tenant", _refuse)
+    r = CliRunner().invoke(main, ["tenant", "delete", "acme", "--purge", "--yes"])
+    assert r.exit_code == 1 and "active legal hold" in r.output
+    assert isinstance(r.exception, SystemExit)

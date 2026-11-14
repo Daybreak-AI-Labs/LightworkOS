@@ -12,9 +12,9 @@ change. This module is the editing surface over that mechanism:
   * :func:`remove_override` -- remove the exact tenant override.
   * :func:`list_agents` -- the roster, flagged by override/workflow status.
 
-Overrides serialize with the same ``json.dumps`` idiom the intake factory uses
-(``maverick.intake._to_toml``): ``json.dumps`` emits valid TOML string/array
-literals, so an override round-trips back through the loader.
+Overrides serialize as JSON literals (``json.dumps`` with ``ensure_ascii=False``
+and DEL escaped), which TOML also accepts; :func:`write_override` parses the
+exact text and validates that parsed form before it publishes the file.
 """
 from __future__ import annotations
 
@@ -44,6 +44,7 @@ from .domain import (
     builtin_domains,
     declared_prompt_gate,
     enforced_gate,
+    extends_errors,
     lint_profile,
     load_domain,
     load_domains,
@@ -194,6 +195,13 @@ def _validated_override_name(name: str) -> str:
     return name
 
 
+def _toml_value(value) -> str:
+    """A JSON literal TOML also accepts: characters outside the BMP stay
+    literal (JSON would write a surrogate pair TOML rejects) and DEL, which
+    TOML requires escaped, is escaped."""
+    return json.dumps(value, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
 def overlay_toml(patch: dict) -> str:
     """Serialize an override patch dict to TOML that round-trips through the
     loader. Only the keys present in ``patch`` are written (it stays a thin
@@ -201,43 +209,43 @@ def overlay_toml(patch: dict) -> str:
     lines: list[str] = []
     for k in _SCALAR_KEYS:
         if k in patch and patch[k] not in (None, ""):
-            lines.append(f"{k} = {json.dumps(patch[k])}")
+            lines.append(f"{k} = {_toml_value(patch[k])}")
     for k in _ARRAY_KEYS:
         if k in patch:
-            lines.append(f"{k} = {json.dumps(list(patch[k]))}")
+            lines.append(f"{k} = {_toml_value(list(patch[k]))}")
     if "models" in patch:
         lines.append("")
         lines.append("[models]")
         for role, model in dict(patch["models"]).items():
-            lines.append(f"{json.dumps(role)} = {json.dumps(model)}")
+            lines.append(f"{_toml_value(role)} = {_toml_value(model)}")
     if patch.get("autonomy"):
         lines.append("")
         lines.append("[autonomy]")
         for key in ("default", "low", "medium", "high", "onboarding"):
             value = patch["autonomy"].get(key)
             if value is not None:
-                lines.append(f"{key} = {json.dumps(value)}")
+                lines.append(f"{key} = {_toml_value(value)}")
     out = patch.get("output")
     if out:
         lines.append("")
         lines.append("[output]")
         for key in ("shape", "deliverable", "cadence", "gate"):
             if out.get(key):
-                lines.append(f"{key} = {json.dumps(out[key])}")
+                lines.append(f"{key} = {_toml_value(out[key])}")
         if out.get("consumers"):
-            lines.append(f"consumers = {json.dumps(list(out['consumers']))}")
+            lines.append(f"consumers = {_toml_value(list(out['consumers']))}")
     for step in patch.get("workflow") or []:
         if not str(step.get("name") or "").strip():
             continue
         lines.append("")
         lines.append("[[workflow]]")
-        lines.append(f"name = {json.dumps(step['name'])}")
+        lines.append(f"name = {_toml_value(step['name'])}")
         if step.get("instruction"):
-            lines.append(f"instruction = {json.dumps(step['instruction'])}")
+            lines.append(f"instruction = {_toml_value(step['instruction'])}")
         if step.get("tools"):
-            lines.append(f"tools = {json.dumps(list(step['tools']))}")
+            lines.append(f"tools = {_toml_value(list(step['tools']))}")
         if step.get("gate"):
-            lines.append(f"gate = {json.dumps(step['gate'])}")
+            lines.append(f"gate = {_toml_value(step['gate'])}")
     return "\n".join(lines) + "\n"
 
 
@@ -303,6 +311,11 @@ def _base_profile(name: str, patch: dict) -> DomainProfile | None:
     return _fresh_builtin_base(base_name)
 
 
+def _extends_errors(name: str, patch: dict, base: DomainProfile | None) -> list[str]:
+    builtin = (name,) if _fresh_builtin_base(name) is not None else ()
+    return extends_errors(name, patch, base, builtin)
+
+
 def validate_override(name: str, patch: dict) -> tuple[list[str], list[str]]:
     """Lint the *merged* result of applying ``patch`` to its base. Returns
     ``(errors, warnings)`` -- the editor blocks a save on any error."""
@@ -312,9 +325,12 @@ def validate_override(name: str, patch: dict) -> tuple[list[str], list[str]]:
         return [str(exc)], []
     patch = dict(patch)
     merged = _resolve(name, patch)
-    errors, warnings = lint_profile(merged)
+    base = _base_profile(name, patch)
+    errors = _extends_errors(name, patch, base)
+    lint_errors, warnings = lint_profile(merged)
+    errors.extend(lint_errors)
     if not _profile_field_type_errors(merged):
-        errors.extend(_envelope_errors(_base_profile(name, patch), merged))
+        errors.extend(_envelope_errors(base, merged))
     return errors, warnings
 
 
@@ -336,7 +352,8 @@ def preview_override(name: str, patch: dict) -> DomainProfile:
     # and envelope checks without resolving that complete catalog three times.
     base = _base_profile(name, parsed)
     merged = overlay_profile(base, parsed) if base else _coerce(name, parsed)
-    errors, _ = lint_profile(merged)
+    errors = _extends_errors(name, parsed, base)
+    errors.extend(lint_profile(merged)[0])
     if not _profile_field_type_errors(merged):
         errors.extend(_envelope_errors(base, merged))
     if errors:
@@ -367,7 +384,15 @@ def write_override(name: str, patch: dict, directory: str | Path | None = None, 
     content = overlay_toml(patch)
     if len(content.encode("utf-8")) > _MAX_OVERRIDE_BYTES:
         raise ValueError("agent override is too large")
-    errors, _ = validate_override(name, patch)
+    from .domain import tomllib
+
+    # Validate exactly what will be persisted: the serialiser drops empty
+    # tables and must never publish text the loader cannot read back.
+    try:
+        persisted = tomllib.loads(content)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError("This agent setup cannot be saved as written.") from exc
+    errors, _ = validate_override(name, persisted)
     if errors:
         raise ValueError("; ".join(errors))
     d = ensure_private_directory(Path(directory) if directory else user_dir())

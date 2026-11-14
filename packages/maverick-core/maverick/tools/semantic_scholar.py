@@ -92,7 +92,10 @@ def _run(args: dict[str, Any]) -> str:
         query = (args.get("query") or "").strip()
         if not query:
             return "ERROR: search requires query"
-        limit = max(1, min(int(args.get("limit") or 10), 100))
+        try:
+            limit = max(1, min(int(args.get("limit") or 10), 100))
+        except (TypeError, ValueError):
+            return "ERROR: limit must be an integer"
         params: dict[str, Any] = {
             "query": query, "limit": str(limit), "fields": _FIELDS,
         }
@@ -137,6 +140,12 @@ def _run(args: dict[str, Any]) -> str:
             paper_path = pid  # ssid
         else:
             paper_path = f"arXiv:{pid}"  # bare arxiv id fallback
+        # DOIs and old arXiv ids keep their "/", but the id must not climb out
+        # of /paper/ (httpx resolves dot segments) or add a query/fragment.
+        if any(seg in (".", "..") for seg in paper_path.split("/")):
+            return "ERROR: paper_id must not contain . or .. path segments"
+        from urllib.parse import quote
+        paper_path = quote(paper_path, safe="/:")
         try:
             resp = _governed_sender(httpx.get)(
                 f"{_API_BASE}/paper/{paper_path}",

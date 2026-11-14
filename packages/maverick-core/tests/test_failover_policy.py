@@ -60,6 +60,12 @@ class TestPolicyShouldRetry:
             {"rate_limit", "timeout", "network", "server", "other"})
 
 
+    def test_status_codes_in_messages_must_stand_alone(self):
+        assert fp.classify_error(ValueError("max_tokens 5000 is too large")) == "other"
+        assert fp.classify_error(ValueError("invalid_request: request id 4012")) == "bad_request"
+        assert fp.classify_error(RuntimeError("HTTP 503 from upstream")) == "server"
+
+
 class TestCooldownLedger:
     def test_threshold_then_cooldown_then_expiry(self):
         now = [0.0]

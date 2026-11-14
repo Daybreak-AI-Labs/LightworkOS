@@ -85,6 +85,19 @@ def test_ast_edit_add_import_idempotent(ast_workdir):
     assert body1 == body2
 
 
+def test_ast_edit_add_import_after_last_line_without_newline(tmp_path):
+    from maverick.tools.ast_edit import ast_edit
+
+    class _Sandbox:
+        workdir = str(tmp_path)
+
+    (tmp_path / "m.py").write_text("import os")  # no trailing newline
+    out = ast_edit(_Sandbox()).fn({"op": "add_import", "path": "m.py",
+                                    "import_line": "import sys"})
+    assert "wrote" in out
+    assert (tmp_path / "m.py").read_text() == "import os\nimport sys\n"
+
+
 def test_ast_edit_remove_symbol(ast_workdir):
     from maverick.tools.ast_edit import ast_edit
 

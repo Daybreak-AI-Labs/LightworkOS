@@ -147,8 +147,8 @@ def recall_past_goals(
 ) -> list[tuple[float, Any]]:
     """Library entry point. Returns scored matches.
 
-    ``world`` lets callers pass an already-open WorldModel (the tool fn
-    does this so we don't re-open the DB on every tool call).
+    ``world`` lets callers pass an already-open WorldModel; when it is
+    omitted (as the tool fn does) the world is opened and closed here.
     """
     own_world = False
     if world is None:

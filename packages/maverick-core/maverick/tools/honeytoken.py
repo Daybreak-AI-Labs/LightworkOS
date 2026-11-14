@@ -1,8 +1,10 @@
 """Honeytoken planting + tripwire.
 
 Mint decoy secrets (canary tokens) that look like real credentials but are
-never valid, then detect them in any text the agent is about to send or store.
-If a planted token ever shows up in output, exfiltration is in progress —
+never valid, then detect them in text passed to ``scan``. Nothing else in the
+kernel scans for them automatically: a caller must run ``scan`` on the text it
+is about to send or store. If a planted token shows up, exfiltration is in
+progress —
 deterministic tripwire, no model. The token format is recognizable by its
 fixed prefix so detection needs only the prefix, not a stored list.
 
@@ -21,12 +23,15 @@ from . import Tool
 
 _PREFIX = "MAVHT"  # Lightwork HoneyToken — the recognizable, never-valid marker.
 _KINDS = {"aws", "api", "pat", "generic"}
-_TOKEN_RE = re.compile(re.escape(_PREFIX) + r"_[A-Za-z0-9_]+")
+# Case-insensitive: a token lower-cased in transit must still trip.
+_TOKEN_RE = re.compile(re.escape(_PREFIX) + r"_[A-Za-z0-9_]+", re.IGNORECASE)
 
 
 def _mint(label: str, kind: str) -> str:
     rnd = secrets.token_hex(12)
-    # A short keyed digest binds the label so a found token can be traced back.
+    # An unkeyed digest suffix over kind, label and the random part. No
+    # label-to-token mapping is stored, so the label cannot be recovered from
+    # a found token; record the minted token yourself to trace it.
     tag = hashlib.sha256(f"{kind}:{label}:{rnd}".encode()).hexdigest()[:8]
     token = f"{_PREFIX}_{kind}_{rnd}{tag}"
     return f"OK minted honeytoken (label={label!r}, kind={kind}): {token}"

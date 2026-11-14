@@ -37,7 +37,10 @@ def _arg(args: dict, key: str) -> str:
 
 
 def _int(args: dict, key: str, default: int) -> int:
-    return int(args.get(key) or default)
+    # Only a missing value takes the default: quantity=0 must reach the
+    # session (which refuses it), not silently become 1.
+    value = args.get(key)
+    return default if value is None or value == "" else int(value)
 
 
 def _refused(exc: Exception) -> str:

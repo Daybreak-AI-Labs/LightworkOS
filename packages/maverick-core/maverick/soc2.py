@@ -445,7 +445,9 @@ def collect_soc2_evidence() -> dict[str, Any]:
                 "maverick.paths", "tenant_by_user_enabled"
             ),
             "usage_quotas": _probe_toggle("maverick.quotas", "quotas_enforced"),
-            "oidc_auth": _probe_toggle("maverick.oidc", "oidc_enabled"),
+            "oidc_auth": _probe_toggle(
+                "maverick.oidc", "oidc_enabled_as_configured"
+            ),
             "encryption_at_rest": _probe_toggle(
                 "maverick.crypto_at_rest", "at_rest_enabled"
             ),

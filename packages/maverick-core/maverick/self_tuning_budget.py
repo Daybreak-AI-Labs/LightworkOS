@@ -146,10 +146,18 @@ class SelfTuningBudget:
             raw = json.loads(Path(self.path).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        for name, d in (raw or {}).items():
+        if not isinstance(raw, dict):
+            return
+        for name, d in raw.items():
+            try:
+                samples = [float(x) for x in (d.get("samples") or [])]
+                count = int(d.get("count", 0))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            # A tampered file must not turn NaN/inf into the ceiling suggestion.
             self._classes[name] = _Class(
-                count=int(d.get("count", 0)),
-                samples=[float(x) for x in (d.get("samples") or [])],
+                count=count,
+                samples=[x for x in samples if math.isfinite(x) and x >= 0],
             )
 
     def _save(self) -> None:

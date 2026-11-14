@@ -179,10 +179,10 @@
     "artifact": 51,
     "a2a": 4,
     "preferences": 7,
-    "learning": 60,
+    "learning": 61,
     "sqlite_domain": 81,
     "configuration": 69,
-    "read_projection": 24,
+    "read_projection": 25,
     "audit": 24,
     "transient": 26,
     "business_records": 21,
@@ -30092,6 +30092,53 @@
           "function": "install_plugin",
           "kind": "write_text",
           "expression": "req.write_text(f\"{name}=={version} \" + \" \".join(f\"--hash={h}\" for h in hashes) + \"\\n\", encoding=\"utf-8\")"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/schema_migrations.py",
+      "contract": "read_projection",
+      "owner": "packages/maverick-core/maverick/world_model.py",
+      "purpose": "Classify world-model migrations online/offline and preview pending steps; reads the stored world schema version read-only without migrating.",
+      "referenced_store_owners": [
+        "packages/maverick-core/maverick/world_model.py"
+      ],
+      "review": "module purpose and persistence seam read; read-only sqlite3 connect (mode=ro) of the world database, no writes",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {
+        "schema_version": 1
+      },
+      "source_sites": [
+        {
+          "line": 163,
+          "function": "_stored_version",
+          "kind": "connect",
+          "expression": "sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=10.0)"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/learning_store_migration.py",
+      "contract": "learning",
+      "owner": "packages/maverick-core/maverick/self_harness.py",
+      "purpose": "One-way move of this host's file learning stores into the shared world store; holds the file store's lock while it imports and renames the files to backups.",
+      "referenced_store_owners": [
+        "packages/maverick-core/maverick/self_harness.py",
+        "packages/maverick-core/maverick/learning_store.py"
+      ],
+      "review": "module purpose and persistence seam read; takes the same file lock as the promotion writers, writes through the learning store owner",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {
+        "cross_process_lock": 1
+      },
+      "source_sites": [
+        {
+          "line": 104,
+          "function": "migrate_learning_files",
+          "kind": "cross_process_lock",
+          "expression": "cross_process_lock(src)"
         }
       ]
     }

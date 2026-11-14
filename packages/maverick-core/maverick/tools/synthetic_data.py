@@ -51,7 +51,7 @@ def _generate(fields: list[dict], n: int, seed: int, fmt: str) -> str:
     rows = [{names[i]: _field_value(f, rng, r) for i, f in enumerate(fields)}
             for r in range(n)]
     if fmt == "csv":
-        out = [",".join(names)]
+        out = [",".join(_csv_cell(name) for name in names)]
         for row in rows:
             out.append(",".join(_csv_cell(row[name]) for name in names))
         return "\n".join(out)

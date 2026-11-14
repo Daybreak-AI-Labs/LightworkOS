@@ -9,8 +9,9 @@ Provability needs two things the learning loop doesn't give on its own:
      the same way, with the paired difference reported as an effect size + CI.
 
 This module owns the statistics and the (dependency-injected) A/B runner so it
-is testable without a live LLM or GPU: the CLI wires the real agent runner +
-verifier into ``run``/``score``; tests inject deterministic callables. The
+is testable without a live LLM or GPU. Only :func:`paired_lift` is used by the
+product (the CLI and the dashboard); ``measure_lift`` and ``forced_freeze`` have
+no production caller and run only with injected callables in tests. The
 bootstrap CI is seeded, so a reported lift is reproducible for a given seed.
 """
 from __future__ import annotations

@@ -38,6 +38,13 @@ def test_verify_accepts_prefixed_signature():
     assert out.startswith("VALID")
 
 
+def test_verify_rejects_prefix_naming_another_algorithm():
+    payload = '{"event":"x"}'
+    out = _run(op="verify", secret="topsecret", payload=payload,  # pragma: allowlist secret
+               signature="sha1=" + _sig("topsecret", payload))
+    assert out.startswith("INVALID")
+
+
 def test_route_most_specific_wins():
     routes = {"*": "g_catchall", "issues.*": "g_issues", "issues.opened": "g_opened"}
     assert _run(op="route", event_type="issues.opened", routes=routes) == "ROUTE: g_opened"

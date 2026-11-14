@@ -248,6 +248,18 @@ def test_support_export_emits_a_redacted_audit_event(monkeypatch, tmp_path):
     assert ev[0].get("filename") == "bundle.json"          # basename only, no path
 
 
+def test_support_export_fails_when_the_audit_trail_refuses(monkeypatch, tmp_path):
+    import maverick.cli as C
+    from click.testing import CliRunner
+    from maverick.audit import AuditRefused
+
+    def _refuse(kind, **kw):
+        raise AuditRefused("signed chain required")
+    monkeypatch.setattr("maverick.audit.record", _refuse)
+    res = CliRunner().invoke(C.main, ["support", "-o", str(tmp_path / "bundle.json")])
+    assert res.exit_code == 1 and "signed chain required" in res.output
+
+
 def test_ticket_summary_is_redacted_and_routable():
     bundle = {
         "correlation_id": "sup_abc123", "generated_at": "2026-07-02T00:00:00Z",

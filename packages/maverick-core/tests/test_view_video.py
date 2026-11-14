@@ -197,3 +197,20 @@ def test_video_audio_uses_its_private_generated_file(monkeypatch, tmp_path):
     monkeypatch.setattr(voice, "_default_stt_backend", lambda: "local")
     monkeypatch.setattr(voice, "_whisper_local", lambda path, _lang: path.read_bytes().decode())
     assert vv._transcribe_track("source.mp4", str(tmp_path), object()) == "ID3audio"
+
+
+def test_view_video_refuses_model_override_and_propagates_stop_signals(monkeypatch, tmp_path):
+    import pytest
+    from maverick.budget import BudgetExceeded
+
+    vid = _prep(monkeypatch, tmp_path, frames=[(2.0, b"\xff\xd8a")])
+    tool = view_video(sandbox=SimpleNamespace(workdir=tmp_path))
+    out = tool.fn({"source": str(vid), "model": "openai:gpt-5-pro"})
+    assert out == "ERROR: the vision model is configured by the operator"
+
+    def _over(self, **_kw):
+        raise BudgetExceeded("cap")
+
+    monkeypatch.setattr(_FakeLLM, "complete", _over)
+    with pytest.raises(BudgetExceeded):
+        tool.fn({"source": str(vid)})

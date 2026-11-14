@@ -45,6 +45,12 @@ def test_release_refuses_secret_bearing_rows():
         cr.build_release(rows)
 
 
+def test_manifest_does_not_claim_a_scan_that_did_not_run(monkeypatch):
+    rows = [{"id": "a", "text": "x", "expected": "block", "category": "inj"}]
+    monkeypatch.setattr(cr, "_scan_available", lambda: False)
+    assert "NOT secret/PII-scanned" in cr.build_release(rows)["provenance"]
+
+
 def test_version_is_content_derived():
     rows = [{"id": "a", "text": "x", "expected": "block", "category": "inj"}]
     v1 = cr.build_release(rows)["version"]

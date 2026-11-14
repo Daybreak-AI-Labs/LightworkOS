@@ -13,17 +13,33 @@ from . import Tool
 # show <commit>`, `git diff HEAD..main`, etc.). The list is the
 # minimum-surprise blocklist — generic `git` (status, diff, apply,
 # add, commit, reset) stays available so the agent can still work.
+# Every `git <subcommand>` rule matches `git`, then any non-separator text,
+# then the subcommand. Written naively (`\bgit\s[^\n;&|]*?X`) the engine
+# retried from every `git` in a long segment, and rules ending in `.*?` from
+# every `log` too, so `"git log " * 474` took seconds before the consent
+# prompt. Rules start at a segment boundary and commit (atomic group) to the
+# FIRST `git` in it: text after a later `git` in the same segment is also
+# after the first, so the set of matched commands is unchanged. Rules with a
+# trailing `.*?` likewise commit to the first subcommand occurrence.
+# The one case that argument misses is a `git` whose `\s` is a newline: the
+# old rule then carried on onto the NEXT line (`git -c "a.b=git\n" show`), so
+# `\bgit\n` is a second entry point. Each such start scans only the line
+# after it, so the work stays linear.
+_GIT_START = r"(?:(?:^|(?<=[\n;&|]))(?>[^\n;&|]*?\bgit\s)|\bgit\n)"
+_GIT = _GIT_START + r"[^\n;&|]*?"
+_GIT_ATOMIC = _GIT_START + r"(?>[^\n;&|]*?"
+
 _GIT_GOLD_LEAK_PATTERNS = [
     # Porcelain commands — most leak vectors. We accept that any of
     # these tokens after `git` (possibly with global flags like -P,
     # -C dir, --git-dir=path, -c k=v) defeats the simple `\bgit\s+log\b`
     # anchor, so we accept ANY non-newline char between `git` and the
     # subcommand. The `git\b` start anchor still rules out `gitlab` etc.
-    re.compile(r"\bgit\s[^\n;&|]*?\blog\b.*?(?:-p|--patch|--all|--reflog)\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bshow\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bblame\b"),
+    re.compile(_GIT_ATOMIC + r"\blog\b).*?(?:-p|--patch|--all|--reflog)\b"),
+    re.compile(_GIT + r"\bshow\b"),
+    re.compile(_GIT + r"\bblame\b"),
     # `git diff` HEAD-vs-worktree is fine; block ref-vs-ref diffs.
-    re.compile(r"\bgit\s[^\n;&|]*?\bdiff\s+\S+\.\."),
+    re.compile(_GIT + r"\bdiff\s+\S+\.\."),
     # A SINGLE ref (no `..`) — `git diff main` / `origin/main` /
     # `HEAD~1` / `<sha>` — compares that ref against the working tree,
     # which IS the inverted gold patch. Block `git diff <ref>` for any
@@ -33,41 +49,41 @@ _GIT_GOLD_LEAK_PATTERNS = [
     # non-option token is a ref that isn't exactly HEAD. The negative
     # lookahead skips leading dash-options and `--` path separators.
     re.compile(
-        r"\bgit\s[^\n;&|]*?\bdiff\s+"
+        _GIT + r"\bdiff\s+"
         r"(?:-(?!-\s|-$)[^\s]+\s+)*"  # skip dash-options, but NOT a lone `--`
         r"(?!HEAD(?:\s|$))"           # HEAD alone (vs worktree) is fine
         r"(?!-)"                      # not an option/`--` (paths-only sep)
         r"[A-Za-z0-9_./~^@]+"         # a ref token (branch/sha/tag)
     ),
-    re.compile(r"\bgit\s[^\n;&|]*?\bstash\s+(?:list|show)\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\breflog\b"),
+    re.compile(_GIT + r"\bstash\s+(?:list|show)\b"),
+    re.compile(_GIT + r"\breflog\b"),
     # Patch-emitting porcelain. `format-patch --stdout`,
     # `whatchanged -p`, `archive`, `bundle create` all materialize the
     # tree/history (and thus the gold patch) outside the blocked verbs.
     # Bare `git log --format=%H` / `--pretty=%H` leaks the gold SHA,
     # which then unlocks `git diff <sha>` — so block those too.
-    re.compile(r"\bgit\s[^\n;&|]*?\bformat-patch\b.*?--stdout\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bwhatchanged\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\barchive\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bbundle\s+create\b"),
+    re.compile(_GIT_ATOMIC + r"\bformat-patch\b).*?--stdout\b"),
+    re.compile(_GIT + r"\bwhatchanged\b"),
+    re.compile(_GIT + r"\barchive\b"),
+    re.compile(_GIT + r"\bbundle\s+create\b"),
     re.compile(
-        r"\bgit\s[^\n;&|]*?\blog\b.*?"
+        _GIT_ATOMIC + r"\blog\b).*?"
         r"(?:--format|--pretty)[=\s]\S*%H",
     ),
     # Plumbing: full coverage including subcommands
     # that the original list missed (rev-list, show-ref, ls-files,
     # fsck, update-ref, symbolic-ref).
-    re.compile(r"\bgit\s[^\n;&|]*?\bcat-file\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bfor-each-ref\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\brev-list\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bshow-ref\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bsymbolic-ref\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bls-tree\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bls-files\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bfsck\b"),
-    re.compile(r"\bgit\s[^\n;&|]*?\bupdate-ref\b"),
+    re.compile(_GIT + r"\bcat-file\b"),
+    re.compile(_GIT + r"\bfor-each-ref\b"),
+    re.compile(_GIT + r"\brev-list\b"),
+    re.compile(_GIT + r"\bshow-ref\b"),
+    re.compile(_GIT + r"\bsymbolic-ref\b"),
+    re.compile(_GIT + r"\bls-tree\b"),
+    re.compile(_GIT + r"\bls-files\b"),
+    re.compile(_GIT + r"\bfsck\b"),
+    re.compile(_GIT + r"\bupdate-ref\b"),
     re.compile(
-        r"\bgit\s[^\n;&|]*?\brev-parse\b.*\b"
+        _GIT_ATOMIC + r"\brev-parse\b).*\b"
         r"(?:HEAD\^|HEAD~|main|master|origin)"
     ),
     # `git --git-dir=PATH` redirects to a foreign .git — block any
@@ -92,7 +108,7 @@ _GIT_GOLD_LEAK_PATTERNS = [
     # token or after `/`), with a word/path boundary after, so we catch
     # both bare `.git` and `.git/...` but not e.g. `foo.gitignore`.
     re.compile(
-        r"\b(?:cp|mv|ln|tar|rsync|cat|scp|install|7z|zip)\b"
+        r"(?:^|(?<=[\n;&|]))(?>[^\n;&|]*?\b(?:cp|mv|ln|tar|rsync|cat|scp|install|7z|zip)\b)"
         r"[^\n;&|]*?(?:^|\s|=)\.git(?:/|\b)",
     ),
     # NOTE: string-matching is inherently brittle (quoting, `$(...)`,
@@ -113,7 +129,8 @@ _GIT_GOLD_LEAK_PATTERNS = [
 # equivalent so we have to gate it here at the tool layer.
 _NETWORK_LEAK_PATTERNS = [
     re.compile(
-        r"\b(?:curl|wget|http(?:ie)?|aria2c|fetch)\b.*?"
+        # Commit to the first fetcher on the line (see _GIT): linear time.
+        r"(?:^|(?<=\n))(?>[^\n]*?\b(?:curl|wget|http(?:ie)?|aria2c|fetch)\b).*?"
         r"\b(?:github\.com|githubusercontent\.com|gist\.github\.com|"
         r"raw\.githubusercontent|api\.github\.com|patch-diff)\b",
         re.IGNORECASE,
@@ -124,7 +141,7 @@ _NETWORK_LEAK_PATTERNS = [
     re.compile(r"\bpip\s+install\s+\S*git\+\S*github\S*", re.IGNORECASE),
     # Python one-liner fetch
     re.compile(
-        r"\b(?:python|python3)\s+-c\s+[\"'].*?(?:urllib|requests|httpx).*?"
+        r"\A(?>.*?\b(?:python|python3)\s+-c\s+[\"'])(?>.*?(?:urllib|requests|httpx)).*?"
         r"github\.com",
         re.IGNORECASE | re.DOTALL,
     ),
@@ -138,7 +155,7 @@ _NETWORK_LEAK_PATTERNS = [
 # unpatched code from the original. We surface the right pattern
 # instead of letting the agent burn cycles on a silent failure.
 _EDITABLE_INSTALL_PATTERN = re.compile(
-    r"\bpip\s+install\s+(?:[^|;&]*\s+)?-e\b",
+    r"\bpip\s+install\b[^|;&\n]*?\s-e\b",
     re.IGNORECASE,
 )
 
@@ -277,6 +294,20 @@ def shell(sandbox) -> Tool:
                     "in git history or fetching the upstream PR. "
                     "(Override by setting MAVERICK_BENCHMARK_OPAQUE=0.)"
                 )
+            if _EDITABLE_INSTALL_PATTERN.search(cmd):
+                # Checked before the general install block below (which
+                # also matches `pip install -e`) so an editable install gets
+                # the worktree-specific explanation.
+                return (
+                    "ERROR: `pip install -e` is blocked in benchmark opaque "
+                    "mode. Editable installs from inside a git worktree "
+                    "create .pth/.egg-link entries that may import unpatched "
+                    "code from the original tree, silently failing tests "
+                    "even when your patch is correct. If you need to install "
+                    "the package, use `pip install .` (non-editable) or set "
+                    "PYTHONPATH to include the worktree explicitly. "
+                    "(Override by setting MAVERICK_BENCHMARK_OPAQUE=0.)"
+                )
             # Block ALL package-install commands
             # in opaque mode. The grader's container has deps already;
             # any install here just pollutes the local sandbox for
@@ -294,20 +325,6 @@ def shell(sandbox) -> Tool:
                     "`pip install` / `npm install` / `apt install`; "
                     "fix the code instead. "
                     "(Override: MAVERICK_BENCHMARK_OPAQUE=0.)"
-                )
-            if _EDITABLE_INSTALL_PATTERN.search(cmd):
-                # Don't outright refuse -- the agent may legitimately need
-                # an editable install -- but flag the worktree gotcha so
-                # the model is told to install against the correct path.
-                return (
-                    "ERROR: `pip install -e` is blocked in benchmark opaque "
-                    "mode. Editable installs from inside a git worktree "
-                    "create .pth/.egg-link entries that may import unpatched "
-                    "code from the original tree, silently failing tests "
-                    "even when your patch is correct. If you need to install "
-                    "the package, use `pip install .` (non-editable) or set "
-                    "PYTHONPATH to include the worktree explicitly. "
-                    "(Override by setting MAVERICK_BENCHMARK_OPAQUE=0.)"
                 )
         # Every shell command requires a fresh human decision. Silent
         # auto-approval and standing grants are ineligible; interactive modes

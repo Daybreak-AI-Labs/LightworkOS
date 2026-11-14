@@ -245,3 +245,115 @@ def test_tool_restore_rejects_dest_escape(tmp_path):
     out = workspace_snapshot(_SB(work)).fn(
         {"op": "restore", "id": "snap-0001", "dest": "/tmp/evil-restore"})
     assert out.startswith("ERROR") and "escape" in out.lower()
+
+
+def test_store_dir_is_resolved_per_tenant(tmp_path, monkeypatch):
+    """Regression: the store was fixed at import time and shared by every
+    tenant, so one tenant could list and restore another tenant's archives."""
+    from maverick.paths import tenant_scope
+    from maverick.workspace_snapshot import store_dir
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    with tenant_scope(tenant="acme"):
+        acme = store_dir()
+    with tenant_scope(tenant="globex"):
+        globex = store_dir()
+    assert acme != globex
+    assert "tenants" in acme.parts and "tenants" in globex.parts
+
+
+def test_restore_into_other_directory_never_deletes(tmp_path):
+    """Regression: restoring a snapshot of ``ws/sub`` into ``ws`` deleted every
+    file in ``ws`` the archive did not contain."""
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    (ws / "sub" / "s.txt").write_text("s", encoding="utf-8")
+    (ws / "important.txt").write_text("keep", encoding="utf-8")
+    store = tmp_path / "snaps"
+    man = create_snapshot(ws / "sub", store)
+
+    res = restore_snapshot(store, man["id"], ws)
+
+    assert (ws / "important.txt").read_text(encoding="utf-8") == "keep"
+    assert (ws / "sub" / "s.txt").exists()
+    assert res["removed"] == 0 and res["reconciled"] is False
+
+
+def test_ids_past_9999_stay_unique_and_store_is_capped(tmp_path, monkeypatch):
+    """Regression: ids overflowed into a repeated ``snap-10000`` that was
+    silently overwritten and never listed; and nothing capped the store."""
+    import maverick.workspace_snapshot as mod
+
+    src = _src(tmp_path)
+    store = tmp_path / "snaps"
+    store.mkdir()
+    (store / "snap-9999.tar.gz").write_bytes(b"")
+    first = create_snapshot(src, store)
+    second = create_snapshot(src, store)
+    assert (first["id"], second["id"]) == ("snap-10000", "snap-10001")
+    assert [s["id"] for s in list_snapshots(store)] == [
+        "snap-10001", "snap-10000", "snap-9999"]
+    assert restore_snapshot(store, "snap-10000", tmp_path / "r")["id"] == "snap-10000"
+
+    monkeypatch.setattr(mod, "_MAX_SNAPSHOTS", 3)
+    with pytest.raises(ValueError, match="store is full"):
+        create_snapshot(src, store)
+    # The tool reply tells the model that an operator must act, and where.
+    monkeypatch.setattr(mod, "store_dir", lambda: store)
+    out = workspace_snapshot(_SB(src)).fn({"op": "snapshot", "path": "."})
+    assert "store is full" in out and "operator must remove" in out
+    assert str(store) in out
+
+
+def _legacy_archive(src, store, num="0001"):
+    """An archive as written before the source directory was recorded."""
+    store.mkdir(parents=True, exist_ok=True)
+    path = store / f"snap-{num}.tar.gz"
+    with tarfile.open(path, "w:gz", format=tarfile.GNU_FORMAT) as tar:
+        tar.add(src, arcname=".", recursive=True)
+    return path
+
+
+def test_legacy_archive_keeps_added_files_unless_caller_opts_in(tmp_path, monkeypatch):
+    """An archive without a recorded source keeps added files (and the tool
+    says so) unless the caller states the restore is in place."""
+    import maverick.workspace_snapshot as mod
+
+    src = _src(tmp_path)
+    store = tmp_path / "snaps"
+    _legacy_archive(src, store)
+    (src / "added.txt").write_text("NEW", encoding="utf-8")
+    monkeypatch.setattr(mod, "store_dir", lambda: store)
+
+    reply = workspace_snapshot(_SB(src)).fn(
+        {"op": "restore", "id": "snap-0001", "dest": "."})
+    assert "were KEPT" in reply
+    assert (src / "added.txt").exists()
+
+    res = restore_snapshot(store, "snap-0001", src, legacy_in_place=True)
+    assert res["reconciled"] is True
+    assert not (src / "added.txt").exists()
+
+
+def test_client_bound_store_warns_about_legacy_archives(tmp_path, monkeypatch, caplog):
+    """Binding a client id moves the store; archives left in the shared store
+    are named in a warning and in list output, never listed or served."""
+    import maverick.workspace_snapshot as mod
+    from maverick import paths
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("MAVERICK_HOME", str(home))
+    _legacy_archive(_src(tmp_path), home / "snapshots")
+    monkeypatch.setattr(mod, "current_tenant", lambda: "acme")
+    monkeypatch.setattr(mod, "explicit_tenant_id", lambda: None)
+    monkeypatch.setattr(paths, "current_tenant", lambda: "acme")
+
+    with caplog.at_level("WARNING"):
+        out = workspace_snapshot(_SB(tmp_path)).fn({"op": "list"})
+    assert out.startswith("(no snapshots)")
+    assert str(home / "snapshots") in out
+    assert str(home / "snapshots") in caplog.text
+
+    # An explicitly scoped tenant on a multi-tenant host is never told.
+    monkeypatch.setattr(mod, "explicit_tenant_id", lambda: "acme")
+    assert workspace_snapshot(_SB(tmp_path)).fn({"op": "list"}) == "(no snapshots)"

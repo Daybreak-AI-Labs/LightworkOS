@@ -89,8 +89,8 @@ def _schedule(agents_in: list[Any], slots: int) -> str:
             pending = int(a.get("pending"))
         except (TypeError, ValueError, OverflowError):
             return f"ERROR: agent {aid!r} pending must be an integer"
-        if pending < 0:
-            return f"ERROR: agent {aid!r} pending must be >= 0"
+        if pending < 0 or pending > _MAX_COUNT:
+            return f"ERROR: agent {aid!r} pending must be between 0 and {_MAX_COUNT}"
         try:
             weight = float(a.get("weight", 1))
         except (TypeError, ValueError):
@@ -100,6 +100,10 @@ def _schedule(agents_in: list[Any], slots: int) -> str:
         if weight < 0:
             return f"ERROR: agent {aid!r} weight must be >= 0"
         agents.append({"id": aid, "weight": weight, "pending": pending})
+    # Finite weights can still sum to infinity (two of 1e308); every ideal
+    # share is then 0 and the allocator places one slot per agent per round.
+    if not math.isfinite(sum(a["weight"] for a in agents)):
+        return "ERROR: the sum of the weights must be a finite number"
 
     alloc = _allocate(agents, slots)
     total_alloc = sum(alloc.values())
@@ -122,6 +126,10 @@ def _schedule(agents_in: list[Any], slots: int) -> str:
     return "\n".join(lines)
 
 
+# Counts above 2**53 are not exact as floats, and the shares are floats.
+_MAX_COUNT = 2**53
+
+
 def _fmt(w: float) -> str:
     return str(int(w)) if w == int(w) else str(w)
 
@@ -136,8 +144,8 @@ def _run(args: dict[str, Any]) -> str:
         slots = int(args.get("slots"))
     except (TypeError, ValueError, OverflowError):
         return "ERROR: slots (integer) is required"
-    if slots < 0:
-        return "ERROR: slots must be >= 0"
+    if slots < 0 or slots > _MAX_COUNT:
+        return f"ERROR: slots must be between 0 and {_MAX_COUNT}"
     return _schedule(agents, slots)
 
 

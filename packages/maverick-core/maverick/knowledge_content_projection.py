@@ -558,6 +558,29 @@ def _retrieval_chunks(payload: Mapping, summary: str) -> tuple[tuple[str, ...], 
             text.strip() != summary)
 
 
+# KnowledgeDocument's searchable-text bound.
+_MAX_RETRIEVAL_CHUNKS = 2048
+_MAX_RETRIEVAL_BYTES = 256 * 1024
+
+
+def _bounded_retrieval_chunks(chunks: tuple[str, ...]) -> tuple[tuple[str, ...], bool]:
+    """Keep the leading chunks that fit the searchable-text bound.
+
+    Overlapping chunks of a large saved remote source can exceed the bound
+    even when its text is within ``max_text_kib``; search then covers the
+    leading part and reports incomplete coverage instead of failing.
+    """
+    kept: list[str] = []
+    used = 0
+    for chunk in chunks:
+        size = len(chunk.encode("utf-8"))
+        if len(kept) >= _MAX_RETRIEVAL_CHUNKS or used + size > _MAX_RETRIEVAL_BYTES:
+            return tuple(kept), False
+        kept.append(chunk)
+        used += size
+    return tuple(kept), True
+
+
 class ExistingKnowledgeContentProjector:
     """Production resolver for exact references in supported existing stores."""
 
@@ -595,6 +618,7 @@ class ExistingKnowledgeContentProjector:
             raise KnowledgeProjectionUnavailable(
                 "source content no longer matches the registered version commitment"
             )
+        chunks, complete = _bounded_retrieval_chunks(inspected["retrieval_chunks"])
         return KnowledgeDocument(
             tenant=canonical_tenant_id(tenant),
             reference=reference,
@@ -604,7 +628,8 @@ class ExistingKnowledgeContentProjector:
             claim_state=inspected["claim_state"],
             observed_at=inspected["observed_at"],
             verified_at=inspected["verified_at"],
-            retrieval_chunks=inspected["retrieval_chunks"],
+            retrieval_chunks=chunks,
+            search_coverage_complete=complete,
             summary_truncated=inspected["summary_truncated"],
             permissions_withheld=inspected.get("permissions_withheld", 0),
         )

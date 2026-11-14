@@ -14,6 +14,7 @@ is checked over the union of sequence numbers.
 """
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any
 
 from . import Tool
@@ -49,11 +50,13 @@ def _verify(primary: list[dict], mirror: list[dict]) -> str:
         return "CONSISTENT: both logs empty (0 entries)"
 
     # Gap check across the full observed range.
+    # Scan the sorted list for the first hole instead of materializing the
+    # whole range: two model-supplied seqs far apart must not allocate memory
+    # proportional to their distance.
     lo, hi = all_seqs[0], all_seqs[-1]
-    expected = set(range(lo, hi + 1))
-    missing = sorted(expected - set(all_seqs))
-    if missing:
-        return f"DIVERGED: sequence gap — seq={missing[0]} missing (range {lo}..{hi})"
+    for prev, cur in pairwise(all_seqs):
+        if cur != prev + 1:
+            return f"DIVERGED: sequence gap — seq={prev + 1} missing (range {lo}..{hi})"
 
     # Entry-for-entry agreement.
     for seq in all_seqs:

@@ -1409,7 +1409,8 @@ def _audit_media_snapshot(paths, audit_dir) -> tuple[tuple[str, bool, int, str],
     candidates = {Path(path) for path in paths}
     if directory.exists() and directory.is_dir():
         candidates.update(directory.glob("*.ndjson"))
-    candidates.update({directory / "anchors.ndjson", directory / ".anchors.required"})
+    candidates.update({directory / "anchors.ndjson", directory / ".anchors.required",
+                       directory / ".anchors.highwater.json"})
     snapshot = []
     for path in sorted(candidates, key=lambda item: item.name):
         try:

@@ -30,9 +30,15 @@ def _laplace(scale: float, rng: random.Random) -> float:
 
 def _noisy(true_value: float, sensitivity: float, epsilon: float,
            seed: int | None) -> str:
+    # epsilon=inf would add zero noise and label the true value as noisy;
+    # NaN would pass every comparison.
+    if not all(math.isfinite(v) for v in (true_value, sensitivity, epsilon)):
+        return "ERROR: value, sensitivity and epsilon must be finite numbers"
     if epsilon <= 0:
         return "ERROR: epsilon must be > 0"
     scale = sensitivity / epsilon
+    if not math.isfinite(scale):
+        return "ERROR: sensitivity/epsilon is too large; raise epsilon"
     rng = random.Random(seed)
     noisy = true_value + _laplace(scale, rng)
     return (f"OK noisy={noisy:.4f} (epsilon={epsilon:g}, "

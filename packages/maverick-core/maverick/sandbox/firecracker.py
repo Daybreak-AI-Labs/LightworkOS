@@ -235,7 +235,7 @@ class FirecrackerBackend:
             # other backend's host-CLI calls (docker/podman/k8s/ssh) -- the
             # CLI shouldn't inherit ANTHROPIC_API_KEY et al.
             proc = subprocess.run(
-                args, capture_output=True, text=True, timeout=self.timeout,
+                args, capture_output=True, text=True, errors="replace", timeout=self.timeout,
                 env=scrub_env(),
             )
         except subprocess.TimeoutExpired:
@@ -269,7 +269,7 @@ class FirecrackerBackend:
         ]
         try:
             proc = subprocess.run(
-                args, capture_output=True, text=True, timeout=self.timeout,
+                args, capture_output=True, text=True, errors="replace", timeout=self.timeout,
                 env=scrub_env(),
             )
         except subprocess.TimeoutExpired:

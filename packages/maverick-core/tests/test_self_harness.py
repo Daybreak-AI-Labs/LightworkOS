@@ -308,6 +308,13 @@ def test_store_roundtrip_and_recall(monkeypatch, store):
     assert json.loads(store.read_text())["A"].count("Verify the window first.") == 1
 
 
+def test_apply_refuses_to_overwrite_an_unreadable_store(store):
+    store.write_text('{"A": "- keep me"', encoding="utf-8")  # truncated JSON
+    with pytest.raises(ValueError):
+        sh._apply_addendum(_sig_proposal(), path=store)
+    assert store.read_text(encoding="utf-8") == '{"A": "- keep me"'
+
+
 # ---------- GATE (full promote + refusal) ----------
 
 def _enable(monkeypatch, frozen=False):
@@ -2993,6 +3000,20 @@ def test_review_efficacy_demotes_dead_weight(monkeypatch, store):
     assert "good guidance line" in recalled and "dead guidance line" not in recalled
 
 
+def test_review_efficacy_ignores_unclean_or_incomplete_measurements(monkeypatch, store):
+    # A provider outage scores both arms 0.0 (lift 0) but marks them unclean;
+    # that is no evidence, so no learned line may be demoted.
+    ctrl = _enable(monkeypatch)
+    _promote_line(store, "M", "c0", "kept guidance line", ctrl)
+    outage = {"success": 0.0, "samples": 2, "attempted": 2, "complete": True, "clean": False}
+    partial = {"success": 0.4, "samples": 1, "attempted": 2}
+    for arm in (outage, partial):
+        assert sh.review_efficacy("M", ["c1", "c2"], score_with=lambda _ln, c, a=arm: a,
+                                  score_without=lambda _ln, c, a=arm: a,
+                                  min_lift=0.0, min_samples=2, path=store) == []
+    assert "kept guidance line" in sh.recall_addendum("M", store)
+
+
 def test_review_efficacy_no_cases_is_noop(monkeypatch, store):
     ctrl = _enable(monkeypatch)
     _promote_line(store, "M", "c0", "kept line", ctrl)
@@ -4479,6 +4500,32 @@ def test_cycle_wires_paraphraser_when_metamorphic_on(monkeypatch, tmp_path, stor
         "self_harness": {"enable": True, "eval_corpus": str(cpath)}})
     runner.run_self_harness_cycle(reflexions=[], model_id="M", retire=False)
     assert seen.get("metamorphic_fn") is None                     # knob off -> not wired
+
+
+def test_cycle_holds_when_enabled_metamorphic_check_cannot_be_built(monkeypatch, tmp_path, store):
+    # Outside risk_limited too: an operator-enabled check is never dropped.
+    _allow_provider_egress(monkeypatch)
+    from maverick import config, llm, self_harness_eval
+    from maverick import self_improvement_runner as runner
+    _enable(monkeypatch)
+    monkeypatch.setattr(sh, "_store_path", lambda: store)
+    cpath = tmp_path / "corpus.json"
+    cpath.write_text(json.dumps(
+        {"M": [{"goal": f"g{i}", "expected": "x"} for i in range(4)]}))
+    monkeypatch.setattr(llm, "model_for_role", lambda role: "role-model")
+    monkeypatch.setattr(
+        self_harness_eval, "llm_paraphraser",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("unavailable")))
+    passes = []
+    monkeypatch.setattr(runner, "run_self_harness_pass",
+                        lambda *a, **k: passes.append(k) or sh.SelfHarnessReport(model_id="M"))
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {
+        "self_harness": {"enable": True, "eval_corpus": str(cpath),
+                         "metamorphic": True, "risk_limited": False}})
+    report, _ = runner.run_self_harness_cycle(reflexions=[], model_id="M", retire=False)
+    assert passes == []
+    assert any("could not construct the authorized paraphraser" in reason
+               for reason in report.skipped)
 
 
 def test_pass_fills_metamorphic_tolerance_from_config(monkeypatch, store):

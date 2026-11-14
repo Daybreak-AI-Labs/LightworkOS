@@ -67,3 +67,14 @@ def test_airtable_create_dry_run(monkeypatch):
         "op": "create", "table": "T", "fields": {"Name": "X"},
     })
     assert "DRY RUN" in out
+
+
+def test_airtable_base_id_cannot_retarget_the_api_path(monkeypatch):
+    monkeypatch.setenv("AIRTABLE_API_KEY", "key")
+    get = MagicMock(return_value=_resp(200, {"records": []}))
+    _fake_httpx(monkeypatch, get=get)
+    from maverick.tools.airtable_tool import airtable_tool
+    airtable_tool().fn({"op": "list", "table": "People", "base_id": "meta/whoami?x="})
+    assert get.call_args.args[0] == "https://api.airtable.com/v0/meta%2Fwhoami%3Fx%3D/People"
+    out = airtable_tool().fn({"op": "list", "table": "People", "base_id": ".."})
+    assert out.startswith("ERROR") and get.call_count == 1

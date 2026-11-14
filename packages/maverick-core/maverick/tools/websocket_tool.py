@@ -80,7 +80,9 @@ def _preflight_egress(url: str, parsed: Any) -> str | None:
     websocket dev server would always fail the enterprise allow-list.
     """
     from ..enterprise import enterprise_egress_denial
-    deny = enterprise_egress_denial(url.replace("ws", "http", 1), tool="websocket")
+    http_scheme = "https" if parsed.scheme.lower() == "wss" else "http"
+    deny = enterprise_egress_denial(parsed._replace(scheme=http_scheme).geturl(),
+                                    tool="websocket")
     if deny:
         return f"ERROR: {deny}"
     try:

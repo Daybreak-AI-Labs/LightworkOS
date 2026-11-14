@@ -89,6 +89,39 @@ def test_revocation_and_current_membership_end_recipient_access(setup):
         service("user:recipient").get(row["id"])
 
 
+def test_a_full_bundle_store_archives_revoked_bundles_and_inbox_keeps_working(setup, monkeypatch):
+    from maverick import deliverable_bundles
+
+    _, goal, chosen, _, _, service = setup
+    monkeypatch.setattr(deliverable_bundles, "_MAX_BUNDLES", 1)
+    row, choices, _ = share(setup)
+    service("user:owner").respond(row["id"], action="revoke", note="",
+                                  expected_revision=row["revision"], operation_id="revoke-operation-one")
+    owner = service("user:owner")
+    preview = owner.prepare(goal, **choices)
+    second = owner.create(goal, expected_review=preview["review_version"],
+                          operation_id="share-operation-two", **choices)
+    assert [entry["id"] for entry in owner.inbox()] == [second["id"]]
+
+
+def test_a_full_bundle_store_makes_room_by_retiring_expired_bundles(setup, monkeypatch):
+    import time
+
+    from maverick import deliverable_bundles
+
+    _, goal, _, _, _, service = setup
+    monkeypatch.setattr(deliverable_bundles, "_MAX_BUNDLES", 1)
+    row, choices, _ = share(setup)
+    later = time.time() + choices["lifetime"] + 60
+    monkeypatch.setattr(deliverable_bundles.STORE, "authoritative_time", lambda: later)
+    owner = service("user:owner")
+    preview = owner.prepare(goal, **choices)
+    second = owner.create(goal, expected_review=preview["review_version"],
+                          operation_id="share-operation-two", **choices)
+    assert [entry["id"] for entry in owner.inbox()] == [second["id"]]
+    assert row["id"] != second["id"]
+
+
 def test_changed_source_or_recipient_cannot_reuse_prepared_share(setup):
     world, goal, chosen, _, _, service = setup
     owner = service("user:owner")

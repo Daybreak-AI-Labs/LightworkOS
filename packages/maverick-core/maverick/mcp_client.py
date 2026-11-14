@@ -47,6 +47,17 @@ def _resolve_elicitation_policy() -> str:
     return (os.environ.get(ELICITATION_ENV) or "decline").strip().lower()
 
 
+def _elicitation_field_text(schema: object) -> str:
+    """The field labels an elicitation prompt would show the operator."""
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    parts: list[str] = []
+    for key, field_spec in (props or {}).items() if isinstance(props, dict) else ():
+        parts.append(str(key))
+        if isinstance(field_spec, dict):
+            parts.extend(str(field_spec.get(k) or "") for k in ("title", "description"))
+    return "\n".join(parts)
+
+
 def _coerce_scalar(raw: str, declared: object) -> Any:
     """Coerce a typed-in string to the JSON-Schema scalar the server asked for.
 
@@ -142,9 +153,10 @@ class MCPServerSpec:
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     inherit_env: bool = False  # opt-in to full os.environ inheritance
-    # SHA-256 of the executable / NPM package SHASUM / image digest the
-    # operator expects. When set, MCPClient.start() refuses to spawn if
-    # the actual command resolves to a different hash. Defends the
+    # SHA-256 of the resolved executable file (argv[0]) the operator expects.
+    # When set, MCPClient.start() refuses to spawn if that file hashes
+    # differently. It pins only the launcher: a pin on npx/docker does not pin
+    # the package or image they fetch. Defends the
     # supply-chain attack class shipped to STDIO MCP in April 2026
     # (CVE-2026-30615 et al). Default None = no pin (legacy behavior).
     pin_sha256: str | None = None
@@ -268,7 +280,7 @@ def _validate_subprocess_inputs(spec: MCPServerSpec) -> None:
       - command must be a simple program name or absolute path; no
         shell metacharacters, no embedded NUL / newline.
       - each arg must not contain NUL / newline / CR.
-      - env keys must match [A-Z][A-Z0-9_]*; values must not contain
+      - env keys must match [A-Za-z_][A-Za-z0-9_]*; values must not contain
         NUL / newline / CR.
     """
     for ch in _DENY_CHARS:
@@ -639,6 +651,9 @@ class MCPClient:
                 except json.JSONDecodeError:
                     log.debug("MCP %s non-JSON line: %s", self.spec.name, line[:200])
                     continue
+                if not isinstance(msg, dict):
+                    log.debug("MCP %s non-object message ignored", self.spec.name)
+                    continue
                 self._dispatch(msg)
         except asyncio.CancelledError:
             return
@@ -675,6 +690,10 @@ class MCPClient:
         msg_id = msg.get("id")
         if msg_id is None:
             return  # a notification: nothing to route, ignored as before
+        if isinstance(msg_id, bool) or not isinstance(msg_id, (int, str)):
+            # Unhashable ids would crash the reader; true == 1 would resolve
+            # someone else's request. Neither can be a reply to us.
+            return
         future = self._pending.pop(msg_id, None)
         if future is None:
             # Reply for an id we no longer track (already timed out / cancelled
@@ -784,6 +803,11 @@ class MCPClient:
             handler performs no network/browser I/O on the params at all."""
         message = str(params.get("message") or "")
         scan = scan_remote_content(message)
+        # Field names, titles and descriptions are shown to the operator too.
+        schema_scan = scan_remote_content(
+            _elicitation_field_text(params.get("requestedSchema")))
+        if schema_scan.suspicious:
+            scan = schema_scan
         if scan.suspicious:
             log.warning(
                 "MCP %s elicitation prompt flagged (score=%.2f, patterns=%s); "
@@ -984,6 +1008,7 @@ class StreamableHttpMCPClient:
         self._session_id: str | None = None
         self._protocol_version = PROTOCOL_VERSION
         self._initialized = False
+        self._oauth_bearer: str | None = None
         self._req_id = 0
         self._oauth_provider: Any = None
         self.catalog = ToolCatalog(
@@ -1067,9 +1092,11 @@ class StreamableHttpMCPClient:
         headers = {"User-Agent": "maverick-mcp-client/0.1"}
         if self.spec.headers:
             headers.update(self.spec.headers)
-        bearer = self._bearer()
+        bearer = await asyncio.to_thread(self._bearer)
         if bearer:
             headers["Authorization"] = f"Bearer {bearer}"
+        if self.spec.oauth:
+            self._oauth_bearer = bearer
         extra = {"transport": self._transport} if self._transport is not None else {}
         self._client = httpx.AsyncClient(
             timeout=self.timeout, headers=headers, follow_redirects=False, **extra,
@@ -1098,7 +1125,22 @@ class StreamableHttpMCPClient:
             h["Mcp-Session-Id"] = self._session_id
         if self._initialized:
             h["MCP-Protocol-Version"] = self._protocol_version
+        if self.spec.oauth and self._oauth_bearer:
+            # Kept current by _refresh_bearer before each request, so a
+            # long-lived client does not keep the token fetched at start().
+            h["Authorization"] = f"Bearer {self._oauth_bearer}"
         return h
+
+    async def _refresh_bearer(self) -> None:
+        """Use the cached OAuth token until shortly before it expires; the
+        refresh is a blocking HTTP call, so it runs off the event loop."""
+        if not self.spec.oauth:
+            return
+        provider = self._ensure_oauth_provider()
+        token = provider.cached_token() if hasattr(provider, "cached_token") else None
+        if token is None:
+            token = await asyncio.to_thread(provider.token)
+        self._oauth_bearer = token
 
     async def _post(self, payload: dict, req_id: int | None = None) -> Any:
         if self._client is None:
@@ -1107,6 +1149,7 @@ class StreamableHttpMCPClient:
         async def _send() -> _HTTPMCPResponse:
             if payload.get("method") == "tools/call":
                 check_call_guard()
+            await self._refresh_bearer()
             from .governed_http import admit_client_request
 
             admit_client_request(self._client, self.spec.url)

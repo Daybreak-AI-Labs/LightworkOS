@@ -60,19 +60,25 @@ def _cfg(key: str, env: str, default: str = "") -> str:
 def sending_disabled() -> bool:
     """The email kill switch shared by the email tool and platform email.
 
-    ``MAVERICK_EMAIL_DISABLE`` decides when it is set (``1`` blocks sending,
-    anything else allows it); otherwise ``[email] disable = true`` (the All
-    settings page) blocks sending. Off by default."""
+    ``MAVERICK_EMAIL_DISABLE`` decides when it is set (a false value such as
+    ``0`` allows sending; ``1``, ``true`` or any unrecognised value blocks it);
+    otherwise ``[email] disable = true`` (the All settings page) blocks
+    sending. Off by default, but on while a config source is unreadable, since
+    that source may hold the switch."""
     import os
+
+    from ._envparse import coerce_bool
     env = os.environ.get("MAVERICK_EMAIL_DISABLE")
     if env is not None and env.strip():
-        return env.strip() == "1"
+        return coerce_bool(env, default=True)
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
         cfg = (load_config() or {}).get("email") or {}
+        if config_source_errors(include_tenant=True):
+            return True
         return isinstance(cfg, dict) and cfg.get("disable") is True
-    except Exception:  # noqa: BLE001 - config trouble => keep the default
-        return False
+    except Exception:  # noqa: BLE001 - config trouble => keep sending blocked
+        return True
 
 
 def configured() -> bool:
@@ -91,12 +97,48 @@ def configured() -> bool:
     return bool(_cfg("user", "EMAIL_USER") and _cfg("app_password", "EMAIL_APP_PASSWORD"))
 
 
+def unavailable_reason() -> str:
+    """Why platform email cannot be sent right now, or "" when it can.
+
+    "configuration unreadable" when a config source cannot be read (sending is
+    held off because the source may hold the kill switch), "sending disabled"
+    for the kill switch, "no sending account configured" otherwise.
+    """
+    if sending_disabled():
+        import os
+        if (os.environ.get("MAVERICK_EMAIL_DISABLE") or "").strip():
+            return "sending disabled"  # the environment decides; config is not consulted
+        try:
+            from .config import config_source_errors
+            unreadable = bool(config_source_errors(include_tenant=True))
+        except Exception:  # noqa: BLE001 - the seam itself failing is the same answer
+            unreadable = True
+        return "configuration unreadable" if unreadable else "sending disabled"
+    return "" if configured() else "no sending account configured"
+
+
+_DISABLED_MESSAGES = {
+    "configuration unreadable": (
+        "Email sending is paused: the configuration could not be read "
+        "(configuration unreadable). Fix the settings file to resume."),
+}
+
+
+def _require_single_recipient(to: str) -> None:
+    """Platform email has exactly one recipient; "a@x, b@y" would reach both."""
+    from email.utils import getaddresses
+    recipients = [addr for _name, addr in getaddresses([to]) if addr]
+    if len(recipients) != 1 or "@" not in recipients[0]:
+        raise MailerNotSent("Send requires a single recipient address.")
+
+
 def send(to: str, subject: str, body: str, *, transport=None, before_effect=None) -> None:
     """Send a plain-text platform email. Raises :class:`MailerError` on any
     problem; never returns partial success. ``transport`` is injectable for
     tests: a callable ``(host, port, user, password, msg) -> None``."""
     if sending_disabled():
-        raise MailerNotSent("Email sending is disabled.")
+        raise MailerNotSent(_DISABLED_MESSAGES.get(
+            unavailable_reason(), "Email sending is disabled."))
 
     to = (to or "").strip()
     subject = (subject or "").strip()
@@ -107,6 +149,7 @@ def send(to: str, subject: str, body: str, *, transport=None, before_effect=None
     for field, val in (("to", to), ("subject", subject)):
         if "\r" in val or "\n" in val:
             raise MailerNotSent(f"Invalid email {field}.")
+    _require_single_recipient(to)
 
     original_scope = sending_scope()
     provider = original_scope["provider"].lower()

@@ -11,6 +11,7 @@ def test_valid_name():
     assert not valid_name("../evil")
     assert not valid_name("a/b")
     assert not valid_name("")
+    assert not valid_name("abc\n")
 
 
 def test_save_load_roundtrip(monkeypatch, tmp_path):

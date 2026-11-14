@@ -53,16 +53,26 @@ def _run(args: dict[str, Any], sandbox) -> str:
     if fmt not in _FORMATS:
         return f"ERROR: format must be one of {_FORMATS}"
 
-    workdir = Path(tempfile.mkdtemp(prefix="mvk-diagram-"))
-    ext = "dot" if engine == "dot" else "mmd"
-    infile = workdir / f"in.{ext}"
-    infile.write_text(source, encoding="utf-8")
     # Confine the model-supplied destination to the sandbox workspace: an
     # unconfined `out` is an arbitrary host-file write (e.g. ~/.ssh/authorized_keys).
     try:
         out = Path(_safe_output_path(sandbox, args.get("out") or f"diagram.{fmt}"))
     except ValueError as e:
         return f"ERROR: {e}"
+    import shutil
+    workdir = Path(tempfile.mkdtemp(prefix="mvk-diagram-"))
+    try:
+        return _render(sandbox, engine, source, fmt, workdir, out)
+    finally:
+        # The temp dir holds the source and the rendered file; never leave it.
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _render(sandbox, engine: str, source: str, fmt: str, workdir: Path, out: Path) -> str:
+    import shutil
+    ext = "dot" if engine == "dot" else "mmd"
+    infile = workdir / f"in.{ext}"
+    infile.write_text(source, encoding="utf-8")
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = workdir / f"out.{fmt}"
 
@@ -73,7 +83,6 @@ def _run(args: dict[str, Any], sandbox) -> str:
         binary = "dot (graphviz)" if engine == "dot" else "mmdc (mermaid-cli)"
         return (f"ERROR: {engine} render failed (exit {code}); is {binary} "
                 f"installed in the sandbox? {tail}")
-    import shutil
     shutil.copyfile(tmp_out, out)
     return f"rendered {engine} diagram -> {out}"
 

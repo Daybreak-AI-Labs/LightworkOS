@@ -43,3 +43,21 @@ def test_mixpanel_track_posts(monkeypatch):
         "properties": {"plan": "pro"},
     })
     assert "tracked 'signup'" in out
+
+
+def test_mixpanel_track_properties_cannot_override_token_or_distinct_id(monkeypatch):
+    import base64
+    import json
+
+    monkeypatch.setenv("MIXPANEL_PROJECT_TOKEN", "tok")
+    resp = MagicMock(status_code=200, text="1")
+    fake_httpx = types.ModuleType("httpx")
+    fake_httpx.post = MagicMock(return_value=resp)
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    from maverick.tools.mixpanel_tool import mixpanel_tool
+    mixpanel_tool().fn({
+        "op": "track", "event": "signup", "distinct_id": "user-1",
+        "properties": {"token": "other-project", "distinct_id": "someone-else", "plan": "pro"},
+    })
+    sent = json.loads(base64.b64decode(fake_httpx.post.call_args.kwargs["data"]["data"]))
+    assert sent["properties"] == {"plan": "pro", "token": "tok", "distinct_id": "user-1"}

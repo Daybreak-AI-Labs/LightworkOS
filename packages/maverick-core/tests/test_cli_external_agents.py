@@ -219,6 +219,18 @@ def test_ordinary_restore_and_gateway_release_refuse_security_containment():
     released = _run("external-agents", "release", "sf-quotebot")
     assert released.exit_code == 1
     assert "security-contained" in released.output
+    # Removing the entry (then re-enrolling) must not be a way around it.
+    removed = _run("external-agents", "remove", "sf-quotebot", "--yes")
+    assert removed.exit_code == 1
+    assert "security-contained" in removed.output
+    removed = _run("trust", "rm", "sf-quotebot")
+    assert removed.exit_code == 1
+    assert "security-contained" in removed.output
+    # `security release` would lift only the revocation row and print success.
+    released = _run("security", "release", "agent:sf-quotebot")
+    assert released.exit_code == 1
+    assert "control-plane release agent:sf-quotebot" in released.output
+    assert "[control_plane] enable" in released.output
 
     assert shared().revoked()["agent:sf-quotebot"] == contained
     assert agent_trust.load_registry()["sf-quotebot"].revoked is True
@@ -278,3 +290,28 @@ def test_remove_prompts_without_yes():
     r = _run("external-agents", "remove", "sf-quotebot", input="n\n")
     assert r.exit_code != 0  # aborted at the prompt
     assert xa.roster() != []
+
+
+def test_trust_add_stores_bearer_tokens_hashed_not_raw(tmp_path):
+    from maverick import agent_trust
+
+    added = _run("trust", "add", "peer1", "--a2a-token", "RAW-BEARER-abc123")
+    assert added.exit_code == 0, added.output
+    stored = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("agent_trust*.json"))
+    assert stored and "RAW-BEARER-abc123" not in stored
+    agent = agent_for_token("RAW-BEARER-abc123", "a2a")
+    assert agent is not None and agent.id == "peer1"
+    assert agent_trust.lookup("peer1") is not None
+
+
+def test_remove_reports_its_own_failure_not_a_containment_outage(monkeypatch):
+    assert _enroll_cli().exit_code == 0
+
+    def _broken(_agent_id):
+        raise OSError("registry write denied")
+
+    monkeypatch.setattr(xa, "unenroll", _broken)
+    removed = _run("external-agents", "remove", "sf-quotebot", "--yes")
+    assert removed.exit_code == 1
+    assert "registry write denied" in removed.output
+    assert "containment authority" not in removed.output

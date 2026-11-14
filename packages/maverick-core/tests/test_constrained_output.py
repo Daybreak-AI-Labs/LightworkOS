@@ -44,3 +44,62 @@ def test_constrained_length_and_errors():
     assert t.fn({"value": "ab", "schema": {"type": "string", "min_length": 3}}).startswith("FAIL")
     assert t.fn({"schema": {"type": "string"}}).startswith("ERROR")  # missing value
     assert t.fn({"value": "x", "schema": {}}).startswith("ERROR")    # empty schema
+
+
+# Patterns that backtrack for seconds or longer on the paired value. Shape
+# checks missed every one of these; the time limit catches them all.
+_HANGING = [
+    ("^(a|a){30}$", "a" * 30 + "b"),
+    ("^(a|a){1,30}$", "a" * 30 + "b"),
+    ("^((a?){10}){10}a{100}$", "a" * 100),
+    ("^([!-~]+,)+$", "," * 40 + "a "),
+    (r"^([\x2c-\x2e]+,)+$", "," * 40 + "a "),
+    ("^" + "a?" * 30 + "a" * 30 + "$", "a" * 30),
+    ("^(.*a){10}!$", "a" * 40),
+    ("^.*a.*a.*a.*a.*!$", "a" * 1000),
+]
+
+
+def test_constrained_slow_patterns_are_a_schema_error(monkeypatch):
+    import maverick.tools.constrained_output as co
+    monkeypatch.setattr(co, "_PATTERN_TIMEOUT_S", 0.3)
+    t = constrained_output()
+    for pat, value in _HANGING:
+        out = t.fn({"value": value, "schema": {"pattern": pat}})
+        assert out.startswith("ERROR: schema pattern") and "too long to evaluate" in out, pat
+    out = t.fn({"value": "x", "schema": {"pattern": "[unterminated"}})
+    assert out.startswith("ERROR: schema pattern") and "invalid" in out
+    out = t.fn({"value": "a" * 5000, "schema": {"pattern": "^a+$"}})
+    assert out.startswith("FAIL")
+
+
+_SEMVER = (r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+           r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)"
+           r"(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
+           r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$")
+
+
+def test_constrained_ordinary_patterns_are_evaluated():
+    t = constrained_output()
+    for pat, good, bad in (
+        (r"^[a-z]+(-[a-z]+)*$", "kebab-case-name", "Kebab--x"),
+        (_SEMVER, "1.2.3-rc.1+build.5", "01.2.3"),
+        (r"^[A-Z][a-z]+( [A-Z][a-z]+)*$", "New York City", "new York"),
+        (r"^(\w+\s)*\w+$", "three plain words", "trailing space "),
+        (r"^(\d+\.){2}\d+$", "1.2.3", "1.2"),
+        (r"^(\d{1,3}\.){3}\d{1,3}$", "10.0.0.1", "10.0.0"),
+        (r"^\d{4}-\d{2}-\d{2}$", "2026-11-14", "2026-11-1"),
+        (r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+         "123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456"),
+        (r"^[\w.+-]+@([\w-]+\.)+\w{2,}$", "a.b+c@mail.example.org", "a@b"),
+        (r"^(foo|bar)+$", "foobarfoo", "foobaz"),
+    ):
+        assert t.fn({"value": good, "schema": {"pattern": pat}}).startswith("PASS"), pat
+        assert t.fn({"value": bad, "schema": {"pattern": pat}}).startswith("FAIL"), pat
+
+
+def test_constrained_fail_open_values_now_fail():
+    t = constrained_output()
+    assert t.fn({"value": "nan", "schema": {"type": "number", "maximum": 10}}).startswith("FAIL")
+    assert t.fn({"value": 3.9, "schema": {"type": "integer", "maximum": 3}}).startswith("FAIL")
+    assert t.fn({"value": "ed,g", "schema": {"enum": "red,green"}}).startswith("FAIL")

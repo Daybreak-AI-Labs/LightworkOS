@@ -349,6 +349,28 @@ def test_world_db_reads_legacy_plaintext(monkeypatch, tmp_path):
     assert wm2.get_fact("user:bob:n") == "plain legacy fact"
 
 
+@requires_crypto
+def test_one_unopenable_legacy_value_does_not_fail_the_list_read(monkeypatch, tmp_path):
+    import sqlite3
+
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    from maverick.world_model import _UNSEALED_WITHHELD, WorldModel
+
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    wm.upsert_fact("user:alice:note", "intact")
+    wm.upsert_fact("user:bob:note", "to be damaged")
+    bad = car.seal_to_str("x")  # a legacy, column-unbound token...
+    bad = bad[:-4] + ("AAAA" if not bad.endswith("AAAA") else "BBBB")  # ...that fails auth
+    con = sqlite3.connect(str(db))
+    con.execute("UPDATE facts SET value = ? WHERE key = 'user:bob:note'", (bad,))
+    con.commit()
+    con.close()
+    facts = wm.get_facts()
+    assert facts["user:alice:note"] == "intact"
+    assert facts["user:bob:note"] == _UNSEALED_WITHHELD
+
+
 # --- per-tenant envelope encryption (opt-in) -------------------------------
 
 
@@ -574,6 +596,34 @@ def test_unseal_wrong_key_or_tamper_raises_encryption_unavailable(monkeypatch, t
 # --- key rotation (additive keyring) ----------------------------------------
 
 @requires_crypto
+@requires_crypto
+def test_a_read_never_creates_a_missing_key(tmp_path):
+    blob = car.seal(b"hello")
+    key_path = tmp_path / "keys" / "at_rest.key"
+    key_path.unlink()
+    with pytest.raises(car.EncryptionUnavailable, match="missing"):
+        car.unseal(blob)
+    assert not key_path.exists()
+
+
+def test_rotation_refuses_while_the_key_is_injected(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAVERICK_ENCRYPTION_KEY", bytes(range(32)).hex())
+    with pytest.raises(car.EncryptionUnavailable, match="injected"):
+        car.rotate_at_rest_key()
+    assert not (tmp_path / "keys" / "at_rest.d").exists()
+
+
+@requires_crypto
+def test_a_stray_keyring_file_is_not_an_active_key(tmp_path):
+    ring = tmp_path / "keys" / "at_rest.d"
+    ring.mkdir(parents=True)
+    (ring / "backup.key").write_text("00" * 32)
+    (ring / "ab.key").write_text("00" * 32)
+    (ring / "ABCDEF0123456789.key").write_text("00" * 32)  # lookup is lower-case
+    blob = car.seal(b"x")
+    assert car.unseal(blob) == b"x"
+
+
 def test_no_keyring_keeps_v1_format():
     # With no keyring, seal() produces the legacy v1 header (no behaviour change).
     blob = car.seal(b"hello")

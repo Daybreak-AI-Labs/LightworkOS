@@ -104,3 +104,14 @@ def test_file_watcher_blocks_paths_outside_workspace(tmp_path: Path):
 
     out = file_watcher(_sandbox(tmp_path)).fn({"path": str(outside), "since": 0})
     assert "ERROR" in out and "escapes the workspace" in out
+
+
+def test_file_watcher_does_not_stat_symlink_targets(tmp_path: Path):
+    from maverick.tools.file_watcher import file_watcher
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    secret = tmp_path / "outside.txt"
+    secret.write_text("x" * 12345)
+    (ws / "link.txt").symlink_to(secret)
+    out = file_watcher(_sandbox(ws)).fn({"path": str(ws), "since": 0})
+    assert "link.txt" in out and "12345" not in out

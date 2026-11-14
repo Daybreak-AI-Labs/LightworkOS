@@ -128,3 +128,30 @@ def test_smtp_verifies_the_server_certificate_before_login(monkeypatch, port):
     assert isinstance(context, ssl.SSLContext)
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+
+
+def test_kill_switch_holds_on_unreadable_config_and_true_env(monkeypatch):
+    _creds(monkeypatch)
+    import maverick.config as cfg
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {"config.toml": "bad"})
+    assert mailer.sending_disabled() is True
+    assert mailer.unavailable_reason() == "configuration unreadable"
+    with pytest.raises(mailer.MailerNotSent, match="configuration unreadable"):
+        mailer.send("to@x.co", "hi", "body", transport=lambda *a: None)
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
+    monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "true")
+    assert mailer.sending_disabled() is True
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {"config.toml": "bad"})
+    assert mailer.unavailable_reason() == "sending disabled"
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
+    monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "0")
+    assert mailer.sending_disabled() is False
+
+
+def test_send_refuses_more_than_one_recipient(monkeypatch):
+    _creds(monkeypatch)
+    sent = []
+    with pytest.raises(mailer.MailerNotSent, match="single recipient"):
+        mailer.send("victim@x.com, attacker@y.com", "hi", "body",
+                    transport=lambda *a: sent.append(a))
+    assert sent == []

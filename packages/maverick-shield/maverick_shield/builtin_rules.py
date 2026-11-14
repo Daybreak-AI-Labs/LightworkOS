@@ -22,6 +22,7 @@ users via the "agent-shield not installed" warning.
 from __future__ import annotations
 
 import base64
+import html
 import os
 import re
 import unicodedata
@@ -79,7 +80,9 @@ def _compile(p: str) -> re.Pattern:
 # (`--recursive`); the rules below use it, bounded to a handful of
 # repetitions (never unbounded, so this can't blow up on adversarial input),
 # to detect the two flags regardless of how they're grouped or ordered.
-_FLAG_TOKEN = r"(?:-[a-zA-Z]+|--[a-zA-Z][a-zA-Z-]*)"
+# A bare ``--`` (end of options) is a token too: ``rm -rf -- /`` is the same
+# command.
+_FLAG_TOKEN = r"(?:-[a-zA-Z]+|--[a-zA-Z][a-zA-Z-]*|--)"
 
 
 def _has_flag(letter: str, long_name: str) -> str:
@@ -99,9 +102,12 @@ def _has_flag(letter: str, long_name: str) -> str:
 # "stops only a verbatim copy-paste" to "stops the common encodings too".
 
 # Zero-width spaces/joiners, bidi controls, BOM, and the Unicode tag block
-# (steganographic invisible chars).
+# (steganographic invisible chars), plus the soft hyphen, combining grapheme
+# joiner, Mongolian vowel separator, Hangul fillers and variation selectors,
+# which render as nothing inside a word ("ig\u00adnore").
 _INVISIBLE = re.compile(
-    r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|[\U000E0000-\U000E007F]"
+    r"[\u00ad\u034f\u115f\u1160\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f"
+    r"\u3164\ufe00-\ufe0f\uffa0\ufeff]|[\U000E0000-\U000E007F]|[\U000E0100-\U000E01EF]"
 )
 
 # Common confusable code points folded to their ASCII look-alike. Covers the
@@ -110,8 +116,36 @@ _HOMOGLYPHS = str.maketrans({
     "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
     "і": "i", "ѕ": "s", "ԁ": "d", "ո": "n", "ⅼ": "l", "ӏ": "l", "ʟ": "l",
     "α": "a", "ο": "o", "ρ": "p", "ν": "v", "ϲ": "c", "ѐ": "e", "ƽ": "s",
-    "ɡ": "g", "ⅰ": "i", "ｉ": "i",
+    "ɡ": "g", "ⅰ": "i", "ｉ": "i", "ι": "i",
+    # Capitals too: the case-sensitive "DAN" match must still see "DАN" with a
+    # Cyrillic capital А (casefold would lowercase it out of that match).
+    "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O",
+    "Р": "P", "С": "C", "Т": "T", "Х": "X", "Ѕ": "S", "І": "I", "Ј": "J",
+    "Ԁ": "D", "Α": "A", "Β": "B", "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K",
+    "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X", "Ζ": "Z",
 })
+
+# ``\\xHH`` escapes written inline ("\\x69\\x67nore all previous ...").
+_INLINE_HEX = re.compile(r"\\x([0-9a-fA-F]{2})")
+
+
+def _strip_combining(text: str) -> str:
+    """Drop combining marks ("ignóre" -> "ignore"); ASCII text is unchanged."""
+    if text.isascii():
+        return text
+    decomposed = unicodedata.normalize("NFD", text)
+    return unicodedata.normalize(
+        "NFC", "".join(c for c in decomposed if not unicodedata.combining(c)))
+
+
+def _unescape_inline(text: str) -> str:
+    """Decode HTML entities and inline ``\\xHH`` escapes in place, so a keyword
+    spelled ``ignore&#32;all`` or ``\x69gnore`` reads as the plain words."""
+    if "&" in text:
+        text = html.unescape(text)
+    if "\\x" in text:
+        text = _INLINE_HEX.sub(lambda m: chr(int(m.group(1), 16)), text)
+    return text
 
 # A base64-shaped run long enough to carry a payload (but not so short it
 # matches every hex id). Decoded and re-scanned.
@@ -214,10 +248,10 @@ def _candidates(text: str) -> list[str]:
     folded after a ``casefold()`` so an upper/mixed-case confusable (Cyrillic
     capital ``І`` -> ``і``) maps onto the lowercase confusable table;
     rules are IGNORECASE so the extra lowercasing is safe."""
-    norm0 = unicodedata.normalize("NFKC", text)
+    norm0 = unicodedata.normalize("NFKC", _unescape_inline(text))
     cands = {text}
     # strip vs space-substitute invisibles; original-case vs casefolded.
-    for base in (_strip_invisible(norm0), _INVISIBLE.sub(" ", norm0)):
+    for base in (_strip_combining(_strip_invisible(norm0)), _INVISIBLE.sub(" ", norm0)):
         for variant in (base, base.casefold()):
             folded = variant.translate(_HOMOGLYPHS)
             cands.add(folded)
@@ -283,9 +317,11 @@ RULES: list[Rule] = [
          # over-blocks normal IT/dev text (measured ~13% false-positive on
          # benign inputs). The real "Developer Mode" jailbreak always
          # sheds restrictions, so require a restriction-removal cue within a
-         # short window (either order). Bounds keep it ReDoS-safe.
+         # short window (either order). Bounds keep it ReDoS-safe. "DAN" is
+         # matched case-sensitively: the jailbreak persona is always written in
+         # capitals, and the name "Dan" blocked ordinary text at critical.
          _compile(
-             r"\b(?:DAN|do anything now|jailbreak|unfiltered\s+ai)\b"
+             r"\b(?:(?-i:DAN)|do anything now|jailbreak|unfiltered\s+ai)\b"
              r"|\bdeveloper\s+mode\b[\s\S]{0,80}(?:unrestricted|unfiltered|anything\s+goes|free\s+from|no\s+(?:restrictions?|rules?|filters?|limits?)|without\s+(?:restrictions?|rules?|filters?)|bypass|never\s+(?:refuse|decline|deny)|(?:can|may)\s+say\s+anything|ignore\s+(?:all|your|the)?[\w\s]{0,12}(?:rules?|restrictions?|instructions?|guidelines?|policy|policies))"
              r"|(?:unrestricted|unfiltered|anything\s+goes|no\s+(?:restrictions?|rules?|filters?)|bypass|never\s+(?:refuse|decline|deny)|(?:can|may)\s+say\s+anything|ignore\s+(?:all|your|the)?[\w\s]{0,12}(?:rules?|restrictions?|instructions?))[\s\S]{0,80}\bdeveloper\s+mode\b"
          ),
@@ -344,20 +380,35 @@ RULES: list[Rule] = [
             r"\brm\s+"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('r', 'recursive')})"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('f', 'force')})"
-            rf"(?:{_FLAG_TOKEN}\s+){{1,5}}(\/|~|\$HOME)(\*|\/|[\s;&|]|$)"
+            rf"(?:{_FLAG_TOKEN}\s+){{1,5}}(\/|~|\$HOME|\$\{{HOME\}})(\*|\/|[\s;&|]|$)"
         ),
         "rm -rf/-fr (contiguous OR split across flags, e.g. `rm -r -f /`) "
         "against /, ~, or $HOME",
     ),
+    # The variable-length run in disk_overwrite, recursive_chmod_chown_root,
+    # curl_pipe_shell and urgency_authority is "tempered": it stops where a
+    # later start can itself complete the rule's whole fixed prefix. A match
+    # that would have run across that start is then found from that start
+    # (the rest of the text is the same), so what the rule matches is
+    # unchanged -- test_builtin_rules checks this against the original
+    # patterns on 30,000+ generated strings per rule -- but no start rescans
+    # another start's run, so the scan is linear instead of quadratic. The
+    # markdown-image, base64-URL and credential-URL rules are the original
+    # patterns: no rewrite found kept both their matches and linear time.
     Rule("disk_overwrite", "critical",
-         _compile(r"\b(dd\s+[^\n]*\bof=\/dev\/(sd[a-z]|nvme\d|disk\d|hd[a-z])|mkfs(\.[a-z0-9]+)?\s+[^\n]*\/dev\/)"),
+         _compile(
+             r"\b(dd\s+(?:(?!\bdd\s)[^\n])*?\bof=\/dev\/(sd[a-z]|nvme\d|disk\d|hd[a-z])"
+             r"|mkfs(\.[a-z0-9]+)?\s+(?:(?!\bmkfs(?:\.[a-z0-9]+)?\s)[^\n])*?\/dev\/)"
+         ),
          "Raw disk overwrite via dd/mkfs against a block device"),
     Rule(
         "recursive_chmod_chown_root", "critical",
         _compile(
             r"\bch(mod|own)\s+"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('R', 'recursive')})"
-            r"[^\n]*\s(\/|~|\$HOME)(\s|;|&|\||$)"
+            r"(?:(?!\bch(?:mod|own)\s+"
+            rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('R', 'recursive')}))[^\n])*"
+            r"\s(\/|~|\$HOME|\$\{HOME\})(\s|;|&|\||$)"
         ),
         "Recursive chmod/chown (contiguous OR split across flags, e.g. "
         "`chmod -c -R 777 /`) against /, ~, or $HOME",
@@ -369,7 +420,7 @@ RULES: list[Rule] = [
          _compile(r"(\/etc\/+(passwd|shadow|ssh|sudoers)|\bNOPASSWD\b|~?\/\.ssh\/|~?\/\.aws\/credentials|\.env\b)"),
          "Read of /etc/passwd, ssh keys, sudoers, AWS creds, or .env"),
     Rule("curl_pipe_shell", "critical",
-         _compile(r"(curl|wget)\s+[^|]+\|\s*(sudo\s+)?(sh|bash|zsh|python)\b"),
+         _compile(r"(curl|wget)\s+(?:(?!(?:curl|wget)\s+[^|\s])[^|])+\|\s*(sudo\s+)?(sh|bash|zsh|python)\b"),
          "curl-pipe-to-shell remote code execution"),
     Rule("reverse_shell", "critical",
          _compile(r"(bash\s+-i\s+>&\s+\/dev\/tcp\/|nc\s+-e\s+\/bin\/(sh|bash))"),
@@ -377,7 +428,7 @@ RULES: list[Rule] = [
 
     # Social engineering markers
     Rule("urgency_authority", "medium",
-         _compile(r"\bthis\s+is\s+(an?\s+)?(emergency|urgent|critical)\b.*\b(execute|run|do)\s+(immediately|now|asap)"),
+         _compile(r"\bthis\s+is\s+(an?\s+)?(emergency|urgent|critical)\b(?:(?!\bthis\s+is\s+(?:an?\s+)?(?:emergency|urgent|critical)\b)[^\n])*\b(execute|run|do)\s+(immediately|now|asap)"),
          "Urgency + authority pressure"),
     Rule("false_preapproval", "medium",
          _compile(r"\b(the\s+user|admin|operator)\s+(has\s+)?already\s+(approved|authorized|allowed)"),

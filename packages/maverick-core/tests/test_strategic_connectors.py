@@ -65,6 +65,11 @@ def test_servicenow_query_hits_table_api(monkeypatch):
     assert req.call_args.args[1].endswith("/api/now/table/incident")
 
 
+def test_servicenow_rejects_dot_sys_id():
+    from maverick.tools.servicenow_tool import _safe_seg
+    assert not _safe_seg(".") and not _safe_seg("..") and _safe_seg("abc.1")
+
+
 def test_servicenow_create_needs_confirm(monkeypatch):
     monkeypatch.setenv("SERVICENOW_INSTANCE_URL", "https://x.service-now.com")
     monkeypatch.setenv("SERVICENOW_TOKEN", "t")
@@ -202,6 +207,19 @@ def test_vertex_generate(monkeypatch):
     assert ":generateContent" in post.call_args.args[0]
 
 
+def test_vertex_ids_cannot_leave_their_path_segment(monkeypatch):
+    monkeypatch.setenv("VERTEX_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("VERTEX_PROJECT", "proj")
+    post = MagicMock(return_value=_resp(200, {"predictions": []}))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.vertex_tool import vertex_tool
+    vertex_tool().fn({"op": "generate", "model": "../../../endpoints/777:predict#", "prompt": "hi"})
+    assert "/models/..%2F..%2F..%2Fendpoints%2F777%3Apredict%23:generateContent" in post.call_args.args[0]
+    vertex_tool().fn({"op": "predict", "endpoint_id": "../x", "instances": [1]})
+    assert post.call_args.args[0].endswith("/endpoints/..%2Fx:predict")
+    assert vertex_tool().fn({"op": "predict", "endpoint_id": "..", "instances": [1]}).startswith("ERROR")
+
+
 def test_erp_and_analytics_connectors_register(tmp_path):
     from maverick.sandbox.local import LocalBackend
     from maverick.tools import base_registry
@@ -310,6 +328,14 @@ def test_sap_post_needs_confirm(monkeypatch):
     post.assert_not_called()
 
 
+def test_sap_csrf_cookie_header_keeps_every_session_cookie():
+    import httpx
+    from maverick.tools.sap_tool import _cookie_header
+    headers = httpx.Headers([("set-cookie", "a=1; path=/"),
+                             ("set-cookie", "SID=abc; path=/; secure; HttpOnly")])
+    assert _cookie_header(headers) == "a=1; SID=abc"
+
+
 # ----------------------------------- Workday -------------------------------
 
 def test_workday_requires_config(monkeypatch):
@@ -330,6 +356,18 @@ def test_workday_get(monkeypatch):
     out = workday_tool().fn({"op": "get", "path": "/workers"})
     assert "w1" in out
     assert get.call_args.args[0].endswith("/workers")
+
+
+def test_workday_path_cannot_climb_out_of_base_url(monkeypatch):
+    monkeypatch.setenv("WORKDAY_BASE_URL", "https://wd.example.com/ccx/api/v1/T")
+    monkeypatch.setenv("WORKDAY_TOKEN", "t")
+    get = MagicMock()
+    _fake_httpx(monkeypatch, get=get)
+    from maverick.tools.workday_tool import workday_tool
+    for path in ("/../../staffing/v6/OTHER/workers", "/%2e%2e/x", "a/./b"):
+        out = workday_tool().fn({"op": "get", "path": path})
+        assert out.startswith("ERROR") and "WORKDAY_BASE_URL" in out, path
+    get.assert_not_called()
 
 
 def test_workday_post_needs_confirm(monkeypatch):

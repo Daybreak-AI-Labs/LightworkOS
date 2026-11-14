@@ -69,6 +69,18 @@ def test_sanctions_needs_list():
     assert _by_control()["Sanctions screening"].status == "action_needed"
 
 
+def test_unusable_legacy_sanctions_list_is_reported_not_raised(tmp_path, monkeypatch):
+    from maverick.tools import sanctions_screen
+
+    bad = tmp_path / "sdn.json"
+    bad.write_text('{"entries": ["Ivan Petrov"]}', encoding="utf-8")
+    monkeypatch.setattr(sanctions_screen, "_list_path", lambda: bad)
+
+    ok, detail = status_module._sanctions_active()
+
+    assert ok is False and "unusable" in detail
+
+
 def test_governed_sanctions_status_never_falls_back_to_legacy_list(tmp_path, monkeypatch):
     _operations_config(tmp_path)
     from maverick.tools import sanctions_screen

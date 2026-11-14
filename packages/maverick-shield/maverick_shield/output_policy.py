@@ -57,7 +57,8 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
 ]
 # A 13-19 digit run (single space/dash separators allowed); bounded repetition so
-# it can't ReDoS on attacker output. Confirmed with Luhn before flagging.
+# it can't ReDoS on attacker output. Confirmed with an issuer prefix and Luhn
+# before flagging.
 _CARD_RE = re.compile(r"(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)")
 
 
@@ -73,6 +74,26 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
+# Issuer prefixes (IIN) and lengths of the major card networks. Luhn alone
+# passes one in ten of any 13-19 digit number, so ordinary ids and epoch
+# milliseconds (``1700000000004``) were blocked as card leaks.
+_CARD_IIN_RE = re.compile(
+    r"4\d{12}(?:\d{3}){0,2}"                                # Visa 13/16/19
+    r"|(?:5[1-5]\d{2}|222[1-9]|22[3-9]\d|2[3-6]\d{2}|27[01]\d|2720)\d{12}"  # Mastercard
+    r"|3[47]\d{13}"                                         # Amex
+    r"|3(?:0[0-5]|[689]\d)\d{11,16}"                         # Diners
+    r"|35(?:2[89]|[3-8]\d)\d{12,15}"                         # JCB
+    r"|6(?:011|5\d{2}|4[4-9]\d)\d{12,15}"                    # Discover
+    r"|62\d{14,17}"                                         # UnionPay
+    r"|220[0-4]\d{12}"                                      # Mir
+    r"|(?:50|5[6-8]|6\d)\d{10,17}"                           # Maestro, other 6-series
+)
+
+
+def _card_shaped(digits: str) -> bool:
+    return bool(_CARD_IIN_RE.fullmatch(digits)) and _luhn_ok(digits)
+
+
 def detect_secret_leak(text: str) -> list[str]:
     """Kinds of plaintext secret/PII present in ``text`` (empty if none)."""
     hits: list[str] = []
@@ -81,7 +102,7 @@ def detect_secret_leak(text: str) -> list[str]:
             hits.append(kind)
     for m in _CARD_RE.finditer(text):
         digits = m.group(0).replace(" ", "").replace("-", "")
-        if 13 <= len(digits) <= 19 and _luhn_ok(digits):
+        if 13 <= len(digits) <= 19 and _card_shaped(digits):
             hits.append("credit_card")
             break
     return hits

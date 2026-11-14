@@ -60,7 +60,7 @@ def _op_list_functions(args: dict) -> str:
     if not fns:
         return "no functions"
     return "\n".join(
-        f"  {f.get('FunctionName'):<40}  runtime={f.get('Runtime'):<14}  "
+        f"  {f.get('FunctionName'):<40}  runtime={f.get('Runtime') or f.get('PackageType') or '?':<14}  "
         f"mem={f.get('MemorySize')}MB  timeout={f.get('Timeout')}s"
         for f in fns
     )

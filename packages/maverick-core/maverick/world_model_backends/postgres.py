@@ -16,11 +16,9 @@ Or env:
 
 Behind ``maverick-agent[postgres]`` extra (pulls in ``psycopg[binary]``).
 
-Implementation scope: enough to pass the ``conn``-only paths the agent
-kernel uses (goals, episodes, events, attachments). For the small
-metadata tables that are write-heavy mostly used by channels, we
-defer to a future iteration -- this batch ships the shape + the
-hot-path methods.
+Implementation scope: the full ``WorldModel`` surface (goals, projects,
+episodes, events, facts, questions, approvals, conversations, erasure,
+messages, attachments, the cluster halt and the provider spend ledger).
 """
 from __future__ import annotations
 
@@ -963,6 +961,10 @@ class _PgRow(tuple):
         return list(self._columns)
 
 
+#: Placeholder action for an approval whose goal was erased (as on SQLite).
+_ERASED_APPROVAL_ACTION = "[erased]"
+
+
 def _tenant_scope(column: str = "tenant_id") -> tuple[str, list]:
     """Read predicate scoping rows to the active tenant.
 
@@ -1279,8 +1281,9 @@ class PostgresWorldModel:
         # single-connection + RLock ownership model.
         self._pool = None
         size = _pool_size()
-        # A statement timeout is rolled back by _tx; a terminated idle
-        # transaction closes the connection. Retain these options on reconnect.
+        # A statement timeout (QueryCanceled, an OperationalError) and a
+        # terminated idle transaction both make _tx close the connection; the
+        # next call reconnects. Retain these options on reconnect.
         self._io_timeout_seconds = postgres_io_timeout_seconds()
         self._connect_kwargs = _connection_kwargs(self._dsn)
         if size > 0:
@@ -1520,15 +1523,31 @@ class PostgresWorldModel:
         if _rls_explicitly_set():
             return
         from . import pg_rls
+        # A table whose policy is already installed and forced was gated on an
+        # earlier boot; counting it again proves nothing (FORCE RLS with no
+        # tenant shows zero rows) and only adds full scans that a statement
+        # timeout can turn into a refusal to start.
+        pending = tuple(
+            t for t in pg_rls._PREFLIGHT_TABLES if not self._rls_policy_is_active(t)
+        )
+        if not pending:
+            return
         try:
             if self._pool is not None:
                 with self._pool.connection() as conn:
-                    report = pg_rls.preflight(conn)
+                    report = pg_rls.preflight(conn, only=pending)
             else:
-                report = pg_rls.preflight(self.conn)
-        except Exception as e:  # pragma: no cover -- preflight never blocks an explicit opt-in
-            log.warning("RLS preflight could not run (%s); proceeding to _apply_rls", e)
-            return
+                report = pg_rls.preflight(self.conn, only=pending)
+        except Exception as e:
+            # An explicit opt-in returned above, so this is the auto-on path the
+            # gate protects: forcing the policy without knowing whether legacy
+            # rows exist risks hiding and freezing them. Refuse to boot.
+            raise RuntimeError(
+                "Enterprise mode auto-enabled Postgres RLS, but the legacy-row "
+                f"preflight could not run ({e}). Retry, or check with "
+                "`maverick tenant rls-preflight`; to opt into RLS knowingly, set "
+                "MAVERICK_PG_RLS=1 explicitly."
+            ) from e
         offenders = {
             t: info.get("null_tenant_rows", 0) + info.get("empty_tenant_rows", 0)
             for t, info in report.get("tables", {}).items()
@@ -2711,12 +2730,17 @@ class PostgresWorldModel:
             return True
 
     def signoff_for(self, goal_id: int) -> dict | None:
-        """The current sign-off on a goal's deliverable, or None if unreviewed."""
+        """The current sign-off on a goal's deliverable, or None if unreviewed.
+
+        Scoped through the parent goal like the other child reads: ``signoffs``
+        has no tenant column or RLS policy of its own."""
+        frag, fparams = _tenant_scope()
         with self._tx() as cur:
             cur.execute(
                 "SELECT goal_id, decision, decided_by, note, created_at "
-                "FROM signoffs WHERE goal_id=%s",
-                (int(goal_id),),
+                "FROM signoffs WHERE goal_id=%s "
+                "AND goal_id IN (SELECT id FROM goals WHERE " + frag + ")",
+                (int(goal_id), *fparams),
             )
             r = cur.fetchone()
         if not r:
@@ -5024,7 +5048,10 @@ class PostgresWorldModel:
         from ..world_records import Conversation
         now = time.time()
         tenant = _active_tenant()
-        frag, params = _tenant_scope()
+        # Exact scope: return the row the upsert below targets. The
+        # compatibility read scope also matches a legacy NULL row, which
+        # append_turn (exact scope) then rejects.
+        frag, params = _mutation_tenant_scope()
         sel = (
             "SELECT id, channel, user_id, created_at, last_seen "
             "FROM conversations WHERE channel = %s AND user_id = %s"
@@ -5259,8 +5286,18 @@ class PostgresWorldModel:
 
     @staticmethod
     def _receipt_tenant(tenant_id: str) -> str:
+        # Callers pass the raw tenant id (or "shared"); the active tenant here
+        # is the path-encoded segment, so compare like with like.
+        from ..paths import InvalidTenantError, _tenant_segment, canonical_tenant_id
+
         active = _active_tenant() or "shared"
-        if tenant_id != active:
+        claimed = tenant_id
+        if tenant_id != "shared":
+            try:
+                claimed = _tenant_segment(canonical_tenant_id(tenant_id))
+            except InvalidTenantError:
+                claimed = None
+        if claimed != active:
             raise ValueError("erasure receipt belongs to another tenant")
         return active
 
@@ -5578,6 +5615,21 @@ class PostgresWorldModel:
                     "UPDATE event_goal_admissions SET sealed_contract=NULL, "
                     "delivery_state='federation_retired' WHERE admission_key LIKE 'federation:%%' "
                     "AND goal_id = ANY(%s)", (gids,),
+                )
+                # Approvals keep their identities and decisions (the audit
+                # outbox refers to them), but the subject's content -- the
+                # sealed action, scope and detail, and sign-off notes -- goes,
+                # as on SQLite.
+                afrag, afparams = _erasure_tenant_scope("tenant_id")
+                cur.execute(
+                    "UPDATE approval_signoffs SET note = NULL WHERE approval_id IN "
+                    "(SELECT id FROM approvals WHERE goal_id = ANY(%s) AND " + afrag + ")",
+                    (gids, *afparams),
+                )
+                cur.execute(
+                    "UPDATE approvals SET action = %s, scope = NULL, detail = NULL "
+                    "WHERE goal_id = ANY(%s) AND " + afrag,
+                    (_seal(_ERASED_APPROVAL_ACTION, "approvals.action"), gids, *afparams),
                 )
                 cur.execute("DELETE FROM goals WHERE id = ANY(%s)", (gids,))
 

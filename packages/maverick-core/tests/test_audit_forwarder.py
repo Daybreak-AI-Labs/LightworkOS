@@ -123,7 +123,7 @@ def test_forward_http_posts_batch_with_token(monkeypatch):
 
     monkeypatch.setenv("MAVERICK_SIEM_TOKEN", "hec-token")
     monkeypatch.delenv("MAVERICK_SECRETS_BACKEND", raising=False)
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(forwarder, "_open_vendor", _fake_urlopen)
 
     n = forwarder.forward(["e1", "e2"], "https://siem.example/raw")
     assert n == 2
@@ -154,7 +154,7 @@ def test_forward_http_streams_bounded_batches(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(forwarder, "_HTTP_BATCH_MAX", 6)
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(forwarder, "_open_vendor", _fake_urlopen)
 
     assert forwarder.forward(_lines(), "https://siem.example/raw") == 3
     assert bodies == [b"aa\nbb\n", b"cc\n"]
@@ -166,7 +166,7 @@ def test_forward_http_raises_on_5xx(monkeypatch):
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=None: _Resp())
+    monkeypatch.setattr(forwarder, "_open_vendor", lambda req, timeout=None: _Resp())
     with pytest.raises(RuntimeError, match="503"):
         forwarder.forward(["e1"], "https://siem.example/raw")
 
@@ -175,7 +175,7 @@ def test_forward_http_empty_batch_sends_nothing(monkeypatch):
     def _boom(*a, **k):  # pragma: no cover -- must not be called
         raise AssertionError("urlopen called for empty batch")
 
-    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    monkeypatch.setattr(forwarder, "_open_vendor", _boom)
     assert forwarder.forward([], "https://siem.example/raw") == 0
 
 
@@ -616,3 +616,14 @@ def test_vendor_destinations_send_nothing_for_empty_input(vendor_env):
     assert forwarder.forward([], "datadog://datadoghq.com") == 0
     assert forwarder.forward([], _SENTINEL_DEST) == 0
     assert calls == []
+
+
+def test_generic_http_collector_redirect_is_not_followed(monkeypatch):
+    # Following a 302 would resend the bearer to the new location as a
+    # body-less GET and count the dropped batch as shipped.
+    monkeypatch.setenv("MAVERICK_SIEM_TOKEN", "hec-token")
+    monkeypatch.delenv("MAVERICK_SECRETS_BACKEND", raising=False)
+    seen = _scripted_https(monkeypatch, (302, "https://other.example.net/raw"), (200, None))
+    with pytest.raises(urllib.error.HTTPError):
+        forwarder.forward(["e1"], "https://siem.example/raw")
+    assert [url for _, url, _ in seen] == ["https://siem.example/raw"]

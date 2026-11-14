@@ -332,6 +332,19 @@ def _validate_id(tenant_id: str) -> str:
     return canonical_tenant_id(tid)
 
 
+#: In-band sentinels other code gives a meaning to: ``paths.data_dir`` reads
+#: ``"__active__"`` as "the ambient tenant" and the KMS layer uses
+#: ``"__default__"`` for the un-namespaced store. A workspace with either id
+#: would alias another tenant's data.
+_RESERVED_IDS = frozenset({"__active__", "__default__"})
+
+
+def _refuse_reserved(tid: str) -> str:
+    if tid in _RESERVED_IDS:
+        raise ValueError(f"tenant id {tid!r} is reserved")
+    return tid
+
+
 def _lookup_id(tenant_id: str | None) -> str:
     tid = (tenant_id or "").strip()
     return canonical_tenant_id(tid) if tid else ""
@@ -351,7 +364,11 @@ def _quota_value(value: object) -> float:
         raise ValueError("tenant quota must be a finite number") from exc
     if not math.isfinite(cap):
         raise ValueError("tenant quota must be a finite number")
-    return max(0.0, cap)
+    if cap < 0:
+        # 0 means "no cap"; clamping a negative to it would turn a mistyped
+        # limit into unlimited spend.
+        raise ValueError("tenant quota must not be negative")
+    return cap
 
 
 def _clean_feature_list(value: object, *, side: str) -> list[str]:
@@ -529,7 +546,7 @@ def create_tenant(
     pass ``max_daily_dollars`` to set one. Refuses an existing identifier or
     visible workspace name.
     """
-    tid = _validate_id(tenant_id)
+    tid = _refuse_reserved(_validate_id(tenant_id))
     quota = _quota_value(max_daily_dollars)
     display_name = display_name.strip()
     _warn_if_unknown_plan(plan)
@@ -844,12 +861,17 @@ def set_plan(tenant_id: str, plan: str) -> TenantRecord:
 def delete_tenant(tenant_id: str, *, purge: bool = False) -> bool:
     """Remove a tenant from the registry. With ``purge=True`` also delete its
     data directory (irreversible). Its identifier remains permanently reserved.
-    Returns False if the tenant was unknown."""
+    Returns False if the tenant was unknown. A purge refuses a workspace with
+    an active legal matter and raises if the data could not all be removed."""
     tid = _lookup_id(tenant_id)
+    if purge:
+        _refuse_reserved(tid)
     with _locked(strict=True):
         records = _load()
         if tid not in records:
             return False
+        if purge:
+            _assert_no_legal_hold(tid)
         # Durable before roster removal or optional purge. A crash here leaves
         # an unavailable tenant, never a reusable incarnation or active row.
         bind_tenant_namespace(tid)
@@ -866,8 +888,16 @@ def delete_tenant(tenant_id: str, *, purge: bool = False) -> bool:
         if "tenants" in root.parts:
             # The tenant's federation state file may be open here; an open file cannot be
             # removed on Windows, and rmtree(ignore_errors=True) would skip it silently.
-            with hold_state_file_closed():
-                shutil.rmtree(root, ignore_errors=True)
+            try:
+                with hold_state_file_closed():
+                    shutil.rmtree(root)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise TenantRegistryError(
+                    "The workspace was removed, but some of its data could not be "
+                    f"deleted ({exc.__class__.__name__}); remove it by hand."
+                ) from exc
     return True
 
 
@@ -1347,8 +1377,10 @@ def _tenant_daily_cap(tenant_id: str) -> float:
     cap = rec.max_daily_dollars
     if cap <= 0 and _enforce_plan_caps():
         try:
-            from ..billing import entitlements_for
-            cap = entitlements_for(rec.plan).max_daily_dollars
+            from ..billing import _effective_plan, entitlements_for
+            # The served plan: a tenant whose payment lapsed gets the base
+            # plan's cap, not its subscribed plan's.
+            cap = entitlements_for(_effective_plan(rec)).max_daily_dollars
         except Exception as exc:
             raise TenantRegistryError(
                 f"tenant plan-cap entitlement unavailable for {rec.id!r}: {exc}"

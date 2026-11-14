@@ -33,14 +33,38 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .postgres import _TENANT_TABLES
+from .postgres import _RLS_TABLES, _RLS_TENANT_COLUMN
 
 _EMPTY_TENANT_TABLES = ("event_goal_admissions", "event_trigger_batches")
-_PREFLIGHT_TABLES = (*_TENANT_TABLES, "attachment_submissions", *_EMPTY_TENANT_TABLES)
+# Unbound writers stamp the empty string, not NULL, in these tables (the event
+# inbox and receipts, and the workspace-keyed webhook/deadline tables).
+_EMPTY_SCOPE_TABLES = (*_EMPTY_TENANT_TABLES, *_RLS_TENANT_COLUMN)
+# Every table the RLS policy is forced on, so nothing it would hide goes
+# unreported or un-backfilled. ``encryption_migrations`` is excluded: its scope
+# key is derived from the tenant and is managed by the backend itself.
+_PREFLIGHT_TABLES = tuple(t for t in _RLS_TABLES if t != "encryption_migrations")
+
+
+def _column(table: str) -> str:
+    return _RLS_TENANT_COLUMN.get(table, "tenant_id")
 
 
 def _legacy_scope(table: str) -> str:
-    return "(tenant_id IS NULL OR tenant_id = '')" if table in _EMPTY_TENANT_TABLES else "tenant_id IS NULL"
+    col = _column(table)
+    return f"({col} IS NULL OR {col} = '')" if table in _EMPTY_SCOPE_TABLES else f"{col} IS NULL"
+
+
+def _stored_tenant(table: str, tenant_id: str) -> str:
+    """The value the backend itself writes for ``tenant_id`` in ``table``.
+
+    ``tenant_id`` columns hold the path-encoded segment
+    (``paths.current_tenant_strict``); the workspace-keyed tables hold the raw
+    id. Binding anything else assigns rows to a value no tenant queries with.
+    """
+    from ..paths import _tenant_segment, canonical_tenant_id
+
+    canonical = canonical_tenant_id(tenant_id.strip())
+    return canonical if table in _RLS_TENANT_COLUMN else _tenant_segment(canonical)
 
 def resolve_dsn(dsn: str | None = None) -> str:
     """Resolve the Postgres DSN: explicit arg > ``MAVERICK_PG_DSN`` > config
@@ -71,21 +95,22 @@ def connect(dsn: str, *, autocommit: bool = False):
     return psycopg.connect(dsn, autocommit=autocommit)
 
 
-def preflight(conn) -> dict[str, Any]:
+def preflight(conn, *, only: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Read-only readiness report for enabling RLS.
 
     For each tenant-scoped table: its owner, whether the *current* role owns it
     (only the owner can ALTER / CREATE POLICY), and the count of legacy
     NULL-tenant rows and empty-tenant event rows that RLS would hide. ``ready``
     is True only when every table exists, is owned by the current role, and has
-    no unscoped rows.
+    no unscoped rows. ``only`` limits the report to a subset of
+    :data:`_PREFLIGHT_TABLES` (the boot gate skips tables already protected).
     """
     cur = conn.cursor()
     cur.execute("SELECT current_user")
     role = cur.fetchone()[0]
     tables: dict[str, dict[str, Any]] = {}
     ready = True
-    for t in _PREFLIGHT_TABLES:
+    for t in _PREFLIGHT_TABLES if only is None else only:
         # to_regclass returns NULL (no error) for a table that isn't there yet,
         # so a pre-migration DB reports cleanly instead of raising.
         cur.execute("SELECT to_regclass(%s)", (t,))
@@ -99,11 +124,12 @@ def preflight(conn) -> dict[str, Any]:
             (t,),
         )
         owner = cur.fetchone()[0]
-        cur.execute(f"SELECT count(*) FROM {t} WHERE tenant_id IS NULL")
+        col = _column(t)
+        cur.execute(f"SELECT count(*) FROM {t} WHERE {col} IS NULL")
         nulls = int(cur.fetchone()[0])
         empty = 0
-        if t in _EMPTY_TENANT_TABLES:
-            cur.execute(f"SELECT count(*) FROM {t} WHERE tenant_id = ''")
+        if t in _EMPTY_SCOPE_TABLES:
+            cur.execute(f"SELECT count(*) FROM {t} WHERE {col} = ''")
             empty = int(cur.fetchone()[0])
         owned = owner == role
         tables[t] = {"owner": owner, "owned_by_current_role": owned,
@@ -139,8 +165,8 @@ def backfill(conn, tenant_id: str, *, dry_run: bool = False) -> dict[str, int]:
                 report[t] = int(cur.fetchone()[0])
             else:
                 cur.execute(
-                    f"UPDATE {t} SET tenant_id = %s WHERE {_legacy_scope(t)}",
-                    (tenant_id,),
+                    f"UPDATE {t} SET {_column(t)} = %s WHERE {_legacy_scope(t)}",
+                    (_stored_tenant(t, tenant_id),),
                 )
                 report[t] = cur.rowcount
         if not dry_run:

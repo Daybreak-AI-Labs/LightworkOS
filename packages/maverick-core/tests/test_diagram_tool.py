@@ -99,3 +99,19 @@ def test_out_under_git_dir_is_refused(tmp_path):
         {"engine": "dot", "source": "digraph{a}", "out": ".git/config"})
     assert out.startswith("ERROR") and ".git" in out
     assert not (tmp_path / ".git" / "config").exists()
+
+
+def test_render_removes_its_temp_dir(tmp_path, monkeypatch):
+    import tempfile
+    made: list[str] = []
+    real = tempfile.mkdtemp
+
+    def _track(*a, **kw):
+        made.append(real(*a, dir=tmp_path, **kw))
+        return made[-1]
+
+    monkeypatch.setattr(tempfile, "mkdtemp", _track)
+    for ok in (True, False):
+        diagram_tool(_FakeSandbox(tmp_path, succeed=ok)).fn(
+            {"engine": "dot", "source": "digraph{a->b}", "out": "g.svg"})
+    assert len(made) == 2 and not any(Path(d).exists() for d in made)

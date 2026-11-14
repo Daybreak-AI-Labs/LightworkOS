@@ -146,12 +146,15 @@ def apply_to_registry(reg, limits: dict[str, tuple[int, float]] | None = None) -
             continue
         max_calls, window_s = lim
         limiter = _Limiter(max_calls, window_s)
+        # An explicit Tool, not dataclasses.replace(): a LazyTool has its own
+        # __init__ and replace() cannot rebuild it.
         reg._tools[name] = Tool(
             name=tool.name,
             description=tool.description,
             input_schema=tool.input_schema,
             fn=_wrap_fn(name, limiter, tool.fn),
             parallel_safe=tool.parallel_safe,
+            strict=tool.strict,
         )
         wrapped += 1
     if wrapped:

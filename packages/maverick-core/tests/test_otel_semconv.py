@@ -57,3 +57,11 @@ def test_errors():
     assert t.fn({"op": "map"}).startswith("ERROR")                 # no span
     assert t.fn({"op": "map", "span": {"kind": "x"}}).startswith("ERROR")  # no attrs
     assert t.fn({"op": "nope", "span": {"attrs": {}}}).startswith("ERROR")
+
+
+def test_colliding_legacy_keys_are_not_silently_overwritten():
+    out = _map({"attrs": {"http_host": "a.example", "net_peer_name": "b.example"}})
+    attrs = _attrs(out)
+    # One value used to be dropped while the summary claimed renamed=2.
+    assert "renamed=1" in out and "not_renamed_conflicts=[net_peer_name]" in out
+    assert attrs == {"server.address": "a.example", "net_peer_name": "b.example"}

@@ -45,18 +45,62 @@ def _safe_exception_text(exc: BaseException, *, fallback: str) -> str:
 
 
 @contextmanager
-def _enrich(label: str):
+def _enrich(label: str, *, paid: bool = False):
     """Wrap a gated brief-enrichment block: its failure is logged at debug and
     never blocks the run. Factors the identical try/except/log.debug scaffold the
-    enrichment blocks (experience, role-stats, reflexion, dreaming, ...) repeat."""
+    enrichment blocks (experience, role-stats, reflexion, dreaming, ...) repeat.
+
+    ``paid`` blocks make model calls on the goal budget: a budget stop or a
+    call whose usage could not be billed stops the run instead."""
     try:
         yield
     except Exception as e:  # pragma: no cover -- enrichment never blocks a run
+        if paid and isinstance(e, (BudgetExceeded, UsageAccountingError)):
+            raise
         log.debug(
             "%s skipped: %s",
             label,
             _safe_exception_text(e, fallback="enrichment unavailable"),
         )
+
+def _remaining_allowance(cap: int | None, used: int) -> int | None:
+    """What is left of an integer cap (``None`` = uncapped), never negative."""
+    return None if cap is None else max(0, cap - used)
+
+
+def _attempt_allowances(budget: Budget) -> dict[str, int | None] | None:
+    """The token and tool-call caps for the next best-of-N attempt: what is
+    left of the parent's. ``None`` when a positive allowance is used up: no
+    tokens left, or tool calls made up to the limit. A tool-call limit set to 0
+    still allows a tools-free attempt."""
+    allowances = {
+        "max_input_tokens": _remaining_allowance(budget.max_input_tokens, budget.input_tokens),
+        "max_output_tokens": _remaining_allowance(budget.max_output_tokens, budget.output_tokens),
+        "max_tool_calls": _remaining_allowance(budget.max_tool_calls, budget.tool_calls),
+    }
+    tokens_used_up = 0 in (allowances["max_input_tokens"], allowances["max_output_tokens"])
+    tools_used_up = budget.tool_calls > 0 and allowances["max_tool_calls"] == 0
+    return None if tokens_used_up or tools_used_up else allowances
+
+
+def _parse_bon_ladder(raw_ladder: str) -> list[tuple[str, float]]:
+    """``model[:temperature]`` entries, comma-separated. A suffix that is not a
+    temperature belongs to the model (``openai:gpt-5.5``, ``ollama:qwen3:32b``)."""
+    ladder: list[tuple[str, float]] = []
+    for entry in raw_ladder.split(","):
+        if not entry.strip():
+            continue
+        mdl, _, t = entry.rpartition(":")
+        try:
+            temperature = float(t) if mdl else None
+        except ValueError:
+            temperature = None
+        if temperature is not None and 0.0 <= temperature <= 2.0:
+            ladder.append((mdl.strip(), temperature))
+        else:
+            ladder.append((entry.strip(), 0.3 + 0.25 * len(ladder)))
+    return ladder
+
 
 def _skill_distillation_frozen(*, config: dict | None = None) -> bool:
     """Whether calibration has frozen learning (the verifier drifted and no
@@ -115,12 +159,15 @@ def _sanitize_persisted_prompt_text(
     single_line: bool = False,
 ) -> str:
     """Redact, scan, and bound persisted user-controlled prompt material."""
-    safe = str(text or "")[:max_chars]
+    # Redact before the final cut, so a secret straddling ``max_chars`` is still
+    # recognised whole; the margin bounds the text the detector scans.
+    safe = str(text or "")[:max_chars + 512]
     try:
         from .safety.secret_detector import redact as _redact
         safe, _ = _redact(safe)
     except Exception:  # pragma: no cover
         pass
+    safe = safe[:max_chars]
     if shield is not None:
         try:
             verdict = shield.scan_input(safe)
@@ -993,7 +1040,7 @@ async def _apply_brief_enrichments(
     # MCP acquisition and generated tools retain separate authority gates.
     from .chat_message_actions import answer_only_runtime, require_dispatch_sources
     require_dispatch_sources()
-    with _enrich("self-learning preflight"):
+    with _enrich("self-learning preflight", paid=True):
         from . import self_learning
         if not answer_only_runtime() and self_learning.enabled() and self_learning.settings()["preflight"]:
             acquired = await self_learning.preflight(
@@ -1039,7 +1086,7 @@ async def _apply_brief_enrichments(
     # Default-on test-time skill synthesis (SOTA SkillTTA): synthesize a short
     # task-specific cheat-sheet for THIS goal and inject it. The extra model call
     # still requires provider-egress authority; spend is metered; fail-open.
-    with _enrich("skill synthesis"):
+    with _enrich("skill synthesis", paid=True):
         from .skill import synthesis as skill_synthesis
         if skill_synthesis.enabled():
             _sk = await skill_synthesis.synthesize_task_skill(
@@ -1126,10 +1173,10 @@ async def _apply_brief_enrichments(
     # pick the winner, and prepend it as guidance. Default mode skips this
     # entirely (no extra LLM calls), so behaviour is unchanged. The
     # shared budget is passed through, so planning counts against the
-    # goal's cap; if it exhausts the budget, root.run() below surfaces the
-    # graceful "hit your limit" message.
+    # goal's cap; a budget stop here ends the run with the graceful "hit your
+    # limit" message.
     _planning_mode = "default"
-    with _enrich("tree-of-thought planning"):
+    with _enrich("tree-of-thought planning", paid=True):
         from . import tree_of_thought as _tot
         _use_tot = _tot.enabled()
         # Learned topology selection: [planning] mode = "auto" lets the
@@ -1479,9 +1526,11 @@ class _RunLifecycle:
         if error is not None:
             cancelled = isinstance(error, asyncio.CancelledError)
             allowance_stop = isinstance(error, BudgetExceeded)
-            if cancelled or allowance_stop:
+            accounting_stop = isinstance(error, UsageAccountingError)
+            if cancelled or allowance_stop or accounting_stop:
                 self.summary = (
                     cancellation_message(error) if cancelled
+                    else _usage_accounting_message(str(error), self.goal_id) if accounting_stop
                     else _budget_stop_message(self.budget, self.goal_id, error)
                 )
                 self.outcome = "interrupted"
@@ -2736,7 +2785,9 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
         except Exception:  # pragma: no cover
             pass
         log.warning("goal #%s blocked by UserPromptSubmit hook", goal_id)
-        return "BLOCKED: goal input rejected by a UserPromptSubmit hook"
+        return "BLOCKED: " + (
+            _hooks.config_block_reason()
+            or "goal input rejected by a UserPromptSubmit hook")
 
     from .knowledge_task_context import has_binding, run_analysis
     if has_binding(goal_id, world):
@@ -2910,6 +2961,11 @@ async def _run_goal_accounted(
     except BudgetExceeded as exc:
         error = exc
         return _budget_stop_message(budget, goal_id, exc)
+    except UsageAccountingError as exc:
+        # A paid call outside the agent loop could not be billed: stop and
+        # mark the goal blocked, as the in-loop path does.
+        error = exc
+        return _usage_accounting_message(str(exc), goal_id)
     except GoalCancelled as exc:
         error = exc
         return cancellation_message(exc)
@@ -3368,16 +3424,7 @@ async def run_goal_best_of_n(
 
     raw_ladder = env_or_config("MAVERICK_BON_LADDER", "search", "ladder", default_ladder) \
         or default_ladder
-    ladder: list[tuple[str, float]] = []
-    for entry in raw_ladder.split(","):
-        if ":" in entry:
-            mdl, t = entry.rsplit(":", 1)
-            try:
-                ladder.append((mdl.strip(), float(t)))
-            except ValueError:
-                ladder.append((mdl.strip(), 0.3 + 0.25 * len(ladder)))
-        elif entry.strip():
-            ladder.append((entry.strip(), 0.3 + 0.25 * len(ladder)))
+    ladder = _parse_bon_ladder(raw_ladder)
     # Pad the ladder with temperature-only steps if N > len(ladder).
     while len(ladder) < n:
         ladder.append(("", round(0.2 + 0.25 * len(ladder), 2)))
@@ -3405,6 +3452,10 @@ async def run_goal_best_of_n(
                 or (remaining_wall is not None and remaining_wall <= 0)):
             log.info("best-of-N early break: no budget left for attempt %d", i)
             break
+        allowances = _attempt_allowances(budget)
+        if allowances is None:  # a zero cap would still pay for one model call
+            log.info("best-of-N early break: token or tool-call allowance used up")
+            break
         per_attempt_dollars = (remaining_dollars / remaining_attempts
                                if remaining_dollars is not None else None)
         per_attempt_wall = (remaining_wall / remaining_attempts
@@ -3424,9 +3475,9 @@ async def run_goal_best_of_n(
         attempt_budget = _Budget(
             max_dollars=per_attempt_dollars,
             max_wall_seconds=per_attempt_wall,
-            max_input_tokens=budget.max_input_tokens,
-            max_output_tokens=budget.max_output_tokens,
-            max_tool_calls=budget.max_tool_calls,
+            # Attempts run one after another and the parent absorbs each one,
+            # so the remaining (not the full) allowance keeps the sum in the cap.
+            **allowances,
         )
         # Per-attempt sampling temperature via a ContextVar, NOT a process-
         # global env var: a concurrent goal on the same process must not inherit
@@ -3451,9 +3502,10 @@ async def run_goal_best_of_n(
                     orchestrator_model_override=per_model or None,
                 )
             except Exception as e:
-                # A budget cap or killswitch is a STOP signal, not a normal
-                # attempt failure -- re-raise so it propagates instead of being
-                # downgraded to a zero-score candidate (matches agent.py).
+                # A budget cap or killswitch raised here is a STOP signal, not
+                # a normal attempt failure -- re-raise it. run_goal usually
+                # reports both as a returned message instead, so the ladder
+                # continues and each later attempt stops at its own check.
                 from . import killswitch as _ks
                 if isinstance(e, (BudgetExceeded, _ks.Halted)):
                     raise

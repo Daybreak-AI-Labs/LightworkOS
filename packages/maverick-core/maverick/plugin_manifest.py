@@ -9,9 +9,10 @@ points must ship a ``maverick-plugin.toml`` declaring:
   - Permissions they request (network, fs writes, etc.)
   - Author + license + repo URL
 
-At load time, the kernel validates the manifest. Mismatches surface
-a warning (not a hard fail) so old plugins keep working while we
-build out the ecosystem.
+At load time, the kernel validates the manifest. A plugin with no
+manifest still loads (v1-era); a declared manifest that is invalid or
+names an unsupported API major is refused (``plugins._gate``), and
+requested permissions must be granted unless enforcement is turned off.
 
 Schema (TOML):
 

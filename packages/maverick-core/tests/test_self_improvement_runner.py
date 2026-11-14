@@ -57,9 +57,14 @@ def test_review_generated_tools_promotes_retires_holds(tmp_path, monkeypatch):
     for _ in range(6):
         t.record("bad", False)
     actions = review_generated_tools(
-        ["good", "bad"], t, baseline_success=0.5, controller=_ctrl(tmp_path))
+        ["good", "bad"], t, baseline_success=0.5, controller=_ctrl(tmp_path),
+        capability_widens_for=lambda _name: False)
     assert actions["good"] == "promoted"
     assert actions["bad"] == "retire"
+    # Without capability evidence a new tool's non-escalation is unproven.
+    unproven = review_generated_tools(
+        ["good"], t, baseline_success=0.5, controller=_ctrl(tmp_path))
+    assert unproven["good"] == "hold"
 
 
 # -- judgment dataset builder ----------------------------------------------

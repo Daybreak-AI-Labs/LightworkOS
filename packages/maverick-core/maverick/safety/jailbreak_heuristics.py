@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 
@@ -19,6 +20,28 @@ class _Pat:
     name: str
     pat: re.Pattern
     weight: float
+    # When set, the hit also needs this pattern somewhere after ``pat``'s match.
+    # Two linear searches replace a ``pat.*then`` regex, which rescans to the
+    # end of the text from every start and is quadratic.
+    then: re.Pattern | None = None
+    # When set, decides the hit instead of ``pat`` (which then documents it).
+    check: Callable[[str], bool] | None = None
+
+
+# ``curl ... | sh``: a fetch command and a pipe into a shell in the same
+# pipeline stage. Searched per stage (from the previous pipe to this one, so a
+# line continuation does not end it), so each character is scanned once
+# however long the URL is.
+_PIPE_TO_SHELL = re.compile(r"\|\s*(?:sh|bash)", re.IGNORECASE)
+_SHELL_FETCH = re.compile(r"\b(?:curl|wget|nc|bash|sh)\s", re.IGNORECASE)
+
+
+def _pipes_fetch_to_shell(text: str) -> bool:
+    for m in _PIPE_TO_SHELL.finditer(text):
+        start = text.rfind("|", 0, m.start()) + 1
+        if _SHELL_FETCH.search(text, start, m.start()):
+            return True
+    return False
 
 
 _PATTERNS: list[_Pat] = [
@@ -83,10 +106,13 @@ _PATTERNS: list[_Pat] = [
          ), 1.0),
     _Pat("admin_override",
          re.compile(
-             r"\[(?:ADMIN|SYSTEM|INST|OVERRIDE|SUDO|MAINTENANCE|START|END)"
-             r"\b[^\]]*\]",
+             r"\[(?:ADMIN|SYSTEM|INST|OVERRIDE|SUDO|MAINTENANCE|START|END)\b",
              re.IGNORECASE,
-         ), 1.8),
+         ), 1.8,
+         # The tag needs a closing bracket anywhere after it (the first one
+         # closes it, as "[^\]]*\]" did); two searches instead of a rescan
+         # from every tag keep this linear.
+         then=re.compile(r"\]")),
     _Pat("api_key_extraction",
          re.compile(
              r"\b(?:reveal|print|share|output|show|tell|give|return|"
@@ -108,10 +134,10 @@ _PATTERNS: list[_Pat] = [
     _Pat("execute_encoded",
          re.compile(
              r"\b(?:decode|translate|convert)\s+(?:from|to)?\s*"
-             r"(?:base64|rot13|hex|binary)\b.*\b(?:and\s+)?"
-             r"(?:execute|run|act\s+on|process)\b",
-             re.IGNORECASE | re.DOTALL,
-         ), 1.8),
+             r"(?:base64|rot13|hex|binary)\b",
+             re.IGNORECASE,
+         ), 1.8,
+         then=re.compile(r"\b(?:execute|run|act\s+on|process)\b", re.IGNORECASE)),
     _Pat("destructive_shell",
          re.compile(
              r"\brm\s+-rf\s+/(?!tmp)|drop\s+(?:table|database)\b|"
@@ -173,11 +199,7 @@ _PATTERNS: list[_Pat] = [
              r"everything\s+(?:above|before))\b",
              re.IGNORECASE,
          ), 1.5),
-    _Pat("execute_shell_string",
-         re.compile(
-             r"(?:curl|wget|nc|bash|sh)\s+[^|]*\|\s*(?:sh|bash)",
-             re.IGNORECASE,
-         ), 2.0),
+    _Pat("execute_shell_string", _PIPE_TO_SHELL, 2.0, check=_pipes_fetch_to_shell),
     _Pat("test_was_a_test",
          re.compile(
              r"(?:previous|prior)\s+(?:turn|instruction|prompt)s?\s+"
@@ -203,14 +225,38 @@ _PATTERNS: list[_Pat] = [
 ]
 
 
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def _squeeze_whitespace(text: str) -> str:
+    """Collapse each whitespace run to one newline (if it holds one) or one space.
+
+    Several patterns put ``\\s+``/``\\s*`` quantifiers next to each other; on a
+    long whitespace run they try every split of it, which is cubic in its
+    length. With runs of length one the patterns match the same phrases in
+    linear time. A newline is kept because ``discard_conversation`` looks for it.
+    """
+    return _WHITESPACE_RUN.sub(lambda m: "\n" if "\n" in m.group() else " ", text)
+
+
+def _hit(p: _Pat, text: str) -> bool:
+    if p.check is not None:
+        return p.check(text)
+    m = p.pat.search(text)
+    if m is None:
+        return False
+    return p.then is None or p.then.search(text, m.end()) is not None
+
+
 def score_text(text: str) -> tuple[float, list[str]]:
     """Return (score in [0,1], list of matched pattern names)."""
     if not text:
         return 0.0, []
+    text = _squeeze_whitespace(text)
     raw = 0.0
     matched: list[str] = []
     for p in _PATTERNS:
-        if p.pat.search(text):
+        if _hit(p, text):
             raw += p.weight
             matched.append(p.name)
     # Sigmoid centered at 1.0: a single strong-weight hit (>=2.0) yields

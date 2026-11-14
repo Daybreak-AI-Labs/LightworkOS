@@ -37,3 +37,15 @@ class TestProgressSanitization:
         out = _sanitize_progress_content(text, limit=200)
         assert "abc123secrettokenvalue4567890" not in out
         assert "[REDACTED:bearer]" in out
+
+
+def test_gc_rejects_zero_and_negative_retention_days(tmp_path):
+    """A negative cutoff lies in the future, so it would delete everything."""
+    from click.testing import CliRunner
+    from maverick.cli import main
+
+    db = tmp_path / "world.db"
+    for flag in ("--days", "--events-days"):
+        for value in ("0", "-1"):
+            result = CliRunner().invoke(main, ["--db", str(db), "gc", "--yes", flag, value])
+            assert result.exit_code == 2, result.output

@@ -282,7 +282,7 @@ class DevcontainerBackend:
 
         try:
             result = subprocess.run(
-                args, capture_output=True, text=True, timeout=effective,
+                args, capture_output=True, text=True, errors="replace", timeout=effective,
                 env=scrub_env(),
             )
             return ExecResult(

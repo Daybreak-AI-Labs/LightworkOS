@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 from maverick import containment
 from maverick.file_lock import private_path_is_restricted
-from maverick.tools import ToolRegistry
+from maverick.tools import Tool, ToolRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +46,30 @@ def test_enabled_env_wins(monkeypatch, tmp_path):
     _config(monkeypatch, tmp_path, "[containment]\nenabled = true\n")
     monkeypatch.setenv("MAVERICK_CONTAINMENT", "0")
     assert containment.enabled() is False
+
+
+def test_enabled_fails_closed_on_unclear_settings(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAVERICK_CONTAINMENT", "enabled")
+    assert containment.enabled() is True
+    monkeypatch.delenv("MAVERICK_CONTAINMENT")
+    _config(monkeypatch, tmp_path, "[containment]\nenabled = true\nbroken = [\n")
+    assert containment.enabled() is True
+    current = containment.status()
+    assert current["reason"] == "unreadable_configuration"
+    assert "could not be read" in current["message"]
+    reg = ToolRegistry()
+    containment.apply(containment.active_profile(), registry=reg, sandbox_env={})
+    assert "could not be read" in reg.acl_denial_note
+    # The note reaches the denial a tool call sees.
+    reg.register(Tool(name="shell", description="", input_schema={}, fn=lambda **_: ""))
+    reg.set_acl(denied={"shell"})
+    assert "could not be read" in reg._tool_access_error("shell")
+
+
+def test_unreadable_config_without_containment_keeps_it_off(monkeypatch, tmp_path):
+    _config(monkeypatch, tmp_path, "[models]\nbroken = [\n")
+    assert containment.enabled() is False
+    assert containment.status()["reason"] == "off"
 
 
 def test_enabled_from_config(monkeypatch, tmp_path):
@@ -104,6 +128,17 @@ def test_denied_tools_actually_blocked_by_registry_acl():
                       sandbox_env={})
     assert reg._acl_allows("http_fetch") is False
     assert reg._acl_allows("read_file") is True
+
+
+def test_apply_denies_deferrable_connectors():
+    reg = ToolRegistry()
+    reg.deferrable_names.add("sendgrid")
+    report = containment.apply(containment.ContainmentProfile(), registry=reg,
+                               sandbox_env={})
+    assert reg._acl_allows("sendgrid") is False
+    assert reg._acl_allows("dns_lookup") is False
+    assert reg._acl_allows("web_recorder") is True  # generates a script; no network
+    assert "sendgrid" in report.denied_tools
 
 
 # --- apply: env hardening -----------------------------------------------------
@@ -170,3 +205,17 @@ def test_ephemeral_workdir_is_outside_maverick_home(tmp_path):
         assert maverick_home() not in wd.path.parents
     finally:
         wd.cleanup()
+
+
+def test_no_network_containment_refuses_backends_it_cannot_take_offline(tmp_path):
+    # ssh and entry-point backends never read allow_network, so containment's
+    # no-network promise cannot be kept there: refuse them, as the network
+    # posture does, instead of running them with network.
+    from maverick.sandbox import SandboxPolicyError, _contain
+
+    profile = containment.ContainmentProfile(ephemeral_workspace=False)
+    for chosen in ("ssh", "ep:custom"):
+        with pytest.raises(SandboxPolicyError):
+            _contain(profile, chosen, {}, tmp_path, [])
+    cfg, _ = _contain(profile, "docker", {}, tmp_path, [])
+    assert cfg["allow_network"] is False

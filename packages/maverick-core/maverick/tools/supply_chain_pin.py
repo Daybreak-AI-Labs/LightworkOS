@@ -41,6 +41,22 @@ def _is_range(version: str) -> bool:
     return _WILDCARD_X_RE.search(v) is not None
 
 
+_DIGEST_PIN_RE = re.compile(r"(?:sha(?:256|384|512):)?[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?\Z|"
+                            r"sha(?:256|384|512):[0-9a-fA-F]{40,128}\Z")
+
+
+def _is_reference(version: str) -> bool:
+    """True for a tag, branch or URL (``latest``, ``main``, ``git+https://...``):
+    a pin names a version number, optionally after ``==``/``=`` or ``v``, or
+    is a full commit SHA (40/64 hex) or a ``sha256:`` style digest."""
+    if _DIGEST_PIN_RE.match(version.strip()):
+        return False
+    v = version.strip().lstrip("=").strip()
+    if v[:1] in ("v", "V"):
+        v = v[1:]
+    return not v[:1].isdigit()
+
+
 def _check(args: dict[str, Any]) -> str:
     deps = args.get("deps")
     if not isinstance(deps, list):
@@ -66,6 +82,8 @@ def _check(args: dict[str, Any]) -> str:
             violations.append(f"{name}: unpinned (no version)")
         elif _is_range(version):
             violations.append(f"{name}: version range/wildcard {version!r} is not a pin")
+        elif _is_reference(version):
+            violations.append(f"{name}: {version!r} is a tag, branch or URL, not a version pin")
         if require_hash:
             h = str(dep.get("hash") or "").strip()
             if not h:
@@ -119,7 +137,8 @@ def supply_chain_pin() -> Tool:
             "Audit dependency pinning. op=check with 'deps' (each {name, version, "
             "hash?}) and optional 'policy' {require_hash: bool, default true}. "
             "Flags unpinned (no version), version-range/wildcard "
-            "(^,~,>,<,*,=,x,||,-), and unhashed packages. Returns OK or "
+            "(^,~,>,<,*,!=,x,||,' - '), tags/branches/URLs that are not a "
+            "version number (latest, main, git+...), and unhashed packages. Returns OK or "
             "VIOLATIONS listing the offenders. Deterministic, offline."
         ),
         input_schema=_SCHEMA,

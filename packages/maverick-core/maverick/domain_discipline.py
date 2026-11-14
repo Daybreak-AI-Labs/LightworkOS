@@ -6,7 +6,7 @@ suite WORKS): the verification habits, escalation rules, and professional
 guardrails that distinguish a dependable specialist from a chatty one.
 
 It is appended to the pack persona at spawn time (``agent_from_profile``)
-rather than copy-pasted into 338 TOML files, so:
+rather than copy-pasted into every pack's TOML file, so:
 
 * a wording improvement here upgrades every pack — built-in AND
   operator-authored — at once;

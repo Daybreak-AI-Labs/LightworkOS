@@ -28,8 +28,8 @@ for learning) and the Operating Record:
 
 The external boundary is fail-closed throughout: an unenrolled agent is
 denied, a Shield scanner error DENIES (never waves through), a malformed
-sidecar is treated as empty-but-alarmed, and over-budget agents are refused
-further actions rather than silently accumulating spend.
+sidecar reads as empty-but-alarmed and is never overwritten, and over-budget
+agents are refused further actions rather than silently accumulating spend.
 """
 from __future__ import annotations
 
@@ -225,6 +225,10 @@ def _load_sidecar(*, strict: bool = False) -> dict[str, dict]:
 
 def _save_sidecar(entries: dict[str, dict]) -> None:
     from .file_lock import atomic_write_text, ensure_private_directory
+    # Callers read with the lenient loader, which turns an unreadable or
+    # corrupt sidecar into ``{}``. Writing that back would replace every other
+    # agent's enrollment, containment flag and meters, so refuse instead.
+    _load_sidecar(strict=True)
     path = registry_path()
     ensure_private_directory(path.parent)
     atomic_write_text(path, json.dumps(entries, indent=2, sort_keys=True),
@@ -396,7 +400,10 @@ def enroll(
     with _sidecar_locked():
         sidecar = _load_sidecar()
         prior = sidecar.get(agent.id, {})
+        # Re-enrollment updates the enrollment fields and keeps everything
+        # else the entry carries (execution and mint ledgers, last contact).
         sidecar[agent.id] = {
+            **prior,
             "platform": platform,
             "description": str(description or "")[:500],
             "owner": str(owner or "")[:200],
@@ -515,8 +522,10 @@ def _mint_approval_required() -> bool:
     """``[external_agents] mint_approval``: step-up re-auth on credential
     minting — a mint parks a world approval a decision-maker must approve."""
     try:
-        from .config import get_external_agents
-        return bool(get_external_agents()["mint_approval"])
+        from .config import config_source_errors, get_external_agents
+        required = bool(get_external_agents()["mint_approval"])
+        # An unreadable config may have lost the policy: park the approval.
+        return required or bool(config_source_errors(include_tenant=True))
     except Exception as exc:
         raise ExternalAgentsError(
             "credential mint approval policy is unavailable; refusing to "
@@ -1055,7 +1064,10 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
     """Close a live run: outcome, step trail, costed episode, spend meter.
 
     Same schema as ``record_run`` minus ``title``. The goal must be live and
-    owned by the caller — cross-agent finishes are refused."""
+    owned by the caller — cross-agent finishes are refused. A contained agent
+    may still close its run so the reported cost reaches the spend meter, but
+    its summary, steps and outcome are not accepted: the goal is closed as
+    blocked with a fixed note."""
     if not enabled():
         raise ExternalAgentsError("external agents plane is disabled")
     from .agent_trust import decide_inbound, lookup, record_denied
@@ -1064,6 +1076,11 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
         record_denied(agent_id, decision, direction="inbound",
                       correlation_id="finish_run")
         raise ExternalAgentsError(f"denied: {decision.reason}")
+    meta = _load_sidecar().get(agent_id)
+    if meta is None:
+        raise ExternalAgentsError(
+            f"agent {agent_id!r} has a trust entry but no enrollment")
+    contained = bool(meta.get("contained"))
     principal = f"agent:{agent_id}"
     from .world_model import open_world
     w = open_world()
@@ -1073,19 +1090,10 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
         raise ExternalAgentsError(
             "run is not live under this agent (finished, reclaimed, or "
             "not yours)")
-    summary = _clean_text(run.get("summary"), shield=shield)
-    if summary is None:
-        raise ExternalAgentsError("run summary rejected by the ingest screen")
-    outcome = "success" if str(run.get("outcome", "")).lower() in (
-        "success", "done", "ok") else "failure"
-    steps: list[str] = []
-    for raw in list(run.get("steps") or [])[:_MAX_STEPS]:
-        cleaned = _clean_text(raw, shield=shield)
-        if cleaned is None:
-            raise ExternalAgentsError(
-                "a run step was rejected by the ingest screen")
-        if cleaned:
-            steps.append(cleaned)
+    if contained:
+        summary, outcome, steps = _CONTAINED_CLOSE, "failure", []
+    else:
+        summary, outcome, steps = _finished_run_text(run, shield)
     for step in steps:
         w.append_event(goal_id, principal, "status", step)
     cost = max(0.0, float(run.get("cost_dollars") or 0.0))
@@ -1114,8 +1122,33 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
                 goal_id=int(goal_id), external_agent=agent_id,
                 outcome=outcome, cost_dollars=cost, steps=len(steps),
                 over_budget=over_budget, over_wall=over_wall, live=True)
-    return {"goal_id": int(goal_id), "over_budget": over_budget,
-            "over_wall": over_wall}
+    out = {"goal_id": int(goal_id), "over_budget": over_budget,
+           "over_wall": over_wall}
+    if contained:
+        out["contained"] = True
+    return out
+
+
+_CONTAINED_CLOSE = ("Closed while the agent was contained; its reported outcome "
+                    "was not accepted.")
+
+
+def _finished_run_text(run: dict, shield: Any | None) -> tuple[str, str, list[str]]:
+    """Screened summary, outcome and step trail of a finished run."""
+    summary = _clean_text(run.get("summary"), shield=shield)
+    if summary is None:
+        raise ExternalAgentsError("run summary rejected by the ingest screen")
+    outcome = "success" if str(run.get("outcome", "")).lower() in (
+        "success", "done", "ok") else "failure"
+    steps: list[str] = []
+    for raw in list(run.get("steps") or [])[:_MAX_STEPS]:
+        cleaned = _clean_text(raw, shield=shield)
+        if cleaned is None:
+            raise ExternalAgentsError(
+                "a run step was rejected by the ingest screen")
+        if cleaned:
+            steps.append(cleaned)
+    return summary, outcome, steps
 
 
 # -- learning plane (fleet memory over the gateway) ---------------------------
@@ -1230,6 +1263,7 @@ def screen(
             decode_approval_detail,
             encode_operation_approval_detail,
         )
+        from .safety.dual_control import required_approvals
         from .world_model import open_world
         action = f"external:{agent_id}:{tool}"
         target = {"agent_id": agent_id, "tool": tool}
@@ -1265,6 +1299,7 @@ def screen(
             scope=meta.get("department") or None,
             detail=approval_detail,
             provenance="external_agents",
+            approvals_required=required_approvals(req_risk),
             requested_by=f"agent:{agent_id}")
         _notify_approval(approval_id, agent_id, tool, req_risk,
                          meta.get("department") or "")
@@ -1397,9 +1432,12 @@ def _notify_approval(approval_id: int, agent_id: str, tool: str,
 def _approval_floor() -> str:
     from .safety.tool_risk import RISK_LEVELS
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
         v = str((load_config() or {}).get("actions", {}).get(
             "require_approval_at", "high")).strip().lower()
+        if config_source_errors(include_tenant=True):
+            # An unreadable policy cannot lower the floor: every risk parks.
+            return RISK_LEVELS[0]
         return v if v in RISK_LEVELS else "high"
     except Exception:
         return "high"
@@ -2128,7 +2166,7 @@ def _park_execution(agent_id: str, conn, meta: dict, *, tool: str,
                 live[execution_id] = {
                     "approval_id": None, "digest": digest,
                     "approval_action": approval_action,
-                    "connector": connector, "op": op, "path": path[:500],
+                    "connector": connector, "op": op, "path": path,
                     "goal_id": goal_id, "created_at": now,
                     "status": "pending",
                     "idempotency_key": idempotency_key or None,
@@ -2180,6 +2218,7 @@ def _park_execution(agent_id: str, conn, meta: dict, *, tool: str,
                                         "body": body or {}})
                     if op != "get" else f"would GET {connector}{path}")
         from .approval_cards import encode_operation_approval_detail
+        from .safety.dual_control import required_approvals
         from .world_model import open_world
         target = {
             "agent_id": agent_id,
@@ -2220,7 +2259,9 @@ def _park_execution(agent_id: str, conn, meta: dict, *, tool: str,
                 irreversible=op != "get",
                 ttl_seconds=_EXECUTION_TTL_SECONDS,
             ),
-            provenance="external_agents", requested_by=f"agent:{agent_id}")
+            provenance="external_agents",
+            approvals_required=required_approvals(req_risk),
+            requested_by=f"agent:{agent_id}")
     except Exception:
         # Nothing was authorized and nothing will fire — hand the reserved
         # slot back instead of stranding a 24h pending entry that has no

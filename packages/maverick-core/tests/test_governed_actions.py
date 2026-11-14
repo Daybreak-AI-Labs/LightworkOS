@@ -161,6 +161,38 @@ def test_lineage_is_tenant_scoped(monkeypatch, tmp_path):
     assert not (tmp_path / ".maverick" / "lineage" / "4.ndjson").exists()  # not the flat dir
 
 
+def test_lineage_honours_maverick_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "custom"))
+    assert ga_mod.record_tool_lineage(7, "shell", {"c": "y"}, strict=True)
+    assert (tmp_path / "custom" / "lineage" / "7.ndjson").exists()
+    assert not (tmp_path / "home" / ".maverick").exists()
+    # A ledger left under the old shared ~/.maverick/lineage cannot be tied
+    # to this home (goal ids repeat), so it is only mentioned, never read.
+    legacy = tmp_path / "home" / ".maverick" / "lineage"
+    legacy.mkdir(parents=True)
+    (legacy / "8.ndjson").write_text((tmp_path / "custom" / "lineage" / "7.ndjson").read_text())
+    verdict = ga_mod.verify_lineage_file(8)
+    assert verdict.startswith("MISSING") and "cannot be tied" in verdict
+    assert ga_mod.load_lineage(8) == []
+
+
+def test_unreadable_config_keeps_the_approval_floor_and_lineage_on(monkeypatch, tmp_path):
+    from maverick import config
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("MAVERICK_CONFIG", str(path))
+    monkeypatch.delenv("MAVERICK_GOVERNED_ACTIONS", raising=False)
+    path.write_text('[actions]\nrequire_approval_at = "high"\n')
+    config.reset_config_cache()
+    assert (ga_mod._require_approval_at(), ga_mod.enabled()) == ("high", False)
+    path.write_text(path.read_text() + "this is not toml\n")
+    config.reset_config_cache()
+    try:
+        assert (ga_mod._require_approval_at(), ga_mod.enabled()) == ("low", True)
+    finally:
+        config.reset_config_cache()
+
+
 def test_lineage_caps_large_params(tmp_path):
     # A huge tool input (e.g. full file content) must not be stored verbatim.
     ga_mod.record_tool_lineage(2, "write_file", {"content": "x" * 10000}, store_dir=tmp_path)

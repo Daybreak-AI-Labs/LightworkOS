@@ -296,10 +296,10 @@ class LLMCache:
                 ),
             )
             if self.max_rows:
-                # Same TTL+LRU-count-cap policy as cache.eviction (shared with
-                # the learning cache), expressed in SQL here because this store
-                # is SQLite rows rather than an in-memory dict.
-                # Evict beyond the cap by recency (true LRU). The previous
+                # A count cap expressed in SQL (cache.eviction is not used here).
+                # Evict beyond the cap by insertion time (oldest created_at
+                # first; a hit does not refresh a row, so this is FIFO, not
+                # LRU: the table has no last_used column). The previous
                 # `ORDER BY hit_count DESC` evicted the row we JUST inserted
                 # (hit_count=0) whenever the cache was full of hit rows, so
                 # under a stream of unique prompts the cache stopped

@@ -109,6 +109,19 @@ def test_gate_flags_a_bare_except_around_an_audit_write(tmp_path) -> None:
     assert hits[0]["catches"] == ["Exception"]
 
 
+def test_gate_flags_an_aliased_audit_writer(tmp_path) -> None:
+    hits = _scan_source(tmp_path, """
+        from maverick.audit import record as audit_record
+
+        def go():
+            try:
+                audit_record("tool_start", tool="t")
+            except Exception:
+                pass
+    """)
+    assert len(hits) == 1
+
+
 def test_gate_flags_catching_only_half_the_pair(tmp_path) -> None:
     """The exact mistake that shipped: hardened against the wrong refusal."""
     hits = _scan_source(tmp_path, """

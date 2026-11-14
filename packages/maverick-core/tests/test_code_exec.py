@@ -161,6 +161,52 @@ async def test_budget_exhaustion_stops_before_running(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_goal_cancel_stops_remaining_declared_calls(monkeypatch):
+    captured = _patch_sandbox(monkeypatch)
+    agent = _FakeAgent()
+    agent.ctx.goal_id, agent.ctx.world = 7, object()
+    agent._goal_cancelled = lambda: len(agent.ran) >= 1  # cancelled after call 1
+    out = await code_exec_tool(agent).fn(
+        {"code": "x", "tool_calls": [{"name": "a"}, {"name": "b"}]})
+    assert out.startswith("INDETERMINATE: goal cancelled after 1 declared")
+    assert agent.ran == [("a", {})]
+    assert captured == {}  # the script never ran
+
+
+@pytest.mark.asyncio
+async def test_non_bmp_tool_output_survives_into_the_script(monkeypatch):
+    captured = _patch_sandbox(monkeypatch)
+    agent = _FakeAgent(tool_output="ok \U0001F600")
+    await code_exec_tool(agent).fn({"code": "x", "tool_calls": [{"name": "t", "as": "v"}]})
+    namespace: dict = {}
+    exec(captured["stdin"].split("\n\n", 1)[0], namespace)
+    assert namespace["tools"]["v"] == "ok \U0001F600:t"
+
+
+@pytest.mark.asyncio
+async def test_lone_surrogate_and_late_budget_stop_are_handled(monkeypatch):
+    from maverick.budget import BudgetExceeded
+    from maverick.tools.code_exec import _outputs_literal
+
+    literal = _outputs_literal({"v": "bad \ud800"})
+    assert "\\ud800" in literal  # escaped fallback: encodable and valid Python
+    literal.encode("utf-8")
+
+    agent = _FakeAgent()
+    calls = {"n": 0}
+
+    def record():
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise BudgetExceeded("out of money")
+
+    agent.ctx.budget.record_tool_call = record
+    out = await code_exec_tool(agent).fn(
+        {"code": "x", "tool_calls": [{"name": "a"}, {"name": "b"}]})
+    assert out.startswith("INDETERMINATE: budget exhausted before running 'b'")
+
+
+@pytest.mark.asyncio
 async def test_empty_stdout_gives_a_hint(monkeypatch):
     _patch_sandbox(monkeypatch, out="")
     out = await code_exec_tool(_FakeAgent()).fn({"code": "x = 1"})

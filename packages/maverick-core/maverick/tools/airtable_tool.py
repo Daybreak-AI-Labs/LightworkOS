@@ -14,11 +14,10 @@ from __future__ import annotations
 
 import logging
 import os
-import urllib.parse
 from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
-from . import Tool, as_bool
+from . import Tool, as_bool, safe_path_segment
 
 log = logging.getLogger(__name__)
 
@@ -58,12 +57,17 @@ def _headers(key: str) -> dict[str, str]:
 
 
 def _enc(name: str) -> str:
-    return urllib.parse.quote(name, safe="")
+    segment = safe_path_segment(name)
+    if segment is None:
+        raise RuntimeError(f"invalid Airtable id {name!r}")
+    return segment
 
 
 def _url(base: str, table: str, *parts: str) -> str:
-    path = "/".join([_enc(table), *(_enc(p) for p in parts if p)])
-    return f"https://api.airtable.com/v0/{base}/{path}"
+    # Every id, the base included, is exactly one encoded path segment, so a
+    # model-supplied value cannot retarget the request to another API path.
+    path = "/".join([_enc(base), _enc(table), *(_enc(p) for p in parts if p)])
+    return f"https://api.airtable.com/v0/{path}"
 
 
 def _get(url: str, params: dict | None = None, key: str = "") -> tuple[int, Any]:

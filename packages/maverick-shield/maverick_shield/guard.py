@@ -35,13 +35,13 @@ from .output_policy import scan_output as output_policy_scan
 log = logging.getLogger(__name__)
 
 
-def _collect_arg_strings(value: Any) -> list[str]:
+def _collect_arg_strings(value: Any, keys: bool = True) -> list[str]:
     """Recursively collect every string leaf from a tool-args structure.
 
     Used so ``scan_tool_call`` can scan the bare argument values (preserving
     their real boundaries) instead of ``repr(args)``, whose quoting can break
     rule anchors. Dict keys are included too, since an injection can hide in a
-    key name.
+    key name. With ``keys=False`` only the values are collected, in order.
     """
     out: list[str] = []
     if isinstance(value, str):
@@ -58,12 +58,12 @@ def _collect_arg_strings(value: Any) -> list[str]:
             out.append(raw.decode("latin-1"))
     elif isinstance(value, dict):
         for k, v in value.items():
-            if isinstance(k, str):
+            if keys and isinstance(k, str):
                 out.append(k)
-            out.extend(_collect_arg_strings(v))
+            out.extend(_collect_arg_strings(v, keys))
     elif isinstance(value, (list, tuple, set)):
         for item in value:
-            out.extend(_collect_arg_strings(item))
+            out.extend(_collect_arg_strings(item, keys))
     elif value is not None:
         out.append(str(value))
     return out
@@ -414,6 +414,18 @@ class Shield:
         leaves = _collect_arg_strings(args)
         payload = "\n".join([f"tool={tool_name}", *leaves])
         verdict = self._scan_via_backend(payload)
+        # Keys sit between the values above, so a command split across fields
+        # ({"cmd": "rm", "args": ["-rf", "/"]}) never read as one command. Scan
+        # the values alone, in order, as a SECOND scan: appending them to the
+        # payload doubled its length and pushed large benign calls over the
+        # scan cap (blocked as input_too_large). This text is never longer
+        # than the payload above, so it cannot trip the cap on its own.
+        values = _collect_arg_strings(args, keys=False)
+        if verdict.allowed and values != leaves:
+            joined = self._scan_via_backend("\n".join(values))
+            if not joined.allowed:
+                joined.scan_error = joined.scan_error or verdict.scan_error
+                verdict = joined
         # Compose operator-defined constitutional rules onto the tool-call
         # surface too -- the most dangerous sink. scan_input/scan_output do
         # this; omitting it here left the constitution unenforced exactly where

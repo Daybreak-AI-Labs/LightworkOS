@@ -576,9 +576,17 @@ def _combine(verdicts: list[VerifierVerdict], *, weighted: bool) -> VerifierVerd
         return verdicts[0]
 
     if weighted:
-        # Weighted by each voter's own confidence.
+        # A reject's ``confidence`` is read two ways in practice: a failed
+        # member and a doubtful voter report low confidence in the ANSWER
+        # (reject() is 0.0), while a voter that found a real issue reports
+        # high confidence in its VERDICT. Either way the reject must count,
+        # so it weighs the larger of the two readings; weighting by the raw
+        # value let one accept outvote failed members, and by (1 - value)
+        # let it outvote confident rejects.
         accept_weight = sum(v.confidence for v in verdicts if v.accepts)
-        reject_weight = sum(v.confidence for v in verdicts if not v.accepts)
+        reject_weight = sum(
+            max(v.confidence, 1.0 - v.confidence) for v in verdicts if not v.accepts
+        )
         accepts = accept_weight > reject_weight
     else:
         accepts = sum(1 for v in verdicts if v.accepts) > len(verdicts) / 2
@@ -614,7 +622,9 @@ def _provider(model: str) -> str:
     m = model.lower()
     if m.startswith("claude"):
         return "anthropic"
-    if m.startswith("gpt") or m.startswith("o"):
+    # OpenAI reasoning models are "o" plus a digit (o1, o3, o4-mini); a bare
+    # "o" prefix also matched unrelated ids such as "ollama-..." or "olmo".
+    if m.startswith("gpt") or re.match(r"o\d", m):
         return "openai"
     if m.startswith("gemini"):
         return "gemini"

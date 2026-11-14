@@ -1,6 +1,6 @@
 """Marketplace stats.
 
-Aggregates the local ratings ledger (:mod:`maverick.marketplace_ratings`) into
+Aggregates the local ratings ledger (:mod:`maverick.marketplace.ratings`) into
 the numbers a stats view wants: how many things you've rated, the average, the
 1–5★ distribution, a per-kind breakdown (skills vs templates vs channels), and
 your top-rated items. Self-host-first: this summarizes the operator's **own**

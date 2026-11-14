@@ -187,8 +187,24 @@ class Vault:
                 return True
 
 
-def _resolve_key(key_file: Path, *, owned_parent: bool) -> bytes:
-    """Resolve one already-authority-bound key path."""
+def _vault_has_entries(data_file: Path | None) -> bool:
+    if data_file is None or not data_file.exists():
+        return False
+    try:
+        data = json.loads(atomic_read_text(data_file, encoding="utf-8"))
+    except (OSError, ValueError):
+        return True  # cannot tell: never risk orphaning what it holds
+    return not isinstance(data, dict) or bool(data)
+
+
+def _resolve_key(key_file: Path, *, owned_parent: bool,
+                 data_file: Path | None = None) -> bytes:
+    """Resolve one already-authority-bound key path.
+
+    A key is generated only for an empty vault. When ``data_file`` already
+    holds entries and the key file is missing (a default backup withholds it),
+    minting a new key would make every stored entry unreadable and orphan new
+    ones once the original key is restored, so this refuses instead."""
     env = os.environ.get("MAVERICK_VAULT_KEY", "").strip()
     if env:
         return env.encode("ascii")
@@ -203,6 +219,12 @@ def _resolve_key(key_file: Path, *, owned_parent: bool) -> bytes:
     if key_file.exists():
         ensure_private_file(key_file)
         return atomic_read_bytes(key_file).strip()
+    if _vault_has_entries(data_file):
+        raise RuntimeError(
+            "the browser vault key is missing but the vault still holds sealed "
+            "entries: restore the backed-up vault key file (named 'key', in the "
+            "same vault folder as browser.json under the data directory) or set "
+            "MAVERICK_VAULT_KEY; a new key will not be generated over them")
     key = generate_key()
     try:
         atomic_create_bytes(key_file, key)
@@ -223,8 +245,8 @@ def resolve_key(key_file: Path | None = None) -> bytes:
     can freeze a previous tenant's path in a long-lived process.
     """
     if key_file is None:
-        default_key, _ = _default_paths()
-        return _resolve_key(default_key, owned_parent=True)
+        default_key, default_data = _default_paths()
+        return _resolve_key(default_key, owned_parent=True, data_file=default_data)
     return _resolve_key(Path(key_file), owned_parent=False)
 
 
@@ -247,7 +269,7 @@ def _run(args: dict) -> str:
         # Resolve both paths from one captured authority and mark the dedicated
         # directory private before either key or encrypted metadata exists.
         ensure_private_directory(key_file.parent)
-        key = _resolve_key(key_file, owned_parent=True)
+        key = _resolve_key(key_file, owned_parent=True, data_file=data_file)
     except RuntimeError as e:
         return f"ERROR: {e}"
     except (OSError, UnicodeError, ValueError):

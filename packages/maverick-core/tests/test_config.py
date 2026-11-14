@@ -1715,3 +1715,85 @@ def test_a_knowledge_sources_table_that_is_not_a_table_fails_closed(monkeypatch)
     monkeypatch.setattr(config_module, "load_config", lambda: {"knowledge_sources": "64"})
     with pytest.raises(config_module.KnowledgeSourcesConfigError, match="knowledge_sources must be a table"):
         config_module.get_knowledge_sources()
+
+
+def test_string_switches_parse_as_booleans_not_truthiness(monkeypatch):
+    monkeypatch.setattr(config_module, "load_config", lambda *a, **k: {
+        "capabilities": {"code_exec": "false", "computer_use": "no"},
+        "autonomy": {"enable": "off"},
+        "skills": {"require_signed": "maybe"},
+        "memory_guard": {"enable": "enabled"},
+        "governed_connectors": {"enable": "y"},
+    })
+    caps = config_module.get_capabilities()
+    assert caps["code_exec"] is False and caps["computer_use"] is False
+    assert config_module.get_autonomy()["enable"] is False
+    # An unrecognized value on a protective switch keeps the protection on.
+    assert config_module.get_skills()["require_signed"] is True
+    assert config_module.get_memory_guard()["enable"] is True
+    assert config_module.get_governed_connectors()["enable"] is False  # adds tools: stays off
+
+
+def test_malformed_dashboard_reset_metadata_is_a_source_error_not_a_crash(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    config_module.reset_config_cache()
+    (tmp_path / "config.toml").write_text('[auth.local_owner]\ntotp = "required"\n', encoding="utf-8")
+    overlay = config_module.dashboard_overrides_path()
+    overlay.write_text("_dashboard_resets = 1\n", encoding="utf-8")
+    try:
+        assert load_config()["auth"]["local_owner"]["totp"] == "required"
+        assert str(overlay) in config_module.config_source_errors()
+        overlay.write_text("[budget]\nmax_dollars = 2.0\n", encoding="utf-8")
+        assert load_config()["budget"]["max_dollars"] == 2.0
+        assert config_module.config_source_errors() == {}
+    finally:
+        config_module.reset_config_cache()
+
+
+def test_infinite_numbers_fall_back_instead_of_raising_or_lifting_caps(monkeypatch):
+    monkeypatch.delenv("MAVERICK_PROVIDER_TEST_RECEIPT_MAX_AGE_DAYS", raising=False)
+    inf = float("inf")
+    monkeypatch.setattr(config_module, "load_global_config", lambda: {
+        "providers": {"test_receipt_max_age_days": inf}})
+    assert config_module.provider_test_receipt_max_age_days() == 30
+    monkeypatch.setattr(config_module, "load_config", lambda *a, **k: {
+        "commerce": {"max_session_spend": inf}, "repl": {"max_seconds": inf}})
+    assert config_module.get_commerce()["max_session_spend"] == 500.0
+    assert config_module.get_repl()["max_seconds"] == 30.0
+
+
+def test_a_rotated_or_removed_wizard_env_value_reaches_the_running_process(tmp_path, monkeypatch):
+    import os
+
+    name = "MAVERICK_TEST_ENV_ROTATION"
+    monkeypatch.setenv(name, "seed")  # so monkeypatch removes what the load exports
+    monkeypatch.delenv(name)
+    env = tmp_path / ".env"
+    env.write_text(f"{name}=first\n", encoding="utf-8")
+    config_module.reset_config_cache()
+    config_module._load_env_file(env)
+    assert os.environ[name] == "first"
+    env.write_text(f"{name}=second-rotated\n", encoding="utf-8")
+    config_module._load_env_file(env)
+    assert os.environ[name] == "second-rotated"
+    env.write_text("\n", encoding="utf-8")
+    config_module._load_env_file(env)
+    assert name not in os.environ
+
+
+def test_deleting_the_wizard_env_file_withdraws_what_it_exported(tmp_path, monkeypatch):
+    import os
+
+    name = "MAVERICK_TEST_ENV_DELETED"
+    monkeypatch.setenv(name, "seed")  # so monkeypatch removes what the load exports
+    monkeypatch.delenv(name)
+    env = tmp_path / ".env"
+    env.write_text(f"{name}=revoked-key\n", encoding="utf-8")
+    config_module.reset_config_cache()
+    config_module._load_env_file(env)
+    assert os.environ[name] == "revoked-key"
+    env.unlink()
+    config_module._load_env_file(env)
+    assert name not in os.environ

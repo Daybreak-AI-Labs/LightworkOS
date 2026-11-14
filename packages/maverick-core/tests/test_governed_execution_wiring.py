@@ -72,6 +72,20 @@ def test_repl_tool_executes_and_keeps_state(monkeypatch):
     assert "8" in tool.fn({"code": "print(carried)"})
 
 
+def test_repl_sessions_are_per_principal_and_replaced_when_closed(monkeypatch):
+    """A goal-less run shared one kernel across principals, and a closed
+    session passed the liveness probe and wedged the tool."""
+    monkeypatch.setenv("MAVERICK_REPL", "1")
+    from maverick import config, governed_repl
+    config.reset_config_cache()
+    from maverick.tools import repl as repl_tool
+    repl_tool._SESSIONS.clear()
+    alice = repl_tool._session_for(None, "alice")
+    assert repl_tool._session_for(None, "bob") != alice
+    governed_repl.close_session(alice)
+    assert repl_tool._session_for(None, "alice") != alice
+
+
 def test_repl_tool_returns_governance_refusals_as_text(monkeypatch):
     """A refusal is a result the model should read and adapt to, not an
     exception that kills the turn."""
@@ -214,3 +228,20 @@ def test_doctor_warns_when_the_kernel_runs_without_a_container(monkeypatch,
     kernel = [r for r in rows if r[1] == "session-kernel"]
     assert kernel and kernel[0][0] == health.YELLOW
     assert "container" in kernel[0][2]
+
+
+def test_doctor_does_not_show_an_unreadable_refinement_ledger_as_green(
+        monkeypatch, tmp_path):
+    (tmp_path / "config.toml").write_text(
+        "[harness_refine]\nenable = true\n", encoding="utf-8")
+    from maverick import config, harness_refine, health
+    config.reset_config_cache()
+
+    def broken(**_kwargs):
+        raise harness_refine.RefineError("corrupt ledger")
+
+    monkeypatch.setattr(harness_refine, "list_proposals", broken)
+    rows = _doctor_rows(monkeypatch)
+    refine = [r for r in rows if r[1] == "self-refinement"]
+    assert refine and refine[0][0] == health.YELLOW
+    assert "unreadable" in refine[0][2]

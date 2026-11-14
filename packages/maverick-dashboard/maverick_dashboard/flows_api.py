@@ -973,6 +973,21 @@ async def resume_flow_run_endpoint(request: Request, run_id: str, payload: FlowR
     return {"run_id": run_id, "status": "resuming", "decision": payload.decision}
 
 
+def _require_retry_without_new_review(run, current_flow) -> None:
+    """Refuse visibly when a retry would re-send a failed approval-gated action."""
+    from maverick.flow import store
+    from maverick.flow.resume_admission import retry_approval_refusal
+
+    try:
+        pinned = (store.load_flow_snapshot(run.definition_digest)
+                  if run.definition_digest else current_flow)
+    except store.FlowSnapshotError as exc:
+        raise HTTPException(status_code=409, detail="run release is no longer active") from exc
+    refusal = retry_approval_refusal(pinned, run) if pinned is not None else ""
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+
+
 @router.post("/flows/runs/{run_id}/retry")
 def retry_flow_run_endpoint(
     request: Request, run_id: str, from_failure: bool = False,
@@ -1039,6 +1054,7 @@ def retry_flow_run_endpoint(
                 )
         elif budget_limit_dollars is not None:
             raise HTTPException(status_code=409, detail="Only a budget-held run can change its allowance.")
+        _require_retry_without_new_review(run, current_flow)
         try:
             aq.enqueue_flow_resume(
                 run.flow_id,

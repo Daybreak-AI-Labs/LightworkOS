@@ -255,6 +255,18 @@ def test_decode_injected_key_rejects_wrong_length(monkeypatch):
     assert signing._decode_injected_key(raw.hex()) == raw
 
 
+def test_decode_injected_key_rejects_base64_with_stray_characters():
+    # Non-validating base64 drops stray characters and yields some other key.
+    import base64
+
+    _, raw = _fresh_key_hex()
+    std = base64.b64encode(raw).decode()
+    url = base64.urlsafe_b64encode(raw).decode()
+    assert signing._decode_injected_key(std) == raw
+    assert signing._decode_injected_key(url) == raw
+    assert signing._decode_injected_key(std[:10] + "!*" + std[10:]) is None
+
+
 # ----- off-host signing enforcement + KMS-wrapped key source -----
 
 def test_offhost_not_required_by_default(monkeypatch):

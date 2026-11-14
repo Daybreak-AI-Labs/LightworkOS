@@ -30,6 +30,30 @@ from typing import Any
 from .config import env_flag
 
 log = logging.getLogger(__name__)
+_MESSAGES_CONTEXT = "checkpoints.messages"
+
+
+def _open_messages(stored: str) -> str:
+    """The stored transcript as JSON text.
+
+    A sealed value is unsealed, and one that fails to open (wrong column,
+    tampered, no key) raises ``ValueError``. An unsealed value is a checkpoint
+    written before transcripts were sealed, whatever the strict-read posture:
+    ``maverick encryption migrate`` does not cover this table, so plaintext
+    here is not evidence of tampering and in-flight goals must still resume.
+    """
+    from .crypto_at_rest import EncryptionUnavailable, is_sealed_str
+    from .world_model import _UNSEALED_WITHHELD, _dec_field
+
+    if not isinstance(stored, str) or not is_sealed_str(stored):
+        return stored
+    try:
+        opened = _dec_field(stored, at_rest=True, context=_MESSAGES_CONTEXT)
+    except EncryptionUnavailable as exc:
+        raise ValueError("sealed checkpoint transcript could not be opened") from exc
+    if opened is None or opened == _UNSEALED_WITHHELD:
+        raise ValueError("sealed checkpoint transcript could not be opened")
+    return opened
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -168,6 +192,10 @@ class Checkpointer:
             log.debug("checkpoint: payload not serializable, skipping: %s", e)
             return False
         try:
+            # The transcript holds prompts and tool output: seal it like the
+            # world model's other agent text (fails closed, never plaintext).
+            from .world_model import _enc_field
+            payload_messages = _enc_field(payload_messages, _MESSAGES_CONTEXT)
             with self._world._writing() as conn:
                 conn.execute(
                     "INSERT INTO checkpoints"
@@ -229,7 +257,8 @@ class Checkpointer:
         try:
             saved = Checkpoint(
                 goal_id=row[0], episode_id=row[1], agent_id=row[2], step_seq=row[3],
-                messages=json.loads(row[4]), budget=json.loads(row[5]),
+                messages=json.loads(_open_messages(row[4])),
+                budget=json.loads(row[5]),
                 meta=json.loads(row[6]),
             )
             if (not isinstance(saved.messages, list)
@@ -363,7 +392,8 @@ class Checkpointer:
         try:
             return Checkpoint(
                 goal_id=row[0], episode_id=row[1], agent_id=row[2], step_seq=row[3],
-                messages=json.loads(row[4]), budget=json.loads(row[5]),
+                messages=json.loads(_open_messages(row[4])),
+                budget=json.loads(row[5]),
                 meta=json.loads(row[6]),
             )
         except (TypeError, ValueError):  # pragma: no cover -- corrupt row
@@ -393,13 +423,15 @@ class Checkpointer:
         if dst_goal_id is None or not self._ensure():
             return False
         try:
+            from .world_model import _enc_field
+            messages = _enc_field(json.dumps(ckpt.messages, default=str), _MESSAGES_CONTEXT)
             with self._world._writing() as conn:
                 conn.execute(
                     "INSERT INTO checkpoints"
                     "(goal_id, episode_id, agent_id, step_seq, created_at, "
                     " messages, budget, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
                     (dst_goal_id, ckpt.episode_id, ckpt.agent_id, ckpt.step_seq,
-                     time.time(), json.dumps(ckpt.messages, default=str),
+                     time.time(), messages,
                      json.dumps(ckpt.budget), json.dumps(ckpt.meta, default=str)),
                 )
             return True

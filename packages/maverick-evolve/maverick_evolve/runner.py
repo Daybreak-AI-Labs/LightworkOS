@@ -696,7 +696,11 @@ async def evolve_with_eval(
         case_family_id=confirmation_family_id,
         evaluator_id=confirmation_evaluator_id,
     )
-    if confirmed.id == champion.id and working_archive is not None:
+    # A champion that is the seed crossed no promotion boundary: confirm_candidate
+    # returns it without a sealed comparison or authorization, so it must not
+    # be marked promotion-confirmed (that made any caller-chosen seed adoptable).
+    if (confirmed.id == champion.id and champion.id != seed.id
+            and working_archive is not None):
         working_archive.mark_confirmed(champion.id)
         if archive is not None:
             committed = Archive.from_dict(working_archive.to_dict())

@@ -341,6 +341,41 @@ def test_cli_erase_stops_before_deleting_anything(world, ledger, events, tmp_pat
         check.close()
 
 
+def test_cli_erase_without_a_conversation_still_respects_a_custodian_hold(world, ledger, events, tmp_path):
+    """With no conversation row the subject-keyed scrubs run on their own path;
+    a custodian of an active matter must still block every one of them."""
+    from maverick import cli as cli_mod
+
+    world.create_goal("Alice task", owner=ALICE)
+    world.upsert_fact("user:cli:alice:home_address", "1 Privacy Lane")
+    db = tmp_path / "world.db"
+    ediscovery.MatterStore(ledger).create("ws-a", actor="auditor", values=_values())
+    world.close()
+    result = CliRunner().invoke(cli_mod.main, ["--db", str(db), "erase", "--channel", "cli",
+                                               "--user", "alice", "--yes"])
+    assert result.exit_code != 0
+    assert ediscovery.LEGAL_HOLD_MESSAGE in result.output
+    check = WorldModel(db)
+    try:
+        assert check.facts_matching("cli:alice")
+    finally:
+        check.close()
+
+
+def test_cli_subject_hold_uses_the_erase_identity_rules():
+    from maverick.cli import _custodian_holds_subject as holds
+
+    # A dashboard user of the same name is a different person.
+    assert not holds("user:bob", "slack", "bob")
+    assert holds("user:bob", "dashboard", "bob")
+    assert holds("user:slack:bob", "slack", "bob")
+    assert not holds("user:slack:bob", "telegram", "bob")
+    # The CLI family: custodian `local` covers every `local:<uuid>` session and back.
+    assert holds("user:cli:local", "cli", "local:abc")
+    assert holds("user:cli:local:abc", "cli", "local")
+    assert not holds("user:cli:local", "cli", "localhost")
+
+
 # ---- export ----------------------------------------------------------------------
 
 def test_export_contains_exactly_the_scoped_records_with_verifiable_signature(world, ledger, events, tmp_path):

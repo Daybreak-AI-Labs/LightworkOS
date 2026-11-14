@@ -131,3 +131,25 @@ class TestApplyPatchPathExtraction:
         from maverick.tools.apply_patch import _files_in_patch
         modify = "--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a\n+b\n"
         assert _files_in_patch(modify) == ["x.py"]
+
+
+def test_hunk_lines_that_look_like_headers_are_not_paths():
+    from maverick.tools.apply_patch import _files_in_patch
+
+    patch = (
+        "diff --git a/q.sql b/q.sql\n"
+        "--- a/q.sql\n"
+        "+++ b/q.sql\n"
+        "@@ -1,3 +1,2 @@\n"
+        " select 1;\n"
+        "-- /usr/share/doc notes\n"
+        "+++ added line\n"
+        "-old\n"
+        "diff --git a/../x b/../x\n"
+        "--- a/../x\n"
+        "+++ b/../x\n"
+    )
+    assert _files_in_patch(patch) == ["q.sql", "../x"]
+    # A form feed inside an added line is not a line break for git.
+    sneaky = patch.replace("-old\n", "-old\x0c@@ -1,9 +1,9 @@\n")
+    assert _files_in_patch(sneaky) == ["q.sql", "../x"]

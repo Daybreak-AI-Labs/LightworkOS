@@ -276,12 +276,18 @@ class OpenAIClient:
             )
         from .base import sdk_http_timeout
         kw: dict = {"api_key": key, "base_url": base_url}
+        # OpenAI organisation and project ids identify an OpenAI account; the
+        # OpenAI-compatible subclasses talk to other vendors, which must not
+        # receive them.
+        openai_account = type(self) is OpenAIClient
+        org = env.get("OPENAI_ORG_ID") if openai_account else None
+        project = env.get("OPENAI_PROJECT_ID") if openai_account else None
         if environment is not None:
             # Explicit empty optional values prevent SDK-level live env fallback.
             kw.update(
                 base_url=base_url or env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1",
-                organization=env.get("OPENAI_ORG_ID", ""),
-                project=env.get("OPENAI_PROJECT_ID", ""),
+                organization=org or "",
+                project=project or "",
             )
         # Data-residency / ZDR control: operator-set `[providers.<name>]
         # default_headers` are attached to every request so a compliance gateway
@@ -296,13 +302,15 @@ class OpenAIClient:
         # budgets, egress denials, and audit accounting.
         self._sync = OpenAI(max_retries=0, **kw)
         self._async = AsyncOpenAI(max_retries=0, **kw)
-        if environment is not None:
+        if environment is not None or not openai_account:
             # Empty construction sentinels block SDK env fallback, then restore
             # absent metadata so no new empty headers are sent to any endpoint.
+            # A subclass built from the live environment clears what the SDK
+            # read from OPENAI_ORG_ID / OPENAI_PROJECT_ID the same way.
             for client in (self._sync, self._async):
                 if client is not None:
-                    client.organization = env.get("OPENAI_ORG_ID") or None
-                    client.project = env.get("OPENAI_PROJECT_ID") or None
+                    client.organization = org or None
+                    client.project = project or None
         # Expose the resolved endpoint for introspection (doctor / logs) and so
         # the OpenAI-compatible subclasses (vllm / tgi / bedrock /
         # openai_compatible) and their tests can read where they're actually
@@ -477,42 +485,12 @@ class OpenAIClient:
         price_model_prefix: str = "",
         usage_required: bool = True,
     ) -> LLMResponse:
-        if not getattr(resp, "choices", None):
-            # Some OpenAI-compatible gateways (and OpenAI/Azure content-filter)
-            # return an empty ``choices`` list on an upstream/filter error. An
-            # unguarded ``resp.choices[0]`` would raise a cryptic IndexError that
-            # propagates out of Agent.run(); surface a clear, actionable message.
-            raise RuntimeError(
-                "OpenAI-compatible provider returned no choices "
-                "(empty response — content filter or upstream gateway error)"
-            )
-        choice = resp.choices[0]
-        text = choice.message.content or ""
-        # DeepSeek reasoner and Gemini-thinking (via the OpenAI-compat shim)
-        # return the chain-of-thought in a separate reasoning_content field,
-        # never in content. Hard-coding thinking=None discarded it entirely.
-        thinking = getattr(choice.message, "reasoning_content", None) or None
-        tool_calls: list[ToolCall] = []
-        if getattr(choice.message, "tool_calls", None):
-            for tc in choice.message.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except (json.JSONDecodeError, AttributeError):
-                    # Truncated (length-capped) or malformed tool arguments from
-                    # a weak model behind vllm/tgi/openrouter. Running the tool
-                    # with {} silently can do the wrong thing, so surface it
-                    # rather than swallowing it without a trace.
-                    args = {}
-                    log.warning(
-                        "tool call %r had unparseable arguments; running with {} "
-                        "(raw=%.200r)",
-                        scrub(str(getattr(tc.function, "name", "?") or "?")),
-                        scrub(str(getattr(tc.function, "arguments", None) or "")),
-                    )
-                tool_calls.append(ToolCall(
-                    id=tc.id, name=tc.function.name, input=args,
-                ))
-        if budget is not None:
+        # Record usage first: the call is paid even when its content cannot
+        # be parsed below, and a parse error must not skip the charge. A reply
+        # with neither choices nor usage keeps the failover-eligible
+        # "no choices" error below instead of the accounting error.
+        no_choices = not getattr(resp, "choices", None)
+        if budget is not None and not (no_choices and not getattr(resp, "usage", None)):
             usage = getattr(resp, "usage", None)
             if not usage and usage_required:
                 raise UsageAccountingError(
@@ -571,6 +549,43 @@ class OpenAIClient:
                 cache_read_tok=cache_read_tok,
                 cache_read_mult=cls.CACHE_READ_MULT,
             )
+        if no_choices:
+            # Some OpenAI-compatible gateways (and OpenAI/Azure content-filter)
+            # return an empty ``choices`` list on an upstream/filter error. An
+            # unguarded ``resp.choices[0]`` would raise a cryptic IndexError that
+            # propagates out of Agent.run(); surface a clear, actionable message.
+            raise RuntimeError(
+                "OpenAI-compatible provider returned no choices "
+                "(empty response — content filter or upstream gateway error)"
+            )
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        # DeepSeek reasoner and Gemini-thinking (via the OpenAI-compat shim)
+        # return the chain-of-thought in a separate reasoning_content field,
+        # never in content. Hard-coding thinking=None discarded it entirely.
+        thinking = getattr(choice.message, "reasoning_content", None) or None
+        tool_calls: list[ToolCall] = []
+        if getattr(choice.message, "tool_calls", None):
+            for tc in choice.message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    args = None
+                if not isinstance(args, dict):
+                    # Truncated (length-capped), malformed or non-object tool
+                    # arguments from a weak model behind vllm/tgi/openrouter.
+                    # Running the tool with {} silently can do the wrong thing,
+                    # so surface it rather than swallowing it without a trace.
+                    args = {}
+                    log.warning(
+                        "tool call %r had unparseable arguments; running with {} "
+                        "(raw=%.200r)",
+                        scrub(str(getattr(tc.function, "name", "?") or "?")),
+                        scrub(str(getattr(tc.function, "arguments", None) or "")),
+                    )
+                tool_calls.append(ToolCall(
+                    id=tc.id, name=tc.function.name, input=args,
+                ))
         # Map finish_reason to Anthropic stop_reason vocab so consumers that
         # check Anthropic values (e.g., 'tool_use', 'end_turn') branch correctly.
         raw_reason = choice.finish_reason or "stop"
@@ -739,8 +754,10 @@ class OpenAIClient:
                 return sync_physical_attempt(lambda: self._sync.chat.completions.create(**kwargs))
 
         resp = sync_retry(request, observe_attempts=False)
+        # Meter under the id the caller admitted. A subclass may send another
+        # wire id (Ollama's promoted adapter), which the facade would refuse.
         return self._from_response(
-            resp, budget, model=kwargs.get("model"),
+            resp, budget, model=model or kwargs.get("model"),
             price_model_prefix=self.PRICE_MODEL_PREFIX,
             usage_required=self.USAGE_REQUIRED,
         )
@@ -769,8 +786,10 @@ class OpenAIClient:
                 return await async_physical_attempt(lambda: self._async.chat.completions.create(**kwargs))
 
         resp = await async_retry(request, observe_attempts=False)
+        # Meter under the id the caller admitted. A subclass may send another
+        # wire id (Ollama's promoted adapter), which the facade would refuse.
         return self._from_response(
-            resp, budget, model=kwargs.get("model"),
+            resp, budget, model=model or kwargs.get("model"),
             price_model_prefix=self.PRICE_MODEL_PREFIX,
             usage_required=self.USAGE_REQUIRED,
         )

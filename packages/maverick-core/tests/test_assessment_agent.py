@@ -94,3 +94,18 @@ def test_build_assessment_agent_is_importable_with_persona():
     assert callable(build_assessment_agent)
     # The persona instructs the honest-'unknown' + human-sign-off behaviour.
     assert "unknown" in ASSESSMENT_PERSONA and "never approve" in ASSESSMENT_PERSONA
+
+
+def test_finalize_still_returns_findings_when_the_save_fails(monkeypatch):
+    import maverick.assessment as module
+
+    def fail(_session):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(module, "save_session", fail)
+    _, tools = _session_and_tools()
+    asyncio.run(tools["start_assessment"].fn({"type": "vendor_risk", "subject": "Acme"}))
+    asyncio.run(tools["answer_question"].fn({"question_id": "vr_dpa", "answer": "no"}))
+    out = asyncio.run(tools["finalize_assessment"].fn({}))
+    assert "could not save (OSError)" in out
+    assert "risk HIGH" in out and "DRAFT" in out

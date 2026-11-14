@@ -352,15 +352,16 @@ def _offline_policy(full_cfg: dict | None, backend) -> dict | None:
     is refused when none is installed), and backends that cannot be kept
     offline are refused. Only ever narrows; open leaves settings untouched.
     """
-    from .network_policy import work_area_offline
+    from .network_policy import offline_reason, work_area_offline
 
     if not work_area_offline():
         return full_cfg
     chosen = str(backend or "local").strip().lower()
     if chosen == "ssh" or chosen.startswith("ep:"):
+        reason = offline_reason() or "the network policy blocks internet access for commands"
         raise SandboxPolicyError(
-            "the network policy blocks internet access for commands, but the "
-            f"{chosen!r} work area cannot be kept offline; choose a container work area")
+            f"{reason}, but the {chosen!r} work area cannot be kept offline; "
+            "choose a container work area")
     return {**(full_cfg or {}), "allow_network": False, "network": "egress-deny",
             "require_container": True}
 
@@ -402,6 +403,11 @@ def _contain(contained, chosen: str, full_cfg: dict | None, wd: Path, held: list
     if contained is None:
         return full_cfg, wd
     if contained.no_network:
+        if chosen == "ssh" or chosen.startswith("ep:"):
+            # Neither backend reads allow_network; refuse, as _offline_policy does.
+            raise SandboxPolicyError(
+                "containment blocks internet access for commands, but the "
+                f"{chosen!r} work area cannot be kept offline; choose a container work area")
         full_cfg = {**(full_cfg or {}), "allow_network": False, "network": "egress-deny"}
     if contained.ephemeral_workspace and chosen not in ("ssh", "devcontainer"):
         from ..containment import make_ephemeral_workdir

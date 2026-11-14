@@ -520,3 +520,24 @@ def test_missing_terminal_outcome_is_unknown_and_never_replayed(rig):
     assert "outcome unknown" in result
     assert len(rig.calls) == 1
     assert rig.channels[0].closed
+
+
+def test_runtime_protoc_disabled_stops_plugin_stub_generation(monkeypatch):
+    monkeypatch.setenv("MAVERICK_NO_RUNTIME_PROTOC", "1")
+    monkeypatch.setitem(sys.modules, "maverick.grpc_api.plugin_host_pb2", None)
+    generated = []
+    monkeypatch.setattr(gph, "_generate_stubs", lambda: generated.append(1))
+    with pytest.raises(RuntimeError, match="MAVERICK_NO_RUNTIME_PROTOC"):
+        gph._load_stubs()
+    assert generated == []
+
+
+@pytest.mark.parametrize("target,local", [
+    ("dns://127.0.0.1/evil.example:50051", False),
+    ("dns:///evil.example:50051", False),
+    ("dns:///localhost:50051", True),
+    ("dns://8.8.8.8/127.0.0.1:50051", True),
+    ("127.0.0.1:50051", True),
+])
+def test_dns_targets_are_judged_by_endpoint_not_dns_server(target, local):
+    assert gph._is_local_grpc_target(target) is local

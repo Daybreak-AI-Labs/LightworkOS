@@ -55,7 +55,7 @@ def validate(model, capability):
         rows = model[name]
         if type(rows) is not list or len(rows) != len(capability[name]):
             raise ValueError("Enter every current offer and possible addition; none may be dropped from the review.")
-        if any(type(row) is not dict or set(row) != fields for row in rows):
+        if any(type(row) is not dict or set(row) != fields or type(row["id"]) is not str for row in rows):
             raise ValueError("Enter every supported financial and permission field.")
         if {row["id"] for row in rows} != {row["id"] for row in capability[name]} or len({row["id"] for row in rows}) != len(rows):
             raise ValueError("Use each current offer and addition exactly once.")

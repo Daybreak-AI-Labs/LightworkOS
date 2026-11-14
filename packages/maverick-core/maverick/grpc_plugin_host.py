@@ -20,9 +20,10 @@ always with a scrubbed env (``scrub_child_env``) so provider keys and connector
 tokens never reach plugin code, and kills it at interpreter exit. Failures
 follow the built-in tool convention: the model sees an ``"ERROR: ..."`` string,
 never an exception. Every ``Call`` carries a deadline (a gRPC deadline,
-mirrored in ``deadline_ms``); a dropped channel is rebuilt â€” and a spawned
-server that died is respawned â€” and the call retried once, the analogue of the
-NDJSON host's one crash-restart. grpcio is imported lazily behind the
+mirrored in ``deadline_ms``). A call is never retried: on a transport error
+the channel is closed and the model gets an ERROR result (marked outcome
+unknown when the request may have been dispatched); the next call rebuilds the
+channel, respawning a spawned server that died. grpcio is imported lazily behind the
 ``[grpc]`` extra; importing this module never requires it.
 """
 from __future__ import annotations
@@ -67,7 +68,11 @@ def _is_local_grpc_target(target: str) -> bool:
     # creates insecure channels, so keep it to loopback names/addresses.
     parsed = urlparse(t)
     host = parsed.hostname
-    if host is None:
+    if parsed.scheme == "dns":
+        # dns:[//dns-server/]host:port -- the authority names the DNS server,
+        # not the endpoint, so judge the endpoint in the path.
+        host = parsed.path.lstrip("/").rsplit(":", 1)[0].strip("[]")
+    elif host is None:
         if t.startswith(("ipv4:", "ipv6:")):
             host = t.split(":", 1)[1].rsplit(":", 1)[0].strip("[]")
         else:
@@ -144,6 +149,8 @@ def _load_stubs():
         from .grpc_api import plugin_host_pb2, plugin_host_pb2_grpc  # type: ignore
         return plugin_host_pb2, plugin_host_pb2_grpc
     except ImportError:
+        from .grpc_stubs import guard_runtime_generation
+        guard_runtime_generation("plugin_host.proto")
         _generate_stubs()
         from .grpc_api import plugin_host_pb2, plugin_host_pb2_grpc  # type: ignore
         return plugin_host_pb2, plugin_host_pb2_grpc
@@ -180,9 +187,9 @@ class _PluginChannel:
     """One plugin-server connection shared by every tool of a plugin.
 
     Calls are serialized under a lock (reconnecting mutates the channel). The
-    optional server process and the channel are built on first use; a channel
-    that drops mid-call is rebuilt â€” respawning a spawned server that died â€”
-    at most once per call.
+    optional server process and the channel are built on first use. A call that
+    fails closes the channel without retrying; the next call rebuilds it,
+    respawning a spawned server that died.
     """
 
     def __init__(self, target: str, command: list[str] | None, call_timeout: float):
@@ -319,7 +326,7 @@ class _PluginChannel:
             if outcome == "error":
                 return result(f"ERROR: grpc plugin tool {tool!r}: {response.error}. Outcome unknown; reconcile before a new invocation.", dispatched=True, unknown=True, failed=True)
             return result(str(response.result), dispatched=True, unknown=False, failed=False)
-        except (grpc.RpcError, OSError, TimeoutError, ValueError, TsPluginError, ProcessCleanupError, ProcessOutputLimit) as exc:
+        except (grpc.RpcError, OSError, TimeoutError, TypeError, ValueError, TsPluginError, ProcessCleanupError, ProcessOutputLimit) as exc:
             try:
                 self.close()
             except ProcessCleanupError:

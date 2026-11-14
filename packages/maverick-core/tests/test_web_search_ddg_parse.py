@@ -48,3 +48,11 @@ def test_bounded_against_pathological_input():
     # assertion -- a quadratic matcher would hang on this ~300KB input.
     evil = ('<a class="result__a" href="https://x/">t</a>' + "Z" * 6000) * 50
     assert _parse_ddg_results(evil, num=10) == []
+
+
+def test_linear_on_unterminated_anchor_heads():
+    # `<a ` fragments with no `>`: the old single regex re-scanned the
+    # attribute run from every start (seconds per 100 KB, minutes at the 1 MB
+    # cap). The scanner finds the next `>` once, so this returns at once.
+    assert _parse_ddg_results("<a " * 333_000, num=10) == []
+    assert _parse_ddg_results("<a >" * 100_000 + "</a>", num=10) == []

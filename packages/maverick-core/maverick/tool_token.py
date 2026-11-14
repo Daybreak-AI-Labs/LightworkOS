@@ -40,10 +40,9 @@ import json
 import secrets
 import threading
 import time
-from collections import OrderedDict
 from dataclasses import dataclass, replace
 
-from ._envparse import env_bool
+from ._envparse import coerce_bool, env_bool
 from .capability import Capability
 
 _DEFAULT_TTL_SECONDS = 30.0
@@ -93,13 +92,14 @@ class _ReplayCache:
 
     A token's nonce is recorded on first successful verify; a second verify of
     the same nonce is rejected as a replay. Entries self-evict once expired, and
-    the cache is bounded (oldest-first) so a long run cannot grow it without
-    bound.
+    the cache is bounded: when every slot holds a still-live nonce, a new token
+    is refused rather than evicting a live entry (which would make that nonce
+    replayable within its TTL).
     """
 
     def __init__(self, maxsize: int = _DEFAULT_REPLAY_CACHE):
         self._lock = threading.Lock()
-        self._seen: OrderedDict[str, float] = OrderedDict()
+        self._seen: dict[str, float] = {}
         self._max = max(1, maxsize)
 
     def check_and_add(self, jti: str, expires_at: float, now: float) -> bool:
@@ -110,14 +110,11 @@ class _ReplayCache:
                 self._seen.pop(k, None)
             if jti in self._seen:
                 return False
+            if len(self._seen) >= self._max:
+                # Every remaining entry is live: dropping one would let it be
+                # replayed, so fail closed and refuse the new token instead.
+                return False
             self._seen[jti] = expires_at
-            self._seen.move_to_end(jti)
-            while len(self._seen) > self._max:
-                # Evict the soonest-to-expire entry, not the oldest-inserted, so
-                # a still-live nonce is never dropped (and replayable within its
-                # TTL) while a later-expiring one survives.
-                soonest = min(self._seen, key=self._seen.__getitem__)
-                self._seen.pop(soonest, None)
             return True
 
 
@@ -133,7 +130,7 @@ def tool_tokens_enabled() -> bool:
     try:
         from .config import load_config
         cfg = (load_config() or {}).get("capabilities") or {}
-        return bool(cfg.get("per_call_tokens"))
+        return coerce_bool(cfg.get("per_call_tokens"))
     except Exception:
         return False
 

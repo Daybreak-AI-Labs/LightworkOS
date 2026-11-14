@@ -99,6 +99,20 @@ def test_per_agent_scope_is_enforced_when_global_trust_is_off(monkeypatch):
     assert len(seen) == 1 and seen[0][1].domain == "sales"
 
 
+def test_failed_lesson_write_is_not_audited_as_an_ingest(monkeypatch):
+    _register()
+    events = []
+    monkeypatch.setattr(fleet_memory, "_audit", lambda event, **kw: events.append((event, kw)))
+    monkeypatch.setattr(reflexion, "record", lambda **kw: False)
+    ok, reason = fleet_memory.ingest({
+        "agent_id": "order-bot", "vendor": "agentforce", "kind": "lesson",
+        "goal_text": "reconcile",
+    })
+    assert (ok, reason) == (False, "write failed")
+    assert [event for event, _ in events] == ["ingest_blocked"]
+    assert events[0][1]["reason"] == "write_failed"
+
+
 def test_lesson_lands_as_provenance_tagged_reflexion():
     _register()
     ok, reason = fleet_memory.ingest({

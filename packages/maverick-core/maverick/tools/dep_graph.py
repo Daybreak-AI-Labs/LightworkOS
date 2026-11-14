@@ -4,7 +4,8 @@ Complements ``repo_map`` (which gives a directory listing) with two
 graphs the agent can query:
 
   - **import_graph**: who imports who (file-level)
-  - **symbol_index**: where each top-level function/class is defined
+  - **symbol_index**: where each function/class is defined (``ast.walk``
+    collects methods and nested definitions too, not only top-level ones)
 
 Both are cheap to build on demand from the workspace and dense enough
 to fit in 4-8k tokens for repos up to ~100 files.
@@ -96,7 +97,9 @@ def _parse_module(path: Path, root: Path) -> dict[str, Any] | None:
     src = raw.decode("utf-8", errors="replace")
     try:
         tree = ast.parse(src, filename=str(path))
-    except SyntaxError:
+    # One unparsable file must not fail the whole index: deep nesting raises
+    # MemoryError/RecursionError, a NUL byte ValueError on 3.11.
+    except (SyntaxError, ValueError, MemoryError, RecursionError):
         return None
     # as_posix() so the dep-graph emits forward-slash paths on every platform
     # (the output feeds the LLM, which expects POSIX-style paths, and matches

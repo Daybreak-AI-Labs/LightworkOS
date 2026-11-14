@@ -116,3 +116,112 @@ async def test_hook_env_omits_secrets(tmp_path, monkeypatch):
     # Non-secret vars + the hook metadata still pass through.
     assert "keep-me" in dumped
     assert "MAVERICK_HOOK_EVENT=PostToolUse" in dumped
+
+
+def _config_file(tmp_path, monkeypatch, text):
+    from maverick import config
+    path = tmp_path / "config.toml"
+    path.write_text(text, encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(path))
+    config.reset_config_cache()
+    return path
+
+
+@pytest.mark.asyncio
+async def test_unreadable_config_without_hooks_allows(tmp_path, monkeypatch):
+    _config_file(tmp_path, monkeypatch, "[budget\nmax_dollars = 1\n")
+    hooks.load_from_config()
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is True
+
+
+@pytest.mark.asyncio
+async def test_unreadable_hooks_config_blocks_until_fixed(tmp_path, monkeypatch):
+    path = _config_file(tmp_path, monkeypatch, (
+        "[[hooks]]\nevent = \"PreToolUse\"\nmatcher = \"shell\"\n"
+        "command = \"/bin/false\"\n[broken\n"))
+    hooks.load_from_config()
+    ctx = HookContext(event=HookEvent.PRE_TOOL_USE, tool_name="read_file")
+    assert await hooks.dispatch(ctx) is False
+    assert "hooks configuration could not be read" in ctx.block_reason
+    assert str(path) in ctx.block_reason
+    assert await _dispatch(HookEvent.POST_TOOL_USE, tool_name="shell") is True
+
+    # Fixed on disk: the block lifts without a restart and the hooks load.
+    path.write_text("[[hooks]]\nevent = \"PreToolUse\"\nmatcher = \"shell\"\n"
+                    "command = \"/bin/false\"\n", encoding="utf-8")
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="read_file") is True
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    b'[["hooks"]]\nevent = "PreToolUse"\n[broken\n',
+    b'\xef\xbb\xbf[[hooks]]\nevent = "PreToolUse"\n[broken\n',
+    b"[budget\n",  # no hooks mention, but the bytes cannot be read below
+])
+async def test_quoted_bom_or_unreadable_hooks_config_blocks(tmp_path, monkeypatch, text):
+    from pathlib import Path
+    path = _config_file(tmp_path, monkeypatch, "")
+    path.write_bytes(text)
+    if b"hooks" not in text:
+        real = Path.read_bytes
+        monkeypatch.setattr(Path, "read_bytes", lambda self: (
+            (_ for _ in ()).throw(PermissionError(13, "denied"))
+            if self == path else real(self)))
+    hooks.load_from_config()
+    ctx = HookContext(event=HookEvent.PRE_TOOL_USE, tool_name="shell")
+    assert await hooks.dispatch(ctx) is False
+    assert str(path) in ctx.block_reason
+
+
+@pytest.mark.asyncio
+async def test_malformed_entry_does_not_drop_later_guard(monkeypatch):
+    import maverick.config as cfg
+
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
+    monkeypatch.setattr(cfg, "load_config", lambda: {"hooks": [
+        {"event": "PostToolUse", "command": "true", "timeout_ms": "5s"},
+        "not-a-table",
+        {"event": "PreToolUse", "matcher": "shell", "command": "/bin/false"},
+    ]})
+    hooks.load_from_config()
+    assert await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell") is False
+
+
+@pytest.mark.asyncio
+async def test_shell_hook_gets_extra_and_expands_home_in_arguments(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "gate.py").write_text(
+        "import json, sys\n"
+        "sys.exit(0 if json.load(sys.stdin)['extra'].get('prompt') == 'ok' else 1)\n"
+    )
+    hooks.register(HookEvent.USER_PROMPT_SUBMIT,
+                   f"{shlex.quote(sys.executable)} ~/gate.py")
+    assert await _dispatch(HookEvent.USER_PROMPT_SUBMIT, extra={"prompt": "ok"}) is True
+    assert await _dispatch(HookEvent.USER_PROMPT_SUBMIT, extra={"prompt": "no"}) is False
+
+
+def test_concurrent_ensure_loaded_waits_for_the_first_load(monkeypatch):
+    import asyncio
+    import threading
+
+    started = threading.Event()
+
+    def slow_load():
+        started.set()
+        threading.Event().wait(0.2)
+        hooks.register(HookEvent.PRE_TOOL_USE, lambda _c: False)
+
+    monkeypatch.setattr(hooks, "load_from_config", slow_load)
+    monkeypatch.setattr(hooks, "load_from_entry_points", lambda: None)
+    first = threading.Thread(target=lambda: asyncio.run(hooks.ensure_loaded()))
+    first.start()
+    started.wait(5)
+
+    async def second():
+        await hooks.ensure_loaded()
+        return await _dispatch(HookEvent.PRE_TOOL_USE, tool_name="shell")
+
+    assert asyncio.run(second()) is False
+    first.join(5)

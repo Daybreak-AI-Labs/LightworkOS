@@ -83,3 +83,28 @@ def test_small_body_not_truncated(monkeypatch):
     assert "hello world" in out
     assert "11 bytes" in out
     assert "11+ bytes" not in out
+
+
+def test_trickled_body_stops_at_the_overall_deadline_and_redirects_are_reported(monkeypatch):
+    # The 30 s httpx timeout bounds each read only; a server that trickles a
+    # byte inside it held the call for up to max_bytes reads. A 3xx was
+    # returned with no Location, so the caller could not follow it.
+    import itertools
+
+    import maverick.tools.http_fetch as hf
+
+    clock = itertools.count(0.0, 10.0)
+    monkeypatch.setattr(hf.time, "monotonic", lambda: next(clock))
+    out = _fetch(_StreamResp([b"a"] * 50), monkeypatch)
+    # What arrived is kept (an approved POST's response must not be lost),
+    # marked as cut off by the deadline.
+    assert out.startswith("HTTP 200") and "body cut off: not finished within 30s" in out.splitlines()[0]
+    assert 0 < out.count("a") < 50
+
+    monkeypatch.setattr(hf.time, "monotonic", lambda: 0.0)
+    moved = _StreamResp([b""])
+    moved.status_code, moved.reason_phrase = 301, "Moved\x1b[2J" + "x" * 500
+    moved.headers["location"] = "https://www.example.com/"
+    out = _fetch(moved, monkeypatch)
+    assert "Redirect location (not followed): https://www.example.com/" in out
+    assert "\x1b" not in out.splitlines()[0] and len(out.splitlines()[0]) < 200

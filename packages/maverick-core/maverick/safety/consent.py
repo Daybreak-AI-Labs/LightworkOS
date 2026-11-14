@@ -439,7 +439,9 @@ def _load_records_unlocked(path: Path, key: bytes | None) -> list[dict]:
     text = atomic_read_text(path, encoding="utf-8")
     if not text.endswith("\n"):
         raise ConsentLedgerError("consent ledger contains a partial record")
-    lines = text.splitlines()
+    # Records are written one per "\n". splitlines() would also split inside a
+    # record at U+2028, U+2029 or U+0085, which a scope may contain.
+    lines = text[:-1].split("\n")
     if len(lines) > _MAX_LEDGER_RECORDS:
         raise ConsentLedgerError("consent ledger contains too many records")
     records: list[dict] = []

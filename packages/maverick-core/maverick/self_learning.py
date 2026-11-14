@@ -551,7 +551,13 @@ def acquire_skill(name: str, *, need: str = "") -> str:
             "self_learning", "skill_persistence",
         ),
     )
-    _record_committed(need or name, "skill", skill.name, source=str(skill.path))
+    # The ledger keeps ``need`` on one bounded line. Preflight passes the whole
+    # redacted goal, which is often longer or multi-line; fold it to fit rather
+    # than let the ledger drop the row for the skill just installed.
+    need_line = "".join(ch for ch in " ".join(str(need or "").split())
+                        if ord(ch) >= 32 and ord(ch) != 127)
+    _record_committed(need_line[:_MAX_LEARNED_TEXT["need"]].strip() or name, "skill",
+                      skill.name, source=str(skill.path))
     return skill.body
 
 
@@ -596,10 +602,10 @@ def add_mcp_server(
     from .mcp_client import MCPServerSpec
 
     check_learning_halt("self_learning", "mcp_config_start")
-    if not _NAME_RE.match(name):
+    if not _NAME_RE.fullmatch(name):
         raise ValueError(
             f"mcp server name {name!r} must be lowercase id (a-z0-9_), "
-            "3-42 chars, starting with a letter"
+            "2-41 chars, starting with a letter"
         )
     spec = MCPServerSpec(
         name=name, command=command, args=list(args or []),
@@ -1462,9 +1468,9 @@ def write_generated_tool(
     )
     content_lineage = lineage()
     check_learning_halt("self_learning", "generated_tool_start")
-    if not _NAME_RE.match(name):
+    if not _NAME_RE.fullmatch(name):
         raise ValueError(
-            f"tool name {name!r} must be lowercase id (a-z0-9_), 3-42 chars"
+            f"tool name {name!r} must be lowercase id (a-z0-9_), 2-41 chars"
         )
     source = _strip_fences(source)
     if len(source.encode("utf-8")) > _MAX_GENERATED_SOURCE_BYTES:
@@ -1832,7 +1838,9 @@ async def preflight(
     Uses one cheap LLM call to extract needs, then installs the best
     catalog SKILL match for each (hash-pinned, safe — MCP/tool creation
     stays agent-driven via the in-loop tool). Returns the names acquired.
-    Never raises: any failure degrades to "acquired nothing".
+    A failed analysis or acquisition degrades to "acquired nothing"; the
+    learning HALT check, the readiness check and the local skill and catalog
+    reads are not wrapped and can raise.
     """
     check_learning_halt("self_learning", "preflight_start")
     acquired: list[str] = []
@@ -1851,6 +1859,8 @@ async def preflight(
         return acquired
 
     if provider_egress_enabled():
+        from .budget import BudgetExceeded, UsageAccountingError
+
         try:
             from .llm import model_for_role
             resp = await llm.complete_async(
@@ -1860,6 +1870,8 @@ async def preflight(
                 model=model_for_role("summarizer"),
             )
             needs = _parse_needs(resp.text or "")
+        except (BudgetExceeded, UsageAccountingError):
+            raise  # a budget or accounting stop ends the run, not just preflight
         except Exception as e:  # pragma: no cover -- preflight never blocks a run
             log.debug("self_learning preflight analysis skipped: %s", e)
             return acquired

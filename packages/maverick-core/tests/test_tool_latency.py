@@ -13,6 +13,8 @@ def test_record_report_reset():
         tool_latency.record("t", ms)
     tool_latency.record("t", -5)   # negative ignored
     tool_latency.record("t", None)  # None ignored
+    tool_latency.record("t", float("nan"))  # non-finite ignored
+    tool_latency.record("t", "slow")  # non-numeric ignored, never raises
     rep = {r["tool"]: r for r in tool_latency.report()}
     assert rep["t"]["count"] == 5
     assert rep["t"]["max_ms"] == 100

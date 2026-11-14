@@ -93,6 +93,19 @@ def test_cli_hunt_reports_and_strict_gates(monkeypatch):
     assert strict.exit_code != 0
 
 
+def test_cli_hunt_strict_fails_on_input_it_could_not_read(monkeypatch):
+    def _unreadable(**k):
+        yield {"kind": "tool_call", "agent": "a", "ts": 1.0}
+        raise OSError("unreadable day-file")
+
+    monkeypatch.setattr(export, "iter_audit_events", _unreadable)
+    runner = CliRunner()
+    assert runner.invoke(main, ["hunt"]).exit_code == 0   # the report stays fail-soft
+    assert runner.invoke(main, ["hunt", "--strict"]).exit_code != 0
+    bad_date = runner.invoke(main, ["hunt", "--strict", "--since", "2999-13-45"])
+    assert bad_date.exit_code == 2
+
+
 @pytest.mark.parametrize("severities,expected", [
     ([], "clear"),
     (["low"], "low"),

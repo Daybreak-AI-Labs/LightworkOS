@@ -42,6 +42,19 @@ def test_failed_spend_is_attributed(tmp_path):
     assert any("failed" in o.lower() for o in rep["observations"])
 
 
+def test_failed_spend_uses_the_orchestrator_outcome_names(tmp_path):
+    # The orchestrator ends a failed episode with "failure" (and a refused
+    # one with "blocked"); only "failed" used to count, so failed spend was 0.
+    _seed(tmp_path / "w.db", [
+        ("ok", [(2.0, "success")]),
+        ("bad", [(3.0, "failure")]),
+        ("refused", [(1.0, "blocked")]),
+        ("paused", [(2.0, "interrupted")]),
+    ])
+    rep = cr.retrospective(WorldModel(tmp_path / "w.db"))
+    assert rep["failed_spend"] == 4.0
+
+
 def test_top_goal_dominance_observed(tmp_path):
     _seed(tmp_path / "w.db", [
         ("whale", [(10.0, "succeeded")]),

@@ -104,6 +104,17 @@ class CompanionPolicyDenied(CompanionError):
     """The current policy does not permit this companion operation."""
 
 
+class CompanionHistoryHeld(CompanionError, LegalHoldApplies):
+    """Every stored exchange is under legal hold, so no new one can be saved.
+
+    A ``LegalHoldApplies`` too, so callers that report a legal hold as itself
+    show this message instead of a generic conflict."""
+
+
+_HISTORY_HELD = ("This conversation's history is under legal hold and is full, so no further "
+                 "messages can be stored. Refreshing will not help; ask your administrator.")
+
+
 def _identity(value: object) -> str:
     if (not isinstance(value, str) or not value.startswith("user:")
             or not value[5:].strip() or value != value.strip() or len(value) > 320
@@ -636,7 +647,7 @@ class EmployeeCompanionStore:
         with self._locked():
             state = self._read(owner)
             now = self._prepare_turns(state)
-            self._prune_history(state)
+            history = self._prune_history(state)
             if (issued_at < now - REQUEST_FRESH_SECONDS
                     or issued_at > now + REQUEST_CLOCK_SKEW_SECONDS):
                 raise CompanionConflictError("Companion request identifier expired; start a new message")
@@ -649,6 +660,9 @@ class EmployeeCompanionStore:
                     or state["history_generation"] != expected_history_generation):
                 raise CompanionConflictError("Companion conversation changed; refresh before sending")
             self._require_draft_policy(state["policy"])
+            if state["policy"]["retention_days"]:
+                # Refuse before the paid model call, not when its reply is saved.
+                self._room_for_one(state, history)
             if any(turn["state"] == "pending" for turn in state["turns"]):
                 raise CompanionConflictError("Your companion is still replying; wait before sending again")
             if len(state["turns"]) >= MAX_TURN_RECEIPTS:
@@ -681,6 +695,19 @@ class EmployeeCompanionStore:
                                       history_generation=history_generation)
             return _turn_metadata(turn)
 
+    def _room_for_one(self, state: dict, history: list[dict]) -> list[dict]:
+        """``history`` with the oldest exchanges no legal matter holds removed
+        until one more fits under ``MAX_HISTORY``. Refuses when every stored
+        exchange is held, because the cap must never evict a held one."""
+        held = {item["id"] for item in self._held_by_matter(state, [])}
+        history = list(history)
+        while len(history) >= MAX_HISTORY:
+            victim = next((item for item in history if item["id"] not in held), None)
+            if victim is None:
+                raise CompanionHistoryHeld(_HISTORY_HELD)
+            history.remove(victim)
+        return history
+
     def _record_reply(self, state: dict, *, message: str, response: str,
                       source_refs: list[str], action: str, model_route: str | None = None) -> dict:
         generation = state["history_generation"]
@@ -689,18 +716,20 @@ class EmployeeCompanionStore:
             raise CompanionConflictError("Companion context expired; refresh the conversation")
         now = self._now(state)
         policy = state["policy"]
-        context_deadline = min((entry["expires_at"] for entry in history), default=math.inf)
+        # A held exchange stays past its expiry; it is not live context.
+        context_deadline = min((entry["expires_at"] for entry in history
+                                if entry["expires_at"] > now), default=math.inf)
         before_reply = copy.deepcopy(state)
         event = self._event(state, state["owner"], action)
         if policy["retention_days"]:
-            history = [*history, {
+            history = [*self._room_for_one(state, history), {
                 "id": event["id"], "time": now,
                 "expires_at": now + policy["retention_days"] * 86400,
                 "message": message, "response": response,
                 "source_refs": list(source_refs), "policy_revision": policy["revision"],
                 "kind": "draft" if action == "draft_reply" else "task_status",
                 "model_route": model_route,
-            }][-MAX_HISTORY:]
+            }]
         self._set_history(state, history)
         if self._now(state) >= context_deadline:
             # Expiry during sealing must invalidate the old context, without

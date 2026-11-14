@@ -34,8 +34,10 @@ Default OFF and never auto-imported by ``cache.tool`` — the caller wires it::
 Wiring: ``maverick.cache.tool`` consults :func:`from_config` on a local miss
 and after each local store, so with the local cache on (``[tools]
 output_cache``) and ``output_cache_backend = "redis"`` a result one worker
-stored is reused by the others. Keys carry the local cache's per-person and
-per-workspace scope, so a shared Redis never crosses that boundary.
+stored is reused by the others. Keys carry the local cache's scope (tenant,
+principal and cache generation), so a shared Redis never crosses a tenant or
+person boundary. The scope has no workspace or host component: one principal's
+reads of the same relative path in two workspaces share an entry.
 """
 from __future__ import annotations
 

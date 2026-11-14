@@ -151,7 +151,11 @@ def summarize(path=None) -> dict:
             rec = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(rec, dict):
+            continue
         m = rec.get("mode", "error")
+        if not isinstance(m, str):
+            continue
         counts[m] = counts.get(m, 0) + 1
         total += 1
     return {"total": total,

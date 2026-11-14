@@ -261,6 +261,24 @@ class TestCompactStreamingStrategy:
         assert "FACT_5" not in second_new        # already summarized
         assert "FACT_5" in out[1]["content"]     # but still in the running summary
 
+    def test_rebound_history_continues_its_own_summary(self, tmp_path):
+        # The agent replaces its history with the strategy output, so the next
+        # call sees [brief, <stream-summary>, ...]. That summary used to be
+        # refolded as one turn clipped to 160 chars, losing earlier facts.
+        msgs = self._msgs(8)
+        out = compact_streaming(msgs, conversation_id="c1", keep_recent=2,
+                                path=tmp_path / "s.json")
+        rebound = out + [{"role": "user", "content": "FACT_90 noted"},
+                         {"role": "assistant", "content": "FACT_91 noted"}]
+        out2 = compact_streaming(rebound, conversation_id="c1", keep_recent=2,
+                                 path=tmp_path / "s.json")
+        summary = out2[1]["content"]
+        for i in range(8):
+            assert f"FACT_{i} noted" in summary, i
+        assert "recent q" in summary and "recent a" in summary
+        assert summary.startswith('<stream-summary turns="10">')
+        assert summary.count("<stream-summary") == 1
+
     def test_default_key_collision_does_not_reuse_other_prefix(self, tmp_path):
         a = (
             [{"role": "user", "content": "summarize my file"}]

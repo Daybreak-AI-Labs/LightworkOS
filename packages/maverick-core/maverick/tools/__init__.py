@@ -372,8 +372,12 @@ class ToolRegistry:
     # Deferred-loading meta-tool name (see enable_deferred / find_tools.py).
     META_TOOL = "find_tools"
 
-    def __init__(self, *, principal: str | None = None):
+    def __init__(self, *, principal: str | None = None, workspace: str | None = None):
         self._tools: dict[str, Tool] = {}
+        # The sandbox workspace the registry's file tools are bound to. Part of
+        # the tool-output cache scope: the same relative path in two
+        # workspaces is two different files.
+        self._workspace = str(workspace or "").strip() or None
         # Authenticated execution identity used by credential-bearing tools.
         # Stored on the registry and rebound with a ContextVar per invocation so
         # sync tools running in worker threads cannot borrow another run's saved
@@ -608,12 +612,14 @@ class ToolRegistry:
 
     def cache_namespace(self) -> str:
         """The tool-output cache scope of this registry's calls: the active
-        tenant and the principal, so two users never share a read result."""
+        tenant, the principal and the workspace, so two users never share a
+        read result and a read in one workspace is never served in another."""
         from ..paths import current_tenant_id
 
         return (
             f"tenant={current_tenant_id() or '<shared>'}\0"
-            f"principal={self._principal or '<anonymous>'}"
+            f"principal={self._principal or '<anonymous>'}\0"
+            f"workspace={self._workspace or '<none>'}"
         )
 
     def speculate_reads(self, predictions, *, budget_guard=None):
@@ -642,7 +648,9 @@ class ToolRegistry:
         if name not in self._tools:
             return f"ERROR: unknown tool {name!r}"
         if not self._acl_allows(name):
-            return f"ERROR: tool {name!r} is denied by the current tool ACL"
+            note = getattr(self, "acl_denial_note", "")
+            message = f"ERROR: tool {name!r} is denied by the current tool ACL"
+            return f"{message} {note}" if note else message
         if not self._mcp_binding_current(name):
             return "ERROR: MCP binding is stale or changed; refresh tools and rebuild the registry"
         return None
@@ -970,6 +978,64 @@ def _registry_principal(user_id: str | None) -> str:
     return str(current_principal() or "").strip()
 
 
+def _workspace_cache_scope(sandbox: Any) -> str | None:
+    """Tool-output cache scope for ``sandbox``'s workspace.
+
+    A local workdir path names one directory on this machine. A remote one
+    (SSH, microVM, Modal) only means something on its host, so the host is
+    part of the scope when the backend names one (with the SSH port when its
+    arguments set one); otherwise a random token stored on the backend
+    instance is, so two remote sandboxes never share entries. ``id()`` is not
+    used: ids repeat after garbage collection and across runs, while the
+    output cache persists on disk.
+    """
+    from ..sandbox.sdk import workdir_is_local
+
+    workdir = getattr(sandbox, "workdir", None)
+    if not workdir:
+        return None
+    scope = f"{type(sandbox).__name__}:{workdir}"
+    if workdir_is_local(sandbox):
+        return scope
+    host = getattr(sandbox, "host", None)
+    if host:
+        port = _ssh_port(getattr(sandbox, "ssh_args", None) or ())
+        return f"{scope}@{host}:{port}" if port else f"{scope}@{host}"
+    return f"{scope}@instance-{_instance_cache_token(sandbox)}"
+
+
+def _ssh_port(ssh_args: Any) -> str | None:
+    """The port an SSH argument list selects (``-p N``, ``-pN``, ``-o Port=N``)."""
+    args = [str(a) for a in ssh_args]
+    for i, arg in enumerate(args):
+        nxt = args[i + 1] if i + 1 < len(args) else ""
+        if arg == "-p" and nxt:
+            return nxt
+        if arg.startswith("-p") and len(arg) > 2:
+            return arg[2:]
+        option = nxt if arg == "-o" else (arg[2:] if arg.startswith("-o") else "")
+        key, _, value = option.partition("=")
+        if key.strip().lower() == "port" and value.strip():
+            return value.strip()
+    return None
+
+
+def _instance_cache_token(sandbox: Any) -> str:
+    """A random token kept on ``sandbox`` for the life of the instance. If
+    the instance cannot hold one, a fresh token per call means no sharing."""
+    import secrets
+
+    token = getattr(sandbox, "_maverick_cache_scope_token", None)
+    if isinstance(token, str) and token:
+        return token
+    token = secrets.token_hex(16)
+    try:
+        sandbox._maverick_cache_scope_token = token
+    except (AttributeError, TypeError):
+        pass
+    return token
+
+
 def base_registry(
     world,
     sandbox,
@@ -1022,8 +1088,11 @@ def base_registry(
     from .str_edit import str_replace_editor
 
     principal = _registry_principal(user_id)
-    reg = ToolRegistry(principal=principal or None)
     from ..sandbox.sdk import workdir_is_local
+
+    reg = ToolRegistry(
+        principal=principal or None, workspace=_workspace_cache_scope(sandbox),
+    )
 
     # These tools use local pathlib operations rather than sandbox.exec().
     # A remote workspace path would refer to an unrelated host directory.
@@ -1340,7 +1409,7 @@ def base_registry(
         reg.register(ios_sim(sandbox))
     reg.register(spend_report())
     reg.register(budget_status(budget=budget))
-    reg.register(test_impact())
+    reg.register(test_impact(sandbox))
     reg.register(youtube())
     reg.register(notion())
     reg.register(obsidian())
@@ -1660,7 +1729,7 @@ def base_registry(
     from ..cost.curve_fitter import cost_curve_tool
     from .capability_query import capability_query
     from .oidc_tool import oidc_tool
-    reg.register(capability_query(user_id=user_id))
+    reg.register(capability_query(user_id=user_id, channel=channel))
     reg.register(oidc_tool())
     reg.register(cost_curve_tool(world))
 
@@ -1834,20 +1903,69 @@ def _register_optional_tools(
 
 def _apply_tool_acl(reg: ToolRegistry, *, channel: str | None, user_id: str | None) -> None:
     # Apply allow/deny lists from ~/.maverick/config.toml [security].
-    # Operational discovery errors remain fail-soft, but an unreadable
-    # operator policy must stop registry construction. Swallowing that
-    # security error would leave every tool registered after a deny-list
-    # became corrupt.
-    from ..runtime_overrides import RuntimeOverridesSecurityError
+    # An unreadable operator policy must stop registry construction.
+    # Swallowing that security error would leave every tool registered after
+    # a deny-list became corrupt.
+    # Any failure here (a mistyped [security] value included) stops the build:
+    # a warning would leave the registry with no allow-list, deny-list or risk
+    # ceiling at all. A malformed value is reported by its setting name rather
+    # than as a bare TypeError from deep inside the ACL code.
+    from ..safety.tool_acl import apply_to_registry
 
     try:
-        from ..safety.tool_acl import apply_to_registry
         apply_to_registry(reg, channel=channel, user_id=user_id)
-    except RuntimeOverridesSecurityError:
-        raise
-    except Exception as e:  # pragma: no cover
-        import logging as _logging
-        _logging.getLogger(__name__).warning("tool_acl: %s", e)
+    except (TypeError, AttributeError, ValueError) as exc:
+        raise ToolAclConfigError(_acl_config_problem()) from exc
+
+
+class ToolAclConfigError(RuntimeError):
+    """The ``[security]`` tool ACL in config.toml has a malformed value."""
+
+
+_ACL_LIST_KEYS = ("allowed_tools", "denied_tools")
+
+
+def _acl_table_problem(table: Any, where: str) -> str | None:
+    if not isinstance(table, dict):
+        return f"{where} must be a table"
+    for key in _ACL_LIST_KEYS:
+        value = table.get(key)
+        if value is not None and not (
+            isinstance(value, str)
+            or (isinstance(value, list) and all(isinstance(v, str) for v in value))
+        ):
+            return f"{where} {key} must be a list of tool names"
+    risk = table.get("max_risk")
+    if risk is not None and not isinstance(risk, str):
+        return f"{where} max_risk must be one of \"low\", \"medium\", \"high\""
+    return None
+
+
+def _acl_config_problem() -> str:
+    """Name the malformed ``[security]`` ACL setting, as far as it can be found."""
+    generic = ("the [security] tool ACL in config.toml could not be applied; "
+               "check allowed_tools, denied_tools, max_risk, [security.channels.*] "
+               "and [security.users.*]")
+    try:
+        from ..config import load_config
+
+        sec = (load_config() or {}).get("security")
+    except Exception:
+        return generic
+    if sec is None:
+        return generic
+    if problem := _acl_table_problem(sec, "[security]"):
+        return f"config.toml: {problem}"
+    for section in ("channels", "users"):
+        entries = sec.get(section)
+        if entries is None:
+            continue
+        if not isinstance(entries, dict):
+            return f"config.toml: [security.{section}] must be a table of tables"
+        for key, table in entries.items():
+            if problem := _acl_table_problem(table, f"[security.{section}.{key}]"):
+                return f"config.toml: {problem}"
+    return generic
 
 
 def _apply_containment(reg: ToolRegistry) -> None:

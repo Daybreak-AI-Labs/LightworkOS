@@ -33,6 +33,17 @@ def test_compute_fallback_blocks_power_tower(monkeypatch):
     assert "256" in ok
 
 
+def test_compute_fallback_refuses_non_numeric_values(monkeypatch):
+    import sys as _sys
+    monkeypatch.setitem(_sys.modules, "sympy", None)
+    from maverick.tools.compute import compute
+    # Strings, f-strings and generators let a short expression allocate
+    # gigabytes; only numeric arithmetic is evaluated.
+    for expr in ("'ab'*3", "f'{1:>100000000}'", "max(i for i in [0]*10)"):
+        assert "ERROR" in compute().fn({"op": "evaluate", "expr": expr}), expr
+    assert compute().fn({"op": "evaluate", "expr": "max(2, sqrt(16)) - 1"}).startswith("3")
+
+
 # ---------- compute (sympy) ----------
 
 _HAS_SYMPY = importlib.util.find_spec("sympy") is not None

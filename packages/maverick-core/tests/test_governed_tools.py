@@ -816,6 +816,46 @@ class TestEnterpriseBoundary:
         assert receipts[0][1]["approver"] == "user:reviewer"
         assert receipts[0][0][0] == 17
 
+    def test_async_connector_write_is_awaited_before_commit(self, monkeypatch):
+        import maverick.governed_actions as actions
+
+        _grant_human(monkeypatch)
+        receipts = []
+        monkeypatch.setattr(actions, "record_tool_lineage",
+                            lambda *a, **k: receipts.append(k["phase"]) or True)
+        calls = []
+
+        async def _afn(args):
+            await asyncio.sleep(0)
+            calls.append(dict(args))
+            return "created"
+
+        tool = Tool(name="acme", description="Acme", input_schema=_SCHEMA, fn=_afn)
+        wrapped = wrap_connector_tool(tool, enterprise=True)
+
+        out = asyncio.run(wrapped.fn({"op": "post", "path": "/accounts"}))
+
+        assert out == "created"
+        assert calls and calls[0]["confirm"] is True
+        assert receipts == ["PREPARE", "COMMIT"]
+
+    def test_unreadable_config_refuses_instead_of_dropping_approver_pin(self, monkeypatch):
+        import maverick.config as cfg
+
+        _grant_human(monkeypatch)
+        monkeypatch.delenv("MAVERICK_GOVERNED_APPROVER", raising=False)
+        monkeypatch.setattr(cfg, "get_governed_connectors", lambda: {"approver": ""})
+        monkeypatch.setattr(cfg, "config_source_errors",
+                            lambda **_k: {"config.toml": "parse error"})
+        calls = []
+
+        out = wrap_connector_tool(_fake_tool(calls), enterprise=True).fn(
+            {"op": "post", "path": "/accounts"})
+
+        assert out.startswith("REFUSED (governed)")
+        assert "configuration could not be read" in out
+        assert calls == []
+
     def test_approval_card_redacts_nested_sensitive_values(self, monkeypatch):
         import maverick.governed_actions as actions
         import maverick.safety.consent as consent

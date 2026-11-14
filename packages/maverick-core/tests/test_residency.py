@@ -100,3 +100,35 @@ def test_verify_deployment_includes_residency(monkeypatch):
     from maverick.deployment import verify_deployment
     names = {c.name for c in verify_deployment()}
     assert "Data residency" in names
+
+
+def test_unreadable_config_fails_closed_only_with_residency_evidence(
+        monkeypatch, tmp_path, caplog):
+    # A corrupt config.toml loads as {}; a [residency] strict = true in it must
+    # not read as "enforcement off", but a typo in an install that never
+    # enabled residency must not stop start-up either.
+    cfg = tmp_path / "config.toml"
+    monkeypatch.setattr("maverick.config.config_source_errors",
+                        lambda *a, **k: {str(cfg): "TOMLDecodeError"})
+    cfg.write_text("[models]\ndefault = \n", encoding="utf-8")
+    ok, detail = residency.check_residency()
+    assert ok is False and "could not be read" in detail   # doctor / verify
+    with caplog.at_level("ERROR", logger="maverick.residency"):
+        residency.require_residency_or_die()               # starts
+    assert str(cfg) in caplog.text
+    # A source whose bytes cannot be read is not evidence either.
+    monkeypatch.setattr("maverick.config.config_source_errors",
+                        lambda *a, **k: {str(tmp_path): "PermissionError"})
+    residency.require_residency_or_die()
+    monkeypatch.setattr("maverick.config.config_source_errors",
+                        lambda *a, **k: {str(cfg): "TOMLDecodeError"})
+    cfg.write_text("[residency]\nstrict = true\nregion = \n", encoding="utf-8")
+    with pytest.raises(residency.ResidencyError):
+        residency.require_residency_or_die()
+    # An explicit environment policy still decides.
+    monkeypatch.setenv("MAVERICK_RESIDENCY_STRICT", "0")
+    residency.require_residency_or_die()
+    monkeypatch.setenv("MAVERICK_RESIDENCY_STRICT", "1")
+    monkeypatch.setenv("MAVERICK_DATA_REGION", "DE")
+    monkeypatch.setenv("MAVERICK_RESIDENCY_ALLOWED", "EU")
+    assert residency.check_residency()[0] is True

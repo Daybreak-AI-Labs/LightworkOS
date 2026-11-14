@@ -7,7 +7,8 @@ context compaction and even a process restart. The model writes durable learning
 a later turn or session.
 
 Distinct from its neighbours:
-  - ``kv_memory``         — goal-scoped key/value, world-model-backed, wiped per run.
+  - ``kv_memory``         — goal-scoped key/value, world-model-backed; keys are
+                            namespaced by goal, so another goal cannot see them.
   - ``recall_past_goals`` — read-only recall of prior *episodes*.
   - ``memory`` (this)     — a model-managed *filesystem* of long-term knowledge that
                             persists across goals and sessions.

@@ -102,6 +102,11 @@ def _scan_rows(
         except json.JSONDecodeError:
             rows.append((raw, None))
             continue
+        if not isinstance(event, dict):
+            # A non-object line (``123``, ``[]``) carries no subject; keep it
+            # verbatim like any other unparseable row.
+            rows.append((raw, None))
+            continue
         if event.get("sig") and event.get("hash") and event.get("key_id"):
             any_signed = True
         if _event_matches(event, channel, user_id):

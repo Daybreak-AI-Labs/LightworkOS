@@ -32,6 +32,28 @@ log = logging.getLogger(__name__)
 
 STRATEGIES = ("learned", "multimodal", "streaming", "graph")
 
+# The digest a strategy puts at index 1. It sits behind the recent window, so
+# the shared post-pass truncated it to ``max_tool_bytes`` (2 KiB) right after
+# it was produced (and paid for), cutting its ending and closing tag. It is
+# exempt from that pass up to this size; everything else is compacted exactly
+# as before.
+_DIGEST_PREFIXES = ("<learned-digest ", "<graph-digest ", "<stream-summary ")
+_MAX_DIGEST_CHARS = 65_536
+
+
+def _is_digest(msg) -> bool:
+    content = msg.get("content") if isinstance(msg, dict) else None
+    return (isinstance(content, str) and content.startswith(_DIGEST_PREFIXES)
+            and len(content) <= _MAX_DIGEST_CHARS)
+
+
+def _post_compact(result: list[dict], **kwargs) -> list[dict]:
+    """``compact_messages`` over a strategy result, leaving its digest whole."""
+    if len(result) > 1 and _is_digest(result[1]):
+        rest = compact_messages([result[0], *result[2:]], **kwargs)
+        return [rest[0], result[1], *rest[1:]]
+    return compact_messages(result, **kwargs)
+
 
 def configured_strategy() -> str:
     """The configured strategy name, or ``""`` for the default path.
@@ -83,7 +105,7 @@ def compact_with_strategy(
     try:
         result = _invoke(name, messages, llm=llm, conversation_id=conversation_id,
                          keep_recent=keep_recent, budget=budget, scope=scope, run_state=run_state)
-        result = compact_messages(result, keep_recent=keep_recent, max_tool_bytes=max_tool_bytes, **limits)
+        result = _post_compact(result, keep_recent=keep_recent, max_tool_bytes=max_tool_bytes, **limits)
         if name == "learned" and run_state is not None:
             run_state.remember(result)
         return result
@@ -141,7 +163,7 @@ async def compact_with_strategy_async(
                 name, messages, llm=llm, conversation_id=conversation_id,
                 keep_recent=keep_recent, budget=budget, scope=scope,
                 run_state=run_state, asynchronous=True)
-            result = compact_messages(result, keep_recent=keep_recent, max_tool_bytes=max_tool_bytes, **limits)
+            result = _post_compact(result, keep_recent=keep_recent, max_tool_bytes=max_tool_bytes, **limits)
             if name == "learned" and run_state is not None:
                 run_state.remember(result)
             return result

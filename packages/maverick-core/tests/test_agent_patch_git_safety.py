@@ -212,6 +212,7 @@ def test_patch_check_does_not_run_a_planted_clean_filter_on_the_host(tmp_path, l
     assert verdict.valid is False
     assert "git" in verdict.reason.lower()
     assert "not a problem with the patch" in verdict.reason
+    assert "git-lfs, or another command" not in verdict.reason  # names the finding
 
 
 def test_patch_check_still_accepts_a_good_patch_on_a_clean_repo(tmp_path):

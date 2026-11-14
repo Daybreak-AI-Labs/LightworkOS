@@ -941,3 +941,14 @@ def test_no_materialization_adapter_leaves_queued_attempt_untouched(services):
     retained = runs.inspect(TENANT, "user:researcher", queued["run_id"])
     assert retained["status"] == "queued"
     assert state["dispatches"] == []
+
+
+def test_huge_decimal_exponent_is_a_value_error():
+    # normalize() raised decimal.Overflow, which ValueError handlers missed.
+    for amount in ("1e999999999", "1e900000"):
+        with pytest.raises(ValueError, match="precision boundary"):
+            ResearchResourceCaps(max_wall_seconds=1, max_provider_calls=0,
+                                 max_storage_bytes=1, max_cost=amount, currency="USD")
+    caps = ResearchResourceCaps(max_wall_seconds=1, max_provider_calls=0,
+                                max_storage_bytes=1, max_cost="0E-1000", currency="USD")
+    assert caps.max_cost == "0"

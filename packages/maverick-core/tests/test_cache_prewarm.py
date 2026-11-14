@@ -129,3 +129,26 @@ def test_llm_prewarm_reserves_budget_before_provider_call(monkeypatch):
     budget = Budget(max_dollars=0.0)
     assert llm.prewarm("billable system prompt", budget=budget) is False
     assert budget.dollars == 0.0
+
+
+def test_llm_prewarm_releases_its_hold_when_admission_refuses(monkeypatch):
+    from maverick import llm as llm_mod
+    from maverick.budget import Budget
+    from maverick.llm import LLM
+
+    llm = LLM(model="claude-opus-4-8")
+
+    class _Fake:
+        def prewarm(self, system, tools, model, *, budget=None):
+            raise AssertionError("provider prewarm must not run after a refused admission")
+
+    def refuse(*a, **k):
+        raise RuntimeError("provider allowance exhausted")
+
+    monkeypatch.setattr(llm, "_get_client", lambda provider: _Fake())
+    monkeypatch.setattr("maverick.enterprise.assert_provider_allowed", lambda p: None)
+    monkeypatch.setattr(llm_mod, "_ProviderAttemptTracker", refuse)
+
+    budget = Budget(max_dollars=1.0)
+    assert llm.prewarm("billable system prompt", budget=budget) is False
+    assert budget._reserved == 0.0

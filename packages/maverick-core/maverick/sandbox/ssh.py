@@ -146,7 +146,7 @@ class SSHBackend:
         args = ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, remote]
         try:
             result = subprocess.run(
-                args, capture_output=True, text=True, timeout=effective,
+                args, capture_output=True, text=True, errors="replace", timeout=effective,
                 env=_ssh_env(),
             )
             return ExecResult(
@@ -155,8 +155,13 @@ class SSHBackend:
                 exit_code=result.returncode,
             )
         except subprocess.TimeoutExpired as e:
+            # Bytes on POSIX; on Windows subprocess fills it from communicate(),
+            # which is already str in text mode.
+            stdout = e.stdout or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode("utf-8", errors="replace")
             return ExecResult(
-                stdout=(e.stdout or b"").decode("utf-8", errors="replace")[-8000:],
+                stdout=stdout[-8000:],
                 stderr=f"TIMEOUT after {effective}s",
                 exit_code=124,
             )

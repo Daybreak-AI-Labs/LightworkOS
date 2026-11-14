@@ -1140,12 +1140,14 @@ def _write_corpus_file(path: Path, data: dict, *, seal: bool = False, effect_gua
     atomic_write_text(Path(path), text, mode=0o600, **options)
 
 
-def _load_raw(path: str | Path) -> dict:
+def _load_raw(path: str | Path, *, strict: bool = False) -> dict:
     """The file's raw JSON dict (tolerant: ``{}`` on any error). Writers merge
     into THIS, not the normalized :func:`load_eval_corpus` view -- rewriting the
     normalized view would silently strip operator-authored per-case fields and
-    unknown keys from the live ground-truth file. World-backed writer reads are
-    strict: a partial or unavailable retained collection cannot be rewritten."""
+    unknown keys from the live ground-truth file. World-backed reads are always
+    strict, and writers pass ``strict=True`` for files: only a missing file
+    reads as ``{}``, and an unreadable or non-object one raises ``ValueError``
+    (or ``OSError``) so it is never rewritten with only the new rows."""
     kind = _world_corpus_kind(path)
     if kind is not None:
         from . import learning_store
@@ -1154,8 +1156,16 @@ def _load_raw(path: str | Path) -> dict:
         data = json.loads(_read_json_text(path))
         if isinstance(data, dict):
             return data
-    except (FileNotFoundError, ValueError, OSError):
+        if strict:
+            raise ValueError(f"corpus file {path} does not hold a JSON object")
+    except FileNotFoundError:
         pass
+    except ValueError:
+        if strict:
+            raise
+    except OSError as exc:
+        if strict:  # callers handle ValueError; an I/O failure is the same refusal
+            raise ValueError(f"corpus file {path} cannot be read: {exc}") from exc
     return {}
 
 
@@ -1191,10 +1201,9 @@ def _add_fresh(dest_path: Path, dest_raw: dict, key: str,
 def _stage_locked(corpus_path: str | Path, key: str,
                   candidates: list[dict]) -> int:
     # These histories determine duplicate/refusal decisions. Refuse unreadable
-    # native rows before touching the pending family, rather than forgetting them.
-    if _world_corpus_kind(corpus_path) is not None:
-        for path in (corpus_path, pending_corpus_path(corpus_path), rejected_corpus_path(corpus_path)):
-            _load_raw(path)
+    # rows before touching the pending family, rather than forgetting them.
+    for path in (corpus_path, pending_corpus_path(corpus_path), rejected_corpus_path(corpus_path)):
+        _load_raw(path, strict=True)
     known = {c["goal"] for c in load_eval_corpus(corpus_path).get(str(key), [])}
     known |= {c["goal"] for c in load_pending(corpus_path).get(str(key), [])}
     known |= set(load_rejected(corpus_path).get(str(key), []))
@@ -1206,7 +1215,7 @@ def _stage_locked(corpus_path: str | Path, key: str,
 def _merge_locked(corpus_path: str | Path, key: str,
                   candidates: list[dict]) -> int:
     known = {c["goal"] for c in load_eval_corpus(corpus_path).get(str(key), [])}
-    return _add_fresh(Path(corpus_path), _load_raw(corpus_path),
+    return _add_fresh(Path(corpus_path), _load_raw(corpus_path, strict=True),
                       key, candidates, known)
 
 
@@ -1251,9 +1260,8 @@ def resolve_pending(corpus_path: str | Path, key: str, *,
             _corpus_rmw_lock(corpus_path):
         # A pending decision can write all three families. Check every retained
         # family before the first effect; ordinary checker reads stay tolerant.
-        if _world_corpus_kind(corpus_path) is not None:
-            for path in (corpus_path, pending_corpus_path(corpus_path), rejected_corpus_path(corpus_path)):
-                _load_raw(path)
+        for path in (corpus_path, pending_corpus_path(corpus_path), rejected_corpus_path(corpus_path)):
+            _load_raw(path, strict=True)
         rows = load_pending(corpus_path).get(str(key), [])
         if accept_all:
             rej_idx = {int(i) for i in (reject or [])}
@@ -1380,7 +1388,7 @@ def retire_corpus_cases(corpus_path: str | Path, key: str,
         return 0
     with _corpus_lock, cross_process_lock(Path(corpus_path)), \
             _corpus_rmw_lock(corpus_path):
-        raw = _load_raw(corpus_path)
+        raw = _load_raw(corpus_path, strict=True)
         rows = raw.get(str(key))
         if not isinstance(rows, list):
             return 0
@@ -1898,30 +1906,51 @@ def preview_corpus_import(corpus_path: str | Path, data: dict, *,
     return result
 
 
+def _migration_file_raw(p: Path) -> dict:
+    """A corpus-family file for migration: ``{}`` when absent; an unreadable
+    or non-object file raises ``MigrationRefused`` (the error the migration
+    callers report)."""
+    from .learning_store_migration import MigrationRefused
+    try:
+        raw = p.read_bytes()
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise MigrationRefused(f"corpus file {p} cannot be read; nothing was migrated: {exc}") from exc
+    try:
+        from .crypto_at_rest import unseal
+        data = json.loads(unseal(raw).decode("utf-8"))
+    except Exception as exc:
+        raise MigrationRefused(f"corpus file {p} cannot be read; nothing was migrated: {exc}") from exc
+    if not isinstance(data, dict):
+        raise MigrationRefused(f"corpus file {p} does not hold a JSON object; nothing was migrated")
+    return data
+
+
+def check_corpus_files_migratable(corpus_path: str | Path) -> None:
+    """Raise ``MigrationRefused`` if a corpus-family file exists but cannot be
+    read. Call before moving anything, so a refusal leaves nothing half-done."""
+    if _world_corpus_kind(corpus_path) != "live":
+        return
+    for p in (Path(corpus_path), pending_corpus_path(corpus_path),
+              rejected_corpus_path(corpus_path)):
+        _migration_file_raw(p)
+
+
 def migrate_corpus_files(corpus_path: str | Path) -> dict | None:
     """One-way import of the FILE corpus family into the world store (used by
     ``self-harness migrate-store``): merge-by-goal for live/pending, union
     for the reject memory; the files are renamed to ``*.migrated`` backups
     afterwards. ``None`` when the corpus isn't world-routed; a counts dict
-    otherwise. Idempotent -- a second run finds no files."""
+    otherwise. Idempotent -- a second run finds no files. A file that exists
+    but cannot be read or opened raises ``MigrationRefused`` before anything
+    is imported or renamed, so a failed read is never reported as migrated."""
     if _world_corpus_kind(corpus_path) != "live":
         return None
-
-    def _file_raw(p: Path) -> dict:
-        try:
-            raw = p.read_bytes()
-        except OSError:
-            return {}
-        try:
-            from .crypto_at_rest import unseal
-            data = json.loads(unseal(raw).decode("utf-8"))
-        except Exception:
-            return {}
-        return data if isinstance(data, dict) else {}
-
     lp = Path(corpus_path)
     pp, rp = pending_corpus_path(corpus_path), rejected_corpus_path(corpus_path)
-    live_f, pend_f, rej_f = _file_raw(lp), _file_raw(pp), _file_raw(rp)
+    live_f, pend_f, rej_f = (_migration_file_raw(lp), _migration_file_raw(pp),
+                             _migration_file_raw(rp))
     counts = {"live": 0, "pending": 0, "rejected": 0}
     if live_f or pend_f or rej_f:
         with _corpus_lock, _corpus_rmw_lock(corpus_path):
@@ -1955,4 +1984,5 @@ __all__ = [
     "load_rejected", "rejected_corpus_path",
     "corpus_quality", "retire_corpus_cases",
     "import_corpus", "preview_corpus_import", "migrate_corpus_files",
+    "check_corpus_files_migratable",
 ]

@@ -54,7 +54,7 @@ MANIFEST = "manifest.json"
 SCHEMA = 2
 _AUTH_ALGORITHM = "HMAC-SHA256"
 _SIGNING_KEY_ENV = "MAVERICK_BACKUP_SIGNING_KEY"
-_SKIP_SUFFIXES = ("-wal", "-shm", ".tmp")
+_SKIP_SUFFIXES = ("-wal", "-shm", "-journal", ".tmp")
 _RESTORE_TX_ROOT = ".restore-transactions"
 _RESTORE_LOCK_TARGET = ".restore-transaction"
 _JOURNAL = "journal.json"
@@ -406,6 +406,23 @@ class _ArchiveBudget:
         return rel
 
 
+# Pax and GNU long-name headers are read whole by ``tarfile`` before a member
+# reaches _ArchiveBudget, so their declared size is bounded here, ahead of that
+# read. Member paths are capped at MAX_ARCHIVE_PATH_BYTES; this leaves ample room.
+MAX_EXTENDED_HEADER_BYTES = 64 * 1024
+_EXTENDED_HEADER_TYPES = frozenset({
+    tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK,
+    tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE,
+})
+
+
+class _BoundedTarInfo(tarfile.TarInfo):
+    def _proc_member(self, tarfile):  # type: ignore[no-untyped-def]
+        if self.type in _EXTENDED_HEADER_TYPES and self.size > MAX_EXTENDED_HEADER_BYTES:
+            raise BackupError("archive extended header exceeds its size limit")
+        return super()._proc_member(tarfile)
+
+
 @contextmanager
 def _verified_archive(path: str | Path):
     archive = _filesystem_path(path)
@@ -476,7 +493,7 @@ def _read_manifest_stream(
     manifest: dict[str, Any] | None = None
     budget = _ArchiveBudget()
     try:
-        with tarfile.open(fileobj=stream, mode="r|gz") as archive:
+        with tarfile.open(fileobj=stream, mode="r|gz", tarinfo=_BoundedTarInfo) as archive:
             for member in archive:
                 budget.observe(member)
                 if member.name != MANIFEST:
@@ -843,17 +860,30 @@ def _validate_restore_schemas(stage: Path, manifest: dict[str, Any]) -> None:
 # keyring. A whole-home archive withholds those too -- matching the archive root
 # alone left them bundled next to the data they unlock.
 _KEY_MATERIAL_ROOTS = (("keys",), ("audit", "keys"))
+# The browser auth vault (maverick.browser_auth_vault) keeps its raw Fernet key
+# as ``vault/key`` (or ``vault/authorities/<id>/key``) beside the ciphertext it
+# unlocks, without a ``.key`` suffix. It is withheld under its own scope so an
+# older archive that bundled it never reads as carrying the at-rest keys.
+_VAULT_SCOPE = "vault"
+
+
+def _is_vault_key(parts: tuple[str, ...]) -> bool:
+    return bool(parts) and parts[0] == "vault" and parts[-1] == "key" and (
+        len(parts) == 2 or (len(parts) == 4 and parts[1] == "authorities"))
 
 
 def _key_material_scope(relative: Path) -> tuple[str, ...] | None:
     """The folder a raw key file belongs to: ``()`` for the data root's own keys,
-    ``("tenants", <id>)`` for one workspace's; ``None`` when it is not key material."""
+    ``("tenants", <id>)`` for one workspace's, either with ``"vault"`` appended
+    for a browser-vault key; ``None`` when it is not key material."""
     parts = relative.parts
     scope: tuple[str, ...] = ()
     if len(parts) > 2 and parts[0] == "tenants":
         scope, parts = parts[:2], parts[2:]
     if relative.suffix == ".key" and any(parts[: len(root)] == root for root in _KEY_MATERIAL_ROOTS):
         return scope
+    if _is_vault_key(parts):
+        return (*scope, _VAULT_SCOPE)
     return None
 
 
@@ -879,7 +909,7 @@ def withheld_key_files() -> list[str]:
         return []
     return sorted(
         relative.as_posix()
-        for relative in (path.relative_to(root) for path in root.rglob("*.key"))
+        for relative in (path.relative_to(root) for path in root.rglob("*key"))
         if _is_key_material(relative) and (root / relative).is_file()
     )
 
@@ -1001,8 +1031,8 @@ def create_backup(
     Existing destination paths are refused rather than overwritten.
 
     ``include_keys`` defaults to ``False``: the at-rest encryption key (and
-    rotation keyring) and the audit signing key, those of the data root and of
-    every workspace folder under it, are excluded from the
+    rotation keyring), the audit signing key and the browser vault key, those
+    of the data root and of every workspace folder under it, are excluded from the
     archive, matching docs/encryption.md's escrow guidance to keep key
     material off the same copy as the data it decrypts. Pass
     ``include_keys=True`` only when the operator has explicitly chosen to
@@ -1102,7 +1132,7 @@ def _extract_payload_stream(
     budget = _ArchiveBudget()
     seen: set[str] = set()
     try:
-        with tarfile.open(fileobj=stream, mode="r|gz") as archive:
+        with tarfile.open(fileobj=stream, mode="r|gz", tarinfo=_BoundedTarInfo) as archive:
             for member in archive:
                 rel = budget.observe(member)
                 if rel is None or member.isdir():

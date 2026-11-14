@@ -122,3 +122,9 @@ def test_disable_kill_switch_precedes_guard(monkeypatch):
     monkeypatch.setenv("MAVERICK_COMPUTER_REQUIRE_SANDBOX", "1")
     out = _run_computer_action({"action": "left_click", "coordinate": [1, 2]})
     assert "MAVERICK_COMPUTER_DISABLE" in out
+
+
+def test_disable_kill_switch_accepts_true(monkeypatch):
+    monkeypatch.setenv("MAVERICK_COMPUTER_DISABLE", "true")
+    out = _run_computer_action({"action": "screenshot"})
+    assert "disabled by MAVERICK_COMPUTER_DISABLE" in out

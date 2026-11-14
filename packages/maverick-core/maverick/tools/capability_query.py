@@ -10,8 +10,10 @@ hitting a wall. Ops:
   - ``check``: is a specific tool permitted right now? (with the reason).
   - ``enforced``: is capability enforcement active?
 
-Read-only; builds the grant from config via ``capability_from_config`` (same
-[security]/RBAC source the ACL uses).
+Read-only; builds the root grant from config via ``capability_from_config``
+with the same principal, channel and user the agent uses for its root grant
+(the same [security]/RBAC source the ACL uses). A spawned child's further
+attenuation is not visible here.
 """
 from __future__ import annotations
 
@@ -28,22 +30,27 @@ _SCHEMA = {
 }
 
 
-def _grant(principal: str):
+def _grant(user_id: str | None, channel: str | None):
+    # Mint the grant exactly as the agent mints its root grant, so per-user and
+    # per-channel ACLs, max_risk and RBAC roles keyed on ``user:<id>`` apply.
     from ..capability import capability_from_config
-    return capability_from_config(principal)
+    return capability_from_config(
+        principal=f"user:{user_id or 'local'}", channel=channel, user_id=user_id,
+    )
 
 
-def _run(args: dict, user_id: str | None) -> str:
+def _run(args: dict, user_id: str | None, channel: str | None = None) -> str:
     op = args.get("op")
     from ..capability import capability_enforced
-    principal = user_id or "self"
     if op == "enforced":
         on = capability_enforced()
         return f"capability enforcement: {'ON' if on else 'OFF (default-open)'}"
     if op == "list":
-        cap = _grant(principal)
+        cap = _grant(user_id, channel)
         return dumps_compact({
-            "principal": cap.principal,
+            # Display contract: the caller's own id as the tool always showed
+            # it; the grant itself is minted for the ``user:``-qualified form.
+            "principal": user_id or "self",
             "enforced": capability_enforced(),
             "allow_tools": sorted(cap.allow_tools) or "(all)",
             "deny_tools": sorted(cap.deny_tools),
@@ -56,7 +63,7 @@ def _run(args: dict, user_id: str | None) -> str:
         name = str(args.get("tool") or "").strip()
         if not name:
             return "ERROR: check requires a tool name"
-        cap = _grant(principal)
+        cap = _grant(user_id, channel)
         permitted = cap.permits(name)
         enforced = capability_enforced()
         verdict = "permitted" if permitted else "denied"
@@ -65,7 +72,7 @@ def _run(args: dict, user_id: str | None) -> str:
     return f"ERROR: unknown op {op!r}"
 
 
-def capability_query(user_id: str | None = None) -> Tool:
+def capability_query(user_id: str | None = None, channel: str | None = None) -> Tool:
     return Tool(
         name="self_capability",
         description=(
@@ -74,7 +81,7 @@ def capability_query(user_id: str | None = None) -> Tool:
             "check (is a named tool permitted?), enforced (is enforcement on?)."
         ),
         input_schema=_SCHEMA,
-        fn=lambda args: _run(args, user_id),
+        fn=lambda args: _run(args, user_id, channel),
         parallel_safe=True,
     )
 

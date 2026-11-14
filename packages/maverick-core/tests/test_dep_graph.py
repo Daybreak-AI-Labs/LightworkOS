@@ -76,3 +76,15 @@ def test_dep_graph_unknown_view():
 
     out = dep_graph(_Sandbox()).fn({"view": "garbage"})
     assert "ERROR" in out
+
+
+def test_dep_graph_skips_a_file_the_parser_cannot_handle(small_repo):
+    from maverick.tools.dep_graph import dep_graph
+    # 200,000 unary minuses overflow the parser stack (MemoryError on 3.12).
+    (small_repo / "deep.py").write_text("x = " + "-" * 200_000 + "1\n")
+
+    class _Sandbox:
+        workdir = str(small_repo)
+
+    out = dep_graph(_Sandbox()).fn({"view": "import_graph"})
+    assert "pkg.a::alpha" in out

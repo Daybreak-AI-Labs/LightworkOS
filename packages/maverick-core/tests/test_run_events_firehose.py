@@ -72,3 +72,7 @@ def test_errors_and_factory_contract():
     assert t.name == "run_events_firehose"
     assert t.parallel_safe is True
     assert set(t.input_schema["properties"]["op"]["enum"]) == {"encode", "filter"}
+
+
+def test_infinite_seq_returns_an_error():
+    assert _run(op="encode", seq=float("inf"), event={"type": "heartbeat"}).startswith("ERROR")

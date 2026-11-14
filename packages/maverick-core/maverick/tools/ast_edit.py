@@ -156,7 +156,10 @@ def _add_import(src: str, import_line: str) -> str:
     else:
         insert_idx = last_import_line
     insert_text = import_line.rstrip("\n") + "\n"
-    return "".join(lines[:insert_idx]) + insert_text + "".join(lines[insert_idx:])
+    head = "".join(lines[:insert_idx])
+    if head and not head.endswith("\n"):
+        head += "\n"  # the anchor line was the last line, with no newline
+    return head + insert_text + "".join(lines[insert_idx:])
 
 
 def _remove_symbol(src: str, symbol: str) -> str:

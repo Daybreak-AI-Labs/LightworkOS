@@ -147,3 +147,16 @@ def test_git_advanced_rejects_option_like_args(_git_run, args):
 def test_git_advanced_accepts_normal_ref(_git_run):
     out = _git_run({"op": "show_commit", "commit": "HEAD"})
     assert "show HEAD" in out and "OK" in out
+
+
+def test_git_read_ops_respect_benchmark_opaque_mode(_git_run, monkeypatch):
+    # read_file blocks tests/ in opaque mode; git show/blame must not reopen it.
+    monkeypatch.setenv("MAVERICK_BENCHMARK_OPAQUE", "1")
+    monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
+    out = _git_run({"op": "show_commit", "commit": "HEAD:tests/test_a.py"})
+    assert out.startswith("ERROR") and "opaque" in out
+    out = _git_run({"op": "blame_line", "path": "tests/test_a.py", "line": 1})
+    assert out.startswith("ERROR") and "opaque" in out
+    assert "OK" in _git_run({"op": "blame_line", "path": "src/a.py", "line": 1})
+    monkeypatch.setenv("MAVERICK_BENCHMARK_OPAQUE", "0")
+    assert "OK" in _git_run({"op": "show_commit", "commit": "HEAD:tests/test_a.py"})

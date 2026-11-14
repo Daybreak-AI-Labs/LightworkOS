@@ -28,6 +28,7 @@ activity-record row naming who made them.
 """
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -562,7 +563,8 @@ _METRICS = {
     "p95_latency_s": "Time for the slowest tasks",
     "success_rate": "Tasks that finished successfully",
 }
-_VERDICTS = {"regressed": "Got worse", "improved": "Got better", "ok": "About the same", "new": "New measure"}
+_VERDICTS = {"regressed": "Got worse", "improved": "Got better", "ok": "About the same", "new": "New measure",
+             "missing": "Not measured", "invalid": "Not a valid number"}
 _TOLERANCES = (0.05, 0.10, 0.20, 0.30)
 
 
@@ -620,14 +622,22 @@ async def compare_release(request: Request, baseline: str, tolerance: float = 0.
     if not current:
         raise HTTPException(409, "No tasks finished in the last 30 days, so there is nothing to compare yet.")
     result = compare(base, current, tolerance=tolerance)
-    rows = [{"measure": _METRICS.get(v.metric, _words(v.metric)), "before": v.baseline, "now": v.candidate,
+    rows = [{"measure": _METRICS.get(v.metric, _words(v.metric)),
+             "before": v.baseline if math.isfinite(v.baseline) else None,
+             "now": v.candidate if math.isfinite(v.candidate) else None,
              "change": v.rel_change if abs(v.rel_change) != float("inf") else None,
-             "result": _VERDICTS.get(v.verdict, _words(v.verdict)), "ok": v.verdict != "regressed"}
+             "result": _VERDICTS.get(v.verdict, _words(v.verdict)), "ok": v.verdict not in {"regressed", "missing", "invalid"}}
             for v in result.verdicts]
-    worse = len(result.regressions)
-    summary = ("Performance held up against the baseline." if result.passed else
-               f"{worse} measure{'s' if worse != 1 else ''} got worse than the baseline by more than "
-               f"{round(tolerance * 100)}%.")
+    worse = sum(v.verdict == "regressed" for v in result.verdicts)
+    unmeasured = len(result.regressions) - worse
+    problems = []
+    if worse:
+        problems.append(f"{worse} measure{'s' if worse != 1 else ''} got worse than the baseline by more "
+                        f"than {round(tolerance * 100)}%.")
+    if unmeasured:
+        problems.append(f"{unmeasured} measure{'s' if unmeasured != 1 else ''} from the baseline "
+                        f"{'are' if unmeasured != 1 else 'is'} missing or not a valid number now.")
+    summary = "Performance held up against the baseline." if result.passed else " ".join(problems)
     return {"passed": result.passed, "summary": summary, "rows": rows}
 
 
@@ -759,6 +769,9 @@ def _learning_move_state() -> dict[str, Any]:
         summary = ("Lightwork keeps what it learns in files on this computer. To share it across your "
                    "installations, first choose the shared records option for where improvements are kept "
                    "in All settings.")
+    elif state.get("unreadable"):
+        summary = (f"The learning file {state['unreadable']} on this computer could not be read, so "
+                   "nothing can be moved yet. Fix or move that file, then try again.")
     elif waiting:
         summary = (f"{waiting:,} learned item{'s are' if waiting != 1 else ' is'} still in files on this computer "
                    "and can be moved into the shared records.")
@@ -805,8 +818,11 @@ async def learning_move(body: ConfirmIn, request: Request) -> dict:
         result = await run_in_threadpool(_learning_move)
     except MigrationRefused as exc:
         await run_in_threadpool(_failed, request, "learning_move")
+        unreadable = getattr(exc, "path", None)
         raise HTTPException(409, "The learned items could not be moved safely, so the files on this computer "
-                                 "were left as they were.") from exc
+                                 "were left as they were."
+                                 + (f" The learning file {unreadable} could not be read; fix or move it first."
+                                    if unreadable else "")) from exc
     except Exception:
         await run_in_threadpool(_failed, request, "learning_move")
         raise

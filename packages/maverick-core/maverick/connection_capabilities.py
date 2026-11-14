@@ -47,6 +47,8 @@ def probe(name, capability, resource, *, actor, expected_revision, authorize):
     authorize()
     if not connections.enabled():
         raise PermissionError("Connections are disabled in Settings.")
+    # The receipt write looks the record up by its stored (normalised) name.
+    name = connections.normalize_name(name)
     record = connections.get_connection(name)
     selected = MANIFEST.get(capability)
     if (not record or (record.get("owner") or None) != actor or not selected

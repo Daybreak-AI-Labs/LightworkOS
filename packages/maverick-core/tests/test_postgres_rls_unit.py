@@ -695,7 +695,7 @@ def test_preflight_refuses_boot_on_legacy_null_rows_when_auto_on(monkeypatch):
     monkeypatch.setattr(postgres, "_rls_explicitly_set", lambda: False)
     monkeypatch.setattr(
         "maverick.world_model_backends.pg_rls.preflight",
-        lambda conn: {"role": "app", "ready": False, "tables": {
+        lambda conn, **kw: {"role": "app", "ready": False, "tables": {
             "goals": {"null_tenant_rows": 3, "owned_by_current_role": True},
             "facts": {"null_tenant_rows": 0, "owned_by_current_role": True},
         }},
@@ -711,7 +711,7 @@ def test_preflight_passes_when_no_null_rows(monkeypatch):
     monkeypatch.setattr(postgres, "_rls_explicitly_set", lambda: False)
     monkeypatch.setattr(
         "maverick.world_model_backends.pg_rls.preflight",
-        lambda conn: {"role": "app", "ready": True, "tables": {
+        lambda conn, **kw: {"role": "app", "ready": True, "tables": {
             "goals": {"null_tenant_rows": 0, "owned_by_current_role": True},
         }},
     )
@@ -725,7 +725,7 @@ def test_preflight_refuses_boot_on_empty_tenant_event_batches(monkeypatch):
     monkeypatch.setattr(postgres, "_rls_explicitly_set", lambda: False)
     monkeypatch.setattr(
         "maverick.world_model_backends.pg_rls.preflight",
-        lambda conn: {"tables": {"event_trigger_batches": {
+        lambda conn, **kw: {"tables": {"event_trigger_batches": {
             "null_tenant_rows": 0, "empty_tenant_rows": 1,
         }}},
     )
@@ -736,13 +736,58 @@ def test_preflight_refuses_boot_on_empty_tenant_event_batches(monkeypatch):
         world._preflight_rls_or_die()
 
 
+def test_preflight_failure_refuses_boot_when_auto_on(monkeypatch):
+    # The auto-on gate exists to stop RLS hiding legacy rows; a preflight that
+    # could not count them must not let the policy be forced anyway.
+    monkeypatch.setattr(postgres, "_rls_explicitly_set", lambda: False)
+
+    def _fails(conn, **kw):
+        raise TimeoutError("statement timeout")
+
+    monkeypatch.setattr("maverick.world_model_backends.pg_rls.preflight", _fails)
+    world = PostgresWorldModel.__new__(PostgresWorldModel)
+    world._pool = None
+    world.conn = object()
+    with pytest.raises(RuntimeError, match="preflight could not run"):
+        world._preflight_rls_or_die()
+
+
+def test_preflight_counts_only_tables_not_yet_protected(monkeypatch):
+    # Tables whose policy is already installed and forced are not re-counted;
+    # when every table is protected the preflight (and its failure) is skipped.
+    monkeypatch.setattr(postgres, "_rls_explicitly_set", lambda: False)
+    from maverick.world_model_backends import pg_rls
+
+    seen = {}
+
+    def _preflight(conn, *, only=None):
+        seen["tables"] = only
+        raise TimeoutError("statement timeout")
+
+    monkeypatch.setattr("maverick.world_model_backends.pg_rls.preflight", _preflight)
+    world = PostgresWorldModel.__new__(PostgresWorldModel)
+    world._pool = None
+    world.conn = object()
+    monkeypatch.setattr(PostgresWorldModel, "_rls_policy_is_active",
+                        lambda self, t, **kw: True)
+    world._preflight_rls_or_die()  # all protected: no count, no refusal
+    assert "tables" not in seen
+
+    monkeypatch.setattr(PostgresWorldModel, "_rls_policy_is_active",
+                        lambda self, t, **kw: t != "projects")
+    with pytest.raises(RuntimeError, match="preflight could not run"):
+        world._preflight_rls_or_die()
+    assert seen["tables"] == ("projects",)
+    assert "projects" in pg_rls._PREFLIGHT_TABLES
+
+
 def test_preflight_skipped_when_explicitly_opted_in(monkeypatch):
     # Explicit MAVERICK_PG_RLS=1 keeps the old fail-closed path: no boot refusal
     # even with NULL rows present (operator knowingly opted in).
     monkeypatch.setattr(postgres, "_rls_explicitly_set", lambda: True)
     called = {"preflight": False}
 
-    def _should_not_run(conn):  # pragma: no cover -- asserted not called
+    def _should_not_run(conn, **kw):  # pragma: no cover -- asserted not called
         called["preflight"] = True
         return {"tables": {}}
 
@@ -1143,3 +1188,19 @@ def test_a_delivered_final_vote_is_announced_only_after_the_guard_and_the_commit
     world, told = _approval_world(monkeypatch, _ScriptedCursor(_delivery_answers()))
     assert world.mark_approval_audit_delivered("evt") is True
     assert told == [("approval.decided", 7, {"status": "approved", "decided_by": "user:dana"}, False)]
+
+
+def test_receipt_tenant_accepts_the_raw_id_of_an_encoded_tenant(tmp_path, monkeypatch):
+    # The manifest carries the raw tenant id; the backend's active tenant is
+    # the path-encoded segment. A tenant like "acme:eu" must still store its
+    # own receipts, and another tenant's id must still be refused.
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    with tenant_scope(tenant="acme:eu"):
+        assert PostgresWorldModel._receipt_tenant("acme:eu") == "acme%3Aeu"
+        with pytest.raises(ValueError, match="another tenant"):
+            PostgresWorldModel._receipt_tenant("acme")
+        with pytest.raises(ValueError, match="another tenant"):
+            PostgresWorldModel._receipt_tenant("shared")

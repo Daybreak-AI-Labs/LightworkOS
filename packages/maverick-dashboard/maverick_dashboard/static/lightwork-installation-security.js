@@ -72,7 +72,7 @@
       const summary = byId('summary'); summary.replaceChildren();
       const workName = {local:'This computer',docker:'Docker container',podman:'Podman container',gvisor:'Stronger container isolation',kubernetes:'Company cluster',ssh:'Remote computer',devcontainer:'Project work area',firecracker:'Separate small machine',modal:'Cloud work area'}[current.summary.work_area] || 'Specialist work area';
       ['Work area chosen: ' + workName + (current.summary.container_required ? ' · isolated work required' : ''),
-       'Company sign-in: ' + (current.summary.company_signin ? 'on' : 'off') + (current.summary.company_login_configured ? ' · local browser details complete' : ' · browser setup incomplete'),
+       'Company sign-in: ' + (current.summary.company_signin === null ? 'unknown (its settings could not be read)' : current.summary.company_signin ? 'on' : 'off') + (current.summary.company_login_configured ? ' · local browser details complete' : ' · browser setup incomplete'),
        'Single sign-on: ' + (current.summary.single_signon_configured ? 'local details complete' : 'setup incomplete') + (current.summary.single_signon_support ? '' : ' · optional support unavailable')].forEach(text => { const item = document.createElement('p'); item.textContent = text; summary.appendChild(item); });
       byId('notice').textContent = current.notice; choices(keep);
       byId('try-signin').hidden = !(current.summary.company_login_configured || current.summary.single_signon_configured);

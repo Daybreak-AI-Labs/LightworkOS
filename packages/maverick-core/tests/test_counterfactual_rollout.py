@@ -75,6 +75,21 @@ def test_untrustworthy_without_action_support():
     assert not est.trustworthy
 
 
+def test_unsupported_states_do_not_bias_the_effect():
+    # State A saw both actions with outcome 0 (true effect 0); state B saw only
+    # the control action, so its rollout would score the 0.5 prior.
+    a, b = ("a",), ("b",)
+    corpus = []
+    for _ in range(6):
+        corpus += [Transition(a, "T", None, 0.0), Transition(a, "C", None, 0.0),
+                   Transition(b, "C", None, 0.0)]
+    est = estimate_effect_via_rollout(
+        TransitionModel().fit(corpus), [a, b], treated_action="T", control_action="C",
+        rollouts=20)
+    assert abs(est.effect) < 1e-9
+    assert est.n_used == 1 and est.n_total == 2
+
+
 def test_calibration_gate_with_holdout():
     model = TransitionModel().fit(_confounded_corpus())
     # Holdout that contradicts the learned dynamics (A is "supposed" to go good):

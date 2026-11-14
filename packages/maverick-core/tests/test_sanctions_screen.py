@@ -12,6 +12,12 @@ def test_normalize():
     assert normalize("  Evil Corp, LLC. ") == "evil corp llc"
 
 
+def test_accented_spellings_match_plain_list_entries():
+    assert normalize("José Pérez") == "jose perez"
+    assert screen("José Pérez", ["Jose Perez"])["match"] is True
+    assert screen("Müller Gmbh", ["Muller GmbH"])["match"] is True
+
+
 def test_exact_match():
     r = screen("evil corp llc", _SDN)
     assert r["match"] is True
@@ -63,6 +69,16 @@ def test_load_list_json(tmp_path):
     p = tmp_path / "sdn.json"
     p.write_text('{"names": ["A Co", "B Co"]}', encoding="utf-8")
     assert load_list(p) == ["A Co", "B Co"]
+
+
+def test_unrecognised_json_list_fails_closed(tmp_path, monkeypatch):
+    p = tmp_path / "sdn.json"
+    p.write_text('{"entries":["Ivan Petrov","Bad Corp"]}', encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_list(p)
+    monkeypatch.setattr(sanctions_mod, "_list_path", lambda: p)
+    out = sanctions_screen().fn({"name": "Ivan Petrov"})
+    assert out.startswith("ERROR") and "CLEAR" not in out
 
 
 def test_load_list_missing(tmp_path):

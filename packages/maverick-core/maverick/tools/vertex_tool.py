@@ -21,7 +21,7 @@ import os
 from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
-from . import Tool
+from . import Tool, safe_path_segment
 
 log = logging.getLogger(__name__)
 
@@ -65,8 +65,10 @@ def _op_generate(model: str, prompt: str) -> str:
     if not prompt:
         return "ERROR: generate requires prompt"
     import httpx
-    model = model or _DEFAULT_MODEL
-    url = f"{_base()}/publishers/google/models/{model}:generateContent"
+    seg = safe_path_segment(model or _DEFAULT_MODEL)
+    if seg is None:
+        return "ERROR: generate requires a valid model"
+    url = f"{_base()}/publishers/google/models/{seg}:generateContent"
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     r = _governed_sender(httpx.post)(url, headers=_headers(), json=body, timeout=120.0)
     try:
@@ -87,7 +89,10 @@ def _op_predict(endpoint_id: str, instances: list) -> str:
     if not endpoint_id or not instances:
         return "ERROR: predict requires endpoint_id and instances"
     import httpx
-    url = f"{_base()}/endpoints/{endpoint_id}:predict"
+    seg = safe_path_segment(endpoint_id)
+    if seg is None:
+        return "ERROR: predict requires a valid endpoint_id"
+    url = f"{_base()}/endpoints/{seg}:predict"
     r = _governed_sender(httpx.post)(url, headers=_headers(), json={"instances": instances}, timeout=120.0)
     try:
         data = r.json()

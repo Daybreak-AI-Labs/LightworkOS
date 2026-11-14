@@ -35,6 +35,16 @@ def test_list_reports_all_permissive_grant():
     assert data["enforced"] is False
 
 
+def test_per_user_policy_applies_to_the_reported_grant(tmp_path):
+    cfg = tmp_path / ".maverick"
+    cfg.mkdir()
+    (cfg / "config.toml").write_text('[security.users.alice]\nmax_risk = "low"\n')
+    data = json.loads(capability_query(user_id="alice").fn({"op": "list"}))
+    assert data["max_risk"] == "low"
+    out = capability_query(user_id="alice").fn({"op": "check", "tool": "shell"})
+    assert "denied" in out
+
+
 def test_check_permitted_when_open():
     out = capability_query().fn({"op": "check", "tool": "read_file"})
     assert "permitted" in out

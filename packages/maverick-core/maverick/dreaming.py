@@ -18,10 +18,11 @@ goals from the world model plus failure reflexions — groups it by department
     instead of degrading as the NDJSON grows (synaptic pruning).
 
 Deterministic and LLM-free *by default*: dreams are derived with the same
-lexical machinery the distillation loops use, so consolidation can never be
-steered by prompt-injected trajectory text into persisting attacker-authored
-instructions (the same reasoning that keeps MAVERICK_AUTO_DISTILL off by
-default). Governed consolidation is on by default
+lexical machinery the distillation loops use, so no model rewrites trajectory
+text into new instructions (the same reasoning that keeps MAVERICK_AUTO_DISTILL
+off by default). A persisted insight does quote up to 240 characters of the
+newest reflection verbatim (secret-redacted, not Shield-scanned at write
+time), so recall applies Shield when the caller passes one. Governed consolidation is on by default
 (``MAVERICK_DREAMING=0`` opts out) and tolerant of ordinary replay/enrichment
 failures. The global operator HALT
 is different: it is checked fresh and fail-closed at learning transitions, so
@@ -114,7 +115,9 @@ _LEGACY_SCOPE_UNKNOWN = "__legacy_scope_unknown__"
 
 
 def enabled() -> bool:
-    """Whether the offline dreaming loop is active. On by default."""
+    """Whether the offline dreaming loop is active. On by default when every
+    configuration source is trustworthy; off when the configuration cannot be
+    read."""
     try:
         from .config import get_dreaming, governed_learning_env_flag
         override = governed_learning_env_flag("MAVERICK_DREAMING")
@@ -126,7 +129,8 @@ def enabled() -> bool:
 
 
 def settings() -> dict:
-    """The ``[dreaming]`` knobs with defaults filled in (fail-open)."""
+    """The ``[dreaming]`` knobs with defaults filled in. If the settings cannot
+    be read, the fallback has dreaming turned off."""
     try:
         from .config import get_dreaming
         return get_dreaming()
@@ -728,7 +732,9 @@ def prune_reflexions(
             ensure_private_file(p)
             with open(p, encoding="utf-8") as f:
                 raw_lines = [ln for ln in f if ln.strip()]
-            parsed: list[tuple[float, set[str], str]] = []
+            # Recall is filtered by channel, user and owner, so a near-duplicate
+            # only replaces a lesson the same scope can still see.
+            parsed: list[tuple[float, set[str], str, tuple]] = []
             for ln in raw_lines:
                 try:
                     d = json.loads(ln)
@@ -743,24 +749,26 @@ def prune_reflexions(
                         + str(d.get("failure_class", ""))
                     ),
                     ln if ln.endswith("\n") else ln + "\n",
+                    (d.get("channel"), d.get("user_id"), d.get("owner")),
                 ))
             # Newest first so the duplicate survivor is the fresher lesson.
             # Wall-clock resolution can give successive appends equal times.
             # The last appended record wins that tie, including on Windows.
             parsed.reverse()
             parsed.sort(key=lambda t: t[0], reverse=True)
-            kept: list[tuple[float, set[str], str]] = []
+            kept: list[tuple[float, set[str], str, tuple]] = []
             for entry in parsed:
                 if len(kept) >= max(1, keep):
                     break
-                if any(_jaccard(entry[1], k[1]) >= dedup_threshold for k in kept):
+                if any(k[3] == entry[3] and _jaccard(entry[1], k[1]) >= dedup_threshold
+                       for k in kept):
                     continue
                 kept.append(entry)
             dropped = len(parsed) - len(kept)
             if dropped <= 0:
                 return 0
             # Restore chronological order through a private atomic rewrite.
-            _atomic_write_lines(p, (ln for _, _, ln in reversed(kept)))
+            _atomic_write_lines(p, (ln for _, _, ln, _ in reversed(kept)))
     except (OSError, RuntimeError) as e:
         log.warning("dreaming: reflexion prune failed: %s", e)
         return 0
@@ -814,6 +822,14 @@ def expire_insights(
         return 0
 
 
+# The fixed wording synthesize_insight wraps around every lesson.
+_INSIGHT_TEMPLATE_TEXT = (
+    "Recurring failure seen on goals about similar goals. Seen across departments. "
+    "Latest lesson: Before committing budget, reproduce/verify the "
+    "previously-failing step in isolation."
+)
+
+
 def resolve_contradictions(
     successes: list[dict], path: Path | str | None = None, *,
     min_successes: int = 2, similarity: float = 0.5,
@@ -823,8 +839,9 @@ def resolve_contradictions(
     When ``min_successes`` or more successes NEWER than a failure-pattern
     insight lexically match it ("we now reliably do X"), the insight is
     contradicted and dropped instead of coexisting with the new reality.
-    Matching is coverage of the success's tokens by the insight text --
-    jaccard would be diluted by the insight's boilerplate. Returns how many
+    Matching is coverage of the success's tokens by the insight text, less
+    the fixed wording every synthesized insight carries (which would otherwise
+    match any success about reproducing or verifying). Returns how many
     insights were retired.
     """
     default_store = path is None
@@ -837,6 +854,8 @@ def resolve_contradictions(
             if not entries or not successes:
                 return 0
 
+            boilerplate = _tokens(_INSIGHT_TEMPLATE_TEXT)
+
             def _covered(goal: str, ins_tokens: set[str]) -> bool:
                 st = _tokens(goal)
                 if not st:
@@ -846,7 +865,9 @@ def resolve_contradictions(
             keep: list[DreamInsight] = []
             retired = 0
             for ins in entries:
-                it = _tokens(ins.text)
+                # Words every synthesized insight carries say nothing about
+                # its subject; matching on them retired unrelated lessons.
+                it = _tokens(ins.text) - boilerplate
                 newer_wins = sum(
                     1 for s in successes
                     if float(s.get("t", 0) or 0) > ins.ts
@@ -2450,10 +2471,7 @@ def dream_cycle_dry(world: Any | None = None, **kwargs) -> DreamReport:
             dst = tmp / name
             src = Path(src)
             if src.is_dir():
-                if src.exists():
-                    shutil.copytree(src, dst)
-                else:
-                    dst.mkdir(parents=True)
+                shutil.copytree(src, dst)
             elif src.exists():
                 shutil.copy2(src, dst)
             copies[name] = dst

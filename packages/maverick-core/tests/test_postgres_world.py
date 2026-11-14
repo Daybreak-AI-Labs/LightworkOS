@@ -30,6 +30,26 @@ def world():
         w.close()
 
 
+def test_signoff_for_is_scoped_to_the_active_tenant(world):
+    from maverick.paths import tenant_scope
+
+    tenant = "signoff-" + uuid.uuid4().hex
+    other = tenant + "-other"
+    try:
+        with tenant_scope(tenant=tenant):
+            gid = world.create_goal("reviewed goal")
+            world.set_goal_status(gid, "done", result="ok")
+            assert world.record_signoff(gid, "approved", decided_by="rev")
+            assert world.signoff_for(gid)["decision"] == "approved"
+        with tenant_scope(tenant=other):
+            assert world.signoff_for(gid) is None
+    finally:
+        with world._tx() as cursor:
+            cursor.execute("DELETE FROM signoffs WHERE goal_id IN "
+                           "(SELECT id FROM goals WHERE tenant_id=%s)", (tenant,))
+            cursor.execute("DELETE FROM goals WHERE tenant_id=%s", (tenant,))
+
+
 @pytest.mark.parametrize("encrypted", [False, True])
 def test_goal_search_enforces_owner_and_preserves_project_metadata(world, monkeypatch, encrypted):
     from maverick.paths import tenant_scope
@@ -661,6 +681,32 @@ def test_ask_answer_open_questions(world):
     assert answered.answered_at is not None
 
 
+def test_erase_conversations_clears_the_subject_approval_content(world):
+    # Parity with SQLite: approvals parked by an erased goal keep their id and
+    # decision for the audit outbox, but lose the sealed action, scope, detail
+    # and sign-off notes.
+    import time as _time
+
+    conv = world.get_or_create_conversation("gdpr-pg-appr", "erase-" + uuid.uuid4().hex)
+    gid = world.create_goal("approval goal")
+    world.append_turn(conv.id, "user", "private text", goal_id=gid)
+    aid = world.create_approval("send private email", scope="inbox", detail="to jane")
+    with world._tx() as cur:
+        cur.execute("UPDATE approvals SET goal_id=%s, status='approved' WHERE id=%s", (gid, aid))
+        cur.execute("INSERT INTO approval_signoffs(approval_id, approver, decision, decided_at, note) "
+                    "VALUES (%s, 'rev', 'approved', %s, 'private note')", (aid, _time.time()))
+    plan = world.plan_conversation_erasure([conv.id])
+    world.erase_conversations([conv.id], expected_conversation_ids=plan["conversation_ids"],
+                              expected_goal_ids=plan["goal_ids"],
+                              expected_episode_ids=plan["episode_ids"])
+    approval = world.get_approval(aid)
+    assert approval is not None and approval.status == "approved"
+    assert approval.action == "[erased]" and approval.scope is None and approval.detail is None
+    with world._tx() as cur:
+        cur.execute("SELECT note FROM approval_signoffs WHERE approval_id=%s", (aid,))
+        assert cur.fetchone()[0] is None
+
+
 def test_answer_unknown_question_id_returns_false(world):
     # Parity with SQLite: a typo'd id is reported, not a false success.
     assert world.answer(987_654_321, "nope") is False
@@ -924,6 +970,29 @@ def test_get_or_create_conversation_is_idempotent(world):
     # A different user is a distinct conversation.
     c3 = world.get_or_create_conversation("telegram", "other")
     assert c3.id != c1.id
+
+
+def test_tenant_conversation_is_its_own_row_beside_a_legacy_one(world, monkeypatch):
+    # With strict isolation off, the compatibility read also matches a legacy
+    # NULL-tenant row for the same user; returning it made append_turn fail.
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    user = "conv-" + uuid.uuid4().hex
+    tenant = "convt-" + uuid.uuid4().hex
+    try:
+        with tenant_scope(tenant=None):
+            legacy = world.get_or_create_conversation("slack", user)
+        with tenant_scope(tenant=tenant):
+            own = world.get_or_create_conversation("slack", user)
+            assert own.id != legacy.id
+            assert world.get_or_create_conversation("slack", user).id == own.id
+            world.append_turn(own.id, "user", "hello")
+    finally:
+        with world._tx() as cursor:
+            cursor.execute("DELETE FROM turns WHERE conversation_id IN "
+                           "(SELECT id FROM conversations WHERE user_id=%s)", (user,))
+            cursor.execute("DELETE FROM conversations WHERE user_id=%s", (user,))
 
 
 def test_append_and_recent_turns_chronological(world):

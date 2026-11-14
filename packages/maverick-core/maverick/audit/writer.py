@@ -386,15 +386,21 @@ def _resolve_signing(explicit: bool | None) -> bool:
 
         return env_bool("MAVERICK_AUDIT_SIGN", False)
     try:
+        from .._envparse import coerce_bool
         from ..config import load_config
         from ..security_defaults import secure_by_default
 
         # Secure-by-default: sign + hash-chain the audit log unless explicitly
         # disabled. An explicit [audit] sign still wins when present.
-        sign = ((load_config() or {}).get("audit") or {}).get("sign")
-        if sign is not None:
-            return bool(sign)
-        return secure_by_default()
+
+        # A malformed ``audit = "..."`` (not a table) must not switch signing
+        # off; it reads as "not set" and keeps the secure default. A string
+        # value parses as a boolean ("false" is False), anything unrecognised
+        # keeps the default too.
+        audit = (load_config() or {}).get("audit")
+        sign = audit.get("sign") if isinstance(audit, dict) else None
+        default = secure_by_default()
+        return default if sign is None else coerce_bool(sign, default)
     # failure-policy: best_effort
     except Exception:
         return False
@@ -551,7 +557,15 @@ class AuditLog:
                     ):
                         return True
                     return self._append_payload(path, payload, identity)
-            except (OSError, TypeError, ValueError) as e:
+            except (OSError, TypeError, ValueError, RuntimeError) as e:
+                from .segments import SegmentReadError
+
+                # An unreadable earlier day-file (scanned for the governed
+                # identity) is a failed write, not an exception escaping the
+                # documented True/False contract. Other RuntimeErrors (an
+                # AuditRefused, for one) still propagate.
+                if isinstance(e, RuntimeError) and not isinstance(e, SegmentReadError):
+                    raise
                 log.warning("audit: write failed: %s", e)
                 return False
 
@@ -870,20 +884,37 @@ def _redact_event(payload: dict[str, Any]) -> dict[str, Any]:
             redacted, _ = redact(v)
             return redacted
         if isinstance(v, dict):
-            return {k: _walk(vv, depth + 1) for k, vv in v.items()}
-        if isinstance(v, list):
+            # Keys are written too: a secret used as a key must not survive.
+            return {
+                (_walk(k, depth + 1) if isinstance(k, str) else k): _walk(vv, depth + 1)
+                for k, vv in v.items()
+            }
+        if isinstance(v, (list, tuple, set, frozenset)):
+            # json.dumps writes tuples as lists (and default=str stringifies
+            # sets), so walk every sequence rather than letting it pass raw.
             return [_walk(vv, depth + 1) for vv in v]
         return v
 
     redacted_payload = _walk(payload)
     try:
         from ..privacy import anon_enabled, anonymize_dict
-        if anon_enabled():
-            return anonymize_dict(redacted_payload)
+        anon = anon_enabled()
     # failure-policy: best_effort
     except Exception:
-        pass
-    return redacted_payload
+        return redacted_payload
+    if not anon:
+        return redacted_payload
+    # The row is written as JSON anyway; normalise to that form first so a
+    # non-string dict key (which JSON writes as a string) does not trip the
+    # anonymiser and drop an otherwise valid row.
+    normalised = json.loads(json.dumps(redacted_payload, default=str))
+    try:
+        return anonymize_dict(normalised)
+    # failure-policy: fail_closed
+    except Exception as e:
+        # Anonymous mode is on: writing the identifiable payload would be the
+        # leak the mode exists to prevent. Fail the write instead.
+        raise ValueError(f"audit: anonymisation failed ({type(e).__name__})") from e
 
 
 _default: AuditLog | None = None

@@ -69,7 +69,8 @@ def _build_client():
     import redis
     url = os.environ.get("REDIS_URL", "").strip()
     if url:
-        return redis.Redis.from_url(url, decode_responses=True)
+        return redis.Redis.from_url(url, decode_responses=True,
+                                    socket_connect_timeout=5, socket_timeout=10)
     if not os.environ.get("REDIS_HOST", "").strip():
         raise ValueError(
             "REDIS_URL (preferred) or REDIS_HOST must be set explicitly"
@@ -191,7 +192,11 @@ def _run(args: dict[str, Any]) -> str:
                 int(args.get("ttl_seconds") or 0),
             )
         if op == "delete":
-            return _op_delete([s for s in (args.get("keys") or []) if s])
+            keys = args.get("keys") or []
+            if isinstance(keys, str):
+                # A bare string would otherwise be iterated per character.
+                keys = [keys]
+            return _op_delete([s for s in keys if s])
         if op == "keys":
             return _op_keys((args.get("pattern") or "").strip())
         if op == "lpush":

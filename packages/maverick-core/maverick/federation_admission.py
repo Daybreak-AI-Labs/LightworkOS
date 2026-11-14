@@ -9,6 +9,8 @@ and execution, and that boundary is explicitly unknown.
 The existing tenant/peer correlation bounds apply to retained admissions,
 including erased-goal tombstones. They are storage limits, not an expiring
 replay window; capacity pressure never silently reopens an old correlation.
+No code removes admission rows, so the bounds are lifetime caps: a peer or
+tenant that reaches one is refused until an operator clears old rows.
 """
 from __future__ import annotations
 

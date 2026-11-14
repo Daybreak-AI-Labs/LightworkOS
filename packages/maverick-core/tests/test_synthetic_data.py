@@ -39,3 +39,9 @@ def test_synthetic_errors():
     assert t.fn({"op": "generate", "fields": []}).startswith("ERROR")
     assert t.fn({"op": "generate", "fields": [{"name": "x", "type": "int"}], "rows": 0}).startswith("ERROR")
     assert t.fn({"op": "generate", "fields": [{"name": "x", "type": "int"}], "format": "xml"}).startswith("ERROR")
+
+
+def test_synthetic_csv_header_is_escaped():
+    out = synthetic_data().fn({"op": "generate", "rows": 1, "seed": 1, "format": "csv",
+                               "fields": [{"name": "a,b", "type": "name"}]})
+    assert out.splitlines()[0] == '"a,b"'

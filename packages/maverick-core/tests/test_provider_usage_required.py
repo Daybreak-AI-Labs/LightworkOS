@@ -317,3 +317,25 @@ def test_contextvar_temperature_dropped_when_thinking_active() -> None:
     k = _kwargs_ctx("claude-opus-4-8", thinking_budget=None, temp=0.9)
     assert k.get("thinking") == {"type": "adaptive"}
     assert "temperature" not in k
+
+
+def test_usage_is_recorded_before_an_unparseable_response_raises():
+    # The empty-choices error used to fire before accounting: a paid call
+    # was never charged to the goal budget.
+    resp = SimpleNamespace(choices=[],
+                           usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5))
+    budget = Budget(max_dollars=10.0)
+    with pytest.raises(RuntimeError, match="no choices"):
+        OpenAIClient._from_response(resp, budget, model="gpt-5.4")
+    assert (budget.input_tokens, budget.output_tokens) == (10, 5)
+    # Without usage either, the failover-eligible error is kept.
+    with pytest.raises(RuntimeError, match="no choices"):
+        OpenAIClient._from_response(SimpleNamespace(choices=[], usage=None), budget,
+                                    model="gpt-5.4")
+
+
+@pytest.mark.parametrize("raw", [None, "null", "[1, 2]", '"text"'])
+def test_non_object_tool_arguments_run_with_empty_input(raw):
+    call = SimpleNamespace(id="c1", function=SimpleNamespace(name="do_thing", arguments=raw))
+    r = OpenAIClient._from_response(_Resp(_Msg(tool_calls=[call])), None)
+    assert r.tool_calls[0].input == {}

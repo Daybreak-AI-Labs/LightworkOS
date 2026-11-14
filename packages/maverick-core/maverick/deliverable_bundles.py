@@ -8,11 +8,14 @@ import re
 from pathlib import Path
 
 from .governed_operations import digest
-from .governed_records import GovernedRecordStore
+from .governed_records import GovernedRecordCapacityError, GovernedRecordStore
 from .paths import current_tenant_id_strict
 from .privacy_ops import RecordConflict
 
 STORE = GovernedRecordStore("deliverable_bundles", "DLB", "deliverable_bundle")
+# The inbox reads the whole namespace, so creation keeps it within this bound;
+# a full store archives its oldest settled (revoked) bundles to make room.
+_MAX_BUNDLES = 1000
 MAX_BYTES = 6 * 1024 * 1024
 MAX_ITEMS = 30
 LIFETIMES = (3600, 86400, 604800)
@@ -198,17 +201,46 @@ class DeliverableBundles:
         if prepared["review_version"] != expected_review:
             raise RecordConflict("The selected evidence or recipient changed. Review a fresh preview before sharing.")
         now = self.store.authoritative_time()
+        record = {"id": identifier, "schema": "lightwork.deliverable-bundle.v1",
+                  "owner": self.actor, "request_hash": request_hash, "status": "shared",
+                  "expires_at": now + prepared["lifetime"], "acceptance": None,
+                  "operations": {}, "payload": prepared}
         try:
-            self.store.create({"id": identifier, "schema": "lightwork.deliverable-bundle.v1",
-                               "owner": self.actor, "request_hash": request_hash, "status": "shared",
-                               "expires_at": now + prepared["lifetime"], "acceptance": None,
-                               "operations": {}, "payload": prepared}, actor=self.actor, action="share_selected_bundle")
+            try:
+                self.store.create(dict(record), actor=self.actor, action="share_selected_bundle",
+                                  max_records=_MAX_BUNDLES)
+            except GovernedRecordCapacityError:
+                # Expired bundles still read "shared", which the store does not
+                # archive; mark them expired so the retry can make room.
+                if not self._settle_expired(now):
+                    raise
+                self.store.create(dict(record), actor=self.actor, action="share_selected_bundle",
+                                  max_records=_MAX_BUNDLES)
         except RecordConflict:
             committed = self.store.get(identifier)
             if not committed or committed.get("request_hash") != request_hash:
                 raise
             self._authorize(committed)
         return self.get(identifier)
+
+    def _settle_expired(self, now) -> int:
+        """Mark shared bundles whose access has ended as ``expired``, a settled
+        status the store archives when full. Returns how many were marked."""
+        settled = 0
+        for row in self.store.list(limit=_MAX_BUNDLES):
+            if row.get("status") != "shared" or float(row.get("expires_at") or 0) > now:
+                continue
+
+            def expire(value):
+                value["status"] = "expired"
+
+            try:
+                if self.store.update(row["id"], expire, expected_revision=row["revision"],
+                                     action="expire_bundle", actor="deliverable-bundle retention"):
+                    settled += 1
+            except RecordConflict:
+                continue
+        return settled
 
     def _authorize(self, record):
         self._context()
@@ -261,8 +293,8 @@ class DeliverableBundles:
         return result
 
     def inbox(self):
-        rows = self.store.list(limit=1001)
-        if len(rows) > 1000:
+        rows = self.store.list(limit=_MAX_BUNDLES + 1)
+        if len(rows) > _MAX_BUNDLES:
             raise ValueError("The bundle inventory exceeds its current supported bound.")
         result = []
         for row in rows:

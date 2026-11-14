@@ -11,16 +11,26 @@ ops:
                             number|boolean), enum, pattern (regex), minimum,
                             maximum, min_length, max_length.
 
-Returns ``PASS <coerced-value>`` or ``FAIL: <reason>``. Deterministic; no LLM.
+Returns ``PASS <coerced-value>`` or ``FAIL: <reason>``, or ``ERROR: schema ...``
+when the pattern is invalid, longer than 1,000 characters, or takes more than
+a second to evaluate (it runs in a separate, killable process). Deterministic;
+no LLM.
 """
 from __future__ import annotations
 
-import re
+import math
 from typing import Any
 
 from . import Tool
+from ._regex_guard import PatternInvalid, PatternTimeout, RegexGuardError, guarded_search
 
 _TRUE = {"true", "1", "yes", "on"}
+# The pattern and the value both come from the model, and ``re`` has no time
+# limit. A pattern with a quantifier is evaluated in a separate interpreter
+# that is killed after _PATTERN_TIMEOUT_S (see _regex_guard), and the value is
+# bounded.
+_PATTERN_MAX_VALUE_LEN = 1000
+_PATTERN_TIMEOUT_S = 1.0
 _FALSE = {"false", "0", "no", "off"}
 
 
@@ -40,12 +50,39 @@ def _coerce(value: Any, typ: str) -> tuple[bool, Any, str]:
     if typ in ("integer", "number"):
         if isinstance(value, bool):
             return False, None, "boolean is not a number"
+        what = "an integer" if typ == "integer" else "a number"
         try:
-            num = int(value) if typ == "integer" else float(value)
+            num = float(value) if typ == "number" or isinstance(value, float) else int(value)
         except (TypeError, ValueError, OverflowError):
-            return False, None, f"{value!r} is not {'an integer' if typ == 'integer' else 'a number'}"
+            return False, None, f"{value!r} is not {what}"
+        if isinstance(num, float) and not math.isfinite(num):
+            return False, None, f"{value!r} is not {'an integer' if typ == 'integer' else 'a finite number'}"
+        if typ == "integer" and isinstance(num, float):
+            if not num.is_integer():
+                return False, None, f"{value!r} is not {what}"
+            num = int(num)
         return True, num, ""
     return False, None, f"unknown type {typ!r}"
+
+
+def _check_pattern(pat: Any, value: str) -> str | None:
+    if not isinstance(pat, str):
+        return "ERROR: schema pattern must be a string"
+    if len(value) > _PATTERN_MAX_VALUE_LEN:
+        return (f"FAIL: value longer than {_PATTERN_MAX_VALUE_LEN} characters "
+                "cannot be checked against a pattern")
+    try:
+        matched = guarded_search(pat, value, timeout_s=_PATTERN_TIMEOUT_S)
+    except PatternInvalid as e:
+        return f"ERROR: schema pattern {pat!r} is invalid: {e}"
+    except PatternTimeout:
+        return (f"ERROR: schema pattern {pat!r} took too long to evaluate "
+                f"(over {_PATTERN_TIMEOUT_S:g}s); rewrite it")
+    except RegexGuardError as e:
+        return f"ERROR: schema pattern {pat!r} could not be evaluated: {e}"
+    if not matched:
+        return f"FAIL: {value!r} does not match pattern {pat!r}"
+    return None
 
 
 def _check(value: Any, schema: dict) -> str:
@@ -57,13 +94,17 @@ def _check(value: Any, schema: dict) -> str:
 
     if "enum" in schema:
         allowed = schema["enum"]
+        if not isinstance(allowed, list):
+            return "FAIL: enum must be a list"
         if value not in allowed:
             return f"FAIL: {value!r} not in enum {allowed}"
 
     if isinstance(value, str):
         pat = schema.get("pattern")
-        if pat and not re.search(pat, value):
-            return f"FAIL: {value!r} does not match pattern {pat!r}"
+        if pat:
+            failure = _check_pattern(pat, value)
+            if failure:
+                return failure
         if "min_length" in schema and len(value) < schema["min_length"]:
             return f"FAIL: length {len(value)} < min_length {schema['min_length']}"
         if "max_length" in schema and len(value) > schema["max_length"]:
@@ -115,7 +156,10 @@ def constrained_output() -> Tool:
             "before accepting it (the guard half of constrained generation). "
             "op=check with a 'value' and a 'schema' (type, enum, pattern, "
             "minimum, maximum, min_length, max_length). Coerces strings toward "
-            "the target type; returns 'PASS <value>' or 'FAIL: <reason>'."
+            "the target type; returns 'PASS <value>' or 'FAIL: <reason>', or "
+            "'ERROR: schema pattern ...' when the pattern is invalid, over "
+            "1,000 characters, or takes over 1s to evaluate. Pattern checks "
+            "apply to values up to 1,000 characters."
         ),
         input_schema=_SCHEMA,
         fn=_run,

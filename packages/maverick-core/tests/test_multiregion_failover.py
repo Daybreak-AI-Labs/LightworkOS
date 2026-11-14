@@ -66,3 +66,11 @@ def test_errors():
          "regions": [{"name": "a", "healthy": True, "rtt_ms": 1, "capacity_left": 1}],
          "client_region": "a"}
     ).startswith("ERROR")
+
+
+def test_string_false_healthy_region_is_not_selected():
+    out = _select([
+        {"name": "us-east-1", "healthy": "false", "rtt_ms": 5, "capacity_left": 10},
+        {"name": "us-west-2", "healthy": True, "rtt_ms": 40, "capacity_left": 10},
+    ], "us-east-1")
+    assert out.startswith("SELECT us-west-2")

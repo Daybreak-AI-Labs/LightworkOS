@@ -75,3 +75,8 @@ def test_non_finite_window_does_not_crash():
                     "slo": {"metric": "m", "threshold": 1, "window": bad, "comparator": "lt"},
                     "measurements": [{"t": 1, "value": 1}]})
         assert out.startswith("ERROR")
+
+
+def test_nan_threshold_or_value_is_rejected_not_ok():
+    assert _check(slo={**_LT, "threshold": "nan"}, measurements=_ms([500])).startswith("ERROR")
+    assert _check(slo=_LT, measurements=_ms([500, "nan"])).startswith("ERROR")

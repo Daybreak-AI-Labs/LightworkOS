@@ -20,12 +20,15 @@ polling reaches out to third-party endpoints, so the operator opts in
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urljoin, urlparse
+
+log = logging.getLogger(__name__)
 
 
 class EventSourceError(RuntimeError):
@@ -161,7 +164,8 @@ def _flatten(item: dict, *, prefix: str = "", out: dict | None = None, depth: in
 
 
 def diff_new_items(items: list[dict], cursor: str, id_field: str, *,
-                   newest_first: bool = True, cursor_format: int | None = None) -> PollResult:
+                   newest_first: bool = True, cursor_format: int | None = None,
+                   feed: str = "") -> PollResult:
     """Given the raw items a source returned, compute the new ones vs ``cursor``.
 
     ``cursor`` is the id of the newest item seen at the last poll. First poll
@@ -186,10 +190,28 @@ def diff_new_items(items: list[dict], cursor: str, id_field: str, *,
     if not cursor:
         return PollResult(events=[], cursor=_encode_cursor("feed", newest))
     fresh: list[dict] = []
-    for it, iid in zip(ordered, ids, strict=False):
-        if iid == prior:
-            break                                       # reached last-seen
-        fresh.append(it)
+    if prior is None:
+        # Baselined on an empty feed: everything listed since then is new.
+        fresh = list(ordered)
+    elif prior in ids:
+        for it, iid in zip(ordered, ids, strict=False):
+            if iid == prior:
+                break                                   # reached last-seen
+            fresh.append(it)
+    elif _numeric_id(prior) is not None and all(_numeric_id(i) is not None for i in ids):
+        # The last-seen item left the feed (closed, deleted, rolled off) but
+        # ids are increasing numbers: only ids above it are new.
+        floor = _numeric_id(prior)
+        fresh = [it for it, iid in zip(ordered, ids, strict=True) if _numeric_id(iid) > floor]
+    else:
+        # Otherwise what is before or after it cannot be told: re-baseline
+        # instead of firing every listed (possibly historical) item as new.
+        if ids:  # an empty page skips nothing
+            log.warning(
+                "event feed %s: last-seen item %r is no longer listed; re-baselined "
+                "on %r and skipped %d listed item(s) without firing them",
+                feed or "(unnamed)", prior, newest, len(ids))
+        return PollResult(events=[], cursor=_encode_cursor("feed", newest))
     fresh.reverse()                                     # oldest-first for firing
     # Fire the OLDEST _MAX_EVENTS of a backlog and advance the cursor only to the
     # newest item we actually fired -- so a burst larger than the cap drains over
@@ -201,6 +223,19 @@ def diff_new_items(items: list[dict], cursor: str, id_field: str, *,
     events = [_flatten(it) for it in fresh]
     return PollResult(events=events, cursor=_encode_cursor("feed", next_cursor),
                       event_ids=[_id(item) for item in fresh])
+
+
+def _feed_label(url: str) -> str:
+    """Scheme, host and path of a feed URL for logs (no query: it may carry a key)."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.hostname or ''}{parts.path}"
+
+
+def _numeric_id(value: str | None) -> int | None:
+    text = (value or "").strip()
+    return int(text) if text.isascii() and text.isdigit() and len(text) <= 30 else None
 
 
 # ---- built-in source: poll a JSON HTTP endpoint ----------------------------
@@ -356,7 +391,8 @@ class HttpJsonSource:
             nxt = _dig(body, next_path) if next_path else None
             page_url = _same_origin_url(url, str(nxt)) if (nxt and next_path) else None
         return diff_new_items(items, cursor, id_field, newest_first=newest_first,
-                              cursor_format=config.get("_lightwork_cursor_format"))
+                              cursor_format=config.get("_lightwork_cursor_format"),
+                              feed=_feed_label(url))
 
 
 register("http_json", HttpJsonSource)
@@ -415,7 +451,8 @@ class RssSource:
         url, id_field, headers = _base_config(config, "rss")
         items = _parse_feed(_http_get_text(url, headers=headers))
         return diff_new_items(items, cursor, id_field, newest_first=True,
-                              cursor_format=config.get("_lightwork_cursor_format"))
+                              cursor_format=config.get("_lightwork_cursor_format"),
+                              feed=_feed_label(url))
 
 
 register("rss", RssSource)
@@ -543,7 +580,8 @@ class GithubIssuesSource:
         # The issues endpoint also lists PRs; drop them. Dedup by issue number.
         items = [it for it in items if isinstance(it, dict) and "pull_request" not in it]
         return diff_new_items(items, cursor, "number", newest_first=True,
-                              cursor_format=config.get("_lightwork_cursor_format"))
+                              cursor_format=config.get("_lightwork_cursor_format"),
+                              feed=f"github:{owner}/{repo}")
 
 
 register("github_issues", GithubIssuesSource)

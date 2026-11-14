@@ -2,9 +2,12 @@
 
 Past runs log (input_tokens, output_tokens, cost); this fits the two per-token
 rates by ordinary least squares (closed-form 2×2 normal equations — no numpy/
-scipy) so the cost router can *predict* a call's cost before making it. Pure and
-dependency-free: ``fit_curve`` / ``predict`` are unit-tested; ``gather`` adapts a
-world model's priced episodes, grouped by provider. Falls back to a single
+scipy) so a caller (the ``cost_curve`` agent tool; the cost router does not use
+it) can *predict* a call's cost before making it. Pure and dependency-free:
+``fit_curve`` / ``predict`` are unit-tested; ``gather`` adapts a world model's
+priced episodes, grouped by an episode's ``provider`` attribute. The shipped
+world model's episodes carry none, so every row lands under ``"(all)"``.
+Falls back to a single
 average-rate model when the system is singular (e.g. all rows share a token mix).
 """
 from __future__ import annotations
@@ -128,7 +131,8 @@ def cost_curve_tool(world):
         description=(
             "Fit / query a per-provider cost model (cost ~ a*in_tok + b*out_tok) "
             "from past priced runs. ops: fit (coefficients + R2 per provider), "
-            "predict (provider, in_tokens, out_tokens -> estimated cost)."
+            "predict (provider, in_tokens, out_tokens -> estimated cost). Episodes "
+            "without a provider are grouped under the provider name '(all)'."
         ),
         input_schema=_SCHEMA,
         fn=lambda args: _run(args, world),

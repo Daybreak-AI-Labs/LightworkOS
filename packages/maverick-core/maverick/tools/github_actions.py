@@ -131,7 +131,7 @@ def _op_runs(args: dict) -> str:
         return "no runs"
     return "\n".join(
         f"  {r.get('id'):>12}  [{r.get('status', '?'):>10}]  "
-        f"{r.get('conclusion', '?'):>10}  "
+        f"{r.get('conclusion') or '-':>10}  "
         f"{(r.get('name') or '')[:30]:<30}  "
         f"{r.get('head_branch', '?')}  {r.get('event', '?')}"
         for r in rows
@@ -179,7 +179,7 @@ def _op_jobs(args: dict) -> str:
         return "no jobs"
     return "\n".join(
         f"  {j.get('id'):>14}  [{j.get('status', '?'):>10}]  "
-        f"{j.get('conclusion', '?'):>10}  {(j.get('name') or '')[:60]}"
+        f"{j.get('conclusion') or '-':>10}  {(j.get('name') or '')[:60]}"
         for j in rows
     )
 

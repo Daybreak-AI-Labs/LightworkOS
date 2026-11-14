@@ -179,6 +179,43 @@ def test_lost_required_archive_fails_closed_after_completed_calls():
         attempt(budget, 1)
 
 
+def test_interrupted_archive_creation_does_not_block_provider_calls():
+    # A crash between creating the history file and writing its schema left
+    # a zero-byte database; every later reserve_call failed on "no such table".
+    from maverick.paths import data_dir
+    path = data_dir('usage', 'provider_history.sqlite3', tenant='acme')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'')
+    budget, _ = start_budget()
+    assert attempt(budget, 1) is not None
+
+
+def test_partly_created_archive_schema_does_not_block_provider_calls():
+    import sqlite3
+
+    from maverick.paths import data_dir
+    path = data_dir('usage', 'provider_history.sqlite3', tenant='acme')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as db:  # crash after calls, before plans
+        db.execute('CREATE TABLE runs (id TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL)')
+        db.execute('CREATE TABLE calls (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, data TEXT NOT NULL)')
+    budget, _ = start_budget()
+    assert attempt(budget, 1) is not None
+
+
+def test_existing_history_is_still_read_without_its_marker():
+    from maverick.paths import data_dir
+    from maverick.tenant import _provider_archive
+    budget, settlement = start_budget()
+    provider.settle(attempt(budget, 2), 1)
+    budget.dollars = 1
+    settlement.record()
+    path = data_dir('usage', 'provider_history.sqlite3', tenant='acme')
+    path.with_suffix('.required').unlink()
+    with _provider_archive._database('acme') as db:
+        assert db is not None
+
+
 def test_archive_commit_before_hot_removal_can_replay_without_double_charge(monkeypatch):
     from maverick.tenant import _provider_archive
     budget, settlement = start_budget()

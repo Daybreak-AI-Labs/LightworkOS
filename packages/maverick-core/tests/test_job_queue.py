@@ -3,10 +3,12 @@ fencing on complete() and fail().
 """
 from __future__ import annotations
 
+import os
 import tempfile
 import time
 from pathlib import Path
 
+import pytest
 from maverick.job_queue import JobQueue
 
 
@@ -152,3 +154,21 @@ def test_job_queue_purge_removes_done(tmp_path):
     deleted = q.purge(older_than_days=30)
     assert deleted == 1
     assert q.get(jid) is None
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX perms")
+def test_queue_file_and_default_directory_are_private(tmp_path, monkeypatch):
+    import stat
+
+    from maverick.job_queue import JobQueue
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    old = os.umask(0o022)
+    try:
+        default = JobQueue()
+        explicit = JobQueue(db_path=tmp_path / "elsewhere" / "jobs.db")
+    finally:
+        os.umask(old)
+    for queue in (default, explicit):
+        assert stat.S_IMODE(queue.db_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(default.db_path.parent.stat().st_mode) == 0o700

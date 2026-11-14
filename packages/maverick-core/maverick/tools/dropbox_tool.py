@@ -94,12 +94,24 @@ def _op_download(args: dict) -> str:
         headers={
             "Authorization": f"Bearer {_token()}",
             "Dropbox-API-Arg": json.dumps({"path": path}),
+            # Only the first 4 KB is shown: ask for 4 KB + 1 byte instead of
+            # downloading the whole file into memory.
+            "Range": "bytes=0-4096",
         }, timeout=30.0,
     )
+    if r.status_code == 416:
+        # A range starting at byte 0 is unsatisfiable only for an empty file.
+        return "size=0\n"
     if r.status_code >= 400:
         return f"ERROR: download ({r.status_code}): {r.text[:300]}"
-    body = r.content[:4096].decode("utf-8", errors="replace")
-    return f"size={len(r.content)}\n{body}{'... (truncated)' if len(r.content) > 4096 else ''}"
+    content = r.content
+    size: Any = len(content)
+    try:  # The full size is in the metadata header, not the partial body.
+        size = json.loads(r.headers.get("Dropbox-API-Result") or "{}").get("size", size)
+    except (ValueError, AttributeError, TypeError):
+        pass
+    body = content[:4096].decode("utf-8", errors="replace")
+    return f"size={size}\n{body}{'... (truncated)' if len(content) > 4096 else ''}"
 
 
 def _op_upload(args: dict) -> str:

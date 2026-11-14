@@ -394,6 +394,35 @@ def test_history_and_metadata_journals_are_bounded(store, monkeypatch):
     assert len(_state(store)["events"]) == len(store.events()) == 3
 
 
+def test_history_cap_and_context_expiry_respect_a_legal_hold(store, monkeypatch):
+    clock = [1000000.0]
+    windows = []
+    monkeypatch.setattr(employee_companion.time, "time", lambda: clock[0])
+    monkeypatch.setattr(employee_companion, "personal_hold_windows", lambda owner: list(windows))
+    monkeypatch.setattr(employee_companion, "MAX_HISTORY", 3)
+    _enable(store, allowed_tools=["task_status", "draft_reply"])
+    _reply(store, message="Question 0")
+    windows.append((None, clock[0] + 0.5))          # the matter holds Question 0
+    for index in range(1, 4):
+        clock[0] += 1
+        _reply(store, message=f"Question {index}")
+    # The cap evicted the oldest unheld exchange, never the held one.
+    assert [e["message"] for e in store.held_exchanges(ALICE)] == [
+        "Question 0", "Question 2", "Question 3"]
+    # Past its retention the held exchange stays, and replies still save.
+    clock[0] += 86400
+    _reply(store, message="Question 4")
+    assert [e["message"] for e in store.history(ALICE)] == ["Question 0", "Question 4"]
+    windows[0] = (None, None)                       # now every exchange is held
+    _reply(store, message="Question 5")
+    with pytest.raises(employee_companion.CompanionHistoryHeld, match="under legal hold"):
+        _reply(store, message="Question 6")
+    # A model turn is refused at admission, before any provider call.
+    with pytest.raises(employee_companion.LegalHoldApplies, match="under legal hold"):
+        _reserve(store)
+    assert len(store.held_exchanges(ALICE)) == 3
+
+
 def test_employee_capacity_blocks_new_records_but_preserves_existing_ones(store, monkeypatch):
     monkeypatch.setattr(employee_companion, "MAX_EMPLOYEES", 1)
     _enable(store)

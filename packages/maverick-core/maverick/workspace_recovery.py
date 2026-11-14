@@ -1156,6 +1156,12 @@ def install_retained_keys(
             _install_and_verify_retained_keys(destinations, keys, key_hashes)
 
             now = time.time()
+            # The first completed installation opens one fresh restore window.
+            # Repeating the install of an already installed set must not
+            # renew it, or the bootstrap authorization (and its offline
+            # attestation) could be extended indefinitely.
+            already_installed = (isinstance(prior_retained, dict)
+                                 and prior_retained.get("state") == "installed")
             retained = {
                 **expected_receipt,
                 "state": "installed",
@@ -1165,7 +1171,8 @@ def install_retained_keys(
             _write_bootstrap({
                 **{key: value for key, value in marker.items()
                    if key not in {"authentication", "retained_keys"}},
-                "expires_at": now + _BOOTSTRAP_TTL_SECONDS,
+                "expires_at": (marker.get("expires_at", 0) if already_installed
+                               else now + _BOOTSTRAP_TTL_SECONDS),
                 "retained_keys": retained,
             })
         return {

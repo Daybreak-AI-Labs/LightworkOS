@@ -385,6 +385,34 @@ def _discard(proposal_id: str) -> None:
                     proposal_id, exc_info=True)
 
 
+def _retire_denied(pending: list[dict]) -> bool:
+    """Mark pending proposals whose parked approval was denied as rejected.
+
+    A denied proposal can never be applied, so it must not hold a place in
+    the pending queue. An approval that cannot be read leaves its proposal
+    pending. Returns whether any record changed.
+    """
+    from .world_model import open_world
+    try:
+        world = open_world()
+    except Exception:
+        log.warning("harness_refine: approvals unreadable; queue left as is",
+                    exc_info=True)
+        return False
+    changed = False
+    for record in pending:
+        try:
+            approval = world.get_approval(int(record.get("approval_id")))
+        except Exception:
+            continue
+        if (approval is not None and approval.provenance == PROVENANCE
+                and approval.status == "denied"):
+            record["status"] = "rejected"
+            record["rejected_at"] = time.time()
+            changed = True
+    return changed
+
+
 def propose(observation: dict, *, goal_id: int | None = None,
             proposed_by: str = "") -> dict:
     """Record one proposed refinement and park its approval.
@@ -428,6 +456,9 @@ def propose(observation: dict, *, goal_id: int | None = None,
         store = _load_store()
         pending = [p for p in store["proposals"].values()
                    if p.get("status") == "pending"]
+        if len(pending) >= cfg["max_pending"] and _retire_denied(pending):
+            _save_store(store)
+            pending = [p for p in pending if p.get("status") == "pending"]
         if len(pending) >= cfg["max_pending"]:
             raise RefineError(
                 f"the pending refinement queue is full "
@@ -456,7 +487,7 @@ def propose(observation: dict, *, goal_id: int | None = None,
 
 def list_proposals(*, status: str | None = None) -> list[dict]:
     """Proposals newest first, optionally filtered to one status
-    (``pending`` / ``applied`` / ``reverted``)."""
+    (``pending`` / ``applied`` / ``reverted`` / ``rejected``)."""
     want = str(status or "").strip().lower()
     rows = [dict(p) for p in _load_store()["proposals"].values()
             if not want or str(p.get("status") or "") == want]

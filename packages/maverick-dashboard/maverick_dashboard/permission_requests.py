@@ -25,16 +25,21 @@ def digest(value):
 
 
 def _layer(name, layer, tool, *, role=False):
+    from maverick.safety.tool_acl import layer_policy
     from maverick.safety.tool_risk import RISK_LEVELS, risk_rank, tool_risk
-    allow = layer.get("allow_tools" if role else "allowed_tools") or []
-    deny = layer.get("deny_tools" if role else "denied_tools") or []
+    if role:
+        allow = layer.get("allow_tools") or []
+        deny = layer.get("deny_tools") or []
+        max_risk = layer.get("max_risk") if layer.get("max_risk") in RISK_LEVELS else None
+    else:  # read as the kernel reads it: a lone string, mixed-case risk
+        allow, deny, max_risk = layer_policy(layer)
     reason = ""
     if tool in deny:
         reason = "Explicitly denied by this policy."
     elif allow and tool not in allow:
         reason = "Outside this policy's allowed tool set."
-    elif layer.get("max_risk") in RISK_LEVELS and risk_rank(tool_risk(tool)) > risk_rank(layer["max_risk"]):
-        reason = "Tool risk exceeds this policy's " + layer["max_risk"] + " ceiling."
+    elif max_risk and risk_rank(tool_risk(tool)) > risk_rank(max_risk):
+        reason = "Tool risk exceeds this policy's " + max_risk + " ceiling."
     return {"source": name, "allowed": not reason, "reason": reason or "No denial from this layer."}
 
 

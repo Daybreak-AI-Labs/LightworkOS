@@ -252,6 +252,32 @@ def test_governance_alerts_due_is_quiet_and_green_when_nothing_is(
     assert "attention items: 0" in result.output
 
 
+def test_governance_alerts_due_fails_when_a_register_cannot_be_read(
+    runner, monkeypatch,
+):
+    from maverick import governance_alerts
+
+    monkeypatch.setattr(
+        governance_alerts,
+        "digest",
+        lambda **kwargs: {
+            "generated_at": 1.0,
+            "attention_count": 0,
+            "sections": {
+                "serious_incidents": {
+                    "enabled": True, "overdue": [], "due_soon": [],
+                    "complete": False, "unavailable_registers": ["declarations"],
+                },
+                "ai_literacy": {"enabled": False, "error": "unavailable"},
+                "eu_conformity": {"enabled": False},
+            },
+        },
+    )
+    result = runner.invoke(main, ["governance-alerts", "due"])
+    assert result.exit_code != 0
+    assert "could not be read: ai_literacy, serious_incidents" in result.output
+
+
 def test_content_provenance_sign_and_verify_round_trip(
     runner, tmp_path, monkeypatch,
 ):

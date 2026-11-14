@@ -84,3 +84,39 @@ def test_unknown_work_area_network_policy_keeps_commands_offline():
     assert work_area_offline({"sandbox": {"network_policy": ""}}) is False
     assert work_area_offline({"sandbox": {}}) is False
     assert work_area_offline({}) is False
+
+
+def test_unparseable_config_or_malformed_values_block_the_network(tmp_path, monkeypatch, caplog):
+    # load_config() returns defaults for a config it cannot parse, so a
+    # deny-all posture would silently become "open". It must block instead,
+    # as must non-string posture values and a tool rule that is not a table.
+    from maverick import config
+    from maverick.sandbox.network_policy import (
+        denied_tools,
+        network_posture,
+        offline_reason,
+        work_area_offline,
+    )
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    cfg = config.config_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text('[security]\nnetwork_policy = "deny-all"\n[sandbox\n', encoding="utf-8")
+    config.reset_config_cache()
+    try:
+        assert network_posture() == "deny-all"
+        assert "http_fetch" in denied_tools()
+        assert work_area_offline() is True
+        # The reason names the file, and no misleading "unknown value" warning.
+        assert str(cfg) in offline_reason() and "could not be read" in offline_reason()
+        assert str(cfg) in describe("http_fetch")
+        assert "unknown" not in caplog.text
+    finally:
+        config.reset_config_cache()
+
+    for value in (False, 0):
+        assert network_posture({"security": {"network_policy": value}}) == "deny-all"
+        assert work_area_offline({"sandbox": {"network_policy": value}}) is True
+    assert not host_allowed("shell", "example.com", {"shell": "deny"})
+    assert "blocked" in describe("shell", {"shell": ["*"]})

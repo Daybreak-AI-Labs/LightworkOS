@@ -192,15 +192,21 @@ def configured_policy() -> QuorumPolicy | None:
     On only when an operator set a quorum (``MAVERICK_QUORUM_REQUIRED`` or
     ``[safety] quorum_required``) of at least 2: one approver who could be
     the person asking adds nothing, and an unset quorum keeps today's
-    behaviour (a protected setting saves at once).
+    behaviour (a protected setting saves at once). While a config source is
+    unreadable (and the env does not set a quorum) the quorum may have been
+    lost with the file, so the default policy applies instead of "off".
     """
     raw: object = os.environ.get("MAVERICK_QUORUM_REQUIRED", "").strip() or None
     if raw is None:
         try:
-            from .config import load_config
+            from .config import config_source_errors, load_config
             raw = ((load_config() or {}).get("safety") or {}).get("quorum_required")
+            unreadable = bool(config_source_errors(include_tenant=True))
         except Exception:
-            return None
+            unreadable = True
+        if unreadable:
+            return QuorumPolicy(required=DEFAULT_REQUIRED, protected_keys=DEFAULT_PROTECTED_KEYS,
+                                ttl_days=DEFAULT_TTL_DAYS)
     if raw is None or isinstance(raw, bool) or not str(raw).strip():
         return None
     policy = policy_from_config()

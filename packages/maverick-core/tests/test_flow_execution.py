@@ -225,6 +225,92 @@ class TestExecution:
         # the pre-pause node's trace is preserved alongside the post-resume nodes
         assert resumed.nodes["a"]["outcome"] == 1.0 and resumed.nodes["c"]["outcome"] == 1.0
 
+    def test_approved_agent_step_is_claimed_and_later_action_outlives_decision_ttl(
+        self, tmp_path, monkeypatch,
+    ):
+        import time as real_time
+
+        from maverick.flow import store
+        _patch_home(tmp_path, monkeypatch)
+        f = Flow(id="fClaim", name="f", start="gate", nodes={
+            "gate": FlowNode(id="gate", kind="approval", prompt="ok?", next="work"),
+            "work": FlowNode(id="work", kind=NODE_AGENT, brief="long work", next="send"),
+            "send": FlowNode(id="send", kind=NODE_ACTION, tool="web_search",
+                             params={"query": "hi"})})
+        paused = execution.execute(f, agent_runner=lambda b, d: ("x", 1.0),
+                                   action_runner=lambda *a: ("ok", 1.0))
+        seen, sent = [], []
+        start = real_time.time()
+
+        def agent(brief, data):
+            # The resume is durably claimed before the agent starts, and the
+            # agent outlives the 15-minute decision attestation.
+            seen.append(store.load_run(paused.run_id).status)
+            monkeypatch.setattr(real_time, "time", lambda: start + 3600.0)
+            return ("x", 1.0)
+
+        resumed = execution.execute(
+            f, agent_runner=agent,
+            action_runner=lambda tool, params, data: sent.append(tool) or ("ok", 1.0),
+            resume_run_id=paused.run_id, decision="approved", decided_by="system:direct",
+            approval_binding_sha256=_approval_binding(paused),
+            approval_decision_attestation=_approval_attestation(paused))
+        assert seen == ["resuming"]
+        assert sent == ["web_search"] and resumed.status == "completed"
+
+    def test_retry_inside_approved_loop_resumes_unless_the_gated_action_failed(
+        self, tmp_path, monkeypatch,
+    ):
+        import pytest
+
+        _patch_home(tmp_path, monkeypatch)
+        body = Flow(id="body", name="b", start="look", nodes={
+            "look": FlowNode(id="look", kind=NODE_ACTION, tool="web_search",
+                             params={"query": "{{x}}"}, next="send"),
+            "send": FlowNode(id="send", kind=NODE_ACTION, tool="slack_bot",
+                             params={"text": "{{x}}"})})
+        f = Flow(id="fLoop", name="f", start="gate", nodes={
+            "gate": FlowNode(id="gate", kind="approval", prompt="ok?", next="loop"),
+            "loop": FlowNode(id="loop", kind="foreach", items="xs", var="x", body=body)})
+        sent, broken = [], {"look": "2", "send": None}
+
+        def act(tool, params, data):
+            key = "look" if tool == "web_search" else "send"
+            value = params.get("query") or params.get("text")
+            if broken[key] == value:
+                if key == "look":
+                    raise RuntimeError("search unavailable")
+                return ("REFUSED: channel archived", 0.0)
+            if key == "send":
+                sent.append(value)
+            return ("ok", 1.0)
+
+        def approved_run():
+            paused = execution.execute(f, agent_runner=lambda b, d: ("", 1.0),
+                                       action_runner=act, data={"xs": [1, 2, 3]})
+            return execution.execute(
+                f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
+                resume_run_id=paused.run_id, decision="approved", decided_by="system:direct",
+                approval_binding_sha256=_approval_binding(paused),
+                approval_decision_attestation=_approval_attestation(paused))
+
+        # A low-risk step failed: the retry continues without re-sending item 1.
+        failed = approved_run()
+        assert failed.status == "failed" and sent == ["1"]
+        broken["look"] = None
+        retried = execution.execute(f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
+                                    resume_run_id=failed.run_id, from_failure=True)
+        assert retried.status == "completed" and sent == ["1", "2", "3"]
+        # The gated action itself failed: a retry would re-send it unreviewed.
+        sent.clear()
+        broken["send"] = "2"
+        failed = approved_run()
+        assert failed.status == "failed" and sent == ["1"]
+        with pytest.raises(execution.FlowNotResumable, match="without a new review"):
+            execution.execute(f, agent_runner=lambda b, d: ("", 1.0), action_runner=act,
+                              resume_run_id=failed.run_id, from_failure=True)
+        assert sent == ["1"]
+
     def test_approval_card_and_run_share_rendered_pause_values(self, tmp_path, monkeypatch):
         _patch_home(tmp_path, monkeypatch)
         flow = Flow(id="fPrompt", name="Payments", start="gate", nodes={

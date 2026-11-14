@@ -24,18 +24,36 @@ Provides four operations matching OpenHands' surface:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from . import Tool
 from .fs import (
     _is_dotgit_path,
     _is_opaque_blocked_resolved,
+    _open_contained,
     _safe_resolve,
     read_text_contained,
     write_text_contained,
 )
 
 _MAX_VIEW_BYTES = 12000
+
+
+def _read_for_edit(sandbox, target: Path) -> tuple[str, str]:
+    """Return ``(text with LF endings, eol)`` for an edit.
+
+    ``read_text_contained`` uses universal-newline mode, so a CRLF file would
+    come back as LF and be rewritten as LF in full. Read the raw endings here
+    and report ``"\r\n"`` when every line break in the file is CRLF, so the
+    edit can write the file back with its own endings.
+    """
+    fd = _open_contained(Path(sandbox.workdir).resolve(), target, os.O_RDONLY)
+    with os.fdopen(fd, encoding="utf-8", newline="") as fh:
+        raw = fh.read()
+    lf = raw.replace("\r\n", "\n")
+    crlf = "\r\n" in raw and lf.count("\n") == raw.count("\r\n")
+    return lf, "\r\n" if crlf else "\n"
 
 
 def _view_file(sandbox, target: Path) -> str:
@@ -146,15 +164,16 @@ def _cmd_str_replace(sandbox, target: Path, args: dict) -> str:
     if not target.exists():
         return f"ERROR: {target} not found"
     try:
-        data = read_text_contained(sandbox, target)
+        data, eol = _read_for_edit(sandbox, target)
     except (ValueError, PermissionError, OSError, UnicodeDecodeError) as e:
         return f"ERROR: {e}"
+    old = old.replace("\r\n", "\n")
     count = data.count(old)
     if count != 1:
         return _str_replace_count_error(data, old, count)
     try:
-        new_data = data.replace(old, new, 1)
-        write_text_contained(sandbox, target, new_data)
+        new_data = data.replace(old, new.replace("\r\n", "\n"), 1)
+        write_text_contained(sandbox, target, new_data.replace("\n", eol))
     except (ValueError, PermissionError, OSError) as e:
         return f"ERROR: {e}"
     delta = len(new_data) - len(data)
@@ -170,15 +189,11 @@ def _cmd_insert(sandbox, target: Path, args: dict) -> str:
     if not target.exists():
         return f"ERROR: {target} not found"
     try:
-        data = read_text_contained(sandbox, target)
+        data, eol = _read_for_edit(sandbox, target)
     except (ValueError, PermissionError, OSError, UnicodeDecodeError) as e:
         return f"ERROR: {e}"
-    # Preserve the file's line ending. Splitting/rejoining on "\n"
-    # unconditionally turned a CRLF file into mixed endings (kept lines
-    # keep their trailing \r while the inserted text is bare LF),
-    # corrupting it for later SEARCH/REPLACE and git apply.
-    eol = "\r\n" if "\r\n" in data else "\n"
-    lines = data.replace("\r\n", "\n").split("\n")
+    # Preserve the file's line ending: a CRLF file is written back as CRLF.
+    lines = data.split("\n")
     try:
         idx = int(after)
     except (TypeError, ValueError):
@@ -211,6 +226,10 @@ def _dispatch_editor_command(sandbox, args: dict) -> str:
 
     if cmd == "view":
         return _cmd_view(sandbox, target, path_arg)
+    if cmd in ("str_replace", "insert") and _is_opaque_blocked_resolved(sandbox, path_arg):
+        # An edit's result ("edited" / "not found" / "appears N times", the
+        # line count) is a content oracle for files `view` hides.
+        return f"ERROR: {cmd}({path_arg!r}) blocked in benchmark opaque mode (.git/tests)"
     if cmd == "create":
         return _cmd_create(sandbox, target, args)
     if cmd == "str_replace":

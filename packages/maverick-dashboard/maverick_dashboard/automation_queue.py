@@ -1776,6 +1776,18 @@ def _handle_flow_resume(job=None) -> None:  # noqa: C901
             except store.FlowSnapshotError:
                 _mark_flow_run_failed(run_id, "immutable execution plan is unavailable")
                 return
+            if retryable_failure:
+                from maverick.flow.resume_admission import retry_approval_refusal
+
+                refusal = retry_approval_refusal(flow, prior)
+                if refusal:
+                    # The run stays failed; keep its failure and say why the
+                    # retry was refused.
+                    prior.error = (
+                        f"{prior.error[:1500]} | {refusal}" if prior.error else refusal
+                    )
+                    store.save_run(prior)
+                    return
             owner = prior.owner
             dry_run = bool(prior.dry_run)
             try:

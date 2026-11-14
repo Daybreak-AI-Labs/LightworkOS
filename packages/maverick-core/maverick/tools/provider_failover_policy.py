@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
 
 
 def _parse_provider(p: Any, idx: int) -> tuple[dict[str, Any] | None, str]:
@@ -38,7 +38,7 @@ def _parse_provider(p: Any, idx: int) -> tuple[dict[str, Any] | None, str]:
         return None, f"ERROR: provider {name!r} error_rate must be in [0, 1]"
     return {
         "name": name,
-        "healthy": bool(p.get("healthy", False)),
+        "healthy": as_bool(p.get("healthy", False)),
         "latency_ms": latency,
         "error_rate": error_rate,
     }, ""

@@ -75,7 +75,8 @@ def _dist_content_hash(dist_name: str, *, portable_paths: bool = False) -> str |
         candidates[rel] = path
         first = Path(rel).parts[0]
         if first.endswith((".dist-info", ".egg-info")) or "." not in first:
-            root_index = len(Path(rel).parts) - (2 if portable_paths else 1)
+            # The distribution's own top-level directory, never site-packages.
+            root_index = len(Path(rel).parts) - 2
             roots.add((first, path if root_index < 0 else path.parents[root_index]))
 
     for root_name, root_path in roots:
@@ -125,19 +126,32 @@ def _enterprise_default_policy() -> str:
 def lock_policy() -> str:
     """``MAVERICK_PLUGIN_LOCK_POLICY`` env wins over ``[plugins] lock_policy``.
     When neither is set the default depends on the deployment profile (see
-    :func:`_enterprise_default_policy`); an explicit setting always wins."""
+    :func:`_enterprise_default_policy`); an explicit setting always wins.
+
+    An unrecognised explicit value, or an unreadable config, resolves to
+    ``enforce`` (logged): a misspelt ``"enforced"`` must not switch the lock
+    off. ``enforce`` with no lockfile still changes nothing."""
     env = os.environ.get("MAVERICK_PLUGIN_LOCK_POLICY", "").strip().lower()
     if env in _POLICIES:
         return env
+    if env:
+        _warn_once("policy:env", f"unknown MAVERICK_PLUGIN_LOCK_POLICY {env!r}; using enforce")
+        return "enforce"
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
         raw = ((load_config() or {}).get("plugins") or {}).get("lock_policy")
-    except Exception:  # pragma: no cover -- config never blocks discovery
-        return _enterprise_default_policy()
+        unreadable = bool(config_source_errors(include_tenant=True))
+    except Exception:
+        raw, unreadable = None, True
+    if unreadable:
+        _warn_once("policy:config", "plugin lock policy unreadable (config error); using enforce")
+        return "enforce"
     if raw is not None:
         pol = str(raw).strip().lower()
         if pol in _POLICIES:
             return pol
+        _warn_once("policy:config", f"unknown [plugins] lock_policy {pol!r}; using enforce")
+        return "enforce"
     return _enterprise_default_policy()
 
 
@@ -208,6 +222,18 @@ def read_lock(path: Path | None = None) -> dict[str, str] | None:
         return None
 
 
+def _lock_malformed(path: Path) -> bool:
+    """True when a lockfile is present but is not ``{pins: {..}, hashes?: {..}}``."""
+    if not path.exists() and not path.is_symlink():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(data, dict) and isinstance(data.get("pins"), dict)
+                and isinstance(data.get("hashes", {}), dict))
+
+
 def verify_lock(path: Path | None = None) -> dict:
     """Compare installed plugin dists against the lock.
 
@@ -262,10 +288,20 @@ def dist_allowed_by_lock(dist_name: str | None) -> bool:
     - policy off, or no lockfile: always True (today's behavior).
     - warn: True, but drift logs a warning (once per process per dist).
     - enforce: a drifted or unpinned dist is refused; pinned-and-matching
-      loads. Unknown dist names load (can't be pinned).
+      loads. Unknown dist names load (can't be pinned). A lockfile that is
+      present but unreadable or malformed refuses every dist (warn: logs).
     """
     policy = lock_policy()
     if policy == "off" or not dist_name:
+        return True
+    if _lock_malformed(lock_path()):
+        # A present but unreadable lock is not "no lock": it may have pinned
+        # this plugin, so enforce refuses rather than allowing everything.
+        msg = "plugins.lock is unreadable or malformed"
+        if policy == "enforce":
+            _warn_once("lock:malformed", msg + "; refusing plugins (enforce)")
+            return False
+        _warn_once("lock:malformed", msg)
         return True
     pins = read_lock()
     if pins is None:
@@ -299,6 +335,8 @@ def dist_allowed_by_lock(dist_name: str | None) -> bool:
                     f"(same version {pinned})" if current_hash is not None else
                     f"plugin {dist_name} content hash cannot be verified against "
                     f"the lock (same version {pinned})")
+            hmsg += ("; if this install is trusted, run `maverick plugin lock` "
+                     "to re-record the hashes")
             if policy == "enforce":
                 _warn_once(dist_name + ":hash", hmsg + "; refusing (enforce)")
                 return False

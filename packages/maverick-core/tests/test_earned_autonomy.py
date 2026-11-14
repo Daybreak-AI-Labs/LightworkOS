@@ -388,6 +388,10 @@ def test_operator_revoke(tmp_path):
     assert engine.revoke("wire_transfer", reason="quarter close") is True
     assert revokes == []
     assert engine.ledger.state("wire_transfer").graduated is False
+    # One more accurate prediction does not undo the operator's revoke.
+    _card(engine, episode_id=9)
+    assert engine.reconcile(resolve=lambda g, e: 1.0).graduated == ()
+    assert engine.ledger.state("wire_transfer").graduated is False
 
 
 # -- decide(): every uncertainty keeps the human ---------------------------
@@ -497,6 +501,7 @@ def test_saga_records_failed_compensation():
     assert result.committed is False
     assert [(r.step, r.ok) for r in result.compensated] == [("hold", False)]
     assert "RuntimeError" in result.compensated[0].detail
+    assert "rolled back 0 of 1" in result.reason
 
 
 # -- run-path wiring -------------------------------------------------------

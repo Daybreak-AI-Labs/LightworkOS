@@ -136,6 +136,18 @@ def test_pandas_query_rejects_bad_where(tmp_path):
     assert "bad where clause" in out
 
 
+@pytest.mark.skipif(not _HAS_PANDAS, reason="pandas not installed")
+def test_pandas_where_parse_is_linear_on_long_whitespace():
+    """``(.+?)\\s*$`` retried the trailing-space match at every position of
+    a long whitespace run, so this clause took minutes to parse."""
+    import pandas as pd
+    from maverick.tools.pandas_query import _apply_where
+
+    df = pd.DataFrame({"a": ["x", "y"]})
+    assert len(_apply_where(df, "a == x" + " " * 200_000 + "y")) == 0
+    assert list(_apply_where(df, "a == 'y'" + " " * 200_000)["a"]) == ["y"]
+
+
 def test_pandas_query_confines_path_to_sandbox_workspace(tmp_path):
     """With a sandbox wired in, an absolute path outside workdir is refused
     before any file is read (no arbitrary host-file read). Needs no pandas:

@@ -50,3 +50,10 @@ def test_dns_reverse_requires_ip():
     from maverick.tools.dns_lookup import dns_lookup
     out = dns_lookup().fn({"op": "reverse"})
     assert "requires ip" in out
+
+
+def test_dns_rejects_record_types_outside_the_schema(monkeypatch):
+    monkeypatch.setattr("maverick.tools.dns_lookup._have_dnspython", lambda: True)
+    from maverick.tools.dns_lookup import dns_lookup
+    out = dns_lookup().fn({"op": "resolve", "host": "example.com", "type": "AXFR"})
+    assert out.startswith("ERROR") and "rtype" in out

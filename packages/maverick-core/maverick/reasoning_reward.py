@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 
@@ -48,10 +49,13 @@ log = logging.getLogger(__name__)
 
 
 def _clamp01(v: object) -> float:
+    """Clamp to [0, 1]; anything unparseable or non-finite is the low 0.0
+    (``min(1.0, nan)`` is 1.0, so NaN must be rejected before clamping)."""
     try:
-        return max(0.0, min(1.0, float(v)))  # type: ignore[arg-type]
+        f = float(v)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0.0
+    return max(0.0, min(1.0, f)) if math.isfinite(f) else 0.0
 
 
 # Default rubric: name -> (weight, veto_floor). ``weight`` sets the

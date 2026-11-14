@@ -62,3 +62,24 @@ def test_msgraph_messages_renders(monkeypatch):
     from maverick.tools.msgraph_tool import msgraph_tool
     out = msgraph_tool().fn({"op": "messages"})
     assert "Standup" in out and "boss@x" in out
+
+
+def test_msgraph_paths_cannot_traverse_to_other_graph_resources(monkeypatch):
+    import maverick.governed_http as governed_http
+
+    monkeypatch.setenv("MSGRAPH_ACCESS_TOKEN", "tok")
+    _fake_httpx(monkeypatch)
+    urls: list[str] = []
+
+    def _request(method, url, **_kw):
+        urls.append(url)
+        return _resp(200, {"value": []})
+
+    monkeypatch.setattr(governed_http, "request", _request)
+    from maverick.tools.msgraph_tool import msgraph_tool
+    tool = msgraph_tool()
+    tool.fn({"op": "messages", "folder": "../../users/victim@contoso.com"})
+    assert tool.fn({"op": "drive_list", "path": "Docs/../../../../users/x"}).startswith("ERROR:")
+    tool.fn({"op": "drive_list", "path": "Docs/Q1 Reports"})
+    assert urls[0].endswith("/me/mailFolders/..%2F..%2Fusers%2Fvictim%40contoso.com/messages")
+    assert urls[1].endswith("/me/drive/root:/Docs/Q1%20Reports:/children")

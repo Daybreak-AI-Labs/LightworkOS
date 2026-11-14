@@ -25,13 +25,29 @@ from . import Tool
 _SECRET_RE = re.compile(r"<secret>.*?</secret>", re.IGNORECASE | re.DOTALL)
 
 
-def _redact(text: str) -> str:
-    """Replace every <secret>...</secret> span with a fixed marker."""
+_OPEN_RE = re.compile(r"<secret>", re.IGNORECASE)
+_CLOSE_RE = re.compile(r"</secret>", re.IGNORECASE)
+
+
+def _redact(text: str, inside: bool = False) -> tuple[str, bool]:
+    """Replace every <secret>...</secret> span with a fixed marker.
+
+    ``inside`` says an earlier event opened a secret that is still unclosed,
+    so this event's text up to the first ``</secret>`` is secret too. Returns
+    the redacted text and whether a secret is still open at its end.
+    """
+    if inside:
+        close = _CLOSE_RE.search(text)
+        if close is None:
+            return "[REDACTED]", True
+        text = "[REDACTED]" + text[close.end():]
     text = _SECRET_RE.sub("[REDACTED]", text)
     # Also strip a trailing UNCLOSED <secret> tag: a secret split across events
     # (or whose closing tag hasn't streamed yet) would otherwise leak its body
-    # verbatim, since the closed-span regex above can't match it.
-    return re.sub(r"<secret>.*", "[REDACTED]", text, flags=re.IGNORECASE | re.DOTALL)
+    # verbatim; the next event carries on redacting until the closing tag.
+    if _OPEN_RE.search(text):
+        return re.sub(r"<secret>.*", "[REDACTED]", text, flags=re.IGNORECASE | re.DOTALL), True
+    return text, False
 
 
 def _as_float(value: Any) -> float | None:
@@ -59,9 +75,10 @@ def _ordered(events: list) -> list[dict]:
 
 def _format(events: list) -> str:
     rows = []
+    inside = False
     for e in _ordered(events):
         phase = str(e.get("phase") or "?")
-        text = _redact(str(e.get("text") or ""))
+        text, inside = _redact(str(e.get("text") or ""), inside)
         ts = e.get("ts")
         ts_str = ts if _as_float(ts) is not None else "?"
         rows.append(f"[{ts_str}] {phase}: {text}")

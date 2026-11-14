@@ -37,13 +37,37 @@ def _toml_value(value) -> str:
     if isinstance(value, (int, float)):
         return str(value)
     if isinstance(value, str):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        if "\n" in escaped:
-            return '"' + escaped.replace("\n", "\\n") + '"'
-        return f'"{escaped}"'
+        return _toml_string(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(v) for v in value) + "]"
     raise TypeError(f"unsupported TOML value: {type(value).__name__}")
+
+
+def _toml_string(value: str) -> str:
+    """A TOML basic string. Every control character is escaped (a bare CR, BEL
+    or NUL made the written pack unparseable), not only newlines."""
+    out = []
+    for ch in value:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def _toml_key(key) -> str:
+    """A bare key when it is one, else a quoted key: ``a.b`` emitted bare
+    re-parsed as a nested table, and a key with a space was invalid TOML."""
+    key = str(key)
+    if key and all(c.isascii() and (c.isalnum() or c in "-_") for c in key):
+        return key
+    return _toml_string(key)
 
 
 def _is_table_array(value) -> bool:
@@ -64,7 +88,7 @@ def _emit_table_body(lines: list[str], table: dict) -> None:
     write a corrupt pack" contract.
     """
     for k, v in table.items():
-        lines.append(f"{k} = {_toml_value(v)}")
+        lines.append(f"{_toml_key(k)} = {_toml_value(v)}")
 
 
 def render_pack(data: dict) -> str:
@@ -90,15 +114,15 @@ def render_pack(data: dict) -> str:
         if _is_table_array(value):
             table_arrays.append((key, value))
             continue
-        lines.append(f"{key} = {_toml_value(value)}")
+        lines.append(f"{_toml_key(key)} = {_toml_value(value)}")
     for key, table in tables:
         lines.append("")
-        lines.append(f"[{key}]")
+        lines.append(f"[{_toml_key(key)}]")
         _emit_table_body(lines, table)
     for key, items in table_arrays:
         for item in items:
             lines.append("")
-            lines.append(f"[[{key}]]")
+            lines.append(f"[[{_toml_key(key)}]]")
             _emit_table_body(lines, item)
     return "\n".join(lines) + "\n"
 

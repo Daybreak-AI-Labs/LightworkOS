@@ -12,11 +12,14 @@ ops:
 """
 from __future__ import annotations
 
+import unicodedata
 from typing import Any
 
 from . import Tool
 
-# Invisible code points that essentially never occur unintentionally.
+# Invisible code points that essentially never occur unintentionally -- except
+# inside emoji: U+FE0F after a symbol selects emoji presentation ("❤️") and
+# U+200D joins emoji into one ("👨‍👩‍👧"). Those uses are skipped below.
 _ZERO_WIDTH = {0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF}
 _BIDI = set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A))
 
@@ -37,12 +40,38 @@ def _category(cp: int) -> str | None:
 _HOMOGLYPHS = set("аеорсхуАВЕКМНОРСТХ" "οατνρ")  # Cyrillic + a few Greek
 
 
+def _emoji_base(ch: str) -> bool:
+    """A symbol or emoji modifier (not a selector) that can start an emoji."""
+    return bool(ch) and unicodedata.category(ch) in ("So", "Sk")
+
+
+def _emoji_use(text: str, i: int) -> bool:
+    """True when the invisible char at ``i`` is ordinary emoji syntax.
+
+    A selector counts only directly after its base character (one per base),
+    so a run of selectors after one symbol is still reported. A joiner counts
+    between a base (optionally with its one selector) and the next base.
+    """
+    cp = ord(text[i])
+    prev = text[i - 1] if i > 0 else ""
+    if cp in (0xFE0E, 0xFE0F):
+        return _emoji_base(prev) or (bool(prev) and prev in "0123456789#*")
+    if cp == 0x200D:
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if prev in ("\ufe0e", "\ufe0f") and i > 1:
+            prev = text[i - 2]
+        return _emoji_base(prev) and _emoji_base(nxt)
+    return False
+
+
 def _scan(text: str) -> str:
     found: dict[str, list[int]] = {}
     homoglyphs: list[int] = []
     has_latin = any("a" <= c.lower() <= "z" for c in text)
     for i, ch in enumerate(text):
         cat = _category(ord(ch))
+        if cat and _emoji_use(text, i):
+            continue
         if cat:
             found.setdefault(cat, []).append(i)
         elif has_latin and ch in _HOMOGLYPHS:

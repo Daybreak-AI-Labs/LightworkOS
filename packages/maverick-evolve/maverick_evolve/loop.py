@@ -192,7 +192,9 @@ async def evolve_continuous(
         case_family_id=confirmation_family_id,
         evaluator_id=confirmation_evaluator_id,
     )
-    passed = confirmed.id == development_best.id
+    # The seed winning development search is not a promotion: confirm_candidate
+    # returns it without a sealed comparison or authorization.
+    passed = confirmed.id == development_best.id and development_best.id != seed.id
     if history:
         history[-1]["confirmation"] = "passed" if passed else "rejected"
     if passed:

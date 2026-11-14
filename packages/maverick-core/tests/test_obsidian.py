@@ -55,3 +55,11 @@ def test_factory_shape():
     t = obs.obsidian()
     assert t.name == "obsidian" and t.fn is obs._run
     assert "op" in t.input_schema["required"]
+
+
+def test_search_survives_a_non_utf8_note_and_clamps_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr(obs, "_vault", lambda: tmp_path)
+    (tmp_path / "bad.md").write_bytes(b"\xff\xfe not utf-8")
+    (tmp_path / "good.md").write_text("needle", encoding="utf-8")
+    assert obs._run({"op": "search", "query": "needle"}) == "good.md"
+    assert obs._run({"op": "list", "limit": -1}) == "bad.md"

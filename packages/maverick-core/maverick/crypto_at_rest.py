@@ -16,10 +16,14 @@ opt-out cannot override. Existing installs are safe to leave on -- reads are
 plaintext-tolerant, so rows written before it was enabled are returned unchanged
 until rewritten (``maverick encryption migrate`` seals them eagerly).
 
-Key resolution (first match wins):
-  1. ``MAVERICK_ENCRYPTION_KEY`` — a 32-byte key as hex or base64, so an operator
+Key resolution for sealing (first match wins):
+  1. the newest key in the rotation keyring ``~/.maverick/keys/at_rest.d/``,
+     once ``maverick encryption rotate`` has created one (refused while a key
+     is injected, so an injected key is never moved onto disk);
+  2. ``MAVERICK_ENCRYPTION_KEY`` — a 32-byte key as hex or base64, so an operator
      can inject a KMS-derived key without it ever touching disk.
-  2. ``~/.maverick/keys/at_rest.key`` — generated on first use, ``chmod 600``.
+  3. ``~/.maverick/keys/at_rest.key`` — generated on first seal, ``chmod 600``
+     (a read never generates it).
 
 Every Postgres governed authority additionally requires the injected key plus
 ``MAVERICK_ENCRYPTION_KEY_DIGEST=sha256:<full digest>``—including an explicitly
@@ -368,7 +372,7 @@ def deployment_at_rest_enabled(
 
 
 def per_tenant_at_rest() -> bool:
-    """Per-tenant envelope encryption (default: on in enterprise mode, else off).
+    """Per-tenant envelope encryption (default: off).
 
     When on **and** at-rest is enabled, new seals use the *current tenant's* own
     data key (:mod:`maverick.tenant.kms`) instead of the single process-wide key,
@@ -649,6 +653,19 @@ def _load_or_create_key() -> bytes:
     return key
 
 
+def _load_existing_key() -> bytes:
+    """The deployment key for a READ. A read never generates key material: a
+    missing key file means the key was lost, and minting a replacement would
+    report that as a wrong key and seal later writes under the new one."""
+    if not os.environ.get(_KEY_ENV) and not _key_path().exists():
+        raise EncryptionUnavailable(
+            f"the at-rest key {_key_path()} is missing; restore it from your "
+            "key backup (or inject it via MAVERICK_ENCRYPTION_KEY) to read "
+            "sealed data"
+        )
+    return _load_or_create_key()
+
+
 def backup_key_material(dest_dir: Path) -> list[Path]:
     """Copy the at-rest key material to ``dest_dir`` for safe escrow.
 
@@ -731,7 +748,14 @@ def _active_keyring_key() -> tuple[bytes, bytes] | None:
     """``(key, keyid)`` of the newest keyring key, or None if the ring is empty
     (then sealing uses the legacy single-key v1 path, unchanged)."""
     try:
-        keys = sorted(_keyring_dir().glob("*.key"))
+        # Only <16 hex>.key names are key ids: a stray ``backup.key`` or a short
+        # stem would otherwise make every seal raise, or seal unopenable data.
+        keys = sorted(
+            path for path in _keyring_dir().glob("*.key")
+            if len(path.stem) == 2 * _KEYID_BYTES
+            # Lower-case only: lookup by key id opens ``<id.hex()>.key``.
+            and all(c in "0123456789abcdef" for c in path.stem)
+        )
     except OSError:
         return None
     if not keys:
@@ -747,7 +771,7 @@ def _resolve_key_by_id(keyid: bytes) -> bytes:
     if path.exists():
         return _read_keyring_key(path)
     try:
-        legacy = _load_or_create_key()
+        legacy = _load_existing_key()
         if _key_fingerprint(legacy) == keyid:
             return legacy
     except EncryptionUnavailable:
@@ -817,6 +841,13 @@ def rotate_at_rest_key(*, operation_id: str | None = None, expected_version: str
     """
     if shared_authority_key_identity_required():
         raise EncryptionUnavailable("shared authority deployments require externally coordinated key rotation; a local key cannot replace them")
+    if os.environ.get(_KEY_ENV):
+        # Sealing prefers the keyring, so a local rotation would move every new
+        # write off the injected key and onto a key file on disk.
+        raise EncryptionUnavailable(
+            "the at-rest key is injected via MAVERICK_ENCRYPTION_KEY; rotate it "
+            "where it is managed, since a local rotation would put new data "
+            "under a key stored on disk")
     _secure_key_dir()
     with file_lock.cross_process_lock(_key_path().parent / "rotation.lock", strict=True):
         if operation_id is not None:
@@ -1007,7 +1038,7 @@ def _unseal_with_key_cache(
         key = (
             _admitted_shared_key()
             if _FORCE_EXTERNAL_FLEET_KEY.get()
-            else _load_or_create_key()
+            else _load_existing_key()
         )
         cipher = AESGCM(key)
         key_cache[cache_key] = cipher
@@ -1119,7 +1150,7 @@ def unseal_bound(blob: bytes, context: str,
                 # The legacy single key: one load, then the fingerprint check
                 # (a result-set read must load the key once, not once per
                 # resolver layer).
-                key = _load_or_create_key()
+                key = _load_existing_key()
                 if _key_fingerprint(key) != keyid:
                     raise EncryptionUnavailable(
                         f"no at-rest key for key-id {keyid.hex()}: the key that "

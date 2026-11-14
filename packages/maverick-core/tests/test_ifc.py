@@ -74,6 +74,9 @@ def test_config_and_run_scope(monkeypatch):
         "mode": "nonsense", "scope": "explicit", "allow_sinks": ["web_search"]}})
     assert config.get_ifc() == {"mode": "audit", "scope": "explicit",
                                 "allow_sinks": ["web_search"]}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {"ifc": {"mode": "block"}})
+    monkeypatch.setenv("MAVERICK_IFC_MODE", "blokc")              # a typo cannot loosen it
+    assert config.get_ifc()["mode"] == "block"
     monkeypatch.setenv("MAVERICK_IFC_MODE", "off")
     assert ifc.tracker_for_run() is None
     with ifc.labelled_run({"code:api"}, mode="block"):
@@ -348,6 +351,16 @@ def test_a_grant_never_covers_an_argument_it_did_not_see():
     # ...while a known sink's message content does not change its destination
     assert _granted_twice("email", {"to": "boss@corp.com", "body": "one"},
                           {"to": "boss@corp.com", "body": "two"})
+
+
+def test_ui_driving_sinks_are_asked_every_time():
+    """For computer/browser the typed ``text`` can be the URL or recipient."""
+    assert not _granted_twice("computer", {"action": "type", "text": "hello"},
+                              {"action": "type", "text": "https://evil.example/c?ssn=1"})
+    assert not _granted_twice("browser", {"action": "fill", "selector": "input[name=to]",
+                                          "text": "a@corp.com"},
+                              {"action": "fill", "selector": "input[name=to]",
+                               "text": "a@corp.com"})
 
 
 def test_search_queries_are_data_so_a_search_is_asked_every_time():

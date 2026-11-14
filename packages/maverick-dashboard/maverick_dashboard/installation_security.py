@@ -84,17 +84,21 @@ def state(request):
     authority(request)
     layers = native._sources()
     rows = _rows(layers)
-    from maverick.oidc import load_oidc_config, login_enabled
+    from maverick.oidc import OIDCError, load_oidc_config, login_enabled, oidc_enabled_as_configured
     from maverick.sandbox import container_backend_required
 
     from .saml import load_saml_config, saml_enabled
     oidc, saml = load_oidc_config(), load_saml_config()
     work = config.get_sandbox()
     last = receipts().get(_identity(request))
+    try:  # None is unknown: not the fail-closed "on" of an unreadable setting
+        company_signin = oidc_enabled_as_configured()
+    except OIDCError:
+        company_signin = None
     return {"revision": revision(layers), "context": context_for(request), "rows": rows, "checked_at": time.time(),
         "latest_attempt": {"operation": last["operation"], "status": "unconfirmed" if last.get("_audit_pending") else last["status"], "policy": last["label"]} if last else None,
         "summary": {"work_area": str(work["backend"]), "container_required": container_backend_required(),
-            "company_signin": oidc.enabled, "company_login_configured": login_enabled(oidc),
+            "company_signin": company_signin, "company_login_configured": login_enabled(oidc),
             "company_login_support": importlib.util.find_spec("jwt") is not None,
             "single_signon_configured": saml_enabled(saml), "single_signon_support": importlib.util.find_spec("saml2") is not None},
         "notice": "These are current settings, not proof of a successful sign-in or isolation test. Existing tasks keep the work area they already started. New work uses current policy; stronger deployment and workspace controls remain authoritative."}

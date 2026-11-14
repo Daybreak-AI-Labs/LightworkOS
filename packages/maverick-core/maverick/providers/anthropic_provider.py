@@ -16,7 +16,7 @@ from typing import Any
 
 import anthropic
 
-from ..budget import Budget
+from ..budget import Budget, UsageAccountingError
 from ..llm import MODEL_OPUS, MODEL_OPUS_FAST, LLMResponse, ToolCall
 from ..retry import async_retry, sync_retry
 from .anthropic_limits import (
@@ -340,6 +340,29 @@ def _add_messages_cache_breakpoint(messages: list[dict]) -> list[dict]:
     return new_messages
 
 
+def _usage_count(value: Any, default: int, *, strict: bool) -> int:
+    """Read one Anthropic usage count.
+
+    A missing count reads as ``default``. A present count that is not a
+    finite, non-negative integer (NaN, "inf", garbage text, a bool) fails
+    closed under ``strict`` (a budget is attached): the call is already paid,
+    and reading it as 0 would let it pass the spend caps.
+    """
+    if value is None:
+        return default
+    try:
+        if isinstance(value, bool):
+            raise ValueError("boolean")
+        count = int(value)
+        if count < 0:
+            raise ValueError("negative")
+        return count
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        if not strict:
+            return default
+        raise UsageAccountingError(f"invalid Anthropic usage token count {value!r}") from exc
+
+
 class AnthropicClient:
     DEFAULT_MODEL = "claude-sonnet-4-6"
 
@@ -624,14 +647,12 @@ class AnthropicClient:
         # If resp.usage itself is None (streaming refusal), getattr
         # chains through 0 defaults. Coerce all values via int() inside
         # a try block to catch non-int truthy values (string "100" from
-        # a mock, Decimal from a future SDK schema).
+        # a mock, Decimal from a future SDK schema); see _usage_count for the
+        # counts that are refused.
         usage = getattr(resp, "usage", None)
 
         def _safe_int(value, default=0) -> int:
-            try:
-                return int(value) if value is not None else default
-            except (TypeError, ValueError):
-                return default
+            return _usage_count(value, default, strict=budget is not None)
 
         cache_creation = _safe_int(getattr(usage, "cache_creation_input_tokens", 0))
         cache_read = _safe_int(getattr(usage, "cache_read_input_tokens", 0))

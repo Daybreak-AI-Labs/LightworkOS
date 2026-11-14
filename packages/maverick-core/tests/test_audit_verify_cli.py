@@ -100,6 +100,11 @@ def test_verify_detects_deleted_unanchored_day_file(tmp_path, monkeypatch):
     assert result.exit_code == 1, result.output
     assert "missing_file" in result.output
 
+    # --all must not pass just because no day-file is left to sweep.
+    result = CliRunner().invoke(main, ["audit", "verify", "--all"])
+    assert result.exit_code == 1, result.output
+    assert "missing_file" in result.output
+
 @pytest.mark.skipif(not _HAVE_CRYPTO, reason="cryptography not installed")
 def test_verify_all_sweeps_every_day_file(tmp_path, monkeypatch):
     audit_dir = _isolate_home(monkeypatch, tmp_path)

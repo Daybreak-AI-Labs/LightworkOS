@@ -175,6 +175,12 @@ def test_the_anchor_ledger_commits_a_closed_day(audit_dir):
     assert result.ok, result.reason
     # Issuer-signed, co-located: chained, never anchored.
     assert result.depth == tv.DEPTH_CHAINED
+    # Regression: a requested --checkpoint-dir comparison was silently skipped
+    # for an anchor-ledger receipt and the result still reported ok.
+    with_dir = tv.verify(receipt, trusted_keys=[_key()],
+                         checkpoint_dir=audit_dir.parent)
+    assert not with_dir.ok
+    assert _claim(with_dir, "commitment").status == tv.FAILS
 
 
 def test_anchor_ledger_uses_audit_keys_not_checkpoint_keys(audit_dir):

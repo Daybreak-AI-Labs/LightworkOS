@@ -31,11 +31,11 @@ class _FakeCursor:
             tbl = sql.split("FROM ")[1].split()[0]
             empty = self.conn.tables[tbl].get("empty", 0)
             count = self.conn.tables[tbl]["nulls"] if "is null" in s else 0
-            self._result = (count + (empty if "tenant_id = ''" in s else 0),)
+            self._result = (count + (empty if "= ''" in s else 0),)
         elif s.startswith("update"):
             tbl = sql.split("UPDATE ")[1].split()[0]
             self.rowcount = self.conn.tables[tbl]["nulls"]
-            if "tenant_id = ''" in s:
+            if "= ''" in s:
                 self.rowcount += self.conn.tables[tbl].get("empty", 0)
             self.conn.updated[tbl] = params[0]
         else:  # pragma: no cover - defensive
@@ -142,6 +142,21 @@ def test_backfill_skips_missing_table():
     report = pg_rls.backfill(conn, "acme")
     assert report == dict.fromkeys(_PREFLIGHT_TABLES, 0)
     assert conn.updated == {}
+
+
+def test_backfill_covers_every_rls_table_with_the_stored_tenant_value():
+    # Every table RLS is forced on must be backfilled (projects, fact history
+    # and the approval outbox were left NULL, then hidden), and tenant_id
+    # columns hold the path-encoded id the backend writes, not the raw id.
+    from maverick.world_model_backends.postgres import _RLS_TABLES
+
+    assert {"projects", "fact_history", "approval_audit_outbox",
+            "webhook_subscriptions"} <= set(_PREFLIGHT_TABLES)
+    assert set(_PREFLIGHT_TABLES) == set(_RLS_TABLES) - {"encryption_migrations"}
+    conn = _FakeConn("app", _tables("app", nulls=1))
+    pg_rls.backfill(conn, "acme:eu")
+    assert conn.updated["projects"] == "acme%3Aeu"
+    assert conn.updated["webhook_subscriptions"] == "acme:eu"
 
 
 def test_backfill_rejects_empty_tenant():

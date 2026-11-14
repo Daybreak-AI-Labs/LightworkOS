@@ -320,10 +320,11 @@ def test_suspending_an_external_agent_flips_its_trust_entry_too():
 def test_a_config_only_trust_entry_gets_a_managed_overlay(monkeypatch, tmp_path):
     """The TOML entry cannot be edited; the managed overlay overrides it by id."""
     from maverick import config
-    from maverick.agent_trust import load_registry
+    from maverick.agent_trust import load_registry, managed_path
     cfg = tmp_path / "config.toml"
     cfg.write_text('[control_plane]\nenable = true\n[agent_trust]\nagents = [\n'
-                   '  { id = "toml-only", direction = "both", max_risk = "low" },\n]\n')
+                   '  { id = "toml-only", direction = "both", max_risk = "low",'
+                   ' rest_token = "plain-rest-bearer" },\n]\n')
     monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
     config.reset_config_cache()
     assert load_registry()["toml-only"].revoked is False
@@ -332,6 +333,7 @@ def test_a_config_only_trust_entry_gets_a_managed_overlay(monkeypatch, tmp_path)
     assert any("managed overlay" in n for n in result.notes)
     assert load_registry()["toml-only"].revoked is True
     assert load_registry()["toml-only"].max_risk == "low"  # nothing else changed
+    assert "plain-rest-bearer" not in managed_path().read_text()
 
 
 def test_a_revocation_that_does_not_persist_is_reported_as_failure(monkeypatch):

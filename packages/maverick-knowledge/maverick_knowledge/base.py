@@ -16,6 +16,7 @@ import hmac
 import logging
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 
 from .embed import DeterministicEmbedder
@@ -50,6 +51,33 @@ _INJECTION_RE = re.compile(
     r"|\boverride\b.{0,20}\b(?:safety|guard|shield|policy|governance)\b",
     re.IGNORECASE,
 )
+
+# The tripwire runs on a normalised copy: wrapped lines (PDF/DOCX extraction),
+# zero-width characters and Cyrillic/Greek look-alikes used to defeat it.
+_SCREEN_INVISIBLE = re.compile(r"[\u00ad\u180e\u200b-\u200f\u2060-\u206f\ufe00-\ufe0f\ufeff]")
+_SCREEN_HOMOGLYPHS = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+    "і": "i", "ѕ": "s", "ј": "j", "α": "a", "ο": "o", "ρ": "p", "ι": "i", "ν": "v",
+})
+_WHITESPACE = re.compile(r"\s+")
+# The Shield's builtin backend blocks text over 262,144 characters outright, so
+# a whole-document Shield scan dropped every large document. It is scanned in
+# overlapping windows below that cap instead.
+_SHIELD_WINDOW = 131_072
+_SHIELD_WINDOW_OVERLAP = 4_096
+
+
+def _source_label(source: str | None) -> str:
+    """A source name on one line with no brackets. The source is a file name
+    the uploader controls and is never screened, so a newline in it put text of
+    the uploader's choosing on its own line in the rendered result."""
+    label = " ".join(str(source or "").split()).replace("[", "(").replace("]", ")")
+    return label or "unknown"
+
+
+def _screen_text(text: str) -> str:
+    text = _SCREEN_INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
+    return _WHITESPACE.sub(" ", text.translate(_SCREEN_HOMOGLYPHS))
 
 
 @dataclass
@@ -159,19 +187,27 @@ class KnowledgeBase:
         document can't ride into prompts via search_formatted. A configured Shield
         runs in addition. Fail-open ONLY on a Shield scanner error, mirroring the
         kernel's shield contract -- the marker screen itself never errors."""
-        if _INJECTION_RE.search(text):
+        if _INJECTION_RE.search(_screen_text(text)):
             log.warning("knowledge: dropping chunk with injection marker on ingest")
             return False
         if self.shield is None:
             return True
-        try:
-            # An ingested chunk is untrusted CONTENT (like tool output), so use
-            # the indirect-injection / content detector, not the prompt-tuned
-            # scan_input.
-            verdict = self.shield.scan_output(text)
-            return getattr(verdict, "allowed", True)
-        except Exception:  # pragma: no cover -- never block ingest on a scan bug
-            return True
+        step = _SHIELD_WINDOW - _SHIELD_WINDOW_OVERLAP
+        for start in range(0, max(1, len(text) - _SHIELD_WINDOW_OVERLAP), step):
+            try:
+                # An ingested chunk is untrusted CONTENT (like tool output), so
+                # use the indirect-injection / content detector, not the
+                # prompt-tuned scan_input.
+                verdict = self.shield.scan_output(text[start:start + _SHIELD_WINDOW])
+            except Exception as e:
+                # Fail open (kernel rule 1), but leave a trace.
+                log.warning("knowledge: shield scan failed on ingest (%s); allowing", e)
+                continue
+            if getattr(verdict, "scan_error", False):
+                log.warning("knowledge: shield reported a scan error on ingest; allowing")
+            if not getattr(verdict, "allowed", True):
+                return False
+        return True
 
     def _source_replacement_snapshot(self, collection: str, source: str, metadata: dict) -> list:
         if not source or metadata["source"] != source:
@@ -708,8 +744,9 @@ class KnowledgeBase:
 
     def search_formatted(self, collections, query: str, k: int = 5) -> str:
         """Search one or more domain collections and render the top-k chunks with
-        their sources -- the string a domain agent's ``knowledge_search`` tool
-        returns. Merges across collections, then keeps the globally top-k.
+        their sources. (The kernel's ``knowledge_search`` tool does not call
+        this; it goes through ``KnowledgeAccessService``.) Merges across
+        collections, then keeps the globally top-k.
 
         The query is embedded once and the vector reused per collection, and
         redundant chunk content (the chunker's overlap, contained duplicates)
@@ -737,5 +774,5 @@ class KnowledgeBase:
         if not hits:
             return "No relevant documents found in this domain's knowledge base."
         return "\n\n".join(
-            f"[source: {h.source or 'unknown'}]\n{h.text}" for h in hits
+            f"[source: {_source_label(h.source)}]\n{h.text}" for h in hits
         )

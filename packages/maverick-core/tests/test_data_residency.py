@@ -52,3 +52,8 @@ def test_factory_identity():
     t = data_residency()
     assert t.name == "data_residency"
     assert t.parallel_safe is True
+
+
+def test_string_policy_entry_is_one_region_not_characters():
+    out = _run(region="DE", policy={"DE": "EU"})
+    assert "E, U" not in out and "FR" in out

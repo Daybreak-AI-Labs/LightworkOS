@@ -1223,11 +1223,12 @@ async def remove_user_suites(request: Request, principal: str) -> Response:
 
 def _require_enabled_specialist(request: Request, domain: str) -> None:
     """Check the live inherited suite before accepting a specialist run."""
-    from maverick.domain import enabled_domains, suites_for_domain
+    from maverick.domain import enabled_domains, suites_for_domain, suites_unavailable_reason
 
     profile = enabled_domains().get(domain)
     if profile is None:
-        raise HTTPException(status_code=400, detail=f"unknown agent or specialist: {domain!r}")
+        detail = suites_unavailable_reason() or f"unknown agent or specialist: {domain!r}"
+        raise HTTPException(status_code=400, detail=detail)
     for suite in suites_for_domain(domain, profile):
         require_suite(request, suite)
 
@@ -5218,14 +5219,18 @@ async def bulk_import_assessments(
             created.append({"id": session.id, "subject": subject, "type": atype})
         except Exception as e:  # noqa: BLE001 -- report the row, keep going
             errors.append({"row": i + 1, "subject": subject, "error": str(e)})
-    try:  # best-effort: the import already committed each session atomically
-        from maverick.audit import record as _audit_record
+    # The import already committed each session atomically: a failed write is
+    # logged by audit_event, and a refusal says the import stands.
+    from maverick.audit import AuditRefused, audit_event
 
-        _audit_record(
+    try:
+        audit_event(
             "ASSESSMENTS_BULK_IMPORTED", agent=who, created=len(created), errors=len(errors)
         )
-    except Exception:  # pragma: no cover -- audit write never blocks the import
-        pass
+    except AuditRefused as exc:
+        raise HTTPException(status_code=503, detail=(
+            f"{len(created)} assessment(s) were queued, but the activity log refused "
+            "to record the import. Tell an administrator.")) from exc
     return {
         "created": created,
         "errors": errors,
@@ -6402,6 +6407,7 @@ from .flows_api import (  # noqa: E402
     _load_owned_run as _load_owned_run,
     _require_flows as _require_flows,
     _require_learned_flow_evidence as _require_learned_flow_evidence,
+    _require_retry_without_new_review as _require_retry_without_new_review,
     _run_out as _run_out,
     _save_flow_definition as _save_flow_definition,
     _save_reviewed_softening as _save_reviewed_softening,
@@ -10549,12 +10555,11 @@ _CONTAINER_PRODUCTS = {"docker": "Docker", "podman": "Podman"}
 def _file_work_status(loaded: dict) -> dict:
     """Report the effective global tool rules, not a button's optimistic state."""
     from maverick.runtime_overrides import denied_tools as runtime_denied_tools
+    from maverick.safety.tool_acl import layer_policy
 
     from maverick_dashboard.settings_store import CONTAINER_FILE_TOOLS
 
-    security = loaded.get("security") or {}
-    denied = set(security.get("denied_tools") or [])
-    allowed = set(security.get("allowed_tools") or [])
+    allowed, denied, _max_risk = layer_policy(loaded.get("security") or {})
     runtime_denied = runtime_denied_tools()
     return {
         "blocked_tools": [name for name in CONTAINER_FILE_TOOLS if name in denied],
@@ -11623,7 +11628,10 @@ async def delete_role_override(role: str, request: Request) -> dict:
     from . import agent_changelog
 
     before = resolved_role(role)
-    removed = remove_role_override(role)
+    try:
+        removed = remove_role_override(role)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     view = resolved_role(role)
     if view is None:
         raise HTTPException(status_code=404, detail=f"no such role: {role!r}")
@@ -11948,9 +11956,13 @@ async def trust_agent_remove(request: Request, agent_id: str) -> None:
     """Remove a managed external agent (admin). Config-file entries reappear
     after their managed override is deleted; the same 404 rule applies."""
     require_permission(request, "admin")
-    from maverick.agent_trust import remove_agent
+    from maverick.agent_trust import RevokedAgentRemovalRefused, remove_agent
 
-    if not remove_agent(agent_id):
+    try:
+        removed = remove_agent(agent_id)
+    except RevokedAgentRemovalRefused as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    if not removed:
         raise HTTPException(
             status_code=404,
             detail="this agent is not in the app-managed registry (it may be "
@@ -12095,8 +12107,13 @@ async def external_agent_unenroll(request: Request, agent_id: str) -> None:
     Prefer revoking (POST /trust/agents/{id}/revoke) to keep the entry."""
     require_permission(request, "admin")
     from maverick import external_agents as xa
+    from maverick.agent_trust import RevokedAgentRemovalRefused
 
-    if not xa.unenroll(agent_id):
+    try:
+        removed = xa.unenroll(agent_id)
+    except RevokedAgentRemovalRefused as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    if not removed:
         raise HTTPException(status_code=404, detail=f"agent {agent_id!r} is not enrolled")
 
 

@@ -825,3 +825,19 @@ def test_article28_seed_labels_match_the_current_deterministic_checklist():
             "missing": missing,
             "unclear": unclear,
         } == case.expected
+
+
+def test_integer_does_not_pass_for_a_json_boolean():
+    case = env.load_environment("dsar_routing_v1").cases[0]
+    exact = env.expected_output(case)
+    bools = [k for k, v in case.expected.items() if isinstance(v, bool)]
+    assert bools
+    candidate = {**exact, **{k: int(exact[k]) for k in bools}}
+    result = env.score_output(case, candidate)
+    assert result.passed is False
+    assert result.correctness < 1.0
+    # A JSON number written as 30.0 still equals an expected 30.
+    ints = [k for k, v in case.expected.items() if type(v) is int]
+    assert ints
+    floats = env.score_output(case, {**exact, **{k: float(exact[k]) for k in ints}})
+    assert floats.passed is True

@@ -1041,3 +1041,37 @@ async def test_wasm_run_module_outside_scope_denied(tmp_path):
     assert "DENIED by capability" in out
     assert "cannot enforce" in out
     assert calls == []
+
+
+@pytest.mark.parametrize("header", [
+    "--- x/evidence/f.txt\n+++ x/evidence/f.txt\n",          # any prefix, stripped by git -p1
+    '--- "a/evid\\145nce/f.txt"\n+++ "b/evid\\145nce/f.txt"\n',  # C-quoted name
+])
+def test_sandbox_read_only_path_reads_patch_names_as_git_apply_does(tmp_path, header):
+    agent = _agent(tmp_path)
+    agent.ctx.sandbox.read_only_paths = ("evidence",)
+    patch = header + "@@ -1 +1 @@\n-old\n+new\n"
+
+    assert "DENIED by sandbox policy" in agent._read_only_path_denial("apply_patch", {"patch": patch})
+
+
+@pytest.mark.parametrize("patch", [
+    # git diff --binary: no ---/+++ lines, only the diff --git header.
+    "diff --git a/evidence/f.bin b/evidence/f.bin\nindex 1..2 100644\nGIT binary patch\n"
+    "literal 3\nKcmZ?wbPWIi0RRF3\n\nliteral 0\nKcmV+b0RR6000031\n\n",
+    # mode-only change
+    "diff --git a/evidence/run.sh b/evidence/run.sh\nold mode 100644\nnew mode 100755\n",
+])
+def test_sandbox_read_only_path_covers_binary_and_mode_only_patches(tmp_path, patch):
+    agent = _agent(tmp_path)
+    agent.ctx.sandbox.read_only_paths = ("evidence",)
+
+    assert "DENIED by sandbox policy" in agent._read_only_path_denial("apply_patch", {"patch": patch})
+
+
+def test_a_patch_whose_targets_cannot_be_read_is_denied(tmp_path):
+    agent = _agent(tmp_path)
+    agent.ctx.sandbox.read_only_paths = ("evidence",)
+
+    out = agent._read_only_path_denial("apply_patch", {"patch": "diff --git a/x b/y z\nGIT binary patch\n"})
+    assert "DENIED" in out and "unreadable" in out

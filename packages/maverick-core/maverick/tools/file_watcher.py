@@ -124,7 +124,9 @@ def _run(sandbox, args: dict[str, Any]) -> str:
         if not fnmatch.fnmatch(p.name, pattern):
             continue
         try:
-            st = p.stat()
+            # lstat: a symlink to a file outside the workspace must not
+            # disclose the target's size and mtime (read_file refuses it).
+            st = p.lstat()
         except OSError:
             continue
         if st.st_mtime <= since_ts:

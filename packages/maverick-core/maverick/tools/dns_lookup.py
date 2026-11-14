@@ -94,10 +94,16 @@ def _resolve_via_socket(host: str, rtype: str) -> str:
     return "\n".join(out) if out else f"no {rtype} for {host}"
 
 
+_RTYPES = ("A", "AAAA", "MX", "TXT", "CNAME", "NS")
+
+
 def _op_resolve(host: str, rtype: str) -> str:
     if not host:
         return "ERROR: resolve requires host"
     rtype = rtype.upper()
+    if rtype not in _RTYPES:
+        # The schema enum is advisory; dnspython would resolve any type it knows.
+        return f"ERROR: rtype must be one of {', '.join(_RTYPES)}"
     if _have_dnspython():
         return _resolve_via_dnspython(host, rtype)
     return _resolve_via_socket(host, rtype)

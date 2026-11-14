@@ -256,7 +256,11 @@ def _check(url: str) -> None:
     if reason is None:
         return
     from .enterprise import EgressBlocked
-    raise EgressBlocked(reason)
+    blocked = EgressBlocked(reason)
+    # The constructor words its message for a model-provider refusal ("route
+    # this role to a self-hosted model"); a blocked request says why instead.
+    blocked.args = (reason,)
+    raise blocked
 
 
 def _is_network_transport(transport: Any) -> bool:
@@ -509,9 +513,15 @@ def _patch_urllib(mod: Any) -> None:
 
     def _open(self, fullurl, data=None, timeout=_SENTINEL):
         # `fullurl` is a str or a Request; Request.full_url holds the target.
-        url = getattr(fullurl, "full_url", None) or (
-            fullurl if isinstance(fullurl, str) else "")
-        _check(str(url))
+        # A str is parsed the way `open` itself will (it unwraps `URL:...`
+        # and `<...>`), so the guard checks the host the request reaches.
+        url = getattr(fullurl, "full_url", None)
+        if url is None and isinstance(fullurl, str):
+            try:
+                url = mod.Request(fullurl).full_url
+            except ValueError:
+                url = fullurl
+        _check(str(url or ""))
         if timeout is _SENTINEL:
             return original_open(self, fullurl, data)
         return original_open(self, fullurl, data, timeout)
@@ -558,8 +568,9 @@ class _PatchOnImport:
 
     ``find_spec`` delegates to the remaining finders for the real spec, then
     wraps that spec's ``exec_module`` so the patch lands immediately after the
-    module body runs. The loader instance is created per-spec, so setting the
-    attribute here does not leak into unrelated imports.
+    module body runs. A loader instance can be shared between modules
+    (``zipimport`` keeps one per archive), so the wrapper stays on that loader
+    and passes any other module straight to the real ``exec_module``.
     """
 
     __maverick_egress_guard_import_hook__ = True
@@ -585,6 +596,11 @@ class _PatchOnImport:
         real_exec = spec.loader.exec_module
 
         def exec_module(module, _real=real_exec, _name=fullname):
+            if getattr(module, "__name__", None) != _name:
+                # A loader can be shared (zipimport keeps one per archive), so
+                # this wrapper stays on it: other modules load untouched.
+                _real(module)
+                return
             # Reload executes into the existing module object. Mark readiness
             # unavailable before that object can expose freshly defined,
             # unwrapped classes to another thread.

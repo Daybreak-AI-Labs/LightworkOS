@@ -128,7 +128,7 @@ def refine_propose_cmd(failure: str, target: str, name: str, change: str,
             proposed_by=proposed_by)
     except harness_refine.RefineError as e:
         raise click.ClickException(str(e)) from e
-    click.echo(f"proposal {out.get('proposal_id')} · {out.get('status')}")
+    click.echo(f"proposal {out.get('id')} · {out.get('status')}")
     if out.get("approval_id"):
         click.echo(f"awaiting approval #{out['approval_id']} "
                    "(decide it in the dashboard queue)")
@@ -144,9 +144,9 @@ def refine_list_cmd(status: str) -> None:
         click.echo("no proposals")
         return
     for row in rows:
-        click.echo(f"{row.get('proposal_id')}  {row.get('status'):<9} "
+        click.echo(f"{row.get('id')}  {row.get('status'):<9} "
                    f"{row.get('target'):<7} {row.get('name') or '-':<20} "
-                   f"{_when(row.get('created_at'))}")
+                   f"{_when(row.get('proposed_at'))}")
 
 
 @refine_group.command("apply")
@@ -161,7 +161,7 @@ def refine_apply_cmd(proposal_id: str, approval_id: int | None) -> None:
                                    approval_id=approval_id)
     except harness_refine.RefineError as e:
         raise click.ClickException(str(e)) from e
-    click.echo(f"applied {proposal_id} · snapshot {out.get('snapshot_id', '-')}")
+    click.echo(f"applied {proposal_id} · snapshot {out.get('snapshot') or '-'}")
 
 
 @refine_group.command("revert")

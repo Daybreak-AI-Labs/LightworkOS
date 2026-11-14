@@ -166,14 +166,15 @@ def _blend(lexical: dict[str, float], semantic: dict[str, float],
 # name/term matches influential.
 _ALPHA = 0.6
 
-_LEX: DomainRouter | None = None
-_EMB: EmbeddingRouter | None = None
-_KEY: tuple | None = None
+# One published (key, lexical, embedding) entry, replaced as a single tuple so
+# a concurrent build for another roster can never pair this key with that
+# roster's index.
+_CACHE: tuple[tuple, DomainRouter, EmbeddingRouter | None] | None = None
 
 
 def _indexes(domains: dict[str, DomainProfile]):
     """Build (and process-cache) the lexical + embedding indexes for a roster."""
-    global _LEX, _EMB, _KEY
+    global _CACHE
     # A workspace can edit a custom pack without changing its ID. Keying only
     # on names kept the previous tenant's text in the process-wide index and
     # made JD matches stale until restart.
@@ -181,14 +182,17 @@ def _indexes(domains: dict[str, DomainProfile]):
         (name, profile.description, profile.persona)
         for name, profile in sorted(domains.items())
     )
-    if _LEX is None or key != _KEY:
-        _LEX = DomainRouter(domains)
-        try:
-            _EMB = EmbeddingRouter(domains)
-        except Exception:  # embeddings are best-effort; lexical always works
-            _EMB = None
-        _KEY = key
-    return _LEX, _EMB
+    cached = _CACHE
+    if cached is not None and cached[0] == key:
+        return cached[1], cached[2]
+    lex = DomainRouter(domains)
+    emb: EmbeddingRouter | None
+    try:
+        emb = EmbeddingRouter(domains)
+    except Exception:  # embeddings are best-effort; lexical always works
+        emb = None
+    _CACHE = (key, lex, emb)
+    return lex, emb
 
 
 def rank_specialists(query: str, k: int = 10,

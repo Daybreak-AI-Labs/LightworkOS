@@ -212,32 +212,79 @@ def _try_serpapi(
     return out
 
 
-# Length-bounded result matcher. Every quantifier is capped so a hostile or
-# malformed page can't drive catastrophic backtracking (ReDoS): the old
-# unbounded `(.+?) ... .*? ... (.+?)` with DOTALL scanned to EOF for each of
-# many result anchors -> quadratic blow-up on a large response. Titles/snippets
-# longer than the cap are skipped rather than scanned, which real DDG lite
-# output never hits.
+# DDG lite result parsing. A single regex over the page was super-linear even
+# with bounded quantifiers: every `<a` start re-scanned the attribute runs, so a
+# hostile 1 MB body of `<a ` fragments cost seconds to minutes. The page is
+# instead walked once with str.find, each anchor's head and text bounded, so
+# the work is linear in the input. Titles longer than 500 characters, snippets
+# longer than 4000, and snippets more than 4000 characters after their title
+# are skipped, which real DDG lite output never hits.
 _MAX_DDG_HTML = 1_000_000
-_DDG_RESULT_RE = re.compile(
-    r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.{0,500}?)</a>'
-    r'.{0,4000}?<a[^>]+class="result__snippet"[^>]*>(.{0,4000}?)</a>',
-    re.DOTALL,
-)
+_DDG_TITLE_MAX = 500
+_DDG_SNIPPET_MAX = 4000
+_DDG_GAP_MAX = 4000
+_DDG_HEAD_MAX = 4500
+_DDG_ATTR_RE = re.compile(r'\b(class|href)="([^"]*)"')
+
+
+def _ddg_anchors(html: str):
+    """Yield ``(attrs, inner_html, start, end)`` for each bounded ``<a ...>...</a>``.
+
+    The next ``>`` and ``</a>`` are found once and reused while the scan
+    position has not passed them, so no stretch of the page is searched twice.
+    """
+    nxt = {">": -2, "</a>": -2}
+
+    def following(needle: str, pos: int) -> int:
+        if -1 != nxt[needle] < pos:
+            nxt[needle] = html.find(needle, pos)
+        return nxt[needle]
+
+    pos = 0
+    while True:
+        start = html.find("<a", pos)
+        if start == -1:
+            return
+        pos = start + 2
+        if not html[pos:pos + 1].isspace():
+            continue
+        head_end = following(">", pos)
+        if head_end == -1:
+            return
+        if head_end - pos > _DDG_HEAD_MAX:
+            continue
+        pos = head_end + 1
+        close = following("</a>", pos)
+        if close == -1:
+            return
+        if close - pos > _DDG_SNIPPET_MAX:
+            continue
+        attrs = dict(_DDG_ATTR_RE.findall(html, start, head_end))
+        yield attrs, html[pos:close], start, close + 4
 
 
 def _parse_ddg_results(html: str, num: int) -> list[dict]:
     """Extract up to ``num`` (title, url, snippet) rows from DDG lite HTML.
 
-    Pure + length-bounded (see ``_DDG_RESULT_RE``) so it can't hang on a
+    Pure + linear-time (see ``_ddg_anchors``) so it can't hang on a
     pathological page. DDG wraps the real URL in a ``/l/?uddg=`` redirector,
     which is unwrapped here; non-http targets are dropped.
     """
     out: list[dict] = []
-    for m in _DDG_RESULT_RE.finditer(html):
-        url_redirect = m.group(1)
-        title_html = re.sub(r"<.*?>", "", m.group(2)).strip()
-        snippet_html = re.sub(r"<.*?>", "", m.group(3)).strip()
+    pending = None  # (href, title_html, end of the title anchor)
+    for attrs, inner, start, end in _ddg_anchors(html):
+        classes = attrs.get("class", "").split()
+        if "result__a" in classes and attrs.get("href"):
+            pending = (attrs["href"], inner, end) if len(inner) <= _DDG_TITLE_MAX else None
+            continue
+        if "result__snippet" not in classes or pending is None:
+            continue
+        url_redirect, title_inner, title_end = pending
+        pending = None
+        if start - title_end > _DDG_GAP_MAX:
+            continue
+        title_html = re.sub(r"<.*?>", "", title_inner).strip()
+        snippet_html = re.sub(r"<.*?>", "", inner).strip()
         real = url_redirect
         m_uddg = re.search(r"uddg=([^&]+)", url_redirect)
         if m_uddg:
@@ -278,7 +325,7 @@ def _try_duckduckgo(
         log.warning("duckduckgo search failed: %s", e)
         return None
     # DDG HTML lite returns <a class="result__a" href="...">...</a> with an
-    # adjacent <a class="result__snippet">. Parse via a length-bounded regex
+    # adjacent <a class="result__snippet">. Parse with a linear, length-bounded scan
     # (capped input size as defense-in-depth) -- not a general HTML parser; the
     # lite endpoint output is stable enough.
     return _parse_ddg_results(html[:_MAX_DDG_HTML], num)
@@ -313,7 +360,12 @@ def _run_search(args: dict[str, Any]) -> str:
 
     forced = (env_or_config("MAVERICK_SEARCH_BACKEND", "tools", "search_backend")
               or "").strip().lower()
-    if forced and forced in _BACKENDS:
+    if forced == "auto":  # the documented default: try backends in order
+        forced = ""
+    if forced and forced not in _BACKENDS:
+        return (f"ERROR: search backend {forced!r} is not supported "
+                f"(choose one of: {', '.join(sorted(_BACKENDS))})")
+    if forced:
         backends = [(forced, _BACKENDS[forced])]
     else:
         # Try in preference order; first one with credentials (or DDG

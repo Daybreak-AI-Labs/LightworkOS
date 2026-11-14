@@ -26,6 +26,17 @@ def test_gather_reads_real_episode_token_fields():
     assert rows == [{"tag": "acme", "cost": 2.5, "in_tok": 1200, "out_tok": 340}]
 
 
+def test_private_tag_field_is_not_read_from_the_episode():
+    # GET /cost/by-tag passes tag_field from the query string; "__dict__"
+    # returned the episode row's repr as its tag.
+    ep = EpisodeSpend(
+        id=1, goal_id=7, started_at=0.0, ended_at=1.0, outcome="done",
+        cost_dollars=2.5, input_tokens=1, output_tokens=1, tool_calls=0,
+    )
+    rows = gather(_FakeWorld([ep]), tag_field="__dict__")
+    assert rows[0]["tag"] == ""
+
+
 def test_split_groups_and_sorts_by_cost():
     rows = [
         {"tag": "acme", "cost": 1.0, "in_tok": 100, "out_tok": 50},

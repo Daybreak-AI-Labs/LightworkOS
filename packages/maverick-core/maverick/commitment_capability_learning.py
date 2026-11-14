@@ -48,10 +48,12 @@ def validate(model: dict) -> None:
     if type(requirements) is not dict or set(requirements) != {"material_per_unit", "capacity_per_unit", "shared_setup"}:
         raise ValueError("Enter competing material, capacity and shared-setup requirements.")
     for key, values in requirements.items():
-        if type(values) is not list or not 1 <= len(values) <= 3 or len(set(values)) != len(values):
+        if type(values) is not list or not 1 <= len(values) <= 3:
             raise ValueError("Enter one to three distinct possibilities for each requirement.")
         for value in values:
             _integer(value, 0 if key == "shared_setup" else 1, 100)
+        if len(set(values)) != len(values):
+            raise ValueError("Enter one to three distinct possibilities for each requirement.")
     if type(model["additions"]) is not list or not 1 <= len(model["additions"]) <= 6:
         raise ValueError("Enter one to six possible additions.")
     for row in model["additions"]:
@@ -60,7 +62,7 @@ def validate(model: dict) -> None:
         _name(row["id"])
         _text(row["label"], 1, 200)
         _text(row["basis"], 10, 2000)
-        if row["kind"] not in {"material", "capacity"}:
+        if type(row["kind"]) is not str or row["kind"] not in {"material", "capacity"}:
             raise ValueError("Choose material or work capacity.")
         _integer(row["units"], 1, 100000)
         _integer(row["cost"], 0, 100000)

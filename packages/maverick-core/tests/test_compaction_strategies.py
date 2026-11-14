@@ -127,6 +127,21 @@ class TestDispatch:
         assert "<learned-digest" in str(out[1]["content"])
         assert "THE DIGEST" in str(out[1]["content"])
 
+    def test_strategy_digest_is_not_truncated_by_the_post_pass(self, monkeypatch, fake_llm,
+                                                              make_llm_response):
+        # The digest sits behind the recent window, so the shared post-pass cut
+        # it to max_tool_bytes (2 KiB) right after it was produced.
+        monkeypatch.setenv("MAVERICK_COMPACTION_STRATEGY", "learned")
+        digest = "fact " * 500 + "NEXT STEP: deploy"
+        fake_llm.scripted = [make_llm_response(digest)]
+        msgs = _traj() + [{"role": "user", "content": "q2"},
+                          {"role": "assistant", "content": "a2"}]
+        out = compact_with_strategy(msgs, llm=fake_llm, keep_recent=2)
+        content = out[1]["content"]
+        assert content.rstrip().endswith("NEXT STEP: deploy\n</learned-digest>")
+        assert "truncated]" not in content
+        assert out[2:] == compact_messages([msgs[0], *out[2:]], keep_recent=2)[1:]
+
     def test_failing_strategy_falls_back_to_default(self, monkeypatch):
         monkeypatch.setenv("MAVERICK_COMPACTION_STRATEGY", "graph")
 

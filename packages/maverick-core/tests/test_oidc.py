@@ -447,6 +447,24 @@ def test_oidc_enabled_via_config(monkeypatch, tmp_path):
     assert cfg.algorithms == ["ES256"]
 
 
+def test_unreadable_config_keeps_oidc_enforced(monkeypatch, tmp_path):
+    """A config typo must not silently switch company sign-in off."""
+    cfg_dir = tmp_path / ".maverick"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "config.toml").write_text("[auth.oidc]\nenabled = true\nx = [\n")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_HOME", raising=False)
+    monkeypatch.delenv("MAVERICK_OIDC_ENABLED", raising=False)
+    assert oidc_enabled() is True
+    # Evidence and display callers can tell "configured on" from "unknown".
+    from maverick.oidc import oidc_enabled_as_configured
+    with pytest.raises(OIDCError):
+        oidc_enabled_as_configured()
+    monkeypatch.setenv("MAVERICK_OIDC_ENABLED", "0")  # an explicit env decision still wins
+    assert oidc_enabled() is False
+    assert oidc_enabled_as_configured() is False
+
+
 def test_config_algorithms_default_to_asymmetric(monkeypatch, tmp_path):
     """A config with no algorithms key falls back to the asymmetric default."""
     monkeypatch.setenv("HOME", str(tmp_path))

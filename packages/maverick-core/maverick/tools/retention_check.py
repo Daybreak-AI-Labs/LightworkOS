@@ -28,7 +28,7 @@ def _age_days(rec: dict, rid: str, today: date) -> int:
     if "age_days" in rec:
         try:
             return int(rec["age_days"])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ValueError(f"record {rid} age_days must be an integer") from None
     if "created" in rec:
         try:
@@ -92,7 +92,7 @@ def _run(args: dict[str, Any]) -> str:
     try:
         for cat in policy:
             int(policy[cat])
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return "ERROR: policy values must be integer day counts"
     today_arg = args.get("today")
     try:

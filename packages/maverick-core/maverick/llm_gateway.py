@@ -527,7 +527,7 @@ class TeamTokenBudget:
                 used_requests = row.get("requests")
                 used_prompt = row.get("prompt_tokens")
                 used_completion = row.get("completion_tokens")
-                invalid_row = (
+                malformed = key in rows and (
                     isinstance(started, bool)
                     or not isinstance(started, (int, float))
                     or isinstance(used_requests, bool)
@@ -539,10 +539,15 @@ class TeamTokenBudget:
                     or used_requests < 0
                     or used_prompt < 0
                     or used_completion < 0
-                    or current_time < float(started)
-                    or current_time - float(started) >= window_seconds
                 )
-                if invalid_row:
+                if malformed:
+                    # A malformed authority fails closed instead of granting a
+                    # fresh window.
+                    raise ValueError("team budget row is malformed")
+                # A new team, or an elapsed window, starts afresh. A window
+                # that starts in the future (the clock stepped back) keeps its
+                # usage until it elapses.
+                if key not in rows or current_time - float(started) >= window_seconds:
                     started, used_requests, used_prompt, used_completion = (
                         current_time, 0, 0, 0
                     )
@@ -616,12 +621,12 @@ class TeamTokenBudget:
         window_seconds: int,
         now: float | None = None,
     ) -> None:
-        """Release only confirmed unused reservation capacity.
+        """Settle a reservation against confirmed provider usage.
 
-        Reconciliation never increases a cap after an indeterminate result;
-        it executes only after a bounded valid success payload.  Provider usage
-        larger than the pre-reserved amount is retained at the reservation so
-        a nonconforming upstream cannot silently expand a team ceiling.
+        Reconciliation runs only after a bounded valid success payload.
+        Unused reserved capacity is released; provider usage larger than the
+        reservation is charged, so the overage counts against the team
+        ceiling (later requests are refused) instead of being dropped.
         """
 
         if not reservation.allowed or reservation.window_started is None:
@@ -641,6 +646,18 @@ class TeamTokenBudget:
             if completion_tokens is not None
             else 0
         )
+        prompt_over = (
+            max(0, _safe_usage_int(prompt_tokens) - reservation.prompt_reserved)
+            if prompt_tokens is not None
+            else 0
+        )
+        completion_over = (
+            max(0, _safe_usage_int(completion_tokens) - reservation.completion_reserved)
+            if completion_tokens is not None
+            else 0
+        )
+        prompt_release -= prompt_over
+        completion_release -= completion_over
         if not prompt_release and not completion_release:
             return
         current_time = float(self._clock() if now is None else now)
@@ -690,6 +707,7 @@ class TeamTokenBudget:
                     or not isinstance(completion_used, int)
                 ):
                     return
+                # A negative release charges provider usage above the reservation.
                 row["prompt_tokens"] = max(0, prompt_used - prompt_release)
                 row["completion_tokens"] = max(
                     0, completion_used - completion_release
@@ -755,10 +773,25 @@ def _provider_error(provider: str, status: int, message: str) -> tuple[int, dict
     }
 
 
-_PROMPT_TEXT_KEYS = frozenset({
-    "arguments", "content", "input", "instructions", "prompt", "system", "text",
+# Keys whose text is redacted in a prompt. In tool schemas only free-text
+# description/title strings are rewritten: enum/const/default/examples values
+# are the tool's contract and must reach the model unchanged.
+_PROMPT_REDACT_KEYS = frozenset({
+    "arguments", "content", "description", "input", "instructions", "prompt",
+    "system", "text", "title",
 })
+# Everything shown to the model (tool schemas included) is screened and
+# counted toward the prompt reservation.
+_PROMPT_TEXT_KEYS = _PROMPT_REDACT_KEYS | frozenset({"input_schema", "parameters"})
 _RESPONSE_TEXT_KEYS = frozenset({"content", "output_text", "refusal", "text"})
+# Model-emitted tool-call arguments are never rewritten (a client would act on
+# a corrupted argument); with completion redaction on, a response whose
+# arguments carry sensitive data is withheld instead.
+_RESPONSE_TOOL_ARGUMENT_KEYS = frozenset({"arguments", "input"})
+
+
+class _ToolArgumentsWithheld(LLMGatewayError):
+    """A completion's tool-call arguments carry data redaction would remove."""
 
 
 def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -815,22 +848,69 @@ def _transform_text_leaves(
         total = 0
         for key, item in value.items():
             key_text = str(key)
-            transformed, count = _transform_text_leaves(
-                item,
-                text_keys=text_keys,
-                inherited_text=inherited_text or key_text in text_keys,
-                depth=depth + 1,
-            )
+            if not inherited_text and key_text in _TOOL_SCHEMA_KEYS:
+                transformed, count = _redact_schema(item, depth=depth + 1)
+            else:
+                transformed, count = _transform_text_leaves(
+                    item,
+                    text_keys=text_keys,
+                    inherited_text=inherited_text or key_text in text_keys,
+                    depth=depth + 1,
+                )
             out[key_text] = transformed
             total += count
         return out, total
     return value, 0
 
 
+_TOOL_SCHEMA_KEYS = frozenset({"input_schema", "parameters"})
+_SCHEMA_TEXT_KEYS = frozenset({"description", "title"})
+
+
+def _redact_schema(value: object, *, depth: int) -> tuple[object, int]:
+    """Redact a tool schema's free text only.
+
+    Only a string whose own key is ``description`` or ``title`` is rewritten.
+    Keys directly under ``properties`` are property names (a property may be
+    called ``title`` or ``content``), and enum/const/default/examples values
+    are the tool's contract, so neither is touched.
+    """
+    if depth > 32:
+        raise LLMGatewayError("the request nesting exceeds the gateway limit")
+    if isinstance(value, list):
+        out_list: list[object] = []
+        total = 0
+        for item in value:
+            transformed, count = _redact_schema(item, depth=depth + 1)
+            out_list.append(transformed)
+            total += count
+        return out_list, total
+    if not isinstance(value, Mapping):
+        return value, 0
+    out: dict[str, object] = {}
+    total = 0
+    for key, item in value.items():
+        key_text = str(key)
+        if key_text in _SCHEMA_TEXT_KEYS and isinstance(item, str):
+            transformed, count = _redact_text(item)
+        elif key_text == "properties" and isinstance(item, Mapping):
+            props: dict[str, object] = {}
+            count = 0
+            for name, prop in item.items():
+                props[str(name)], n = _redact_schema(prop, depth=depth + 2)
+                count += n
+            transformed = props
+        else:
+            transformed, count = _redact_schema(item, depth=depth + 1)
+        out[key_text] = transformed
+        total += count
+    return out, total
+
+
 def _redact_prompt(body: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
     copied = _json_copy(body)
     transformed, count = _transform_text_leaves(
-        copied, text_keys=_PROMPT_TEXT_KEYS
+        copied, text_keys=_PROMPT_REDACT_KEYS
     )
     if not isinstance(transformed, dict):  # pragma: no cover - guarded by _json_copy
         raise LLMGatewayError("the request body must be a JSON object")
@@ -844,10 +924,22 @@ def _redact_response(payload: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
     )
     if not isinstance(transformed, dict):  # pragma: no cover - guarded by _json_copy
         raise LLMGatewayError("the upstream response must be a JSON object")
+    arguments = "\n".join(_collect_prompt_text(
+        copied, text_keys=_RESPONSE_TOOL_ARGUMENT_KEYS))
+    if arguments and _redact_text(arguments)[1]:
+        raise _ToolArgumentsWithheld(
+            "The AI service's reply asked to call a tool with sensitive data in its "
+            "arguments, so the gateway withheld it. Nothing was changed.")
     return transformed, count
 
 
-def _collect_prompt_text(value: object, *, inherited_text: bool = False, depth: int = 0) -> list[str]:
+def _collect_prompt_text(
+    value: object,
+    *,
+    inherited_text: bool = False,
+    depth: int = 0,
+    text_keys: frozenset[str] = _PROMPT_TEXT_KEYS,
+) -> list[str]:
     """Collect only text that can reach an LLM, for Shield and input reserve."""
 
     if depth > 32:
@@ -858,7 +950,8 @@ def _collect_prompt_text(value: object, *, inherited_text: bool = False, depth: 
         parts: list[str] = []
         for item in value:
             parts.extend(
-                _collect_prompt_text(item, inherited_text=inherited_text, depth=depth + 1)
+                _collect_prompt_text(item, inherited_text=inherited_text,
+                                     depth=depth + 1, text_keys=text_keys)
             )
         return parts
     if isinstance(value, Mapping):
@@ -867,8 +960,9 @@ def _collect_prompt_text(value: object, *, inherited_text: bool = False, depth: 
             parts.extend(
                 _collect_prompt_text(
                     item,
-                    inherited_text=inherited_text or str(key) in _PROMPT_TEXT_KEYS,
+                    inherited_text=inherited_text or str(key) in text_keys,
                     depth=depth + 1,
+                    text_keys=text_keys,
                 )
             )
         return parts
@@ -918,7 +1012,13 @@ def _completion_cap(
         or not 1 <= value <= _MAX_COMPLETION_TOKENS
     ):
         raise ValueError("the request completion-token cap must be between 1 and 1000000")
-    return copied, int(value)
+    # OpenAI ``n`` asks for that many completions, each up to the cap.
+    choices = copied.get("n", 1) if provider != "anthropic" else 1
+    if choices is None:
+        choices = 1
+    if isinstance(choices, bool) or not isinstance(choices, int) or not 1 <= choices <= 128:
+        raise ValueError("the request choice count n must be between 1 and 128")
+    return copied, int(value) * choices
 
 
 def _usage_for_provider(
@@ -1075,6 +1175,7 @@ def _record_call(
 
 
 _SCREEN_MAX_CHARS = 200_000
+_SCREEN_OVERLAP_CHARS = 4_096
 
 
 def _screen_messages(body: Mapping[str, Any]):
@@ -1086,22 +1187,22 @@ def _screen_messages(body: Mapping[str, Any]):
     still blocks). Returns the verdict, or None when there is no text.
     """
 
-    parts: list[str] = []
-    total = 0
-    for chunk in _collect_prompt_text(body):
-        if not chunk:
-            continue
-        take = chunk[: max(0, _SCREEN_MAX_CHARS - total)]
-        parts.append(take)
-        total += len(take)
-        if total >= _SCREEN_MAX_CHARS:
-            break
-    if not parts:
+    text = "\n".join(chunk for chunk in _collect_prompt_text(body) if chunk)
+    if not text:
         return None
     try:
         from .shield_ensemble import ShieldEnsemble
 
-        return ShieldEnsemble().evaluate("\n".join(parts))
+        # Every character is screened, in overlapping windows so a pattern
+        # that straddles a window edge is still seen. Deny wins.
+        ensemble = ShieldEnsemble()
+        step = _SCREEN_MAX_CHARS - _SCREEN_OVERLAP_CHARS
+        verdict = None
+        for start in range(0, len(text), step):
+            verdict = ensemble.evaluate(text[start:start + _SCREEN_MAX_CHARS])
+            if not verdict.allowed:
+                break
+        return verdict
     except Exception as exc:
         error_type = re.sub(r"[^A-Za-z0-9_.-]", "_", type(exc).__name__)[:64]
         log.warning("llm_gateway: content screen unavailable; blocking (%s)", error_type)
@@ -1413,10 +1514,16 @@ def _handle_completion(  # noqa: C901 - the request boundary is deliberately lin
         )
     usage = _usage_for_provider(provider, payload)
     response_redactions = 0
+    withheld: str | None = None
     try:
         response = _json_copy(payload)
         if settings["redact_completions"]:
             response, response_redactions = _redact_response(response)
+    except _ToolArgumentsWithheld as exc:
+        # A valid response with known usage that must not be relayed: settle
+        # it like any completed call, then refuse with the same non-retried
+        # status as screened content (403), so SDK retries do not pay again.
+        withheld, response = str(exc), {}
     except LLMGatewayError as exc:
         # The upstream effect is known but an unredacted response is not safe
         # to relay.  Keep the reservation and report an explicit outage.
@@ -1436,10 +1543,13 @@ def _handle_completion(  # noqa: C901 - the request boundary is deliberately lin
         now=current,
     )
     _record_call(
-        caller=caller, team=team, model=model, status="ok",
+        caller=caller, team=team, model=model,
+        status="response_withheld" if withheld else "ok",
         prompt_sha256=prompt_sha, usage=usage, now=current,
         redaction_count=prompt_redactions + response_redactions,
     )
+    if withheld:
+        return _provider_error(provider, 403, withheld)
     return 200, response
 
 
@@ -1479,7 +1589,8 @@ def handle_anthropic_message(
 
 
 def gateway_status() -> dict[str, Any]:
-    rows = _LEDGER.list(limit=_MAX_LIST)
+    # The ledger holds at most _MAX_CALLERS rows; count all of them.
+    rows = _LEDGER.list(limit=_MAX_CALLERS)
     counts: dict[str, int] = {}
     callers: set[str] = set()
     requests = 0
@@ -1500,8 +1611,10 @@ def gateway_status() -> dict[str, Any]:
 def list_callers(*, limit: int = 100) -> list[dict[str, Any]]:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_LIST:
         raise ValueError(f"limit must be between 1 and {_MAX_LIST}")
-    rows = _LEDGER.list(limit=limit)
+    # Sort the whole bounded ledger first so the most recent callers win.
+    rows = _LEDGER.list(limit=_MAX_CALLERS)
     rows.sort(key=lambda row: -float(row.get("last_seen") or 0.0))
+    rows = rows[:limit]
     return [
         {
             "caller_digest": row.get("caller_digest"),

@@ -25,9 +25,7 @@ class XaiClient(OpenAIClient):
             or env.get("XAI_API_KEY")
             or env.get("GROK_API_KEY")
         )
-        url = base_url or env.get(
-            "XAI_BASE_URL", "https://api.x.ai/v1",
-        )
+        url = base_url or env.get("XAI_BASE_URL") or "https://api.x.ai/v1"
         super().__init__(
             api_key=key,
             base_url=url,

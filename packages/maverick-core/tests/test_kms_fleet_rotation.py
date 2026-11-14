@@ -88,6 +88,29 @@ def test_wrong_old_kek_is_isolated_failure_not_crash():
     assert rep["rotated"] == []
 
 
+def test_rotates_every_dek_on_disk_not_only_the_roster():
+    # A removed (restorable) tenant, the un-namespaced DEK and a tenant used
+    # without a roster entry all hold DEKs under the old KEK; skipping any of
+    # them while reporting zero failures would lose their data once the old
+    # KEK is retired.
+    from maverick.tenant import registry
+    _provision("live", "gone")
+    registry.delete_tenant("gone")
+    old_kms = K.LocalKMS(bytes.fromhex(_OLD))
+    K.seal_for_tenant(None, b"shared", kms=old_kms)
+    K.seal_for_tenant("slack:U1", b"unlisted", kms=old_kms)
+    K._clear_cache()
+
+    rep = F.rotate_local_fleet(_OLD, _NEW)
+
+    assert set(rep["rotated"]) == {"live", "gone", "slack:U1", K.SHARED_DEK_LABEL}
+    assert rep["failed"] == {}
+    new_kms = K.LocalKMS(bytes.fromhex(_NEW))
+    for tid in (None, "gone", "slack:U1"):
+        K._clear_cache()
+        assert K.tenant_dek(tid, kms=new_kms)
+
+
 def test_bad_kek_length_raises():
     _provision("a")
     with pytest.raises(EncryptionUnavailable):

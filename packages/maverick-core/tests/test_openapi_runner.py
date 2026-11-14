@@ -259,3 +259,35 @@ def test_openapi_blocks_absolute_etc_passwd(tmp_path):
         {"op": "list_ops", "spec": "/etc/passwd"}
     )
     assert "outside the workspace" in out
+
+
+def test_openapi_spec_cache_follows_edits_and_listed_ids_resolve(tmp_path, monkeypatch):
+    """An edited local spec was served stale for the life of the process, a
+    cached URL spec skipped the caller's egress check, and list_ops printed a
+    synthetic id for operations without operationId that describe could not
+    find."""
+    import os
+
+    import maverick.egress_guard as egress_guard
+    import maverick.tools.openapi_runner as oas
+    from maverick.tools.openapi_runner import openapi_runner
+
+    tool = openapi_runner(_sb(tmp_path))
+    path = _write_spec(tmp_path)
+    assert "getPet" in tool.fn({"op": "list_ops", "spec": path})
+    edited = dict(_TINY_OAS)
+    edited["paths"] = {"/v2/things": {"get": {"summary": "things"}}}
+    (tmp_path / "spec.json").write_text(json.dumps(edited))
+    os.utime(tmp_path / "spec.json", ns=(1, 1))
+    listed = tool.fn({"op": "list_ops", "spec": path})
+    assert "getPet" not in listed and "get_/v2/things" in listed
+    assert "not found" not in tool.fn({"op": "describe", "spec": path, "op_id": "get_/v2/things"})
+
+    oas._spec_cache["https://specs.example/api.json"] = edited  # noqa: SLF001 - warm cache
+
+    def _deny(url):
+        raise RuntimeError(f"egress denied: {url}")
+
+    monkeypatch.setattr(egress_guard, "_check", _deny)
+    out = tool.fn({"op": "list_ops", "spec": "https://specs.example/api.json"})
+    assert "get_/v2/things" not in out

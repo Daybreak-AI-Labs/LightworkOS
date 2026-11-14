@@ -52,3 +52,13 @@ def test_write_without_cache_readers_does_not_create_generation(monkeypatch):
     assert not path.exists()
     tool.note_side_effect(SimpleNamespace(parallel_safe=False))
     assert not path.exists()
+
+
+def test_failed_shared_invalidation_is_logged(monkeypatch, caplog):
+    # A Redis outage during a write used to leave other workers on the old
+    # generation with nothing above debug level in the logs.
+    shared = SimpleNamespace(epoch=lambda advance=False: None, purge=lambda: 0)
+    monkeypatch.setattr(tool, "_shared_backend", lambda: shared)
+    with caplog.at_level("ERROR", logger="maverick.cache.tool"):
+        tool.note_side_effect(SimpleNamespace(name="write_file", parallel_safe=False))
+    assert "could not advance the shared Redis generation" in caplog.text

@@ -221,7 +221,10 @@ def _post_http_batch(url: str, body: bytes, timeout: float) -> None:
                 "refusing to send the SIEM bearer token over plaintext http://; "
                 "use https:// or set MAVERICK_SIEM_ALLOW_INSECURE=1 to override")
         req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - scheme validated
+    # No redirects: urllib would turn the POST into a body-less GET, keep the
+    # bearer header for the new host, and allow an https -> http downgrade, so
+    # a dropped batch would still be counted as shipped.
+    with _open_vendor(req, timeout) as resp:
         code = getattr(resp, "status", None) or resp.getcode()
     if not (200 <= int(code) < 300):
         raise RuntimeError(f"SIEM HTTP collector returned {code}")

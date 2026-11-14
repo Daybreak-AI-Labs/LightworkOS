@@ -99,6 +99,20 @@ def test_dispatch_forwards_base_url_to_cloud_vendors(monkeypatch, provider, modu
     assert _Recorder.last_kwargs == {"api_key": "k", "base_url": "https://gw.corp/v1"}
 
 
+@pytest.mark.parametrize("module,cls,var,host", [
+    ("deepseek_provider", "DeepSeekClient", "DEEPSEEK_BASE_URL", "api.deepseek.com"),
+    ("moonshot_provider", "MoonshotClient", "MOONSHOT_BASE_URL", "api.moonshot.ai"),
+    ("xai_provider", "XaiClient", "XAI_BASE_URL", "api.x.ai"),
+])
+def test_empty_vendor_base_url_uses_the_vendor_default(module, cls, var, host):
+    # An empty value used to fall through to the OpenAI endpoint, which
+    # would then receive the vendor's key.
+    import importlib
+    client_cls = getattr(importlib.import_module(f"maverick.providers.{module}"), cls)
+    client = client_cls(api_key="vendor-test", environment={var: ""})  # pragma: allowlist secret
+    assert host in str(client._sync.base_url)
+
+
 def test_llm_facade_passes_config_base_url(clean_provider_env, monkeypatch):
     clean_provider_env.write_text(
         '[providers.vllm]\nbase_url = "http://cfg-host:9/v1"\n', encoding="utf-8"

@@ -616,6 +616,8 @@ def _resolve_model_for_role(role: str, *, domain_models: Mapping[str, str] | Non
     """Return the model spec for a role (may be 'provider:id' or bare id).
 
     Resolution order:
+      0. The task-level model choice (``task_model_selection.current_model``),
+         when one is set for the running task.
       1. Per-role env override `MAVERICK_MODEL_OVERRIDE_<ROLE>` (set by
          best-of-N to swap models per attempt).
       2. Global override `MAVERICK_MODEL_OVERRIDE` (set by the CLI's
@@ -1609,6 +1611,45 @@ _PROVIDER_SNAPSHOT_RETRIES = 3
 _CLIENT_CACHE_MAX = 32
 
 
+# Providers whose client signs in with an ambient cloud identity (Google ADC,
+# an AWS role or profile, an Azure managed identity through
+# DefaultAzureCredential) that no variable here reveals: a workspace endpoint
+# for them could always receive the deployment's credential.
+_AMBIENT_IDENTITY_PROVIDERS = frozenset({"vertex", "bedrock", "azure"})
+# Credentials a client reads beyond PROVIDER_CREDENTIAL_ENV_MAP.
+_EXTRA_CREDENTIAL_ENV = {
+    "anthropic": ("ANTHROPIC_AUTH_TOKEN",),
+    "bedrock": ("AWS_BEARER_TOKEN_BEDROCK",),
+}
+
+
+def _refuse_deployment_key_for_workspace_endpoint(
+    provider: str, base_url: str | None, key: str | None,
+    environment: Mapping[str, str],
+) -> None:
+    """Never send the deployment's credential to an endpoint a workspace chose.
+
+    A workspace overlay that sets ``base_url`` must bring its own ``api_key``
+    (or a per-workspace BYOK key) unless no deployment credential of any kind
+    would be sent: a keyless local endpoint such as Ollama keeps working."""
+    if base_url is None:
+        return
+    from .config import (
+        PROVIDER_CREDENTIAL_ENV_MAP,
+        tenant_provider_api_key,
+        tenant_sets_provider_endpoint_without_key,
+    )
+    if not tenant_sets_provider_endpoint_without_key(provider) or tenant_provider_api_key(provider):
+        return
+    names = (*PROVIDER_CREDENTIAL_ENV_MAP.get(provider, ()), *_EXTRA_CREDENTIAL_ENV.get(provider, ()))
+    if (key or provider in _AMBIENT_IDENTITY_PROVIDERS
+            or any(environment.get(name, "").strip() for name in names)):
+        raise ValueError(
+            f"providers.{provider}.base_url in the workspace configuration "
+            "needs the workspace's own api_key"
+        )
+
+
 def _provider_config_snapshot(
     provider: str,
 ) -> tuple[dict[str, Any], dict[str, str]]:
@@ -2001,6 +2042,7 @@ class LLM:
         raw_base_url = pcfg.get("base_url")
         if isinstance(raw_base_url, str) and raw_base_url.strip():
             base_url = raw_base_url.strip()
+        _refuse_deployment_key_for_workspace_endpoint(provider, base_url, key, environment)
         if base_url is None:
             for env_name in _PROVIDER_BASE_URL_ENV_MAP.get(provider, ()):
                 value = environment.get(env_name, "").strip()
@@ -2697,23 +2739,24 @@ class LLM:
                 * _cache_write_mult_from_ttl("1h")
             )
             _held = budget.reserve(estimate) if budget is not None else 0.0
-            provider_sequence = _new_provider_attempt_sequence(
-                default_category="storage",
-                operation_prefix="prewarm",
-            )
-            tracker = _ProviderAttemptTracker(
-                provider,
-                f"{provider}:{model_id}",
-                budget,
-                getattr(client, "CACHE_READ_MULT", None),
-                estimate,
-                sequence=provider_sequence,
-                service=f"{provider}:{model_id}:prompt-cache",
-                metered_model=model_id,
-                material_guard=self._price_material_guard(provider, route),
-                admitted_quote=admitted_quote,
-            )
-            try:
+            tracker = None
+            try:  # from the reservation on, so a refused admission still releases it
+                provider_sequence = _new_provider_attempt_sequence(
+                    default_category="storage",
+                    operation_prefix="prewarm",
+                )
+                tracker = _ProviderAttemptTracker(
+                    provider,
+                    f"{provider}:{model_id}",
+                    budget,
+                    getattr(client, "CACHE_READ_MULT", None),
+                    estimate,
+                    sequence=provider_sequence,
+                    service=f"{provider}:{model_id}:prompt-cache",
+                    metered_model=model_id,
+                    material_guard=self._price_material_guard(provider, route),
+                    admitted_quote=admitted_quote,
+                )
                 from .retry import observe_physical_attempts
 
                 with _attempt_price_scope(tracker.metering_quote), observe_physical_attempts(tracker):
@@ -2721,7 +2764,8 @@ class LLM:
                         return bool(warm(system, tools, model_id, budget=budget))
                     return bool(warm(system, tools, model_id))
             finally:
-                tracker.finalize(None)
+                if tracker is not None:
+                    tracker.finalize(None)
                 if _held:
                     budget.release(_held)
         except Exception:  # pragma: no cover -- prewarm is best-effort

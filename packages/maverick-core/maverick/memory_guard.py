@@ -81,14 +81,17 @@ def enabled() -> bool:
     """Whether the Memory Guard is active. OFF by default.
 
     Turn on with ``MAVERICK_MEMORY_GUARD=1`` or ``[memory_guard] enable = true``.
+    An unreadable config source may hold ``enable = true``, so the guard is
+    on while one is reported by ``config_source_errors``.
     """
     if env_bool("MAVERICK_MEMORY_GUARD"):
         return True
     try:
-        from .config import get_memory_guard
-        return bool(get_memory_guard()["enable"])
-    except Exception:  # pragma: no cover -- config never blocks a run
-        return False
+        from .config import config_source_errors, get_memory_guard
+        enable = bool(get_memory_guard()["enable"])
+        return enable or bool(config_source_errors(include_tenant=True))
+    except Exception:  # pragma: no cover -- policy unknown: keep the guard on
+        return True
 
 
 def min_recall_trust() -> int:

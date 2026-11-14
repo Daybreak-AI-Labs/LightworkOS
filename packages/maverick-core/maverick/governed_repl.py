@@ -25,9 +25,13 @@ objects) are DROPPED and named in the result's ``dropped`` list rather than
 silently vanishing, so the caller can see exactly what the next statement will
 not find.
 
-The session directory IS the sandbox workdir, so the driver, the statement and
-the result file are visible from both sides. A backend with no shared workdir
-(ssh, kubernetes) therefore cannot host a session in v1.
+The session's ``work`` subdirectory IS the sandbox workdir, so the driver, the
+statement and the result file are visible from both sides. The session's
+control state (``meta.json``: counter, owner, closed flag) and its ledger sit
+beside it, outside what an isolating backend mounts, so a statement cannot
+reset its own cap, change its owner or rewrite its history. (The ``local``
+backend runs on the host and isolates nothing.) A backend with no shared
+workdir (ssh, kubernetes) therefore cannot host a session in v1.
 
 No tool access
 --------------
@@ -46,8 +50,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -60,6 +66,7 @@ _DRIVER_NAME = "_driver.py"
 _STATE_NAME = "state.json"
 _META_NAME = "meta.json"
 _LEDGER_NAME = "ledger.jsonl"
+_WORK_NAME = "work"
 
 #: Session ids are bare lowercase hex, so validating one is also what keeps a
 #: caller-supplied id from walking out of the repl root as a path segment.
@@ -203,8 +210,9 @@ def _write_meta(session_dir: Path, meta: dict) -> None:
 def open_session(goal_id: int | None = None, *, principal: str = "") -> str:
     """Create a kernel session and return its id.
 
-    The session directory doubles as the sandbox workdir, so it holds the
-    driver, the carried namespace, each statement's source, and the ledger.
+    The session directory holds the metadata and the ledger; its ``work``
+    subdirectory is the sandbox workdir and holds the driver, the carried
+    namespace and each statement's source and result.
     """
     if not enabled():
         raise ReplError(
@@ -213,8 +221,9 @@ def open_session(goal_id: int | None = None, *, principal: str = "") -> str:
     session_id = uuid.uuid4().hex[:16]
     session_dir = _root() / session_id
     ensure_private_directory(session_dir)
-    atomic_write_text(session_dir / _DRIVER_NAME, _DRIVER, mode=0o600)
-    atomic_write_text(session_dir / _STATE_NAME, "{}", mode=0o600)
+    work_dir = ensure_private_directory(session_dir / _WORK_NAME)
+    atomic_write_text(work_dir / _DRIVER_NAME, _DRIVER, mode=0o600)
+    atomic_write_text(work_dir / _STATE_NAME, "{}", mode=0o600)
     _write_meta(session_dir, {
         "session": session_id,
         "created": time.time(),
@@ -297,8 +306,9 @@ def close_session(session_id: str) -> bool:
     meta["closed"] = True
     meta["closed_at"] = time.time()
     _write_meta(session_dir, meta)
-    stale = [session_dir / _STATE_NAME, session_dir / _DRIVER_NAME]
-    stale += list(session_dir.glob("stmt_*.py")) + list(session_dir.glob("res_*.json"))
+    work_dir = session_dir / _WORK_NAME
+    stale = [work_dir / _STATE_NAME, work_dir / _DRIVER_NAME]
+    stale += list(work_dir.glob("stmt_*.py")) + list(work_dir.glob("res_*.json"))
     for path in stale:
         path.unlink(missing_ok=True)
     return True
@@ -397,12 +407,26 @@ def _driver_command(sandbox: object, argv: list[str]) -> str:
     return shlex.join(argv)
 
 
-def _run_statement(sandbox, session_dir: Path, index: int, source: str,
+def _read_result(path: Path, limit: int) -> str:
+    """Read the statement's result file without following a link the
+    statement planted there, blocking on a FIFO, or reading without bound."""
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+             | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+    with os.fdopen(os.open(path, flags), "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise OSError(f"statement result is not a regular file: {path.name}")
+        data = fh.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"statement result exceeds {limit} bytes")
+    return data.decode("utf-8")
+
+
+def _run_statement(sandbox, work_dir: Path, index: int, source: str,
                    policy: dict) -> tuple[dict, int, float]:
     """Run one statement through ``sandbox.exec`` and read its result file."""
-    from .file_lock import atomic_read_text, atomic_write_text
+    from .file_lock import atomic_write_text
     code_name, result_name = f"stmt_{index}.py", f"res_{index}.json"
-    atomic_write_text(session_dir / code_name, source, mode=0o600)
+    atomic_write_text(work_dir / code_name, source, mode=0o600)
     cmd = _driver_command(
         sandbox,
         [
@@ -422,9 +446,14 @@ def _run_statement(sandbox, session_dir: Path, index: int, source: str,
         res = sandbox.exec(cmd)
     wall = time.monotonic() - started
     exit_code = int(getattr(res, "exit_code", 1))
-    result_path = session_dir / result_name
+    # Two capped streams, each character at most 12 bytes once JSON-escaped,
+    # plus the dropped names (bounded by the namespace) and the envelope.
+    output_chars = int(policy["max_output_chars"]) + _SCAN_SLACK_CHARS
+    limit = 24 * output_chars + int(policy["max_state_bytes"]) + 65536
     try:
-        payload = json.loads(atomic_read_text(result_path))
+        payload = json.loads(_read_result(work_dir / result_name, limit))
+        if not isinstance(payload, dict):
+            raise ValueError("statement result is not an object")
     except (OSError, ValueError):
         # No result file: the driver never got to write one (timeout, killed
         # process, missing interpreter). The backend's own streams are all we
@@ -489,7 +518,11 @@ def _execute_locked(session_dir: Path, source: str, digest: str, policy: dict,
     if index > int(policy["max_statements"]):
         raise ReplError(f"repl session {session_id} reached its "
                         f"{policy['max_statements']}-statement cap")
-    sandbox = _sandbox_for(session_dir)
+    work_dir = session_dir / _WORK_NAME
+    if not work_dir.is_dir():
+        raise ReplError(f"repl session {session_id} predates the separate "
+                        "work directory; open a new session")
+    sandbox = _sandbox_for(work_dir)
     # Consume the slot before running: a statement that crashes the process
     # must still count against the cap.
     meta["statements"] = index
@@ -504,7 +537,7 @@ def _execute_locked(session_dir: Path, source: str, digest: str, policy: dict,
                         "be persisted (no receipt, no effect)")
 
     payload, exit_code, wall = _run_statement(
-        sandbox, session_dir, index, source, policy)
+        sandbox, work_dir, index, source, policy)
     limit = int(policy["max_output_chars"])
     stdout, stdout_cut = _cap(_redact(str(payload.get("stdout", ""))), limit)
     stderr, stderr_cut = _cap(_redact(str(payload.get("stderr", ""))), limit)

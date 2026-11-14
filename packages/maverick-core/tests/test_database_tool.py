@@ -80,8 +80,23 @@ def test_select_forms_with_known_side_effects_need_confirm(monkeypatch):
         "SELECT * FROM accounts FOR UPDATE",
         "SELECT GET_LOCK('nightly', 30)",
         "SELECT nextval('invoice_seq')",
+        # Effects behind VALUES, DESC-as-EXPLAIN and underscore-prefixed names.
+        "VALUES (setval('orders_id_seq', 1))",
+        "select pg_sleep(100000)",
+        "DESC ANALYZE DELETE t1 FROM t1 JOIN t2 ON t1.id = t2.id",
+        "SELECT pg_terminate_backend(123)",
+        "SELECT load_file('/etc/passwd')",
     ):
         assert "DRY RUN" in database_tool().fn({"op": "query", "sql": sql}), sql
+
+
+def test_identifiers_resembling_effect_functions_stay_reads():
+    from maverick.tools.database_tool import _is_read_sql
+    for sql in ("SELECT lo_price FROM items", "SELECT * FROM user_sleep",
+                "SELECT 'asleep'", "SHOW CREATE TABLE lo_items"):
+        assert _is_read_sql(sql), sql
+    for sql in ("SELECT SLEEP(5)", "select lo_unlink(3)", "select pg_sleep_for('1s')"):
+        assert not _is_read_sql(sql), sql
 
 
 def test_comment_prefixed_write_needs_confirm(monkeypatch):
@@ -212,6 +227,10 @@ def test_stacked_write_behind_select_needs_confirm(monkeypatch):
     for sql in (
         "SELECT 1; DELETE FROM users",
         "SELECT * FROM t WHERE x=1; DROP TABLE t",
+        # Dollar quotes and `#` comments must not hide a separator.
+        "select $a$ -- $a$; drop table t",
+        "select $$ ' $$; drop table t; select $$ ' $$",
+        "select 1 # '\n; delete from t where true; select 2 # '",
     ):
         out = database_tool().fn({"op": "query", "sql": sql})
         assert "DRY RUN" in out, sql

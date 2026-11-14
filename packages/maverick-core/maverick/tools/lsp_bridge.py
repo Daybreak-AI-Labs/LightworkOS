@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import stat
@@ -75,6 +76,8 @@ _SYMBOL_KINDS = {
 _SEVERITIES = {1: "error", 2: "warning", 3: "info", 4: "hint"}
 
 _TIMEOUT_S = 30.0
+_MAX_TIMEOUT_S = 120.0
+_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 
 def _read_bounded_file(path: Path, limit: int, *, include_bytes: bool = False) -> tuple[dict[str, str], bytes]:
@@ -120,11 +123,32 @@ class _LspSession:
     # -- framing ----------------------------------------------------------
 
     def _send(self, payload: dict) -> None:
+        """Write one frame without blocking past the session deadline.
+
+        A server that stops reading fills the pipe; a plain blocking write
+        would then hang regardless of the deadline, so each PIPE_BUF-sized
+        piece waits for writability with the remaining time.
+        """
         body = json.dumps(payload).encode("utf-8")
         frame = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
         assert self._proc.stdin is not None
-        self._proc.stdin.write(frame)
-        self._proc.stdin.flush()
+        try:
+            import select
+            fd = self._proc.stdin.fileno()
+            select.select([], [fd], [], 0)
+        except (OSError, ValueError, AttributeError):  # non-selectable (e.g. Windows)
+            self._proc.stdin.write(frame)
+            self._proc.stdin.flush()
+            return
+        view = memoryview(frame)
+        while view:
+            remaining = self._deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("LSP server did not read its input within the deadline")
+            _, ready, _ = select.select([], [fd], [], remaining)
+            if not ready:
+                raise TimeoutError("LSP server did not read its input within the deadline")
+            view = view[os.write(fd, view[:select.PIPE_BUF]):]
 
     def _read_chunk(self) -> bytes | None:
         """Read available bytes, never blocking past the session deadline.
@@ -165,6 +189,8 @@ class _LspSession:
             for line in headers.split("\r\n"):
                 if line.lower().startswith("content-length:"):
                     length = int(line.split(":", 1)[1].strip())
+            if not 0 <= length <= _MAX_MESSAGE_BYTES:
+                raise RuntimeError(f"LSP message length {length} is outside 0..{_MAX_MESSAGE_BYTES}")
             start = header_end + 4
             while len(self._buf) < start + length:
                 chunk = self._read_chunk()
@@ -353,6 +379,17 @@ def _op_diagnostics(session: _LspSession) -> str:
     return "\n".join(out)
 
 
+def _session_timeout(value: Any) -> float | str:
+    """The model-supplied deadline, capped so a call cannot hold a worker for long."""
+    try:
+        timeout = float(value or _TIMEOUT_S)
+    except (TypeError, ValueError):
+        return "ERROR: timeout_s must be a number"
+    if not math.isfinite(timeout) or timeout <= 0:
+        return "ERROR: timeout_s must be a positive number"
+    return min(timeout, _MAX_TIMEOUT_S)
+
+
 def _run_query(args: dict[str, Any], sandbox: Any = None) -> str:
     op = args.get("op")
     if "server" in args:
@@ -399,7 +436,9 @@ def _run_query(args: dict[str, Any], sandbox: Any = None) -> str:
         return root
     if not root.is_dir():
         return f"ERROR: root is not a directory: {root}"
-    timeout = float(args.get("timeout_s") or _TIMEOUT_S)
+    timeout = _session_timeout(args.get("timeout_s"))
+    if isinstance(timeout, str):
+        return timeout
     if op not in {"symbols", "definition", "references", "hover", "diagnostics"}:
         return f"ERROR: unknown op {op!r}"
     if op in {"definition", "references", "hover"} and (

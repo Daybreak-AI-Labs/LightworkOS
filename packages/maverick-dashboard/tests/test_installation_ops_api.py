@@ -361,6 +361,20 @@ def test_release_checks_record_a_baseline_and_compare_plainly(client, monkeypatc
     assert bad.status_code == 422
 
 
+def test_release_check_with_an_unmeasured_baseline_metric_fails_plainly(client):
+    # A baseline recorded from the command line may hold a measure this page
+    # does not take; it fails the check, is not shown as ok, and is not a 500.
+    from maverick.release_canary import CanaryStore
+    _finished_tasks(3, 0.10)
+    CanaryStore().record("cli-baseline", {"cost_per_task": 0.10, "accuracy": 0.9})
+    r = client.get(BASE + "/release-checks/compare", params={"baseline": "cli-baseline"})
+    assert r.status_code == 200
+    body = r.json()
+    row = next(row for row in body["rows"] if row["result"] == "Not measured")
+    assert body["passed"] is False and row["ok"] is False and row["now"] is None
+    assert "missing" in body["summary"] and "got worse" not in body["summary"]
+
+
 def test_connection_components_run_as_a_job_and_refuse_read_only_installs(client, monkeypatch):
     from maverick import grpc_stubs
     from maverick_dashboard import installation_ops_api
@@ -583,3 +597,21 @@ def test_a_workspace_under_a_legal_hold_is_shown_as_held_not_as_a_clean_zero(mon
     assert rows["Acme"]["held"] is True and rows["Beta"]["held"] is False
     assert "1 workspace skipped: a legal hold applies there" in preview["summary"]
     assert "1 activity entry would be removed" in preview["summary"]
+
+
+def test_learning_move_names_an_unreadable_learning_file(client, monkeypatch, tmp_path):
+    import maverick.learning_store_migration as lsm
+    from maverick_dashboard import installation_ops_api as ops
+
+    bad = tmp_path / "addenda.json"
+    monkeypatch.setattr(lsm, "preview", lambda: {
+        "world_store": True, "addenda": 0, "provenance": 0, "tried": 0,
+        "corpus_configured": False, "unreadable": str(bad)})
+    state = client.get(BASE + "/learning-move").json()
+    assert str(bad) in state["summary"] and "could not be read" in state["summary"]
+
+    def refused():
+        raise lsm.LearningFileUnreadable(bad)
+    monkeypatch.setattr(ops, "_learning_move", refused)
+    answer = client.post(BASE + "/learning-move", json={"confirm": True})
+    assert answer.status_code == 409 and str(bad) in answer.json()["detail"]

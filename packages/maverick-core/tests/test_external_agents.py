@@ -15,8 +15,7 @@ from maverick.agent_trust import agent_for_token, lookup
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    # Lineage receipts fall back to ~/.maverick/lineage (HOME, not
-    # MAVERICK_HOME) when no tenant is active — keep them in the sandbox too.
+    # Keep anything else that resolves under HOME in the sandbox too.
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
     monkeypatch.setenv("MAVERICK_EXTERNAL_AGENTS", "1")
@@ -761,6 +760,14 @@ def test_containment_reaches_midflight_via_heartbeat():
     assert xa.heartbeat("sf-quotebot", gid)["continue"] is False
     with pytest.raises(xa.ExternalAgentsError):
         xa.start_run("sf-quotebot", {"title": "Another"})
+    # The run is closed and its cost metered, but its outcome is not accepted.
+    closed = xa.finish_run("sf-quotebot", gid, {"summary": "all done", "outcome": "success",
+                                                "steps": ["shipped it"], "cost_dollars": 1.5})
+    assert closed["contained"] is True
+    from maverick.world_model import WorldModel
+    goal = WorldModel().get_goal(gid)
+    assert goal.status == "blocked" and "contained" in goal.result
+    assert xa._load_sidecar()["sf-quotebot"]["spent_dollars"] == pytest.approx(1.5)
 
 
 def test_parked_approval_notifies_and_fires_webhook(monkeypatch, tmp_path):
@@ -1324,6 +1331,65 @@ def test_commit_after_approval_fires_exactly_once(monkeypatch):
     assert again["rule"] == "already_finished"
     assert again["status"] == "executed"
     assert len(conn.writes) == 1
+
+
+def test_a_corrupt_sidecar_is_never_overwritten():
+    _enroll()
+    path = xa.registry_path()
+    path.write_text("{ not json", encoding="utf-8")
+    with pytest.raises(xa.ExternalAgentsError):
+        xa._settle_spend("sf-quotebot", 1, cost=1.0, idem="", over_wall=False, cap=None)
+    assert path.read_text(encoding="utf-8") == "{ not json"
+
+
+def test_external_agent_approvals_carry_the_dual_control_quorum(monkeypatch):
+    monkeypatch.setenv("MAVERICK_APPROVALS_REQUIRED", "2")
+    _wire_fakecrm(monkeypatch)
+    _enroll(max_risk="high")
+    from maverick.world_model import WorldModel
+    parked = xa.execute("sf-quotebot", _write_request())
+    screened = xa.screen("sf-quotebot", "send_contract", risk="high")
+    for approval_id in (parked["approval_id"], screened["approval_id"]):
+        assert WorldModel().get_approval(approval_id).approvals_required == 2
+    WorldModel().decide_approval(parked["approval_id"], "approved",
+                                 decided_by="admin@corp.test")
+    assert WorldModel().get_approval(parked["approval_id"]).status == "pending"
+
+
+def test_unreadable_config_keeps_the_mint_and_approval_gates_strict(tmp_path):
+    from maverick import config
+    path = tmp_path / "config.toml"
+    path.write_text("[actions]\nrequire_approval_at = \"high\"\n")
+    config.reset_config_cache()
+    assert xa._mint_approval_required() is False
+    assert xa._approval_floor() == "high"
+    path.write_text(path.read_text() + "this is not toml\n")
+    config.reset_config_cache()
+    assert xa._mint_approval_required() is True
+    assert xa._approval_floor() == "low"
+
+
+def test_re_enrollment_keeps_the_execution_ledger(monkeypatch):
+    _wire_fakecrm(monkeypatch)
+    _enroll(max_risk="high")
+    parked = xa.execute("sf-quotebot", _write_request(idempotency_key="k1"))
+    _enroll(max_risk="high")
+    assert xa.execute_status("sf-quotebot", parked["execution_id"])["status"] == "pending"
+    again = xa.execute("sf-quotebot", _write_request(idempotency_key="k1"))
+    assert again.get("execution_id") == parked["execution_id"]
+
+
+def test_commit_of_an_approved_long_path_reaches_the_connector(monkeypatch):
+    conn = _wire_fakecrm(monkeypatch)
+    _enroll(max_risk="high")
+    request = _write_request(path="/opportunities/" + "4" * 600)
+    parked = xa.execute("sf-quotebot", request)
+    from maverick.world_model import WorldModel
+    WorldModel().decide_approval(parked["approval_id"], "approved",
+                                 decided_by="admin@corp.test")
+    verdict = xa.execute_commit("sf-quotebot", parked["execution_id"], request)
+    assert verdict["rule"] == "executed"
+    assert conn.writes[0]["path"] == request["path"]
 
 
 def test_commit_digest_mismatch_voids_and_counts_toward_containment(

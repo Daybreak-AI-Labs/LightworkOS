@@ -83,6 +83,20 @@ def test_unmanaged_agent_actions_explain_the_config_file():
     assert client.delete("/api/v1/trust/agents/config-only").status_code == 404
 
 
+def test_remove_that_would_lift_a_revocation_is_a_conflict(monkeypatch):
+    from maverick import agent_trust
+
+    def _refuse(agent_id):
+        raise agent_trust.RevokedAgentRemovalRefused("would make it trusted again")
+
+    monkeypatch.setattr(agent_trust, "remove_agent", _refuse)
+    for url in ("/api/v1/trust/agents/partner-copilot",
+                "/api/v1/external-agents/partner-copilot"):
+        r = client.delete(url)
+        assert r.status_code == 409
+        assert r.json()["detail"] == "would make it trusted again"
+
+
 def test_trust_page_has_register_form_and_row_actions():
     _register()
     page = client.get("/trust").text

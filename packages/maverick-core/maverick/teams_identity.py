@@ -253,16 +253,24 @@ def redeem_link_code(code: object, teams_id: object, *, upn: str = "",
     now = time.time()
     with _LOCK:
         data = _load()
+        codes_before = len(data["codes"])
         _prune_codes(data, now)
-        row = data["codes"].pop(_code_digest(text), None)
-        if not isinstance(row, dict):
-            _write(data)
+        digest = _code_digest(text)
+        row = data["codes"].get(digest)
+        if (not isinstance(row, dict)
+                or (key not in data["links"] and len(data["links"]) >= MAX_LINKS)):
+            # A wrong guess rewrites the store only when expired codes went away.
+            if len(data["codes"]) != codes_before:
+                _write(data)
             return None
+        del data["codes"][digest]
         record = {"principal": row["principal"], "approver": bool(row.get("approver")),
                   "upn": str(upn or "").strip().lower(),
                   "linked_by": str(row.get("issued_by") or ""), "linked_at": now}
         if isinstance(conversation, dict):
-            record["conversation"] = conversation
+            record["conversation"] = {
+                k: str(conversation.get(k) or "")[:2048]
+                for k in ("service_url", "conversation_id", "tenant_id", "user_id")}
         data["links"][key] = record
         _write(data)
     _audit("teams_identity_linked", str(row.get("issued_by") or ""), teams_id=key,

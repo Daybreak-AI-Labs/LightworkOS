@@ -332,11 +332,10 @@ def _settings() -> dict:
 def enabled() -> bool:
     """Whether JitRL test-time adaptation is turned on. ON by default.
 
-    Wired into verifier-guided best-of-N selection
-    (:func:`make_best_of_n_selector`): it records candidate outcomes and factors
-    learned advantage into the choice, reducing to the pure verifier selection
-    with a cold store (so enabling it changes nothing until experience
-    accumulates). ``MAVERICK_JIT_RL=0`` (or ``[jit_rl] enable = false``) turns
+    The flag gates :func:`make_best_of_n_selector`, which records candidate
+    outcomes and factors learned advantage into a best-of-N choice. Nothing in
+    the product calls that selector or ``best_of_n.best_of_n`` today, so the
+    flag currently has no runtime effect beyond being reported. ``MAVERICK_JIT_RL=0`` (or ``[jit_rl] enable = false``) turns
     it off. Fail-open: any error resolving the flag leaves it at the configured
     default."""
     try:

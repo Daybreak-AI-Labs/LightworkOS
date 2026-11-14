@@ -50,7 +50,7 @@ def test_browser_and_aria_stay_on_their_own_goal_worker(monkeypatch, tmp_path):
         def first(self):
             return self
 
-        def click(self):
+        def click(self, *_a, **_kw):  # aria clicks run through the browser click path
             pass
 
     class Session:

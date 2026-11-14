@@ -13,8 +13,10 @@ summed:
     and brand-lookalikes (``paypa1``, ``g00gle``, ``micros0ft``)
 
 The score maps to a severity ("none"/"low"/"medium"/"high"). Pure and
-unit-tested; ``Shield.scan_output`` wires it in fail-open so a detector bug can
-never block the agent.
+unit-tested; ``Shield.scan_output`` runs it on every output and routes a
+detector exception through the Shield's scan-failure policy: recorded as a scan
+error and allowed, or blocked when the Shield is fail-closed (strict profile or
+required).
 """
 from __future__ import annotations
 
@@ -46,9 +48,13 @@ _BRANDS = ["paypal", "google", "microsoft", "apple", "amazon", "netflix",
 _CRED_RE = [re.compile(p, re.IGNORECASE) for p in _CRED_PHRASES]
 _URGENCY_RE = [re.compile(p, re.IGNORECASE) for p in _URGENCY_PHRASES]
 # [visible text](url)  and  <a href="url">text</a>
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)", re.IGNORECASE)
+# Each variable run stops where the next link could start (``[``, ``](``,
+# ``<``, ``<a``). Unbounded runs let every ``[`` or ``<a`` scan to the end of
+# the text, which was quadratic: 40,000 ``[`` took ~6.5 s per scan.
+_MD_LINK_RE = re.compile(
+    r"\[([^\[\]]+)\]\((https?://(?:(?!\]\()[^)\s])+)\)", re.IGNORECASE)
 _HTML_LINK_RE = re.compile(
-    r"""<a[^>]+href=["'](https?://[^"']+)["'][^>]*>(.*?)</a>""",
+    r"""<a\b[^<>]*?\bhref=["'](https?://[^"'<>]+)["'][^<>]*>((?:(?!<a\b).)*?)</a>""",
     re.IGNORECASE | re.DOTALL)
 _URL_RE = re.compile(r"https?://[^\s)\"'<>]+", re.IGNORECASE)
 _DOMAIN_IN_TEXT_RE = re.compile(r"\b([a-z0-9-]+\.(?:com|net|org|io|gov|co))\b",

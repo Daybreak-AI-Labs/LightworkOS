@@ -467,13 +467,15 @@ def pick(signal: CostSignal, *, estimate_only: bool = False) -> str | None:
     provider, model, *_ = available[0]
     cheapest = f"{provider}:{model}"
     # [routing] bandit: learn which of these viable arms pays off best for this
-    # kind of task. It only reorders within the healthy, affordable set above
-    # and falls back to the cheapest arm; off, the cheapest arm is returned.
+    # kind of task. It only reorders within the healthy, affordable set above,
+    # limited to the cheapest arm's tier (exploration across every tier at or
+    # above the floor sent cheap roles to premium models), and falls back to
+    # the cheapest arm; off, the cheapest arm is returned.
     try:
         from . import bandit
 
         if bandit.enabled():
-            arms = [f"{c[0]}:{c[1]}" for c in available]
+            arms = [f"{c[0]}:{c[1]}" for c in available if c[2] == available[0][2]]
             return bandit.choose_for(signal.role, tier, arms) or cheapest
     except Exception as exc:  # noqa: BLE001 -- learning never breaks routing
         log.warning("cost routing: bandit unavailable (%s); using the cheapest arm",

@@ -55,6 +55,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -86,19 +87,35 @@ class PlanError(RuntimeError):
 # Value coercion
 # ---------------------------------------------------------------------------
 def _loads(payload: str) -> Any:
-    """Parse a connector response, tolerating the 4000-char truncation.
+    """Parse a connector response, refusing a partial one.
 
-    ``_rest_execute`` truncates its JSON at 4000 characters, which can cut a
-    document mid-token. A record we cannot parse is simply a record we do not
-    have -- callers treat ``None`` as "no restore point", which fails closed.
+    A REST connector replaces a body over 4,000 characters with a valid JSON
+    envelope (``truncated: true`` and a ``preview`` of the start). That
+    envelope, like unparseable text, is a record we do not have -- callers
+    treat ``None`` as "no restore point", which fails closed.
     """
     if not isinstance(payload, str) or not payload.strip():
         return None
     try:
-        return json.loads(payload)
+        parsed = json.loads(payload, parse_constant=_reject_constant)
     except ValueError:
-        log.debug("connector response was not parseable JSON (truncated?)")
+        log.debug("connector response was not parseable JSON")
         return None
+    if (isinstance(parsed, dict) and parsed.get("truncated") is True
+            and "preview" in parsed and "status_code" in parsed):
+        log.debug("connector response was truncated; no record read")
+        return None
+    return parsed
+
+
+def _confidence(value: Any) -> float:
+    """A caller's predicted-outcome figure in [0, 1]; non-finite is 0."""
+    number = float(value)
+    return max(0.0, min(1.0, number)) if math.isfinite(number) else 0.0
+
+
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"non-finite JSON number {name}")
 
 
 def _as_money(value: Any) -> float | None:
@@ -111,7 +128,7 @@ def _as_money(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        return float(value) if math.isfinite(value) else None
     if isinstance(value, dict):
         for key in ("value", "amount", "display_value"):
             if key in value:
@@ -124,9 +141,10 @@ def _as_money(value: Any) -> float | None:
         text = text.rsplit(";", 1)[-1]
     text = text.replace(",", "").replace("$", "").strip()
     try:
-        return float(text)
+        amount = float(text)
     except ValueError:
         return None
+    return amount if math.isfinite(amount) else None
 
 
 def _is_number(value: Any) -> bool:
@@ -865,8 +883,10 @@ def _exposure(dialect: RestDialect, op: str, body: dict, record: dict | None,
     A DELETE risks everything on the record. An update risks only the *change*
     -- moving an opportunity from $100k to $120k exposes $20k, not $120k --
     which is computable precisely because a restore point was captured. Absent
-    a prior read, the whole written figure is reported: overstating exposure
-    keeps a human in the loop, understating it would not.
+    a prior read, an update reports the whole written figure: overstating
+    exposure keeps a human in the loop, understating it would not. A DELETE
+    whose record could not be read reports ``None`` (no figure), alongside the
+    plan's "no single record" warning.
     """
     if op == "delete":
         doomed = _money_in(dialect, record)
@@ -1063,7 +1083,7 @@ def plan_write(conn: Any, params: dict, *, predicted: float | None = None,
     preview = ConsequencePreview(
         action=action,
         predicted_outcome=(_predicted(op, reversible, frozen_warnings)
-                           if predicted is None else max(0.0, min(1.0, float(predicted)))),
+                           if predicted is None else _confidence(predicted)),
         effect=effect,
         exposure_dollars=_exposure(dialect, op, body, record),
         entities=(entity,) if entity else (),

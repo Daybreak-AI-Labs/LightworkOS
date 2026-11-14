@@ -182,8 +182,14 @@ def _purge_audit_files(
         # `anchored_file_deleted` -- policy retention forging a permanent
         # tamper alert.
         try:
-            from .signing import record_retention_purge
-            record_retention_purge(audit_dir, purged)
+            from .signing import ANCHOR_FILENAME, record_retention_purge
+            # False with a ledger present means the marker was not written (no
+            # signer, a failed append); without a ledger there is nothing to
+            # excuse, so no marker is needed.
+            if not record_retention_purge(audit_dir, purged) and (
+                audit_dir / ANCHOR_FILENAME
+            ).exists():
+                marker_failed = True
         # failure-policy: fail_soft_with_audit
         except Exception as e:  # pragma: no cover - must not undo the purge
             log.warning("retention: could not record anchor purge marker: %s", e)

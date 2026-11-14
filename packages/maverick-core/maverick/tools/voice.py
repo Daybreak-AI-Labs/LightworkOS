@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ..governed_http import guarded_sender as _governed_sender
-from . import Tool
+from . import Tool, safe_path_segment
 
 log = logging.getLogger(__name__)
 
@@ -452,10 +452,12 @@ def _run_transcribe_internal(args: dict[str, Any]) -> str:
     if not source:
         return "ERROR: source is required"
     path = Path(source).absolute()
-    return _run_transcribe({**args, "source": str(path)}, SimpleNamespace(workdir=path.parent))
+    return _run_transcribe({**args, "source": str(path)}, SimpleNamespace(workdir=path.parent),
+                           operator_backend=True)
 
 
-def _run_transcribe(args: dict[str, Any], sandbox: Any = None) -> str:
+def _run_transcribe(args: dict[str, Any], sandbox: Any = None, *,
+                    operator_backend: bool = False) -> str:
     from ..tool_results import confirmed_success_text
 
     src = (args.get("source") or "").strip()
@@ -473,7 +475,15 @@ def _run_transcribe(args: dict[str, Any], sandbox: Any = None) -> str:
     if not path.exists() or not path.is_file():
         return f"ERROR: audio file not found: {src!r}"
     language = args.get("language")
-    backend = (args.get("backend") or _default_stt_backend()).lower()
+    pinned = _default_stt_backend()
+    backend = str(args.get("backend") or pinned).lower()
+    # An operator pin (e.g. "local" to keep audio on the machine) may only be
+    # narrowed to "local" by a model-invoked call, never widened to another
+    # provider. A trusted caller's explicit choice (the operator's own
+    # `maverick voice transcribe --backend`) is not bound by it.
+    if not operator_backend and pinned != "auto" and backend not in (pinned, "local"):
+        return (f"ERROR: speech-to-text is pinned to {pinned!r} by the operator; "
+                f"backend {backend!r} is not allowed")
 
     if backend in ("openai", "auto"):
         out = _whisper_openai(path, language)
@@ -547,7 +557,11 @@ def _tts_elevenlabs(text: str, voice: str | None, output: Path) -> bool:
         import httpx
     except ImportError:
         return False
-    voice_id = voice or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
+    voice_id = safe_path_segment(
+        voice or os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"))
+    if voice_id is None:
+        log.warning("tts (elevenlabs): voice id is not a single path segment")
+        return False
     try:
         resp = _governed_sender(httpx.post)(
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",

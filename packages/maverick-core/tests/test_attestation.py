@@ -244,6 +244,9 @@ def test_an_unreadable_governance_policy_is_not_an_empty_one(audit_dir, monkeypa
     bundle = att.build(audit_dir=audit_dir, now=1767225600.0)
     assert bundle["envelope"]["policy_source"] == "unavailable"
     assert "malformed" in bundle["envelope"]["policy_error"]
+    _write_chain(audit_dir, "2026-01-01", [_tool_row("read_file")])
+    claim = _claim(av.verify(att.sign(bundle), trusted_key_hex=_key()), "policy_envelope")
+    assert claim.status == av.INDETERMINATE and "malformed" in claim.detail
 
 
 # ---- claim 2: bounded self-improvement --------------------------------------
@@ -650,6 +653,10 @@ def test_a_ledger_that_does_not_match_its_digest_is_reported(audit_dir, tmp_path
                       encoding="utf-8")
     result = av.verify(bundle, trusted_key_hex=_key(),
                        evidence_root=ledger.parent)
+    assert any("not the attested ones" in f for f in result.findings)
+    # ...and with the documented --evidence <data>/audit, one level below it.
+    result = av.verify(bundle, trusted_key_hex=_key(),
+                       evidence_root=ledger.parent / "audit")
     assert any("not the attested ones" in f for f in result.findings)
 
 

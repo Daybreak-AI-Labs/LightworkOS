@@ -42,6 +42,52 @@ def test_persists_across_instances_with_0600(tmp_path, now):
     assert second.get("Repo build command")["result"] == "make build"
 
 
+def test_two_instances_on_one_file_keep_each_others_entries(tmp_path, now):
+    # Each instance loaded the file once and rewrote it whole, so the second
+    # writer (or a cache hit in a stale one) erased the first one's entries.
+    path = tmp_path / "lc.json"
+    a = lc.LearningCache(path, clock=lambda: now["t"])
+    b = lc.LearningCache(path, clock=lambda: now["t"])
+    a.put("task one", "r1", verified_by="verifier:g1")
+    b.put("task two", "r2", verified_by="verifier:g2")
+    assert a.get("task one") is not None
+    fresh = lc.LearningCache(path, clock=lambda: now["t"])
+    assert fresh.get("task one")["result"] == "r1"
+    assert fresh.get("task two")["result"] == "r2"
+
+
+def test_unavailable_cross_process_lock_falls_back_with_one_warning(
+        tmp_path, now, monkeypatch, caplog):
+    # A data directory where the lock file cannot be created must not disable
+    # the cache; a read that changes nothing takes no cross-process lock.
+    calls = []
+
+    def _no_lock(path):
+        calls.append(path)
+        raise PermissionError("read-only data directory")
+
+    monkeypatch.setattr(lc, "cross_process_lock", _no_lock)
+    cache = lc.LearningCache(tmp_path / "lc.json", clock=lambda: now["t"])
+    assert cache.get("never stored") is None
+    assert calls == []
+    with caplog.at_level("WARNING", logger="maverick.cache.learning"):
+        cache.put("task", "result", verified_by="verifier:g1")
+        assert cache.get("task")["result"] == "result"
+    assert len(calls) == 2
+    assert caplog.text.count("no cross-process lock") == 1
+
+
+def test_prune_drops_an_entry_with_a_non_numeric_expiry(tmp_path, now):
+    # get() already treated such an entry as expired; prune() raised ValueError.
+    import json
+    path = tmp_path / "lc.json"
+    lc.LearningCache(path, clock=lambda: now["t"]).put("t", "r", verified_by="v:1")
+    raw = json.loads(path.read_text())
+    next(iter(raw["entries"].values()))["expires_at"] = "soon"
+    path.write_text(json.dumps(raw))
+    assert lc.LearningCache(path, clock=lambda: now["t"]).prune() == 1
+
+
 def test_temp_file_is_restrictive_before_replace(tmp_path, now, monkeypatch):
     import maverick.file_lock as file_lock
 

@@ -464,6 +464,23 @@ def _set_cell_operation(path, args, sheet):
     return f"set {cell} in {path}"
 
 
+def _workspace_gate(sandbox, raw_path: str, path: Path, op) -> None:
+    """Apply the file tools' `.git` write refusal and opaque-mode read gate.
+
+    Raises ``ValueError`` when the operation is refused; no-op without a sandbox.
+    """
+    if sandbox is None:
+        return
+    from .fs import _is_opaque_blocked_resolved
+    if op in ("info", "read"):
+        if _is_opaque_blocked_resolved(sandbox, raw_path):
+            raise ValueError("spreadsheet read blocked in benchmark opaque mode (.git/tests)")
+        return
+    rel = path.relative_to(Path(sandbox.workdir).resolve())
+    if any(part.rstrip(" .").casefold() == ".git" for part in rel.parts):
+        raise ValueError(f"refusing to write under .git/: {rel}")
+
+
 def _run(args: dict[str, Any], sandbox=None) -> str:
     op = args.get("op")
     raw_path = str(args.get("path") or "")
@@ -473,6 +490,7 @@ def _run(args: dict[str, Any], sandbox=None) -> str:
         return "ERROR: path is required"
     try:
         path = _safe_path(sandbox, raw_path)
+        _workspace_gate(sandbox, raw_path, path, op)
     except ValueError as e:
         return f"ERROR: {e}"
     limit = args.get("limit", 50)

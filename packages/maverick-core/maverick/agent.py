@@ -796,6 +796,82 @@ def _normalize_file_tool_args(
     return normalized
 
 
+_PATCH_HEADER_RE = re.compile(r"^(\+\+\+|---|rename from|rename to|copy from|copy to) (.+)$",
+                              re.MULTILINE)
+_DIFF_GIT_RE = re.compile(r"^diff --git (.+)$", re.MULTILINE)
+_QUOTED_OR_WORD_RE = re.compile(r'"((?:[^"\\]|\\.)*)"|(\S+)')
+
+
+class _UnreadablePatchTargets(ValueError):
+    """A non-empty patch whose target paths cannot be read: gates deny it."""
+
+
+def _unquote_git_name(value: str) -> str | None:
+    """A C-quoted git path name decoded, an unquoted one as is; None if bad."""
+    import codecs
+
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            return codecs.escape_decode(value[1:-1].encode("latin-1", "backslashreplace"))[0].decode(
+                "utf-8", "replace")
+        except Exception:
+            return None
+    return value
+
+
+def _strip_first_component(value: str) -> str:
+    return value.split("/", 1)[1] if "/" in value else value
+
+
+def _diff_git_names(rest: str) -> list[str] | None:
+    """Paths named by ``diff --git A B`` (the only names a binary or
+    mode-only patch carries), with git's ``-p1`` prefix removed."""
+    rest = rest.strip()
+    if '"' in rest:
+        tokens = [_unquote_git_name(f'"{q}"') if q or not w else w
+                  for q, w in _QUOTED_OR_WORD_RE.findall(rest)]
+        if len(tokens) != 2 or None in tokens:
+            return None
+        return [_strip_first_component(t) for t in tokens if t]
+    # Unquoted names may hold spaces: git reads the split where both sides
+    # name the same file.
+    for i, ch in enumerate(rest):
+        if ch == " ":
+            left, right = rest[:i], rest[i + 1:]
+            if _strip_first_component(left) == _strip_first_component(right):
+                return [_strip_first_component(left)]
+    return None
+
+
+def _git_apply_targets(patch_text: str) -> list[str]:
+    """The paths ``git apply`` (default ``-p1``) will touch, as it reads them.
+
+    ``_files_in_patch`` strips only an ``a/``/``b/`` prefix, keeps a quoted
+    name quoted and ignores ``diff --git`` headers, while git strips any first
+    component (``--- x/f``), unquotes C-style names (``"b/pro\\164ected"``)
+    and takes a binary or mode-only patch's names from ``diff --git``. Gates
+    check both readings. Raises :class:`_UnreadablePatchTargets` when a header
+    cannot be read or a non-empty patch names no path at all."""
+    out: list[str] = []
+    for kind, value in _PATCH_HEADER_RE.findall(patch_text):
+        value = _unquote_git_name(value.split("\t", 1)[0].strip())
+        if value is None:
+            raise _UnreadablePatchTargets("unreadable patch path")
+        if not value or value == "/dev/null":
+            continue
+        out.append(_strip_first_component(value) if kind in ("+++", "---") else value)
+    has_rename = any(kind.startswith(("rename", "copy"))
+                     for kind, _ in _PATCH_HEADER_RE.findall(patch_text))
+    for rest in _DIFF_GIT_RE.findall(patch_text):
+        names = _diff_git_names(rest)
+        if names is None and not has_rename:
+            raise _UnreadablePatchTargets("unreadable diff --git header")
+        out.extend(names or ())
+    if not out and patch_text.strip():
+        raise _UnreadablePatchTargets("patch names no path")
+    return out
+
+
 def _one_workspace_access(
     sandbox: Any,
     target: str | Path,
@@ -991,10 +1067,8 @@ def _workspace_path_accesses_for_tool(
             return None
         from .tools.apply_patch import _files_in_patch
 
-        return [
-            _one_workspace_access(sandbox, raw)
-            for raw in _files_in_patch(patch_text)
-        ]
+        raws = dict.fromkeys([*_files_in_patch(patch_text), *_git_apply_targets(patch_text)])
+        return [_one_workspace_access(sandbox, raw) for raw in raws]
 
     custom = {
         "obsidian": _obsidian_path_accesses,
@@ -1273,9 +1347,15 @@ def _blocked_tool_output_message(*, execution_unknown: bool, verdict: Any, reaso
     )
 
 
+def _stop_signal_name(exc: BaseException) -> str:
+    """The stop-signal class name, with budget subclasses (UnpricedModelError,
+    OrganizationBudgetExceeded) reported as the BudgetExceeded they are."""
+    return "BudgetExceeded" if isinstance(exc, BudgetExceeded) else type(exc).__name__
+
+
 def _post_effect_control_stop(exc: BaseException, execution_unknown: bool) -> bool:
     """Preserve stop signals and any uncertainty about an external effect."""
-    is_stop = type(exc).__name__ in {
+    is_stop = _stop_signal_name(exc) in {
         "BudgetExceeded", "CancelledError", "GoalCancelled", "Halted", "KeyboardInterrupt", "SystemExit",
     }
     if is_stop and execution_unknown:
@@ -2565,11 +2645,13 @@ class Agent:
                     # (same guard as coding_mode.evaluate_candidate) and run
                     # git under a scrubbed environment.
                     if git_metadata_may_execute_filters(workdir):
+                        from .git_safety import git_metadata_hazard
+                        found = git_metadata_hazard(workdir) or (
+                            "a filter such as git-lfs, or another command")
                         raise RuntimeError(
-                            "the workspace's git settings (a filter such as "
-                            "git-lfs, or another command) are not allowed to "
-                            "run on the host, so git was not run. This is "
-                            "not a problem with the edits themselves"
+                            f"the workspace's git settings ({found}) are not "
+                            "allowed to run on the host, so git was not run. "
+                            "This is not a problem with the edits themselves"
                         )
                     hooks_dir.mkdir(mode=0o700)
                     wt = _sub.run(
@@ -2759,8 +2841,9 @@ class Agent:
     def _maybe_seal(self, quarantine, verdict) -> None:
         """Conservatively escalate a shield block to a Rung-1 seal.
 
-        Workers only; the trusted root orchestrator (the privileged promoter)
-        is never sealed. Do not trust ``role`` alone here: child agents receive
+        Workers only; the trusted root orchestrator (the privileged promoter:
+        role ``orchestrator`` at depth 0 with no parent) is never sealed. A
+        domain-routed goal root with another role can be sealed. Do not trust ``role`` alone here: child agents receive
         model-supplied role strings from spawn tools. Fail-open -- containment
         must never break the agent loop.
         """
@@ -2866,13 +2949,17 @@ class Agent:
         above already authorized the call; a verification *failure* (expired,
         tampered, replayed, wrong tool) fail-closes only because the operator
         explicitly turned the feature on.
+
+        The token is minted and verified within this call and is not passed to
+        the tool or bound to the dispatch; its lasting effect is the
+        ``TOKEN_EXCHANGE`` audit row.
         """
         if cap is None:
             return None
         from .tool_token import tool_tokens_enabled
         if not tool_tokens_enabled():
             return None
-        from .tool_token import mint_tool_token, verify_tool_token
+        from .tool_token import _ReplayCache, mint_tool_token, verify_tool_token
         try:
             token = mint_tool_token(cap, name)
             # Same-process mint-then-verify: the token never crosses a trust
@@ -2880,7 +2967,11 @@ class Agent:
             # exchange fail-open when cryptography is unavailable (kernel rule),
             # while a present signature is still verified and the exported
             # verifier default stays require_signature=True for outside callers.
-            ok = verify_tool_token(token, name, require_signature=False)
+            # The token is verified once and discarded, so it needs no shared
+            # replay ledger: a private one keeps busy processes from filling
+            # the process-wide cache (which refuses tokens when full).
+            ok = verify_tool_token(token, name, require_signature=False,
+                                   replay_cache=_ReplayCache(maxsize=1))
         except Exception:  # pragma: no cover -- exchange must never brick a run
             return None
         if ok:
@@ -2988,11 +3079,14 @@ class Agent:
                 self.ctx.sandbox,
                 mutating_only=True,
             )
+        except _UnreadablePatchTargets:
+            # git may touch paths no reader here can name: never assume safe.
+            accesses = ["<unreadable patch paths>"]
         except ValueError:
             return None
         if not accesses:
             return None
-        denied = [
+        denied = list(accesses) if isinstance(accesses[0], str) else [
             access.path
             for access in accesses
             if any(
@@ -3800,7 +3894,7 @@ class Agent:
                         "Halted": "halted",
                         "CancelledError": "cancelled",
                         "GoalCancelled": "cancelled",
-                    }.get(type(exc).__name__, "exception")
+                    }.get(_stop_signal_name(exc), "exception")
                     if getattr(exc, "tool_execution_unknown", False):
                         disposition = "execution_unknown"
                     record_terminal(
@@ -4025,7 +4119,10 @@ class Agent:
                 self.name, "error",
                 f"tool={name} BLOCKED by PreToolUse hook",
             )
-            return _NotExecutedToolResult("⚠ BLOCKED by hook. The tool was not executed.")
+            # A block caused by an unreadable hooks configuration says so, so
+            # the person can fix the file instead of looking for a hook.
+            reason = getattr(pre_ctx, "block_reason", "") or "by hook"
+            return _NotExecutedToolResult(f"⚠ BLOCKED {reason}. The tool was not executed.")
 
         # Dispatch audit: TOOL_CALL proves the request reached the governed
         # execution boundary; TOOL_RESULT below proves whether it completed.
@@ -4170,6 +4267,11 @@ class Agent:
 
     @staticmethod
     def _tool_call_key(name: str, args: dict) -> str:
+        # Kernel-injected scope (``_capability_*``) is added after the
+        # suppression check, so it must not make the same call look different.
+        if isinstance(args, dict):
+            args = {k: v for k, v in args.items()
+                    if not (isinstance(k, str) and k.startswith("_capability_"))}
         try:
             blob = json.dumps(args, sort_keys=True, default=str)
         except Exception:  # pragma: no cover -- unserializable args
@@ -4881,7 +4983,8 @@ class Agent:
         Returns ``(ckpt, start_step, messages)``. When durable checkpointing is
         disabled, there is no goal id, or this is not the root agent, returns
         ``(None, 0, messages)`` unchanged. Missing history starts at zero;
-        corrupt/unavailable history or exhausted current caps blocks execution.
+        corrupt/unavailable history or exhausted current caps blocks execution
+        by raising (``ValueError`` / ``BudgetExceeded``) out of ``Agent.run``.
         Usage is restored into the authoritative shared Budget.
 
         ``messages[0]`` on entry is the brief this run was JUST built
@@ -5095,7 +5198,8 @@ class Agent:
                                stop_kind=_budget_stop_kind(e), stop_detail=str(e))
         if self._goal_cancelled():
             bb.post(self.name, "error", "cancelled via dashboard")
-            return AgentResult(error="cancelled via dashboard", role=self.role, name=self.name)
+            return AgentResult(error="cancelled via dashboard", role=self.role, name=self.name,
+                               stop_kind="cancelled", stop_detail="cancelled via dashboard")
 
         # Long-horizon review checkpoint (opt-in [safety] review_checkpoint): at
         # the root, a human-review heartbeat every N dollars / M tool calls /
@@ -5890,6 +5994,7 @@ class Agent:
             bb.post(self.name, "error", "cancelled via dashboard")
             return AgentResult(
                 error="cancelled via dashboard", role=self.role, name=self.name,
+                stop_kind="cancelled", stop_detail="cancelled via dashboard",
             )
 
         run_parallel = (
@@ -5971,7 +6076,16 @@ class Agent:
         _norm: list[str] = []
         _tool_stop: Exception | None = None
         for o in outputs:
-            if isinstance(o, (BudgetExceeded, killswitch.Halted, AuditRefused)):
+            if (isinstance(o, asyncio.CancelledError) and not isinstance(o, GoalCancelled)
+                    and self._goal_cancelled()):
+                # gather hands back a bare CancelledError for a task that raised
+                # GoalCancelled, losing it; a sibling's effect may be unknown.
+                # Any other cancellation (an MCP or anyio scope inside the tool)
+                # stays an error result for that tool.
+                o = GoalCancelled("cancelled during tool execution")
+                o.tool_execution_unknown = True
+            if isinstance(o, (BudgetExceeded, UsageAccountingError, killswitch.Halted,
+                              AuditRefused, GoalCancelled)):
                 # Keep budget/halt precedence over an audit refusal, but finish
                 # normalizing: every sibling already ran under gather.
                 if _tool_stop is None or (
@@ -6035,6 +6149,7 @@ class Agent:
                 bb.post(self.name, "error", f"halted: {e}")
                 return AgentResult(
                     error=f"halted: {e}", role=self.role, name=self.name,
+                    stop_kind="killswitch", stop_detail=str(e),
                 ), blocked
             if self._goal_cancelled():
                 self._answer_pending_tool_uses(
@@ -6043,6 +6158,7 @@ class Agent:
                 bb.post(self.name, "error", "cancelled via dashboard")
                 return AgentResult(
                     error="cancelled via dashboard", role=self.role, name=self.name,
+                    stop_kind="cancelled", stop_detail="cancelled via dashboard",
                 ), blocked
             # record_tool_call() calls check() and can raise mid-turn.
             try:
@@ -6056,8 +6172,10 @@ class Agent:
             # shares this Budget) can trip BudgetExceeded -- or a halt can land
             # -- DURING execution.
             try:
-                output = await self._run_tool(tc.name, tc.input)
-            except (AuditRefused, BudgetExceeded, killswitch.Halted) as exc:
+                # Model-written arguments can decode to null, a list or a string.
+                output = (await self._run_tool(tc.name, tc.input) if isinstance(tc.input, dict)
+                          else _NotExecutedToolResult("ERROR: tool input must be a JSON object"))
+            except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted) as exc:
                 _stop_reason = "audit refused" if isinstance(exc, AuditRefused) else type(exc).__name__
                 self._answer_pending_tool_uses(
                     resp, messages, tool_results,
@@ -6065,7 +6183,8 @@ class Agent:
                     "reconcile state before retrying",
                 )
                 raise
-            if tc.name == "ask_user" and not isinstance(output, _NotExecutedToolResult):
+            if (tc.name == "ask_user" and not isinstance(output, _NotExecutedToolResult)
+                    and not _tool_call_failed(output)):  # only a filed question pauses the run
                 from .autonomy import assume_when_headless
                 if assume_when_headless():
                     # No human is available (headless / autonomous run, off by

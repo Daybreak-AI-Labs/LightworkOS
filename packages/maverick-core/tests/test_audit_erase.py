@@ -180,3 +180,22 @@ def test_audit_erase_logs_only_redacted_subject(tmp_path, caplog):
     assert "channel=tg" not in log_output
     assert "user_id=" not in log_output
     assert "subject_hash=" in log_output
+
+
+def test_audit_erase_keeps_non_object_line_instead_of_crashing(tmp_path):
+    from maverick.audit import AuditEvent, AuditLog, EventKind
+    from maverick.audit.erase import scrub_user
+
+    audit_dir = tmp_path / "audit"
+    al = AuditLog(audit_dir=audit_dir, sign=False)
+    al.record(AuditEvent(ts=1.0, kind=EventKind.GOAL_START, agent="orch", goal_id=1,
+                         payload={"channel": "tg", "user_id": "alice"}))
+    (day,) = audit_dir.glob("*.ndjson")
+    with open(day, "a", encoding="utf-8") as f:
+        f.write("123\n")
+
+    matched, _ = scrub_user("tg", "alice", audit_dir=audit_dir)
+
+    assert matched == 1
+    lines = day.read_text().splitlines()
+    assert lines[-1] == "123" and "alice" not in day.read_text()

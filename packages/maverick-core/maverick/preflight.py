@@ -112,15 +112,24 @@ def context_limit(model: str) -> int:
     """Return the (conservative) context limit for ``model``.
 
     Operator-declared ``[context.model_windows]`` entries win, then the
-    built-in table, then family-prefix match, then 32k as the safe
-    default when we have no clue.
+    built-in table, then the longest table id that the model id extends
+    (``claude-sonnet-4-5-20250929`` -> ``claude-sonnet-4-5``), then the
+    first table entry of the model's family (text before the first ``-``),
+    then 32k as the safe default when we have no clue.
     """
     declared = _declared_windows()
     if model in declared:
         return declared[model]
     if model in _MODEL_CONTEXT_LIMITS:
         return _MODEL_CONTEXT_LIMITS[model]
-    # Family-prefix fallback.
+    best = ""
+    for key in _MODEL_CONTEXT_LIMITS:
+        if (len(key) > len(best) and model.startswith(key)
+                and model[len(key):len(key) + 1] in ("-", "@")):
+            best = key
+    if best:
+        return _MODEL_CONTEXT_LIMITS[best]
+    # Family-prefix fallback for ids that extend no table id.
     for prefix, limit in _MODEL_CONTEXT_LIMITS.items():
         if model.startswith(prefix.split("-")[0]):
             return limit
@@ -207,7 +216,13 @@ def preflight(
     budget = limit - max_tokens - safety_margin
     if budget <= 0:
         # Tiny model + huge requested output: nothing's going to fit.
-        raise PreflightFailed(model, 0, limit, max_tokens)
+        if strict:
+            raise PreflightFailed(model, 0, limit, max_tokens)
+        log.warning(
+            "preflight: model=%s max_tokens=%d leaves no input room (limit=%d)",
+            model, max_tokens, limit,
+        )
+        return estimate_messages_tokens(system, messages, tools)
     estimated = estimate_messages_tokens(system, messages, tools)
     if estimated > budget:
         if strict:

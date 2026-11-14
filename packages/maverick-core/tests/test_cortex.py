@@ -265,6 +265,20 @@ def test_record_hits_carry_who_decided(sources, events):
     assert hit.kind == "approval" and "j.alvarez" in hit.citation and hit.meta["goal_id"] == 7
 
 
+def test_record_source_is_scoped_to_a_named_user(sources, events, monkeypatch):
+    from maverick import operating_record
+
+    seen = []
+    monkeypatch.setattr(operating_record, "assemble",
+                        lambda world, *, limit=500, owner=None: seen.append(owner) or [])
+    cortex.recall("payment", sources=("record",), world=object(),
+                  caller=cortex.Caller(principal="user:alice"))
+    cortex.recall("payment", sources=("record",), world=object(),
+                  caller=cortex.Caller(principal="dashboard"))
+    cortex.recall("payment", sources=("record",), world=object())
+    assert seen == ["user:alice", "", None]
+
+
 def test_fleet_source_is_for_enrolled_external_callers(sources, events):
     internal = cortex.recall("x", sources=("fleet",), world=object())
     assert internal.per_source["fleet"] == 0 and "external" in internal.denied["fleet"]

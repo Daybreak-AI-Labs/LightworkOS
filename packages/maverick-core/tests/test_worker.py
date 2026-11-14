@@ -69,6 +69,23 @@ def test_worker_defers_when_goal_could_not_start(tmp_path, monkeypatch):
     assert pending[0].run_at > now  # scheduled into the future, not immediate
 
 
+def test_deferring_a_cron_occurrence_does_not_register_another_schedule(tmp_path, monkeypatch):
+    import maverick.runner as runner
+    from maverick.job_queue import JobQueue
+    from maverick.worker import Worker
+
+    monkeypatch.setattr(runner, "run_goal_in_thread",
+                        lambda gid, **k: runner.GoalRunUnavailable("concurrency_slot"))
+    q = JobQueue(db_path=tmp_path / "jobs.db")
+    w = Worker(queue=q, retry_after=0.0, max_attempts=5)
+    q.enqueue("run_goal", {"goal_id": 1, "__cron__": "0 * * * *"}, run_at=time.time() - 1)
+    w.run_once()
+    with q._conn() as c:
+        assert c.execute("SELECT COUNT(*) FROM schedule_definitions").fetchone()[0] == 1
+    deferred = [j for j in q.list(status="pending", limit=10) if j.payload.get("_slot_defers")]
+    assert len(deferred) == 1 and "__cron__" not in deferred[0].payload
+
+
 def test_worker_gives_up_after_defer_budget_exhausted(tmp_path, monkeypatch):
     """Once MAVERICK_GOAL_SLOT_MAX_DEFERS deferrals are spent, a persistent
     'no slot' outcome must still surface as a job failure eventually."""
@@ -213,3 +230,20 @@ def test_worker_run_forever_stop_is_clean(tmp_path):
     w.stop()
     t.join(timeout=2.0)
     assert not t.is_alive()
+
+
+def test_worker_claims_nothing_while_halted(tmp_path, monkeypatch):
+    from maverick import killswitch
+    from maverick.job_queue import JobQueue
+    from maverick.worker import Worker
+
+    q = JobQueue(db_path=tmp_path / "jobs.db")
+    w = Worker(queue=q, retry_after=0.0, max_attempts=5)
+    jid = q.enqueue("run_goal", {"goal_id": 1})
+    killswitch.halt("test stop")
+    try:
+        assert w.run_once() is False
+    finally:
+        killswitch.clear()
+    job = q.get(jid)
+    assert job.status == "pending" and job.attempts == 0

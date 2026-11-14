@@ -124,3 +124,71 @@ def test_ensure_anchors_does_not_rebuild_deleted_anchor_ledger(tmp_path, monkeyp
     assert not (tmp_path / signing.ANCHOR_FILENAME).exists()
     breaks = verify_anchors(tmp_path)
     assert any(b.reason == "anchor_ledger_missing" for b in breaks)
+
+
+def test_ledger_truncated_with_day_files_is_detected(tmp_path, monkeypatch):
+    # Cutting anchors.ndjson back together with the newest day-file leaves a
+    # self-consistent shorter ledger; the signed high-water record shows it.
+    _isolate_keys(monkeypatch, tmp_path)
+    older, newer = _past_day(2), _past_day(1)
+    _write_signed_day(tmp_path, older, 2)
+    ensure_anchors(tmp_path)
+    ledger = tmp_path / signing.ANCHOR_FILENAME
+    ledger_after_older = ledger.read_bytes()
+    _write_signed_day(tmp_path, newer, 2)
+    assert ensure_anchors(tmp_path) == 1
+    assert verify_anchors(tmp_path) == []
+
+    (tmp_path / f"{newer}.ndjson").unlink()
+    ledger.write_bytes(ledger_after_older)
+    assert {b.reason for b in verify_anchors(tmp_path)} == {"anchor_ledger_truncated"}
+    ledger.write_bytes(b"")
+    assert {b.reason for b in verify_anchors(tmp_path)} == {"anchor_ledger_truncated"}
+
+    # A later honest anchor does not launder the cut, and removing the record
+    # is itself reported.
+    _write_signed_day(tmp_path, newer, 1)
+    ensure_anchors(tmp_path)
+    assert "anchor_ledger_truncated" in {b.reason for b in verify_anchors(tmp_path)}
+    (tmp_path / signing.ANCHOR_HIGHWATER_FILENAME).unlink()
+    assert "anchor_highwater_missing" in {b.reason for b in verify_anchors(tmp_path)}
+
+    # An installation that predates the record still verifies until it is written.
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    _write_signed_day(legacy, older, 2)
+    ensure_anchors(legacy)
+    (legacy / signing.ANCHOR_HIGHWATER_FILENAME).unlink()
+    (legacy / signing.ANCHOR_MARKER_FILENAME).write_text("anchors.ndjson is required\n")
+    assert verify_anchors(legacy) == []
+
+
+def test_unreadable_day_does_not_stop_later_days_being_anchored(tmp_path, monkeypatch):
+    _isolate_keys(monkeypatch, tmp_path)
+    bad, good = _past_day(2), _past_day(1)
+    _write_signed_day(tmp_path, bad, 1)
+    _write_signed_day(tmp_path, good, 1)
+    real = signing._file_tip_and_count
+
+    def _flaky(path):
+        from maverick.audit.segments import SegmentReadError
+
+        if path.stem == bad:
+            raise SegmentReadError("cannot decrypt")
+        return real(path)
+
+    monkeypatch.setattr(signing, "_file_tip_and_count", _flaky)
+    assert ensure_anchors(tmp_path) == 1
+    assert signing._anchored_days(tmp_path) == {good}
+
+
+def test_highwater_is_not_written_from_a_half_written_ledger_line(tmp_path, monkeypatch):
+    _isolate_keys(monkeypatch, tmp_path)
+    _write_signed_day(tmp_path, _past_day(2), 1)
+    ensure_anchors(tmp_path)
+    hw = tmp_path / signing.ANCHOR_HIGHWATER_FILENAME
+    before = hw.read_bytes()
+    with open(tmp_path / signing.ANCHOR_FILENAME, "a", encoding="utf-8") as f:
+        f.write('{"kind": "anchor", "day": "')     # append still in progress
+    signing._write_anchor_highwater(tmp_path)
+    assert hw.read_bytes() == before

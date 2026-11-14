@@ -5132,7 +5132,7 @@ tested without spawning py-spy.
   static tests pin the manifest security properties (no remote code).
 - **ARIA-first navigation** (`tools/aria_navigate.py`, registered with the
   browser tool): drive the page via the accessibility tree — `snapshot`
-  (stable node ids), `find` (role+name), `activate` (click/focus by node) —
+  (stable node ids), `find` (role+name), `activate` (an approved click on a node) —
   the live counterpart to the static `a11y_tree` extractor.
 - **Audio understanding** (`tools/audio_understanding.py`, `[clap]` extra):
   zero-shot NON-SPEECH classification — a CLAP model embeds the clip and

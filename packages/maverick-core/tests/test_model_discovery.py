@@ -99,6 +99,8 @@ def test_discovery_can_be_switched_off_in_config_and_by_environment(monkeypatch)
     assert discovery.discovery_enabled() is False
     monkeypatch.setattr(config, "load_config", lambda: {"models": {}})
     assert discovery.discovery_enabled() is True
+    monkeypatch.setattr(config, "config_source_errors", lambda **_k: {"config.toml": "bad"})
+    assert discovery.discovery_enabled() is False
     monkeypatch.setenv("MAVERICK_MODEL_DISCOVERY", "0")
     assert discovery.discovery_enabled() is False
     fetch = FakeFetch({})
@@ -318,3 +320,15 @@ def test_free_models_round_trip_through_the_cache(monkeypatch, tmp_path):
     stored["providers"]["openrouter"]["free_models"] = ["stealth/union-alpha", "bad id!", 7]
     discovery.cache_path().write_text(json.dumps(stored), encoding="utf-8")
     assert discovery.free_models("openrouter") == ["stealth/union-alpha"]
+
+
+def test_first_read_after_the_config_breaks_already_refuses(tmp_path, monkeypatch):
+    from maverick import config
+    monkeypatch.delenv("MAVERICK_MODEL_DISCOVERY", raising=False)
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("MAVERICK_CONFIG", str(path))
+    path.write_text("[models]\ndiscovery = true\n", encoding="utf-8")
+    config.reset_config_cache()
+    assert discovery.discovery_enabled() is True
+    path.write_text("[models\ndiscovery = false\n", encoding="utf-8")
+    assert discovery.discovery_enabled() is False

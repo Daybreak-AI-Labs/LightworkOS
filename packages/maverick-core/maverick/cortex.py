@@ -3,12 +3,14 @@
 One governed read/write surface over every memory the workforce has:
 
 * **knowledge** -- the tenant's documents and data, retrieved with citations
-  (:mod:`maverick.knowledge_admin` / ``maverick_knowledge``);
+  through a governed ``knowledge_reader`` the caller injects (without one the
+  source is reported as denied; deposits go to :mod:`maverick.knowledge_admin`);
 * **skills** -- the recipes learned on this operation (:mod:`maverick.skills`);
 * **lessons** -- guidance mined from failures and proven on held-out work
   (:mod:`maverick.self_harness`);
 * **record** -- the Operating Record: every decision and sign-off
-  (:mod:`maverick.operating_record`);
+  (:mod:`maverick.operating_record`); a named ``user:`` caller sees only the
+  record of their own work and other dashboard credentials only unowned work;
 * **fleet** -- what agents you didn't build deposited, roster-gated and
   Shield-scanned (:mod:`maverick.fleet_memory`).
 
@@ -213,12 +215,25 @@ def _recall_lessons(query: str, k: int, *, model_id: str | None,
     return [h for _, h in scored[:k]]
 
 
-def _recall_record(query: str, k: int, *, domain: str | None, world: Any) -> list[Hit]:
+def _record_owner(caller: Caller) -> str | None:
+    """The owner filter for the record source, matching how the dashboard
+    lists goals: a named user reads only their own work, and any other
+    credential (the dashboard's static-token or anonymous ``"dashboard"``
+    caller) reads only unowned work. Only the in-process default ``"system"``
+    caller keeps the workspace view."""
+    principal = caller.principal or ""
+    if principal.startswith("user:"):
+        return principal
+    return None if principal == "system" else ""
+
+
+def _recall_record(query: str, k: int, *, domain: str | None, world: Any,
+                   caller: Caller) -> list[Hit]:
     from . import operating_record as orec
     if world is None:
         from .world_model import open_world
         world = open_world()
-    records = orec.assemble(world, limit=500)
+    records = orec.assemble(world, limit=500, owner=_record_owner(caller))
     matched = orec.query(records, text=query, department=domain or "")
     out = []
     for r in matched[:k]:
@@ -319,7 +334,8 @@ def recall(
                 elif s == "lessons":
                     hits = _recall_lessons(query, k, model_id=model_id, domain=domain, role=role)
                 elif s == "record":
-                    hits = _recall_record(query, k, domain=domain, world=world)
+                    hits = _recall_record(query, k, domain=domain, world=world,
+                                          caller=caller)
                 else:
                     hits, why = _recall_fleet(query, caller=caller, domain=domain, shield=shield)
                     if why:
@@ -356,7 +372,9 @@ def deposit(
     tenant's knowledge base) or ``"fleet"`` (an enrolled external agent's
     experience, which goes through fleet memory's roster and Shield gates).
     External callers may only deposit into fleet memory. Returns
-    ``(ok, reason)`` and always leaves one audit row."""
+    ``(ok, reason)`` and leaves one audit row for every outcome it returns;
+    an exception raised by the knowledge base or fleet memory propagates and
+    is not audited here."""
     caller = caller or Caller()
     tenant = _tenant()
 

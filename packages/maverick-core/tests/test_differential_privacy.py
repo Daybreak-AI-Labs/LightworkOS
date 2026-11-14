@@ -76,3 +76,8 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "differential_privacy" in names
+
+
+def test_tiny_epsilon_and_non_finite_inputs_error_cleanly():
+    assert _run(op="noisy_count", value=5, epsilon=1e-320).startswith("ERROR")
+    assert _run(op="noisy_count", value=float("nan"), epsilon=1.0).startswith("ERROR")

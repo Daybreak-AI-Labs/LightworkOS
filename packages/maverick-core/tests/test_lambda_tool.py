@@ -89,3 +89,14 @@ class TestLambdaConfirmGate:
         # False so the live invoke is NOT fired (returns the dry-run preview).
         out = _op_invoke({"function_name": "f", "confirm": "false"})
         assert "DRY RUN" in out
+
+
+def test_lambda_list_functions_handles_container_image_functions(monkeypatch):
+    # Container-image functions have no Runtime; formatting None raised and
+    # the whole listing failed.
+    _install_fake_boto3_lambda(monkeypatch, functions=[
+        {"FunctionName": "img-fn", "PackageType": "Image", "MemorySize": 512, "Timeout": 30},
+    ])
+    from maverick.tools.lambda_tool import lambda_tool
+    out = lambda_tool().fn({"op": "list_functions"})
+    assert "img-fn" in out and "runtime=Image" in out

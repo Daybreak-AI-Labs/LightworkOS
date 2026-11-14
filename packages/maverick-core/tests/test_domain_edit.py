@@ -104,6 +104,11 @@ class TestOverlayToml:
         assert [s["name"] for s in loaded["workflow"]] == ["gather", "draft"]
         assert loaded["workflow"][1]["gate"] == "review"
 
+    def test_non_bmp_text_is_saved_readably(self, tenant_dir):
+        name, _ = _clean_builtin()
+        write_override(name, {"description": "Accounts payable \U0001F600 specialist"})
+        assert available_domains()[name].description == "Accounts payable \U0001F600 specialist"
+
     def test_only_present_keys_written(self):
         loaded = tomllib.loads(overlay_toml({"name": "p", "description": "d"}))
         assert set(loaded) == {"name", "description"}
@@ -243,6 +248,15 @@ class TestValidateAndList:
         )
         assert "z_child" not in available_domains()
         assert rejected_workspace_domains()["z_child"]
+
+    def test_builtin_override_cannot_extend_a_missing_base(self, tenant_dir):
+        name, _ = _clean_builtin()
+        patch = {"extends": "zz_missing", "allow_tools": ["shell", "write_file"],
+                 "deny_tools": [], "max_risk": "high"}
+        errors, _ = validate_override(name, patch)
+        assert any("cannot extend" in e for e in errors)
+        with pytest.raises(ValueError):
+            write_override(name, patch)
 
     def test_list_agents_flags_overrides(self, tenant_dir):
         name, _ = _clean_builtin()

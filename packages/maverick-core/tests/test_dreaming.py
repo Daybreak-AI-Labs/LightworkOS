@@ -434,6 +434,15 @@ class TestReflexionPruning:
         parser = [r for r in kept if "parser" in r.goal_text]
         assert parser and parser[0].reflection == "new"
 
+    def test_duplicates_from_different_users_are_both_kept(self, tmp_path):
+        path = tmp_path / "reflexions.ndjson"
+        rows = [{"ts": ts, "goal_text": "fix the flaky parser test", "failure_class": "agent_error",
+                 "reflection": user, "channel": channel, "user_id": user, "owner": f"user:{user}"}
+                for ts, channel, user in ((1.0, "slack", "alice"), (2.0, "teams", "bob"))]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        assert dreaming.prune_reflexions(path, keep=10) == 0
+        assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+
     def test_noop_when_nothing_to_drop(self, tmp_path):
         path = tmp_path / "reflexions.ndjson"
         reflexion.record(goal_text="one distinct lesson",
@@ -781,6 +790,16 @@ class TestInsightLifecycle:
             "Recurring failure (budget, seen 2x) on goals about ledger "
             "reconciliation totals.", ts=50.0,
         )], path=path)
+        assert dreaming.resolve_contradictions(successes, path) == 0
+
+    def test_template_wording_alone_does_not_retire_an_insight(self, tmp_path):
+        path = tmp_path / "insights.ndjson"
+        cluster = [{"goal_text": "deploy the kubernetes cluster", "failure_class": "agent_error",
+                    "reflection": "pin the chart version", "ts": 1.0}] * 2
+        dreaming.append_insights([dreaming.synthesize_insight(cluster, domain=None, now=10.0)],
+                                 path=path)
+        successes = [{"goal": "Reproduce the failing step", "t": 20.0},
+                     {"goal": "Verify budget before committing", "t": 30.0}]
         assert dreaming.resolve_contradictions(successes, path) == 0
 
 

@@ -60,6 +60,16 @@ def test_schema_ref_and_invalid_sample_refuse_before_dispatch():
     assert called == []
 
 
+def test_dynamic_reference_to_a_url_is_refused():
+    # The host validates practice input against a schema the container
+    # reported; $dynamicRef resolves through a registry that fetches URLs.
+    pytest.importorskip("jsonschema")
+    for key in ("$dynamicRef", "$recursiveRef"):
+        schema = {"type": "object", "properties": {"a": {key: "http://169.254.169.254/x"}}}
+        with pytest.raises(ValueError, match="external schema"):
+            contracts.validator(schema)
+
+
 def test_node_inspection_never_launches_configured_program(tmp_path, monkeypatch):
     from maverick import plugin_workbench_ts as node
     from maverick.plugin_workbench import _digest

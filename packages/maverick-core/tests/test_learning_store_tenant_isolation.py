@@ -134,6 +134,20 @@ def test_write_stamps_tenant_and_delete_is_scoped(pg_double):
     assert deletes[0][1] == ("acme",)
 
 
+def test_invalid_client_binding_raises_instead_of_using_unbound_partition(
+        pg_double, monkeypatch):
+    from maverick.client import ClientBindingError
+
+    monkeypatch.setenv("MAVERICK_CLIENT_ID", "bad id!!")
+    tok = set_tenant(None)
+    try:
+        with pytest.raises(ClientBindingError):
+            ls.write_addenda_db({"M": "x"})
+    finally:
+        reset_tenant(tok)
+    assert pg_double.rows == []
+
+
 # --- live Postgres round-trip (CI postgres job only) ------------------------
 
 _DSN = os.environ.get("MAVERICK_PG_DSN")

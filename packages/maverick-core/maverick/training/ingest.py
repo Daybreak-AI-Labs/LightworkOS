@@ -57,7 +57,8 @@ def fetch_steps_for_goal(world, goal_id: int) -> list[dict]:
     Returns dicts; the world is optional (donations may have been pruned before
     ingestion). Paginates past ``goal_events``' default limit (200) so a long
     trajectory isn't silently truncated -- a truncated trajectory is corrupt
-    training data. A real DB error is logged (not silently swallowed as empty).
+    training data. A real DB error therefore raises ``RuntimeError`` instead of
+    returning the events read so far as if they were the whole trajectory.
     """
     if world is None:
         return []
@@ -82,9 +83,10 @@ def fetch_steps_for_goal(world, goal_id: int) -> list[dict]:
             since = batch[-1].id  # continue after the last event id
         return out
     except Exception as e:
-        log.warning("ingest: goal_events(%s) lookup failed (%s); "
-                    "trajectory may be incomplete", goal_id, e)
-        return out
+        raise RuntimeError(
+            f"ingest: goal_events({goal_id}) lookup failed after {len(out)} event(s); "
+            "refusing to train on a truncated trajectory"
+        ) from e
 
 
 def build_trajectory(
@@ -177,7 +179,9 @@ def build_rejected_trajectories(record: dict) -> list[TrainingTrajectory]:
 
     These pair against the record's chosen (accepted) trajectory WITHIN the same
     task_family: chosen reward ~1.0 vs the rejected draft's verifier confidence
-    (un-clamped, e.g. 0.62) is the margin DPO trains on. Steps are empty -- the
+    (un-clamped, e.g. 0.62) is the pair's margin. ``rlaif`` keeps only pairs at
+    or above its ``min_margin`` (default 0.5), so with the defaults that 0.38
+    example is dropped and only drafts scored below ~0.5 pair. Steps are empty -- the
     PRM learns from the accepted run; these exist purely to form preference
     pairs. Drafts without text are skipped (nothing for the DPO sidecar to use).
     """
@@ -244,16 +248,26 @@ def klear_rows(outbox: Path, world=None) -> Iterator[dict]:
     best-of-N candidates scored by objective tests (so a passing vs failing
     candidate pairs within the task_family). ``world`` (optional) supplies the
     goal_events; donations may have been pruned before ingestion."""
+    skipped = 0
     for record in load_donations(outbox, world=world):
-        events = (
-            fetch_steps_for_goal(world, record.get("goal_id", 0))
-            if world else []
-        )
+        try:
+            events = (
+                fetch_steps_for_goal(world, record.get("goal_id", 0))
+                if world else []
+            )
+        except RuntimeError as e:
+            # One goal's database error skips that donation only; its partial
+            # trajectory is never emitted as complete.
+            skipped += 1
+            log.warning("ingest: skipping donation for goal %s: %s", record.get("goal_id"), e)
+            continue
         yield to_klear_jsonl(build_trajectory(record, events))
         for rej in build_rejected_trajectories(record):
             yield to_klear_jsonl(rej)
         for cnd in build_candidate_trajectories(record):
             yield to_klear_jsonl(cnd)
+    if skipped:
+        log.warning("ingest: skipped %d donation(s) whose goal events could not be read", skipped)
 
 
 def main() -> int:

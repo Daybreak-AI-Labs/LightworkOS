@@ -473,3 +473,13 @@ def _answer(reply):
     answer, label = reply.rsplit("\n\n", 1)
     assert label.startswith("-- Written by an agent in Lightwork.")
     return answer
+
+
+def test_an_empty_maverick_home_is_the_default_not_the_working_directory(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from maverick.paths import maverick_home
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_HOME", "")
+    assert maverick_home() == Path(tmp_path) / ".maverick"

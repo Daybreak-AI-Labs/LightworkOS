@@ -92,7 +92,9 @@ def _open_contained(workdir: Path, target: Path, flags: int, mode: int = 0o666) 
     return fd
 
 
-def read_text_contained(sandbox, target: Path, *, errors: str = "strict") -> str:
+def read_text_contained(
+    sandbox, target: Path, *, errors: str = "strict", max_chars: int | None = None,
+) -> str:
     """Read text from an already-resolved ``target`` through a descriptor that is
     verified to be inside ``sandbox.workdir`` (TOCTOU-safe).
 
@@ -100,11 +102,13 @@ def read_text_contained(sandbox, target: Path, *, errors: str = "strict") -> str
     the symlink-race guard lives in one place. Raises ``ValueError`` if the
     opened inode escaped the workspace; ``OSError`` / ``UnicodeDecodeError``
     propagate so callers handle them exactly as ``Path.read_text`` would.
+    ``max_chars`` stops after that many characters instead of loading the
+    whole file.
     """
     workdir = Path(sandbox.workdir).resolve()
     fd = _open_contained(workdir, target, os.O_RDONLY)
     with os.fdopen(fd, encoding="utf-8", errors=errors) as fh:
-        return fh.read()
+        return fh.read() if max_chars is None else fh.read(max_chars)
 
 
 def write_text_contained(sandbox, target: Path, content: str) -> None:
@@ -193,8 +197,9 @@ def _is_test_path(rel_path: str) -> bool:
         or name.endswith(".spec.ts")
         or name.endswith("test.go")
         or name.endswith("_spec.rb")
-        or name.endswith("Test.java")
-        or name.endswith("Tests.java")
+        # JUnit naming is case-sensitive (FooTest.java, not Contest.java), so
+        # test the original-case name; ``name`` is lower-cased.
+        or rel_path.replace("\\", "/").rstrip("/").endswith(("Test.java", "Tests.java"))
     )
     return test_file
 
@@ -214,15 +219,20 @@ def _is_dotgit_path(rel_path: str) -> bool:
     return any(seg == ".git" for seg in parts)
 
 
-def _is_opaque_blocked(rel_path: str) -> bool:
-    """Return True if `rel_path` should be blocked under opaque benchmark
-    mode. Combines the test-path and .git-path checks."""
+def _opaque_mode_active() -> bool:
+    """True when benchmark opaque mode applies (coding mode, opacity not off)."""
     import os as _os
     opaque = _os.environ.get("MAVERICK_BENCHMARK_OPAQUE", "1") != "0"
     coding = _os.environ.get(
         "MAVERICK_CODING_MODE", ""
     ).lower() in ("1", "true", "yes")
-    if not (opaque and coding):
+    return opaque and coding
+
+
+def _is_opaque_blocked(rel_path: str) -> bool:
+    """Return True if `rel_path` should be blocked under opaque benchmark
+    mode. Combines the test-path and .git-path checks."""
+    if not _opaque_mode_active():
         return False
     return _is_test_path(rel_path) or _is_dotgit_path(rel_path)
 
@@ -286,11 +296,18 @@ def read_file(sandbox) -> Tool:
         # the workspace — a symlink swapped in after _safe_resolve can't
         # redirect the read outside (TOCTOU).
         try:
-            data = read_text_contained(sandbox, target, errors="replace")
+            # Read one character past the cap, never the whole file: the
+            # answer is at most MAX_READ_BYTES characters.
+            data = read_text_contained(
+                sandbox, target, errors="replace", max_chars=MAX_READ_BYTES + 1,
+            )
+            size = target.stat().st_size
         except (ValueError, PermissionError, OSError) as e:
             return f"ERROR: {e}"
         if len(data) > MAX_READ_BYTES:
-            data = data[:MAX_READ_BYTES] + f"\n... [truncated, total {len(data)} bytes]"
+            data = data[:MAX_READ_BYTES] + (
+                f"\n... [truncated at {MAX_READ_BYTES} characters, file is {size} bytes]"
+            )
         # File bytes can begin with reserved legacy result markers. Their
         # contents do not describe the success or failure of the read itself.
         return confirmed_success_text(data)
@@ -303,8 +320,8 @@ def read_file(sandbox) -> Tool:
             "BEFORE editing — never write a SEARCH/REPLACE block from "
             "memory or from an LLM-summarized view of the file. The "
             "SEARCH section must match the file's exact bytes including "
-            "whitespace, indentation, and line endings. Files >8KB are "
-            "truncated; chain multiple calls if you need more. In "
+            "whitespace, indentation, and line endings. Only the first "
+            "8,000 characters of a file are returned. In "
             "benchmark opaque mode (SWE-bench Pro / Verified), reads "
             "under `tests/`, `test/`, and `.git/` are blocked — the "
             "tests directory holds the grader's expected values and "

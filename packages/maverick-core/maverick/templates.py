@@ -533,7 +533,7 @@ def install_template_from_catalog(
     Returns the parsed Template. Raises ValueError on unknown name, hash
     mismatch, signature policy failure, or Shield rejection."""
     from . import catalog
-    from .skills import _fetch_skill_source  # generic gh:/https: text fetcher
+    from .skills import _fetch_skill_source_bytes  # generic gh:/https: fetcher
 
     _validate_template_name(name)
     entry = catalog.resolve(
@@ -541,11 +541,14 @@ def install_template_from_catalog(
         indexes=indexes if indexes is not None else _configured_template_indexes())
     if entry is None:
         raise ValueError(f"no template named {name!r} in the registry")
-    content = _fetch_skill_source(entry.source)
-    if not catalog.verify_sha256(content, entry.sha256):
+    # The pin covers the published file's wire bytes; decode only after the
+    # check (errors="replace" would change the bytes being verified).
+    raw = _fetch_skill_source_bytes(entry.source)
+    if not catalog.verify_sha256(raw, entry.sha256):
         raise ValueError(
             f"content hash mismatch for {name!r}: the fetched template does not "
             "match the registry's pinned sha256. Refusing to install.")
+    content = raw.decode("utf-8", errors="replace")
     # Catalog templates are untrusted remote prompt content. Validate and scan
     # the rendered prompt surface before persisting, and do not persist remote
     # budget fields as future explicit run overrides.

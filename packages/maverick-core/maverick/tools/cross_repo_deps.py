@@ -95,7 +95,9 @@ def _imports(path: Path) -> set[str]:
         if len(raw) > _MAX_PARSE_BYTES:
             return set()
         tree = ast.parse(raw.decode("utf-8", errors="replace"), filename=str(path))
-    except (SyntaxError, OSError):
+    # One unparsable file must not fail the whole workspace: deep nesting
+    # raises MemoryError/RecursionError, a NUL byte ValueError on 3.11.
+    except (SyntaxError, ValueError, MemoryError, RecursionError, OSError):
         return set()
     mods: set[str] = set()
     for node in ast.walk(tree):
@@ -137,38 +139,45 @@ def _cycles(edges: dict[tuple[str, str], int]) -> list[list[str]]:
     for (s, d) in edges:
         adj.setdefault(s, []).append(d)
         adj.setdefault(d, [])
-    index = {}
-    low = {}
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
     on_stack: set[str] = set()
     stack: list[str] = []
-    counter = [0]
     sccs: list[list[str]] = []
 
-    def strongconnect(v: str) -> None:
-        index[v] = low[v] = counter[0]
-        counter[0] += 1
-        stack.append(v)
-        on_stack.add(v)
-        for w in adj.get(v, []):
-            if w not in index:
-                strongconnect(w)
-                low[v] = min(low[v], low[w])
-            elif w in on_stack:
-                low[v] = min(low[v], index[w])
-        if low[v] == index[v]:
-            comp = []
-            while True:
-                w = stack.pop()
-                on_stack.discard(w)
-                comp.append(w)
-                if w == v:
-                    break
-            if len(comp) > 1 or (v, v) in edges:
-                sccs.append(sorted(comp))
-
-    for v in list(adj):
-        if v not in index:
-            strongconnect(v)
+    # Iterative Tarjan: the recursive form raised RecursionError on a long
+    # import chain (the walk admits 2,000 files per root).
+    for root in list(adj):
+        if root in index:
+            continue
+        work: list[tuple[str, int]] = [(root, 0)]
+        while work:
+            v, i = work.pop()
+            if i == 0:
+                index[v] = low[v] = len(index)
+                stack.append(v)
+                on_stack.add(v)
+            succ = adj.get(v, [])
+            if i > 0:
+                low[v] = min(low[v], low[succ[i - 1]])
+            while i < len(succ) and succ[i] in index:
+                if succ[i] in on_stack:
+                    low[v] = min(low[v], index[succ[i]])
+                i += 1
+            if i < len(succ):
+                work.append((v, i + 1))
+                work.append((succ[i], 0))
+                continue
+            if low[v] == index[v]:
+                comp = []
+                while True:
+                    w = stack.pop()
+                    on_stack.discard(w)
+                    comp.append(w)
+                    if w == v:
+                        break
+                if len(comp) > 1 or (v, v) in edges:
+                    sccs.append(sorted(comp))
     return sccs
 
 

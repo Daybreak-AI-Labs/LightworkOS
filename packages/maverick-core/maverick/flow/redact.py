@@ -11,9 +11,27 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Credential key names are matched as substrings, so joined and plural forms
+# (``accesstoken``, ``dbpassword``, ``api_keys``) stay masked.  A short list of
+# ordinary names that merely contain a secret word is removed first:
+# ``author*``/``authority`` (not ``authorization``), ``secretary`` and
+# token-count keys such as ``max_tokens`` or ``token_count``.  Masking those
+# would silently change what a resumed or queued run sees.
 _SECRET_KEY = re.compile(
     r"(token|secret|password|passwd|api[_-]?key|apikey|authorization|auth|"
     r"bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key)", re.IGNORECASE)
+_ORDINARY_KEY_PART = re.compile(
+    r"author(?!i[sz])|secretar(?:y|ies)"
+    r"|(?:max|min|input|output|prompt|completion|total|num|reasoning|cached)[_-]?tokens"
+    r"(?![a-z0-9])"
+    r"|tokens?[_-]?(?:counts?|limits?|usage|used|budget|estimate)(?![a-z0-9])",
+    re.IGNORECASE)
+
+
+def _secret_key(name: str) -> bool:
+    return bool(_SECRET_KEY.search(_ORDINARY_KEY_PART.sub(" ", name)))
+
+
 _MASK = "***redacted***"
 _MAX_STR = 8_000          # truncate any single string value past this
 _MAX_KEYS = 500           # cap the breadth of a single dict
@@ -27,7 +45,7 @@ def redact(value: Any, *, strict: bool = False) -> Any:
     stored under innocuous keys such as ``result`` or inside a list.
     """
     if isinstance(value, dict):
-        return {k: (_MASK if isinstance(k, str) and _SECRET_KEY.search(k) else redact(v, strict=strict))
+        return {k: (_MASK if isinstance(k, str) and _secret_key(k) else redact(v, strict=strict))
                 for k, v in value.items()}
     if isinstance(value, list):
         return [redact(v, strict=strict) for v in value]

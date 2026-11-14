@@ -163,6 +163,18 @@ def test_default_runner_refuses_without_root(monkeypatch):
         EbpfMonitor(100).run()
 
 
+def test_default_runner_reports_a_failed_attach(monkeypatch, tmp_path):
+    import os
+
+    fake = tmp_path / "bpftrace"
+    fake.write_text("#!/bin/sh\necho 'ERROR: tracepoint not found' >&2\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    with pytest.raises(BpftraceUnavailable, match="status 1: ERROR: tracepoint not found"):
+        EbpfMonitor(100).run()
+
+
 # ---- default OFF + CLI ------------------------------------------------------------
 
 def test_disabled_by_default(tmp_path, monkeypatch):

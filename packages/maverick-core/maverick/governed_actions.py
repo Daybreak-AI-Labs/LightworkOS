@@ -42,10 +42,14 @@ class ActionError(Exception):
 
 def _require_approval_at() -> str:
     """Risk floor at/above which ``commit`` requires an approver. Reads
-    ``[actions] require_approval_at`` (default ``high``); never raises."""
+    ``[actions] require_approval_at`` (default ``high``); an unreadable config
+    source gives ``low``, so a lost policy never lowers the floor. Never
+    raises."""
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
         v = str((load_config() or {}).get("actions", {}).get("require_approval_at", "high")).strip().lower()
+        if config_source_errors(include_tenant=True):
+            return RISK_LEVELS[0]
         return v if v in RISK_LEVELS else "high"
     except Exception:  # pragma: no cover -- config must never block
         return "high"
@@ -278,30 +282,46 @@ __all__ = ["ActionSpec", "Preview", "LineageLink", "GovernedActions", "ActionErr
 # --------------------------------------------------------------------------
 def enabled() -> bool:
     """Whether the run path records governed-action lineage. Off by default;
-    ``[actions] enable`` / ``MAVERICK_GOVERNED_ACTIONS`` turns it on. Never raises."""
+    ``[actions] enable`` / ``MAVERICK_GOVERNED_ACTIONS`` turns it on. An
+    unreadable config source keeps it on, since the setting may have been
+    lost. Never raises."""
     _v = env_flag("MAVERICK_GOVERNED_ACTIONS")
     if _v is not None:
         return _v
     try:
-        from .config import load_config
-        return bool((load_config() or {}).get("actions", {}).get("enable", False))
+        from .config import config_source_errors, load_config
+        on = bool((load_config() or {}).get("actions", {}).get("enable", False))
+        return on or bool(config_source_errors(include_tenant=True))
     except Exception:  # pragma: no cover -- config must never block a run
         return False
 
 
 def _lineage_dir(store_dir: str | Path | None = None) -> Path:
-    """Where per-goal lineage lives. With an ACTIVE tenant it resolves under the
-    tenant's data dir (one tenant's audit trail never mixes with another's),
-    matching the other learned stores; single-tenant keeps the legacy path."""
+    """Where per-goal lineage lives: ``data_dir("lineage")``, so an ACTIVE
+    tenant's audit trail never mixes with another's and ``MAVERICK_HOME`` is
+    honoured. A tenant binding that cannot be resolved raises rather than
+    falling back to the shared directory."""
     if store_dir is not None:
         return Path(store_dir).expanduser()
+    from .paths import data_dir
+    return data_dir("lineage")
+
+
+def _legacy_lineage_note(goal_id: int, store_dir: str | Path | None) -> str:
+    """Before lineage honoured ``MAVERICK_HOME`` it was written under
+    ``~/.maverick/lineage`` (shared by every home) when no tenant was active.
+    A file there for the same goal id cannot be tied to this store, so it is
+    never read as this goal's lineage; a MISSING verdict only mentions it."""
+    if store_dir is not None:
+        return ""
+    legacy = Path("~/.maverick/lineage").expanduser() / f"{int(goal_id)}.ndjson"
     try:
-        from .paths import current_tenant, data_dir
-        if current_tenant():
-            return data_dir("lineage")
-    except Exception:  # pragma: no cover -- isolation never blocks lineage
+        if legacy.exists() and legacy.parent.resolve() != _lineage_dir().resolve():
+            return (f"; an older ledger for goal id {int(goal_id)} exists at {legacy}, "
+                    "but it cannot be tied to this workspace and was not checked")
+    except Exception:  # noqa: BLE001 -- a hint never changes the verdict
         pass
-    return Path("~/.maverick/lineage").expanduser()
+    return ""
 
 
 def record_tool_lineage(goal_id: int | None, action: str, params: object, *,
@@ -410,10 +430,10 @@ def verify_lineage_file(goal_id: int, store_dir: str | Path | None = None) -> st
         path = _lineage_dir(store_dir) / f"{int(goal_id)}.ndjson"
         body = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return "MISSING: no persisted lineage file"
+        return "MISSING: no persisted lineage file" + _legacy_lineage_note(goal_id, store_dir)
     except UnicodeError:
         return "BROKEN: lineage is not UTF-8 text"
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RuntimeError):
         return "UNAVAILABLE: lineage file could not be read"
     try:
         links = [json.loads(line) for line in body.splitlines() if line.strip()]

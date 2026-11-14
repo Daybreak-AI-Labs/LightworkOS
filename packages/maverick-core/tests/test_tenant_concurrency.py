@@ -13,8 +13,10 @@ from maverick.tenant import concurrency as tc
 @pytest.fixture(autouse=True)
 def _clear():
     tc._inflight.clear()
+    tc._uncounted.clear()
     yield
     tc._inflight.clear()
+    tc._uncounted.clear()
 
 
 def test_none_tenant_is_never_limited():
@@ -70,3 +72,28 @@ def test_lookup_error_fails_open(monkeypatch):
     # A resolution error must never block a run -> treated as unlimited.
     assert tc._limit_for("acme") == 0
     assert tc.acquire("acme") is True
+
+
+def test_release_of_an_uncounted_grant_does_not_free_a_counted_slot(monkeypatch):
+    # A run admitted while the plan was unlimited, then a plan change to a
+    # ceiling of 1: the old run's release must not let a second goal in.
+    limit = {"n": 0}
+    monkeypatch.setattr(tc, "_limit_for", lambda t: limit["n"])
+    assert tc.acquire("acme") is True          # uncounted
+    limit["n"] = 1
+    assert tc.acquire("acme") is True          # counted, at the ceiling
+    tc.release("acme")                         # the first run finishes
+    assert tc.in_flight("acme") == 1
+    assert tc.acquire("acme") is False
+
+
+def test_limit_uses_the_served_plan_when_payment_lapsed(monkeypatch):
+    # A past-due tenant is served the base plan; its paid concurrency must
+    # not survive the downgrade.
+    from types import SimpleNamespace
+
+    from maverick.billing import entitlements_for
+
+    rec = SimpleNamespace(plan="enterprise", billing_status="past_due")
+    monkeypatch.setattr("maverick.tenant.registry.get_tenant", lambda t: rec)
+    assert tc._limit_for("acme") == entitlements_for("free").max_concurrent_goals

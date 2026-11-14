@@ -68,3 +68,8 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "geofence" in names
+
+
+def test_group_partly_denied_and_unknown_region_fail_closed():
+    assert _check("EU", {"deny": ["DE"], "default": "allow"}).startswith("DENY EU")
+    assert _check("Germany", {"deny": ["DE"], "default": "allow"}).startswith("ERROR")

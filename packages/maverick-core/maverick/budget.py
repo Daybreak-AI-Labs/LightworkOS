@@ -876,7 +876,7 @@ class Budget:
         occasionally returns ``None`` in ``usage`` on streaming refusals; the
         prior code raised ``TypeError`` and the instance counted as $0 spent.
         Non-finite, unparseable, or negative counts now fail closed with
-        ``BudgetExceeded`` instead of silently recording a paid call as zero.
+        ``UsageAccountingError`` (deliberately not a ``BudgetExceeded``) instead of silently recording a paid call as zero.
 
         Cache reads/writes accumulate in separate
         counters so ``max_input_tokens`` reflects the BILLABLE input
@@ -1328,7 +1328,8 @@ def resolve_budget_caps(*, defaults: dict | None = None,
     # use `MAVERICK_BUDGET_DOLLARS=0.5 maverick start ...` to cap a single
     # invocation, but nothing read it -- so the cap silently did nothing and
     # users ran at the default. Sits above [budget] config, below an explicit
-    # CLI override (--max-dollars). Malformed / non-finite -> keep prior layer.
+    # CLI override (--max-dollars). Malformed / non-finite / negative raises
+    # ValueError rather than running under a different cap than asked.
     env_dollars = os.environ.get("MAVERICK_BUDGET_DOLLARS")
     if env_dollars:
         try:

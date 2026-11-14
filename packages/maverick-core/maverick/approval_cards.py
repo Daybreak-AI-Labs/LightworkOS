@@ -59,7 +59,9 @@ def digest(value: Any) -> str:
 def _label(value: Any, name: str, *, allow_empty: bool = False) -> str:
     if not isinstance(value, str):
         raise ApprovalCardError(f"{name} must be a string")
-    text = " ".join(value.split())
+    # Drop format and control characters (bidirectional overrides, zero-width
+    # spaces): the label a person approves must render as its bytes read.
+    text = " ".join("".join(c for c in value if c.isprintable() or c.isspace()).split())
     try:
         from .safety.secret_detector import redact
 

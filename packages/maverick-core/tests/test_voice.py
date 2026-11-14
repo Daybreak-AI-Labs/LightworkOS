@@ -64,6 +64,21 @@ def test_invalid_hosted_voice_model_id_uses_safe_default(monkeypatch, tmp_path):
     )
 
 
+def test_elevenlabs_voice_id_stays_one_path_segment(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    urls = []
+
+    def _post(url, **_kw):
+        urls.append(url)
+        return SimpleNamespace(raise_for_status=lambda: None, content=b"mp3")
+
+    monkeypatch.setattr(voice_mod, "_governed_sender", lambda _send: _post)
+    assert voice_mod._tts_elevenlabs("hi", "../sound-generation?x=", tmp_path / "o.mp3")
+    assert urls == ["https://api.elevenlabs.io/v1/text-to-speech/..%2Fsound-generation%3Fx%3D"]
+    assert voice_mod._tts_elevenlabs("hi", "..", tmp_path / "p.mp3") is False
+
+
 # ---- _find_whisper_cpp -------------------------------------------------------
 
 def test_find_whisper_cpp_none_when_absent(monkeypatch, tmp_path):
@@ -233,6 +248,15 @@ def test_stt_backend_env_pins_local(monkeypatch, tmp_path):
     audio = tmp_path / "clip.wav"
     audio.write_bytes(b"RIFFfake")
     assert voice_mod._run_transcribe({"source": str(audio)}, sandbox=SimpleNamespace(workdir=tmp_path)) == "local only"
+    # A per-call backend cannot widen the operator's on-machine pin.
+    for backend in ("openai", "groq", "auto"):
+        out = voice_mod._run_transcribe({"source": str(audio), "backend": backend},
+                                        sandbox=SimpleNamespace(workdir=tmp_path))
+        assert out.startswith("ERROR") and "pinned" in out
+    # The operator's own CLI flag (trusted internal entry point) is not bound.
+    monkeypatch.setattr(voice_mod, "_whisper_openai", lambda p, lang: "operator chose openai")
+    assert voice_mod._run_transcribe_internal({"source": str(audio), "backend": "openai"}) == (
+        "operator chose openai")
 
 
 def test_explicit_arg_backend_beats_env_default(monkeypatch, tmp_path):

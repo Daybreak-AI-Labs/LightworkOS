@@ -8,6 +8,7 @@ display truncation is never used as resume input.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -15,7 +16,9 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 
-from .ir import Flow
+from .ir import Flow, clamp_saved_numbers
+
+log = logging.getLogger(__name__)
 
 _MAX_FLOW_DEFINITION_BYTES = 1_000_000
 
@@ -1036,6 +1039,11 @@ def load_flow_snapshot(digest: str) -> Flow:
         flow = Flow.from_dict(raw)
     except Exception as exc:
         raise FlowSnapshotError(f"flow snapshot {digest} is invalid") from exc
+    # Bounds added after a release was published must not make it unloadable.
+    clamped = clamp_saved_numbers(flow)
+    if clamped:
+        log.warning("flow snapshot %s: clamped out-of-range values: %s",
+                    digest, ", ".join(clamped[:10]))
     errors = flow.validate()
     if errors:
         raise FlowSnapshotError(

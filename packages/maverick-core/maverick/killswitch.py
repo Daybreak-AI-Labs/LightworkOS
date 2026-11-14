@@ -89,6 +89,10 @@ _file_check_lock = threading.Lock()
 # only engaged on a shared backend (Postgres).
 _last_shared_check_ts: float = 0.0
 _last_shared_halt: tuple[str, str] | None = None
+# Whether the cached shared state came from a successful fail-closed read. An
+# ordinary read keeps the last known state on error and does not inspect the
+# config health seam, so a fail-closed caller may not reuse its result.
+_last_shared_strict_ok: bool = False
 _shared_world = None  # cached world handle for the shared-halt consult
 
 _HALT_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -379,12 +383,14 @@ def _shared_halt_active(
     read error must not silently drop a real halt either. Privileged callers
     set ``fail_closed`` and receive ``Halted(source="shared-error")`` instead.
     """
-    global _last_shared_check_ts, _last_shared_halt, _shared_world
+    global _last_shared_check_ts, _last_shared_halt, _shared_world, _last_shared_strict_ok
     now = time.monotonic()
     elapsed = now - _last_shared_check_ts
-    if _last_shared_check_ts > 0.0 and 0.0 <= elapsed < min_interval:
+    if (_last_shared_check_ts > 0.0 and 0.0 <= elapsed < min_interval
+            and (_last_shared_strict_ok or not fail_closed)):
         return _last_shared_halt
     _last_shared_check_ts = now
+    _last_shared_strict_ok = False
     try:
         if fail_closed:
             # ``is_postgres_configured`` deliberately fails soft when config is
@@ -401,6 +407,7 @@ def _shared_halt_active(
         from .world_model_backends import is_postgres_configured
         if not is_postgres_configured():
             _last_shared_halt = None
+            _last_shared_strict_ok = fail_closed
             return None
         if _shared_world is None:
             from .world_model import open_world
@@ -410,6 +417,7 @@ def _shared_halt_active(
             (state.get("reason") or "cluster halt", state.get("source") or "shared")
             if state else None
         )
+        _last_shared_strict_ok = fail_closed
     except Exception as exc:  # reconnect next time; posture is caller-selected
         _shared_world = None
         if fail_closed:

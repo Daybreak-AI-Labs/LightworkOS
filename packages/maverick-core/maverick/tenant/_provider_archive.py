@@ -31,6 +31,16 @@ def _database(tenant, *, create=False):
     ensure_private_file(path)
     connection = sqlite3.connect(path, timeout=30)
     try:
+        if not create and connection.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' "
+            "AND name IN ('runs','calls','plans')"
+        ).fetchone()[0] != 3:
+            # Created but the schema not fully written (executescript commits
+            # each CREATE on its own, so a crash can stop part-way): it holds
+            # no history. Reading it must not block every
+            # provider call; the next compact finishes the creation.
+            yield None
+            return
         if create:
             connection.executescript('''
                 CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL);

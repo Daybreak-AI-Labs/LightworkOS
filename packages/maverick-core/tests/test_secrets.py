@@ -129,3 +129,49 @@ class TestSecretScrubbing:
         out = scrub(text)
         # env_secret pattern catches this first since GITHUB_TOKEN matches.
         assert "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789" not in out
+
+
+def test_common_credential_shapes_are_redacted():
+    # Formerly left in clear: an empty URL user, a password containing "@",
+    # fine-grained GitHub PATs, Basic auth, and lowercase or JSON key/values.
+    cases = {
+        "redis://:s3cr3tpass@cache:6379/0": "s3cr3tpass",  # pragma: allowlist secret
+        "postgres://u:p@ssw0rd@h/db": "ssw0rd",  # pragma: allowlist secret
+        "token github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuv": "github_pat_11ABCDEFG",  # pragma: allowlist secret
+        "Authorization: Basic dXNlcjpwYXNz": "dXNlcjpwYXNz",  # pragma: allowlist secret
+        "password=hunter2": "hunter2",  # pragma: allowlist secret
+        "api_key: abc123def": "abc123def",  # pragma: allowlist secret
+        "api_key = abc999": "abc999",  # pragma: allowlist secret
+        "password = hunter3": "hunter3",  # pragma: allowlist secret
+        "auth_token: tok123": "tok123",  # pragma: allowlist secret
+        "access_token: ya29.abcdef": "ya29.abcdef",  # pragma: allowlist secret
+        "passwd : r00tpw": "r00tpw",  # pragma: allowlist secret
+        "client_secret:  cs3cret": "cs3cret",  # pragma: allowlist secret
+        "refreshToken=rtok1": "rtok1",  # pragma: allowlist secret
+        '{"api_key": "zzz-secret"}': "zzz-secret",  # pragma: allowlist secret
+    }
+    for text, secret in cases.items():
+        assert secret not in scrub(text), text
+    assert scrub("see http://host:8080/p") == "see http://host:8080/p"
+    # JSON stays valid, prose is not a key/value pair, and a host after the
+    # password stays readable.
+    assert scrub('{"api_key": "zzz"}') == '{"api_key": "[REDACTED:kv_secret]"}'  # pragma: allowlist secret
+    assert scrub("invalid password: user bob") == "invalid password: user bob"
+    assert scrub("the token: see below") == "the token: see below"
+    # Source code names variables after secrets; those lines pass unchanged.
+    for code in (
+        "token = get_token()",
+        "def login(user, password: str, token: str):",
+        "self.token = token",
+        "if token: return",
+        "x = {'token': token}",
+        "return Token(token=tok)",
+        "max_token: 5",
+        "token = tokens[0]",
+        "secret = sha256(data)",
+    ):
+        assert scrub(code) == code, code
+    with_query = scrub("https://u:pw@host?next=a@b.com")  # pragma: allowlist secret
+    assert with_query == "https://u:[REDACTED:url_credentials]@host?next=a@b.com"
+    with_list = scrub("redis://u:pw@cache:6379,user=a@b")  # pragma: allowlist secret
+    assert with_list == "redis://u:[REDACTED:url_credentials]@cache:6379,user=a@b"

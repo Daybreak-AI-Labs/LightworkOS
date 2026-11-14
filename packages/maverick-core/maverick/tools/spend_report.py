@@ -13,7 +13,7 @@ ops:
   - recent(limit, since_hours)   — table of recent episodes
   - by_role()                    — total $ per role (orchestrator vs proposer ...)
   - anomalies()                  — episodes more than 3× the median cost
-  - total()                      — lifetime + 24h + 1h totals
+  - total()                      — totals over the newest 2,000 episodes + 24h + 1h
 """
 from __future__ import annotations
 
@@ -49,7 +49,11 @@ def _world():
 def _episodes(limit: int = 200) -> list[dict]:
     w = _world()
     try:
-        return list(w.list_episodes(limit=limit) or [])
+        # Scope to the running goal's owner: owner=None is the admin view of
+        # every principal's episodes, which an agent tool must never get.
+        from ..memory_ownership import current_owner
+        owner = current_owner(world=w)
+        return list(w.list_episodes(limit=limit, owner=owner) or [])
     except Exception as e:
         log.warning("spend_report: cannot list episodes: %s", e)
         return []
@@ -61,11 +65,9 @@ def _episodes(limit: int = 200) -> list[dict]:
 def _cost(ep) -> float:
     """Tolerate dataclasses, dicts, namedtuples — pick whichever shape ships."""
     try:
+        if isinstance(ep, dict):
+            return float(ep.get("cost_dollars") or 0.0)
         return float(getattr(ep, "cost_dollars", 0.0) or 0.0)
-    except Exception:
-        pass
-    try:
-        return float(ep["cost_dollars"] or 0.0)
     except Exception:
         return 0.0
 
@@ -169,8 +171,9 @@ def _op_total() -> str:
     total = sum(_cost(e) for e in eps)
     last_24h = sum(_cost(e) for e in eps if now - _ts(e) <= 86400)
     last_1h = sum(_cost(e) for e in eps if now - _ts(e) <= 3600)
+    scope = "newest 2000" if len(eps) >= 2000 else "lifetime"
     return (
-        f"lifetime:  ${total:.4f}  ({len(eps)} episodes)\n"
+        f"{scope + ':':<10} ${total:.4f}  ({len(eps)} episodes)\n"
         f"last 24h:  ${last_24h:.4f}\n"
         f"last 1h:   ${last_1h:.4f}"
     )
@@ -204,7 +207,7 @@ def spend_report() -> Tool:
             "Cost analytics over recent episodes. ops: recent "
             "(limit + since_hours), by_role (total + avg per role), "
             "anomalies (episodes >= 3× median cost), total "
-            "(lifetime / 24h / 1h rollup). Use to decide when to "
+            "(lifetime, or newest 2000 episodes when there are more / 24h / 1h rollup). Use to decide when to "
             "escalate or to flag runaway loops."
         ),
         input_schema=_SPEND_SCHEMA,

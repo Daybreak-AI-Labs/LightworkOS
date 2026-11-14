@@ -621,6 +621,10 @@ _CLOSURE_STEP_LABELS = {
     "audit_scrub": "earlier activity records",
     "audit_reanchor": "the activity record's tamper seal",
     "audit_record": "the note that this erasure happened",
+    "knowledge": "stored knowledge about the person",
+    "residual data": "the check that nothing remains",
+    "verification": "the check that nothing remains",
+    "could not verify": "the check that nothing remains",
 }
 
 
@@ -632,6 +636,63 @@ def _unfinished_steps(failures: list) -> list[str]:
         if label not in labels:
             labels.append(label)
     return labels
+
+
+def _run_subject_residue_erase(world, channel: str, user: str, actor: str) -> dict:
+    """Erase what is stored about a person who has no conversation left."""
+    import click
+    from maverick.audit import AuditRefused, EventKind, audit_event
+    from maverick.cli import erase as erase_command
+
+    obj = {"db": getattr(world, "path", None)}
+    refused = False
+    with _ERASE_LOCK, contextlib.redirect_stdout(io.StringIO()), \
+            contextlib.redirect_stderr(io.StringIO()):
+        ctx = click.Context(erase_command, obj=obj)
+        try:
+            with ctx:
+                ctx.invoke(erase_command, channel=channel, user=user, yes=True)
+        except AuditRefused:
+            refused = True  # raised only after the scrub
+        except (SystemExit, click.exceptions.Exit, click.ClickException) as exc:
+            if obj.get("erase_refusal"):  # a legal hold: nothing was deleted
+                return {"erased": False, "conversations": 0, "clean": False,
+                        "message": obj["erase_refusal"]}
+            if "erase_residue" not in obj:
+                raise RuntimeError("erasure command stopped") from exc
+    residue = obj.get("erase_residue")
+    if residue is None:
+        raise RuntimeError("erasure command did not report its outcome")
+    removed = int(residue.get("removed") or 0)
+    unfinished = _unfinished_steps(residue.get("failures") or [])
+    if refused and "the note that this erasure happened" not in unfinished:
+        unfinished.append("the note that this erasure happened")
+    if not removed and not unfinished:
+        return {"erased": False, "conversations": 0, "clean": False,
+                "message": "Nothing was found for this person."}
+    if removed:
+        try:  # who erased, never whose data
+            audit_event(EventKind.ERASE, agent="operator", actor=actor, channel=channel,
+                        conversations=0, source="dashboard")
+        except AuditRefused:
+            if "the note that this erasure happened" not in unfinished:
+                unfinished.append("the note that this erasure happened")
+    if unfinished:
+        message = (
+            f"No conversations were found. {removed} other stored item(s) about this "
+            "person were erased, but these could not be cleaned up: "
+            + ", ".join(unfinished)
+            + ". Try again, or ask your administrator to check storage and the activity record."
+        )
+    else:
+        message = (
+            f"No conversations were found. {removed} other stored item(s) about this "
+            "person (saved facts, notes, activity records or knowledge) were erased, "
+            "and nothing was found afterwards."
+        )
+    return {"erased": bool(removed), "conversations": 0,
+            "clean": not unfinished, "unfinished": unfinished, "receipt_id": None,
+            "message": message}
 
 
 def _run_erase(channel: str, user: str, actor: str = "local") -> dict:
@@ -648,8 +709,9 @@ def _run_erase(channel: str, user: str, actor: str = "local") -> dict:
         if conversation_user_matches(conv.user_id, user, channel)
     )
     if not before:
-        return {"erased": False, "conversations": 0, "clean": False,
-                "message": "Nothing was found for this person."}
+        # Facts, notes, activity lines and knowledge are keyed by the person,
+        # not a conversation, so they can outlive one: the command scrubs them.
+        return _run_subject_residue_erase(world, channel, user, actor)
     out, err = io.StringIO(), io.StringIO()
     obj = {"db": getattr(world, "path", None)}
     refused = False

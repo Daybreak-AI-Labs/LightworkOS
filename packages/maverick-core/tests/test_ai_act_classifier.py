@@ -60,3 +60,17 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "ai_act_classifier" in names
+
+
+def test_gap_patterns_match_like_re_without_rescanning():
+    import re
+
+    from maverick.tools.ai_act_classifier import _search
+
+    pattern = r"real[- ]time.*biometric"
+    for text in ("real-time biometric id", "biometric then real time",
+                 "real time\nbiometric", "x real time y real-time z biometric"):
+        assert _search(pattern, text) == (re.search(pattern, text) is not None)
+    # Each part is searched once from the previous match, so a long run of the
+    # first part with no second part is a single linear pass.
+    assert _search(pattern, "real time " * 50_000) is False

@@ -639,3 +639,19 @@ def test_strict_sink_returns_tenant_key_and_chain_bound_receipt(
             tenant_id="tenant-a",
             audit_log=AuditLog(tmp_path / "wrong-tenant" / "audit", sign=True),
         )
+
+
+def test_store_reopens_after_history_and_sweep(tmp_path: Path) -> None:
+    """Regression: _initialize required the genesis counters, so a second
+    store object on the same file failed after any history row or sweep (the
+    dashboard opens a new store per request)."""
+    clock = Clock()
+    store = _store(tmp_path, clock)
+    store.bind_source(FakeSource("tenant-a", "ai_governance").authority())
+    store.begin_sweep()
+
+    reopened = _store(tmp_path, clock)
+
+    assert reopened.verify_integrity()["valid"] is True
+    with pytest.raises(UnifiedAuditIntegrityError):
+        UnifiedAuditStore(tmp_path / "tenant-a.sqlite3", tenant_id="tenant-b", clock=clock)

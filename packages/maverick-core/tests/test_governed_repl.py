@@ -269,3 +269,35 @@ def test_transcript_is_the_ordered_ledger(policy):
     assert [row["ok"] for row in rows] == [True, False, True]
     assert all(len(row["statement_sha256"]) == 64 for row in rows)
     assert rows[0]["excerpt"] == "one = 1"
+
+
+def test_statement_cannot_reach_the_session_metadata_or_ledger(policy):
+    """The counter, owner and ledger are kept outside the sandbox workdir: a
+    statement that rewrites what it can see there resets nothing."""
+    policy["max_statements"] = 2
+    session = repl.open_session(principal="alice")
+    tamper = (
+        "import json, os\n"
+        "print(sorted(os.listdir('.')))\n"
+        "json.dump({'session': 'x', 'statements': 0, 'closed': False,\n"
+        "           'principal': 'mallory'}, open('meta.json', 'w'))\n"
+        "open('ledger.jsonl', 'w').close()\n"
+    )
+    listed = repl.execute(session, tamper)["stdout"]
+    assert "meta.json" not in listed and "ledger.jsonl" not in listed
+    repl.execute(session, "x = 1")
+    with pytest.raises(repl.ReplError, match="statement cap"):
+        repl.execute(session, "y = 2")
+    assert repl.session_info(session)["principal"] == "alice"
+    assert [row["statement"] for row in repl.transcript(session)] == [1, 2]
+
+
+def test_result_file_planted_as_a_symlink_is_not_followed(policy, tmp_path):
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"ok": True, "stdout": "host secret"}))
+    session = repl.open_session()
+    result = repl.execute(
+        session,
+        f"import os, sys\nos.symlink({str(outside)!r}, sys.argv[3])\nos._exit(0)\n")
+    assert result["ok"] is False
+    assert "host secret" not in result["stdout"]

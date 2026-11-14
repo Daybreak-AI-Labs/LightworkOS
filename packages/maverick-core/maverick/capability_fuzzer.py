@@ -273,9 +273,10 @@ def fuzz_roundtrip(spec, *, seed: int = 0, rounds: int = 200) -> RoundtripReport
 
 
 def main(argv=None) -> int:
-    """CI gate: fuzz the real Capability with a representative grant.
+    """Fuzz the real Capability with a representative grant.
 
-    Exits 1 on any leak so a regression in ``permits()`` fails the build.
+    Exits 1 on any leak. No CI workflow runs this entry point today; the
+    module's tests exercise the same fuzzing.
     """
     import argparse
 

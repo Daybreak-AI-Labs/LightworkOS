@@ -73,7 +73,7 @@ def _read_archive_json(path: Path):
         or not stat.S_ISREG(before.st_mode)
         or before.st_nlink != 1
     ):
-        raise ValueError("code archive must be a private regular file")
+        raise ValueError("code archive must be a single-link regular file")
     if before.st_size > _MAX_ARCHIVE_BYTES:
         raise ValueError("code archive exceeds the file-size limit")
     expected = _archive_file_identity(before)

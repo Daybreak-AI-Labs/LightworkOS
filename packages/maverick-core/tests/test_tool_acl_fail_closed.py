@@ -108,3 +108,42 @@ def test_overlapping_allow_lists_keep_intersection(monkeypatch):
     kept = tool_acl.filter_tools({"read_file", "shell", "http_fetch"},
                                  allowed=allowed, denied=denied)
     assert kept == {"shell"}
+
+
+def test_unparseable_config_and_malformed_values_fail_closed(tmp_path, monkeypatch):
+    # load_config() returns defaults for a config it cannot parse instead of
+    # raising, so the per-principal loaders must also consult the recorded
+    # source errors. A lone string deny-list is one tool name, and a ceiling
+    # that is set but unreadable applies the tightest level.
+    from maverick import config
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    path = config.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('[security.users."tg:1"]\ndenied_tools = ["shell"]\n[security\n',
+                    encoding="utf-8")
+    config.reset_config_cache()
+    try:
+        assert tool_acl._load_lists_for_user("tg:1")[0] == set(tool_acl._FAIL_CLOSED)
+        assert tool_acl._load_lists_for_channel("slack")[0] == set(tool_acl._FAIL_CLOSED)
+        assert tool_acl.resolve_max_risk(channel="slack") == "low"
+
+        path.write_text('[security]\ndenied_tools = "shell"\nmax_risk = "Low"\n'
+                        '[security.channels.slack]\nmax_risk = "lo"\n', encoding="utf-8")
+        config.reset_config_cache()
+        assert tool_acl._load_lists() == (set(), {"shell"})
+        assert tool_acl.resolve_max_risk() == "low"
+        assert tool_acl.resolve_max_risk(channel="slack") == "low"
+    finally:
+        config.reset_config_cache()
+
+
+def test_layer_policy_normalises_like_the_kernel():
+    # An empty allowed_tools string means no allow-list (not "allow nothing"),
+    # and views get the same normalised lists and ceiling the kernel applies.
+    assert tool_acl.layer_policy({"allowed_tools": "  ", "denied_tools": "shell",
+                                  "max_risk": "Low"}) == (set(), {"shell"}, "low")
+    assert tool_acl.layer_policy({"max_risk": "lo"})[2] == "low"
+    assert tool_acl.layer_policy({"max_risk": ""}) == (set(), set(), None)
+    assert tool_acl.layer_policy(None) == (set(), set(), None)

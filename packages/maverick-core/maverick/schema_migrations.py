@@ -133,25 +133,44 @@ def current_plan(world=None) -> tuple[list[str], int, int, list[Step]]:
     the world database -- what ``maverick schema-plan`` shows.
 
     ``world`` is an open world to read the current version from; without one
-    the default world is opened (no database yet means nothing is pending).
-    Nothing is planned when the migration table fails its structural lint.
+    the default SQLite world file is read without opening it as a world, since
+    opening a world applies every pending migration (no database yet means
+    nothing is pending). A database that cannot be read raises RuntimeError
+    instead of reading as current. Nothing is planned when the migration table fails its
+    structural lint.
     """
-    from .world_model import SCHEMA_VERSION, close_world_if_owned, open_world
+    from .world_model import SCHEMA_VERSION
     problems = validate()
     if problems:
         return problems, SCHEMA_VERSION, SCHEMA_VERSION, []
-    if world is not None:
-        current = world.schema_version
-    else:
-        try:
-            w = open_world()
-            try:
-                current = w.schema_version
-            finally:
-                close_world_if_owned(w)
-        except Exception:
-            current = SCHEMA_VERSION  # no DB yet -> nothing pending
+    current = world.schema_version if world is not None else _stored_version()
     return [], int(current), SCHEMA_VERSION, plan(int(current), SCHEMA_VERSION)
+
+
+def _stored_version() -> int:
+    """The default SQLite world's stored schema version, read-only."""
+    import sqlite3
+
+    from .world_model import SCHEMA_VERSION, default_db_path
+    from .world_model_backends import is_postgres_configured
+    if is_postgres_configured():
+        raise RuntimeError("schema-plan previews the SQLite world database only; "
+                           "the Postgres backend is configured")
+    path = default_db_path()
+    if not path.exists() or path.stat().st_size == 0:
+        return SCHEMA_VERSION  # no DB yet -> nothing pending
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10.0)
+        try:
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='schema_version'").fetchone() is None:
+                return 1  # a legacy world without a version table is v1
+            row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        finally:
+            conn.close()
+        return int(row[0]) if row else 1
+    except (sqlite3.Error, TypeError, ValueError) as exc:
+        raise RuntimeError(f"cannot read the world database schema version ({path}): {exc}") from exc
 
 
 def _default_migrations():

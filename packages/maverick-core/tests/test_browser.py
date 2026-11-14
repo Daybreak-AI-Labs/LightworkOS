@@ -488,10 +488,26 @@ def test_fill_form_rejects_oversized_selector_and_value(monkeypatch):
         "action": "fill_form",
         "fields": {long_selector: "ok", "#ok": long_value},
     })
-    assert out.startswith("filled 0/2 field(s)")
-    assert "selector too long" in out
-    assert "value too long" in out
+    # Refused before approval and dispatch, so the approved single-task
+    # dispatch path is bounded too.
+    assert out.startswith("ERROR: fill_form selectors are limited")
     assert page.filled == []
+    out = browser_mod._run_browser_action({
+        "action": "fill_form", "fields": {"#ok": long_value},
+    })
+    assert out.startswith("ERROR: fill_form values are limited")
+    assert page.filled == []
+
+
+def test_timeout_ms_is_clamped(monkeypatch):
+    seen = []
+    monkeypatch.setenv("MAVERICK_BROWSER_DISABLE", "0")
+    monkeypatch.setattr(browser_mod, "_get_session", lambda: _FakeFormSession(_FakeFormPage()))
+    monkeypatch.setattr(browser_mod, "gate_browser_action", lambda *args, **kwargs: None)
+    monkeypatch.setattr(browser_mod, "_dispatch_browser_action",
+                        lambda action, session, page, args, timeout, hosts: seen.append(timeout) or "ok")
+    browser_mod._run_browser_action({"action": "wait_for", "selector": "#x", "timeout_ms": 2**31 - 1})
+    assert seen == [browser_mod._MAX_TIMEOUT_MS]
 
 
 def test_schema_includes_fill_form_limits():

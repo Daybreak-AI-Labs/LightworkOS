@@ -308,6 +308,34 @@ class TestAvailableDomainsOverlay:
         (tmp_path / f"{name}.toml").unlink()
         assert available_domains()[name] == base
 
+    def test_extends_cannot_move_a_builtin_override_off_its_envelope(self, tmp_path, monkeypatch):
+        name = "aero_avionics"
+        monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path))
+        (tmp_path / f"{name}.toml").write_text(
+            f'name = "{name}"\nextends = "zz_missing"\nallow_tools = ["shell", "write_file"]\n'
+            'deny_tools = []\nmax_risk = "high"\n', encoding="utf-8",
+        )
+
+        assert name not in available_domains()
+        assert any("cannot extend" in e for e in rejected_workspace_domains()[name])
+
+    def test_fork_inherits_its_workspace_base_whatever_the_file_order(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path))
+        (tmp_path / "m_base.toml").write_text(
+            'name = "m_base"\nallow_tools = ["read_file"]\ndeny_tools = ["shell", "write_file"]\n'
+            'allow_hosts = ["example.com"]\nmax_risk = "low"\n', encoding="utf-8",
+        )
+        for fork in ("a_child", "z_child"):
+            (tmp_path / f"{fork}.toml").write_text(
+                f'name = "{fork}"\nextends = "m_base"\nallow_tools = ["read_file"]\nmax_risk = "low"\n',
+                encoding="utf-8",
+            )
+
+        domains = available_domains()
+        for fork in ("a_child", "z_child"):
+            assert set(domains[fork].deny_tools) == {"shell", "write_file"}
+            assert domains[fork].allow_hosts == ["example.com"]
+
     def test_workspace_override_cannot_expand_builtin_tools(self, tmp_path, monkeypatch):
         name = "aero_avionics"
         base = load_domains(builtin_dir())[name]
@@ -356,6 +384,20 @@ class TestAvailableDomainsOverlay:
         assert result.exit_code != 0
         assert "ERROR  unsafe: allow_tools is empty" in result.output
         assert "ERROR  unsafe: max_risk is unset" in result.output
+
+    def test_domains_lint_reports_unparseable_builtin_pack(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+        from maverick import domain
+        from maverick.cli import main
+
+        (tmp_path / "broken.toml").write_text('allow_tools = [', encoding="utf-8")
+        monkeypatch.setattr(domain, "builtin_dir", lambda: tmp_path)
+        monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path / "workspace"))
+
+        result = CliRunner().invoke(main, ["domains-lint", "--ci"])
+
+        assert result.exit_code != 0
+        assert "ERROR  broken: pack does not load" in result.output
 
     def test_same_name_override_inherits_base(self, tmp_path, monkeypatch):
         name, base = _clean_builtin()
@@ -503,3 +545,22 @@ class TestBuiltinCatalogCache:
             f'name = "{name}"\ndescription = "overridden-in-test"\n'
         )
         assert available_domains()[name].description == "overridden-in-test"
+
+
+def test_misspelt_signoff_gate_is_enforced_as_approval():
+    from maverick.domain import OutputContract, enforced_gate
+
+    profile = DomainProfile(name="p", output=OutputContract(gate="Approval"),
+                            workflow=[WorkflowStep(name="ship", gate="sign-off")])
+    assert enforced_gate(profile) == "approval"
+
+
+def test_unreadable_config_keeps_every_suite_off(tmp_path, monkeypatch):
+    from maverick.domain import SUITE_PREFIXES, _disabled_suites
+
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[suites]\ncapital_markets = false\nbroken = [\n', encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    assert _disabled_suites() == set(SUITE_PREFIXES.values())
+    from maverick.domain import suites_unavailable_reason
+    assert "could not be read" in suites_unavailable_reason()

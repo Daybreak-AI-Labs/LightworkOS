@@ -213,6 +213,11 @@ def _op_show_commit(sandbox, workdir: Path, args: dict[str, Any]) -> str:
     commit = (args.get("commit") or "HEAD").strip()
     if err := _reject_option_like(commit):
         return err
+    # `<rev>:<path>` (and `:<stage>:<path>`) prints a file's content, which
+    # would reopen the tests/ and .git reads opaque benchmark mode blocks.
+    from .fs import _opaque_mode_active
+    if ":" in commit and _opaque_mode_active():
+        return "ERROR: show_commit does not accept <rev>:<path> in benchmark opaque mode"
     return _shape(*_run_git(sandbox, workdir, ["show", "--stat", commit]), label=f"show {commit}")
 
 
@@ -222,6 +227,9 @@ def _op_blame_line(sandbox, workdir: Path, args: dict[str, Any]) -> str:
     if not path or line is None:
         return "ERROR: blame_line requires path and line"
     line = int(line)
+    from .fs import _is_opaque_blocked_resolved
+    if _is_opaque_blocked_resolved(sandbox, path):
+        return f"ERROR: blame of {path} is blocked in benchmark opaque mode"
     # `--` terminates options so a path can't be read as a flag.
     return _shape(
         *_run_git(sandbox, workdir, ["blame", "-L", f"{line},{line}", "--", path]),

@@ -173,6 +173,10 @@ def migrate_world_db(
         if dry_run or not work:
             log.info("encryption migrate (dry_run=%s): %s", dry_run, report)
             if not dry_run:
+                if _has_message_index(conn):
+                    # A store sealed before the index rebuild existed can still
+                    # hold plaintext terms there; clear them on any re-run.
+                    _clear_leftover_index(conn)
                 _mark_migrated(db_path)
             return report
         # Phase 2 -- optionally back up the plaintext, then reseal in place.
@@ -198,6 +202,7 @@ def migrate_world_db(
                 (resealed, rid, val),
             )
             report[f"{table}.{col}"] += changed.rowcount
+        _rebuild_message_index(conn)
         conn.commit()
         _shred_residue(conn, report)
         if not _unsealed_remaining(conn):
@@ -322,6 +327,50 @@ def migrate_postgres_world(world, *, dry_run: bool = False) -> dict[str, int]:
         from .world_model import _POSTGRES_STORE_POSTURES
         _POSTGRES_STORE_POSTURES[(world._posture_identity, tenant)] = True
     return report
+
+
+def _has_message_index(conn: sqlite3.Connection) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts'"
+    ).fetchone() is not None
+
+
+def _clear_leftover_index(conn: sqlite3.Connection) -> None:
+    """Rebuild the leftover ``messages_fts`` index and shred what it freed.
+
+    Raises :class:`EncryptionUnavailable` with a plain instruction when the
+    database is in use, so the caller stops before writing the migrated
+    marker: that marker must not claim no plaintext remains while the
+    leftover index may still hold it."""
+    try:
+        conn.execute("PRAGMA secure_delete=ON")
+        _rebuild_message_index(conn)
+        conn.commit()
+    except sqlite3.OperationalError as exc:
+        if "locked" not in str(exc) and "busy" not in str(exc):
+            raise
+        conn.rollback()
+        raise EncryptionUnavailable(
+            "the message search index left by an earlier version may still hold "
+            "text written before encryption, and it can only be rebuilt while "
+            "the database is not in use; stop the application and run the "
+            "migration again"
+        ) from exc
+    _shred_residue(conn, {"messages_fts": 1})
+
+
+def _rebuild_message_index(conn: sqlite3.Connection) -> None:
+    """Rebuild the pre-v49 ``messages_fts`` index when it is still present.
+
+    Its update trigger deletes the old row and indexes the sealed token, but
+    FTS5 keeps the deleted plaintext terms in its segment pages until they are
+    merged. A rebuild discards the whole index, so the freed pages are zeroed
+    by ``secure_delete`` and dropped by the VACUUM that follows."""
+    try:
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc):
+            raise
 
 
 def _shred_residue(conn: sqlite3.Connection, report: dict[str, int]) -> None:

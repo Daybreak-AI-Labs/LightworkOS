@@ -3,9 +3,11 @@
 A long-horizon run decomposes a goal into tasks with dependencies; this is the
 durable structure that records them. The graph is a DAG — ``ready()`` returns the
 frontier (pending tasks whose dependencies are all done) so a scheduler/swarm
-knows what's runnable now, ``topo_order()`` gives a valid execution order, and a
-dependency cycle is rejected (it would deadlock the frontier). State persists as
-JSON so a killed run resumes where it left off.
+knows what's runnable now, and ``topo_order()`` gives a valid execution order.
+Only a self-dependency is rejected when a task is added; a longer dependency
+cycle is accepted, leaves its tasks out of ``ready()``, and is reported by
+``topo_order()``. State persists as JSON so a killed run resumes where it left
+off.
 
 ``TaskGraph`` is the pure, unit-tested core; the ``task_graph`` tool persists one
 named graph per file under ``~/.maverick/task_graphs/``.

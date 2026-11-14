@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -94,8 +95,24 @@ class TestShellOpaqueGuard:
         for cmd in ("pip install -e .", "pip install requests", "npm install"):
             out = tool.fn({"cmd": cmd})
             assert "blocked" in out.lower(), f"expected {cmd!r} to be blocked; got {out[:200]}"
+        assert "editable" in tool.fn({"cmd": "pip install -e ."}).lower()
         monkeypatch.setenv("MAVERICK_BENCHMARK_OPAQUE", "0")
         assert "ran:" in tool.fn({"cmd": "pip install ."})
+
+    def test_blocklist_is_linear_on_repeated_subcommands(self):
+        """`"git log " * 474` took seconds before the consent prompt: each rule
+        retried from every `git` (and every `log`). Rules now commit to the
+        first `git` in a segment; the decisions themselves are unchanged."""
+        from maverick.tools.shell import _is_blocked_in_opaque
+        for many in ("git log " * 474, "cat " * 950, "curl " * 760):
+            assert _is_blocked_in_opaque(many) == (False, "")
+        assert _is_blocked_in_opaque("echo x; " + "git log " * 400 + "-p")[0]
+        assert _is_blocked_in_opaque("ls | git -c a=b show HEAD")[0]
+        assert _is_blocked_in_opaque("curl " * 300 + "https://github.com/x")[0]
+        # The editable-install rule is checked first now; it must stay linear.
+        from maverick.tools.shell import _EDITABLE_INSTALL_PATTERN
+        assert _EDITABLE_INSTALL_PATTERN.search("pip install" + " " * 3780 + "x") is None
+        assert _EDITABLE_INSTALL_PATTERN.search("pip install --user -e .")
 
 
 @pytest.fixture(autouse=True)
@@ -393,3 +410,101 @@ class TestOpaqueGoldLeakBlocklist:
         out = tool.fn({"cmd": cmd})
         assert "blocked" not in out.lower(), cmd
         assert "ok" in out
+
+
+# The opaque-mode rule lists as they were before the linear-time rewrite
+# (commit e8a39fb, tools/shell.py). The rewrite must decide every command the
+# same way, rule by rule.
+_OLD_GIT_RULES = [
+    re.compile(r"\bgit\s[^\n;&|]*?\blog\b.*?(?:-p|--patch|--all|--reflog)\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bshow\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bblame\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bdiff\s+\S+\.\."),
+    re.compile(
+        r"\bgit\s[^\n;&|]*?\bdiff\s+"
+        r"(?:-(?!-\s|-$)[^\s]+\s+)*"
+        r"(?!HEAD(?:\s|$))"
+        r"(?!-)"
+        r"[A-Za-z0-9_./~^@]+"
+    ),
+    re.compile(r"\bgit\s[^\n;&|]*?\bstash\s+(?:list|show)\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\breflog\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bformat-patch\b.*?--stdout\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bwhatchanged\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\barchive\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bbundle\s+create\b"),
+    re.compile(
+        r"\bgit\s[^\n;&|]*?\blog\b.*?"
+        r"(?:--format|--pretty)[=\s]\S*%H",
+    ),
+    re.compile(r"\bgit\s[^\n;&|]*?\bcat-file\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bfor-each-ref\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\brev-list\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bshow-ref\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bsymbolic-ref\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bls-tree\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bls-files\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bfsck\b"),
+    re.compile(r"\bgit\s[^\n;&|]*?\bupdate-ref\b"),
+    re.compile(
+        r"\bgit\s[^\n;&|]*?\brev-parse\b.*\b"
+        r"(?:HEAD\^|HEAD~|main|master|origin)"
+    ),
+    re.compile(r"\bgit\s+--git-dir[=\s]+\S+"),
+    re.compile(
+        r"\.git/(?:HEAD|ORIG_HEAD|FETCH_HEAD|MERGE_HEAD|packed-refs"
+        r"|refs(?:/|\b)|objects(?:/|\b)|index\b)",
+    ),
+    re.compile(r"\bfind\s+\.git\b"),
+    re.compile(
+        r"\b(?:cp|mv|ln|tar|rsync|cat|scp|install|7z|zip)\b"
+        r"[^\n;&|]*?(?:^|\s|=)\.git(?:/|\b)",
+    ),
+]
+_OLD_NETWORK_RULES = [
+    re.compile(
+        r"\b(?:curl|wget|http(?:ie)?|aria2c|fetch)\b.*?"
+        r"\b(?:github\.com|githubusercontent\.com|gist\.github\.com|"
+        r"raw\.githubusercontent|api\.github\.com|patch-diff)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bgit\s+clone\s+\S*github\.com\S*", re.IGNORECASE),
+    re.compile(r"\bpip\s+install\s+\S*git\+\S*github\S*", re.IGNORECASE),
+    re.compile(
+        r"\b(?:python|python3)\s+-c\s+[\"'].*?(?:urllib|requests|httpx).*?"
+        r"github\.com",
+        re.IGNORECASE | re.DOTALL,
+    ),
+]
+
+
+_EQUIV_TOKENS = [
+    "git", "git", "-c", "a.b=git", "-C", "/tmp/git", "log", "-p", "show", "HEAD",
+    "HEAD~1", "main", "diff", "--", "x..y", "rev-parse", "format-patch", "--stdout",
+    "--format=%H", "stash", "list", "cat", "cp", ".git", ".git/HEAD", "curl",
+    "https://github.com/x", "python", "-c", '"', "urllib", "pip", "install", "-e",
+    "core.pager=git", "legit", "echo", "blame", "--git-dir=/x", "ls-files",
+]
+_EQUIV_SEPARATORS = [" ", " ", " ", "\n", "; ", " | ", " && ", "\t", "=", ""]
+
+
+def test_linear_rules_decide_exactly_like_the_old_rules():
+    import random
+
+    from maverick.tools import shell as sh
+    old = _OLD_GIT_RULES + _OLD_NETWORK_RULES
+    new = sh._GIT_GOLD_LEAK_PATTERNS + sh._NETWORK_LEAK_PATTERNS
+    assert len(old) == len(new)
+    corpus = [
+        'git -c "a.b=git\n" show HEAD',
+        'git -C "/tmp/git\n" log -p',
+        "git -c core.pager=git\n show HEAD~1",
+        "echo x; git -C d log -p", "ls | cat .git/config", "git status",
+        "cd x && curl https://github.com/a", "cat .gitignore",
+    ]
+    rng = random.Random(20261114)
+    for _ in range(20_000):
+        corpus.append("".join(rng.choice(_EQUIV_TOKENS) + rng.choice(_EQUIV_SEPARATORS)
+                              for _ in range(rng.randint(1, 12))))
+    for cmd in corpus:
+        assert [bool(p.search(cmd)) for p in old] == [bool(p.search(cmd)) for p in new], repr(cmd)

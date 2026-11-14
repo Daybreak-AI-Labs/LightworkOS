@@ -129,3 +129,23 @@ class TestCostRouterReconciled:
         for mid in ("deepseek-v4-flash", "moonshot-v1-128k"):
             assert mid in MODEL_PRICES
             assert rates[mid] == MODEL_PRICES[mid], mid
+
+
+def test_bandit_explores_only_the_cheapest_arms_tier(monkeypatch):
+    # Exploration used to range over every tier at or above the role's floor,
+    # so a cheap-tier summarizer was routed to premium models.
+    monkeypatch.setenv("MAVERICK_COST_ROUTING", "1")
+    monkeypatch.setenv("MAVERICK_ROUTING_BANDIT", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    import maverick.config as cfg
+    monkeypatch.setattr(cfg, "load_config", dict)
+    from maverick.cost import bandit, router
+
+    offered = []
+    monkeypatch.setattr(bandit, "choose_for",
+                        lambda role, tier, arms: offered.extend(arms) or arms[-1])
+    picked = router.pick(router.signal_for_role("summarizer"))
+    tiers = {t for p, m, t, _q in router._PRICE_ENTRIES if f"{p}:{m}" in offered}
+    assert offered and picked in offered
+    assert tiers == {router.TIER_CHEAP}

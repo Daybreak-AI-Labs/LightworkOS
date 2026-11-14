@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
 
 
 def _apply(entries: list[Any]) -> str:
@@ -28,7 +28,7 @@ def _apply(entries: list[Any]) -> str:
             score = float(e.get("score", 0))
         except (TypeError, ValueError):
             score = 0.0
-        if bool(e.get("flagged", False)):
+        if as_bool(e.get("flagged", False)):
             reason = str(e.get("reason", "")).strip() or "flagged for misuse"
             tombstones.append((eid, reason))
         else:

@@ -340,3 +340,56 @@ class TestWarmOnStart:
         assert tc.warm_on_start() == 1
         assert tc.warm_on_start() == 0  # second call no-ops
         tc.reset()
+
+
+def test_workspaces_never_share_cached_output(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_TOOL_CACHE", "1")
+    tool_a, calls_a = _counting_tool()
+    tool_b, calls_b = _counting_tool()
+    reg_a = ToolRegistry(workspace="LocalBackend:/work/a")
+    reg_b = ToolRegistry(workspace="LocalBackend:/work/b")
+    reg_a.register(tool_a)
+    reg_b.register(tool_b)
+    _run(reg_a, "read_file", {"path": "notes.txt"})
+    _run(reg_b, "read_file", {"path": "notes.txt"})
+    assert calls_a["n"] == 1 and calls_b["n"] == 1  # same args, two workspaces
+
+
+def test_remote_workspaces_on_different_hosts_have_distinct_cache_scopes():
+    from maverick.tools import _workspace_cache_scope
+
+    class Remote:
+        workdir_is_local = False
+        workdir = "~/maverick-workspace"
+
+        def __init__(self, host):
+            self.host = host
+
+    assert _workspace_cache_scope(Remote("a.example")) != _workspace_cache_scope(Remote("b.example"))
+
+
+def test_remote_workspace_scope_uses_a_stable_random_token_and_ssh_port():
+    from maverick.tools import _workspace_cache_scope
+
+    class NoHost:
+        workdir_is_local = False
+        workdir = "/ws"
+
+    a, b = NoHost(), NoHost()
+    scope_a = _workspace_cache_scope(a)
+    assert scope_a == _workspace_cache_scope(a)  # stable for the instance
+    assert scope_a != _workspace_cache_scope(b)
+    assert str(id(a)) not in scope_a  # ids repeat after garbage collection
+
+    class Ssh:
+        workdir_is_local = False
+        workdir = "/ws"
+        host = "box.example"
+
+        def __init__(self, ssh_args):
+            self.ssh_args = ssh_args
+
+    assert _workspace_cache_scope(Ssh(["-p", "2222"])) != _workspace_cache_scope(Ssh(["-p", "2223"]))
+    assert _workspace_cache_scope(Ssh(["-o", "Port=2222"])).endswith("@box.example:2222")
+    assert _workspace_cache_scope(Ssh([])).endswith("@box.example")

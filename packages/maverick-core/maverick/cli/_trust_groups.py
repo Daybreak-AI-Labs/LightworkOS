@@ -162,11 +162,21 @@ def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollar
     def _split(s):
         return [x.strip() for x in s.split(",") if x.strip()]
 
+    def _at_rest(token):
+        # The managed overlay must never hold a raw bearer (a leaked backup
+        # of it must not authenticate); store the hashed form `mint` uses.
+        if not token or token.startswith("sha256:"):
+            return token
+        return agent_trust.hash_token(token)
+
     entry = {
         "id": agent_id, "pubkey": pubkey, "direction": direction,
         "allow_tools": _split(allow_tools), "max_risk": max_risk,
         "max_dollars": max_dollars, "data_scopes": _split(data_scopes),
-        "a2a_token": a2a_token, "grpc_token": grpc_token, "mcp_token": mcp_token,
+        "a2a_token": _at_rest(a2a_token), "grpc_token": _at_rest(grpc_token),
+        # Stored as given until the MCP task authorizer accepts the hashed
+        # form: it compares the stored credential with the presented bearer.
+        "mcp_token": mcp_token,
     }
     try:
         a = agent_trust.put_agent(entry)
@@ -180,7 +190,33 @@ def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollar
 def trust_rm_cmd(agent_id: str) -> None:
     """Remove a managed trusted agent."""
     from .. import agent_trust
-    if agent_trust.remove_agent(agent_id):
+    from ..revocation import ProtectedRevocationError, shared
+
+    # Removing a contained agent's entry drops its revoked flag, so a later
+    # `trust add` would re-admit it without the security release.
+    action_errors: list[Exception] = []
+
+    def _remove() -> bool:
+        try:
+            return agent_trust.remove_agent(agent_id)
+        except Exception as exc:  # reported below, not as a containment failure
+            action_errors.append(exc)
+            return False
+
+    try:
+        removed = shared().run_if_unprotected(f"agent:{agent_id}", _remove)
+    except ProtectedRevocationError as exc:
+        raise click.ClickException(
+            "agent is security-contained; use `maverick control-plane release`"
+        ) from exc
+    except Exception as exc:
+        raise click.ClickException(
+            "containment authority is unavailable; remove refused"
+        ) from exc
+    if action_errors:
+        raise click.ClickException(
+            f"could not remove {agent_id!r}: {action_errors[0]}") from action_errors[0]
+    if removed:
         click.echo(click.style(f"removed {agent_id!r}", fg="yellow"))
     else:
         raise click.ClickException(
@@ -322,7 +358,7 @@ def backup_group() -> None:
     Snapshots the client-scoped data root (world DB via the SQLite online backup
     API, signed audit chain, memory, fleet, managed trust registry) into a
     portable ``.tgz`` with an authenticated manifest. The at-rest encryption
-    key and audit signing key are excluded by default (escrow them
+    key, audit signing key and browser vault key are excluded by default (escrow them
     separately per docs/encryption.md; ``--include-keys`` opts back in). Set
     the same 32-byte ``MAVERICK_BACKUP_SIGNING_KEY`` on the active and
     standby nodes. Restore is transactional and fail-closed on
@@ -332,16 +368,16 @@ def backup_group() -> None:
 @backup_group.command("create")
 @click.option("--out", default=None, help="Destination .tgz (default: under data root).")
 @click.option("--include-keys", is_flag=True,
-              help="Bundle the at-rest encryption + audit signing key material "
-                   "in the archive. Off by default: escrow keys separately "
+              help="Bundle the at-rest encryption, audit signing and browser "
+                   "vault key material in the archive. Off by default: escrow keys separately "
                    "instead of storing them next to the data they unlock.")
 def backup_create_cmd(out, include_keys) -> None:
     """Create a consistent backup of this client's data."""
     from ..backup import BackupError, create_backup, withheld_key_files
     if include_keys:
         click.echo(click.style(
-            "WARNING: --include-keys bundles the at-rest encryption and audit "
-            "signing key material inside this archive. Anyone who obtains a "
+            "WARNING: --include-keys bundles the at-rest encryption, audit "
+            "signing and browser vault key material inside this archive. Anyone who obtains a "
             "copy (offsite backup, object storage, a lost disk) gets "
             "plaintext-equivalent access to everything it seals. Escrow keys "
             "separately unless you have a specific reason not to.",
@@ -596,7 +632,17 @@ def security_contain_cmd(subject: str, reason: str, yes: bool) -> None:
 @click.argument("subject")
 def security_release_cmd(subject: str) -> None:
     """Undo a containment for SUBJECT."""
+    from ..agent_control_plane import is_external
     from ..agent_edr import release
+    if is_external(subject):
+        # This path lifts only the revocation row; an external agent's trust
+        # entry and gateway containment would stay in force while it printed
+        # success. The control plane releases all three together.
+        raise click.ClickException(
+            "an external agent's trust entry and gateway containment are lifted "
+            "together by the control plane: enable it ([control_plane] enable = "
+            "true or MAVERICK_CONTROL_PLANE=1), then run "
+            f"`maverick control-plane release {subject}`")
     result = release(subject)
     colour = "green" if result.contained else "red"
     click.echo(click.style(f"released={result.contained}", fg=colour))

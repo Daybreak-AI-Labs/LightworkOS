@@ -41,8 +41,10 @@ _REST_SPEC_INDEX = {spec["name"]: spec for spec in _SPECS}
 # Read-only (GET-only) variants for finance vendors -- the bridge that
 # lets a read-only pack (max_risk <= medium) pull narrowly-scoped data without
 # handing it a write-capable seat. Same env/creds as the write connector; writes
-# are structurally unreachable, and reads are constrained by explicit endpoint
-# allowlists (allowed_read_paths). Risk is tracked explicitly in
+# are structurally unreachable. Only the seats that set allowed_read_paths
+# (modern_treasury_read and the tax seats below) are limited to listed endpoint
+# prefixes; the finance seats derived by _read_specs_for may GET any path of
+# their system. Risk is tracked explicitly in
 # READ_CONNECTOR_RISKS so read-only seats for sensitive systems do not bypass
 # low-risk ceilings.
 _READ_SPECS: list[dict] = [
@@ -85,7 +87,9 @@ def _read_specs_for(vendors: list[str]) -> list[dict]:
 
 # Finance vendors whose read-only/draft packs need to pull data: each gets a
 # GET-only, LOW-risk variant (wired into the matching pack's allow_tools), so the
-# whole CFO office can read its systems while money tools stay denied.
+# whole CFO office can read its systems while money tools stay denied. These
+# seats have no allowed_read_paths: any GET endpoint of the vendor is reachable,
+# including payroll and HR records for adp/gusto.
 _FINANCE_READ_VENDORS: list[str] = [
     "billdotcom", "coupa", "ariba", "chargebee", "netsuite", "carta",
     "concur", "ramp", "adp", "gusto", "workiva", "avalara",
@@ -114,7 +118,9 @@ _TAX_READ_ALLOWLISTS: dict[str, tuple[str, ...]] = {
 _TAX_READ_VENDORS: list[str] = ["cch_axcess", "gosystem_tax"]
 _TAX_READ_SPECS = _read_specs_for(_TAX_READ_VENDORS)
 for _spec in _TAX_READ_SPECS:
-    _allowed = _TAX_READ_ALLOWLISTS.get(_spec["name"], ())
+    # Indexed, not .get(): an empty allow-list means "every path", so a tax
+    # vendor added without one must fail at import, not open up.
+    _allowed = _TAX_READ_ALLOWLISTS[_spec["name"]]
     _spec["allowed_read_paths"] = _allowed
     _spec["description"] += (
         " Low-risk seat is restricted to these status/locator prefixes: "
@@ -196,7 +202,7 @@ _PUBLIC_DATA_SPECS: list[dict] = [
          description="SEC EDGAR company filings & XBRL facts, READ-ONLY, keyless. "
          "e.g. /submissions/CIK0000320193.json, "
          "/api/xbrl/companyconcept/CIK0000320193/us-gaap/Revenues.json. "
-         "Send a descriptive User-Agent via SEC_EDGAR_* if required."),
+         "Requests carry the HTTP client's default User-Agent."),
     _pub("treasury_fiscaldata", "https://api.fiscaldata.treasury.gov", keyless=True,
          description="U.S. Treasury Fiscal Data, READ-ONLY, keyless. e.g. "
          "/services/api/fiscal_service/v2/accounting/od/avg_interest_rates."),
@@ -235,8 +241,9 @@ _PUBLIC_DATA_SPECS: list[dict] = [
          "/v3/reference/tickers, /v2/aggs/ticker/AAPL/range/1/day/2024-01-01/2024-02-01. "
          "Auth: POLYGON_API_KEY (Bearer)."),
     _pub("openfigi", "https://api.openfigi.com", token_header="X-OPENFIGI-APIKEY", scheme="",
-         description="OpenFIGI security-identifier mapping, READ-ONLY. POST-style "
-         "mapping is read-shaped; e.g. GET /v3/search. Auth: OPENFIGI_API_KEY."),
+         description="OpenFIGI security-identifier mapping, READ-ONLY (GET only; the "
+         "POST /v3/mapping and /v3/search endpoints are not reachable). e.g. "
+         "/v3/mapping/values/exchCode. Auth: OPENFIGI_API_KEY."),
     # --- Regulatory / legal / government ---
     _pub("federal_register", "https://www.federalregister.gov", keyless=True,
          description="U.S. Federal Register, READ-ONLY, keyless. e.g. "
@@ -259,7 +266,8 @@ _PUBLIC_DATA_SPECS: list[dict] = [
          "Auth: GOVINFO_API_KEY (free via api.data.gov)."),
     _pub("usaspending", "https://api.usaspending.gov", keyless=True,
          description="USAspending federal awards/spending, READ-ONLY, keyless. e.g. "
-         "/api/v2/search/spending_by_award/ (POST search is read-shaped)."),
+         "/api/v2/references/toptier_agencies/ (GET only; the POST search "
+         "endpoints are not reachable)."),
     _pub("sam_gov", "https://api.sam.gov", query_auth="api_key",
          description="SAM.gov entity registration & exclusions, READ-ONLY. e.g. "
          "/entity-information/v3/entities?ueiSAM=. Key as query param. "

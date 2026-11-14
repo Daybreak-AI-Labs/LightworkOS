@@ -91,3 +91,18 @@ def test_redirect_does_not_contact_destination(monkeypatch, relative):
             await target_server.wait_closed()
 
     asyncio.run(scenario())
+
+
+def test_enterprise_check_sees_the_real_host_for_mixed_case_schemes(monkeypatch):
+    from urllib.parse import urlparse
+
+    import maverick.enterprise as enterprise
+    from maverick.tools.websocket_tool import _preflight_egress
+
+    seen = []
+    monkeypatch.setattr(enterprise, "enterprise_egress_denial",
+                        lambda url, tool=None: seen.append(url) or None)
+    url = "Wss://wsbin.org/x"
+    _preflight_egress(url, urlparse(url))
+    assert urlparse(seen[0]).hostname == "wsbin.org"
+    assert urlparse(seen[0]).scheme == "https"

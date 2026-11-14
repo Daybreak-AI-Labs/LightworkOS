@@ -70,8 +70,15 @@ _DESTRUCTIVE = (
     # DROP of any schema object an old replica may still depend on. CONSTRAINT
     # and the rebuildable objects (INDEX/VIEW/TRIGGER/SEQUENCE) are non-additive
     # in a rolling deploy and were missed before.
-    re.compile(r"\bDROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX|VIEW|TRIGGER|SEQUENCE)\b",
-               re.IGNORECASE),
+    re.compile(r"\bDROP\s+(TABLE|COLUMN|CONSTRAINT|INDEX|VIEW|TRIGGER|SEQUENCE"
+               r"|SCHEMA|TYPE|FUNCTION|MATERIALIZED\s+VIEW)\b", re.IGNORECASE),
+    # ALTER TABLE t DROP c (COLUMN is optional in SQLite and Postgres); only
+    # relaxing NOT NULL is additive.
+    re.compile(r"\bALTER\s+TABLE\b[^;]*\bDROP\s+(?!NOT\s+NULL\b)", re.IGNORECASE | re.DOTALL),
+    # A column type change can break an old replica's reads and writes.
+    re.compile(r"\bALTER\s+COLUMN\b[^;]*\bTYPE\b", re.IGNORECASE | re.DOTALL),
+    # Top-level data removal (trigger bodies that delete are not matched).
+    re.compile(r"^\s*(TRUNCATE|DELETE\s+FROM)\b", re.IGNORECASE),
     # Any RENAME under ALTER TABLE. Match RENAME anywhere after ALTER TABLE
     # (not `ALTER TABLE \S+ RENAME`) so a quoted/bracketed identifier containing
     # a space -- ALTER TABLE "my table" RENAME TO y -- can't slip past \S+.
@@ -172,7 +179,9 @@ def structural_problems(lads: dict[str, dict[int, list[str]]] | None = None) -> 
 def _destructive_statements(statements: list[str]) -> list[str]:
     hits = []
     for stmt in statements:
-        if any(p.search(stmt) for p in _DESTRUCTIVE):
+        # Comments must not hide a keyword: DROP /* c */ TABLE t.
+        bare = re.sub(r"/\*.*?\*/|--[^\n]*", " ", stmt, flags=re.DOTALL)
+        if any(p.search(bare) for p in _DESTRUCTIVE):
             hits.append(_normalize(stmt)[:70])
     return hits
 

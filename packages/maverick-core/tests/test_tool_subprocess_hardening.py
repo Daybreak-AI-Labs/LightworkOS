@@ -323,6 +323,77 @@ def test_pandoc_converts_simple_markdown_to_html_and_docx(tmp_path):
         assert b"A plain document." in archive.read("word/document.xml")
 
 
+def test_pandoc_document_cannot_include_files_outside_the_workspace(tmp_path):
+    import shutil
+
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    if shutil.which("pandoc") is None:
+        pytest.skip("pandoc is unavailable")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE-SECRET\n", encoding="utf-8")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "a.rst").write_text(f"Title\n=====\n\n.. include:: {outside}\n", encoding="utf-8")
+    (work / "b.md").write_text(f"![x]({outside})\n", encoding="utf-8")
+    tool = pandoc_tool(LocalBackend(workdir=work))
+    tool.fn({"op": "convert", "input_path": "a.rst", "output_path": "a.html"})
+    written = work / "a.html"
+    assert not written.exists() or "OUTSIDE-SECRET" not in written.read_text(encoding="utf-8")
+    assert tool.fn({"op": "convert", "input_path": "b.md", "output_path": "b.docx"}).startswith("ERROR:")
+    assert sorted(p.name for p in work.iterdir()) == ["a.html", "a.rst", "b.md"]
+
+
+def test_pandoc_docx_round_trip_keeps_images_and_allows_data_uris(tmp_path):
+    """docx -> docx went through a JSON AST that names images inside the
+    package without their bytes, so the output silently lost them; data:
+    images were refused for containing ':'."""
+    import base64
+    import shutil
+    import struct
+    import zipfile
+    import zlib
+
+    from maverick.sandbox import LocalBackend
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    if shutil.which("pandoc") is None:
+        pytest.skip("pandoc is unavailable")
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00")) + chunk(b"IEND", b""))
+    (tmp_path / "p.png").write_bytes(png)
+    (tmp_path / "a.md").write_text("# T\n\n![x](p.png)\n", encoding="utf-8")
+    tool = pandoc_tool(LocalBackend(workdir=tmp_path))
+    assert tool.fn({"op": "convert", "input_path": "a.md", "output_path": "in.docx"}).startswith("wrote ")
+    assert tool.fn({"op": "convert", "input_path": "in.docx", "output_path": "out.docx"}).startswith("wrote ")
+    with zipfile.ZipFile(tmp_path / "out.docx") as archive:
+        assert any(name.startswith("word/media/") for name in archive.namelist())
+    assert not any(p.name.startswith(".pandoc") for p in tmp_path.iterdir())
+
+    inline = "data:image/png;base64," + base64.b64encode(png).decode()
+    (tmp_path / "d.md").write_text(f"![x]({inline})\n", encoding="utf-8")
+    assert tool.fn({"op": "convert", "input_path": "d.md", "output_path": "d.docx"}).startswith("wrote ")
+
+
+def test_pandoc_without_sandbox_support_names_the_required_version(tmp_path, monkeypatch):
+    from maverick.tools.pandoc_tool import pandoc_tool
+
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/pandoc")
+
+    class _OldPandoc(_RecordingSandbox):
+        def exec(self, cmd, timeout=None):
+            from maverick.sandbox.local import ExecResult
+            return ExecResult(stdout="", stderr="Unknown option --sandbox.\nTry pandoc --help", exit_code=2)
+
+    out = pandoc_tool(_OldPandoc(tmp_path)).fn({"op": "markdown_to_html", "text": "hi"})
+    assert out == "ERROR: pandoc 2.15 or newer is required (it must support --sandbox)"
+
+
 @pytest.mark.parametrize("options", [
     ["-write", "/tmp/out"], ["text:/etc/passwd"], ["-script", "@bad"],
     ["-format", "info:"], ["-resize", "@secret"], ["-quality", "101"],
