@@ -93,7 +93,7 @@ class FakeDecisions:
         self.calls = []
         self.risk, self.card_present, self.status = risk, card, status
         self.refuse = None
-        self.eligible = {"user:alice"}
+        self.eligible = {"user:alice", "user:bob"}
 
     def eligible_approvers(self, world, approval):
         return set(self.eligible)
@@ -631,6 +631,26 @@ def test_post_approval_to_linked_users(monkeypatch):
     assert len(posted) == 2  # carol is not an approver
     assert teams_mod.post_approval_to_linked_users(7, cfg={**cfg, "approvals_enabled": False},
                                                    transport=transport) == []
+
+
+def test_approval_card_is_not_posted_to_a_link_the_dashboard_rule_excludes():
+    """A demoted or deprovisioned approver link must not receive the card."""
+    from maverick import teams_identity
+    teams_identity.link(AAD_USER, "user:alice", approver=True)
+    teams_identity.remember_conversation(AAD_USER, {"service_url": SERVICE_URL, "conversation_id": "a:conv1",
+                                                    "tenant_id": TENANT, "user_id": "29:x"})
+    teams_identity.link("dave@example.com", "user:dave", approver=True)
+    transport = FakeTransport()
+    cfg = {"enabled": True, "approvals_enabled": True, "app_id": APP_ID, "app_password": FAKE_SECRET,
+           "tenant_id": TENANT}
+    decisions = FakeDecisions()
+    decisions.eligible = {"user:alice"}
+    assert len(teams_mod.post_approval_to_linked_users(7, cfg=cfg, transport=transport, decisions=decisions)) == 1
+    assert not any("dave" in json.dumps(c.get("json")) for c in transport.calls)
+    decisions.eligible = set()
+    transport.calls.clear()
+    assert teams_mod.post_approval_to_linked_users(7, cfg=cfg, transport=transport, decisions=decisions) == []
+    assert transport.calls == []
 
 
 def test_approval_notify_hook_is_gated_and_skips_settings(monkeypatch):
