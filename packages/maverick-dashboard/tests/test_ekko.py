@@ -851,3 +851,14 @@ def test_factory_builds_guided_task_steps_without_an_extra_context_form(factory)
     assert "1. download report in excel; 2. create presentation in powerpoint" in flow.nodes["produce"].brief
     recorded.erase()
     assert build_scan(found, body).status_code == 409
+
+
+def test_pilot_after_revoked_enrollment_asks_to_enroll_again(planning):
+    store, candidate, payload, _ = planning
+    plan = save(candidate, payload).json()["plan"]
+    store.revoke_enrollment()
+    response = client.post(f"/api/v1/ekko/plans/{candidate['opportunity_id']}/runs", json={
+        "device_id": "desk", "context": payload["context"], "expected_revision": plan["revision"],
+        "sample_id": "pilot-run-one", "manual_minutes": 30, "remaining_minutes": 6, "accepted": True})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Your enrollment for this device has ended. Enroll it again to continue."
