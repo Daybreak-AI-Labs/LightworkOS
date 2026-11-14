@@ -31,6 +31,7 @@ scripted flaky plugin) and exits non-zero if any property fails — a CI gate.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from random import Random
@@ -150,7 +151,9 @@ def run_drill(
             # isolation: a clean call must echo its OWN payload, proving no
             # carry-over from the previous (faulted) call.
             text = result.content if isinstance(result, ToolOutcome) else result
-            if isinstance(text, str) and f"i={i}" not in text and inject is None:
+            # Delimited match: "i=10" must not count as the echo of i=1.
+            if (isinstance(text, str) and inject is None
+                    and not re.search(rf"(?<![0-9])i={i}(?![0-9])", text)):
                 report.isolation_violations += 1
         if mem_sampler is not None:
             mem.append(mem_sampler())
