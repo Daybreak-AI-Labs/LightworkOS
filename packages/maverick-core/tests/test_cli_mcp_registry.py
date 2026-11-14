@@ -69,3 +69,13 @@ def test_list_configured(monkeypatch):
     assert r.exit_code == 0, r.output
     assert "github  (stdio)  npx -y pkg" in r.output
     assert "remote  (http)  https://h/sse" in r.output
+
+
+def test_remove_refusal_is_a_clean_cli_error(monkeypatch, tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('[mcp_servers]\nfoo = { command = "srv" }\n', encoding="utf-8")
+    monkeypatch.setattr(mcp_registry, "_config_path", lambda path=None: cfg)
+    r = CliRunner().invoke(main, ["mcp-registry", "remove", "foo"])
+    assert r.exit_code != 0
+    assert "by hand" in r.output and "Traceback" not in r.output
+    assert r.exception is None or isinstance(r.exception, SystemExit)

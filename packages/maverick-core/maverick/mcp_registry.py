@@ -25,6 +25,8 @@ from __future__ import annotations
 import logging
 import re
 
+import click
+
 from . import catalog
 from .mcp_client import MCPServerSpec
 
@@ -321,6 +323,13 @@ def add_mcp_server_to_config(name: str, spec_dict: dict, *, path=None) -> None:
         p.write_text(block, encoding="utf-8")
 
 
+class MCPConfigEditRefused(click.ClickException, ValueError):
+    """config.toml could not be edited safely; nothing was written.
+
+    A ClickException so ``maverick mcp-registry remove`` prints a clean
+    message and exits non-zero; a ValueError for library callers."""
+
+
 def remove_mcp_server_from_config(name: str, *, path=None) -> bool:
     """Remove the ``[mcp_servers.<name>]`` table (and any subtables) from
     config.toml by text scan. Returns True if it was present and removed.
@@ -329,7 +338,8 @@ def remove_mcp_server_from_config(name: str, *, path=None) -> bool:
     ordering, unrelated tables — is preserved byte-for-byte. The result is
     parsed before it is written: if the server is still declared (for example
     inline under ``[mcp_servers]``) or the file would no longer parse, nothing
-    is written and ``ValueError`` asks the operator to edit the file."""
+    is written and :class:`MCPConfigEditRefused` (a ``ValueError``) asks the
+    operator to edit the file."""
     p = _config_path(path)
     if not p.exists():
         return False
@@ -359,7 +369,7 @@ def remove_mcp_server_from_config(name: str, *, path=None) -> bool:
     except tomllib.TOMLDecodeError:
         remaining = None
     if remaining is None or name in remaining:
-        raise ValueError(
+        raise MCPConfigEditRefused(
             f"MCP server {name!r} could not be removed automatically; "
             f"edit {p} by hand (the file was not changed)")
     from .file_lock import atomic_write_text
@@ -376,4 +386,5 @@ __all__ = [
     "install_mcp_from_registry",
     "add_mcp_server_to_config",
     "remove_mcp_server_from_config",
+    "MCPConfigEditRefused",
 ]
