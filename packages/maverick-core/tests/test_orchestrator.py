@@ -479,3 +479,15 @@ async def test_env_ladder_sets_each_attempts_model_and_temperature(tmp_path, mon
         ("deepseek-v4-pro", 0.5),
         ("claude-opus-4-7", 0.3),
     ]
+
+
+def test_paid_enrichment_does_not_swallow_budget_or_accounting_stops():
+    from maverick.budget import BudgetExceeded, UsageAccountingError
+    from maverick.orchestrator import _enrich
+
+    for stop in (UsageAccountingError("usage missing"), BudgetExceeded("cap")):
+        with pytest.raises(type(stop)):
+            with _enrich("planning", paid=True):
+                raise stop
+        with _enrich("recall"):  # unpaid enrichment stays fail-soft
+            raise stop

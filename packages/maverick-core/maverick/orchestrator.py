@@ -45,13 +45,18 @@ def _safe_exception_text(exc: BaseException, *, fallback: str) -> str:
 
 
 @contextmanager
-def _enrich(label: str):
+def _enrich(label: str, *, paid: bool = False):
     """Wrap a gated brief-enrichment block: its failure is logged at debug and
     never blocks the run. Factors the identical try/except/log.debug scaffold the
-    enrichment blocks (experience, role-stats, reflexion, dreaming, ...) repeat."""
+    enrichment blocks (experience, role-stats, reflexion, dreaming, ...) repeat.
+
+    ``paid`` blocks make model calls on the goal budget: a budget stop or a
+    call whose usage could not be billed stops the run instead."""
     try:
         yield
     except Exception as e:  # pragma: no cover -- enrichment never blocks a run
+        if paid and isinstance(e, (BudgetExceeded, UsageAccountingError)):
+            raise
         log.debug(
             "%s skipped: %s",
             label,
@@ -993,7 +998,7 @@ async def _apply_brief_enrichments(
     # MCP acquisition and generated tools retain separate authority gates.
     from .chat_message_actions import answer_only_runtime, require_dispatch_sources
     require_dispatch_sources()
-    with _enrich("self-learning preflight"):
+    with _enrich("self-learning preflight", paid=True):
         from . import self_learning
         if not answer_only_runtime() and self_learning.enabled() and self_learning.settings()["preflight"]:
             acquired = await self_learning.preflight(
@@ -1039,7 +1044,7 @@ async def _apply_brief_enrichments(
     # Default-on test-time skill synthesis (SOTA SkillTTA): synthesize a short
     # task-specific cheat-sheet for THIS goal and inject it. The extra model call
     # still requires provider-egress authority; spend is metered; fail-open.
-    with _enrich("skill synthesis"):
+    with _enrich("skill synthesis", paid=True):
         from .skill import synthesis as skill_synthesis
         if skill_synthesis.enabled():
             _sk = await skill_synthesis.synthesize_task_skill(
@@ -1126,10 +1131,10 @@ async def _apply_brief_enrichments(
     # pick the winner, and prepend it as guidance. Default mode skips this
     # entirely (no extra LLM calls), so behaviour is unchanged. The
     # shared budget is passed through, so planning counts against the
-    # goal's cap; if it exhausts the budget, root.run() below surfaces the
-    # graceful "hit your limit" message.
+    # goal's cap; a budget stop here ends the run with the graceful "hit your
+    # limit" message.
     _planning_mode = "default"
-    with _enrich("tree-of-thought planning"):
+    with _enrich("tree-of-thought planning", paid=True):
         from . import tree_of_thought as _tot
         _use_tot = _tot.enabled()
         # Learned topology selection: [planning] mode = "auto" lets the
