@@ -21,6 +21,44 @@ from .content_classifier import MAX_TEXT_CHARS, classify_text
 REDACTION_TEMPLATE = "[REDACTED:{category}]"
 
 
+def _replace_spans(text: str, work: str, findings: list[dict[str, Any]],
+                   wanted: set[str] | None, counts: dict[str, int]) -> tuple[str, str, int]:
+    """Replace the ``wanted`` findings in ``text`` and in its working copy
+    ``work`` (same offsets), and blank the other findings in ``work`` only so a
+    later pass does not collect them again. Returns both strings and how many
+    spans were handled, adding replacements to ``counts``."""
+    # Unwanted findings: blank them in the working copy only (same length).
+    kept = [row for row in findings if wanted is not None and row["category"] not in wanted]
+    if kept:
+        chars = list(work)
+        for row in kept:
+            chars[row["start"]:row["end"]] = "\x00" * (row["end"] - row["start"])
+        work = "".join(chars)
+    # Merge overlapping or nested wanted spans into their union, labelled with
+    # the earliest (outermost) finding, so no part of an enclosing identifier
+    # stays visible around a nested hit.
+    merged: list[list[Any]] = []
+    for row in sorted((row for row in findings if wanted is None or row["category"] in wanted),
+                      key=lambda row: (row["start"], -row["end"])):
+        if merged and row["start"] < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], row["end"])
+            continue
+        merged.append([row["start"], row["end"], row["category"]])
+    # Rebuild both strings in one forward pass (offsets refer to the input).
+    out_text: list[str] = []
+    out_work: list[str] = []
+    pos = 0
+    for start, end, category in merged:
+        placeholder = REDACTION_TEMPLATE.format(category=category)
+        out_text += [text[pos:start], placeholder]
+        out_work += [work[pos:start], placeholder]
+        pos = end
+        counts[category] = counts.get(category, 0) + 1
+    text = "".join(out_text) + text[pos:]
+    work = "".join(out_work) + work[pos:]
+    return text, work, len(merged) + len(kept)
+
+
 def redact_text(
     text: object,
     *,
@@ -33,39 +71,27 @@ def redact_text(
     every finding. ``roster`` adds deterministic name matches (category
     ``name``). Returns ``{"text", "redactions", "counts"}`` where
     ``counts`` maps category -> replacements made. Overlapping findings are
-    replaced as one span. Raises ``ValueError`` when the classifier hit its
-    findings cap, since some findings would otherwise stay unredacted.
+    replaced as one span. Text with more findings than the classifier
+    collects in one pass is redacted over several passes.
     """
 
     sample = str(text or "")
     if len(sample) > MAX_TEXT_CHARS:
         raise ValueError(f"text must be at most {MAX_TEXT_CHARS} characters")
     wanted = None if categories is None else {str(c) for c in categories}
-    report = classify_text(sample, roster=roster)
-    if report.get("truncated"):
-        # The classifier stops collecting at its findings cap; redacting only
-        # the collected spans would ship the rest in clear.
-        raise ValueError("text holds too many findings to redact completely")
-    spans = sorted(
-        (row for row in report["findings"]
-         if wanted is None or row["category"] in wanted),
-        key=lambda row: (row["start"], -row["end"]),
-    )
-    # Merge overlapping or nested spans into their union, labelled with the
-    # earliest (outermost) finding, so no part of an enclosing identifier stays
-    # visible around a nested hit.
-    merged: list[list[Any]] = []
-    for row in spans:
-        if merged and row["start"] < merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], row["end"])
-            continue
-        merged.append([row["start"], row["end"], row["category"]])
-    # Replace back-to-front so earlier spans keep their offsets.
-    out = sample
+    out = work = sample
     counts: dict[str, int] = {}
-    for start, end, category in reversed(merged):
-        out = out[:start] + REDACTION_TEMPLATE.format(category=category) + out[end:]
-        counts[category] = counts.get(category, 0) + 1
+    # The classifier stops collecting at its findings cap. Redact what it
+    # collected, then classify the redacted text again (placeholders are never
+    # findings) until a pass is complete, so every finding is redacted however
+    # many there are. Each truncated pass handles at least one span.
+    while True:
+        report = classify_text(work, roster=roster)
+        out, work, handled = _replace_spans(out, work, report["findings"], wanted, counts)
+        if not report.get("truncated"):
+            break
+        if not handled:
+            raise ValueError("text holds findings that could not be redacted")
     return {
         "text": out,
         "redactions": sum(counts.values()),

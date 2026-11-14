@@ -43,11 +43,19 @@ def test_nested_findings_redact_the_whole_outer_span():
     assert result["redactions"] == 1
 
 
-def test_findings_beyond_the_classifier_cap_refuse_instead_of_leaking():
+def test_findings_beyond_the_classifier_cap_are_all_redacted():
+    # The classifier stops collecting at MAX_FINDINGS; findings past the cap
+    # (including a cap reached before overlapping phone hits are dropped) used
+    # to stay in clear.
     from maverick.content_classifier import MAX_FINDINGS
     text = " ".join(f"u{i}@example.com" for i in range(MAX_FINDINGS + 5))
-    with pytest.raises(ValueError, match="too many findings"):
-        redact_text(text)
+    result = redact_text(text)
+    assert "@example.com" not in result["text"]
+    assert result["counts"] == {"email": MAX_FINDINGS + 5}
+    filtered = redact_text(text + " 51.5007, -0.1246", categories=["location"])
+    assert "51.5007" not in filtered["text"] and "u0@example.com" in filtered["text"]
+    nhs = "NHS 943 476 5919 " * 2600 + "51.5007, -0.1246"
+    assert "51.5007" not in redact_text(nhs)["text"]
 
 
 def test_bounds():
