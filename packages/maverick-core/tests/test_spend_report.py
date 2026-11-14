@@ -13,11 +13,12 @@ class _FakeEp:
 
 def _patch_world(monkeypatch, episodes):
     class _W:
-        def list_episodes(self, limit=200):
+        def list_episodes(self, limit=200, owner=None):
             return episodes[:limit]
 
     import maverick.world_model
     monkeypatch.setattr(maverick.world_model, "WorldModel", lambda: _W())
+    monkeypatch.setattr("maverick.memory_ownership.current_owner", lambda **_: "")
 
 
 def test_spend_recent_empty(monkeypatch):
@@ -84,3 +85,19 @@ def test_spend_total_renders(monkeypatch):
     assert "lifetime:" in out and "6.0000" in out
     assert "last 24h:" in out and "3.0000" in out
     assert "last 1h:" in out and "1.0000" in out
+
+
+def test_spend_report_is_scoped_to_the_current_owner(monkeypatch):
+    seen = {}
+
+    class _W:
+        def list_episodes(self, limit=200, owner=None):
+            seen["owner"] = owner
+            return [{"id": 1, "role": "p", "cost_dollars": 0.25, "ended_at": 0}]
+
+    monkeypatch.setattr("maverick.tools.spend_report._world", lambda: _W())
+    monkeypatch.setattr("maverick.memory_ownership.current_owner", lambda **_: "alice")
+    from maverick.tools.spend_report import spend_report
+    out = spend_report().fn({"op": "by_role"})
+    assert seen["owner"] == "alice"
+    assert "0.2500" in out  # dict-shaped episodes keep their cost
