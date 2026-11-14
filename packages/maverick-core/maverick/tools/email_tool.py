@@ -21,7 +21,7 @@ import os
 import ssl
 from typing import Any
 
-from . import Tool
+from . import Tool, as_bool
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +117,16 @@ def _send(args: dict[str, Any]) -> str:
     return f"sent to {to} (subject: {subject[:60]})"
 
 
+def _quote_mailbox(folder: str) -> str:
+    """Quote an IMAP mailbox name: imaplib sends arguments verbatim, so
+    ``Sent Items`` would otherwise reach the server as two arguments. A
+    name the model already quoted is unwrapped first, then re-quoted, so it
+    can never carry extra arguments."""
+    if len(folder) >= 2 and folder[0] == folder[-1] == '"':
+        folder = folder[1:-1]
+    return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _list_inbox(args: dict[str, Any]) -> str:
     import imaplib
     from email import message_from_bytes
@@ -131,12 +141,14 @@ def _list_inbox(args: dict[str, Any]) -> str:
     if any(ord(c) < 0x20 for c in folder):
         return "ERROR: invalid folder name (control character)"
     limit = max(1, min(int(args.get("limit") or 20), 200))
-    criterion = "UNSEEN" if args.get("unread_only") else "ALL"
+    criterion = "UNSEEN" if as_bool(args.get("unread_only")) else "ALL"
 
     try:
-        with imaplib.IMAP4_SSL(host, ssl_context=ssl.create_default_context()) as m:
+        with imaplib.IMAP4_SSL(
+            host, ssl_context=ssl.create_default_context(), timeout=30,
+        ) as m:
             m.login(user, pw)
-            m.select(folder)
+            m.select(_quote_mailbox(folder))
             # UID commands, never m.search()/m.fetch(): plain SEARCH/FETCH
             # use volatile message SEQUENCE numbers, renumbered by any
             # EXPUNGE. The ids listed here are consumed by a later `fetch`
@@ -198,9 +210,11 @@ def _fetch(args: dict[str, Any]) -> str:
         return "ERROR: invalid folder name (control character)"
 
     try:
-        with imaplib.IMAP4_SSL(host, ssl_context=ssl.create_default_context()) as m:
+        with imaplib.IMAP4_SSL(
+            host, ssl_context=ssl.create_default_context(), timeout=30,
+        ) as m:
             m.login(user, pw)
-            m.select(folder)
+            m.select(_quote_mailbox(folder))
             # UID FETCH, not m.fetch(): the uid came from list_inbox's UID
             # SEARCH in an earlier session. A sequence-number FETCH after any
             # EXPUNGE would silently return a different message. UID FETCH of

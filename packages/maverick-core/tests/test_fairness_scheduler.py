@@ -83,3 +83,10 @@ def test_non_finite_weight_does_not_crash():
 def test_infinite_pending_and_slots_do_not_crash():
     assert _run(agents=[{"id": "a", "pending": float("inf")}], slots=2).startswith("ERROR")
     assert _run(agents=[{"id": "a", "pending": 1}], slots=float("inf")).startswith("ERROR")
+
+
+def test_weights_summing_to_infinity_and_huge_counts_are_refused():
+    big = [{"id": "a", "weight": 1e308, "pending": 5}, {"id": "b", "weight": 1e308, "pending": 5}]
+    assert _run(agents=big, slots=4).startswith("ERROR")
+    out = _run(agents=[{"id": "a", "pending": 1}], slots=10**12 * 10**4)
+    assert out.startswith("ERROR")
