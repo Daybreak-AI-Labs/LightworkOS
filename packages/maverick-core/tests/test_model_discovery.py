@@ -99,6 +99,8 @@ def test_discovery_can_be_switched_off_in_config_and_by_environment(monkeypatch)
     assert discovery.discovery_enabled() is False
     monkeypatch.setattr(config, "load_config", lambda: {"models": {}})
     assert discovery.discovery_enabled() is True
+    monkeypatch.setattr(config, "config_source_errors", lambda **_k: {"config.toml": "bad"})
+    assert discovery.discovery_enabled() is False
     monkeypatch.setenv("MAVERICK_MODEL_DISCOVERY", "0")
     assert discovery.discovery_enabled() is False
     fetch = FakeFetch({})

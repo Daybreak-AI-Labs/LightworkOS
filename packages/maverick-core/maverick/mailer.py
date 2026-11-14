@@ -60,19 +60,25 @@ def _cfg(key: str, env: str, default: str = "") -> str:
 def sending_disabled() -> bool:
     """The email kill switch shared by the email tool and platform email.
 
-    ``MAVERICK_EMAIL_DISABLE`` decides when it is set (``1`` blocks sending,
-    anything else allows it); otherwise ``[email] disable = true`` (the All
-    settings page) blocks sending. Off by default."""
+    ``MAVERICK_EMAIL_DISABLE`` decides when it is set (a false value such as
+    ``0`` allows sending; ``1``, ``true`` or any unrecognised value blocks it);
+    otherwise ``[email] disable = true`` (the All settings page) blocks
+    sending. Off by default, but on while a config source is unreadable, since
+    that source may hold the switch."""
     import os
+
+    from ._envparse import coerce_bool
     env = os.environ.get("MAVERICK_EMAIL_DISABLE")
     if env is not None and env.strip():
-        return env.strip() == "1"
+        return coerce_bool(env, default=True)
     try:
-        from .config import load_config
+        from .config import config_source_errors, load_config
         cfg = (load_config() or {}).get("email") or {}
+        if config_source_errors(include_tenant=True):
+            return True
         return isinstance(cfg, dict) and cfg.get("disable") is True
-    except Exception:  # noqa: BLE001 - config trouble => keep the default
-        return False
+    except Exception:  # noqa: BLE001 - config trouble => keep sending blocked
+        return True
 
 
 def configured() -> bool:

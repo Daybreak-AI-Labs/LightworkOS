@@ -128,3 +128,15 @@ def test_smtp_verifies_the_server_certificate_before_login(monkeypatch, port):
     assert isinstance(context, ssl.SSLContext)
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+
+
+def test_kill_switch_holds_on_unreadable_config_and_true_env(monkeypatch):
+    _creds(monkeypatch)
+    import maverick.config as cfg
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {"config.toml": "bad"})
+    assert mailer.sending_disabled() is True
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
+    monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "true")
+    assert mailer.sending_disabled() is True
+    monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "0")
+    assert mailer.sending_disabled() is False
