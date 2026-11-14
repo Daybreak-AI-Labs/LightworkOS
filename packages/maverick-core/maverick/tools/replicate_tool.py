@@ -175,8 +175,9 @@ def _op_models(args: dict) -> str:
     # plaintext search string as the body — GET /models is the
     # (unfiltered) list endpoint and ignores any query param, so it
     # would silently return the whole catalog instead of matches.
-    r = httpx.request(
-        "QUERY", f"{_API}/models",
+    # guarded_sender takes the URL first, so bind the method around it.
+    r = _governed_sender(lambda url, **kw: httpx.request("QUERY", url, **kw))(
+        f"{_API}/models",
         headers={"Authorization": f"Bearer {_token()}",
                  "Content-Type": "text/plain"},
         content=q, timeout=30.0,

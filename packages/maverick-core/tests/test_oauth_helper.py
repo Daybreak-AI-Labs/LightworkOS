@@ -79,3 +79,9 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "oauth_helper" in names
+
+
+def test_authorize_url_keeps_an_existing_query_string():
+    out = _t().fn({"op": "authorize_url", "authorize_url": "https://idp/auth?tenant=1",
+                   "client_id": "cid", "redirect_uri": "https://app/cb"})
+    assert out.startswith("open: https://idp/auth?tenant=1&response_type=code")

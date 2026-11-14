@@ -53,20 +53,32 @@ def _map(span: dict) -> str:
 
     mapped: dict[str, Any] = {}
     unknown: list[str] = []
+    conflicts: list[str] = []
+    renamed = 0
     for key in sorted(attrs):
-        if key in _SEMCONV:
-            mapped[_SEMCONV[key]] = attrs[key]
+        target = _SEMCONV.get(key)
+        if target is not None and target not in mapped and target not in attrs:
+            mapped[target] = attrs[key]
+            renamed += 1
+        elif target is not None:
+            # Two legacy keys (or a legacy and a current key) name the same
+            # attribute: keep this one under its own name rather than
+            # silently overwriting a value.
+            mapped[key] = attrs[key]
+            conflicts.append(key)
         else:
             mapped[key] = attrs[key]
             unknown.append(key)
 
-    renamed = sum(1 for k in attrs if k in _SEMCONV)
     unknown_str = "[" + ", ".join(unknown) + "]" if unknown else "[]"
-    return (
+    out = (
         f"OK kind={kind or '(none)'} renamed={renamed} unknown={len(unknown)}\n"
         f"  attrs={json.dumps(mapped, sort_keys=True)}\n"
         f"  unknown_keys={unknown_str}"
     )
+    if conflicts:
+        out += f"\n  not_renamed_conflicts=[{', '.join(conflicts)}]"
+    return out
 
 
 def _run(args: dict[str, Any]) -> str:
