@@ -453,7 +453,7 @@ def test_bigquery_incomplete_job_is_not_reported_as_empty(monkeypatch):
     _fake_httpx(monkeypatch, post=post)
     from maverick.tools.bigquery_tool import bigquery_tool
     out = bigquery_tool().fn({"op": "query", "sql": "SELECT * FROM d.big"})
-    assert "ok (" not in out
+    assert out.startswith("INDETERMINATE:")
     assert "still running" in out and "job_123" in out
 
 
