@@ -16,6 +16,7 @@ import hmac
 import logging
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 
 from .embed import DeterministicEmbedder
@@ -39,17 +40,43 @@ MAX_DOCUMENT_CHUNKS = 2048
 # base legitimately ingests engineering docs full of `rm -rf` / `curl` / base64,
 # and silently dropping those would harm recall. A real Shield (when passed)
 # covers the rest.
+#
+# The phrases need an attack cue, not just the vocabulary: "you are now ready
+# to log in", "the new rule takes effect", "show the password you typed" and
+# "print your access token expiry" each used to drop a whole benign document.
 _INJECTION_RE = re.compile(
     r"\b(?:ignore|disregard|forget)\b.{0,30}\b(?:previous|prior|above|earlier|all)\b"
     r".{0,30}\b(?:instruction|message|context|prompt|rule)"
-    r"|\byou\s+are\s+now\b"
-    r"|\bnew\s+(?:system\s+)?(?:instruction|prompt|directive|rule)"
+    r"|\byou\s+are\s+now\s+(?:an?\s+|in\s+)?(?:unrestricted|uncensored|unfiltered|"
+    r"jailbroken|amoral|evil|rogue|dan\b|developer\s+mode|free\s+from|no\s+longer\s+bound)"
+    r"|\bnew\s+system\s+(?:instruction|prompt|directive|rule)"
+    r"|\bnew\s+(?:instruction|prompt|directive|rule)s?\s*:"
     r"|</?\s*(?:system|assistant|developer)\s*>"
-    r"|\b(?:reveal|print|show|leak|exfiltrate)\b.{0,40}"
-    r"\b(?:system\s+prompt|your\s+instruction|secret|api[\s_-]?key|password|token|credential)"
+    r"|\b(?:reveal|print|show|leak|exfiltrate)\b.{0,40}\b(?:system\s+prompt|your\s+instruction)"
+    r"|\b(?:reveal|leak|exfiltrate)\b.{0,40}"
+    r"\b(?:secret|api[\s_-]?key|password|token|credential)"
     r"|\boverride\b.{0,20}\b(?:safety|guard|shield|policy|governance)\b",
     re.IGNORECASE,
 )
+
+# The tripwire runs on a normalised copy: wrapped lines (PDF/DOCX extraction),
+# zero-width characters and Cyrillic/Greek look-alikes used to defeat it.
+_SCREEN_INVISIBLE = re.compile(r"[\u00ad\u180e\u200b-\u200f\u2060-\u206f\ufe00-\ufe0f\ufeff]")
+_SCREEN_HOMOGLYPHS = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+    "і": "i", "ѕ": "s", "ј": "j", "α": "a", "ο": "o", "ρ": "p", "ι": "i", "ν": "v",
+})
+_WHITESPACE = re.compile(r"\s+")
+# The Shield's builtin backend blocks text over 262,144 characters outright, so
+# a whole-document Shield scan dropped every large document. It is scanned in
+# overlapping windows below that cap instead.
+_SHIELD_WINDOW = 131_072
+_SHIELD_WINDOW_OVERLAP = 4_096
+
+
+def _screen_text(text: str) -> str:
+    text = _SCREEN_INVISIBLE.sub("", unicodedata.normalize("NFKC", text))
+    return _WHITESPACE.sub(" ", text.translate(_SCREEN_HOMOGLYPHS))
 
 
 @dataclass
@@ -159,19 +186,27 @@ class KnowledgeBase:
         document can't ride into prompts via search_formatted. A configured Shield
         runs in addition. Fail-open ONLY on a Shield scanner error, mirroring the
         kernel's shield contract -- the marker screen itself never errors."""
-        if _INJECTION_RE.search(text):
+        if _INJECTION_RE.search(_screen_text(text)):
             log.warning("knowledge: dropping chunk with injection marker on ingest")
             return False
         if self.shield is None:
             return True
-        try:
-            # An ingested chunk is untrusted CONTENT (like tool output), so use
-            # the indirect-injection / content detector, not the prompt-tuned
-            # scan_input.
-            verdict = self.shield.scan_output(text)
-            return getattr(verdict, "allowed", True)
-        except Exception:  # pragma: no cover -- never block ingest on a scan bug
-            return True
+        step = _SHIELD_WINDOW - _SHIELD_WINDOW_OVERLAP
+        for start in range(0, max(1, len(text) - _SHIELD_WINDOW_OVERLAP), step):
+            try:
+                # An ingested chunk is untrusted CONTENT (like tool output), so
+                # use the indirect-injection / content detector, not the
+                # prompt-tuned scan_input.
+                verdict = self.shield.scan_output(text[start:start + _SHIELD_WINDOW])
+            except Exception as e:
+                # Fail open (kernel rule 1), but leave a trace.
+                log.warning("knowledge: shield scan failed on ingest (%s); allowing", e)
+                continue
+            if getattr(verdict, "scan_error", False):
+                log.warning("knowledge: shield reported a scan error on ingest; allowing")
+            if not getattr(verdict, "allowed", True):
+                return False
+        return True
 
     def _source_replacement_snapshot(self, collection: str, source: str, metadata: dict) -> list:
         if not source or metadata["source"] != source:
