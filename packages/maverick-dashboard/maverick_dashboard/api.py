@@ -11623,7 +11623,10 @@ async def delete_role_override(role: str, request: Request) -> dict:
     from . import agent_changelog
 
     before = resolved_role(role)
-    removed = remove_role_override(role)
+    try:
+        removed = remove_role_override(role)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     view = resolved_role(role)
     if view is None:
         raise HTTPException(status_code=404, detail=f"no such role: {role!r}")
