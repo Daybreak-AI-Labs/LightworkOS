@@ -34,7 +34,7 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 def valid_name(name: str) -> bool:
-    return bool(isinstance(name, str) and _NAME_RE.match(name))
+    return bool(isinstance(name, str) and _NAME_RE.fullmatch(name))
 
 
 @dataclass(frozen=True)
