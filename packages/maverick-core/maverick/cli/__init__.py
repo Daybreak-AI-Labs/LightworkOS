@@ -5707,6 +5707,56 @@ def _persist_erasure_auxiliary_closure(
     return True, None
 
 
+def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> None:
+    """Scrub the subject-keyed stores when no conversation row matches.
+
+    Exits 1 when a scrub fails or residual data remains, so a re-run after a
+    partly failed erase can finish the job and a script can tell.
+    """
+    import types
+
+    _refuse_under_legal_hold(ctx, world, [])
+    if not yes:
+        click.echo(f"This will erase stored facts, notes, audit lines and "
+                   f"knowledge for {channel}:{user}.")
+        click.confirm("Proceed?", abort=True)
+    scrubbed_fact_keys = world.delete_facts_matching(_fact_subject_token(channel, user))
+    removed_notes, notes_error = _erase_conversation_user_notes(
+        channel, [types.SimpleNamespace(user_id=user)]
+    )
+    failures = [f"user_notes: {notes_error}"] if notes_error else []
+    audit_scrubbed = 0
+    try:
+        from ..audit import reanchor_after_erase, scrub_user
+        audit_scrubbed, _ = scrub_user(channel, user, strict=True)
+        if audit_scrubbed:
+            reanchor_after_erase()
+    except Exception as exc:
+        failures.append(f"audit_scrub: {_erasure_failure_label(exc)}")
+    knowledge_removed = _erase_subject_knowledge(channel, user)
+    click.echo(
+        f"{audit_scrubbed} audit event(s) scrubbed, "
+        f"{len(scrubbed_fact_keys)} fact(s) scrubbed, "
+        f"{removed_notes} user note(s) scrubbed, "
+        f"{sum(knowledge_removed.values())} knowledge chunk(s) scrubbed"
+    )
+    _print_erased_extras(knowledge_removed, scrubbed_fact_keys)
+    from ..erasure_verify import verify_erasure
+
+    try:
+        residual = verify_erasure(user, channel=channel, world=world).get("residual") or {}
+    except Exception as exc:
+        failures.append(f"verification: {_erasure_failure_label(exc)}")
+        residual = {}
+    if residual:
+        failures.append("residual data: " + ", ".join(
+            f"{store}={count}" for store, count in sorted(residual.items())
+        ))
+    if failures:
+        click.echo("error: erasure incomplete (" + "; ".join(failures) + ")", err=True)
+        ctx.exit(1)
+
+
 @main.command()
 @click.option("--channel", required=True, help="Channel name (e.g. telegram, sms).")
 @click.option("--user", required=True, help="The channel user_id to erase.")
@@ -5725,6 +5775,10 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
     ]
     if not convs:
         click.echo(f"no conversation found for {channel}:{user}")
+        # Facts, notes, audit lines and knowledge are keyed by the subject,
+        # not by a conversation row, so they can outlive it (a subject who
+        # never chatted, or an earlier erase that failed part-way).
+        _erase_subject_residue(ctx, world, channel, user, yes)
         return
     if not yes:
         click.echo(f"This will erase {len(convs)} conversation(s) for {channel}:{user}.")
@@ -6011,6 +6065,10 @@ def erase(ctx, channel: str, user: str, yes: bool) -> None:
             + (f" ({detail})" if detail else ""),
             err=True,
         )
+    _print_erased_extras(knowledge_removed, scrubbed_fact_keys)
+
+
+def _print_erased_extras(knowledge_removed, scrubbed_fact_keys) -> None:
     if knowledge_removed:
         click.echo(
             "  knowledge removed (per collection): "
@@ -6297,9 +6355,10 @@ def export_user(ctx, channel: str, user: str, output) -> None:
         # co-tenant can't read it, and fail cleanly instead of dumping a
         # traceback on a bad/unwritable path.
         try:
-            fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
+            from ..file_lock import atomic_write_text
+            # Atomic replace: a new 0600 file even over an existing
+            # file or a symlink, never its old mode or target.
+            atomic_write_text(output, payload, mode=0o600)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"exported to {output}")
@@ -6308,9 +6367,9 @@ def export_user(ctx, channel: str, user: str, output) -> None:
 
 
 @main.command()
-@click.option("--days", default=90, type=int,
+@click.option("--days", default=90, type=click.IntRange(min=1),
               help="Delete conversations idle longer than N days.")
-@click.option("--events-days", default=30, type=int,
+@click.option("--events-days", default=30, type=click.IntRange(min=1),
               help="Delete goal_events older than N days.")
 @click.option("--yes", is_flag=True)
 @click.pass_context
@@ -6635,6 +6694,12 @@ def audit_verify(
         anchor_dir = audit_dir
         if not paths:
             click.echo(f"no audit day-files in {audit_dir}")
+            if audit_dir.exists() and any(audit_dir.iterdir()):
+                # Keys or a ledger without any day-file: as in the default-day
+                # branch, verify today's path so a deletion reports
+                # missing_file instead of passing.
+                today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+                paths = [audit_dir / f"{today}.ndjson"]
     else:
         d = day or _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
         anchor_dir = audit_dir

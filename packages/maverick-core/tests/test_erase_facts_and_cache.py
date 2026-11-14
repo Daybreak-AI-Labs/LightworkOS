@@ -123,3 +123,37 @@ def test_all_authority_cache_purge_requires_explicit_confirmation(
     cache = llm_cache_mod.LLMCache(db_path=cache_db)
     with pytest.raises(PermissionError, match="confirmed"):
         cache.purge_all_authorities_for_erasure()
+
+
+def test_erase_scrubs_subject_facts_when_no_conversation_matches(tmp_path, monkeypatch):
+    """A subject with no conversation row (never chatted, or an earlier erase
+    that failed part-way) still has its subject-keyed facts erased."""
+    os.environ.pop("MAVERICK_DB", None)
+    import maverick.audit as audit_mod
+    monkeypatch.setattr(audit_mod, "scrub_user", lambda *a, **k: (0, 0))
+    db = tmp_path / "world.db"
+    wm = WorldModel(db)
+    wm.upsert_fact("user:telegram:alice:home_address", "1 Privacy Lane")
+    wm.close()
+
+    result = CliRunner().invoke(
+        cli_mod.main,
+        ["--db", str(db), "erase", "--channel", "telegram", "--user", "alice", "--yes"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "no conversation found" in result.output
+    assert "1 fact(s) scrubbed" in result.output
+    wm = WorldModel(db)
+    assert wm.get_facts() == {}
+    wm.close()
+
+    def _boom(*a, **k):
+        raise OSError("audit storage unavailable")
+
+    monkeypatch.setattr(audit_mod, "scrub_user", _boom)
+    failed = CliRunner().invoke(
+        cli_mod.main,
+        ["--db", str(db), "erase", "--channel", "telegram", "--user", "alice", "--yes"],
+    )
+    assert failed.exit_code == 1
+    assert "erasure incomplete" in failed.output
