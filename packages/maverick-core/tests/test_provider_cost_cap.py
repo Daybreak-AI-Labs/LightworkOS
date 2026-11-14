@@ -314,3 +314,107 @@ def test_spend_in_an_old_per_tenant_ledger_still_counts_after_upgrade(monkeypatc
     pcc._FOLDED.clear()                                       # another process starts
     assert pcc.check("openai").spent == 1.5
     assert legacy.exists()                                    # left in place
+
+
+def _seed_unresolved_legacy(tmp_path, monkeypatch, *, indexed):
+    """An old per-tenant ledger holding a zero-dollar hold and an unknown-cost
+    receipt, i.e. unresolved spending that blocks admission."""
+    from maverick import provider_spend_sqlite
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(pcc, "_admission_cap", lambda name: 20.0)
+    legacy = tmp_path / "home" / "tenants" / "acme" / "provider_spend.json"
+    with tenant_scope(tenant="acme"):
+        settled = pcc.reserve("openai", 1.0, request_id="settled-call", path=legacy)
+        pcc.settle(settled, 0.5)
+        unknown = pcc.reserve("openai", 2.0, request_id="unknown-cost", path=legacy,
+                              operation_id="op-1", category="other", parent_category="other",
+                              attempt_no=1)
+        pcc.settle(unknown, None)                    # unresolved: later calls are refused
+        zero = pcc.Reservation("openai", unknown.period, "zero-hold", 0.0, legacy)
+
+        def add_zero_hold(total, receipts):
+            receipts["zero-hold"] = {"projected": 0.0, "state": "held", "actual": None}
+            return total, receipts, None
+
+        pcc._mutate("openai", unknown.period, add_zero_hold, path=legacy)
+    if indexed:
+        provider_spend_sqlite.ensure(legacy, pcc)
+        assert provider_spend_sqlite.is_active(legacy)
+    before = pcc.check("openai", path=legacy)
+    assert (before.allowed, before.unresolved) == (False, True)   # refused before the upgrade
+    return legacy, before, [zero, unknown, settled]
+
+
+@pytest.mark.parametrize("indexed", [False, True], ids=["json", "sqlite"])
+def test_fold_moves_unresolved_receipts_with_their_totals(monkeypatch, tmp_path, indexed):
+    from maverick.paths import tenant_scope
+
+    legacy, before, holds = _seed_unresolved_legacy(tmp_path, monkeypatch, indexed=indexed)
+    pcc._FOLDED.clear()
+    after = pcc.check("openai")
+    # Same admission answer, and no projection counted twice.
+    assert (after.allowed, after.unresolved) == (before.allowed, before.unresolved)
+    assert (after.spent, after.reserved) == (before.spent, before.reserved)
+    with tenant_scope(tenant="acme"):
+        for hold in holds:
+            snapshot = pcc.inspect_reservation(pcc.reservation_reference(hold))
+            assert snapshot.request_id == hold.request_id
+    assert pcc.inspect_reservation(pcc.reservation_reference(holds[1])).state == "unknown"
+    pcc._FOLDED.clear()                                         # a fresh process
+    assert pcc.check("openai") == after
+    # The migrated attempt still blocks a second dispatch of the same attempt.
+    data = pcc._load(pcc._deployment_ledger_path())
+    assert pcc._complete_attempt_index(data)
+    # Normal settlement of a migrated receipt clears the unresolved state.
+    moved = pcc.Reservation("openai", holds[0].period, "zero-hold", 0.0,
+                            pcc._deployment_ledger_path())
+    pcc._settle_provider(moved, 0.25)
+    moved = pcc.Reservation("openai", holds[1].period, "unknown-cost", 2.0,
+                            pcc._deployment_ledger_path())
+    pcc._settle_provider(moved, 1.5, attempt_state="failed")
+    cleared = pcc.check("openai")
+    assert cleared.allowed is True and cleared.unresolved is False
+    assert cleared.spent == 0.5 + 0.25 + 1.5
+
+
+def test_fold_is_crash_safe_with_receipts(monkeypatch, tmp_path):
+    import json
+
+    legacy, before, _ = _seed_unresolved_legacy(tmp_path, monkeypatch, indexed=False)
+    path = pcc._deployment_ledger_path()
+    journal = path.with_name(path.name + pcc._TENANT_FOLD_SUFFIX)
+    real_save = pcc._save
+
+    def crash(*_a, **_k):
+        raise OSError("crash before the ledger write")
+
+    monkeypatch.setattr(pcc, "_save", crash)
+    pcc._FOLDED.clear()
+    with pytest.raises(pcc.ProviderAccountingUnavailable):
+        pcc.check("openai")
+    assert json.loads(journal.read_text())["state"] == "pending"
+    monkeypatch.setattr(pcc, "_save", real_save)
+    pcc._FOLDED.clear()
+    after = pcc.check("openai")                                 # finishes the fold once
+    assert (after.allowed, after.unresolved, after.spent) == (False, True, before.spent)
+    # Crash after the ledger write, before "done": the retry only finishes.
+    journal.write_text(json.dumps({**json.loads(journal.read_text()), "state": "pending"}))
+    pcc._FOLDED.clear()
+    assert pcc.check("openai") == after
+    assert json.loads(journal.read_text())["state"] == "done"
+
+
+def test_fold_refuses_a_reference_used_by_two_workspaces(monkeypatch, tmp_path):
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(pcc, "_admission_cap", lambda name: 20.0)
+    for tenant in ("acme", "globex"):
+        legacy = tmp_path / "home" / "tenants" / tenant / "provider_spend.json"
+        with tenant_scope(tenant=tenant):
+            pcc.reserve("openai", 1.0, request_id="same-id", path=legacy)
+    pcc._FOLDED.clear()
+    with pytest.raises(pcc.EarlierTenantLedgerConflict, match="tenants/globex"):
+        pcc.check("openai")

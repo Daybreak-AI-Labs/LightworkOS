@@ -327,3 +327,43 @@ def test_an_unreadable_earlier_tenant_ledger_is_named_and_repairable(tmp_path, m
     assert cap.check("openai").spent == 9
     assert old.read_text(encoding="utf-8") == "{damaged"        # evidence kept
     config.reset_config_cache()
+
+
+def test_a_migrated_legacy_hold_reconciles_and_settles_its_organization_hold(tmp_path, monkeypatch):
+    """A zero-projection unknown hold recorded in an earlier per-tenant ledger
+    moves with the fold, still blocks, and the normal hold review settles it
+    and the workspace's matching organization admission hold."""
+    from maverick.tenant import provider_admission as organization
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "0")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setattr(cap, "caps_from_config", lambda: {"openai": 20.0})
+    monkeypatch.setattr(cap, "_admission_cap", lambda name: 20.0)
+    monkeypatch.setattr(cap, "period_key", lambda now=None, period=None: "2026-09-06")
+    monkeypatch.setattr(cap, "_shared_world", lambda: None)
+    monkeypatch.setattr(workspace_recovery, "_key", lambda: bytes(range(32)))
+    monkeypatch.setattr(audit, "record", lambda *a, **kw: True)
+    legacy = tmp_path / "tenants" / "review-workspace" / "provider_spend.json"
+    with tenant_scope(tenant="review-workspace"):
+        held = cap.reserve("openai", 0, request_id="unknown-cost", path=legacy)
+        assert held.organization_tenant == "review-workspace"
+        cap.settle(held, None)
+        cap._FOLDED.clear()
+        status = cap.check("openai")                       # folds the old ledger
+        assert (status.allowed, status.unresolved) == (False, True)
+        assert organization.outstanding("review-workspace") == float("inf")
+        review = spending.prepare_hold("openai", held.period, held.request_id, 2,
+                                       "Final invoice INV-9, verified against this request.",
+                                       actor="user:owner", context="context-a")
+        spending.apply(review["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
+        key = organization._key("openai", "unknown-cost")
+        call = organization._load("review-workspace", key=key)["calls"][key]
+        assert (call["state"], call["actual"]) == ("settled", 2.0)
+        assert organization.outstanding("review-workspace") < float("inf")
+        after = cap.check("openai")
+        assert (after.allowed, after.unresolved, after.spent) == (True, False, 2.0)
+    config.reset_config_cache()
