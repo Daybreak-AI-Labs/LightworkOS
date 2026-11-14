@@ -43,6 +43,7 @@ import logging
 import math
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from .agent_trust import TrustedAgent, load_registry
@@ -217,7 +218,11 @@ class _StaticJWKS:
 #: keys). Cached with a bounded lifespan so IdP key rotation is picked up
 #: without a per-request fetch.
 _JWKS_CACHE: dict[str, tuple[float, list[dict] | None]] = {}
-_JWKS_CACHE_LOCK = threading.Lock()
+#: One fetch lock per JWKS endpoint, so a slow or unreachable provider holds
+#: up only its own cache misses. Bounded LRU; only idle locks are evicted.
+_JWKS_URL_LOCKS: OrderedDict[str, threading.Lock] = OrderedDict()
+_JWKS_URL_LOCKS_GUARD = threading.Lock()
+_JWKS_MAX_URL_LOCKS = 64
 _JWKS_FETCH_TIMEOUT_SECONDS = 10
 _JWKS_CACHE_LIFESPAN_SECONDS = 300
 _JWKS_FAILURE_LIFESPAN_SECONDS = 30
@@ -241,9 +246,13 @@ def _remote_jwks_client(jwt_mod, url: str):
             return None
     except Exception:
         return None
-    # Serialize cache misses too: concurrent invalid tokens must not each
-    # start a ten-second fetch while an identity provider is unavailable.
-    with _JWKS_CACHE_LOCK:
+    # A fresh entry (keys or a cached failure) answers without any lock.
+    cached = _JWKS_CACHE.get(url)
+    if cached is not None and cached[0] > time.monotonic():
+        return _StaticJWKS(jwt_mod, cached[1]) if cached[1] is not None else None
+    # Serialize misses per endpoint: concurrent invalid tokens must not each
+    # start a ten-second fetch while that identity provider is unavailable.
+    with _jwks_url_lock(url):
         cached = _JWKS_CACHE.get(url)
         if cached is not None and cached[0] > time.monotonic():
             return _StaticJWKS(jwt_mod, cached[1]) if cached[1] is not None else None
@@ -251,6 +260,27 @@ def _remote_jwks_client(jwt_mod, url: str):
         lifespan = _JWKS_CACHE_LIFESPAN_SECONDS if keys else _JWKS_FAILURE_LIFESPAN_SECONDS
         _JWKS_CACHE[url] = (time.monotonic() + lifespan, keys)
         return _StaticJWKS(jwt_mod, keys) if keys is not None else None
+
+
+def _jwks_url_lock(url: str) -> threading.Lock:
+    """The fetch lock for one JWKS endpoint. When the table is full the
+    least recently used idle lock is dropped; if every lock is held, a
+    transient lock is returned (at worst one duplicate fetch, never an
+    unbounded table)."""
+    with _JWKS_URL_LOCKS_GUARD:
+        lock = _JWKS_URL_LOCKS.get(url)
+        if lock is not None:
+            _JWKS_URL_LOCKS.move_to_end(url)
+            return lock
+        if len(_JWKS_URL_LOCKS) >= _JWKS_MAX_URL_LOCKS:
+            idle = next((key for key, held in _JWKS_URL_LOCKS.items()
+                         if not held.locked()), None)
+            if idle is not None:
+                del _JWKS_URL_LOCKS[idle]
+        lock = threading.Lock()
+        if len(_JWKS_URL_LOCKS) < _JWKS_MAX_URL_LOCKS:
+            _JWKS_URL_LOCKS[url] = lock
+        return lock
 
 
 def _fetch_remote_jwks(url: str) -> list[dict] | None:
