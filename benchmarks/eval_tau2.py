@@ -132,7 +132,7 @@ def _action_present(actions: list[dict], required: dict) -> bool:
         if a.get("name") != rname:
             continue
         aargs = a.get("args") or {}
-        if all(aargs.get(k) == v for k, v in rargs.items()):
+        if all(aargs.get(k, _MISSING) == v for k, v in rargs.items()):
             return True
     return False
 
@@ -141,7 +141,10 @@ def verify(task: Tau2Task, env: Tau2Env) -> tuple[float, str]:
     """Grade a finished task: outcome (final state) AND process (required actions).
 
     Returns (1.0, "ok") only if every expected-state key matches AND every
-    required action was logged; else (0.0, "<what failed>")."""
+    required action was logged; else (0.0, "<what failed>"). A task with no
+    criteria at all cannot be evaluated and scores 0.0, never a vacuous pass."""
+    if not task.expected_state and not task.required_actions:
+        return 0.0, "no grading criteria (expected_state/required_actions): not evaluated"
     state_fails = [
         f"{path}={_resolve(env.db, path)!r} (want {expected!r})"
         for path, expected in (task.expected_state or {}).items()

@@ -111,6 +111,22 @@ def test_verify_requires_state_and_action(tau2):
     assert score == 0.0 and "cancel_order" in detail
 
 
+def test_task_without_criteria_is_never_a_pass(tau2):
+    task = tau2.Tau2Task(task_id="t", prompt="p")
+    score, detail = tau2.verify(task, tau2.Tau2Env({}))
+    assert score == 0.0 and "not evaluated" in detail
+
+
+def test_required_none_arg_is_not_matched_by_an_absent_arg(tau2):
+    task = tau2.Tau2Task(
+        task_id="t", prompt="p",
+        required_actions=[{"name": "cancel_order", "args": {"reason": None}}],
+    )
+    env = tau2.Tau2Env({})
+    env.actions.append({"name": "cancel_order", "args": {"order_id": "O1"}})
+    assert tau2.verify(task, env)[0] == 0.0
+
+
 def test_solver_exception_scores_zero_not_crash(tau2):
     def boom(t, tools):
         raise RuntimeError("solver blew up")

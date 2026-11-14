@@ -120,6 +120,9 @@ class ContainerTask:
 
 
 def verify(task: ContainerTask, env: ContainerEnv) -> tuple[float, str]:
+    if not task.expected_files and not task.verify_command:
+        # Nothing to check is "not evaluated", never a vacuous pass.
+        return 0.0, "no grading criteria (verify_command/expected_files): not evaluated"
     fails: list[str] = []
     for path, content in (task.expected_files or {}).items():
         got = env.read_file(path)

@@ -92,6 +92,12 @@ def test_verify_command_pass_and_fail():
     assert M.verify(task, bad_env)[0] == 0.0
 
 
+def test_task_without_criteria_is_never_a_pass():
+    task = M.ContainerTask(task_id="t", prompt="x")
+    score, detail = M.verify(task, FakeContainerEnv(run_result=("", 0)))
+    assert score == 0.0 and "not evaluated" in detail
+
+
 def test_unknown_tool_call_does_not_crash():
     env = FakeContainerEnv()
     fake = FakeLLM([_tool(("1", "no_such", {"x": "y"}))])
