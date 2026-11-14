@@ -328,3 +328,21 @@ def test_work_discovery_owner_check_compares_non_ascii_principals():
             admission,
             _authority("tenant-a", "user:bob"),
         )
+
+
+def test_oversized_retrieval_chunks_are_bounded_with_partial_coverage(monkeypatch):
+    from maverick import knowledge_content_projection as kcp
+
+    chunks = tuple(f"{i:04d}" + "x" * 996 for i in range(300))  # ~293 KiB
+    monkeypatch.setattr(kcp, "inspect_existing_source", lambda *a, **k: {
+        "content_sha256": _sha("remote"), "title": "Large source", "summary": "s",
+        "claim_state": "inferred", "observed_at": None, "verified_at": None,
+        "retrieval_chunks": chunks, "summary_truncated": True,
+    })
+    reference = ResearchAssetRef("dataset", "source", "v1", _sha("manifest"))
+    document = ExistingKnowledgeContentProjector()._resolve(
+        "tenant-a", reference,
+        _admission(reference, "catalog:evidence-graph/node-7", _sha("remote")))
+
+    assert document.search_coverage_complete is False
+    assert document.retrieval_chunks == chunks[:262]
