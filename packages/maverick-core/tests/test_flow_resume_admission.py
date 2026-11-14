@@ -60,3 +60,15 @@ def test_retry_from_budget_hold_requires_a_larger_finite_total(monkeypatch):
             _prepare(flow, from_failure=True, budget_limit_dollars=invalid)
     admission = _prepare(flow, from_failure=True, budget_limit_dollars=6.0)
     assert admission.resume["rerun"] is True
+
+
+def test_retry_from_failure_cannot_reuse_an_approval_for_a_high_risk_action(monkeypatch):
+    gate = FlowNode(id="gate", kind="approval", assignee="cfo", next="pay")
+    pay = FlowNode(id="pay", kind="action", tool="slack_bot", params={"text": "x"})
+    flow = Flow(id="f", name="Example", start="gate", nodes={"gate": gate, "pay": pay})
+    prior = store.FlowRun(run_id="run", flow_id="f", status="failed", cursor="pay",
+                          continuation={"node_id": "pay"})
+    monkeypatch.setattr(store, "load_run", lambda _run_id: prior)
+    with pytest.raises(FlowNotResumable, match="needs approval"):
+        _prepare(flow, from_failure=True)
+    assert prior.status == "failed"

@@ -525,6 +525,7 @@ def _checked_paused_operation(
     expired: bool = False,
     decision_attestation: object | None = None,
     refresh: bool = False,
+    now: float | None = None,
 ) -> dict:
     """Validate the exact persisted approval before core flow execution.
 
@@ -549,7 +550,7 @@ def _checked_paused_operation(
             validate_approval_card((run.human or {}).get("approval_card"))
             if expired or refresh
             else require_current_approval_card(
-                (run.human or {}).get("approval_card")
+                (run.human or {}).get("approval_card"), now=now,
             )
         )
         paused = flow.node(run.cursor) if run.cursor else None
@@ -671,6 +672,7 @@ def _checked_paused_operation(
                     decided_by=decided_by,
                 ),
                 expected_tenant=runtime_authority["workspace"],
+                now=now,
             )
         return card
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
@@ -683,12 +685,18 @@ def require_current_paused_operation(
     run, flow, *, inputs: dict | None = None, expected_binding: str,
     authority_binding_sha256: str = "", decision: str = "", decided_by: str = "",
     expired: bool = False, decision_attestation: object | None = None,
+    now: float | None = None,
 ) -> dict:
-    """Check a decision or scheduled expiry before any continuation executes."""
+    """Check a decision or scheduled expiry before any continuation executes.
+
+    ``now`` fixes the instant at which card and decision freshness are judged
+    (default: the current wall clock); every other binding is checked live.
+    """
     return _checked_paused_operation(
         run, flow, inputs=inputs, expected_binding=expected_binding,
         authority_binding_sha256=authority_binding_sha256, decision=decision,
         decided_by=decided_by, expired=expired, decision_attestation=decision_attestation,
+        now=now,
     )
 
 

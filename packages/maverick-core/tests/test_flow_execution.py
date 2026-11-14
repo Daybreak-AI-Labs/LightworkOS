@@ -225,6 +225,39 @@ class TestExecution:
         # the pre-pause node's trace is preserved alongside the post-resume nodes
         assert resumed.nodes["a"]["outcome"] == 1.0 and resumed.nodes["c"]["outcome"] == 1.0
 
+    def test_approved_agent_step_is_claimed_and_later_action_outlives_decision_ttl(
+        self, tmp_path, monkeypatch,
+    ):
+        import time as real_time
+
+        from maverick.flow import store
+        _patch_home(tmp_path, monkeypatch)
+        f = Flow(id="fClaim", name="f", start="gate", nodes={
+            "gate": FlowNode(id="gate", kind="approval", prompt="ok?", next="work"),
+            "work": FlowNode(id="work", kind=NODE_AGENT, brief="long work", next="send"),
+            "send": FlowNode(id="send", kind=NODE_ACTION, tool="web_search",
+                             params={"query": "hi"})})
+        paused = execution.execute(f, agent_runner=lambda b, d: ("x", 1.0),
+                                   action_runner=lambda *a: ("ok", 1.0))
+        seen, sent = [], []
+        start = real_time.time()
+
+        def agent(brief, data):
+            # The resume is durably claimed before the agent starts, and the
+            # agent outlives the 15-minute decision attestation.
+            seen.append(store.load_run(paused.run_id).status)
+            monkeypatch.setattr(real_time, "time", lambda: start + 3600.0)
+            return ("x", 1.0)
+
+        resumed = execution.execute(
+            f, agent_runner=agent,
+            action_runner=lambda tool, params, data: sent.append(tool) or ("ok", 1.0),
+            resume_run_id=paused.run_id, decision="approved", decided_by="system:direct",
+            approval_binding_sha256=_approval_binding(paused),
+            approval_decision_attestation=_approval_attestation(paused))
+        assert seen == ["resuming"]
+        assert sent == ["web_search"] and resumed.status == "completed"
+
     def test_approval_card_and_run_share_rendered_pause_values(self, tmp_path, monkeypatch):
         _patch_home(tmp_path, monkeypatch)
         flow = Flow(id="fPrompt", name="Payments", start="gate", nodes={

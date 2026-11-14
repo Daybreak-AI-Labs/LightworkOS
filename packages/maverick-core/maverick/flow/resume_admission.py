@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from . import store
 from .approval_resume import prepare_approval_decision
-from .ir import Flow
+from .ir import Flow, _contains_high_risk, _is_high_risk_action
 from .resume_inputs import prepare_resume_inputs
 from .run_state import STATUS_BUDGET_LIMITED, STATUS_FAILED
 from .transitions import ResumeDecision, decide_resume
@@ -26,6 +26,26 @@ class ResumeAdmission:
     approval_actor: str
     approval_binding: str
     approval_expired: bool
+
+
+def _refuse_retry_past_approval(
+    flow: Flow, prior: store.FlowRun, run_id: str, not_resumable: type[ValueError],
+) -> None:
+    """A retry carries no decision, so it must not re-dispatch a gated effect.
+
+    Every high-risk action sits behind an approval.  That approval admitted one
+    dispatch; a retry from failure would otherwise reuse it for a later one.
+    """
+    node = flow.node(prior.cursor) if prior.cursor else None
+    if node is None:
+        return
+    if _is_high_risk_action(node) or any(
+        _contains_high_risk(sub) for sub in ([node.body] if node.body else []) + list(node.branches)
+    ):
+        raise not_resumable(
+            f"run {run_id!r} stopped at a step that needs approval; "
+            "start a new run so a person can review it again"
+        )
 
 
 def prepare_saved_resume(
@@ -64,6 +84,7 @@ def prepare_saved_resume(
     resume = {"node_id": prior.cursor, "data": resume_data}
     actor, selected_binding, is_expired = "", "", False
     if retry:
+        _refuse_retry_past_approval(flow, prior, run_id, not_resumable)
         resume["rerun"] = True
         if prior.continuation:
             resume["continuation"] = prior.continuation
