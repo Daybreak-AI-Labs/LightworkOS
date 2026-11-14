@@ -110,3 +110,120 @@ def test_aborted_anthropic_stream_retains_observed_usage(monkeypatch, asynchrono
             client.complete("", [], budget=budget, on_delta=abort)
     assert (budget.input_tokens, budget.output_tokens, budget.cache_read_tokens, budget.cache_write_tokens) == (100, 4, 20, 10)
     assert budget.dollars > 0
+
+
+def _anthropic_stream_client(monkeypatch, stream_factory):
+    from maverick.providers.anthropic_provider import AnthropicClient
+
+    client = AnthropicClient.__new__(AnthropicClient)
+    endpoint = SimpleNamespace(stream=lambda **kwargs: stream_factory())
+    client.client = client.aclient = SimpleNamespace(messages=endpoint)
+    monkeypatch.setattr(client, "_build_request", lambda *args, **kwargs: {"model": "claude-sonnet-4-6"})
+    return client
+
+
+class _FakeStream:
+    snapshot = None
+    final = None
+    fail_with: BaseException | None = None
+    asynchronous = False
+
+    @property
+    def current_message_snapshot(self):
+        assert self.snapshot is not None  # mirrors the anthropic SDK property
+        return self.snapshot
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    @property
+    def text_stream(self):
+        fail_with = self.fail_with
+
+        def texts():
+            if fail_with is not None:
+                raise fail_with
+            yield "hello"
+
+        async def atexts():
+            for text in texts():
+                yield text
+        return atexts() if self.asynchronous else texts()
+
+    def get_final_message(self):
+        if self.asynchronous:
+            async def final():
+                return self.final
+            return final()
+        return self.final
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_anthropic_stream_failure_before_message_start_surfaces_provider_error(monkeypatch, asynchronous):
+    from maverick.budget import Budget
+
+    class ProviderDown(Exception):
+        pass
+
+    class Stream(_FakeStream):
+        pass
+
+    Stream.fail_with = ProviderDown("overloaded before message_start")
+    Stream.asynchronous = asynchronous
+    client = _anthropic_stream_client(monkeypatch, Stream)
+    budget = Budget()
+    with pytest.raises(ProviderDown, match="overloaded"):
+        if asynchronous:
+            asyncio.run(client.complete_async("", [], budget=budget, on_delta=lambda _t: None))
+        else:
+            client.complete("", [], budget=budget, on_delta=lambda _t: None)
+    assert budget.input_tokens == 0
+
+
+def test_anthropic_cancelled_stream_surfaces_cancellation_and_keeps_usage(monkeypatch):
+    from maverick.budget import Budget
+
+    usage = SimpleNamespace(input_tokens=100, output_tokens=4, cache_read_input_tokens=0,
+                            cache_creation_input_tokens=0)
+
+    class Stream(_FakeStream):
+        snapshot = SimpleNamespace(usage=usage)
+        fail_with = asyncio.CancelledError()
+        asynchronous = True
+
+    client = _anthropic_stream_client(monkeypatch, Stream)
+    budget = Budget(max_input_tokens=1)  # recording crosses this cap
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(client.complete_async("", [], budget=budget, on_delta=lambda _t: None))
+    assert (budget.input_tokens, budget.output_tokens) == (100, 4)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_anthropic_completed_stream_records_usage_once(monkeypatch, asynchronous):
+    from maverick.budget import Budget
+
+    usage = SimpleNamespace(input_tokens=100, output_tokens=4, cache_read_input_tokens=0,
+                            cache_creation_input_tokens=0)
+    final = SimpleNamespace(content=[], stop_reason="end_turn", usage=usage)
+
+    class Stream(_FakeStream):
+        pass
+
+    Stream.snapshot = Stream.final = final
+    Stream.asynchronous = asynchronous
+    client = _anthropic_stream_client(monkeypatch, Stream)
+    budget = Budget()
+    if asynchronous:
+        asyncio.run(client.complete_async("", [], budget=budget, on_delta=lambda _t: None))
+    else:
+        client.complete("", [], budget=budget, on_delta=lambda _t: None)
+    assert (budget.input_tokens, budget.output_tokens) == (100, 4)

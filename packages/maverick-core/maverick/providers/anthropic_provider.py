@@ -738,17 +738,39 @@ class AnthropicClient:
             raw=resp,
         )
 
+    @staticmethod
+    def _stream_snapshot(stream):
+        # The SDK's ``current_message_snapshot`` asserts that ``message_start``
+        # arrived; a stream that failed earlier has no snapshot to read.
+        try:
+            return stream.current_message_snapshot
+        except (AssertionError, AttributeError, RuntimeError):
+            return None
+
     def _record_stream_usage(self, stream, final, budget, model):
         if budget is None:
             return
-        try:
-            message = final if final is not None else stream.current_message_snapshot
-            usage = message.usage
-        except (AttributeError, RuntimeError) as exc:
-            raise UsageAccountingError("Anthropic stream ended before usage could be observed") from exc
+        message = final if final is not None else self._stream_snapshot(stream)
+        usage = getattr(message, "usage", None)
         if usage is None:
             raise UsageAccountingError("Anthropic stream ended without observed usage")
         self._record_usage(usage, budget, model)
+
+    def _record_aborted_stream_usage(self, stream, budget, model):
+        """Best effort: charge usage observed before a stream error.
+
+        Called while that error propagates, so it never raises: an accounting
+        or budget stop must not replace the provider failure or cancellation.
+        """
+        if budget is None:
+            return
+        usage = getattr(self._stream_snapshot(stream), "usage", None)
+        if usage is None:
+            return
+        try:
+            self._record_usage(usage, budget, model)
+        except Exception:
+            log.warning("Anthropic aborted-stream usage could not be fully recorded", exc_info=True)
 
     def _generation_timeout(self, kwargs: dict) -> dict:
         from .base import generation_timeout
@@ -800,8 +822,10 @@ class AnthropicClient:
                 for event in stream.text_stream:
                     on_delta(event)
                 final = stream.get_final_message()
-            finally:
-                self._record_stream_usage(stream, final, budget, billing_model)
+            except BaseException:
+                self._record_aborted_stream_usage(stream, budget, billing_model)
+                raise
+            self._record_stream_usage(stream, final, budget, billing_model)
         return self._parse_response(final, None, model=billing_model)
 
     async def complete_async(
@@ -835,8 +859,10 @@ class AnthropicClient:
                 async for text in stream.text_stream:
                     on_delta(text)
                 final = await stream.get_final_message()
-            finally:
-                self._record_stream_usage(stream, final, budget, billing_model)
+            except BaseException:
+                self._record_aborted_stream_usage(stream, budget, billing_model)
+                raise
+            self._record_stream_usage(stream, final, budget, billing_model)
         return self._parse_response(final, None, model=billing_model)
 
     def prewarm(
