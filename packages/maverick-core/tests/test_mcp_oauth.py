@@ -120,3 +120,14 @@ def test_fresh_oauth_token_is_reused_without_a_fetch(monkeypatch):
     for _ in range(3):
         asyncio.run(client._refresh_bearer())
     assert calls == [1]
+
+
+def test_cached_token_never_waits_for_a_refresh_in_progress():
+    p = OAuthTokenProvider(OAuthConfig("https://i/t", "c"), fetch=_counting_fetch())
+    assert p.token(now=0) == "tok1"
+    assert p.cached_token(now=1) == "tok1"
+    p._lock.acquire()  # a refresh holds the lock during its blocking POST
+    try:
+        assert p.cached_token(now=1) is None
+    finally:
+        p._lock.release()
