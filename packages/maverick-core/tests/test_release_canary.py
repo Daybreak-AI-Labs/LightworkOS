@@ -69,6 +69,15 @@ def test_dropped_or_non_finite_metric_fails_the_gate(tmp_path):
         rc.CanaryStore(tmp_path / "c.json").record("v1", {"cost_per_task": float("inf")})
 
 
+def test_record_refuses_to_overwrite_an_unreadable_store(tmp_path):
+    # A corrupt store loaded as {}, so the next record erased every baseline.
+    path = tmp_path / "c.json"
+    path.write_text('{"v1": {"cost_per_task": 1.0},', encoding="utf-8")
+    with pytest.raises(ValueError):
+        rc.CanaryStore(path).record("v2", {"cost_per_task": 2.0})
+    assert path.read_text(encoding="utf-8") == '{"v1": {"cost_per_task": 1.0},'
+
+
 def test_multiple_metrics_any_regression_fails():
     res = rc.compare(
         {"cost_usd": 1.0, "success_rate": 0.9},

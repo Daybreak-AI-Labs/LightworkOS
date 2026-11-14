@@ -115,13 +115,23 @@ class CanaryStore:
         from .paths import data_dir
         return data_dir("release_canary.json")
 
-    def _load(self) -> dict:
+    def _load(self, *, strict: bool = False) -> dict:
+        """The stored snapshots; ``{}`` when absent. A tolerant read also maps
+        an unreadable file to ``{}``; ``strict`` raises instead, so a write
+        never replaces every stored baseline with one release."""
         try:
             from .file_lock import ensure_private_file
 
             ensure_private_file(self.path)
-            return json.loads(self.path.read_text(encoding="utf-8")) or {}
+            data = json.loads(self.path.read_text(encoding="utf-8")) or {}
+            if not isinstance(data, dict):
+                raise ValueError(f"{self.path} does not hold a JSON object")
+            return data
+        except FileNotFoundError:
+            return {}
         except (OSError, ValueError):
+            if strict:
+                raise
             return {}
 
     def _save(self, data: dict) -> None:
@@ -136,7 +146,14 @@ class CanaryStore:
                      if isinstance(v, (int, float)) and not math.isfinite(v))
         if bad:
             raise ValueError(f"metric values must be finite numbers: {bad}")
-        data = self._load()
+        from .file_lock import cross_process_lock, ensure_private_directory
+
+        ensure_private_directory(self.path.parent)
+        with cross_process_lock(self.path):
+            self._record_locked(release, metrics)
+
+    def _record_locked(self, release: str, metrics: dict) -> None:
+        data = self._load(strict=True)
         data[release] = {k: float(v) for k, v in metrics.items()
                          if isinstance(v, (int, float))}
         self._save(data)
