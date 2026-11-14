@@ -29,6 +29,12 @@ log = logging.getLogger(__name__)
 
 _MAX_ROWS_CAP = 1000
 _MAX_VALUE_BYTES = 1_000_000
+_TOO_BIG_NOTE = (
+    f" -- SQLite refused a value over this tool's {_MAX_VALUE_BYTES:,}-byte limit. SQLite "
+    "does not say which: a result value, a stored value the query reads (even "
+    "length() of a large text column), a bound parameter, or the statement "
+    "text itself, which the same limit covers and cannot be exempted from."
+)
 _WRITE_KEYWORDS = frozenset({
     "insert", "update", "delete", "replace", "drop", "alter", "create",
     "truncate", "attach", "detach", "reindex", "vacuum",
@@ -190,7 +196,10 @@ def _execute_sqlite_query(path, query, params, read_only, max_rows, response_for
                         cur.close()
                 if conn is not None:
                     execution.rollback(conn)
-                return execution.failure(exc)
+                message = execution.failure(exc)
+                if isinstance(exc, sqlite3.DataError) and "too big" in str(exc):
+                    message += _TOO_BIG_NOTE
+                return message
             finally:
                 execution.stop_monitor()
                 if conn is not None:

@@ -312,4 +312,4 @@ def test_select_refuses_a_cell_larger_than_the_length_limit(tmp_path):
     db = _mkdb(tmp_path)
     out = sql_query(SimpleNamespace(workdir=tmp_path)).fn(
         {"database": str(db), "query": "SELECT zeroblob(2000000) FROM users"})
-    assert out.startswith("ERROR") and "DataError" in out
+    assert out.startswith("ERROR") and "DataError" in out and "1,000,000-byte limit" in out
