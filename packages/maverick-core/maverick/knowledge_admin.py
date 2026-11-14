@@ -69,13 +69,14 @@ def open_knowledge_base(
         raise KnowledgeUnavailable("configured knowledge store is unavailable") from e
 
 
-def _store_config(kcfg: dict, tenant: str | None) -> tuple[dict, Path]:
-    """``kcfg`` with its resolved store path, confined to the tenant workspace."""
+def _store_config(kcfg: dict, tenant: str | None, *, confine: bool = True) -> tuple[dict, Path]:
+    """``kcfg`` with its resolved store path, confined to the tenant workspace
+    unless ``confine`` is false (an existence probe that opens nothing)."""
     from .workspace import Workspace
     workspace = Workspace(tenant) if tenant is not None else Workspace.current()
     configured_path = kcfg.get("path")
     path = Path(configured_path or workspace.knowledge_path).expanduser().resolve()
-    if workspace.tenant and configured_path and not path.is_relative_to(workspace.root.resolve()):
+    if confine and workspace.tenant and configured_path and not path.is_relative_to(workspace.root.resolve()):
         raise KnowledgeUnavailable("knowledge path is outside the selected tenant workspace")
     return {**kcfg, "path": str(path)}, path
 
@@ -84,29 +85,31 @@ def _open_for_subject_admin(tenant: str | None) -> Any | None:
     """The knowledge base erasure and residual counting must look at.
 
     Turning ``[knowledge] enable`` off does not delete a populated store, so
-    a disabled plane still opens a store that exists (the SQLite file on
-    disk, or a configured pgvector/Qdrant location) for erasure and counting.
-    ``None`` only when knowledge is disabled AND no store exists to look at.
-    No embedder is built: erasure and counting match provenance only.
+    a disabled plane still opens one that exists for erasure and counting:
+    the SQLite file at the resolved path, or pgvector rows for this workspace
+    (found with a read-only query; no DDL runs). ``None`` when knowledge is
+    disabled and no such store exists. A disabled Qdrant store is not
+    contacted: Lightwork refuses ingestion into Qdrant, so it holds no
+    documents this plane stamped with a subject. No embedder is built:
+    erasure and counting match provenance only.
     """
     kb = open_knowledge_base(tenant=tenant, require_existing=True)
     if kb is not None:
         return kb
-    import os
-
     from .config import get_knowledge
+    raw = get_knowledge()
+    kcfg, path = _store_config(raw, tenant, confine=False)
+    store = str(kcfg.get("store", "sqlite")).lower()
     try:
-        kcfg, path = _store_config(get_knowledge(), tenant)
-        store = str(kcfg.get("store", "sqlite")).lower()
         if store == "sqlite":
-            exists = path.is_file()
-        else:
-            exists = bool(kcfg.get("dsn") or kcfg.get("url") or os.environ.get("MAVERICK_KNOWLEDGE_DSN")
-                          or os.environ.get("MAVERICK_PG_DSN"))
-        if not exists:
-            return None
-        from maverick_knowledge import KnowledgeBase, build_store
-        return KnowledgeBase(store=build_store(kcfg))
+            if not path.is_file():
+                return None
+            _store_config(raw, tenant)  # an existing store must be this tenant's
+            from maverick_knowledge import KnowledgeBase, build_store
+            return KnowledgeBase(store=build_store(kcfg))
+        if store == "pgvector":
+            return _open_disabled_pgvector(raw, kcfg, tenant)
+        return None
     except KnowledgeUnavailable:
         raise
     except Exception as e:
@@ -115,6 +118,28 @@ def _open_for_subject_admin(tenant: str | None) -> Any | None:
             "knowledge is turned off, but its existing store could not be opened to "
             "erase or count this subject's records"
         ) from e
+
+
+def _open_disabled_pgvector(raw: dict, kcfg: dict, tenant: str | None) -> Any | None:
+    """pgvector rows left for this workspace, or ``None`` without any DDL."""
+    import os
+    if not (kcfg.get("dsn") or os.environ.get("MAVERICK_KNOWLEDGE_DSN")
+            or os.environ.get("MAVERICK_PG_DSN")):
+        return None
+    try:
+        from maverick_knowledge import KnowledgeBase
+        from maverick_knowledge.store import open_existing_pgvector
+    except ModuleNotFoundError:
+        return None  # without the package there is no reader for the table
+    pg = open_existing_pgvector(kcfg)
+    if pg is None:
+        return None
+    try:
+        _store_config(raw, tenant)
+    except KnowledgeUnavailable:
+        pg.close()
+        raise
+    return KnowledgeBase(store=pg)
 
 
 def erase_subject(channel: str, user_id: str, *,

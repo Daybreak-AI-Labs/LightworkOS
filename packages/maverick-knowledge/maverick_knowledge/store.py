@@ -570,6 +570,7 @@ class PgVectorStore:
         dim: int = 1024,
         table: str = "knowledge_chunks",
         namespace: str = "default",
+        create_schema: bool = True,
     ) -> None:
         try:
             import psycopg
@@ -611,7 +612,52 @@ class PgVectorStore:
             self._db = provider_call(
                 lambda: psycopg.connect(self._dsn, autocommit=True)
             )
-            self._initialize_schema(provider_call)
+            if create_schema:
+                self._initialize_schema(provider_call)
+
+    @classmethod
+    def open_existing(
+        cls,
+        dsn: str | None = None,
+        *,
+        dim: int = 1024,
+        table: str = "knowledge_chunks",
+        namespace: str = "default",
+    ) -> PgVectorStore | None:
+        """Open a store that already holds rows for ``namespace``, running no DDL.
+
+        For administration (erasure, residual counts) while knowledge is
+        switched off: a database where knowledge was never used must not gain
+        an extension, table or index as a side effect. Returns ``None`` when
+        the table does not exist or holds no rows for this namespace.
+        """
+        store = cls(dsn, dim=dim, table=table, namespace=namespace, create_schema=False)
+
+        def dispatch() -> bool:
+            with store._lock, store._db.cursor() as cur:
+                exists = cur.execute("SELECT to_regclass(%s)", (table,)).fetchone()
+                if not exists or exists[0] is None:
+                    return False
+                return cur.execute(
+                    f"SELECT 1 FROM {table} WHERE namespace = %s LIMIT 1",
+                    (store._namespace,),
+                ).fetchone() is not None
+
+        try:
+            with metered_operation(
+                "pgvector",
+                category="retrieval",
+                service="vector-store:pgvector",
+                operation="knowledge-pgvector-open-existing",
+            ) as provider_call:
+                has_rows = provider_call(dispatch)
+        except BaseException:
+            store.close()
+            raise
+        if not has_rows:
+            store.close()
+            return None
+        return store
 
     def _initialize_schema(self, provider_call) -> None:
         try:
@@ -1317,6 +1363,16 @@ def _namespace_from_cfg(cfg: dict) -> str:
     namespace = str(raw)
     digest = hashlib.sha256(namespace.encode("utf-8")).hexdigest()[:16]
     return f"workspace:{digest}"
+
+
+def open_existing_pgvector(cfg: dict) -> PgVectorStore | None:
+    """``build_store``'s pgvector store, opened read-only only if it already
+    holds rows for this workspace (see :meth:`PgVectorStore.open_existing`)."""
+    return PgVectorStore.open_existing(
+        dsn=cfg.get("dsn") or None,
+        dim=int(cfg.get("dim", 1024)),
+        namespace=_namespace_from_cfg(cfg),
+    )
 
 
 def build_store(cfg: dict | None = None):

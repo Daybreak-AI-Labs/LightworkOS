@@ -214,6 +214,44 @@ class TestBuildStore:
                     "WHERE namespace = %s AND collection = %s OFFSET 0) AS scoped "
                     "ORDER BY embedding <=> %s::vector LIMIT %s") in search_sql
 
+    def test_pgvector_open_existing_runs_no_ddl(self, monkeypatch):
+        sqls = []
+
+        class _Cursor:
+            last = ""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return None
+
+            def execute(self, sql, params=None):
+                sqls.append(sql)
+                self.last = sql
+                return self
+
+            def fetchone(self):
+                return ("knowledge_chunks",) if "to_regclass" in self.last else (1,)
+
+        class _Conn:
+            def execute(self, sql, params=None):
+                sqls.append(sql)
+
+            def cursor(self):
+                return _Cursor()
+
+            def close(self):
+                pass
+
+        monkeypatch.setitem(sys.modules, "psycopg",
+                            types.SimpleNamespace(connect=lambda *a, **k: _Conn()))
+        from maverick_knowledge.store import PgVectorStore
+
+        store = PgVectorStore.open_existing("postgresql://shared", dim=4)
+        assert store is not None
+        assert all(sql.startswith("SELECT") for sql in sqls)
+
     def test_pgvector_migrates_legacy_table_to_namespace(self, monkeypatch):
         """A pre-namespacing table (no namespace column) is migrated in place:
         column added, existing rows backfilled to 'default', PK moved to include
