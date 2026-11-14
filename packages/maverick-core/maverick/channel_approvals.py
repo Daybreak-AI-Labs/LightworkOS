@@ -662,7 +662,7 @@ def decide_from_channel(
 
     ``decision`` is ``"approved"`` or ``"denied"``. ``authorize`` is the
     surface's permission check (the dashboard's ``operate`` role rule), run
-    once the request is known to be pending. Raises
+    before reading the approval or its review state. Raises
     :class:`ChannelApprovalRefused` when nothing was recorded: not linked to a
     Lightwork user, a protected-settings change (dashboard only), an expired,
     stale or legacy card, a High or Critical risk without the confirmation
@@ -685,6 +685,8 @@ def decide_from_channel(
         raise ChannelApprovalRefused(
             "unlinked", "Your chat account isn't linked to a Lightwork user yet.",
         )
+    if authorize is not None:
+        authorize(who, int(approval_id))
     current = time.time() if now is None else float(now)
     approval = world.get_approval(int(approval_id))
     if approval is None or approval.status != "pending":
@@ -694,8 +696,6 @@ def decide_from_channel(
     from .approval_vote_review import channel_vote_review
 
     review = channel_vote_review(world, approval, status=decision, actor=who, binding=binding)
-    if authorize is not None:
-        authorize(who, int(approval_id))
     if approval.provenance == SETTINGS_PROVENANCE:
         raise ChannelApprovalRefused(
             "dashboard_only",

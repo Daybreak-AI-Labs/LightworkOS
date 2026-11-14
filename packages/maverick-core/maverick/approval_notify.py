@@ -15,6 +15,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import threading
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -60,8 +61,10 @@ def announcements_configured() -> bool:
 def approval_created(approval_id: int, *, provenance: str | None = None, world=None) -> None:
     """Post the approval to every configured chat channel, in the background.
 
-    ``world`` is the world model that committed the row (it is shared across
-    threads); when omitted the default world is opened on the thread.
+    ``world`` identifies the database that committed the row. The thread opens
+    its own connection to that backend and database so the caller may close its
+    world immediately. An in-memory SQLite source cannot be independently
+    reopened; its unsupported background announcement is reported in the log.
     """
     if provenance == "settings_quorum":
         return  # protected-settings changes are decided in the dashboard only
@@ -73,23 +76,39 @@ def approval_created(approval_id: int, *, provenance: str | None = None, world=N
     if not announcements_configured():
         return
     context = contextvars.copy_context()
+    world_path = getattr(world, "path", None)
+    world_dsn = getattr(world, "_dsn", None)
+    if world_path is not None:
+        if str(world_path) == ":memory:":
+            log.warning(
+                "could not announce approval #%s: an in-memory source cannot open an independent connection",
+                approval_id,
+            )
+            return
+        world_path = Path(world_path).absolute()
 
     def run() -> None:
         try:
             from .channel_approvals import announce_new_approval
-            from .world_model import close_world_if_owned, open_world
+            from .world_model import WorldModel, close_world_if_owned, open_world
 
-            # The thread starts with an empty context; the world is the
-            # caller's tenant's, so it is opened (and, if opened here, closed)
-            # under the context copied from the caller.
-            wm = world if world is not None else context.run(open_world)
+            # The source's backend/path/DSN is authority. The configurable
+            # factory can select a different store even with an explicit path.
+            if world_path is not None:
+                wm = context.run(WorldModel, world_path)
+            elif world_dsn is not None:
+                from .world_model_backends.postgres import PostgresWorldModel
+
+                wm = context.run(PostgresWorldModel, dsn=world_dsn)
+            else:
+                wm = context.run(open_world)
             try:
                 context.run(announce_new_approval, wm, int(approval_id))
             finally:
-                if world is None:
-                    close_world_if_owned(wm)
-        except Exception:  # noqa: BLE001 -- a failed post never blocks the queue
-            log.warning("could not announce approval #%s", approval_id, exc_info=True)
+                context.run(close_world_if_owned, wm)
+        except Exception as exc:  # noqa: BLE001 -- a failed post never blocks the queue
+            # Backend exceptions can contain connection credentials.
+            log.warning("could not announce approval #%s (%s)", approval_id, type(exc).__name__)
 
     threading.Thread(target=run, name=f"approval-announce-{approval_id}", daemon=True).start()
 
