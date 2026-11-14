@@ -138,7 +138,7 @@ async def test_coding_checks_preserve_dirty_real_workspace(agent, monkeypatch, p
 async def test_post_tool_hooks_receive_screened_redacted_result(agent, monkeypatch):
     from maverick.hooks import HookEvent
     seen = []
-    secret = "prefix PRIVATE secret suffix"
+    secret = "prefix PRIVATE secret suffix"  # pragma: allowlist secret -- synthetic post-hook redaction fixture
     async def run(*_):
         return secret
     async def hook(ctx):
