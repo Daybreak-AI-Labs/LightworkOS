@@ -1880,14 +1880,16 @@ def _handle_flow_sweep(_job=None) -> None:
     due record regardless of newer completed history; stale resumes are no-ops.
     """
     from maverick import flow
-    if not flow.enabled():
-        return
+    resume_flows = flow.enabled()
 
     def _sweep_current_tenant() -> None:
-        from maverick.flow import runner, store
+        from maverick.flow import action_episode_review, runner, store
         from maverick.flow.payloads import FlowPayloadError
 
         now = time.time()
+        action_episode_review.expire_retained(now=now)
+        if not resume_flows:
+            return
         for run in store.iter_run_metadata(
             statuses={runner.STATUS_PAUSED_DELAY, runner.STATUS_PAUSED_APPROVAL},
             due_before=now,
@@ -1916,6 +1918,8 @@ def _handle_flow_sweep(_job=None) -> None:
             # paused_event runs are NEVER swept -- only their event resumes them.
 
     _run_for_active_tenants("flow delay sweep", _sweep_current_tenant)
+    if not resume_flows:
+        return
     # Also re-sync per-flow cron schedules from the store, so a flow scheduled
     # (or unscheduled) after boot is armed/disarmed within a minute -- no restart.
     try:
@@ -2149,12 +2153,20 @@ def _reconcile_flow_crons_locked() -> None:
     from maverick.flow import store
     from maverick.scheduler import CronError, next_run, schedule_cron
     want: dict[tuple[str, str], tuple[str, str, str]] = {}
+    unreadable: set[tuple[str, str]] = set()
+    uncertain_tenants: set[str] = set()
 
     def _collect_current_tenant() -> None:
         from maverick.paths import current_tenant_id
 
         tenant = current_tenant_id() or ""
-        for f, release in store.list_published_bundles():
+        bundles, problems = store.list_published_bundles(with_problems=True)
+        for problem in problems:
+            if problem["flow_id"]:
+                unreadable.add((tenant, problem["flow_id"]))
+            else:
+                uncertain_tenants.add(tenant)
+        for f, release in bundles:
             expr = f.schedule.strip()
             if not expr:
                 continue
@@ -2183,6 +2195,8 @@ def _reconcile_flow_crons_locked() -> None:
         fid = str(p.get("flow_id") or "")
         tenant = str(p.get("tenant") or "")
         key = (tenant, fid)
+        if key in unreadable or (tenant in uncertain_tenants and key not in want):
+            continue  # An unreadable release is not authority to cancel its jobs.
         cur = (
             str(p.get("__cron__") or ""),
             str(p.get("__tz__") or ""),
@@ -2285,8 +2299,9 @@ def reconcile() -> None:
         _ensure_cron(FLYWHEEL_KIND, _flywheel_cron())
     if flow.enabled():
         _repair_queued_flow_outbox()
-        _ensure_cron(FLOW_SWEEP_KIND, _FLOW_SWEEP_CRON)
         _reconcile_flow_crons()
+    # Expiration is maintenance even after capture/workflow features are disabled.
+    _ensure_cron(FLOW_SWEEP_KIND, _FLOW_SWEEP_CRON)
     if flow.auto_evolve_enabled():
         _ensure_cron(FLOW_EVOLVE_KIND, _FLOW_EVOLVE_CRON)
     # Governance assessments re-check daily whenever the automation worker runs.
