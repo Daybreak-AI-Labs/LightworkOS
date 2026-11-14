@@ -14,6 +14,8 @@ Resolution (env wins over config in every case):
     expand to their members on both sides, reusing the ``data_residency`` tool's
     group table so the two never drift.
   - strict: ``MAVERICK_RESIDENCY_STRICT`` / ``[residency] strict``; default off.
+    When the environment does not set it and config.toml cannot be read, strict
+    is assumed and the check fails, so a broken file cannot switch the gate off.
 
 Off by default and a silent no-op until an operator opts in, so the single-tenant
 default and existing deployments are unchanged (kernel rule 1).
@@ -47,10 +49,30 @@ def _cfg(key: str):
         return None
 
 
+def _config_unreadable() -> bool:
+    """Whether an active config source could not be read. ``load_config`` then
+    returns defaults, so a ``[residency]`` policy in it may have been lost."""
+    try:
+        from .config import config_source_errors
+        return bool(config_source_errors(include_tenant=True))
+    except Exception:
+        return True
+
+
+def _env_set(name: str) -> bool:
+    raw = os.environ.get(name)
+    return raw is not None and raw.strip() != ""
+
+
 def residency_strict() -> bool:
+    """Whether strict residency is on. When it is not set in the environment
+    and the configuration cannot be read, strict is assumed: the policy may be
+    in the unreadable file, and a boot gate must not read lost policy as off."""
     env = os.environ.get("MAVERICK_RESIDENCY_STRICT")
     if env is not None and env.strip() != "":
         return _truthy(env)
+    if _config_unreadable():
+        return True
     return _truthy(_cfg("strict"))
 
 
@@ -94,14 +116,22 @@ def check_residency() -> tuple[bool, str]:
     """``(ok, detail)`` for the current residency configuration.
 
     Always ``ok`` when strict mode is off (informational). When strict: fails if
-    no region is declared, or if a configured allowlist does not admit the
-    declared region; passes otherwise.
+    the configuration cannot be read (unless the region and the allowlist both
+    come from the environment), if no region is declared, or if a configured
+    allowlist does not admit the declared region; passes otherwise.
     """
     if not residency_strict():
         region = declared_region()
         return True, (
             f"residency enforcement off (declared region {region})" if region
             else "residency enforcement off"
+        )
+    if not (_env_set("MAVERICK_DATA_REGION") and _env_set("MAVERICK_RESIDENCY_ALLOWED")) \
+            and _config_unreadable():
+        return False, (
+            "residency policy unknown: the configuration could not be read "
+            "(fix config.toml, or set MAVERICK_RESIDENCY_STRICT, "
+            "MAVERICK_DATA_REGION and MAVERICK_RESIDENCY_ALLOWED)"
         )
     region = declared_region()
     if not region:

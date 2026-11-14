@@ -100,3 +100,22 @@ def test_verify_deployment_includes_residency(monkeypatch):
     from maverick.deployment import verify_deployment
     names = {c.name for c in verify_deployment()}
     assert "Data residency" in names
+
+
+def test_unreadable_config_fails_closed(monkeypatch):
+    # A corrupt config.toml loads as {}; a [residency] strict = true in it must
+    # not read as "enforcement off".
+    monkeypatch.setattr("maverick.config.config_source_errors",
+                        lambda *a, **k: {"config.toml": "TOMLDecodeError"})
+    assert residency.residency_strict() is True
+    ok, detail = residency.check_residency()
+    assert ok is False and "could not be read" in detail
+    with pytest.raises(residency.ResidencyError):
+        residency.require_residency_or_die()
+    # An explicit environment policy still decides.
+    monkeypatch.setenv("MAVERICK_RESIDENCY_STRICT", "0")
+    residency.require_residency_or_die()
+    monkeypatch.setenv("MAVERICK_RESIDENCY_STRICT", "1")
+    monkeypatch.setenv("MAVERICK_DATA_REGION", "DE")
+    monkeypatch.setenv("MAVERICK_RESIDENCY_ALLOWED", "EU")
+    assert residency.check_residency()[0] is True
