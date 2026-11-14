@@ -41,7 +41,7 @@ target-version = "py310"
 #              whitelisted via extend-immutable-calls below.
 # C90 (mccabe): cyclomatic-complexity ceiling -- the "keep functions small"
 #               ratchet (see [tool.ruff.lint.mccabe]). New code must stay under
-#               the cap; the 165 functions already over it carry an explicit
+#               the cap; the 161 functions already over it carry an explicit
 #               `# noqa: C901` marking them as refactor debt to pay down;
 #               test_claims_docs pins that count so the backlog only shrinks.
 # G   (flake8-logging-format): logging calls use %-style args, never f-strings
