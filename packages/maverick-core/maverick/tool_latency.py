@@ -8,6 +8,7 @@ load. Thread-safe; recording never raises into the tool path.
 """
 from __future__ import annotations
 
+import math
 import threading
 from collections import defaultdict, deque
 
@@ -20,7 +21,11 @@ _samples: dict[str, deque] = defaultdict(lambda: deque(maxlen=_MAX_SAMPLES))
 
 def record(tool: str, ms: float) -> None:
     """Record one tool call's wall-clock duration (milliseconds)."""
-    if ms is None or ms < 0:
+    try:
+        ms = float(ms)
+    except (TypeError, ValueError):
+        return
+    if not math.isfinite(ms) or ms < 0:
         return
     with _lock:
         key = str(tool or "?")

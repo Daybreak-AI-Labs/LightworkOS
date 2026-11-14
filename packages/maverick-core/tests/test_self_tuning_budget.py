@@ -93,6 +93,15 @@ def test_non_finite_rejected_and_store_stays_valid_json(tmp_path):
         json.loads(raw, parse_constant=_reject_constant)
 
 
+def test_tampered_store_cannot_force_the_ceiling(tmp_path):
+    p = tmp_path / "bt.json"
+    p.write_text('{"x": {"count": 3, "samples": [NaN, Infinity, 1.0]}, "bad": [1]}',
+                 encoding="utf-8")
+    b = SelfTuningBudget(path=p, rng=Random(0), min_samples=1)
+    assert b.stats("x")["count"] == 3
+    assert b.suggest("x") is not None and b.suggest("x") < 100.0
+
+
 def _reject_constant(token):  # pragma: no cover - only fires on a regression
     raise AssertionError(f"non-standard JSON token persisted: {token}")
 
