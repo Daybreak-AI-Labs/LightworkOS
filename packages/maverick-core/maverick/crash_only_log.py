@@ -79,6 +79,19 @@ def _parse_record(raw: bytes) -> dict | None:
     return rec if isinstance(rec, dict) else None
 
 
+def _encode_line(rec: dict) -> bytes:
+    """One JSON line for ``rec``. A value json cannot encode as given (a lone
+    surrogate, a non-string dict key) falls back to ASCII escapes and its
+    ``str`` form, so an exotic field cannot stop the record being written."""
+    try:
+        return json.dumps(rec, ensure_ascii=False, separators=(",", ":"),
+                          default=str).encode("utf-8") + b"\n"
+    except (TypeError, ValueError):
+        plain = (str, int, float, bool, type(None))
+        safe = {str(k): v if isinstance(v, plain) else str(v) for k, v in rec.items()}
+        return json.dumps(safe, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
+
+
 @dataclass
 class ReplayResult:
     """Outcome of :func:`replay`.
@@ -233,13 +246,14 @@ class CrashOnlyLog:
         :func:`replay` already tolerates.
         """
         with self._lock:
-            self._seq += 1
-            seq = self._seq
+            seq = self._seq + 1
             rec: dict = {"seq": seq, "ts": float(self._clock()), "kind": str(kind)}
             for k, v in fields.items():
                 rec.setdefault(k, v)
-            line = json.dumps(rec, ensure_ascii=False, separators=(",", ":"),
-                              default=str).encode("utf-8") + b"\n"
+            line = _encode_line(rec)
+            # The sequence number is consumed only once its line is written,
+            # so a record that cannot be written leaves no gap.
+            self._seq = seq
             view = memoryview(line)
             while view:
                 n = os.write(self._fd, view)

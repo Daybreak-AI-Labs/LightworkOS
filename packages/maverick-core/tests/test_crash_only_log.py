@@ -55,6 +55,15 @@ def test_append_replay_roundtrip(tmp_path):
     assert recs[1]["name"] == "shell" and recs[1]["ok"] is True
 
 
+def test_exotic_fields_are_written_without_a_sequence_gap(tmp_path):
+    log = _log(tmp_path)
+    assert log.append("a", text="lone \ud800 surrogate") == 1
+    assert log.append("b", mapping={(1, 2): "tuple key"}) == 2
+    assert log.append("c") == 3
+    summary = col.verify(log.path)
+    assert summary["records"] == 3 and summary["gaps"] == []
+
+
 def test_reserved_keys_win_over_fields(tmp_path):
     log = _log(tmp_path)
     log.append("k", seq=999, ts=999, extra="kept")
