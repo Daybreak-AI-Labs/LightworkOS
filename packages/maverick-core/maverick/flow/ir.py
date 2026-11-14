@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -42,6 +43,7 @@ NODE_SETVAR = "setvar"      # set flow-data keys from expressions (compose / loo
 MAX_FLOW_NODE_RETRIES = 10
 MAX_FLOW_NODE_RETRY_BACKOFF_TOTAL = 120.0
 MAX_FLOW_NODE_RETRY_SLEEP = 30.0
+MAX_FLOW_LOOP_LIMIT = 10_000   # explicit foreach/while limit; the runtime has no other pass cap
 
 NODE_KINDS = frozenset({
     NODE_ACTION, NODE_AGENT, NODE_BRANCH, NODE_SWITCH, NODE_FOREACH, NODE_WHILE,
@@ -557,12 +559,18 @@ class Flow:
             if type(n.concurrency) is not int or not 0 <= n.concurrency <= 8:
                 errs.append(f"node {n.id!r}: choose Shared workflow limit or between 1 and 8 items at once")
             errs.extend(self._validate_retry_policy(n))
+            errs.extend(_validate_node_numbers(n))
             errs.extend(self._validate_routing(n))
             errs.extend(self._validate_retry_budget(n))
             errs.extend(self._validate_kind(
                 n, inherited_approval=_inherited_approval))
         errs.extend(self._validate_high_risk_approval_paths(
             inherited_approval=_inherited_approval))
+        errs.extend(
+            f"{name} must be a finite number >= 0"
+            for name in ("max_seconds", "max_dollars")
+            if not _finite_non_negative(getattr(self, name))
+        )
         seen_input_keys = set()
         for i, spec in enumerate(self.inputs):
             key = str(spec.get("key") or "").strip()
@@ -782,6 +790,23 @@ class Flow:
             return False
         only = next(iter(self.nodes.values()))
         return only.kind == NODE_AGENT and not only.next
+
+
+def _finite_non_negative(value: object) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value >= 0)
+
+
+def _validate_node_numbers(n: FlowNode) -> list[str]:
+    """Reject NaN, infinity and negative durations and unbounded loop limits."""
+    errs = [
+        f"node {n.id!r}: {name} must be a finite number >= 0"
+        for name in ("seconds", "timeout", "expires_after", "retry_backoff")
+        if not _finite_non_negative(getattr(n, name))
+    ]
+    if type(n.limit) is not int or not 0 <= n.limit <= MAX_FLOW_LOOP_LIMIT:
+        errs.append(f"node {n.id!r}: limit must be between 0 and {MAX_FLOW_LOOP_LIMIT:,}")
+    return errs
 
 
 def _is_high_risk_action(node: FlowNode) -> bool:
