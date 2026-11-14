@@ -51,20 +51,54 @@ _ALLOWLIST = frozenset({"allowlist", "allow-list", "allow_list"})
 _OPEN = frozenset({"", "open", "allow", "allow-all", "allow_all"})
 
 
+_BLOCKED = {"security": {"network_policy": "deny-all"}}
+
+
+def unreadable_config() -> str | None:
+    """The configuration file(s) that could not be read, or ``None``.
+
+    While any is unreadable the posture is ``deny-all``: the posture the
+    operator wrote may be in it.
+    """
+    try:
+        from ..config import config_source_errors
+        errors = config_source_errors(include_tenant=True)
+    except Exception:  # pragma: no cover -- cannot tell: treat as unreadable
+        return "the configuration"
+    return ", ".join(sorted(errors)) or None
+
+
 def _config(config: dict | None) -> dict:
     if config is not None:
         return config
     try:
-        from ..config import config_source_errors, load_config
+        from ..config import load_config
         cfg = load_config() or {}
-        # load_config() returns defaults for a config file it cannot parse, so
-        # the posture the operator wrote may be lost: block rather than open.
-        if config_source_errors(include_tenant=True):
-            log.warning("configuration is unreadable; blocking network access")
-            return {"security": {"network_policy": "?"}}
-        return cfg
-    except Exception:  # an unreadable config fails closed below
-        return {"security": {"network_policy": "?"}}
+    except Exception:  # an unreadable config fails closed
+        log.warning("configuration could not be read; blocking network access")
+        return _BLOCKED
+    # load_config() returns defaults for a config file it cannot parse, so
+    # the posture the operator wrote may be lost: block rather than open.
+    unreadable = unreadable_config()
+    if unreadable:
+        log.warning("configuration file %s could not be read; blocking network access",
+                    unreadable)
+        return _BLOCKED
+    return cfg
+
+
+def offline_reason(config: dict | None = None) -> str | None:
+    """Why the work area must have no network, in plain words, or ``None``."""
+    if config is None:
+        unreadable = unreadable_config()
+        if unreadable:
+            return f"network access is blocked because {unreadable} could not be read"
+    if not work_area_offline(config):
+        return None
+    posture = network_posture(config)
+    if posture != "open":
+        return f"the network policy ({posture}) blocks internet access for commands"
+    return "the work area network policy blocks internet access for commands"
 
 
 def _setting(section: object, key: str) -> str:
@@ -180,6 +214,10 @@ def host_allowed(tool: str, host: str, policy: dict | None = None) -> bool:
 
 def describe(tool: str, policy: dict | None = None) -> str:
     """Human summary of a tool's egress rule."""
+    if policy is None:
+        unreadable = unreadable_config()
+        if unreadable:
+            return f"{tool}: egress blocked because {unreadable} could not be read"
     pol = policy if policy is not None else load_policy()
     rule = (pol or {}).get(tool) or {}
     if not rule:
@@ -195,4 +233,5 @@ def describe(tool: str, policy: dict | None = None) -> str:
 
 
 __all__ = ["UNLISTABLE_TOOLS", "WEB_TOOLS", "denied_tools", "describe", "host_allowed",
-           "load_policy", "network_posture", "work_area_offline"]
+           "load_policy", "network_posture", "offline_reason", "unreadable_config",
+           "work_area_offline"]

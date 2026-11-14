@@ -86,7 +86,7 @@ def test_unknown_work_area_network_policy_keeps_commands_offline():
     assert work_area_offline({}) is False
 
 
-def test_unparseable_config_or_malformed_values_block_the_network(tmp_path, monkeypatch):
+def test_unparseable_config_or_malformed_values_block_the_network(tmp_path, monkeypatch, caplog):
     # load_config() returns defaults for a config it cannot parse, so a
     # deny-all posture would silently become "open". It must block instead,
     # as must non-string posture values and a tool rule that is not a table.
@@ -94,6 +94,7 @@ def test_unparseable_config_or_malformed_values_block_the_network(tmp_path, monk
     from maverick.sandbox.network_policy import (
         denied_tools,
         network_posture,
+        offline_reason,
         work_area_offline,
     )
 
@@ -107,6 +108,10 @@ def test_unparseable_config_or_malformed_values_block_the_network(tmp_path, monk
         assert network_posture() == "deny-all"
         assert "http_fetch" in denied_tools()
         assert work_area_offline() is True
+        # The reason names the file, and no misleading "unknown value" warning.
+        assert str(cfg) in offline_reason() and "could not be read" in offline_reason()
+        assert str(cfg) in describe("http_fetch")
+        assert "unknown" not in caplog.text
     finally:
         config.reset_config_cache()
 
