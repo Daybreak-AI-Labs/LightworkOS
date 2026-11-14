@@ -50,7 +50,8 @@ pip install pytest pytest-asyncio pytest-xdist pytest-timeout 'ruff>=0.5' 'vultu
 # (requirements/ci.txt pins it); xlrd + olefile power the legacy-XLS worker.
 # Their tests self-skip without these (test_oidc pattern), so this install is
 # what makes them actually RUN in the devcontainer.
-pip install 'pillow>=10' 'xlrd>=2.0' 'olefile>=0.47'
+# lxml also matches core[spreadsheet] in CI, including the XLSX amplification checks.
+pip install 'pillow>=10' 'xlrd>=2.0' 'olefile>=0.47' 'lxml>=5.0'
 # openai: every OpenAI-compatible provider (openai/ollama/vllm/tgi/azure/...)
 # imports it; without it a vllm:/ollama:-routed run dies at the provider.
 pip install 'openai>=1.30'

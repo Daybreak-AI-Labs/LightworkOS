@@ -735,6 +735,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: needs.select-tests.outputs.mode != 'none'
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install supported optional test integrations
+        if: needs.select-tests.outputs.mode != 'none'
+        run: |
+          # Constraints alone do not install extras. Keep the real adapters in
+          # the existing interpreter/posture matrix instead of silently skipping.
+          python -m pip install --upgrade \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
+          python -m pip install \
+            arq azure-identity azure-keyvault-keys boto3 chromadb duckdb fastembed \
+            grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
+            opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
+            pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
+            python-telegram-bot qdrant-client slack-sdk sympy websockets
+          # The learned PRM round-trip needs CPU tensors, not a CUDA runtime.
+          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch
+          # Install the headless executable, too, so the local egress test runs.
+          python -m playwright install --with-deps --only-shell chromium
+          python -m pip check
+          python scripts/verify_constraint_closure.py
       - uses: ./.github/actions/test-shard
         with:
           python-version: ${{ matrix.python-version }}
@@ -774,6 +797,29 @@ jobs:
         if: github.event_name != 'pull_request'
         with:
           persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: github.event_name != 'pull_request'
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install supported optional test integrations
+        if: github.event_name != 'pull_request'
+        run: |
+          # Constraints alone do not install extras. Keep the real adapters in
+          # the existing interpreter/posture matrix instead of silently skipping.
+          python -m pip install --upgrade \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
+          python -m pip install \
+            arq azure-identity azure-keyvault-keys boto3 chromadb duckdb fastembed \
+            grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
+            opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
+            pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
+            python-telegram-bot qdrant-client slack-sdk sympy websockets
+          # The learned PRM round-trip needs CPU tensors, not a CUDA runtime.
+          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch
+          # Install the headless executable, too, so the local egress test runs.
+          python -m playwright install --with-deps --only-shell chromium
+          python -m pip check
+          python scripts/verify_constraint_closure.py
       - uses: ./.github/actions/test-shard
         if: github.event_name != 'pull_request'
         with:
@@ -925,6 +971,25 @@ jobs:
             -e ./packages/maverick-knowledge \
             -e ./apps/installer-cli \
             pytest pytest-asyncio pytest-timeout pytest-xdist 'pyjwt[crypto]' pyyaml sqlalchemy
+          python -m pip check
+          python scripts/verify_constraint_closure.py
+      - name: Install supported optional test integrations
+        if: github.event_name != 'pull_request'
+        run: |
+          # Constraints alone do not install extras. Keep the real adapters in
+          # the existing interpreter/posture matrix instead of silently skipping.
+          python -m pip install --upgrade \
+            'pip==26.3' 'setuptools==84.2.1' 'wheel==0.48.0' 'packaging==26.3'
+          python -m pip install \
+            arq azure-identity azure-keyvault-keys boto3 chromadb duckdb fastembed \
+            grpcio grpcio-tools langchain-core langsmith latex2mathml matrix-nio \
+            opentelemetry-sdk opentelemetry-exporter-otlp-proto-http \
+            pandas pyarrow playwright prometheus-client pysaml2 pyXMLSecurity python-docx \
+            python-telegram-bot qdrant-client slack-sdk sympy websockets
+          # The learned PRM round-trip needs CPU tensors, not a CUDA runtime.
+          python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch
+          # Install the headless executable, too, so the local egress test runs.
+          python -m playwright install --with-deps --only-shell chromium
           python -m pip check
           python scripts/verify_constraint_closure.py
       - name: Test and gate the production security posture
