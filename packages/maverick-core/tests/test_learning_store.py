@@ -148,6 +148,25 @@ def test_migrate_store_imports_and_backs_up(world_home, monkeypatch):
     assert r.exit_code == 0 and "nothing to migrate" in r.output
 
 
+def test_migrate_store_refuses_when_the_world_read_fails(world_home, monkeypatch):
+    ls.write_addenda_db({"model-a": "- keep a", "model-b": "- keep b"})
+    sh._store_path().parent.mkdir(parents=True, exist_ok=True)
+    sh._store_path().write_text(json.dumps({"model-c": "- from file"}))
+    real_rows = ls._rows
+
+    def _locked(conn, sql, params=()):
+        if sql.startswith("SELECT key, block FROM harness_addenda"):
+            raise RuntimeError("database is locked")
+        return real_rows(conn, sql, params)
+
+    monkeypatch.setattr(ls, "_rows", _locked)
+    from maverick import learning_store_migration as mig
+    with pytest.raises(RuntimeError):
+        mig.migrate_learning_files()
+    monkeypatch.setattr(ls, "_rows", real_rows)
+    assert ls.load_addenda_db() == {"model-a": "- keep a", "model-b": "- keep b"}
+
+
 def test_migrate_store_merges_conflicting_blocks(world_home, monkeypatch):
     from maverick.cli import main
     ctrl = _ctrl(monkeypatch, world_home / "promotion-ledger.json")

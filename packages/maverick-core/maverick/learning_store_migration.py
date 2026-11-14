@@ -5,8 +5,10 @@ The work behind ``maverick self-harness migrate-store`` (for
 Idempotent and fleet-safe: existing world entries win, file-only keys import,
 and a conflicting addenda block merges line-by-line under the normal cap. The
 routed store is verified to serve every imported key before the files are
-renamed to ``*.migrated`` backups. Every write happens under the learning
-store's own read-modify-write lock, so it is safe while Lightwork is running.
+renamed to ``*.migrated`` backups. The import holds the same locks as the
+promotion writers (the in-process lock, the store file lock and the learning
+store's read-modify-write lock), so it is safe while Lightwork is running on
+this host.
 """
 from __future__ import annotations
 
@@ -70,8 +72,12 @@ def migrate_learning_files() -> dict[str, int] | None:
     if not (addenda or meta or tried):
         return None
     merged = 0
-    with learning_store.rmw_lock():
-        db_add = learning_store.load_addenda_db()
+    from .file_lock import cross_process_lock
+    # Same lock order as the promotion writers (self_harness.apply_addendum):
+    # rmw_lock alone is a no-op on SQLite. Reads are strict so a failed read
+    # never becomes an empty map that the whole-map write below would replace.
+    with sh._lock, cross_process_lock(src), learning_store.rmw_lock():
+        db_add = learning_store.load_addenda_db(strict=True)
         for k, block in addenda.items():
             if k not in db_add:
                 db_add[k] = block
@@ -84,11 +90,11 @@ def migrate_learning_files() -> dict[str, int] | None:
                 db_add[k] = cur
                 merged += 1
         learning_store.write_addenda_db(db_add)
-        db_meta = learning_store.load_line_meta_db()
+        db_meta = learning_store.load_line_meta_db(strict=True)
         for lid, rec in meta.items():
             db_meta.setdefault(lid, rec)
         learning_store.write_line_meta_db(db_meta)
-        db_tried = learning_store.load_transfer_tried_db()
+        db_tried = learning_store.load_transfer_tried_db(strict=True)
         for lid, ts in tried.items():
             db_tried.setdefault(lid, ts)
         learning_store.write_transfer_tried_db(db_tried)

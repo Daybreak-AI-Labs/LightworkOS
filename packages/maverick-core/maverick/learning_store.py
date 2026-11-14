@@ -225,12 +225,13 @@ _TENANT_SCOPED_TABLES = (
 
 def _active_tenant() -> str | None:
     """The tenant scoping this call, or ``None`` for the unbound single-tenant
-    store. Lazy import keeps this module free of a hard ``paths`` dependency."""
-    try:
-        from .paths import current_tenant_id
-        return current_tenant_id()
-    except Exception:  # pragma: no cover -- no tenant context resolves to unbound
-        return None
+    store. Lazy import keeps this module free of a hard ``paths`` dependency.
+
+    The predicate is a tenant boundary on the shared store, so an invalid or
+    corrupt tenant/client binding raises instead of selecting the unbound
+    (``tenant_id IS NULL``) partition."""
+    from .paths import current_tenant_id_strict
+    return current_tenant_id_strict()
 
 
 def _tenant_predicate() -> tuple[str, tuple]:
@@ -412,8 +413,12 @@ def restore_guidance_snapshot(state: dict) -> None:
         _require_guidance_fence(source)
 
 
-def load_addenda_db() -> dict[str, str]:
-    """``{key: block}`` -- the world-store addenda map ({} on any error)."""
+def load_addenda_db(*, strict: bool = False) -> dict[str, str]:
+    """``{key: block}`` -- the world-store addenda map.
+
+    Returns {} on a read error unless ``strict``: a caller that writes the
+    whole map back must pass ``strict=True``, or one failed read would make the
+    next whole-map replace delete every stored addendum."""
     pred, params = _tenant_predicate()
     try:
         with _conn() as c:
@@ -423,6 +428,8 @@ def load_addenda_db() -> dict[str, str]:
     except LearningSchemaError:
         raise
     except Exception:
+        if strict:
+            raise
         log.debug("learning_store: addenda read failed", exc_info=True)
         return {}
 
@@ -446,8 +453,9 @@ def write_addenda_db(data: dict[str, str], *, effect_guard=None) -> None:
         if effect_guard is not None:
             effect_guard()
 
-def load_line_meta_db() -> dict[str, dict]:
-    """``{line_id: record}`` provenance sidecar ({} on any error)."""
+def load_line_meta_db(*, strict: bool = False) -> dict[str, dict]:
+    """``{line_id: record}`` provenance sidecar ({} on a read error unless
+    ``strict``; whole-map writers must pass ``strict=True``)."""
     out: dict[str, dict] = {}
     pred, params = _tenant_predicate()
     try:
@@ -464,6 +472,8 @@ def load_line_meta_db() -> dict[str, dict]:
     except LearningSchemaError:
         raise
     except Exception:
+        if strict:
+            raise
         log.debug("learning_store: line-meta read failed", exc_info=True)
     return out
 
