@@ -126,6 +126,20 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"(?i)([?&](?:access_token|api_key|apikey|auth_token|token|secret|"
         r"password|passwd|sig|signature|client_secret)=)([^&#\s\"']+)",
     )),
+    # Query parameters that are a credential only for particular services:
+    # Wolfram Alpha's ``appid`` (its sole credential) and Trello's ``key``.
+    # httpx logs every request URL at INFO. Kept apart from url_secret so the
+    # names there match exactly as before; ``(?!=)`` leaves an ``&key==`` (a
+    # comparison in source code) alone.
+    ("url_key_param", re.compile(
+        r"(?i)([?&](?:appid|key)=)(?!=)([^&#\s\"']+)",
+    )),
+    # Telegram bot token in a Bot API URL path (``/bot<id>:<token>/method``,
+    # also ``/file/bot<id>:<token>/...``). httpx logs the URL at INFO. The bot
+    # id stays readable; the bounded runs keep the match linear.
+    ("telegram_bot_token", re.compile(
+        r"(/bot[0-9]{1,20}:)([A-Za-z0-9_-]{20,128})",
+    )),
     # Lowercase, camelCase or quoted key/value pairs (password: hunter2,
     # api_key = abc, {"apiKey": "..."}) that the uppercase env_secret pattern
     # misses. A quoted value is always a value, and its quotes stay around the
@@ -165,7 +179,8 @@ def scrub(text: str, *, key_values: bool = True) -> str:
     for kind, pat in _PATTERNS:
         if kind == "kv_secret" and not key_values:
             continue
-        if kind in ("bearer", "env_secret", "url_secret", "aws_secret_key", "jwt", "kv_secret"):
+        if kind in ("bearer", "env_secret", "url_secret", "url_key_param", "telegram_bot_token",
+                    "aws_secret_key", "jwt", "kv_secret"):
             # Keep the prefix (header name / KEY= / ?param= / text before a
             # token), redact the value.
             out = pat.sub(lambda m, k=kind: m.group(1) + f"[REDACTED:{k}]", out)

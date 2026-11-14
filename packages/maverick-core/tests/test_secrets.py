@@ -149,6 +149,12 @@ def test_common_credential_shapes_are_redacted():
         "client_secret:  cs3cret": "cs3cret",  # pragma: allowlist secret
         "refreshToken=rtok1": "rtok1",  # pragma: allowlist secret
         '{"api_key": "zzz-secret"}': "zzz-secret",  # pragma: allowlist secret
+        # httpx logs request URLs at INFO: Wolfram's appid, Trello's key and a
+        # Telegram bot token in the URL path.
+        "GET https://api.wolframalpha.com/v2/query?input=pi&appid=WXYZ12-ABCDEF1234": "ABCDEF1234",  # pragma: allowlist secret
+        "GET https://api.trello.com/1/boards?key=0123abcdkey&token=tok": "0123abcdkey",  # pragma: allowlist secret
+        "POST https://api.telegram.org/bot123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/getUpdates": "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",  # pragma: allowlist secret
+        "https://api.telegram.org/file/bot42:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/doc.pdf": "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",  # pragma: allowlist secret
     }
     for text, secret in cases.items():
         assert secret not in scrub(text), text
@@ -169,6 +175,8 @@ def test_common_credential_shapes_are_redacted():
         "max_token: 5",
         "token = tokens[0]",
         "secret = sha256(data)",
+        "if flags&key==mask: return",
+        "def bot(self, key=None):",
     ):
         assert scrub(code) == code, code
     with_query = scrub("https://u:pw@host?next=a@b.com")  # pragma: allowlist secret
