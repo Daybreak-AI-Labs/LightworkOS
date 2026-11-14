@@ -242,6 +242,18 @@ def test_channel_authorization_precedes_any_approval_probe(isolated):
                             channel="slack", authorize=forbidden)
 
 
+def test_channel_undo_authorization_precedes_any_approval_probe(isolated):
+    from maverick.channel_approvals import undo_decision
+
+    def forbidden(*args):
+        raise PermissionError("unavailable")
+
+    world = SimpleNamespace(get_approval=lambda *args: pytest.fail("approval probed"))
+    with pytest.raises(PermissionError, match="unavailable"):
+        undo_decision(world, 123, undone_by="user:other", channel="slack",
+                      authorize=forbidden)
+
+
 def test_announcement_owns_world_even_after_callers_world_closes(isolated, monkeypatch):
     from maverick import approval_notify, channel_approvals, world_model
 

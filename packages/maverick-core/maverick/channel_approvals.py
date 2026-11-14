@@ -782,11 +782,11 @@ def undo_decision(world: Any, approval_id: int, *, undone_by: str, channel: str,
         raise ChannelApprovalRefused(
             "unlinked", "Your chat account isn't linked to a Lightwork user yet.",
         )
+    if authorize is not None:
+        authorize(who, int(approval_id))
     before = world.get_approval(int(approval_id))
     if before is None:
         raise ChannelApprovalRefused("not_found", "This request no longer exists.")
-    if authorize is not None:
-        authorize(who, int(approval_id))
     outcome = world.undo_approval_decision(
         int(approval_id), undone_by=who, within_seconds=approval_undo_grace_seconds(),
     )
