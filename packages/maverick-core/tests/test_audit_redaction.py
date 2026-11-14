@@ -142,3 +142,26 @@ def test_anonymous_mode_hashes_principal_bearing_audit_fields(monkeypatch, tmp_p
     assert row["created_by"].startswith("created_by#")
     assert row["approval_id"] == 123
     assert row["status"] == "approved"
+
+
+def test_redaction_covers_tuples_and_dict_keys_and_anon_fails_closed(monkeypatch, tmp_path: Path):
+    from maverick import privacy
+    from maverick.audit.events import AuditEvent, EventKind
+    from maverick.audit.writer import AuditLog
+
+    key = "sk-ant-api03-" + "B" * 54
+    al = AuditLog(audit_dir=tmp_path / "a")
+    assert al.record(AuditEvent(ts=1.0, kind=EventKind.TOOL_RESULT,
+                                payload={"args": ("x", key), "map": {key: 1}}))
+    body = next((tmp_path / "a").glob("*.ndjson")).read_text()
+    assert key not in body
+
+    # Anonymous mode on but the anonymiser broken: the identifiable payload
+    # must not be written.
+    monkeypatch.setenv("MAVERICK_ANON", "1")
+    monkeypatch.setattr(privacy, "anonymize_dict", lambda d: 1 / 0)
+    al = AuditLog(audit_dir=tmp_path / "b")
+    assert al.record(AuditEvent(ts=2.0, kind=EventKind.GOAL_START,
+                                payload={"title": "Jane Patient"})) is False
+    assert "Jane Patient" not in "".join(
+        p.read_text() for p in (tmp_path / "b").glob("*.ndjson"))

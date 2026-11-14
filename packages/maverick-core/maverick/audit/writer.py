@@ -884,20 +884,33 @@ def _redact_event(payload: dict[str, Any]) -> dict[str, Any]:
             redacted, _ = redact(v)
             return redacted
         if isinstance(v, dict):
-            return {k: _walk(vv, depth + 1) for k, vv in v.items()}
-        if isinstance(v, list):
+            # Keys are written too: a secret used as a key must not survive.
+            return {
+                (_walk(k, depth + 1) if isinstance(k, str) else k): _walk(vv, depth + 1)
+                for k, vv in v.items()
+            }
+        if isinstance(v, (list, tuple, set, frozenset)):
+            # json.dumps writes tuples as lists (and default=str stringifies
+            # sets), so walk every sequence rather than letting it pass raw.
             return [_walk(vv, depth + 1) for vv in v]
         return v
 
     redacted_payload = _walk(payload)
     try:
         from ..privacy import anon_enabled, anonymize_dict
-        if anon_enabled():
-            return anonymize_dict(redacted_payload)
+        anon = anon_enabled()
     # failure-policy: best_effort
     except Exception:
-        pass
-    return redacted_payload
+        return redacted_payload
+    if not anon:
+        return redacted_payload
+    try:
+        return anonymize_dict(redacted_payload)
+    # failure-policy: fail_closed
+    except Exception as e:
+        # Anonymous mode is on: writing the identifiable payload would be the
+        # leak the mode exists to prevent. Fail the write instead.
+        raise ValueError(f"audit: anonymisation failed ({type(e).__name__})") from e
 
 
 _default: AuditLog | None = None
