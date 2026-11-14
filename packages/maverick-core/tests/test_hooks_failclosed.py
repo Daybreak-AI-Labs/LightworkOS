@@ -155,6 +155,27 @@ async def test_unreadable_hooks_config_blocks_until_fixed(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    b'[["hooks"]]\nevent = "PreToolUse"\n[broken\n',
+    b'\xef\xbb\xbf[[hooks]]\nevent = "PreToolUse"\n[broken\n',
+    b"[budget\n",  # no hooks mention, but the bytes cannot be read below
+])
+async def test_quoted_bom_or_unreadable_hooks_config_blocks(tmp_path, monkeypatch, text):
+    from pathlib import Path
+    path = _config_file(tmp_path, monkeypatch, "")
+    path.write_bytes(text)
+    if b"hooks" not in text:
+        real = Path.read_bytes
+        monkeypatch.setattr(Path, "read_bytes", lambda self: (
+            (_ for _ in ()).throw(PermissionError(13, "denied"))
+            if self == path else real(self)))
+    hooks.load_from_config()
+    ctx = HookContext(event=HookEvent.PRE_TOOL_USE, tool_name="shell")
+    assert await hooks.dispatch(ctx) is False
+    assert str(path) in ctx.block_reason
+
+
+@pytest.mark.asyncio
 async def test_malformed_entry_does_not_drop_later_guard(monkeypatch):
     import maverick.config as cfg
 

@@ -133,7 +133,11 @@ def clear() -> None:
 # Raw-text evidence that an unreadable config file defines hooks: a [hooks]
 # or [[hooks]] table header, or a top-level hooks key. Bytes are searched,
 # never parsed (the file is unreadable as TOML by definition).
-_HOOKS_MENTION = re.compile(rb"^[ \t]*(?:\[\[?[ \t]*hooks\b|hooks[ \t]*=)", re.MULTILINE)
+_HOOKS_MENTION = re.compile(
+    rb"^(?:\xef\xbb\xbf)?[ \t]*(?:\[\[?[ \t]*([\"']?)hooks\1(?![A-Za-z0-9_-])"
+    rb"|([\"']?)hooks\2[ \t]*=)",
+    re.MULTILINE,
+)
 # Global config files that are unreadable and appear to define hooks. While
 # non-empty, blocking events are refused; it is re-evaluated on each dispatch.
 _config_block: list[str] = []
@@ -157,7 +161,9 @@ def _unreadable_hook_sources() -> list[str]:
         except FileNotFoundError:
             continue
         except OSError:
-            raw = b""
+            # The bytes cannot be read at all, so the file may define hooks.
+            flagged.append(path)
+            continue
         if _HOOKS_MENTION.search(raw):
             flagged.append(path)
         elif path not in _reported_unreadable:
