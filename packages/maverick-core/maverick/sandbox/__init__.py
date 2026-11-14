@@ -402,6 +402,11 @@ def _contain(contained, chosen: str, full_cfg: dict | None, wd: Path, held: list
     if contained is None:
         return full_cfg, wd
     if contained.no_network:
+        if chosen == "ssh" or chosen.startswith("ep:"):
+            # Neither backend reads allow_network; refuse, as _offline_policy does.
+            raise SandboxPolicyError(
+                "containment blocks internet access for commands, but the "
+                f"{chosen!r} work area cannot be kept offline; choose a container work area")
         full_cfg = {**(full_cfg or {}), "allow_network": False, "network": "egress-deny"}
     if contained.ephemeral_workspace and chosen not in ("ssh", "devcontainer"):
         from ..containment import make_ephemeral_workdir

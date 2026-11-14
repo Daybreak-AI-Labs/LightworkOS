@@ -170,3 +170,17 @@ def test_ephemeral_workdir_is_outside_maverick_home(tmp_path):
         assert maverick_home() not in wd.path.parents
     finally:
         wd.cleanup()
+
+
+def test_no_network_containment_refuses_backends_it_cannot_take_offline(tmp_path):
+    # ssh and entry-point backends never read allow_network, so containment's
+    # no-network promise cannot be kept there: refuse them, as the network
+    # posture does, instead of running them with network.
+    from maverick.sandbox import SandboxPolicyError, _contain
+
+    profile = containment.ContainmentProfile(ephemeral_workspace=False)
+    for chosen in ("ssh", "ep:custom"):
+        with pytest.raises(SandboxPolicyError):
+            _contain(profile, chosen, {}, tmp_path, [])
+    cfg, _ = _contain(profile, "docker", {}, tmp_path, [])
+    assert cfg["allow_network"] is False
