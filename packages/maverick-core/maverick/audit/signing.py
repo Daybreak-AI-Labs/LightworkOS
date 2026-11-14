@@ -47,7 +47,7 @@ import os
 import re
 import threading
 from collections.abc import Iterable
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1634,17 +1634,22 @@ def ensure_anchors(audit_dir: Path) -> int:
         day = day_file.stem
         if day >= today or day in anchored:
             continue
-        with cross_process_lock(day_file):
-            # A writer may have selected this day before midnight. Hold its
-            # append lock boundary from tip discovery through anchor publication.
-            with cross_process_lock(audit_dir / ANCHOR_FILENAME):
-                if day in _anchored_days(audit_dir):
-                    continue
+        with ExitStack() as held:
             try:
+                # A writer may have selected this day before midnight. Hold its
+                # append lock boundary from tip discovery through anchor
+                # publication. The locks are taken inside the per-day try: one
+                # unlockable or unreadable day must not leave every later day
+                # un-anchored (and so deletable without detection).
+                held.enter_context(cross_process_lock(day_file))
+                with cross_process_lock(audit_dir / ANCHOR_FILENAME):
+                    if day in _anchored_days(audit_dir):
+                        continue
                 tip, count = _file_tip_and_count(day_file)
             # failure-policy: fail_soft_with_audit
             except Exception as e:
-                log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
+                log.warning("audit anchors: cannot lock or read %s; not anchored: %s",
+                            day_file.name, e)
                 continue
             if count and not tip:
                 log.warning("audit anchors: %s has no signed rows; not anchored", day_file.name)

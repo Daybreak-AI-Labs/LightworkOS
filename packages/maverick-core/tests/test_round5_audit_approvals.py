@@ -74,6 +74,19 @@ def test_anchor_tip_waits_for_inflight_day_append(isolated, monkeypatch):
     assert signing.verify_anchors(audit_dir) == []
 
 
+def test_anchor_lock_failure_skips_only_that_day(isolated):
+    from maverick.audit import signing
+
+    audit_dir = isolated / "audit"
+    for day in ("2000-01-01", "2000-01-02"):
+        assert signing.AuditSigner(audit_dir / f"{day}.ndjson").write({"kind": day})
+    unsafe = audit_dir / "2000-01-01.ndjson.lock"
+    unsafe.unlink(missing_ok=True)
+    unsafe.symlink_to(isolated / "elsewhere")
+    assert signing.ensure_anchors(audit_dir) == 1
+    assert signing._anchored_days(audit_dir) == {"2000-01-02"}
+
+
 def test_checkpoint_publication_recovers_only_its_stale_stage_link(isolated):
     from maverick.audit import checkpoints, signing
 
