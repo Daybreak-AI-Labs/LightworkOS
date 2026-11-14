@@ -345,6 +345,18 @@ def test_workday_get(monkeypatch):
     assert get.call_args.args[0].endswith("/workers")
 
 
+def test_workday_path_cannot_climb_out_of_base_url(monkeypatch):
+    monkeypatch.setenv("WORKDAY_BASE_URL", "https://wd.example.com/ccx/api/v1/T")
+    monkeypatch.setenv("WORKDAY_TOKEN", "t")
+    get = MagicMock()
+    _fake_httpx(monkeypatch, get=get)
+    from maverick.tools.workday_tool import workday_tool
+    for path in ("/../../staffing/v6/OTHER/workers", "/%2e%2e/x", "a/./b"):
+        out = workday_tool().fn({"op": "get", "path": path})
+        assert out.startswith("ERROR") and "WORKDAY_BASE_URL" in out, path
+    get.assert_not_called()
+
+
 def test_workday_post_needs_confirm(monkeypatch):
     monkeypatch.setenv("WORKDAY_BASE_URL", "https://wd.example.com/ccx/api/v1/T")
     monkeypatch.setenv("WORKDAY_TOKEN", "t")
