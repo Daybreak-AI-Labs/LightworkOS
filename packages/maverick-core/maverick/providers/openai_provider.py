@@ -276,12 +276,18 @@ class OpenAIClient:
             )
         from .base import sdk_http_timeout
         kw: dict = {"api_key": key, "base_url": base_url}
+        # OpenAI organisation and project ids identify an OpenAI account; the
+        # OpenAI-compatible subclasses talk to other vendors, which must not
+        # receive them.
+        openai_account = type(self) is OpenAIClient
+        org = env.get("OPENAI_ORG_ID") if openai_account else None
+        project = env.get("OPENAI_PROJECT_ID") if openai_account else None
         if environment is not None:
             # Explicit empty optional values prevent SDK-level live env fallback.
             kw.update(
                 base_url=base_url or env.get("OPENAI_BASE_URL") or "https://api.openai.com/v1",
-                organization=env.get("OPENAI_ORG_ID", ""),
-                project=env.get("OPENAI_PROJECT_ID", ""),
+                organization=org or "",
+                project=project or "",
             )
         # Data-residency / ZDR control: operator-set `[providers.<name>]
         # default_headers` are attached to every request so a compliance gateway
@@ -296,13 +302,15 @@ class OpenAIClient:
         # budgets, egress denials, and audit accounting.
         self._sync = OpenAI(max_retries=0, **kw)
         self._async = AsyncOpenAI(max_retries=0, **kw)
-        if environment is not None:
+        if environment is not None or not openai_account:
             # Empty construction sentinels block SDK env fallback, then restore
             # absent metadata so no new empty headers are sent to any endpoint.
+            # A subclass built from the live environment clears what the SDK
+            # read from OPENAI_ORG_ID / OPENAI_PROJECT_ID the same way.
             for client in (self._sync, self._async):
                 if client is not None:
-                    client.organization = env.get("OPENAI_ORG_ID") or None
-                    client.project = env.get("OPENAI_PROJECT_ID") or None
+                    client.organization = org or None
+                    client.project = project or None
         # Expose the resolved endpoint for introspection (doctor / logs) and so
         # the OpenAI-compatible subclasses (vllm / tgi / bedrock /
         # openai_compatible) and their tests can read where they're actually
