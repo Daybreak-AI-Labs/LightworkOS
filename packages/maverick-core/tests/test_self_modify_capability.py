@@ -194,3 +194,13 @@ class TestDynamicCodePrecision:
         for added in (django, pytest_):
             w, new = widens(_patch(added))
             assert w is False, f"{added!r} wrongly widens -> {new}"
+
+
+def test_common_spawn_apis_and_cross_file_baselines_are_caught():
+    for line in ("await asyncio.create_subprocess_shell('id')",
+                 "os.posix_spawn('/bin/sh', ['sh'], {})",
+                 "builtins.__dict__['ex' + 'ec'](code)"):
+        assert widens(_patch(line))[0] is True, line
+    # A class used only in ANOTHER baseline file does not mask its first use here.
+    w, new = widens(_patch("import subprocess"), baseline_files={"other.py": "import subprocess\n"})
+    assert w is True and new == ["process"]

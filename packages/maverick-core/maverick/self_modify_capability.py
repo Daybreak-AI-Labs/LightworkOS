@@ -47,7 +47,8 @@ from .capability import Capability
 _CLASS_PATTERNS: dict[str, tuple[str, ...]] = {
     "process": (
         r"\bshell\s*=\s*True\b", r"\bsubprocess\b",
-        r"\bos\.(system|popen|exec[lv]\w*|spawn\w*)\s*\(",
+        r"\bcreate_subprocess_(shell|exec)\b",
+        r"\bos\.(system|popen|exec[lv]\w*|spawn\w*|posix_spawnp?)\s*\(",
         r"\bpty\.spawn\b", r"\bmultiprocessing\b",
     ),
     "network": (
@@ -61,7 +62,7 @@ _CLASS_PATTERNS: dict[str, tuple[str, ...]] = {
         # builtins. This matches the AST pass, which already flags eval/exec/
         # compile only as bare Names -- the regex now says the same thing.
         r"(?<![\w.])(eval|exec)\s*\(", r"(?<![\w.])compile\s*\(",
-        r"\bbuiltins\.(eval|exec|compile)\s*\(",
+        r"\bbuiltins\.(eval|exec|compile)\s*\(", r"\bbuiltins\.__dict__\b",
         # Obfuscation constructs that reach the same primitives past a literal
         # regex (getattr(os,'sy'+'stem'), __builtins__[...], base64/codecs
         # payloads). A regex screen can't catch every spelling, so a change that
@@ -181,7 +182,9 @@ class _CapVisitor(ast.NodeVisitor):
         for a in node.names:  # dangerous from-imports (incl. aliases)
             local, cls = a.asname or a.name, None
             if root == "os" and (a.name in ("system", "popen")
-                                 or a.name.startswith(("exec", "spawn"))):
+                                 or a.name.startswith(("exec", "spawn", "posix_spawn"))):
+                cls = "process"
+            elif root == "asyncio" and a.name.startswith("create_subprocess_"):
                 cls = "process"
             elif root == "os" and a.name in _OS_FS_ATTRS:
                 cls = "fs_write"
@@ -253,11 +256,13 @@ class _CapVisitor(ast.NodeVisitor):
         if root is None:
             return None
         if root == "os":
-            if attr in ("system", "popen") or attr.startswith(("exec", "spawn")):
+            if attr in ("system", "popen") or attr.startswith(("exec", "spawn", "posix_spawn")):
                 return "process"
             if attr in _OS_FS_ATTRS:
                 return "fs_write"
         if root in ("subprocess", "multiprocessing"):
+            return "process"
+        if root == "asyncio" and attr.startswith("create_subprocess_"):
             return "process"
         if root == "pty" and attr == "spawn":
             return "process"
@@ -269,7 +274,7 @@ class _CapVisitor(ast.NodeVisitor):
             return "dynamic_code"
         if root == "base64":
             return "dynamic_code"
-        if root in ("builtins", "__builtins__") and attr in ("eval", "exec", "compile"):
+        if root in ("builtins", "__builtins__") and attr in ("eval", "exec", "compile", "__dict__"):
             return "dynamic_code"
         if root in _NETWORK_ROOTS:
             return "network"
@@ -313,6 +318,18 @@ def _added_lines(patch: str) -> list[str]:
             if ln.startswith("+") and not ln.startswith("+++")]
 
 
+def _added_lines_by_file(patch: str) -> dict[str, list[str]]:
+    """Added lines grouped by the ``+++`` target path (``b/`` stripped)."""
+    out: dict[str, list[str]] = {}
+    current = ""
+    for ln in (patch or "").splitlines():
+        if ln.startswith("+++"):
+            current = ln[4:].split("\t", 1)[0].removeprefix("b/")
+        elif ln.startswith("+"):
+            out.setdefault(current, []).append(ln[1:])
+    return out
+
+
 def _grant(principal: str, classes: Iterable[str]) -> Capability:
     """A capability whose allow-list is exactly ``classes`` (plus the anchor so
     it is never the empty 'all' set). ``permits(cls)`` is then True iff the grant
@@ -338,8 +355,8 @@ def capability_delta(
 
     ``baseline_files`` maps repo-relative path -> full current source for the
     touched files (from the Phase-2 materialized baseline tree); when given, the
-    differential is real (a class already used elsewhere in the file is not a new
-    grant). WITHOUT it the baseline is **empty** — every capability class the
+    differential is real (a class already used elsewhere in the same file is not
+    a new grant; a class used only in another file still is). WITHOUT it the baseline is **empty** — every capability class the
     added lines introduce counts as new. Deriving the baseline from the patch's
     own context lines was unsafe: an unchanged context line mentioning e.g.
     ``allowlist``/``grant`` would seed that class into ``before`` and NEUTRALISE
@@ -347,11 +364,21 @@ def capability_delta(
     added construct widens); pass ``baseline_files`` to earn the differential."""
     # AST-aware detection on coherent source (the joined added block often parses;
     # baseline files always do), falling back to the regex within classes_in_source.
-    added = classes_in_source("\n".join(_added_lines(patch)))
-    base = classes_in_source(
-        "\n".join(str(src) for src in (baseline_files or {}).values()))
-    after = base | added
-    return _grant(principal, base), _grant(principal, after), CAPABILITY_CLASSES
+    # The differential is per file: a class another file already uses does not
+    # make it pre-existing in the file that adds it.
+    files = baseline_files or {}
+    base: set[str] = set()
+    added: set[str] = set()
+    new: set[str] = set()
+    for path, lines in _added_lines_by_file(patch).items():
+        added_here = classes_in_source("\n".join(lines))
+        base_here = classes_in_source(str(files.get(path) or ""))
+        added |= added_here
+        new |= added_here - base_here
+    for src in files.values():
+        base |= classes_in_source(str(src))
+    before = base - new
+    return _grant(principal, before), _grant(principal, base | added), CAPABILITY_CLASSES
 
 
 def widens(patch: str, *, baseline_files: dict[str, str] | None = None) -> tuple[bool, list[str]]:
