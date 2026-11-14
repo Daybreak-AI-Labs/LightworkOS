@@ -9,7 +9,7 @@
 //! entirely-unsigned log is UNVERIFIABLE (exit 1), not "clean".
 
 use clap::Parser;
-use maverick_verify_audit::{verify_file, ChainBreak, KeySource};
+use maverick_verify_audit::{verify_file_report, ChainBreak, KeySource};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -36,7 +36,7 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     keys_dir: Option<PathBuf>,
 
-    /// Print every break, not just the first.
+    /// Print every retained break (up to 1,000), not just the first.
     #[arg(long)]
     all: bool,
 }
@@ -68,11 +68,10 @@ fn main() -> ExitCode {
         }
     };
 
-    let breaks = verify_file(&args.file, &keys);
+    let (n, breaks) = verify_file_report(&args.file, &keys);
 
     if breaks.is_empty() {
         // Match the writer's vocabulary: report rows verified.
-        let n = count_rows(&args.file);
         println!("OK: {} rows verified ({})", n, args.file.display());
         return ExitCode::SUCCESS;
     }
@@ -97,6 +96,9 @@ fn main() -> ExitCode {
 fn report(file: &std::path::Path, breaks: &[ChainBreak], all: bool) {
     eprintln!("FAIL: {} issue(s) in {}", breaks.len(), file.display());
     let shown: &[ChainBreak] = if all { breaks } else { &breaks[..1] };
+    if breaks.len() == 1000 {
+        eprintln!("  failure report limit reached; the remaining input is not certified");
+    }
     for b in shown {
         if b.line_no == 0 {
             eprintln!("  {} — {}", b.reason, b.detail);
@@ -110,12 +112,4 @@ fn report(file: &std::path::Path, breaks: &[ChainBreak], all: bool) {
             breaks.len() - 1
         );
     }
-}
-
-/// Count non-blank rows for the success message. Best-effort: the chain already
-/// verified, so a read error here only affects the printed count.
-fn count_rows(path: &std::path::Path) -> usize {
-    std::fs::read_to_string(path)
-        .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
-        .unwrap_or(0)
 }
