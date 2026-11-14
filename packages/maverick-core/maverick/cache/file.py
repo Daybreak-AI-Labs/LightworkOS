@@ -137,7 +137,7 @@ def _workdir_signature(workdir: Path) -> str:
     """Content-aware signature of ``workdir`` for repo-map cache invalidation.
 
     Recursively walks visible files and directories (skipping VCS / vendor /
-    cache dirs and dot-entries) and digests each relative path plus cheap
+    cache dirs) and digests each relative path plus cheap
     metadata. File entries include size+mtime as a proxy for content -- a full
     content hash would be more robust but too slow for a per-call probe; the
     vendor-dir skips keep the walk bounded. Directory entries include mtime so
@@ -146,25 +146,23 @@ def _workdir_signature(workdir: Path) -> str:
     try:
         entries: list[tuple[str, str, int, float]] = []
         for dirpath, dirnames, filenames in os.walk(workdir):
-            # Prune in place so os.walk never descends into skipped/hidden dirs.
+            # Prune vendor/cache directories; hidden names are shown by repo_map.
             dirnames[:] = [
                 d for d in dirnames
-                if not d.startswith(".") and d not in _SIG_SKIP_DIRS
+                if d not in _SIG_SKIP_DIRS
             ]
             for name in dirnames:
                 dp = Path(dirpath) / name
                 try:
-                    st = dp.stat()
+                    st = dp.lstat()
                 except OSError:
                     continue
                 rel = os.path.relpath(dp, workdir).replace(os.sep, "/")
                 entries.append(("d", rel, 0, st.st_mtime))
             for name in filenames:
-                if name.startswith("."):
-                    continue
                 fp = Path(dirpath) / name
                 try:
-                    st = fp.stat()
+                    st = fp.lstat()
                 except OSError:
                     continue
                 rel = os.path.relpath(fp, workdir).replace(os.sep, "/")
