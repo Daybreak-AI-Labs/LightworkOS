@@ -161,3 +161,29 @@ class TestTestsDirAllFiles:
         out = tool.fn({"path": "tests/__init__.py"})
         assert "ERROR" in out
         assert "gold" not in out
+
+
+def test_java_test_names_are_test_paths():
+    from maverick.tools.fs import _is_test_path
+    assert _is_test_path("src/FooTest.java") and _is_test_path("src/FooTests.java")
+    assert not _is_test_path("src/Contest.java")
+
+
+def test_read_file_reads_only_up_to_the_cap(tmp_path, monkeypatch):
+    from maverick.tools import fs
+    (tmp_path / "big.txt").write_text("x" * 20000)
+    seen: dict = {}
+    real = fs.read_text_contained
+
+    def _spy(sandbox, target, **kw):
+        seen.update(kw)
+        return real(sandbox, target, **kw)
+
+    monkeypatch.setattr(fs, "read_text_contained", _spy)
+
+    class _Sandbox:
+        workdir = tmp_path
+
+    out = fs.read_file(_Sandbox()).fn({"path": "big.txt"})
+    assert seen["max_chars"] == fs.MAX_READ_BYTES + 1
+    assert "truncated at 8000 characters, file is 20000 bytes" in out
