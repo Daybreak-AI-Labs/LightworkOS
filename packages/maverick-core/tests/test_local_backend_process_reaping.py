@@ -267,3 +267,14 @@ def test_windows_job_containment_nests_inside_an_outer_job(tmp_path: Path):
             process.wait(timeout=5)
         if outer_job is not None:
             _terminate_and_close_windows_job(outer_job)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell printf")
+def test_non_utf8_output_is_returned_not_raised(tmp_path: Path):
+    # One undecodable byte used to raise UnicodeDecodeError out of exec()
+    # after the command had run, losing its exit code and skipping the
+    # process-group reap. Undecodable bytes are now replaced.
+    result = LocalBackend(workdir=tmp_path).exec(r"printf '\377\376abc'; printf '\377' >&2")
+    assert result.exit_code == 0
+    assert result.stdout.endswith("abc") and "�" in result.stdout
+    assert "�" in result.stderr

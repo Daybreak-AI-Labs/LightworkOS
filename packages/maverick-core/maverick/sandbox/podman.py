@@ -126,6 +126,7 @@ class PodmanBackend:
                 args,
                 capture_output=True,
                 text=True,
+                errors="replace",
                 timeout=effective,
                 env=scrub_env(),
             )

@@ -146,7 +146,7 @@ class SSHBackend:
         args = ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, remote]
         try:
             result = subprocess.run(
-                args, capture_output=True, text=True, timeout=effective,
+                args, capture_output=True, text=True, errors="replace", timeout=effective,
                 env=_ssh_env(),
             )
             return ExecResult(

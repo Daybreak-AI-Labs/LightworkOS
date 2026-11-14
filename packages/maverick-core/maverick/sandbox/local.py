@@ -374,6 +374,7 @@ class LocalBackend:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             env=child_env,
             # Own session (= new process group) so a timeout can reap the WHOLE
             # tree. subprocess's own timeout SIGKILLs only the direct /bin/sh
