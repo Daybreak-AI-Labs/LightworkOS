@@ -885,6 +885,16 @@ def _run_scope(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
     return node.next
 
 
+def _sequential_item_data(node: FlowNode, data: dict, item: Any) -> dict:
+    sub = dict(data)
+    if node.output:
+        # The partial results published after each iteration are not iteration
+        # input; carrying them would nest every earlier snapshot in each new one.
+        sub.pop(node.output, None)
+    sub[node.var] = item
+    return sub
+
+
 def _run_foreach(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
     if type(node.concurrency) is not int or not 0 <= node.concurrency <= _PARALLEL_MAX_WORKERS:
         raise _Reject(node, data, error="Choose Shared workflow limit or between 1 and 8 items at once.")
@@ -952,8 +962,7 @@ def _run_foreach(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         results = subs
     else:
         for item in items[len(results):]:
-            sub = dict(data)
-            sub[node.var] = item
+            sub = _sequential_item_data(node, data, item)
             _run_chain(node.body, sub, ctx.nested(), node.body.start)
             results.append(sub)      # per-iteration data snapshot (body outputs included)
             ctx.frame["results"] = copy.deepcopy(results)

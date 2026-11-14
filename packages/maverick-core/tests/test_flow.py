@@ -29,6 +29,16 @@ def _flow(nodes, start="a"):
 # ---- IR ---------------------------------------------------------------------
 
 class TestFlowIR:
+    def test_validate_rejects_unbounded_loops_and_non_finite_numbers(self):
+        body = _flow([FlowNode(id="x", kind="agent", brief="b")], start="x")
+        f = _flow([FlowNode(id="a", kind="while", condition="go", body=body,
+                            limit=10**9, seconds=float("nan"))])
+        f.max_dollars = float("nan")
+        errors = "; ".join(f.validate())
+        assert "limit must be between 0 and 10,000" in errors
+        assert "'a': seconds must be a finite number" in errors
+        assert "max_dollars must be a finite number" in errors
+
     def test_single_agent_flow_is_a_template(self):
         f = single_agent_flow("t1", "Draft memo", "Write a memo about {{topic}}")
         assert f.is_single_agent()
@@ -131,6 +141,14 @@ class TestRunner:
         r = run_flow(f, agent_fn=_agent, action_fn=_action, data={"rows": [1, 2, 3]})
         assert r.status == STATUS_COMPLETED
         assert [row["r"] for row in r.data["results"]] == ["[do 1]", "[do 2]", "[do 3]"]
+
+    def test_sequential_foreach_snapshots_do_not_nest_earlier_results(self):
+        body = _flow([FlowNode(id="x", kind="agent", brief="do {{item}}", output="r")], start="x")
+        f = _flow([FlowNode(id="a", kind="foreach", items="rows", var="item",
+                            body=body, output="results")])
+        r = run_flow(f, agent_fn=_agent, action_fn=_action, data={"rows": list(range(20))})
+        assert r.status == STATUS_COMPLETED and len(r.data["results"]) == 20
+        assert all("results" not in row for row in r.data["results"])
 
     def test_parallel_merges_branch_outputs(self):
         f = _flow([FlowNode(id="a", kind="parallel", branches=[

@@ -7,6 +7,17 @@ from maverick.flow import Flow, FlowNode
 from maverick.flow.runner import FlowCredentialRefused, eval_condition, render, run_flow
 
 
+def test_text_functions_refuse_results_larger_than_a_run_can_hold():
+    from maverick.flow.expressions import FlowTextLimitRefused
+
+    x = {"x": "a" * 100}
+    assert len(render("{{replace(replace(x,'',x),'',x)}}", x)) == 1_030_300
+    with pytest.raises(FlowTextLimitRefused):
+        render("{{replace(replace(replace(x,'',x),'',x),'',x)}}", x)
+    with pytest.raises(FlowTextLimitRefused):
+        render("{{concat(x, x)}}", {"x": "a" * (9 * 1024 * 1024)})
+
+
 class TestArithmeticAndLists:
     def test_arithmetic(self):
         assert render("{{add(a, b)}}", {"a": 2, "b": 3}) == "5"      # int, not 5.0
