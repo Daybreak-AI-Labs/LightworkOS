@@ -2716,23 +2716,24 @@ class LLM:
                 * _cache_write_mult_from_ttl("1h")
             )
             _held = budget.reserve(estimate) if budget is not None else 0.0
-            provider_sequence = _new_provider_attempt_sequence(
-                default_category="storage",
-                operation_prefix="prewarm",
-            )
-            tracker = _ProviderAttemptTracker(
-                provider,
-                f"{provider}:{model_id}",
-                budget,
-                getattr(client, "CACHE_READ_MULT", None),
-                estimate,
-                sequence=provider_sequence,
-                service=f"{provider}:{model_id}:prompt-cache",
-                metered_model=model_id,
-                material_guard=self._price_material_guard(provider, route),
-                admitted_quote=admitted_quote,
-            )
-            try:
+            tracker = None
+            try:  # from the reservation on, so a refused admission still releases it
+                provider_sequence = _new_provider_attempt_sequence(
+                    default_category="storage",
+                    operation_prefix="prewarm",
+                )
+                tracker = _ProviderAttemptTracker(
+                    provider,
+                    f"{provider}:{model_id}",
+                    budget,
+                    getattr(client, "CACHE_READ_MULT", None),
+                    estimate,
+                    sequence=provider_sequence,
+                    service=f"{provider}:{model_id}:prompt-cache",
+                    metered_model=model_id,
+                    material_guard=self._price_material_guard(provider, route),
+                    admitted_quote=admitted_quote,
+                )
                 from .retry import observe_physical_attempts
 
                 with _attempt_price_scope(tracker.metering_quote), observe_physical_attempts(tracker):
@@ -2740,7 +2741,8 @@ class LLM:
                         return bool(warm(system, tools, model_id, budget=budget))
                     return bool(warm(system, tools, model_id))
             finally:
-                tracker.finalize(None)
+                if tracker is not None:
+                    tracker.finalize(None)
                 if _held:
                     budget.release(_held)
         except Exception:  # pragma: no cover -- prewarm is best-effort
