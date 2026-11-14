@@ -73,3 +73,9 @@ def test_consent_revoke(tmp_path, monkeypatch):
     assert ("rm-rf", "/tmp/test") not in list_grants()
     # Idempotent: revoking again returns False.
     assert revoke("rm-rf", scope="/tmp/test") is False
+
+
+def test_terminal_prompt_escapes_control_characters():
+    from maverick.safety.consent import _format_prompt
+    prompt = _format_prompt("rm", "high", "x\x1b[2K\rscope: /tmp/safe", None)
+    assert "\x1b" not in prompt and "\r" not in prompt and "\\x1b" in prompt

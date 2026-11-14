@@ -1690,6 +1690,15 @@ def _decide_via_dashboard(
         close_world_if_owned(wm)
 
 
+def _terminal_safe(text: str) -> str:
+    """Escape control and format characters (ANSI, ``\\r``, bidi overrides) so
+    the text cannot repaint the prompt the operator is approving."""
+    return "".join(
+        ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii")
+        for ch in str(text)
+    )
+
+
 def _format_prompt(
     action: str,
     risk: str,
@@ -1709,12 +1718,12 @@ def _format_prompt(
             f"{rendered}\nAllow this exact binding? [y/N]: "
         )
     parts = [
-        f"\n[CONSENT {risk_tag}] {action}",
+        f"\n[CONSENT {risk_tag}] {_terminal_safe(action)}",
     ]
     if scope:
-        parts.append(f"  scope: {scope}")
+        parts.append(f"  scope: {_terminal_safe(scope)}")
     if detail:
-        parts.append(f"  detail: {detail}")
+        parts.append(f"  detail: {_terminal_safe(detail)}")
     parts.append("Allow? [y/N]: ")
     return "\n".join(parts)
 
