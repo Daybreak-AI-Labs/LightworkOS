@@ -186,6 +186,20 @@ def test_removed_signed_heads_never_allow_a_second_adoption(tmp_path, monkeypatc
     assert ledger.state("deploy").hits == 1
 
 
+def test_unsigned_audit_log_install_adopts_legacy_evidence_once(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "0")  # operator chose an unsigned log
+    path = tmp_path / "trust.ndjson"
+    _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("hit", "deploy", card_id="b", ts=3.0)
+    assert ledger.verify().startswith("VALID: 3")
+    shutil.rmtree(ledger._log._anchor_location()[1])
+    assert "anchored before" in ledger.verify()
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=4.0)
+
+
 def test_fabricated_ledger_at_an_anchored_path_is_not_adopted(tmp_path, monkeypatch):
     import shutil
 

@@ -93,21 +93,25 @@ def _first_anchor_recorded(identity: str) -> bool | None:
 
     ``None`` when the main log cannot be verified (a broken or unsigned chain,
     a broken anchor history, an unreadable file): adoption is then refused.
-    Only the rare adoption path calls this; it reads every main-log day-file.
+    When the audit writer does not sign (the operator chose an unsigned log),
+    there is nothing to verify, so a plain read decides; an unreadable
+    day-file still returns ``None``. Only the rare adoption path calls this;
+    it reads every main-log day-file.
     """
     from .audit.signing import _segment_text, day_files, verify_anchors, verify_chain
     from .audit.writer import default_audit_log
     from .file_lock import cross_process_lock
 
     try:
-        main = default_audit_log().audit_dir
-        if verify_anchors(main):
+        sink = default_audit_log()
+        main, signed = sink.audit_dir, sink.signing_enabled
+        if signed and verify_anchors(main):
             return None
         found = False
         for path in day_files(main):
             with cross_process_lock(path, strict=True):
                 segment = _segment_text(path)
-                if verify_chain(path, segment=segment):
+                if signed and verify_chain(path, segment=segment):
                     return None
             for line in segment.splitlines():
                 if not line.strip():
@@ -152,6 +156,7 @@ class _ChainedLog:
         #: after the signed head (the trust ledger's demote/revoke). Such rows
         #: only take authority away, so anchoring them hides nothing.
         self.reanchorable_kinds: frozenset[str] = frozenset()
+        self._warned_unverifiable = False
         # Fingerprint of the evidence file and its signed namespace at the
         # last full verification (or our own anchored append after it), and
         # the row count of the day-file our last signed head went to.
@@ -230,6 +235,12 @@ class _ChainedLog:
                 return "signed audit head is missing"
             recorded = _first_anchor_recorded(identity)
             if recorded is None:
+                if not self._warned_unverifiable:
+                    self._warned_unverifiable = True
+                    log.warning(
+                        "earned-autonomy: earlier evidence in %s was not taken over because "
+                        "the audit log does not verify; `maverick audit verify` shows "
+                        "what is wrong", self.path)
                 return "signed audit head is missing and the main audit log cannot be verified"
             if recorded:
                 return ("signed audit head is missing: the main audit log shows this "
@@ -402,6 +413,11 @@ class _ChainedLog:
         if not self._record_anchor(head, count, adopted_from_unanchored=True):
             return False
         log.warning("earned-autonomy: adopted %d row(s) of unanchored legacy evidence", count)
+        from .audit.writer import default_audit_log
+
+        if not default_audit_log().signing_enabled:
+            log.warning("earned-autonomy: evidence was adopted without a verifiable audit "
+                        "log (audit signing is off)")
         return True
 
     def _repair_status_unlocked(self, status: str) -> str:
