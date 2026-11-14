@@ -37,6 +37,13 @@ def test_sequence_gap_detected():
     assert "seq=2 missing" in out
 
 
+def test_huge_sequence_span_does_not_allocate_the_range():
+    # The old check built set(range(lo, hi + 1)); this span would need ~TBs.
+    log = [{"seq": 0, "hash": "a"}, {"seq": 10**15, "hash": "b"}]
+    out = _verify(log, list(log))
+    assert out.startswith("DIVERGED") and "seq=1 missing" in out
+
+
 def test_missing_entry_on_one_side():
     out = _verify(
         [{"seq": 1, "hash": "a"}, {"seq": 2, "hash": "b"}],
