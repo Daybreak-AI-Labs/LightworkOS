@@ -98,7 +98,9 @@ def _symbols(path: Path) -> list[tuple[str, int, str]]:
         return []
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except (SyntaxError, OSError):
+    except (SyntaxError, OSError, ValueError, RecursionError, MemoryError):
+        # One unparseable file (too deeply nested, a NUL byte) must not abort
+        # the whole search.
         return []
     out: list[tuple[str, int, str]] = []
 

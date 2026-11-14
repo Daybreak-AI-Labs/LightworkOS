@@ -59,3 +59,11 @@ def test_search_registered_tool_confines_paths_to_workspace(tmp_path):
 def test_search_rejects_non_python_and_special_files():
     t = semantic_code_search()
     assert t.fn({"op": "search", "paths": ["/dev/zero"], "query": "anything"}).startswith("ERROR")
+
+
+def test_one_unparseable_file_does_not_abort_the_search(tmp_path):
+    (tmp_path / "deep.py").write_text("x = " + "+".join(["1"] * 200_000) + "\n")
+    (tmp_path / "nul.py").write_bytes(b"x = 1\x00\n")
+    (tmp_path / "mod.py").write_text("def parse_csv_file(path):\n    return []\n")
+    out = semantic_code_search().fn({"op": "search", "paths": [str(tmp_path)], "query": "parse csv"})
+    assert "parse_csv_file" in out
