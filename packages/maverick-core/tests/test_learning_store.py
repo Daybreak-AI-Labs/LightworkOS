@@ -309,3 +309,15 @@ def test_migrate_store_requires_world_config(tmp_path, monkeypatch):
         "self_harness": {"enable": True}})       # store = files
     r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
     assert r.exit_code != 0 and 'store = "world"' in r.output
+
+
+def test_migrate_store_refuses_an_unreadable_corpus_file(world_corpus):
+    # An unreadable file read as {} was renamed to *.migrated and the run
+    # reported success with zero counts.
+    from maverick.cli import main
+    cpath = world_corpus
+    cpath.write_text('{"M": [,]}')
+    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
+    assert r.exit_code != 0
+    assert cpath.read_text() == '{"M": [,]}'
+    assert not cpath.with_name(cpath.name + ".migrated").exists()
