@@ -131,3 +131,36 @@ def test_local_kms_wrap_unwrap_round_trip():
     kms = k.LocalKMS()
     dek = b"\x07" * 32
     assert kms.unwrap(kms.wrap(dek)) == dek
+
+
+@requires_crypto
+def test_unwrap_never_mints_a_missing_at_rest_key(monkeypatch):
+    # A read whose at-rest key was lost must fail clearly, not create a new
+    # key (which could open nothing and would mask the loss).
+    from maverick import crypto_at_rest
+    from maverick.tenant import kms as k
+
+    monkeypatch.delenv("MAVERICK_KMS_KEK", raising=False)
+    monkeypatch.delenv("MAVERICK_ENCRYPTION_KEY", raising=False)
+    k.seal_for_tenant("acme", b"data")          # first write creates the key
+    key_file = crypto_at_rest._key_path()
+    assert key_file.exists()
+    key_file.unlink()
+    k._clear_cache()
+    with pytest.raises(k.EncryptionUnavailable, match="missing"):
+        k.tenant_dek("acme")
+    assert not key_file.exists()
+
+
+@requires_crypto
+def test_fleet_rotation_reports_a_reserved_tenant_directory():
+    # A leftover "__active__" directory resolves to the ambient path; rotating
+    # it would report success and leave its DEK under the old KEK.
+    from maverick.paths import maverick_home
+    from maverick.tenant import kms as k
+
+    (maverick_home() / "tenants" / "__active__" / "keys").mkdir(parents=True)
+    (maverick_home() / "tenants" / "__active__" / "keys" / "dek.wrapped").write_bytes(b"x")
+    owners, unrecognised = k.wrapped_dek_holders()
+    assert "__active__" not in owners
+    assert "reserved" in unrecognised["__active__"]

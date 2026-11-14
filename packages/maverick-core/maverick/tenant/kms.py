@@ -120,10 +120,13 @@ def _tenant_context(tenant_id: str | None, purpose: bytes) -> bytes:
     )
 
 
-def _resolve_local_kek() -> bytes:
+def _resolve_local_kek(*, create: bool = True) -> bytes:
     """The local KEK: ``MAVERICK_KMS_KEK`` (hex/base64, 32 bytes) if set, else a
     stable derivation from the at-rest master key — so no new key file to manage
-    and rotating the at-rest key rotates the KEK."""
+    and rotating the at-rest key rotates the KEK.
+
+    ``create=False`` is for reads: a missing at-rest key is an error, never a
+    reason to mint one (a fresh key can open nothing that already exists)."""
     raw = os.environ.get("MAVERICK_KMS_KEK")
     if raw:
         from ..crypto_at_rest import _decode_injected_key
@@ -132,8 +135,12 @@ def _resolve_local_kek() -> bytes:
             raise EncryptionUnavailable(
                 f"MAVERICK_KMS_KEK must decode to {_DEK_BYTES} bytes, got {len(kek)}")
         return kek
-    from ..crypto_at_rest import _load_or_create_key
-    master = _load_or_create_key()
+    from ..crypto_at_rest import _KEY_ENV, _key_path, _load_or_create_key, _read_key_file
+    if not create and not os.environ.get(_KEY_ENV) and not _key_path().exists():
+        raise EncryptionUnavailable(
+            f"at-rest key missing at {_key_path()}: cannot unwrap a data key "
+            "(restore the key; a new one would not open existing data)")
+    master = _load_or_create_key() if create or os.environ.get(_KEY_ENV) else _read_key_file()
     # Domain-separated derivation so the KEK is distinct from the at-rest data key.
     return hashlib.sha256(b"maverick-kms-kek/v1\x00" + master).digest()
 
@@ -143,15 +150,25 @@ class LocalKMS:
     Wraps DEKs with AES-256-GCM. The default provider for self-hosted deploys."""
 
     def __init__(self, kek: bytes | None = None):
-        self._kek = kek if kek is not None else _resolve_local_kek()
-        if len(self._kek) != _DEK_BYTES:
+        # Resolved lazily: wrapping may create the at-rest key on first use,
+        # unwrapping (a read) never does.
+        if kek is not None and len(kek) != _DEK_BYTES:
             raise EncryptionUnavailable("KEK must be 32 bytes")
+        self._kek = kek
+
+    def _key(self, *, create: bool) -> bytes:
+        if self._kek is None:
+            kek = _resolve_local_kek(create=create)
+            if len(kek) != _DEK_BYTES:
+                raise EncryptionUnavailable("KEK must be 32 bytes")
+            self._kek = kek
+        return self._kek
 
     def wrap(self, dek: bytes, *, context: bytes | None = None) -> bytes:
-        return _gcm_seal(self._kek, _WRAP_MAGIC, dek, context)
+        return _gcm_seal(self._key(create=True), _WRAP_MAGIC, dek, context)
 
     def unwrap(self, wrapped: bytes, *, context: bytes | None = None) -> bytes:
-        return _gcm_open(self._kek, _WRAP_MAGIC, wrapped, context)
+        return _gcm_open(self._key(create=False), _WRAP_MAGIC, wrapped, context)
 
 
 def _kms_config_for(tenant_id: str | None) -> dict:
@@ -324,8 +341,12 @@ def _kms_config_unreadable(tenant_id: str | None) -> bool:
     if tenant_id is None:
         return bool(config_source_errors(include_tenant=True))
     from ..paths import _tenant_segment, maverick_home
-    overlay = _io_path(maverick_home() / "tenants" / _tenant_segment(tenant_id) / "config.toml")
-    return bool(config_source_errors(include_tenant=False) or _source_errors([overlay]))
+    plain = maverick_home() / "tenants" / _tenant_segment(tenant_id) / "config.toml"
+    # The error cache is keyed by the spelling the loader used: this module
+    # reads the overlay through _io_path (extended form on Windows), while
+    # load_config uses the extended form only for long paths. Check both.
+    spellings = list(dict.fromkeys([plain, _io_path(plain)]))
+    return bool(config_source_errors(include_tenant=False) or _source_errors(spellings))
 
 
 def _generate_and_persist_dek(path, context: bytes, kms: KMS) -> bytes:
@@ -422,6 +443,11 @@ def rotate_kek_idempotent(tenant_id: str | None, *, old_kms: KMS, new_kms: KMS) 
     return "rotated"
 
 
+#: Ids other code treats as sentinels (``paths.data_dir`` reads
+#: ``"__active__"`` as the ambient tenant; ``"__default__"`` is the shared
+#: store's KMS context), mirroring ``registry._RESERVED_IDS``.
+_RESERVED_TENANT_IDS = frozenset({"__active__", "__default__"})
+
 #: Report key for the un-namespaced (no tenant) DEK in fleet rotation reports.
 #: Tenant ids are never empty, so it cannot collide with a named tenant.
 SHARED_DEK_LABEL = ""
@@ -456,7 +482,12 @@ def wrapped_dek_holders() -> tuple[list[str | None], dict[str, str]]:
             ok = bool(tid) and _tenant_segment(tid) == entry.name
         except (UnicodeDecodeError, ValueError):
             ok = False
-        if ok:
+        if ok and tid in _RESERVED_TENANT_IDS:
+            # A sentinel id resolves to the ambient/shared path, not this
+            # directory: rotating it would report success and leave this DEK
+            # under the old KEK.
+            unrecognised[entry.name] = "tenant directory uses a reserved id; rotate it by hand"
+        elif ok:
             owners.append(tid)
         else:
             unrecognised[entry.name] = "tenant directory name does not decode to a tenant id"
