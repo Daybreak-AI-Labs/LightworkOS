@@ -76,3 +76,19 @@ async def test_find_api_web_search_blocked_by_capability(monkeypatch, tmp_path):
     out = await learn_capability(agent).fn({"op": "find_api", "need": "weather api"})
     assert ran["web_search"] is False           # denied at the gate, never executed
     assert "Could not auto-discover" in out     # degrades gracefully
+
+
+@pytest.mark.asyncio
+async def test_find_api_probe_respects_the_network_posture(monkeypatch, tmp_path):
+    """probe_openapi_spec GETs a model-chosen host; under a deny posture it
+    used to run anyway because only the web tools were removed."""
+    import maverick.tenant.egress as egress
+    from maverick import self_learning
+    from maverick.tools.learn import learn_capability
+
+    agent = _agent(tmp_path)
+    probed: list[str] = []
+    monkeypatch.setattr(self_learning, "probe_openapi_spec", lambda url, **k: probed.append(url))
+    monkeypatch.setattr(egress, "egress_allowed", lambda tool, host: False)
+    out = await learn_capability(agent).fn({"op": "find_api", "base_url": "https://example.com/?d=secret"})
+    assert probed == [] and "egress policy blocks" in out

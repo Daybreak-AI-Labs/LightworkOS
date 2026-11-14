@@ -116,6 +116,17 @@ async def _op_find_api(agent: Agent, bb, self_learning, args: dict, need: str) -
     base_url = (args.get("base_url") or "").strip()
     spec_url = None
     if base_url:
+        # The probe issues GETs to a model-chosen host, so the network
+        # posture and egress policy apply as they do to http_fetch.
+        from urllib.parse import urlparse
+        host = urlparse(base_url if "://" in base_url else f"https://{base_url}").hostname or ""
+        try:
+            from ..tenant.egress import egress_allowed
+            allowed = egress_allowed("learn_capability", host)
+        except Exception as e:
+            return f"ERROR: egress policy could not be evaluated ({type(e).__name__}); not probing {base_url!r}."
+        if not allowed:
+            return f"ERROR: egress policy blocks probing {host!r} for an API spec."
         spec_url = self_learning.probe_openapi_spec(base_url)
     # Route nested tool calls through the agent's _run_tool chokepoint
     # (shield + capability + governance + hooks), not the bare registry
