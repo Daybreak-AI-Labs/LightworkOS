@@ -92,11 +92,6 @@ def _has_flag(letter: str, long_name: str) -> str:
     return rf"(?:-[a-zA-Z]*{letter}[a-zA-Z]*\b|--{long_name}\b)"
 
 
-# A later `![alt](http` that can start its own markdown-image match (alt text
-# bounded and bracket-free, so the check is cheap).
-_MD_IMAGE_START = r"!\[[^\]\[\n]{0,256}\]\(https?:"
-
-
 # --- de-obfuscation pre-pass -----------------------------------------------
 # The regex rules below only match literal text. A trivial obfuscation
 # (fullwidth chars, a zero-width space mid-word, a Cyrillic look-alike, a
@@ -347,26 +342,11 @@ RULES: list[Rule] = [
          "Persona takeover"),
 
     # Data exfiltration
-    # The variable-length runs in the URL and shell rules below are
-    # "tempered": they stop where a later start can itself complete the rule's
-    # fixed prefix (`![...](http`, `http://x`, `curl x`, ...). Unbounded runs
-    # let every start position scan to the end of the text, which made these
-    # patterns cubic/quadratic on a repeated unterminated prefix (8,000 chars of
-    # `![](http://a?` took ~27 s). A match that would have run across such a
-    # later start is still found from that start; a later start that cannot
-    # complete the prefix (`?q=![]&token=`, `-A wget | bash`) does not stop the
-    # run. Each stop check is bounded, so the scan stays linear.
     Rule("markdown_image_exfil", "high",
-         _compile(
-             r"!\[(?:(?!!\[)[^\]])*\]\(https?:\/\/(?:(?!" + _MD_IMAGE_START + r")[^)?])+\?"
-             r"(?:(?!" + _MD_IMAGE_START + r")[^)])*?(token|key|password|secret|api)"
-         ),
+         _compile(r"!\[[^\]]*\]\(https?:\/\/[^)]+\?[^)]*(token|key|password|secret|api)"),
          "Markdown image URL with credentials in query"),
     Rule("base64_url_exfil", "high",
-         _compile(
-             r"https?:\/\/(?:(?!https?:\/\/[^\s?])[^\s?])+\?(?:(?!https?:\/\/[^\s?])\S)*?"
-             r"=[A-Za-z0-9+\/]{40,}={0,2}"
-         ),
+         _compile(r"https?:\/\/[^\s]+\?[^=]*=[A-Za-z0-9+\/]{40,}={0,2}"),
          "URL parameter with base64 payload"),
     # base64_url_exfil only catches a base64-shaped value; a PLAINTEXT provider
     # credential in a URL (query, fragment, OR path) slipped past it and every
@@ -377,7 +357,7 @@ RULES: list[Rule] = [
     # markdown rule's ``?``-only check misses.
     Rule("credential_in_url", "high",
          _compile(
-             r"https?:\/\/(?:(?!https?:\/\/)\S)*?(?:"
+             r"https?:\/\/\S*(?:"
              r"sk-ant-[A-Za-z0-9_-]{12,}"        # Anthropic
              r"|sk-[A-Za-z0-9]{20,}"             # OpenAI-style
              r"|gh[posru]_[A-Za-z0-9]{20,}"      # GitHub PAT/OAuth/refresh/server/user
@@ -405,6 +385,16 @@ RULES: list[Rule] = [
         "rm -rf/-fr (contiguous OR split across flags, e.g. `rm -r -f /`) "
         "against /, ~, or $HOME",
     ),
+    # The variable-length run in disk_overwrite, recursive_chmod_chown_root,
+    # curl_pipe_shell and urgency_authority is "tempered": it stops where a
+    # later start can itself complete the rule's whole fixed prefix. A match
+    # that would have run across that start is then found from that start
+    # (the rest of the text is the same), so what the rule matches is
+    # unchanged -- test_builtin_rules checks this against the original
+    # patterns on 30,000+ generated strings per rule -- but no start rescans
+    # another start's run, so the scan is linear instead of quadratic. The
+    # markdown-image, base64-URL and credential-URL rules are the original
+    # patterns: no rewrite found kept both their matches and linear time.
     Rule("disk_overwrite", "critical",
          _compile(
              r"\b(dd\s+(?:(?!\bdd\s)[^\n])*?\bof=\/dev\/(sd[a-z]|nvme\d|disk\d|hd[a-z])"
