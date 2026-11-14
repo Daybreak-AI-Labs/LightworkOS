@@ -484,8 +484,21 @@ def retry_delay(attempts_done: int, *, rng: Callable[[], float] = random.random)
     return base * (1.0 + JITTER * (2.0 * rng() - 1.0))
 
 
-def _delivery_public(row: dict) -> dict:
+def _opened(row: dict) -> dict:
+    """A copy of a delivery row with its body unsealed. The body is sealed at
+    rest like the signing secret (it can carry data-subject identifiers); a
+    row stored before that is plaintext and reads as it is. A body that cannot
+    be opened reads as the withheld placeholder, which is never sent."""
+    from .world_model import _dec_field_or_withheld
+
     out = dict(row)
+    if "body" in out:
+        out["body"] = _dec_field_or_withheld(out["body"] or "") or ""
+    return out
+
+
+def _delivery_public(row: dict) -> dict:
+    out = _opened(row)
     try:
         out["attempt_log"] = json.loads(out.get("attempt_log") or "[]")
     except ValueError:
@@ -504,9 +517,11 @@ def enqueue(
     now: float | None = None,
 ) -> list[str]:
     """Record one pending delivery per target; returns the delivery ids."""
+    from .world_model import _enc_field
+
     world = _world(world)
     stamp = time.time() if now is None else float(now)
-    text = body.decode("utf-8")
+    text = _enc_field(body.decode("utf-8")) or ""
     ids: list[str] = []
     ws = workspace_id()
     for target in targets:
@@ -640,7 +655,12 @@ def _send_claimed(world: Any, row: dict, stamp: float, transport: Callable[..., 
     exhausted = False
     entered_transport = False
     try:
-        body = str(row["body"]).encode("utf-8")
+        from .world_model import _UNSEALED_WITHHELD
+
+        text = _opened(row)["body"]
+        if text == _UNSEALED_WITHHELD:
+            raise SubscriptionError("The saved message could not be verified. Nothing was sent.")
+        body = str(text).encode("utf-8")
         source, secret = _send_source(row, world)
         headers = build_headers(body, row["event_type"], secret, event_id=row["event_id"])
         if enterprise_egress_denial(row["url"], tool="webhook") is not None:
@@ -680,7 +700,7 @@ def recovery_material(delivery_id: str, *, world: Any = None) -> tuple[dict, str
     if row is None or row["status"] not in {"unknown", "sending"}:
         raise DeliveryConflict("This original is no longer an unconfirmed send. Refresh its current record.")
     source, secret = _send_source(row, world)
-    return row, digest(source), bool(secret)
+    return _opened(row), digest(source), bool(secret)
 
 
 def recovery_id(value: dict) -> str:
@@ -741,7 +761,7 @@ def _recovery_insert(writer: Any, world: Any, value: dict, guard: Callable[[], N
         return _cursor_row(writer, found)
 
     guard()
-    if (original["status"] not in {"sending", "unknown"} or digest(original) != value["before"]
+    if (original["status"] not in {"sending", "unknown"} or digest(_opened(original)) != value["before"]
             or digest(_send_source(original, world, read=source_read)[0]) != value["source"]):
         raise DeliveryConflict("The original delivery or subscription changed. Review its current record; nothing was sent.")
     _audit("reviewed_recovery", value["actor"], operation=value["operation"],
