@@ -52,3 +52,10 @@ def test_doctor_world_db_row_follows_maverick_home(monkeypatch, tmp_path):
     res = CliRunner().invoke(main, ["doctor"])
     # The world-db row must point under MAVERICK_HOME, not ~/.maverick.
     assert f"{tmp_path}" in res.output
+
+
+def test_channel_check_skips_scalar_entries(monkeypatch):
+    rows = []
+    monkeypatch.setattr(h, "_row", lambda *a, **k: rows.append(a))
+    h._check_channels({"channels": {"default": "slack"}})
+    assert rows == []

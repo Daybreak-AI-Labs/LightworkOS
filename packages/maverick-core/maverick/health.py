@@ -525,8 +525,10 @@ def _check_channels(cfg: dict) -> None:
     channels = cfg.get("channels", {})
     if not channels:
         return
+    if not isinstance(channels, dict):
+        return
     for name, ch_cfg in channels.items():
-        if not ch_cfg.get("enabled"):
+        if not isinstance(ch_cfg, dict) or not ch_cfg.get("enabled"):
             continue
         dep = CHANNEL_DEPS.get(name)
         if dep:
@@ -881,9 +883,10 @@ def _check_tls_cert_expiry() -> None:
     now = _dt.datetime.now(_dt.timezone.utc)
     for section in ("grpc", "federation"):
         try:
-            if not tls_enabled(section, cfg):
+            section_cfg = cfg.get(section)
+            if not isinstance(section_cfg, dict) or not tls_enabled(section, section_cfg):
                 continue
-            path = ((cfg.get(section) or {}).get("tls_cert"))
+            path = section_cfg.get("tls_cert")
             if not path:
                 continue
             from pathlib import Path as _P
