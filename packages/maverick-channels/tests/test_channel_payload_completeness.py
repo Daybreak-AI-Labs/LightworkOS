@@ -104,3 +104,69 @@ def test_matrix_too_large_is_definitively_not_sent():
     channel._client = SimpleNamespace(room_send=AsyncMock(return_value=SimpleNamespace(status_code="M_TOO_LARGE")))
     with pytest.raises(DeliveryNotSent, match="Matrix rejected"):
         asyncio.run(channel.send("!room:example.test", "reply"))
+
+
+@pytest.mark.parametrize("prior_state", ["retryable", "delivery_unknown", "delivered"])
+@pytest.mark.parametrize("prefixed", [False, True])
+def test_matrix_legacy_whole_reply_keeps_its_saved_transaction(monkeypatch, prior_state, prefixed):
+    from maverick_channels import delivery
+    from maverick_channels.base import IncomingMessage, Reply
+
+    monkeypatch.setenv("MAVERICK_GOVERNED_RECORD_BACKEND", "local")
+    text = "x" * 4001
+    channel = matrix.MatrixChannel.__new__(matrix.MatrixChannel)
+    channel.handler = AsyncMock(return_value=Reply(text))
+    calls = []
+    async def post(**payload):
+        calls.append(payload)
+        if len(calls) == 1 and prior_state == "retryable":
+            raise DeliveryNotSent("Matrix rejected the reply")
+        if len(calls) <= 2 and prior_state == "delivery_unknown":
+            raise TimeoutError("acceptance uncertain")
+        return SimpleNamespace(event_id="$legacy")
+    channel._client = SimpleNamespace(room_send=post)
+    msg = IncomingMessage(user_id="!room:example.test", text="question", channel="matrix", message_id="$input")
+    journal = delivery.DeliveryJournal()
+
+    async def old_send(reply):
+        # The pre-chunking sender saved the entire body under text-0.
+        payload = {"room_id": msg.user_id, "message_type": "m.room.message",
+                   "content": {"msgtype": "m.text", "body": reply.text}}
+        async def send():
+            result = await post(**payload, tx_id=delivery.chunk_idempotency_key("text-0"))
+            return result.event_id
+        await delivery.send_chunk("text-0", payload, send, idempotent=True)
+        raise TimeoutError("stopped after recording the provider acknowledgement")
+
+    async def new_send(reply):
+        return await channel.send(msg.user_id, reply.text)
+
+    async def invoke(sender, reply):
+        if not prefixed:
+            return await sender(reply)
+        attempt = delivery._ACTIVE.get()
+        nested = delivery._PrefixedAttempt(delivery._PrefixedAttempt(attempt, "question:"), "followup:")
+        token = delivery._ACTIVE.set(nested)
+        try:
+            return await sender(reply)
+        finally:
+            delivery._ACTIVE.reset(token)
+
+    async def run():
+        kwargs = dict(external_id="$input", account="matrix-fixture", authorize=lambda: True,
+                      journal=journal, idempotent=True)
+        key = ("question:followup:" if prefixed else "") + "text-0"
+        before = await channel.process_message(msg, send=lambda reply: invoke(old_send, reply), **kwargs)
+        assert before["chunks"][key]["state"] == prior_state
+        after = await channel.process_message(msg, send=lambda reply: invoke(new_send, reply), **kwargs)
+        if prior_state == "delivery_unknown":
+            assert after["delivery"] == after["chunks"][key]["state"] == "delivery_unknown"
+            after = await channel.process_message(msg, send=lambda reply: invoke(new_send, reply), **kwargs)
+        assert after["delivery"] == after["chunks"][key]["state"] == "delivered"
+        assert set(after["chunks"]) == {"reply", key}
+        assert after["chunks"][key]["payload_sha256"] == before["chunks"][key]["payload_sha256"]
+    asyncio.run(run())
+    channel.handler.assert_awaited_once()
+    assert len(calls) == {"retryable": 2, "delivery_unknown": 3, "delivered": 1}[prior_state]
+    assert all(call == calls[0] for call in calls)
+    assert calls[0]["content"]["body"] == text
