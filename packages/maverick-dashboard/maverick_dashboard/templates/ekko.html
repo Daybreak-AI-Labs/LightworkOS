@@ -876,7 +876,7 @@
     document.dispatchEvent(new CustomEvent('lightwork:ekko-scope-reset'));
     setText('ekko-discovery-progress', 'Your workspace or access changed. Refresh the page to review current evidence.');
   }
-  ['lightwork:context-changed', 'lightwork:workspace-changed', 'lightwork:account-changed',
+  ['lightwork:context-changed', 'lightwork:workspace-changed',
     'lightwork:account-context-changed', 'lightwork:authority-changed'].forEach(function (name) {
     document.addEventListener(name, invalidateDiscovery); window.addEventListener(name, invalidateDiscovery);
   });

@@ -23,7 +23,7 @@ async function fixture({principal="user:owner",intercept=()=>undefined,fragment=
   function submit(id){el(id).dispatchEvent(new window.Event("submit",{cancelable:true,bubbles:true}));}
   setup(window);window.eval(source);await settle();return{window,calls,el,settle,click,change,submit};
 }
-async function preview(ui){ui.change("project","1");await ui.settle();ui.change("goal","7");await ui.click("preview");ui.change("reviewer","user:reviewer");ui.change("due","2027-01-01T12:00");ui.change("note","Review the explicit limitations.");}
+async function preview(ui){ui.change("project","1");await ui.settle();ui.change("goal","7");await ui.click("preview");ui.change("reviewer","user:reviewer");ui.change("due",new Date(Date.now()+86400000).toISOString().slice(0,16));ui.change("note","Review the explicit limitations.");}
 test("sharing needs a current preview and explicit confirmation, and keeps the exact captured version",async t=>{
   const ui=await fixture();t.after(()=>ui.window.close());assert.equal(ui.el("send-button").disabled,true);ui.submit("send");await ui.settle();assert.equal(ui.calls.some(row=>row.method==="POST"),false);
   await preview(ui);assert.equal(ui.el("preview-text").querySelector("img"),null);assert.match(ui.el("preview-text").textContent,/Sensitive/);
@@ -123,4 +123,18 @@ test('an unknown review network error stays opaque and refresh restores the tran
   let broken=false;const ui=await fixture({setup:w=>installLocale(w,{catalog:reviewCatalog}),intercept:()=>{if(broken)throw new Error('Choose your project');}});t.after(()=>ui.window.close());
   broken=true;await ui.click('refresh');assert.equal(ui.el('status').textContent,'Choose your project');assert.equal(ui.el('status').lang,'und');
   broken=false;await ui.click('refresh');assert.equal(ui.el('status').textContent,'La liste des révisions est à jour.');assert.equal(ui.el('status').lang,'fr');assert.equal(ui.el('status').hasAttribute('data-user-content'),false);
+});
+
+
+test("sharing rejects past and current due dates before confirmation or a write",async t=>{
+  const ui=await fixture();t.after(()=>ui.window.close());await preview(ui);
+  const due=new Date(ui.el("due").value).getTime();let confirmations=0;
+  ui.window.mvConfirm=async()=>{confirmations++;return true;};
+  for(const now of [due+1000,due]){
+    ui.window.Date.now=()=>now;ui.submit("send");await ui.settle();
+    assert.equal(confirmations,0);assert.equal(ui.calls.some(row=>row.method==="POST"),false);
+    assert.match(ui.el("status").textContent,/future due date/);
+  }
+  ui.window.Date.now=()=>due-1000;ui.submit("send");await ui.settle();
+  assert.equal(confirmations,1);assert.equal(ui.calls.filter(row=>row.method==="POST").length,1);
 });
