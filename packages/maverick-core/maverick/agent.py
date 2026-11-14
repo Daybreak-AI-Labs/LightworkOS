@@ -2645,11 +2645,13 @@ class Agent:
                     # (same guard as coding_mode.evaluate_candidate) and run
                     # git under a scrubbed environment.
                     if git_metadata_may_execute_filters(workdir):
+                        from .git_safety import git_metadata_hazard
+                        found = git_metadata_hazard(workdir) or (
+                            "a filter such as git-lfs, or another command")
                         raise RuntimeError(
-                            "the workspace's git settings (a filter such as "
-                            "git-lfs, or another command) are not allowed to "
-                            "run on the host, so git was not run. This is "
-                            "not a problem with the edits themselves"
+                            f"the workspace's git settings ({found}) are not "
+                            "allowed to run on the host, so git was not run. "
+                            "This is not a problem with the edits themselves"
                         )
                     hooks_dir.mkdir(mode=0o700)
                     wt = _sub.run(
@@ -4117,7 +4119,10 @@ class Agent:
                 self.name, "error",
                 f"tool={name} BLOCKED by PreToolUse hook",
             )
-            return _NotExecutedToolResult("⚠ BLOCKED by hook. The tool was not executed.")
+            # A block caused by an unreadable hooks configuration says so, so
+            # the person can fix the file instead of looking for a hook.
+            reason = getattr(pre_ctx, "block_reason", "") or "by hook"
+            return _NotExecutedToolResult(f"⚠ BLOCKED {reason}. The tool was not executed.")
 
         # Dispatch audit: TOOL_CALL proves the request reached the governed
         # execution boundary; TOOL_RESULT below proves whether it completed.

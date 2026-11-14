@@ -2785,7 +2785,9 @@ async def _run_goal_impl(  # noqa: C901  -- core goal-execution loop
         except Exception:  # pragma: no cover
             pass
         log.warning("goal #%s blocked by UserPromptSubmit hook", goal_id)
-        return "BLOCKED: goal input rejected by a UserPromptSubmit hook"
+        return "BLOCKED: " + (
+            _hooks.config_block_reason()
+            or "goal input rejected by a UserPromptSubmit hook")
 
     from .knowledge_task_context import has_binding, run_analysis
     if has_binding(goal_id, world):

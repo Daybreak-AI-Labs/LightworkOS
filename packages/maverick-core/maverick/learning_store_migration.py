@@ -92,6 +92,12 @@ def migrate_learning_files() -> dict[str, int] | None:
         return None
     merged = 0
     from .file_lock import cross_process_lock
+    # The corpus files are migrated next by the same command. Check they are
+    # readable before anything is moved, so a refusal leaves nothing half-done.
+    corpus = sh.settings().get("eval_corpus")
+    if corpus:
+        from .self_harness_eval import check_corpus_files_migratable
+        check_corpus_files_migratable(corpus)
     # Same lock order as the promotion writers (self_harness.apply_addendum):
     # rmw_lock alone is a no-op on SQLite. Reads are strict so a failed read
     # never becomes an empty map that the whole-map write below would replace.
