@@ -524,3 +524,22 @@ def test_push_refuses_plaintext_when_configured_sealing_is_unavailable(
 
     assert sink.puts == []
     assert not (ad / "worm").exists()
+
+
+def test_unsigned_day_is_skipped_not_blocking_later_days(tmp_path, caplog):
+    # A day written before crypto was installed cannot be attested. Neither it
+    # nor an old empty-tip anchor for it may block every later WORM push.
+    from maverick.audit import signing
+
+    ad = _audit_dir(tmp_path, {"2020-01-02.ndjson": "signed"})
+    (ad / "2020-01-01.ndjson").write_text('{"kind": "test"}\n', encoding="utf-8")
+    os.chmod(ad / "2020-01-01.ndjson", 0o600)
+    assert signing._append_anchor(ad, "2020-01-01", "", 1)  # legacy empty-tip anchor
+    sink = FakeSink()
+    rep = worm.push_closed_dayfiles(audit_dir=ad, today="2025-01-01", sink=sink)
+    assert rep["2020-01-02.ndjson"] == "pushed"
+    assert rep["2020-01-01.ndjson"].startswith("not pushed: unsigned")
+    assert [n for n, _, _ in sink.puts] == ["2020-01-02.ndjson"]
+    assert "2020-01-01" in caplog.text
+    assert worm.verify(audit_dir=ad)["2020-01-01.ndjson"].startswith("not pushed: unsigned")
+    assert signing.verify_anchors(ad) == []

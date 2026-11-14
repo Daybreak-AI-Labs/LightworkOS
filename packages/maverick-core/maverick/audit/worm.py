@@ -841,7 +841,9 @@ def _at_rest_sealing_active() -> bool:
     return True
 
 
-def _verified_source_snapshot(audit_dir: Path, closed: list[Path]) -> dict[str, bytes]:
+def _verified_source_snapshot(
+    audit_dir: Path, closed: list[Path], *, skip_unsigned: bool = False,
+) -> dict[str, bytes]:
     """Return exact signed day bytes after exact signed-anchor verification.
 
     Authentication and consumption operate on the same identity-bound byte
@@ -883,6 +885,16 @@ def _verified_source_snapshot(audit_dir: Path, closed: list[Path]) -> dict[str, 
             day = record.get("day")
             row_count = record.get("row_count")
             if (
+                set(record) == anchor_keys
+                and record.get("kind") == "anchor"
+                and isinstance(day, str)
+                and _valid_day_name(f"{day}.ndjson")
+                and record.get("tip_hash") == ""
+            ):
+                # Written for an unsigned day by older releases: it attests
+                # nothing, so it neither covers nor blocks that day.
+                continue
+            if (
                 set(record) != anchor_keys
                 or record.get("kind") != "anchor"
                 or not isinstance(day, str)
@@ -904,8 +916,13 @@ def _verified_source_snapshot(audit_dir: Path, closed: list[Path]) -> dict[str, 
             latest.pop(day, None)
 
         requested = {path.stem: path for path in closed}
-        if not set(requested).issubset(latest):
-            raise WormUnavailable("one or more closed audit day-files are not anchored")
+        for day in set(requested) - set(latest):
+            if not skip_unsigned or not _unsigned_day(requested[day]):
+                raise WormUnavailable("one or more closed audit day-files are not anchored")
+            log.warning(
+                "WORM push: audit day %s has no signed rows and cannot be attested; "
+                "it is not pushed", day,
+            )
 
         snapshot: dict[str, bytes] = {}
         for day, anchor in latest.items():
@@ -925,6 +942,31 @@ def _verified_source_snapshot(audit_dir: Path, closed: list[Path]) -> dict[str, 
         raise
     except (OSError, PermissionError, UnicodeError) as exc:
         raise WormUnavailable("closed audit evidence custody is invalid") from exc
+
+
+_UNSIGNED_STATUS = "not pushed: unsigned day (written without signing), cannot be attested"
+
+
+def _unsigned_day(path: Path) -> bool:
+    """True when every row of a closed day-file lacks a signature hash.
+
+    Such a day was written before signing was available; nothing can attest
+    it, so a push skips it rather than blocking every other day. Bytes that
+    are not plain JSON rows (for example sealed) raise or return False, and
+    the push then fails closed as before.
+    """
+    rows = 0
+    for line in _read_custodied_file(path, mode=0o600).decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            return False
+        if not isinstance(row, dict) or row.get("hash") or row.get("sig"):
+            return False
+        rows += 1
+    return rows > 0
 
 
 def _invalid_source_evidence(audit_dir: Path, closed: list[Path]) -> set[str]:
@@ -1009,7 +1051,7 @@ def push_closed_dayfiles(
         return report
 
     try:
-        source_snapshot = _verified_source_snapshot(audit_dir, closed)
+        source_snapshot = _verified_source_snapshot(audit_dir, closed, skip_unsigned=True)
     except WormUnavailable as exc:
         raise WormUnavailable(
             "WORM push refused: one or more closed audit day-files do not have "
@@ -1045,6 +1087,9 @@ def push_closed_dayfiles(
     from ..crypto_at_rest import is_sealed
 
     for p in closed:
+        if p.name not in source_snapshot:
+            report[p.name] = _UNSIGNED_STATUS
+            continue
         with cross_process_lock(p, strict=True):
             data = source_snapshot[p.name]
             digest = _sha256(data)
@@ -1114,7 +1159,7 @@ def verify(*, audit_dir: Path | None = None) -> dict[str, str]:
         return report
     closed = [p for p in day_files(audit_dir) if p.stem < today]
     try:
-        source_snapshot = _verified_source_snapshot(audit_dir, closed)
+        source_snapshot = _verified_source_snapshot(audit_dir, closed, skip_unsigned=True)
         invalid_evidence: set[str] = set()
     except WormUnavailable:
         source_snapshot = {}
@@ -1126,6 +1171,9 @@ def verify(*, audit_dir: Path | None = None) -> dict[str, str]:
     for p in closed:
         if p.name in invalid_evidence:
             report[p.name] = "source evidence invalid"
+            continue
+        if p.name not in source_snapshot:
+            report[p.name] = _UNSIGNED_STATUS
             continue
         digest = _sha256(source_snapshot[p.name])
         prior = manifest.get(p.name)
