@@ -190,7 +190,10 @@ def diff_new_items(items: list[dict], cursor: str, id_field: str, *,
     if not cursor:
         return PollResult(events=[], cursor=_encode_cursor("feed", newest))
     fresh: list[dict] = []
-    if prior in ids:
+    if prior is None:
+        # Baselined on an empty feed: everything listed since then is new.
+        fresh = list(ordered)
+    elif prior in ids:
         for it, iid in zip(ordered, ids, strict=False):
             if iid == prior:
                 break                                   # reached last-seen
