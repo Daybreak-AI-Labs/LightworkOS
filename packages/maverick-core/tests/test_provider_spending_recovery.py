@@ -239,3 +239,26 @@ def test_review_is_invalidated_when_shared_authority_identity_changes(ledger, mo
     with pytest.raises(spending.SpendingReviewError, match="workspace"):
         spending.apply(selected["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
     assert ledger.read_bytes() == before
+
+
+def test_reconciled_hold_also_settles_the_organization_admission_hold(ledger):
+    # An unknown zero-projection organization hold counts as infinite against
+    # today's cap. Reconciling the provider receipt must settle it as well, or
+    # the workspace stays blocked from provider calls until the day ends.
+    from maverick.tenant import provider_admission as organization
+
+    held = cap.reserve("openai", 0, request_id="unknown-cost")
+    assert held.organization_tenant == "review-workspace"
+    cap.settle(held, None)
+    assert organization.outstanding("review-workspace") == float("inf")
+    review = spending.prepare_hold("openai", held.period, held.request_id, 2,
+                                   "Final invoice INV-9, verified against this request.",
+                                   actor="user:owner", context="context-a")
+    spending.apply(review["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
+    assert organization.outstanding("review-workspace") < float("inf")
+    key = organization._key("openai", "unknown-cost")
+    call = organization._load("review-workspace", key=key)["calls"][key]
+    assert (call["state"], call["actual"]) == ("settled", 2.0)
+    # Re-applying a completed review stays idempotent for both authorities.
+    spending.apply(review["id"], actor="user:owner", context="context-a", isolated=False, confirm=True)
+    assert organization.outstanding("review-workspace") < float("inf")

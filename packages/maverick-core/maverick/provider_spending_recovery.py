@@ -359,6 +359,27 @@ def _apply_repair(record, identifier, intent):
         cap._save(path, replacement)
 
 
+def _settle_organization_hold(record):
+    """Settle the matching organization admission hold with the reviewed cost.
+
+    An unknown zero-projection organization hold counts as unlimited against
+    today's cap, so leaving it would keep provider calls blocked after the
+    receipt itself was reconciled. Repeating this for a settled hold with the
+    same cost is a no-op, so an interrupted apply can be retried.
+    """
+    from .tenant.provider_admission import settle_call
+
+    reference = cap.reservation_reference(
+        cap.Reservation(record["provider"], record["period"], record["receipt"], 0.0, None))
+    try:
+        settle_call(record["provider"], record["receipt"], reference, record["actual"])
+    except ValueError as exc:
+        raise SpendingReviewError(
+            "The provider receipt was reconciled, but the workspace's matching spending "
+            "hold could not be settled with the same cost. Review the workspace's provider "
+            "holds before retrying.") from exc
+
+
 def apply(identifier, *, actor, context, isolated, confirm):
     if confirm is not True:
         raise SpendingReviewError("Explicitly confirm the reviewed final provider costs.")
@@ -397,6 +418,7 @@ def apply(identifier, *, actor, context, isolated, confirm):
             return total, receipts, None
         cap._mutate(record["provider"], record["period"], reconcile,
                     path=cap._ledger_path(), shared=shared)
+        _settle_organization_hold(record)
     else:
         _apply_repair(record, identifier, intent)
     current = _REVIEWS.get(identifier)
