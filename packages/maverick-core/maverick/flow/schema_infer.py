@@ -21,18 +21,23 @@ _MAX_KEYS = 60          # cap fields recorded per output (bound the hint size)
 _MAX_OUTPUTS = 200      # cap distinct output keys tracked per flow
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}\Z")
 _DIGIT_RUN = re.compile(r"\d{5}")
+_PREFIXED_ID = re.compile(r"[A-Za-z]_\d{3,}")
+_HEX_TOKEN = re.compile(r"(?=.*\d)(?=.*[a-fA-F])[0-9a-fA-F]{8,}")
 _LETTER_DIGIT_TURN = re.compile(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
 
 
 def _data_shaped(key: str) -> bool:
     """An identifier-shaped key that reads as a record id, not a field name:
-    a run of five or more digits (``u_48213``), or a long random-looking token
-    segment (``cus_NffrFeUfNV2Hib``, ``5f3a9c2e1b7d``). Three- or four-digit
+    a run of five or more digits (``u_48213``), a one-letter prefix and an id
+    (``u_4821``), a hexadecimal segment of 8+ characters (``5f3a9c2e1``), or a
+    long random-looking token segment (``cus_NffrFeUfNV2Hib``). Three- or four-digit
     parts (``revenue_2024``, ``top_100``) and acronyms with digits
     (``ISO8601Date``, ``EC2InstanceId``) are field names."""
-    if _DIGIT_RUN.search(key):
+    if _DIGIT_RUN.search(key) or _PREFIXED_ID.fullmatch(key):
         return True
     for part in key.split("_"):
+        if _HEX_TOKEN.fullmatch(part):
+            return True
         if len(part) < 12 or not any(c.isdigit() for c in part):
             continue
         if len(_LETTER_DIGIT_TURN.findall(part)) >= 3:

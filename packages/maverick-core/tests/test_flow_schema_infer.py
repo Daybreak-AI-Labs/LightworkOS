@@ -58,11 +58,13 @@ def test_execute_records_schema_only_for_real_runs(tmp_path, monkeypatch):
 
 
 def test_data_shaped_keys_are_not_saved_but_field_names_are():
-    keyed_by_data = {"cus_NffrFeUfNV2Hib": {}, "u_48213": {}, "JohnSmith": {},
+    keyed_by_data = {"cus_NffrFeUfNV2Hib": {}, "u_48213": {}, "JohnSmith": {},  # pragma: allowlist secret
                      "alice@example.com": {}}
     assert infer_shape(keyed_by_data)["keys"] == []
-    id_shaped = ["cus_NffrFeUfNV2Hib", "u_48213", "order_5f3a9c2e1b7d", "user48213",
-                 "a3f9c2e1b7d4"]  # pragma: allowlist secret
+    # Two of three keys are ids, so the object is keyed by data: nothing is kept.
+    assert infer_shape({"u_4821": 1, "order_5f3a9c2e1": 2, "status": 4})["keys"] == []  # pragma: allowlist secret
+    id_shaped = ["cus_NffrFeUfNV2Hib", "u_48213", "order_5f3a9c2e1b7d", "user48213",  # pragma: allowlist secret
+                 "a3f9c2e1b7d4", "u_4821", "order_5f3a9c2e1", "5f3a9c2e"]  # pragma: allowlist secret
     for key in id_shaped:
         assert infer_shape({key: 1, "status": 2})["keys"] == ["status"]
     fields = ["customer_id", "orderTotal", "line_items", "ID", "sku", "AccountId",
