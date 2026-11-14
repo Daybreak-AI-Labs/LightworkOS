@@ -52,8 +52,9 @@ It does not contain descendants that independently detach before cleanup.
 Initialization and the read-only smoke requests share a 30-second deadline.
 
 After building, set `MCP_BOUNDARY_COMMAND` to a JSON argument array invoking the
-built executable and run `python3 -m pytest examples/clients/java/tests/test_stdio_boundaries.py`
-from the repository root.
+built executable and run `python3 -m pytest` on the `StdioBoundaries`,
+`PipedStreamBounds` and `ResponseDeadline` classes in
+`examples/clients/java/tests/test_stdio_boundaries.py` from the repository root.
 The shared fixture launches a disposable stdio server without model calls.
 Without `MCP_BOUNDARY_COMMAND`, generic Python test runs skip this native fixture.
 The client workflow runs the live smoke; these adversarial checks are run

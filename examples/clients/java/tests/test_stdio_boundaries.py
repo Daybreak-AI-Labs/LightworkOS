@@ -37,6 +37,8 @@ def tool_page(scenario: str, count: int) -> dict:
             cursor = "x" * (1024 * 1024) + cursor
     elif scenario == "controls":
         names = expected + ["unsafe\x1b]52;c;fixture\x07\x9b31m\u202e"]
+    elif scenario == "write-backpressure":
+        cursor = "x" * (1024 * 1024)
     result = {
         "tools": [
             {"name": name, "inputSchema": {"type": "object"}}
@@ -50,8 +52,50 @@ def tool_page(scenario: str, count: int) -> dict:
     return result
 
 
+def serve_changed(kind: str) -> None:
+    count = 0
+    call = None
+
+    def reply(request_id, result):
+        print(json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result}), flush=True)
+
+    for line in sys.stdin:
+        request = json.loads(line)
+        if "id" not in request:
+            continue
+        method = request["method"]
+        if method == "initialize":
+            reply(request["id"], {
+                "protocolVersion": request["params"]["protocolVersion"],
+                "capabilities": {name: {"listChanged": True} for name in ("tools", "resources", "prompts")},
+                "serverInfo": {"name": "boundary-fixture", "version": "1"},
+            })
+        elif method.endswith("/list"):
+            count += 1
+            Path(os.environ["MCP_BOUNDARY_COUNT"]).write_text(str(count))
+            if method == "tools/list":
+                result = tool_page("success", count)
+            elif method == "resources/list":
+                result = {"resources": [{"uri": "test://fixture", "name": "entry"}]}
+            else:
+                result = {"prompts": [{"name": "entry"}]}
+            if 1 < count < 112:
+                result["nextCursor"] = "same"
+            reply(request["id"], result)
+            if count == 1:
+                print(json.dumps({"jsonrpc": "2.0", "method": f"notifications/{kind}/list_changed"}), flush=True)
+        elif method == "tools/call":
+            call = request["id"]
+        if count >= 112 and call is not None:
+            reply(call, {"content": [{"type": "text", "text": "{}"}], "structuredContent": {"facts": {}}})
+            call = None
+
+
 def serve() -> None:
     scenario = os.environ["MCP_BOUNDARY_SCENARIO"]
+    Path(os.environ["MCP_BOUNDARY_SERVER"]).write_text(str(os.getpid()))
+    if scenario.startswith("changed-"):
+        return serve_changed(scenario.removeprefix("changed-"))
     count = 0
     for line in sys.stdin:
         request = json.loads(line)
@@ -59,6 +103,8 @@ def serve() -> None:
             continue
         method = request["method"]
         if method == "initialize":
+            if scenario == "controls":
+                print("stderr\x1b]52;c;fixture\x07\x9b31m\u202e", file=sys.stderr, flush=True)
             if scenario == "large-stderr-descendants":
                 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
                 Path(os.environ["MCP_BOUNDARY_DESCENDANT"]).write_text(str(child.pid))
@@ -99,6 +145,9 @@ def serve() -> None:
         print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress",
                           "params": {"progressToken": "unrequested", "progress": 1}}), flush=True)
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+        if scenario == "write-backpressure" and method == "tools/list":
+            time.sleep(60)  # Stop consuming stdin while the client writes its cursor.
+            return
     if scenario == "initialization-cleanup":
         time.sleep(30)  # Deliberately ignore stdin EOF; the client must reap us.
 
@@ -125,14 +174,15 @@ class ClientFixture:
             launcher.chmod(0o700)
             counter = root / "count"
             descendant = root / "descendant"
+            server_pid = root / "server"
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                    "MCP_BOUNDARY_SCENARIO": scenario, "MCP_BOUNDARY_COUNT": str(counter),
-                   "MCP_BOUNDARY_DESCENDANT": str(descendant)}
+                   "MCP_BOUNDARY_DESCENDANT": str(descendant), "MCP_BOUNDARY_SERVER": str(server_pid)}
             with subprocess.Popen(self.command, env=env, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, text=True, start_new_session=True) as process:
                 try:
                     stdout, stderr = process.communicate(
-                        timeout=45 if scenario.startswith("large-") or scenario == "silent-response" else 20)
+                        timeout=45 if scenario.startswith(("large-", "changed-")) or scenario in ("silent-response", "write-backpressure") else 20)
                 except subprocess.TimeoutExpired:
                     # The fixture owns this process group. Also clean up an
                     # orphaned server holding a pipe after the client exits.
@@ -140,11 +190,13 @@ class ClientFixture:
                     process.communicate(timeout=5)
                     raise
                 completed = subprocess.CompletedProcess(self.command, process.returncode, stdout, stderr)
-                if descendant.exists():
+                for process_file in (server_pid, descendant):
+                    if not process_file.exists():
+                        continue
                     deadline = time.monotonic() + 1
                     while True:
                         try:
-                            alive = Path(f"/proc/{int(descendant.read_text())}/stat").read_text().split()[2] != "Z"
+                            alive = Path(f"/proc/{int(process_file.read_text())}/stat").read_text().split()[2] != "Z"
                         except FileNotFoundError:
                             alive = False
                         if not alive or time.monotonic() >= deadline:
@@ -152,7 +204,7 @@ class ClientFixture:
                         time.sleep(0.01)
                     if alive:
                         os.killpg(process.pid, signal.SIGKILL)
-                        raise AssertionError(f"MCP client left a server descendant running; stderr={stderr[:5000]!r}")
+                        raise AssertionError(f"MCP client left its {process_file.name} running; stderr={stderr[:5000]!r}")
             return completed, int(counter.read_text()) if counter.exists() else 0
 
 
@@ -225,6 +277,22 @@ class ResponseDeadline(ClientFixture, unittest.TestCase):
                 rejected, _ = self.run_client(scenario)
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertNotIn("round-trip OK", rejected.stdout)
+
+    def test_blocked_writer_cannot_hold_cleanup_open(self) -> None:
+        rejected, _ = self.run_client("write-backpressure")
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertNotIn("round-trip OK", rejected.stdout)
+
+
+class AutomaticRefresh(ClientFixture, unittest.TestCase):
+    """The Java SDK installs automatic catalog-refresh handlers by default."""
+
+    def test_list_change_notifications_cannot_start_unbounded_refreshes(self) -> None:
+        for kind in ("tools", "resources", "prompts"):
+            with self.subTest(kind=kind):
+                rejected, count = self.run_client("changed-" + kind)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertLessEqual(count, 100)
 
 
 if __name__ == "mcp_fixture":

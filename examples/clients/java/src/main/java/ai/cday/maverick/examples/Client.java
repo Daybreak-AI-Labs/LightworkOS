@@ -22,6 +22,9 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.ListToolsResult;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
+import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
+import io.modelcontextprotocol.spec.McpSchema.JSONRPCNotification;
+import reactor.core.publisher.Mono;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -32,6 +35,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public final class Client {
@@ -64,7 +69,7 @@ public final class Client {
         String ownershipToken = TaggedMcpLauncher.TOKEN_PREFIX + UUID.randomUUID();
         try (McpProcessOwnership ownership = McpProcessOwnership.create(ownershipToken)) {
             ServerParameters server = taggedServer(ownershipToken, ownership.registry());
-            StdioClientTransport transport = new StdioClientTransport(server, json);
+            BoundedCatalogTransport transport = new BoundedCatalogTransport(server, json);
             transport.setStdErrorHandler(line -> System.err.println(terminalText(line)));
 
             McpSyncClient client = McpClient.sync(transport)
@@ -113,10 +118,52 @@ public final class Client {
                             "maverick_facts_get returned no structuredContent with a 'facts' object");
                 }
                 System.out.println("maverick_facts_get structuredContent OK");
+            } catch (Exception failure) {
+                transport.requireNoAutomaticRefresh();
+                throw failure;
             }
+            transport.requireNoAutomaticRefresh();
         }
 
         System.out.println("OK: Java client drove Lightwork over MCP end-to-end");
+    }
+
+    private static final class BoundedCatalogTransport extends StdioClientTransport {
+        private final AtomicReference<IllegalStateException> refusal = new AtomicReference<>();
+
+        BoundedCatalogTransport(ServerParameters server, McpJsonMapper json) {
+            super(server, json);
+        }
+
+        @Override
+        public Mono<Void> connect(Function<Mono<JSONRPCMessage>, Mono<JSONRPCMessage>> handler) {
+            // The SDK automatically fetches complete catalogs on these
+            // notifications, bypassing the explicit bounded page reader.
+            return super.connect(message -> handler.apply(message.filter(this::admitMessage)));
+        }
+
+        private boolean admitMessage(JSONRPCMessage message) {
+            if (message instanceof JSONRPCNotification notification
+                    && List.of("notifications/tools/list_changed",
+                            "notifications/resources/list_changed",
+                            "notifications/prompts/list_changed").contains(notification.method())) {
+                refusal.compareAndSet(null, new IllegalStateException(
+                        "MCP automatic catalog refresh is unsupported by this bounded example"));
+                return false;
+            }
+            return true;
+        }
+
+        @Override
+        public Mono<Void> sendMessage(JSONRPCMessage message) {
+            IllegalStateException failure = refusal.get();
+            return failure == null ? super.sendMessage(message) : Mono.error(failure);
+        }
+
+        void requireNoAutomaticRefresh() {
+            IllegalStateException failure = refusal.get();
+            if (failure != null) throw failure;
+        }
     }
 
     private static List<Tool> listToolsBounded(McpSyncClient client, McpJsonMapper json) throws Exception {

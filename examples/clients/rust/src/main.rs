@@ -17,8 +17,16 @@ use rmcp::{
     transport::{ConfigureCommandExt, TokioChildProcess},
     Peer, RoleClient, ServiceExt,
 };
-use std::{collections::HashSet, process::ExitCode, time::Duration};
-use tokio::process::Command;
+use std::{
+    collections::HashSet,
+    process::{ExitCode, Stdio},
+    time::Duration,
+};
+use tokio::{
+    io::AsyncReadExt,
+    process::{ChildStderr, Command},
+    sync::oneshot,
+};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -34,27 +42,92 @@ async fn main() -> ExitCode {
 async fn run() -> Result<()> {
     // Spawn `maverick mcp` as a child process; rmcp wires up stdio JSON-RPC and
     // performs the MCP initialize handshake. `()` is the (no-op) client handler.
-    let startup = ().serve(TokioChildProcess::new(Command::new("maverick").configure(
-        |cmd| {
+    let (transport, stderr) =
+        TokioChildProcess::builder(Command::new("maverick").configure(|cmd| {
             // Initialization can fail before a RunningService exists.
             // Its drop-time cleanup must also survive runtime shutdown.
             cmd.arg("mcp").kill_on_drop(true);
-        },
-    ))?);
-    let client = tokio::time::timeout(Duration::from_secs(30), startup)
-        .await
-        .context("MCP initialization exceeded 30 seconds")??;
+        }))
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stderr = stderr.context("MCP stderr pipe is unavailable")?;
+    let (stderr_sender, stderr_receiver) = oneshot::channel();
+    let mut stderr_failure = Some(stderr_receiver);
+    let mut stderr_task = tokio::spawn(async move {
+        if let Err(error) = drain_stderr(stderr).await {
+            let _ = stderr_sender.send(error);
+        }
+    });
+    let mut client = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(30), ().serve(transport)) =>
+            result.context("MCP initialization exceeded 30 seconds")??,
+        error = wait_stderr_failure(&mut stderr_failure) => return Err(error),
+    };
 
-    let result = tokio::time::timeout(Duration::from_secs(30), check_client(&client))
-        .await
-        .context("MCP tool checks exceeded 30 seconds")
-        .and_then(|result| result);
+    let mut result = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(30), check_client(&client)) =>
+            result.context("MCP tool checks exceeded 30 seconds").and_then(|result| result),
+        error = wait_stderr_failure(&mut stderr_failure) => Err(error),
+    };
     // Await cleanup on refusals too, before the Tokio runtime is torn down.
-    let cleanup = client.cancel().await;
+    // A nonreading server can hold the SDK writer mutex during close. Bound
+    // that wait; kill_on_drop still applies when runtime teardown drops it.
+    let cleanup = client.close_with_timeout(Duration::from_secs(2)).await;
+    let stderr_cleanup = tokio::time::timeout(Duration::from_secs(2), &mut stderr_task).await;
+    if stderr_cleanup.is_err() {
+        stderr_task.abort();
+    }
+    if let Some(mut receiver) = stderr_failure {
+        if let Ok(error) = receiver.try_recv() {
+            if result.is_ok() {
+                result = Err(error);
+            }
+        }
+    }
     result?;
-    cleanup?;
+    cleanup?.context("MCP cleanup exceeded 2 seconds")?;
+    stderr_cleanup.context("MCP stderr did not close during cleanup")??;
     println!("OK: Rust client drove Lightwork over MCP end-to-end");
     Ok(())
+}
+
+async fn wait_stderr_failure(
+    receiver: &mut Option<oneshot::Receiver<anyhow::Error>>,
+) -> anyhow::Error {
+    if let Some(pending) = receiver {
+        let error = pending.await.ok();
+        *receiver = None;
+        if let Some(error) = error {
+            return error;
+        }
+    }
+    // A server may close stderr while continuing its protocol exchange.
+    std::future::pending().await
+}
+
+async fn drain_stderr(mut stderr: ChildStderr) -> Result<()> {
+    let mut chunk = [0; 8192];
+    let mut line = Vec::new();
+    loop {
+        let count = stderr.read(&mut chunk).await?;
+        if count == 0 {
+            if !line.is_empty() {
+                eprintln!("{}", terminal_text(&String::from_utf8_lossy(&line)));
+            }
+            return Ok(());
+        }
+        for &value in &chunk[..count] {
+            if line.len() == 64 * 1024 {
+                bail!("MCP stderr line exceeds the transport size limit");
+            }
+            if value == b'\n' {
+                eprintln!("{}", terminal_text(&String::from_utf8_lossy(&line)));
+                line.clear();
+            } else {
+                line.push(value);
+            }
+        }
+    }
 }
 
 async fn check_client(client: &Peer<RoleClient>) -> Result<()> {
