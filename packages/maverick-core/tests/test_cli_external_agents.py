@@ -289,3 +289,15 @@ def test_remove_prompts_without_yes():
     r = _run("external-agents", "remove", "sf-quotebot", input="n\n")
     assert r.exit_code != 0  # aborted at the prompt
     assert xa.roster() != []
+
+
+def test_trust_add_stores_bearer_tokens_hashed_not_raw(tmp_path):
+    from maverick import agent_trust
+
+    added = _run("trust", "add", "peer1", "--a2a-token", "RAW-BEARER-abc123")
+    assert added.exit_code == 0, added.output
+    stored = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("agent_trust*.json"))
+    assert stored and "RAW-BEARER-abc123" not in stored
+    agent = agent_for_token("RAW-BEARER-abc123", "a2a")
+    assert agent is not None and agent.id == "peer1"
+    assert agent_trust.lookup("peer1") is not None

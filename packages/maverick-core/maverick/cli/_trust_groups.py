@@ -162,11 +162,19 @@ def trust_add_cmd(agent_id, pubkey, direction, allow_tools, max_risk, max_dollar
     def _split(s):
         return [x.strip() for x in s.split(",") if x.strip()]
 
+    def _at_rest(token):
+        # The managed overlay must never hold a raw bearer (a leaked backup
+        # of it must not authenticate); store the hashed form `mint` uses.
+        if not token or token.startswith("sha256:"):
+            return token
+        return agent_trust.hash_token(token)
+
     entry = {
         "id": agent_id, "pubkey": pubkey, "direction": direction,
         "allow_tools": _split(allow_tools), "max_risk": max_risk,
         "max_dollars": max_dollars, "data_scopes": _split(data_scopes),
-        "a2a_token": a2a_token, "grpc_token": grpc_token, "mcp_token": mcp_token,
+        "a2a_token": _at_rest(a2a_token), "grpc_token": _at_rest(grpc_token),
+        "mcp_token": _at_rest(mcp_token),
     }
     try:
         a = agent_trust.put_agent(entry)
