@@ -57,7 +57,12 @@ def fit_curve(samples: list[tuple[float, float, float]]) -> CostCurve:
         a = b = rate
         basis = "average"
 
-    a, b = max(0.0, a), max(0.0, b)  # negative per-token rates are nonsense
+    # The constrained optimum lies on an axis when an unconstrained rate
+    # is negative. Refit the remaining rate on that axis, not at its old value.
+    if a < 0:
+        a, b = 0.0, max(0.0, syc / syy) if syy else 0.0
+    elif b < 0:
+        a, b = max(0.0, sxc / sxx) if sxx else 0.0, 0.0
     mean_c = sum(c for _, _, c in rows) / len(rows)
     ss_tot = sum((c - mean_c) ** 2 for _, _, c in rows)
     ss_res = sum((c - (a * i + b * o)) ** 2 for i, o, c in rows)

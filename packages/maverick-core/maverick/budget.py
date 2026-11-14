@@ -848,6 +848,8 @@ class Budget:
         cache_write_5m_tok: int = 0,
         cache_write_1h_tok: int = 0,
         operation_id: str | None = None,
+        cost_dollars: float | None = None,
+        cache_write_mult: float | None = None,
     ) -> TokenCharge:
         """Add usage from one LLM call.
 
@@ -885,6 +887,13 @@ class Budget:
         budget (non-cached only). Caching is a discount, so heavy
         caching should let you DO more work within the same input cap.
         """
+        # Gateway receipts include cache pricing that cannot be reconstructed
+        # from a single vendor multiplier. Cancellation uses the reserved cost
+        # when its provider receipt is unknown. Both still enforce every cap.
+        if cost_dollars is not None:
+            cost_dollars = _nonnegative_finite(cost_dollars, "reported call cost")
+        if cache_write_mult is not None:
+            cache_write_mult = _nonnegative_finite(cache_write_mult, "cache write multiplier")
         in_tok = _coerce_count(in_tok)
         out_tok = _coerce_count(out_tok)
         cache_read_tok = _coerce_count(cache_read_tok)
@@ -921,7 +930,13 @@ class Budget:
             _CACHE_READ_MULT if cache_read_mult is None else cache_read_mult,
             "cache read multiplier",
         )
+        accounting_options = {}
+        if cost_dollars is not None:
+            accounting_options["cost_dollars"] = cost_dollars
+        if cache_write_mult is not None:
+            accounting_options["cache_write_mult"] = cache_write_mult
         request = _token_request_digest({
+            **accounting_options,
             "in_tok": in_tok,
             "out_tok": out_tok,
             "model": model,
@@ -977,11 +992,18 @@ class Budget:
                     * _CACHE_WRITE_MULT_1H
                 )
             else:
-                write_mult = _cache_write_mult_from_ttl(cache_write_ttl)
+                write_mult = (_cache_write_mult_from_ttl(cache_write_ttl)
+                              if cache_write_mult is None else cache_write_mult)
                 call_dollars += (
                     (cache_write_tok / 1_000_000) * in_rate * write_mult
                 )
             call_dollars += (out_tok / 1_000_000) * out_rate
+            if cost_dollars is not None:
+                # A custom gateway must not discount the operator's explicit
+                # conservative ceiling using an unverified receipt.
+                call_dollars = (max(call_dollars, cost_dollars)
+                                if quote.rate_card_version == "operator-ceiling-v1"
+                                else cost_dollars)
             call_dollars = _nonnegative_finite(call_dollars, "token charge")
             charge = TokenCharge(call_dollars, dict(pricing_evidence))
             self.input_tokens += in_tok
@@ -1151,7 +1173,9 @@ class Budget:
             raise BudgetExceeded(f"input tokens {self.input_tokens} > {self.max_input_tokens}")
         if self.max_output_tokens is not None and self.output_tokens > self.max_output_tokens:
             raise BudgetExceeded(f"output tokens {self.output_tokens} > {self.max_output_tokens}")
-        if self.max_dollars is not None and self.dollars > self.max_dollars:
+        if self.max_dollars is not None and self.dollars > self.max_dollars and not math.isclose(
+            self.dollars, self.max_dollars, rel_tol=1e-15, abs_tol=0.0,
+        ):
             raise BudgetExceeded(f"${self.dollars:.2f} > ${self.max_dollars:.2f}")
         if self.max_tool_calls is not None and self.tool_calls > self.max_tool_calls:
             raise BudgetExceeded(f"tool calls {self.tool_calls} > {self.max_tool_calls}")
@@ -1178,7 +1202,9 @@ class Budget:
         with self._lock:
             self._validate_integrity()
             projected = self.dollars + getattr(self, "_reserved", 0.0) + est
-            if self.max_dollars is not None and projected > self.max_dollars:
+            if self.max_dollars is not None and projected > self.max_dollars and not math.isclose(
+                projected, self.max_dollars, rel_tol=1e-15, abs_tol=0.0,
+            ):
                 raise BudgetExceeded(
                     f"projected ${projected:.2f} > ${self.max_dollars:.2f} "
                     f"(spent ${self.dollars:.2f} + est ${est:.2f} for this call)"
@@ -1200,7 +1226,9 @@ class Budget:
             self._validate_integrity()
             held = getattr(self, "_reserved", 0.0)
             projected = self.dollars + held + est
-            if self.max_dollars is not None and projected > self.max_dollars:
+            if self.max_dollars is not None and projected > self.max_dollars and not math.isclose(
+                projected, self.max_dollars, rel_tol=1e-15, abs_tol=0.0,
+            ):
                 raise BudgetExceeded(
                     f"projected ${projected:.2f} > ${self.max_dollars:.2f} "
                     f"(spent ${self.dollars:.2f} + in-flight ${held:.2f} "
