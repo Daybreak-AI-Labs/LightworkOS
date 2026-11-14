@@ -104,6 +104,15 @@ class SSHBackend:
                 f"ssh to {self.host} failed: {stderr or 'unknown error'}. "
                 "Check your SSH config / keys."
             )
+        check = subprocess.run(
+            ["ssh", *self._ssh_opts(), *self.ssh_args, self.host, "timeout --version"],
+            capture_output=True, timeout=15, env=_ssh_env(),
+        )
+        if check.returncode != 0:
+            raise RuntimeError(
+                f"SSH host {self.host} requires GNU timeout to enforce command deadlines. "
+                "Install GNU coreutils on the remote host before using this backend."
+            )
 
     def _quote_workdir(self) -> str:
         """Shell-quote the remote workdir, but leave a leading ``~/`` (or bare
