@@ -306,11 +306,23 @@ RULES: list[Rule] = [
          "Persona takeover"),
 
     # Data exfiltration
+    # The variable-length runs in the three URL rules below are "tempered":
+    # they stop where the next possible match start begins (`![` or
+    # `http(s):`). Unbounded runs let every start position scan to the end of
+    # the text, which made these patterns cubic/quadratic on a repeated
+    # unterminated prefix (8,000 chars of `![](http://a?` took ~27 s). A match
+    # that would have run across a later start is still found from that start.
     Rule("markdown_image_exfil", "high",
-         _compile(r"!\[[^\]]*\]\(https?:\/\/[^)]+\?[^)]*(token|key|password|secret|api)"),
+         _compile(
+             r"!\[(?:(?!!\[)[^\]])*\]\(https?:\/\/(?:(?!!\[)[^)?])+\?"
+             r"(?:(?!!\[)[^)])*?(token|key|password|secret|api)"
+         ),
          "Markdown image URL with credentials in query"),
     Rule("base64_url_exfil", "high",
-         _compile(r"https?:\/\/[^\s]+\?[^=]*=[A-Za-z0-9+\/]{40,}={0,2}"),
+         _compile(
+             r"https?:\/\/(?:(?!https?:)[^\s?])+\?(?:(?!https?:)\S)*?"
+             r"=[A-Za-z0-9+\/]{40,}={0,2}"
+         ),
          "URL parameter with base64 payload"),
     # base64_url_exfil only catches a base64-shaped value; a PLAINTEXT provider
     # credential in a URL (query, fragment, OR path) slipped past it and every
@@ -321,7 +333,7 @@ RULES: list[Rule] = [
     # markdown rule's ``?``-only check misses.
     Rule("credential_in_url", "high",
          _compile(
-             r"https?:\/\/\S*(?:"
+             r"https?:\/\/(?:(?!https?:)\S)*?(?:"
              r"sk-ant-[A-Za-z0-9_-]{12,}"        # Anthropic
              r"|sk-[A-Za-z0-9]{20,}"             # OpenAI-style
              r"|gh[posru]_[A-Za-z0-9]{20,}"      # GitHub PAT/OAuth/refresh/server/user
@@ -350,14 +362,17 @@ RULES: list[Rule] = [
         "against /, ~, or $HOME",
     ),
     Rule("disk_overwrite", "critical",
-         _compile(r"\b(dd\s+[^\n]*\bof=\/dev\/(sd[a-z]|nvme\d|disk\d|hd[a-z])|mkfs(\.[a-z0-9]+)?\s+[^\n]*\/dev\/)"),
+         _compile(
+             r"\b(dd\s+(?:(?!\bdd\s)[^\n])*?\bof=\/dev\/(sd[a-z]|nvme\d|disk\d|hd[a-z])"
+             r"|mkfs(\.[a-z0-9]+)?\s+(?:(?!\bmkfs)[^\n])*?\/dev\/)"
+         ),
          "Raw disk overwrite via dd/mkfs against a block device"),
     Rule(
         "recursive_chmod_chown_root", "critical",
         _compile(
             r"\bch(mod|own)\s+"
             rf"(?=(?:{_FLAG_TOKEN}\s+){{0,5}}{_has_flag('R', 'recursive')})"
-            r"[^\n]*\s(\/|~|\$HOME)(\s|;|&|\||$)"
+            r"(?:(?!\bch(?:mod|own)\s)[^\n])*\s(\/|~|\$HOME)(\s|;|&|\||$)"
         ),
         "Recursive chmod/chown (contiguous OR split across flags, e.g. "
         "`chmod -c -R 777 /`) against /, ~, or $HOME",
@@ -369,7 +384,7 @@ RULES: list[Rule] = [
          _compile(r"(\/etc\/+(passwd|shadow|ssh|sudoers)|\bNOPASSWD\b|~?\/\.ssh\/|~?\/\.aws\/credentials|\.env\b)"),
          "Read of /etc/passwd, ssh keys, sudoers, AWS creds, or .env"),
     Rule("curl_pipe_shell", "critical",
-         _compile(r"(curl|wget)\s+[^|]+\|\s*(sudo\s+)?(sh|bash|zsh|python)\b"),
+         _compile(r"(curl|wget)\s+(?:(?!(?:curl|wget)\s)[^|])+\|\s*(sudo\s+)?(sh|bash|zsh|python)\b"),
          "curl-pipe-to-shell remote code execution"),
     Rule("reverse_shell", "critical",
          _compile(r"(bash\s+-i\s+>&\s+\/dev\/tcp\/|nc\s+-e\s+\/bin\/(sh|bash))"),
@@ -377,7 +392,7 @@ RULES: list[Rule] = [
 
     # Social engineering markers
     Rule("urgency_authority", "medium",
-         _compile(r"\bthis\s+is\s+(an?\s+)?(emergency|urgent|critical)\b.*\b(execute|run|do)\s+(immediately|now|asap)"),
+         _compile(r"\bthis\s+is\s+(an?\s+)?(emergency|urgent|critical)\b(?:(?!\bthis\s+is\s)[^\n])*\b(execute|run|do)\s+(immediately|now|asap)"),
          "Urgency + authority pressure"),
     Rule("false_preapproval", "medium",
          _compile(r"\b(the\s+user|admin|operator)\s+(has\s+)?already\s+(approved|authorized|allowed)"),
