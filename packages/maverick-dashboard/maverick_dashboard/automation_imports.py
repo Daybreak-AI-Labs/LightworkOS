@@ -273,6 +273,10 @@ def _translated(request, choices, raws):
             automation = importer.translate(raw)
             title, body = automation.render(complete=True)
         except Exception as exc:
+            if isinstance(exc, ValueError) and str(exc).startswith("n8n import needs repair:"):
+                name = " ".join(str(raw.get("name") or "An automation").split())[:80]
+                raise HTTPException(422, f"{name} was not imported: {exc}. Repair it in the other platform; "
+                                    "nothing was saved.") from exc
             raise HTTPException(422, "An automation in this export could not be translated completely. Nothing was skipped or saved; choose a supported separate export.") from exc
         if not body or len(body) > 16000:
             raise HTTPException(413, "One automation's full instructions exceed the supported review size. Choose a smaller automation export.")

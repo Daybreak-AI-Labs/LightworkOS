@@ -125,7 +125,10 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
     except ImporterError as e:
         raise click.ClickException(str(e)) from e
 
-    automations = translate_all(source, raws)
+    skipped: list[tuple[str, str]] = []
+    automations = translate_all(source, raws, skipped)
+    for name, reason in skipped:
+        click.echo(f"Not imported: {name} ({reason})", err=True)
     if not automations:
         raise click.ClickException(f"no importable automations found from {source!r}")
 
