@@ -122,6 +122,13 @@ class _PinnedCommand:
         return cls(pinned, tuple(files))
 
     def verify(self) -> None:
+        """Best-effort change detection for explicit command-file arguments.
+
+        The child still opens these paths after verification, so a concurrent
+        writer can replace them before execution. Imported modules are not
+        pinned. This check is not an execution-integrity boundary; plugin files
+        and their dependencies must remain under trusted operator custody.
+        """
         for f in self.files:
             try:
                 resolved = Path(self.command[f.arg_index]).resolve(strict=True)
