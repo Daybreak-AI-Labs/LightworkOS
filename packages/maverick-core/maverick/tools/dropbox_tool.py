@@ -158,10 +158,15 @@ def _op_share(args: dict) -> str:
         "/sharing/create_shared_link_with_settings", {"path": path},
     )
     if code >= 400 or not isinstance(data, dict):
-        # Link may already exist; fetch it.
-        c2, d2 = _rpc("/sharing/list_shared_links", {"path": path})
-        if c2 < 400 and isinstance(d2, dict) and (d2.get("links") or []):
-            return (d2["links"][0]).get("url", "?")
+        # Link may already exist; fetch it. Without direct_only the listing
+        # also returns links to parent folders, which would share far more
+        # than the requested file.
+        c2, d2 = _rpc("/sharing/list_shared_links",
+                      {"path": path, "direct_only": True})
+        links = (d2.get("links") or []) if c2 < 400 and isinstance(d2, dict) else []
+        for link in links:
+            if isinstance(link, dict) and link.get("path_lower", path.lower()) == path.lower():
+                return link.get("url", "?")
         return f"ERROR: share ({code}): {data}"
     return data.get("url", "?")
 

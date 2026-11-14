@@ -443,6 +443,20 @@ def test_bigquery_trailing_semicolon_read_runs(monkeypatch):
     assert post.call_args.kwargs["json"]["query"] == "SELECT ';' AS semi;"
 
 
+def test_bigquery_incomplete_job_is_not_reported_as_empty(monkeypatch):
+    monkeypatch.setenv("BIGQUERY_ACCESS_TOKEN", "t")
+    monkeypatch.setenv("BIGQUERY_PROJECT", "proj")
+    post = MagicMock(return_value=_resp(200, {
+        "jobComplete": False,
+        "jobReference": {"projectId": "proj", "jobId": "job_123", "location": "US"},
+    }))
+    _fake_httpx(monkeypatch, post=post)
+    from maverick.tools.bigquery_tool import bigquery_tool
+    out = bigquery_tool().fn({"op": "query", "sql": "SELECT * FROM d.big"})
+    assert "ok (" not in out
+    assert "still running" in out and "job_123" in out
+
+
 # ---------------------------------- Dynamics -------------------------------
 
 def test_dynamics_requires_config(monkeypatch):
