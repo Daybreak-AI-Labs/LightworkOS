@@ -21,42 +21,61 @@ from .content_classifier import MAX_TEXT_CHARS, classify_text
 REDACTION_TEMPLATE = "[REDACTED:{category}]"
 
 
-def _replace_spans(text: str, work: str, findings: list[dict[str, Any]],
-                   wanted: set[str] | None, counts: dict[str, int]) -> tuple[str, str, int]:
-    """Replace the ``wanted`` findings in ``text`` and in its working copy
-    ``work`` (same offsets), and blank the other findings in ``work`` only so a
-    later pass does not collect them again. Returns both strings and how many
-    spans were handled, adding replacements to ``counts``."""
-    # Unwanted findings: blank them in the working copy only (same length).
-    kept = [row for row in findings if wanted is not None and row["category"] not in wanted]
-    if kept:
-        chars = list(work)
-        for row in kept:
-            chars[row["start"]:row["end"]] = "\x00" * (row["end"] - row["start"])
-        work = "".join(chars)
-    # Merge overlapping or nested wanted spans into their union, labelled with
-    # the earliest (outermost) finding, so no part of an enclosing identifier
-    # stays visible around a nested hit.
+# Filler for collected findings in a working copy: same length, so offsets
+# stay those of the original text, and never part of any classifier match.
+_FILLER = "\x00"
+
+
+def _merge_spans(spans: list[tuple[int, int, str]]) -> list[list[Any]]:
+    """Merge overlapping or nested spans into their union, labelled with the
+    earliest (outermost) finding, so no part of an enclosing identifier stays
+    visible around a nested hit."""
     merged: list[list[Any]] = []
-    for row in sorted((row for row in findings if wanted is None or row["category"] in wanted),
-                      key=lambda row: (row["start"], -row["end"])):
-        if merged and row["start"] < merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], row["end"])
+    for start, end, category in sorted(spans, key=lambda span: (span[0], -span[1])):
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
             continue
-        merged.append([row["start"], row["end"], row["category"]])
-    # Rebuild both strings in one forward pass (offsets refer to the input).
-    out_text: list[str] = []
-    out_work: list[str] = []
-    pos = 0
-    for start, end, category in merged:
-        placeholder = REDACTION_TEMPLATE.format(category=category)
-        out_text += [text[pos:start], placeholder]
-        out_work += [work[pos:start], placeholder]
-        pos = end
-        counts[category] = counts.get(category, 0) + 1
-    text = "".join(out_text) + text[pos:]
-    work = "".join(out_work) + work[pos:]
-    return text, work, len(merged) + len(kept)
+        merged.append([start, end, category])
+    return merged
+
+
+# Window size and context margin for text with more findings than the
+# classifier collects in one pass. A finding longer than the margin, or whose
+# context lies further back than it, is not expected.
+_WINDOW = 20_000
+_MARGIN = 1_024
+
+
+def _collect(text: str, roster: list[str] | None, wanted: set[str] | None,
+             *, complete: bool = False) -> tuple[list[tuple[int, int, str]], bool]:
+    """Wanted findings in ``text`` and whether the first pass was truncated.
+    With ``complete``, collected findings are blanked in a same-length working
+    copy and the text classified again until a pass is not truncated."""
+    spans: list[tuple[int, int, str]] = []
+    work = text
+    while True:
+        report = classify_text(work, roster=roster)
+        spans += [(row["start"], row["end"], row["category"]) for row in report["findings"]
+                  if wanted is None or row["category"] in wanted]
+        if not report.get("truncated") or not complete:
+            return spans, bool(report.get("truncated"))
+        if not report["findings"]:
+            raise ValueError("text holds findings that could not be redacted")
+        chars = list(work)
+        for row in report["findings"]:
+            chars[row["start"]:row["end"]] = _FILLER * (row["end"] - row["start"])
+        work = "".join(chars)
+
+
+def _collect_window(text: str, low: int, roster: list[str] | None,
+                    wanted: set[str] | None) -> list[tuple[int, int, str]]:
+    """Every wanted finding that starts in ``[low, low + _WINDOW)``, found in a
+    slice with ``_MARGIN`` characters of context on each side."""
+    start = max(0, low - _MARGIN)
+    piece = text[start:low + _WINDOW + _MARGIN]
+    spans, _ = _collect(piece, roster, wanted, complete=True)
+    return [(start + a, start + b, category) for a, b, category in spans
+            if low <= start + a < low + _WINDOW]
 
 
 def redact_text(
@@ -79,19 +98,22 @@ def redact_text(
     if len(sample) > MAX_TEXT_CHARS:
         raise ValueError(f"text must be at most {MAX_TEXT_CHARS} characters")
     wanted = None if categories is None else {str(c) for c in categories}
-    out = work = sample
     counts: dict[str, int] = {}
-    # The classifier stops collecting at its findings cap. Redact what it
-    # collected, then classify the redacted text again (placeholders are never
-    # findings) until a pass is complete, so every finding is redacted however
-    # many there are. Each truncated pass handles at least one span.
-    while True:
-        report = classify_text(work, roster=roster)
-        out, work, handled = _replace_spans(out, work, report["findings"], wanted, counts)
-        if not report.get("truncated"):
-            break
-        if not handled:
-            raise ValueError("text holds findings that could not be redacted")
+    spans, truncated = _collect(sample, roster, wanted)
+    if truncated:
+        # More findings than one pass collects: scan bounded windows (with
+        # context margins) instead, so each window costs one or two passes.
+        spans = []
+        for low in range(0, len(sample), _WINDOW):
+            spans += _collect_window(sample, low, roster, wanted)
+    # Build the redacted text once, from the original.
+    pieces: list[str] = []
+    pos = 0
+    for start, end, category in _merge_spans(spans):
+        pieces += [sample[pos:start], REDACTION_TEMPLATE.format(category=category)]
+        pos = end
+        counts[category] = counts.get(category, 0) + 1
+    out = "".join(pieces) + sample[pos:]
     return {
         "text": out,
         "redactions": sum(counts.values()),

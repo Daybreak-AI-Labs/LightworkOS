@@ -52,6 +52,10 @@ def test_findings_beyond_the_classifier_cap_are_all_redacted():
     result = redact_text(text)
     assert "@example.com" not in result["text"]
     assert result["counts"] == {"email": MAX_FINDINGS + 5}
+    # Far past the cap (the working copy used to grow until it exceeded the
+    # text limit): every finding is redacted.
+    many = redact_text("a@b.co " * 150_000)
+    assert many["counts"] == {"email": 150_000} and "@" not in many["text"]
     filtered = redact_text(text + " 51.5007, -0.1246", categories=["location"])
     assert "51.5007" not in filtered["text"] and "u0@example.com" in filtered["text"]
     nhs = "NHS 943 476 5919 " * 2600 + "51.5007, -0.1246"
