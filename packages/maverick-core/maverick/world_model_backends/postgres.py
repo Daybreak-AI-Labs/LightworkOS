@@ -4158,9 +4158,11 @@ class PostgresWorldModel:
 
     def ask(self, question: str, goal_id: int | None = None) -> int:
         # When attached to a goal, gate on that goal being in the active tenant
-        # (matches `answer`, which scopes by the parent goal). A goal-less
-        # question has no parent to inherit from, so it inserts directly.
+        # (matches `answer`, which scopes by the parent goal). A scoped
+        # question needs that parent so it can later be listed and answered.
         frag, fparams = _mutation_tenant_scope()
+        if _active_tenant() is not None and goal_id is None:
+            raise ValueError("A question in a tenant workspace must be attached to a goal.")
         with self._tx() as cur:
             if frag and goal_id is not None:
                 cur.execute(
@@ -6023,26 +6025,64 @@ class PostgresWorldModel:
             # backfill commit together, so no partial state is observable here.
             return
         cur.execute(
-            "INSERT INTO provider_operation_attempts("
+            "WITH entries AS MATERIALIZED ("
+            "SELECT p.provider, p.period_key, j.request_id, j.receipt, "
+            "j.receipt->'operation' AS operation "
+            "FROM provider_cap_receipts AS p "
+            "CROSS JOIN LATERAL jsonb_each(CASE "
+            "WHEN jsonb_typeof(p.receipts_json::jsonb) = 'object' "
+            "THEN p.receipts_json::jsonb ELSE '{}'::jsonb END) AS j(request_id, receipt) "
+            "WHERE j.receipt->'operation' IS NOT NULL), "
+            "parsed AS MATERIALIZED (SELECT *, CASE "
+            "WHEN jsonb_typeof(operation->'attempt_no') = 'number' "
+            "AND operation->>'attempt_no' ~ '^[1-9][0-9]{0,18}$' "
+            "AND (length(operation->>'attempt_no') < 19 "
+            "OR operation->>'attempt_no' <= '9223372036854775807') "
+            "THEN (operation->>'attempt_no')::BIGINT ELSE NULL END AS attempt_no, "
+            "COALESCE(jsonb_typeof(operation) = 'object' "
+            "AND request_id COLLATE \"C\" ~ '^[A-Za-z0-9_.:-]{1,192}$' "
+            "AND jsonb_typeof(operation->'operation_id') = 'string' "
+            "AND (operation->>'operation_id') COLLATE \"C\" ~ '^[A-Za-z0-9_.:-]{1,192}$' "
+            "AND (receipt->'work_item_sha256' IS NULL OR ("
+            "jsonb_typeof(receipt->'work_item_sha256') = 'string' "
+            "AND (receipt->>'work_item_sha256') COLLATE \"C\" ~ '^[0-9a-f]{64}$')) "
+            "AND (receipt->'operation_scope_sha256' IS NULL "
+            "OR jsonb_typeof(receipt->'operation_scope_sha256') = 'null' OR ("
+            "jsonb_typeof(receipt->'operation_scope_sha256') = 'string' "
+            "AND (receipt->>'operation_scope_sha256') COLLATE \"C\" ~ '^[0-9a-f]{64}$')) "
+            "AND (receipt->>'operation_scope_sha256' IS NULL "
+            "OR receipt->>'work_item_sha256' IS NULL "
+            "OR receipt->>'operation_scope_sha256' = receipt->>'work_item_sha256') "
+            "AND jsonb_typeof(operation->'category') = 'string' "
+            "AND jsonb_typeof(operation->'parent_category') = 'string' "
+            "AND (operation->'service' IS NULL "
+            "OR jsonb_typeof(operation->'service') IN ('string', 'null')), FALSE) AS valid "
+            "FROM entries), inserted AS (INSERT INTO provider_operation_attempts("
             "scope_sha256, operation_id, attempt_no, category, parent_category, "
             "service, provider, period_key, request_id) "
-            "SELECT COALESCE(j.receipt->>'operation_scope_sha256', "
-            "j.receipt->>'work_item_sha256', "
+            "SELECT COALESCE(receipt->>'operation_scope_sha256', "
+            "receipt->>'work_item_sha256', "
             "'c544f4564db872e0ffb51fa1bb81b3d7089460a7a9a79ad21cd3952e77f0efec'), "  # pragma: allowlist secret
-            "j.receipt->'operation'->>'operation_id', "
-            "(j.receipt->'operation'->>'attempt_no')::BIGINT, "
-            "j.receipt->'operation'->>'category', "
-            "j.receipt->'operation'->>'parent_category', "
-            "j.receipt->'operation'->>'service', "
-            "p.provider, p.period_key, j.request_id "
-            "FROM provider_cap_receipts AS p "
-            "CROSS JOIN LATERAL jsonb_each(p.receipts_json::jsonb) "
-            "AS j(request_id, receipt) "
-            "WHERE jsonb_typeof(j.receipt->'operation') = 'object' "
+            "operation->>'operation_id', attempt_no, operation->>'category', "
+            "operation->>'parent_category', operation->>'service', "
+            "provider, period_key, request_id FROM parsed "
+            "WHERE valid AND attempt_no IS NOT NULL "
             "AND NOT EXISTS (SELECT 1 FROM provider_operation_attempts AS a "
-            "WHERE a.provider = p.provider AND a.period_key = p.period_key "
-            "AND a.request_id = j.request_id)"
+            "WHERE a.provider = parsed.provider AND a.period_key = parsed.period_key "
+            "AND a.request_id = parsed.request_id) RETURNING request_id) "
+            "SELECT provider, period_key, request_id FROM parsed "
+            "WHERE NOT valid OR attempt_no IS NULL"
         )
+        skipped = 0
+        while rows := cur.fetchmany(100):
+            for row in rows:
+                # A digest identifies the retained row without writing any
+                # potentially sensitive legacy identifier into application logs.
+                reference = hashlib.sha256(json.dumps(list(row)).encode()).hexdigest()
+                log.warning("Malformed legacy provider operation receipt retained; row_sha256=%s", reference)
+            skipped += len(rows)
+        if skipped:
+            log.warning("Skipped %d malformed legacy provider operation receipt(s); original spend receipts were retained", skipped)
 
     def reserve_current_provider_cap(
         self,
