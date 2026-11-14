@@ -486,8 +486,11 @@ class OpenAIClient:
         usage_required: bool = True,
     ) -> LLMResponse:
         # Record usage first: the call is paid even when its content cannot
-        # be parsed below, and a parse error must not skip the charge.
-        if budget is not None:
+        # be parsed below, and a parse error must not skip the charge. A reply
+        # with neither choices nor usage keeps the failover-eligible
+        # "no choices" error below instead of the accounting error.
+        no_choices = not getattr(resp, "choices", None)
+        if budget is not None and not (no_choices and not getattr(resp, "usage", None)):
             usage = getattr(resp, "usage", None)
             if not usage and usage_required:
                 raise UsageAccountingError(
@@ -546,7 +549,7 @@ class OpenAIClient:
                 cache_read_tok=cache_read_tok,
                 cache_read_mult=cls.CACHE_READ_MULT,
             )
-        if not getattr(resp, "choices", None):
+        if no_choices:
             # Some OpenAI-compatible gateways (and OpenAI/Azure content-filter)
             # return an empty ``choices`` list on an upstream/filter error. An
             # unguarded ``resp.choices[0]`` would raise a cryptic IndexError that

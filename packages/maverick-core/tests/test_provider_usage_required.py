@@ -328,6 +328,10 @@ def test_usage_is_recorded_before_an_unparseable_response_raises():
     with pytest.raises(RuntimeError, match="no choices"):
         OpenAIClient._from_response(resp, budget, model="gpt-5.4")
     assert (budget.input_tokens, budget.output_tokens) == (10, 5)
+    # Without usage either, the failover-eligible error is kept.
+    with pytest.raises(RuntimeError, match="no choices"):
+        OpenAIClient._from_response(SimpleNamespace(choices=[], usage=None), budget,
+                                    model="gpt-5.4")
 
 
 @pytest.mark.parametrize("raw", [None, "null", "[1, 2]", '"text"'])
