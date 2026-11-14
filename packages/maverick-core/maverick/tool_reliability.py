@@ -88,6 +88,8 @@ async def run_with_retry(name: str, call: Callable[[], Awaitable[T]]) -> T:
                 ):
                     raise
                 delay = retry_classifier.next_delay(exc, attempts_so_far=attempts)
+                if delay >= invocation.remaining():
+                    raise  # a retry could only start after the deadline
             else:
                 if not isinstance(result, ConnectorResult) or not result.attempt.retryable:
                     return result

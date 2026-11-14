@@ -133,13 +133,15 @@ class TrajectoryStore:
         # not rely on every current and future producer remembering to gate.
         if self.path is None or not enabled():
             return False
-        from .pilot_learning import excluded
-        if excluded(step.goal_id):
-            return False
-        from .learning_guard import learning_write_allowed
-        if not learning_write_allowed("trajectory_capture"):
-            return False
         try:
+            # The gates can raise (a kill-switch checker); a gate that cannot
+            # answer refuses the write rather than breaking the agent path.
+            from .pilot_learning import excluded
+            if excluded(step.goal_id):
+                return False
+            from .learning_guard import learning_write_allowed
+            if not learning_write_allowed("trajectory_capture"):
+                return False
             line = json.dumps(asdict(step.redacted()), sort_keys=True)
             with self._lock:
                 p = Path(self.path)
