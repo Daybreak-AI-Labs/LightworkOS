@@ -318,13 +318,40 @@ def _added_lines(patch: str) -> list[str]:
             if ln.startswith("+") and not ln.startswith("+++")]
 
 
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
 def _added_lines_by_file(patch: str) -> dict[str, list[str]]:
-    """Added lines grouped by the ``+++`` target path (``b/`` stripped)."""
+    """Added lines grouped by the ``+++`` target path (``b/`` stripped).
+
+    A ``+++`` line is a file header only outside a hunk: hunk line counts are
+    tracked, so an added content line that reads ``++ b/other.py`` cannot
+    switch the file its following lines are attributed to.
+    """
     out: dict[str, list[str]] = {}
     current = ""
+    old_left = new_left = 0
     for ln in (patch or "").splitlines():
-        if ln.startswith("+++"):
-            current = ln[4:].split("\t", 1)[0].removeprefix("b/")
+        if old_left > 0 or new_left > 0:
+            if ln.startswith("+"):
+                new_left -= 1
+                out.setdefault(current, []).append(ln[1:])
+                continue
+            if ln.startswith("-"):
+                old_left -= 1
+                continue
+            if ln.startswith((" ", "\\")) or ln == "":
+                if not ln.startswith("\\"):
+                    old_left -= 1
+                    new_left -= 1
+                continue
+            old_left = new_left = 0  # malformed hunk: fall back to header parsing
+        hunk = _HUNK_RE.match(ln)
+        if hunk:
+            old_left = int(hunk.group(1) or 1)
+            new_left = int(hunk.group(2) or 1)
+        elif ln.startswith("+++"):
+            current = ln[4:].split("\t", 1)[0].rstrip("\r").removeprefix("b/")
         elif ln.startswith("+"):
             out.setdefault(current, []).append(ln[1:])
     return out

@@ -204,3 +204,14 @@ def test_common_spawn_apis_and_cross_file_baselines_are_caught():
     # A class used only in ANOTHER baseline file does not mask its first use here.
     w, new = widens(_patch("import subprocess"), baseline_files={"other.py": "import subprocess\n"})
     assert w is True and new == ["process"]
+
+
+def test_added_line_that_looks_like_a_header_does_not_switch_files():
+    base = {"pkg/a.py": "x = 1\n", "pkg/b.py": "import subprocess\n"}
+    patch = ("diff --git a/pkg/a.py b/pkg/a.py\n--- a/pkg/a.py\n+++ b/pkg/a.py\n"
+             "@@ -1 +1,4 @@\n x = 1\n"
+             '+_doc = """\n'
+             "+++ b/pkg/b.py\n"
+             '+"""; import subprocess\n')
+    w, new = widens(patch, baseline_files=base)
+    assert w is True and new == ["process"]
