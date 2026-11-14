@@ -173,19 +173,16 @@ def _store_session(
         return
     resource_sessions[sid] = _ResourceSession(caller_scope, subscriptions)
     resource_sessions.move_to_end(sid)
+    # A caller over its own allowance loses its own oldest sessions, so a
+    # flood of sessionless subscribes cannot evict other callers' state
+    # without limit. A full store is left to the global LRU eviction below:
+    # evicting the caller's own live sessions there would leave every caller
+    # one session once idle sessions fill the store.
     caller_sessions = [
         key for key, session in resource_sessions.items()
         if hmac.compare_digest(session.caller_scope, caller_scope)
     ]
-    # Sessionless subscriptions must spend this caller's own LRU allowance.
-    # Also reclaim its older entries when the shared store is full, preserving
-    # the newly used session before considering another caller's oldest entry.
-    excess = max(
-        0,
-        len(caller_sessions) - _MAX_RESOURCE_SESSIONS_PER_CALLER,
-        len(resource_sessions) - max_sessions,
-    )
-    for key in caller_sessions[:min(excess, len(caller_sessions) - 1)]:
+    for key in caller_sessions[:max(0, len(caller_sessions) - _MAX_RESOURCE_SESSIONS_PER_CALLER)]:
         del resource_sessions[key]
     while len(resource_sessions) > max_sessions:
         resource_sessions.popitem(last=False)
