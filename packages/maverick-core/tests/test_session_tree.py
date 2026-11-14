@@ -81,7 +81,7 @@ def test_fork_without_an_event_copies_the_whole_trail():
     child = st.fork(gid)
     copied = _contents(child)
     assert copied[:3] == ["planned", "called the API", "wrote the file"]
-    assert copied[-1].endswith("at its full trail by operator")
+    assert copied[-1].endswith("at its trail (up to 500 events) by operator")
 
 
 def test_fork_refuses_an_unknown_goal_and_an_out_of_range_event():

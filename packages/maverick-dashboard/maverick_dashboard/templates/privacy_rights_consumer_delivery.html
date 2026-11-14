@@ -98,7 +98,8 @@
   </section>
   <section class="panel">
     <h2>Result and availability</h2>
-    <pre class="prcd-output" id="prcd-output" aria-live="polite">No request made.</pre>
+    <p id="prcd-output-status" role="status" aria-live="polite"></p>
+    <pre class="prcd-output" id="prcd-output">No request made.</pre>
   </section>
 </div>
 
@@ -112,6 +113,7 @@
   var confirmation = document.getElementById("prcd-confirm");
   var confirmationPanel = document.getElementById("prcd-confirm-panel");
   var output = document.getElementById("prcd-output");
+  var outputStatus = document.getElementById("prcd-output-status");
   var highImpact = new Set([
     "delivery-mint", "delivery-revoke", "export-create", "retention-purge"
   ]);
@@ -123,6 +125,7 @@
 
   function show(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    outputStatus.textContent = typeof value === "string" ? value : "Request completed. Review the result below.";
   }
   // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
   function requestProblem(status, detail) {
@@ -162,6 +165,7 @@
     });
   }
   async function run(method, path, payload) {
+    outputStatus.textContent = "Completing the request…";
     var options = {
       method: method,
       cache: "no-store",

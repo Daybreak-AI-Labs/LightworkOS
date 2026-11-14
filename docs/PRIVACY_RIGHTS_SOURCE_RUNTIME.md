@@ -84,8 +84,10 @@ capabilities = ["discover", "retrieve", "delete", "verify_delete"]
 The provider table is closed to `microsoft_graph_users`,
 `google_workspace_users`, `salesforce_contacts`, and `servicenow_users`.
 Origins are exact public HTTPS origins; secret values are never valid in the
-configuration, only `env:`, `vault:` or `secret:` references. Provider source
-IDs must be unique. Retrieval size must be at least the ordinary response size.
+configuration. The stock credential resolver supports only `env:` references.
+`vault:` and `secret:` references require a deployment-installed credential
+resolver. Provider source IDs must be unique. Retrieval size must be at least
+the ordinary response size.
 Each stock adapter reference includes the full canonical source-manifest digest;
 changing any provider or operational binding therefore requires source
 re-enrollment and task replanning before provider I/O can resume.
