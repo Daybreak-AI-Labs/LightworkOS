@@ -94,14 +94,31 @@ def _headers() -> dict[str, str]:
 _AUTH_HEADERS = ("private-token", "authorization", "cookie")
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _redirect_keeps_credentials(old_url: str, new_url: str) -> bool:
+    """Same host, and either the same scheme and port or the default
+    http-to-https upgrade (self-hosted ``GITLAB_URL=http://...``). A host
+    change, an https-to-http downgrade or any other port change drops them."""
+    try:
+        old, dest = urllib.parse.urlparse(old_url), urllib.parse.urlparse(new_url)
+        old_port = old.port or _DEFAULT_PORTS.get(old.scheme)
+        new_port = dest.port or _DEFAULT_PORTS.get(dest.scheme)
+    except ValueError:  # malformed port
+        return False
+    if not old.hostname or old.hostname != dest.hostname:
+        return False
+    if (old.scheme, old_port) == (dest.scheme, new_port):
+        return True
+    return (old.scheme, old_port, dest.scheme, new_port) == ("http", 80, "https", 443)
+
+
 class _AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None:
-            # Keep credentials only on the same origin: a same-host redirect to
-            # http:// or another port must not carry the token either.
-            old, dest = urllib.parse.urlparse(req.full_url), urllib.parse.urlparse(newurl)
-            if (old.scheme, old.netloc.lower()) != (dest.scheme, dest.netloc.lower()):
+            if not _redirect_keeps_credentials(req.full_url, newurl):
                 for h in _AUTH_HEADERS:
                     new.remove_header(h.capitalize())
         return new
