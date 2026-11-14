@@ -154,6 +154,68 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Rewinding a goal is refused while that goal is executing.
 - Audit writes from federation peers that have not authenticated are
   rate-limited per network peer.
+- A Vault Transit KMS address (`[kms] address` or `VAULT_ADDR`) must use
+  `https://`, or `http://` on a loopback address, with no user name or
+  password; otherwise encrypted data cannot be opened until it is corrected.
+- A tenant's own `[kms] dek_cache_ttl` now applies to that tenant. An invalid
+  value or unreadable configuration is logged and turns data-key caching off.
+- Tenant egress rules compare IP addresses in canonical form: decimal, hex,
+  octal, shortened, IPv4-mapped and bracketed spellings of an address match
+  an allow or deny rule written for that address.
+- The file-write tool writes only to regular files, not to a pipe or device,
+  and refuses a write when the file or a folder on its path is replaced by a
+  link leading out of the workspace while it writes.
+- A Python, TypeScript or gRPC plugin tool with a built-in tool's name is
+  skipped with a warning, even when that built-in is off. The Android and iOS
+  simulator tools are registered only for a workspace on the same machine.
+- On sandboxes other than the local one, stdin input to a program (such as a
+  notebook's code) is limited to 64 KiB; larger input is refused.
+- The notebook tool runs the sandbox's `python3`, or else `python`, and says
+  plainly when neither is there. Whisper.cpp transcription converts non-WAV
+  audio with the sandbox's own `ffmpeg`; install it in the sandbox image.
+- The database tool caps MySQL and MariaDB SELECTs at its row limit through
+  the session's `sql_select_limit`. The MongoDB tool uses only the database
+  named by `MONGODB_DB` or the `MONGODB_URI` path, refuses any other `db`,
+  and needs a non-empty filter to update or delete.
+- The serial tool accepts only serial device names (`/dev/ttyS*`,
+  `/dev/ttyUSB*`, `/dev/ttyACM*`, board UARTs, `/dev/serial/by-id/*`,
+  `/dev/cu.*`, `COM<n>`) and caps its timeout, now also used for writes, at
+  5 seconds.
+- With `MAVERICK_FETCH_RESPECT_ROBOTS=1`, the HTTP fetch tool applies
+  robots.txt Allow and Disallow rules with wildcards, the most specific rule
+  winning, so some pages change between allowed and blocked.
+- Shopify refunds are refused unless the order has exactly one successful
+  sale or capture in the refund's currency; refund other orders in Shopify.
+- The browser tool reports a key press that only sent key events (no click or
+  form submission followed) as dispatched, and refuses combinations such as
+  `Control+A`.
+- The ImageMagick tool reads only PNG, JPEG, GIF, WebP, BMP, TIFF and
+  PPM/PGM/PBM/PNM files, decoded as their extension says, and writes those
+  formats plus ICO and PDF, under fixed memory, disk and 60-second limits.
+- Hugging Face OCR now also needs `OCR_BACKEND=hf`. Discord posts and replies
+  no longer notify mentioned users or roles.
+- Memory writes and governed Python session statements are screened for
+  instruction-injection markers across line breaks, so more ordinary text can
+  be flagged (for example a `curl -X POST` whose URL is on the next line).
+  With the shield installed, a goal-memory write is refused when the shield
+  cannot be configured or its scan does not finish.
+- A pending workspace restore review that cannot be read or verified is set
+  aside as `review.json.unusable-<n>` with a warning, and its safety snapshot
+  is kept. An expired, unused review is removed with its safety snapshot.
+- The learning journal keeps its newest entries within 16 MiB instead of
+  refusing new ones once full. The promotion ledger refuses with "promotion
+  ledger journal is incomplete" when its saved view holds records the
+  journal lacks.
+- Recording an Ekko pilot run for a device whose enrollment was revoked
+  answers 409 and asks to enroll the device again.
+- Reading a published knowledge analysis needs read access to every source
+  item and that each source's current admission still allows analysis.
+  Evidence-graph evidence must be reviewed by someone other than whoever
+  added it; evidence with no record of who added it must be submitted again.
+- Further llama.cpp replicas of the local runtime keep their prompt cache in
+  `llamacpp-<port>.promptcache`; replica 0 keeps `llamacpp.promptcache`.
+- On Postgres, malformed or duplicate legacy provider spend receipts no
+  longer stop the one-time operation-record backfill; they are logged.
 
 ### Fixed
 
