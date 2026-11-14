@@ -179,6 +179,17 @@ def test_lost_required_archive_fails_closed_after_completed_calls():
         attempt(budget, 1)
 
 
+def test_interrupted_archive_creation_does_not_block_provider_calls():
+    # A crash between creating the history file and writing its schema left
+    # a zero-byte database; every later reserve_call failed on "no such table".
+    from maverick.paths import data_dir
+    path = data_dir('usage', 'provider_history.sqlite3', tenant='acme')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b'')
+    budget, _ = start_budget()
+    assert attempt(budget, 1) is not None
+
+
 def test_archive_commit_before_hot_removal_can_replay_without_double_charge(monkeypatch):
     from maverick.tenant import _provider_archive
     budget, settlement = start_budget()

@@ -28,6 +28,13 @@ def _database(tenant, *, create=False):
             atomic_create_text(path, '')
         except FileExistsError:
             pass
+    elif not create and not marker.exists():
+        # The marker is written only after the schema, and history only after
+        # the marker: a file without it is an interrupted first creation that
+        # holds no history (and maybe no tables). Reading it must not block
+        # every provider call; the next compact finishes the creation.
+        yield None
+        return
     ensure_private_file(path)
     connection = sqlite3.connect(path, timeout=30)
     try:
