@@ -230,3 +230,20 @@ def test_worker_run_forever_stop_is_clean(tmp_path):
     w.stop()
     t.join(timeout=2.0)
     assert not t.is_alive()
+
+
+def test_worker_claims_nothing_while_halted(tmp_path, monkeypatch):
+    from maverick import killswitch
+    from maverick.job_queue import JobQueue
+    from maverick.worker import Worker
+
+    q = JobQueue(db_path=tmp_path / "jobs.db")
+    w = Worker(queue=q, retry_after=0.0, max_attempts=5)
+    jid = q.enqueue("run_goal", {"goal_id": 1})
+    killswitch.halt("test stop")
+    try:
+        assert w.run_once() is False
+    finally:
+        killswitch.clear()
+    job = q.get(jid)
+    assert job.status == "pending" and job.attempts == 0
