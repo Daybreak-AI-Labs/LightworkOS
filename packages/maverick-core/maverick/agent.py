@@ -2728,13 +2728,14 @@ class Agent:
                     ))
                     return None, summary
 
-            elif not self._verification_workdir_clean():
+            elif self._workdir_had_prior_work():
                 summary = ApplySummary()
                 summary.results.append(ApplyResult(
                     ok=False,
                     block=SearchReplaceBlock(path="<workdir>", search="", replace=""),
-                    reason=("In-place patch verification requires a clean workdir. "
-                            "Uncommitted work was preserved; no blocks were applied."),
+                    reason=("In-place patch verification requires a workdir that was "
+                            "clean when the run started. Uncommitted work from before "
+                            "the run was preserved; no blocks were applied."),
                 ))
                 return None, summary
 
@@ -2845,11 +2846,12 @@ class Agent:
         sandbox = self.ctx.sandbox
         workdir = _Path(getattr(sandbox, "workdir", "."))
         if (getattr(self, "_verification_requires_clean", False)
-                and not self._verification_workdir_clean()):
+                and self._workdir_had_prior_work()):
             self.ctx.blackboard.post(
                 self.name, "error",
-                "Patch verification refused: the workdir has uncommitted work "
-                "or its clean state could not be checked. No patch was applied.",
+                "Patch verification refused: the workdir had uncommitted work "
+                "before the run started, or its state could not be checked. It "
+                "was not reset and no patch was applied.",
             )
             return False
         if sandbox is not None and hasattr(sandbox, "exec"):
@@ -2920,6 +2922,40 @@ class Agent:
             return result.returncode == 0 and not result.stdout.strip()
         except Exception:
             return False
+
+    def _note_workdir_state_at_start(self) -> None:
+        """Coding mode: record, once per goal, whether the workdir held
+        uncommitted work before the run began. Verification resets the
+        workdir to HEAD, which is safe for what the run itself left there (its
+        own edits, a reproduction script) but would destroy earlier work. The
+        record lives on the shared context so sub-agents, which start after
+        the root has edited the tree, inherit the goal's starting state."""
+        cfg = self._coding_config()
+        if cfg is None or not cfg.enabled:
+            return
+        noted = getattr(self.ctx, "_coding_workdir_at_start", None)
+        if noted is not None and noted[0] == self.ctx.goal_id:
+            return
+        try:
+            self.ctx._coding_workdir_at_start = (
+                self.ctx.goal_id, not self._verification_workdir_clean())
+        except Exception:
+            pass
+
+    def _workdir_had_prior_work(self) -> bool:
+        """True when the workdir had uncommitted work before this goal's run
+        started (or its state could not be checked). Without a record from run
+        start, the current state stands in for it."""
+        noted = getattr(self.ctx, "_coding_workdir_at_start", None)
+        if noted is None or noted[0] != self.ctx.goal_id:
+            return not self._verification_workdir_clean()
+        return bool(noted[1])
+
+    def _may_reset_workdir(self) -> bool:
+        """Resetting is safe when blocks were applied in place (only allowed
+        on a tree that was clean at run start) or nothing predates the run."""
+        return (getattr(self, "_patch_applied_in_place", False)
+                or not self._workdir_had_prior_work())
 
     def _maybe_seal(self, quarantine, verdict) -> None:
         """Conservatively escalate a shield block to a Rung-1 seal.
@@ -5195,6 +5231,7 @@ class Agent:
         resume durable loop state when a checkpoint exists."""
         bb = self.ctx.blackboard
         bb.post(self.name, "plan", f"role={self.role} depth={self.depth} brief={self.brief}")
+        self._note_workdir_state_at_start()
         self._prewarm_prompt_cache()
         image_blocks = self._goal_attachment_blocks()
         brief_text = (
@@ -5592,7 +5629,7 @@ class Agent:
             # Reset AFTER capturing the diff so the verifier (and downstream
             # evaluators) see HEAD when they re-apply.
             if sr_summary is not None:
-                if getattr(self, "_patch_applied_in_place", False):
+                if await asyncio.to_thread(self._may_reset_workdir):
                     await asyncio.to_thread(self._reset_workdir)
                 try:
                     self.ctx.blackboard.post(self.name, "tool_signal", "search_replace_used=1")
@@ -5709,8 +5746,8 @@ class Agent:
             patch = getattr(self, "_final_patch", None)
             if patch is None:
                 patch, _ = await asyncio.to_thread(self._extract_and_apply_patch, final)
-                if patch is not None and getattr(self, "_patch_applied_in_place", False):
-                    # Applied to disk; reset for the verifier's own apply.
+                if patch is not None and await asyncio.to_thread(self._may_reset_workdir):
+                    # Reset for the verifier's own apply.
                     await asyncio.to_thread(self._reset_workdir)
             if patch is None:
                 if self._request_patch_revision(

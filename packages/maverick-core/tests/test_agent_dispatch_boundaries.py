@@ -195,3 +195,59 @@ def test_oidc_actual_authorize_url_retains_legacy_url_denials(agent):
         "authorize_url": "https://safe.example/a", "token_url": "https://outside.example/a",
     }, cap)
     assert agent._capability_host_denial("oidc", {"authorize_url": "https://safe.example/a"}, cap) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("left_by_agent", ["own_edit", "scratch_file"])
+async def test_coding_checks_reset_what_the_run_itself_left_in_a_clean_workspace(
+        agent, monkeypatch, left_by_agent):
+    # The coding prompt has the agent edit files and run a reproduction script
+    # before FINAL, so the tree is dirty with the run's own work when the
+    # checks start. A workdir that was clean when the run began is still reset
+    # to HEAD for the apply check and the test run.
+    root = agent.ctx.sandbox.workdir
+    _git(root, "init")
+    (root / "x.py").write_text("value = 1\n")
+    _git(root, "add", "x.py")
+    _git(root, "commit", "-m", "initial")
+    monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
+    st = agent._open_run()
+    if left_by_agent == "own_edit":
+        (root / "x.py").write_text("value = 2\n")
+    (root / "reproduce.py").write_text("import x\n")
+    final = "x.py\n<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE\n"
+    cfg = CodingModeConfig(enabled=True, require_apply_check=True, fail_to_pass=["test_x"])
+    applied = []
+    def tests(workdir, *_a, **_k):
+        applied.append((workdir / "x.py").read_text())
+        return SimpleNamespace(all_pass=True, score=1.0, summary=lambda: "passed")
+    monkeypatch.setattr("maverick.coding_mode.run_failing_tests", tests)
+    assert await agent._validate_final_patch(st, final, cfg) is None
+    result = await agent._verify_against_tests(st, final, cfg)
+    assert (result.verifier_confidence, result.verifier_critique) == (1.0, "passed")
+    assert result.final_patch and applied == ["value = 2\n"]
+    assert (root / "x.py").read_text() == "value = 1\n"
+    assert not (root / "reproduce.py").exists()
+
+
+@pytest.mark.asyncio
+async def test_coding_checks_keep_work_that_predates_the_run(agent, monkeypatch):
+    root = agent.ctx.sandbox.workdir
+    _git(root, "init")
+    (root / "x.py").write_text("value = 1\n")
+    _git(root, "add", "x.py")
+    _git(root, "commit", "-m", "initial")
+    (root / "notes.txt").write_text("uncommitted work")
+    monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
+    st = agent._open_run()
+    (root / "notes.txt").unlink()
+    (root / "reproduce.py").write_text("import x\n")
+    final = "x.py\n<<<<<<< SEARCH\nvalue = 1\n=======\nvalue = 2\n>>>>>>> REPLACE\n"
+    cfg = CodingModeConfig(enabled=True, require_apply_check=True, fail_to_pass=["test_x"])
+    monkeypatch.setattr("maverick.coding_mode.run_failing_tests", lambda *a, **k: SimpleNamespace(
+        all_pass=True, score=1.0, summary=lambda: "passed"))
+    await agent._validate_final_patch(st, final, cfg)
+    result = await agent._verify_against_tests(st, final, cfg)
+    assert result is not None
+    assert (root / "reproduce.py").read_text() == "import x\n"
+    assert (root / "x.py").read_text() == "value = 1\n"
