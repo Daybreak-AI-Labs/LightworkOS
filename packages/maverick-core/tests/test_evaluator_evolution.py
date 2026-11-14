@@ -195,6 +195,8 @@ def test_regen_refuses_to_launder_an_edited_released_anchor(tmp_path, monkeypatc
     f.write_text('{"id": "case1", "label": false}\n')  # edit a released anchor
     assert ee.main(["--regen"]) == 1                    # refuses, not silently rewritten
     assert lock_path.read_text() == original
+    lock_path.write_text("{not json")                   # a corrupted lock is not "no lock"
+    assert ee.main(["--regen"]) == 1
 
 
 def test_regen_force_cannot_relock_an_edited_released_anchor(tmp_path, monkeypatch):
