@@ -28,6 +28,7 @@ from .ffmpeg_tool import _safe_path
 log = logging.getLogger(__name__)
 
 _MAX_ROWS_CAP = 1000
+_MAX_VALUE_BYTES = 1_000_000
 _WRITE_KEYWORDS = frozenset({
     "insert", "update", "delete", "replace", "drop", "alter", "create",
     "truncate", "attach", "detach", "reindex", "vacuum",
@@ -152,6 +153,9 @@ def _execute_sqlite_query(path, query, params, read_only, max_rows, response_for
                 else:
                     conn = sqlite3.connect(str(path), timeout=min(10, execution.remaining()))
                     conn.set_authorizer(_write_authorizer)
+                # The query runs in the host process and rows are capped by
+                # count only, so cap each string/BLOB value (and row) too.
+                conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, _MAX_VALUE_BYTES)
                 execution.bind_sqlite(conn)
                 # Explicit ownership covers SQLite DDL as well as implicit DML.
                 # Nontransactional maintenance is not admitted through this tool.

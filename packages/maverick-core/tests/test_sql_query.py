@@ -304,3 +304,12 @@ def test_registered_by_default():
 def test_schema_requires_database_and_query():
     schema = sql_query().input_schema
     assert schema["required"] == ["database", "query"]
+
+
+def test_select_refuses_a_cell_larger_than_the_length_limit(tmp_path):
+    # The query runs in the host process and rows are bounded by count, not
+    # size: zeroblob(900000000) over a few rows exhausted host memory.
+    db = _mkdb(tmp_path)
+    out = sql_query(SimpleNamespace(workdir=tmp_path)).fn(
+        {"database": str(db), "query": "SELECT zeroblob(2000000) FROM users"})
+    assert out.startswith("ERROR") and "DataError" in out
