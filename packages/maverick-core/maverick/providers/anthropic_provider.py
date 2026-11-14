@@ -10,13 +10,14 @@ format.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import Callable
 from typing import Any
 
 import anthropic
 
-from ..budget import Budget
+from ..budget import Budget, UsageAccountingError
 from ..llm import MODEL_OPUS, MODEL_OPUS_FAST, LLMResponse, ToolCall
 from ..retry import async_retry, sync_retry
 from .anthropic_limits import (
@@ -624,10 +625,16 @@ class AnthropicClient:
         # If resp.usage itself is None (streaming refusal), getattr
         # chains through 0 defaults. Coerce all values via int() inside
         # a try block to catch non-int truthy values (string "100" from
-        # a mock, Decimal from a future SDK schema).
+        # a mock, Decimal from a future SDK schema). A NaN or infinite count
+        # is refused: the call is already paid, and reading it as 0 would
+        # let it pass the spend caps unrecorded.
         usage = getattr(resp, "usage", None)
 
         def _safe_int(value, default=0) -> int:
+            if isinstance(value, float) and not math.isfinite(value):
+                raise UsageAccountingError(
+                    f"invalid Anthropic usage: non-finite token count {value!r}"
+                )
             try:
                 return int(value) if value is not None else default
             except (TypeError, ValueError):

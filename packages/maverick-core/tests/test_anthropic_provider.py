@@ -503,6 +503,29 @@ class TestAnthropicProviderRobust:
         assert budget.input_tokens == 0
         assert budget.output_tokens == 50
 
+    def test_non_finite_usage_fails_closed(self):
+        # A NaN count used to read as 0, so a paid call recorded $0 and
+        # never tripped max_dollars or the token caps.
+        import pytest
+        from maverick.budget import Budget, UsageAccountingError
+        from maverick.providers.anthropic_provider import AnthropicClient
+
+        client = AnthropicClient.__new__(AnthropicClient)
+
+        class _Usage:
+            input_tokens = float("nan")
+            output_tokens = 50
+
+        class _Resp:
+            content = []
+            usage = _Usage()
+            stop_reason = "end_turn"
+
+        budget = Budget(max_dollars=10.0)
+        with pytest.raises(UsageAccountingError, match="non-finite"):
+            client._parse_response(_Resp(), budget, model="claude-sonnet-4-6")
+        assert budget.output_tokens == 0
+
     def test_duplicate_tool_names_no_crash(self):
         from maverick.providers.anthropic_provider import _cached_tools
         tools = [
