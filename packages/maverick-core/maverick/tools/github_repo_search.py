@@ -88,9 +88,10 @@ class _AuthStrippingRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new is not None:
-            old_host = urllib.parse.urlparse(req.full_url).hostname
-            new_host = urllib.parse.urlparse(newurl).hostname
-            if old_host != new_host:
+            # Keep credentials only on the same origin: a same-host redirect to
+            # http:// or another port must not carry the token either.
+            old, dest = urllib.parse.urlparse(req.full_url), urllib.parse.urlparse(newurl)
+            if (old.scheme, old.netloc.lower()) != (dest.scheme, dest.netloc.lower()):
                 for h in _AUTH_HEADERS:
                     new.remove_header(h.capitalize())
         return new
