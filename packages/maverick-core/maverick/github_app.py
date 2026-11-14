@@ -101,14 +101,26 @@ def parse_webhook(event: str, payload: dict) -> WebhookPayload | None:
     Returns None for events we don't care about (e.g., issues.opened
     without a trigger label).
     """
+    if not isinstance(payload, dict):
+        return None
+    objects = {key: payload.get(key, {}) for key in ("repository", "issue", "sender", "label", "comment")}
+    if any(not isinstance(value, dict) for value in objects.values()):
+        return None
     action = payload.get("action", "")
-    repo = payload.get("repository", {}).get("full_name", "")
-    issue = payload.get("issue", {}) or {}
-    sender = (payload.get("sender") or {}).get("login", "")
+    repo = objects["repository"].get("full_name", "")
+    issue = objects["issue"]
+    sender = objects["sender"].get("login", "")
+    strings = (action, repo, sender, issue.get("title", ""))
+    if any(not isinstance(value, str) for value in strings):
+        return None
+    if issue.get("body") is not None and not isinstance(issue["body"], str):
+        return None
+    if type(issue.get("number", 0)) is not int:
+        return None
 
     if event == "issues" and action == "labeled":
-        label_name = (payload.get("label") or {}).get("name", "")
-        if label_name.lower() not in _trigger_labels():
+        label_name = objects["label"].get("name", "")
+        if not isinstance(label_name, str) or label_name.lower() not in _trigger_labels():
             return None
         return WebhookPayload(
             event=event, action=action,
@@ -121,14 +133,17 @@ def parse_webhook(event: str, payload: dict) -> WebhookPayload | None:
         )
 
     if event == "issue_comment" and action == "created":
-        comment_obj = payload.get("comment") or {}
+        comment_obj = objects["comment"]
         comment = comment_obj.get("body", "") or ""
-        if SLASH_TRIGGER not in comment.lower():
+        if not isinstance(comment, str) or SLASH_TRIGGER not in comment.lower():
             return None
         # Authorization: only repo-privileged commenters may trigger a run.
         # Without this, any public user can comment "/maverick" and spend
         # the operator's budget on a clone + swarm run.
-        association = (comment_obj.get("author_association") or "").upper()
+        association = comment_obj.get("author_association") or ""
+        if not isinstance(association, str):
+            return None
+        association = association.upper()
         if association not in _PRIVILEGED_ASSOCIATIONS:
             log.warning(
                 "ignoring /maverick from unauthorized commenter %s "

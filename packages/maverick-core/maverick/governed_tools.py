@@ -158,7 +158,7 @@ _BESPOKE_READ_OPS: dict[str, frozenset[str]] = {
     "pagerduty": frozenset({"incident_get", "incidents", "on_call"}),
     "redis": frozenset({"get", "info", "keys", "lrange"}),
     "replicate": frozenset({"models", "predict_get"}),
-    "s3": frozenset({"get", "list_buckets", "list_objects", "presign"}),
+    "s3": frozenset({"get", "list_buckets", "list_objects"}),
     "salesforce": frozenset({"record_get", "soql"}),
     "sentry": frozenset({"events", "issue_get", "issues", "releases"}),
     "servicenow": frozenset({"get", "query"}),
@@ -940,7 +940,6 @@ def _wrap_connector_executor(
 ) -> Tool:
     """Bind the existing governed boundary around a materialized executor."""
     from .governed_actions import (
-        ActionError,
         ActionSpec,
         GovernedActions,
         record_tool_lineage,
@@ -992,6 +991,27 @@ def _wrap_connector_executor(
             simulate=lambda p: _connector_effect(tool.name, p["op"], p["path"]),
         ))
         params = {"op": op, "path": path}
+        effect_started = False
+
+        def uncertain(exc):
+            detail = _preserve_connector_failure(
+                exc, lambda detail: _receipt(
+                    action=f"{action}.indeterminate",
+                    args=receipt_args,
+                    effect=preview.effect,
+                    result=detail,
+                    approver=approval_identity,
+                    transaction_id=transaction_id,
+                    phase="INDETERMINATE",
+                    strict_write=False,
+                ),
+            )
+            return (
+                "INDETERMINATE (governed): the connector crossed its "
+                "external-effect boundary; reconcile before retrying. "
+                f"transaction_id={transaction_id}; failure_type={detail}"
+            )
+
         try:
             try:
                 revision_contract = _connector_revision_contract(tool, args)
@@ -1113,29 +1133,8 @@ def _wrap_connector_executor(
                     (tool.name, request_digest) if no_revision else None
                 )
                 try:
+                    effect_started = True
                     result = _await_effect(tool.fn(receipt_args), loop)
-                except (Exception, asyncio.CancelledError) as exc:
-                    # Exception messages from HTTP/database libraries routinely
-                    # embed credentialed URLs, headers, and DSNs. Receipts and the
-                    # model-visible result get only a bounded type marker; the
-                    # transaction id is sufficient for privileged reconciliation.
-                    detail = _preserve_connector_failure(
-                        exc, lambda detail: _receipt(
-                            action=f"{action}.indeterminate",
-                            args=receipt_args,
-                            effect=preview.effect,
-                            result=detail,
-                            approver=approval_identity,
-                            transaction_id=transaction_id,
-                            phase="INDETERMINATE",
-                            strict_write=False,
-                        ),
-                    )
-                    return (
-                        "INDETERMINATE (governed): the connector raised after its "
-                        "external-effect boundary; reconcile before retrying. "
-                        f"transaction_id={transaction_id}; failure_type={detail}"
-                    )
                 finally:
                     _APPROVED_NO_REVISION.reset(token)
 
@@ -1147,6 +1146,7 @@ def _wrap_connector_executor(
 
             outcome = ToolOutcome.from_legacy(result)
             result_state = outcome.state
+            safe_result = _safe_connector_result(outcome.content)
             if result_state is not ToolResultState.SUCCEEDED:
                 result_marker = result_state.value
                 try:
@@ -1166,10 +1166,9 @@ def _wrap_connector_executor(
                     "INDETERMINATE (governed): the connector did not prove a "
                     "committed or definitively aborted write; reconcile before "
                     f"retrying. transaction_id={transaction_id}; "
-                    f"result_state={result_marker}"
+                    f"result_state={result_marker}\n{safe_result}"
                 )
 
-            safe_result = _safe_connector_result(outcome.content)
             try:
                 committed = _receipt(
                     action=f"{action}.commit",
@@ -1190,27 +1189,10 @@ def _wrap_connector_executor(
                     f"transaction_id={transaction_id}; do not retry automatically."
                 )
             return _governed_public_result(result, safe_result, result_state)
-        except CONTROL_ERRORS:
-            raise
-        except ConsentDenied:
-            return (
-                f"REFUSED (governed): approval was denied for target {path!r}; "
-                "no external write was attempted."
-            )
-        except ApprovalCardError as exc:
-            reason = _approval_card_error_reason(exc)
-            return (
-                f"REFUSED (governed): {reason} for target {path!r}; review the "
-                "current target and request again. No external write was "
-                "attempted."
-            )
-        except ActionError:
-            return "ERROR (governed): action policy rejected the request"
-        except Exception as exc:  # noqa: BLE001 -- policy errors refuse writes
-            return (
-                "ERROR (governed): internal policy failure; no retry without "
-                f"operator review (failure_type={type(exc).__name__[:120]})"
-            )
+        except (Exception, asyncio.CancelledError) as exc:
+            if effect_started:
+                return uncertain(exc)
+            return _connector_pre_effect_failure(exc, path)
 
     # Preserve connector provenance used by registry inventory and credential
     # scoping checks while the closure still supplies the governed boundary.
@@ -1222,6 +1204,31 @@ def _wrap_connector_executor(
         input_schema=tool.input_schema,
         fn=_async_governed(_fn) if inspect.iscoroutinefunction(tool.fn) else _fn,
         parallel_safe=False,
+    )
+
+
+def _connector_pre_effect_failure(exc, path: str) -> str:
+    """Only failures before dispatch may promise no external effect."""
+    from .governed_actions import ActionError
+
+    if isinstance(exc, (*CONTROL_ERRORS, asyncio.CancelledError)):
+        raise exc
+    if isinstance(exc, ConsentDenied):
+        return (
+            f"REFUSED (governed): approval was denied for target {path!r}; "
+            "no external write was attempted."
+        )
+    if isinstance(exc, ApprovalCardError):
+        reason = _approval_card_error_reason(exc)
+        return (
+            f"REFUSED (governed): {reason} for target {path!r}; review the "
+            "current target and request again. No external write was attempted."
+        )
+    if isinstance(exc, ActionError):
+        return "ERROR (governed): action policy rejected the request"
+    return (
+        "ERROR (governed): internal policy failure; no retry without "
+        f"operator review (failure_type={type(exc).__name__[:120]})"
     )
 
 

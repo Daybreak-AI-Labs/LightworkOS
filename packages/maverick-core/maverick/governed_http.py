@@ -2,12 +2,14 @@
 
 This complements the process-wide egress guard, which remains necessary for
 third-party libraries and for integrations that have not migrated. Callers
-must validate model-supplied destinations and pin DNS separately where needed;
-this module enforces tenant and enterprise egress policy, not SSRF policy.
+must validate initial model-supplied destinations and pin their DNS separately
+where needed. This module enforces tenant and enterprise egress policy, and
+the redirect helper additionally validates and pins network redirect targets.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -80,10 +82,9 @@ def guarded_redirect_get(
 ) -> Callable[..., Any]:
     """Follow GET redirects with a policy decision before every HTTP hop.
 
-    HTTPX builds each next request, including its URL, cookies, headers and
-    cross-origin credential stripping. The original sender is used for the
-    first hop; subsequent requests use one client with redirects disabled so
-    this boundary can check each prepared destination before sending it.
+    HTTPX builds each next request. Redirects reuse the original client's
+    transport configuration and strip credentials on an origin change. Each
+    network redirect is checked and pinned to a public address before sending.
     """
     def guarded(url: str, *args: Any, **kwargs: Any) -> Any:
         if require_https and urlsplit(str(url)).scheme.lower() != "https":
@@ -99,16 +100,18 @@ def guarded_redirect_get(
 
         import httpx
 
-        from .egress_guard import _check
-
         history = []
-        # Carry cookies set on the initial response into the redirect client.
-        # Its subsequent responses update the same jar through HTTPX itself.
-        with httpx.Client(
-            cookies=response.cookies,
-            follow_redirects=False,
-            timeout=options.get("timeout", 5.0),
-        ) as client:
+        owner = getattr(send, "__self__", None)
+        # Bound clients retain their actual CA, client certificate, proxies,
+        # mounts and custom transport. Top-level httpx.get passes these options
+        # to a short-lived client, so preserve them for its redirect client.
+        if owner is not None and callable(getattr(owner, "send", None)):
+            context = nullcontext(owner)
+        else:
+            client_options = {key: options[key] for key in ("verify", "cert", "proxy", "trust_env") if key in options}
+            context = httpx.Client(cookies=response.cookies, follow_redirects=False,
+                                   timeout=options.get("timeout", 5.0), **client_options)
+        with context as client:
             while next_request is not None:
                 if len(history) >= 20:
                     response.close()
@@ -122,18 +125,146 @@ def guarded_redirect_get(
                     response.close()
                     raise ValueError("HTTPS is required for every redirect")
                 try:
-                    _check(str(next_request.url))
+                    previous = response.request.url
+                    target = next_request.url
+                    if (previous.scheme, previous.host, previous.port) != (target.scheme, target.host, target.port):
+                        # Keep only ordinary representation/transport headers.
+                        # Credential header names are not enumerable (API keys,
+                        # signed headers and vendor tokens all occur in practice).
+                        # HTTPX already removed the source Cookie header and
+                        # rebuilt it from cookies scoped to the destination.
+                        allowed = {"accept", "accept-encoding", "accept-language", "cache-control",
+                                   "connection", "cookie", "host", "user-agent"}
+                        for header in list(next_request.headers):
+                            if header.lower() not in allowed:
+                                del next_request.headers[header]
+                    following = _send_pinned_redirect(client, next_request)
                 except BaseException:
                     response.close()
                     raise
                 history.append(response)
                 response.close()
-                response = client.send(next_request, follow_redirects=False)
+                response = following
                 next_request = response.next_request
         response.history = history
         return response
 
     return guarded
+
+
+def _send_pinned_redirect(client: Any, request: Any) -> Any:
+    """Pin a redirect in an isolated pool with the caller's transport settings."""
+    import httpx
+
+    from .egress_guard import _check, _reaches_the_network
+    from .tools._ssrf import _host_header, _PinnedTransport, resolve_pinned_ip
+
+    _check(str(request.url))
+    if not _reaches_the_network(client, request):
+        return client.send(request, follow_redirects=False, auth=None)
+    host = request.url.raw_host.decode("ascii")
+    ip = resolve_pinned_ip(host, require_public=True)
+    inner = _isolated_redirect_transport(client._transport_for_url(request.url), host=host)
+
+    class IsolatedPinnedTransport(_PinnedTransport):
+        def handle_request(self, request):
+            original = request.url
+            try:
+                return super().handle_request(request)
+            finally:
+                # HTTPX resolves relative Location headers after transport
+                # return; that base must remain the original hostname.
+                request.url = original
+
+    transport = IsolatedPinnedTransport(host, _host_header(urlsplit(str(request.url)), host), ip, inner)
+    with httpx.Client(transport=transport, cookies=client.cookies,
+                      event_hooks=client.event_hooks, follow_redirects=False) as pinned:
+        response = pinned.send(request, follow_redirects=False, auth=None)
+        client.cookies.extract_cookies(response)
+        return response
+
+
+class _RedirectTlsStream:
+    """Keep proxy and origin certificate identities on their own TLS layers."""
+
+    def __init__(self, stream: Any, tls_hosts: tuple[str, ...]) -> None:
+        self._stream, self._tls_hosts = stream, tls_hosts
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+    def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+        del server_hostname  # Pool URLs contain the pin, not the TLS identity.
+        if not self._tls_hosts:
+            raise ValueError("unexpected TLS layer in pinned redirect")
+        stream = self._stream.start_tls(ssl_context=ssl_context,
+                                        server_hostname=self._tls_hosts[0], timeout=timeout)
+        return _RedirectTlsStream(stream, self._tls_hosts[1:])
+
+
+class _RedirectTlsBackend:
+    """Wrap new streams only; the original backend and pools remain untouched."""
+
+    def __init__(self, backend: Any, tls_hosts: tuple[str, ...]) -> None:
+        self._backend, self._tls_hosts = backend, tls_hosts
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._backend, name)
+
+    def connect_tcp(self, *args, **kwargs):
+        return _RedirectTlsStream(self._backend.connect_tcp(*args, **kwargs), self._tls_hosts)
+
+    def connect_unix_socket(self, *args, **kwargs):
+        return _RedirectTlsStream(self._backend.connect_unix_socket(*args, **kwargs), self._tls_hosts)
+
+
+def _isolated_redirect_transport(transport: Any, *, host: str) -> Any:
+    """Copy configuration, never connections, from a standard HTTPX transport.
+
+    Rewriting two HTTPS origins to the same pinned IP collapses httpcore's
+    pool key. Reusing that pool could send the second hostname over a TLS
+    connection verified only for the first. Each redirect needs its own pool.
+    """
+    import copy
+
+    import httpcore
+    import httpx
+
+    if type(transport) is not httpx.HTTPTransport:
+        raise ValueError("cannot safely isolate this network redirect transport")
+    pool = transport._pool
+    if type(pool) not in (httpcore.ConnectionPool, httpcore.HTTPProxy, httpcore.SOCKSProxy):
+        raise ValueError("cannot safely isolate this network redirect connection pool")
+    if type(pool) is httpcore.ConnectionPool and pool._proxy is not None:
+        raise ValueError("cannot safely isolate this custom proxy redirect configuration")
+    tls_hosts = (host,)
+    if type(pool) is httpcore.HTTPProxy and pool._proxy_url.scheme == b"https":
+        tls_hosts = (pool._proxy_url.host.decode("ascii"), host)
+    # HTTPX retains the original CA and client certificate in this SSLContext.
+    # Preserve its proxy/TLS/network settings while constructing empty pool
+    # state; neither the caller's connections nor its locks are shared.
+    options = {name: getattr(pool, "_" + name) for name in (
+        "ssl_context", "max_connections", "max_keepalive_connections",
+        "keepalive_expiry", "http1", "http2", "retries", "network_backend",
+    )}
+    if type(pool) is httpcore.SOCKSProxy:
+        options.update(proxy_url=pool._proxy_url, proxy_auth=pool._proxy_auth)
+    else:
+        options.update((name, getattr(pool, "_" + name)) for name in (
+            "local_address", "uds", "socket_options",
+        ))
+        if type(pool) is httpcore.HTTPProxy:
+            options.update(proxy_url=pool._proxy_url, proxy_headers=list(pool._proxy_headers),
+                           proxy_ssl_context=pool._proxy_ssl_context)
+        else:
+            options["proxy"] = pool._proxy
+    isolated = copy.copy(transport)
+    # CONNECT/SOCKS must address the pinned IP, but httpcore's tunnel TLS
+    # paths do not all honor sni_hostname. Bind each TLS layer explicitly,
+    # passing the original SSLContext through with verification unchanged.
+    options["network_backend"] = _RedirectTlsBackend(pool._network_backend, tls_hosts)
+    isolated._pool = type(pool)(**options)
+    return isolated
 
 
 class GuardedClient:
