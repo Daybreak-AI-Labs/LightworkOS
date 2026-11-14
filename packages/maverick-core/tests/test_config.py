@@ -1777,3 +1777,19 @@ def test_a_rotated_or_removed_wizard_env_value_reaches_the_running_process(tmp_p
     env.write_text("\n", encoding="utf-8")
     config_module._load_env_file(env)
     assert name not in os.environ
+
+
+def test_deleting_the_wizard_env_file_withdraws_what_it_exported(tmp_path, monkeypatch):
+    import os
+
+    name = "MAVERICK_TEST_ENV_DELETED"
+    monkeypatch.setenv(name, "seed")  # so monkeypatch removes what the load exports
+    monkeypatch.delenv(name)
+    env = tmp_path / ".env"
+    env.write_text(f"{name}=revoked-key\n", encoding="utf-8")
+    config_module.reset_config_cache()
+    config_module._load_env_file(env)
+    assert os.environ[name] == "revoked-key"
+    env.unlink()
+    config_module._load_env_file(env)
+    assert name not in os.environ

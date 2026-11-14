@@ -245,6 +245,7 @@ _env_file_cache: dict[str, tuple[int, int, bytes | None]] = {}
 # Values this loader put into os.environ, so a later change to .env replaces
 # them while an explicitly exported variable still always wins.
 _env_file_exported: dict[str, str] = {}
+_env_file_lock = threading.Lock()
 _env_last_check: float | None = None
 # Bound at import: tests that monkeypatch time.monotonic (a process-global
 # patch) to drive their OWN timeout logic must not have the values consumed
@@ -266,10 +267,27 @@ def _load_wizard_env() -> None:
 def _load_env_file(path: Path) -> None:
     """Export ``KEY=value`` lines from ``path`` into ``os.environ`` without
     overriding variables that were set by anyone but this loader."""
+    with _env_file_lock:  # load_config() runs on many threads
+        _load_env_file_locked(path)
+
+
+def _drop_env_exports(keep: set[str]) -> None:
+    """Stop exporting values this loader set for names not in ``keep``, unless
+    someone else replaced the value meanwhile."""
+    for name in [n for n in _env_file_exported if n not in keep]:
+        if os.environ.get(name) == _env_file_exported.pop(name, None):
+            os.environ.pop(name, None)
+
+
+def _load_env_file_locked(path: Path) -> None:
     try:
         st = path.stat()
+    except _ABSENT:
+        _env_file_cache.pop(str(path), None)
+        _drop_env_exports(set())  # .env deleted: what it exported goes too
+        return
     except OSError:
-        return  # no .env (or unreadable) -> nothing to load
+        return  # unreadable .env -> keep what was loaded
     key = str(path)
     digest = _content_digest(path, st)  # None (never a hit) when the content is unreadable
     if digest is not None and _env_file_cache.get(key) == (st.st_mtime_ns, st.st_size, digest):
@@ -298,11 +316,7 @@ def _load_env_file(path: Path) -> None:
             os.environ[name] = value  # first load, or a value this loader set: follow the file
             _env_file_exported[name] = value
         seen.add(name)
-    for name in [n for n in _env_file_exported if n not in seen]:
-        # A line removed from the file stops being exported, unless the value
-        # was replaced by someone else meanwhile.
-        if os.environ.get(name) == _env_file_exported.pop(name):
-            os.environ.pop(name, None)
+    _drop_env_exports(seen)  # a line removed from the file stops being exported
 
 
 def _read_toml_raw(path: Path) -> dict:
