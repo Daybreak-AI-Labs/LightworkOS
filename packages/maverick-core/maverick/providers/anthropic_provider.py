@@ -591,6 +591,44 @@ class AnthropicClient:
             kwargs["betas"] = [_FAST_MODE_BETA]
         return kwargs
 
+    @staticmethod
+    def _record_usage(usage, budget: Budget | None, model: str | None):
+        def _safe_int(value, default=0) -> int:
+            return _usage_count(value, default, strict=budget is not None)
+
+        cache_creation = _safe_int(getattr(usage, "cache_creation_input_tokens", 0))
+        cache_read = _safe_int(getattr(usage, "cache_read_input_tokens", 0))
+        in_tok = _safe_int(getattr(usage, "input_tokens", 0))
+        out_tok = _safe_int(getattr(usage, "output_tokens", 0))
+        # The system/tools breakpoint writes at _default_cache_ttl()
+        # (1h in interactive mode) while the messages breakpoint writes at
+        # _msg_cache_ttl() (5m) -- a single call can write BOTH tiers at
+        # once. Anthropic reports the real per-tier split as
+        # usage.cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens when
+        # present; billing the combined total at one multiplier overcharges
+        # (or undercharges) whichever tier isn't the one that TTL matches.
+        cache_creation_detail = getattr(usage, "cache_creation", None)
+        cache_write_5m = _safe_int(getattr(cache_creation_detail, "ephemeral_5m_input_tokens", 0))
+        cache_write_1h = _safe_int(getattr(cache_creation_detail, "ephemeral_1h_input_tokens", 0))
+
+        if budget is not None:
+            # ``usage.input_tokens`` is non-cached input only. Cache reads
+            # and writes are billed separately at different rates.
+            budget.record_tokens(
+                in_tok, out_tok,
+                model=model,
+                cache_read_tok=cache_read,
+                cache_write_tok=cache_creation,
+                # Pass TTL so write surcharge math matches the
+                # actual breakpoint TTL (5m vs 1h) when the per-tier split
+                # below isn't available (older SDK, or a single-tier write).
+                cache_write_ttl=_default_cache_ttl(),
+                cache_write_5m_tok=cache_write_5m,
+                cache_write_1h_tok=cache_write_1h,
+            )
+
+        return in_tok, out_tok, cache_read, cache_creation
+
     def _parse_response(
         self,
         resp: Any,
@@ -644,47 +682,9 @@ class AnthropicClient:
                     "name": block.name, "input": dict(block.input),
                 })
 
-        # Nullsafe usage parsing.
-        # If resp.usage itself is None (streaming refusal), getattr
-        # chains through 0 defaults. Coerce all values via int() inside
-        # a try block to catch non-int truthy values (string "100" from
-        # a mock, Decimal from a future SDK schema); see _usage_count for the
-        # counts that are refused.
-        usage = getattr(resp, "usage", None)
-
-        def _safe_int(value, default=0) -> int:
-            return _usage_count(value, default, strict=budget is not None)
-
-        cache_creation = _safe_int(getattr(usage, "cache_creation_input_tokens", 0))
-        cache_read = _safe_int(getattr(usage, "cache_read_input_tokens", 0))
-        in_tok = _safe_int(getattr(usage, "input_tokens", 0))
-        out_tok = _safe_int(getattr(usage, "output_tokens", 0))
-        # The system/tools breakpoint writes at _default_cache_ttl()
-        # (1h in interactive mode) while the messages breakpoint writes at
-        # _msg_cache_ttl() (5m) -- a single call can write BOTH tiers at
-        # once. Anthropic reports the real per-tier split as
-        # usage.cache_creation.{ephemeral_5m,ephemeral_1h}_input_tokens when
-        # present; billing the combined total at one multiplier overcharges
-        # (or undercharges) whichever tier isn't the one that TTL matches.
-        cache_creation_detail = getattr(usage, "cache_creation", None)
-        cache_write_5m = _safe_int(getattr(cache_creation_detail, "ephemeral_5m_input_tokens", 0))
-        cache_write_1h = _safe_int(getattr(cache_creation_detail, "ephemeral_1h_input_tokens", 0))
-
-        if budget is not None:
-            # ``usage.input_tokens`` is non-cached input only. Cache reads
-            # and writes are billed separately at different rates.
-            budget.record_tokens(
-                in_tok, out_tok,
-                model=model,
-                cache_read_tok=cache_read,
-                cache_write_tok=cache_creation,
-                # Pass TTL so write surcharge math matches the
-                # actual breakpoint TTL (5m vs 1h) when the per-tier split
-                # below isn't available (older SDK, or a single-tier write).
-                cache_write_ttl=_default_cache_ttl(),
-                cache_write_5m_tok=cache_write_5m,
-                cache_write_1h_tok=cache_write_1h,
-            )
+        in_tok, out_tok, cache_read, cache_creation = self._record_usage(
+            getattr(resp, "usage", None), budget, model,
+        )
 
         # Prometheus token + cache-effectiveness metrics (no-op unless the
         # exporter is on). Records billed tokens by direction and the three
@@ -738,6 +738,18 @@ class AnthropicClient:
             raw=resp,
         )
 
+    def _record_stream_usage(self, stream, final, budget, model):
+        if budget is None:
+            return
+        try:
+            message = final if final is not None else stream.current_message_snapshot
+            usage = message.usage
+        except (AttributeError, RuntimeError) as exc:
+            raise UsageAccountingError("Anthropic stream ended before usage could be observed") from exc
+        if usage is None:
+            raise UsageAccountingError("Anthropic stream ended without observed usage")
+        self._record_usage(usage, budget, model)
+
     def _generation_timeout(self, kwargs: dict) -> dict:
         from .base import generation_timeout
 
@@ -783,10 +795,14 @@ class AnthropicClient:
         # surface the error directly and let the caller retry the
         # higher-level request without partial output.
         with endpoint.stream(**kwargs) as stream:
-            for event in stream.text_stream:
-                on_delta(event)
-            final = stream.get_final_message()
-        return self._parse_response(final, budget, model=billing_model)
+            final = None
+            try:
+                for event in stream.text_stream:
+                    on_delta(event)
+                final = stream.get_final_message()
+            finally:
+                self._record_stream_usage(stream, final, budget, billing_model)
+        return self._parse_response(final, None, model=billing_model)
 
     async def complete_async(
         self,
@@ -814,10 +830,14 @@ class AnthropicClient:
         # Streaming mirrors complete(): no retry wrapper, so a mid-stream
         # failure never replays deltas the caller has already shown.
         async with endpoint.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                on_delta(text)
-            final = await stream.get_final_message()
-        return self._parse_response(final, budget, model=billing_model)
+            final = None
+            try:
+                async for text in stream.text_stream:
+                    on_delta(text)
+                final = await stream.get_final_message()
+            finally:
+                self._record_stream_usage(stream, final, budget, billing_model)
+        return self._parse_response(final, None, model=billing_model)
 
     def prewarm(
         self,

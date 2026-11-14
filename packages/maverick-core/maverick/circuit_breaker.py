@@ -84,6 +84,7 @@ class CircuitBreaker:
         # HALF_OPEN admits exactly one probe at a time; concurrent callers
         # fast-fail until it resolves (cleared by record_success/failure).
         self._probe_in_flight = False
+        self._probe_started_mono: float | None = None
 
     @property
     def state(self) -> CircuitState:
@@ -148,11 +149,19 @@ class CircuitBreaker:
                 # Let exactly ONE caller probe the dependency; everyone else
                 # fast-fails (admitting ALL concurrent callers in HALF_OPEN
                 # would re-storm the dead service on cooldown expiry).
+                # Zero cooldown permits immediate recovery, not concurrent
+                # probes. Use the normal cooldown as its bounded probe lease.
+                # A missing timestamp is not proof that a legacy probe expired.
+                probe_timeout = self.cooldown_seconds if self.cooldown_seconds > 0 else _DEFAULT_COOLDOWN
+                if (self._probe_in_flight and self._probe_started_mono is not None
+                        and time.monotonic() - self._probe_started_mono >= probe_timeout):
+                    self._probe_in_flight = False
                 if self._probe_in_flight:
                     raise CircuitOpen(
                         f"circuit {self.key!r} HALF_OPEN: a probe is already in flight"
                     )
                 self._probe_in_flight = True
+                self._probe_started_mono = time.monotonic()
                 probe_started = True
         return probe_started
 
