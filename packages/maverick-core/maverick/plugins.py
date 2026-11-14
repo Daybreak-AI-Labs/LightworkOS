@@ -461,7 +461,10 @@ def _ep_module_file(ep):
 # swapped ``.so`` ran as "verified" native code under a signed plugin. The
 # on-disk coverage scan (``_ondisk_files_covered``) flags any of these that a
 # tamperer dropped next to signed modules without touching the dist RECORD.
-_SIGNED_ONDISK_SUFFIXES = (".so", ".pyd", ".dylib", ".pth")
+# Python source and sourceless bytecode count too: a package directory wins
+# over a same-named module, so an unsigned ``pkg/sub/__init__.py`` beside a
+# signed ``pkg/sub.py`` would otherwise run unsigned code.
+_SIGNED_ONDISK_SUFFIXES = (".so", ".pyd", ".dylib", ".pth", ".py", ".pyc", ".pyw")
 
 
 def _ep_importable_files(ep) -> dict[str, str] | None:
@@ -512,9 +515,9 @@ def _ep_importable_files(ep) -> dict[str, str] | None:
 
 
 def _ondisk_files_covered(ep, signed_rels: dict) -> bool:
-    """Fail-closed: refuse if the on-disk package tree carries an auto-loading
-    or native file (``.so``/``.pyd``/``.dylib``/``.pth``) absent from the signed
-    manifest.
+    """Fail-closed: refuse if the on-disk package tree carries an importable,
+    auto-loading or native file (``.py``/``.pyc``/``.pyw``/``.so``/``.pyd``/
+    ``.dylib``/``.pth``) absent from the signed manifest.
 
     The manifest is recomputed from the dist RECORD, which is itself an on-disk,
     editable text file -- a tamperer could drop a rogue extension next to signed
