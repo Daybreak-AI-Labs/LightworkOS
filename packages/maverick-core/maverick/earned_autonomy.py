@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 
 _GENESIS = "0" * 64
 #: Why :meth:`_ChainedLog.verify` fails for evidence that was never anchored.
+#: Main-audit-log decision recording a store's first signed head.
+_FIRST_ANCHOR = "evidence_anchored"
 _UNANCHORED = (
     "signed audit head is missing: the evidence predates anchoring and is "
     "adopted by its next append"
@@ -79,6 +81,41 @@ def _safe_text(value: object, *, max_len: int = _MAX_TEXT) -> str:
 # ---------------------------------------------------------------------------
 # hash-chained append-only NDJSON log (the shared shape of both stores)
 # ---------------------------------------------------------------------------
+
+
+def _first_anchor_recorded(identity: str) -> bool | None:
+    """Whether the main audit log records a first signed head for ``identity``.
+
+    ``None`` when the main log cannot be verified (a broken or unsigned chain,
+    a broken anchor history, an unreadable file): adoption is then refused.
+    Only the rare adoption path calls this; it reads every main-log day-file.
+    """
+    from .audit.signing import _segment_text, day_files, verify_anchors, verify_chain
+    from .audit.writer import default_audit_log
+    from .file_lock import cross_process_lock
+
+    try:
+        main = default_audit_log().audit_dir
+        if verify_anchors(main):
+            return None
+        found = False
+        for path in day_files(main):
+            with cross_process_lock(path, strict=True):
+                segment = _segment_text(path)
+                if verify_chain(path, segment=segment):
+                    return None
+            for line in segment.splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                found = found or (
+                    row.get("kind") == "autonomy_graduation"
+                    and row.get("decision") == _FIRST_ANCHOR
+                    and row.get("store_id") == identity)
+        return found
+    except Exception:  # noqa: BLE001 -- unverifiable means no adoption
+        log.debug("earned-autonomy: main audit log not verifiable", exc_info=True)
+        return None
 
 
 class _ChainedLog:
@@ -149,8 +186,10 @@ class _ChainedLog:
     def _anchor_location(self) -> tuple[str, Path]:
         from .paths import data_dir
 
+        # realpath: every spelling of one file (a symlinked data directory)
+        # must share one signed namespace, or a new spelling reads as unanchored.
         identity = hashlib.sha256(os.path.normcase(
-            os.path.abspath(self.path),
+            os.path.realpath(self.path),
         ).encode()).hexdigest()
         return identity, data_dir("audit") / "earned-autonomy" / identity
 
@@ -178,9 +217,15 @@ class _ChainedLog:
         if latest is None:
             if not self._rows:
                 return None
-            if self._never_anchored(directory):
-                return _UNANCHORED
-            return "signed audit head is missing"
+            if not self._never_anchored(directory):
+                return "signed audit head is missing"
+            recorded = _first_anchor_recorded(identity)
+            if recorded is None:
+                return "signed audit head is missing and the main audit log cannot be verified"
+            if recorded:
+                return ("signed audit head is missing: the main audit log shows this "
+                        "evidence was anchored before")
+            return _UNANCHORED
         if latest.get("head") != head or latest.get("row_count") != len(self._rows):
             return "head does not match the signed audit record"
         return None
@@ -193,8 +238,10 @@ class _ChainedLog:
         required-marker, its high-water record and a non-empty day-file, and
         nothing here removes them. Any one of them, or an entry that cannot be
         inspected, means "anchored before"; only their complete absence means
-        "never anchored". Erasing them takes write access to the signed audit
-        directory, not just to the evidence file.
+        "never anchored" here. That alone is not enough to adopt: the whole
+        namespace can be deleted, so adoption also requires the main audit
+        log to verify and to hold no first-anchor record for the store
+        (:func:`_first_anchor_recorded`).
         """
         from .audit.signing import (
             ANCHOR_FILENAME,
@@ -210,6 +257,29 @@ class _ChainedLog:
             return all(path.stat().st_size == 0 for path in day_files(directory))
         except OSError:
             return False
+
+    def _record_first_anchor(self, *, adopted: bool) -> bool:
+        """Record in the MAIN audit log that this store now has a signed head.
+
+        Written before the store's first signed head (fresh evidence or an
+        adoption). It lives outside the store's own namespace, so removing
+        that namespace cannot make anchored evidence look never-anchored
+        while the main log still holds this record.
+        """
+        from .audit import AuditEvent, EventKind
+        from .audit.writer import default_audit_log
+
+        sink = default_audit_log()
+        event = AuditEvent(
+            ts=time.time(), kind=EventKind.AUTONOMY_GRADUATION, agent="earned_autonomy",
+            payload={"decision": _FIRST_ANCHOR, "store_id": self._anchor_location()[0],
+                     "adopted_from_unanchored": adopted, "row_count": len(self._rows)},
+        )
+        written = (sink.record_strict_signed(event) if sink.signing_enabled
+                   else sink.record(event))
+        if not written:
+            log.warning("earned-autonomy: first signed head not recorded in the main audit log")
+        return bool(written)
 
     def _record_anchor(self, head: str, count: int, **extra: object) -> bool:
         from .audit import AuditEvent, EventKind, signing
@@ -298,15 +368,11 @@ class _ChainedLog:
         recorded in the main audit log, so it stays visible after the fact.
         """
         head, count = self._rows[-1]["hash"], len(self._rows)
+        if not self._record_first_anchor(adopted=True):
+            return False
         if not self._record_anchor(head, count, adopted_from_unanchored=True):
             return False
         log.warning("earned-autonomy: adopted %d row(s) of unanchored legacy evidence", count)
-        from .audit import EventKind
-
-        _default_audit_fn(
-            EventKind.AUTONOMY_GRADUATION, decision="evidence_adopted",
-            store_id=self._anchor_location()[0], head=head, row_count=count,
-        )
         return True
 
     def _append_unlocked(self, fields: dict, *, force: bool) -> bool:
@@ -326,6 +392,18 @@ class _ChainedLog:
                 log.warning("earned-autonomy append refused: prior evidence is not verified")
                 return False
             return self._append_unverified_unlocked(fields, status)
+        if not self._rows and self._never_anchored(self._anchor_location()[1]):
+            try:
+                first = self._record_first_anchor(adopted=False)
+            except AuditRefused:
+                if not force:
+                    raise
+                first = False
+            if not first:
+                if not force:
+                    return False
+                return self._append_unverified_unlocked(
+                    fields, "BROKEN: first signed head could not be recorded")
         try:
             size = self.path.stat().st_size
         except FileNotFoundError:

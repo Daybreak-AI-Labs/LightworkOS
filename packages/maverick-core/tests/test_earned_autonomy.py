@@ -142,7 +142,8 @@ def _signed_heads(ledger):
             for line in _segment_text(day).splitlines() if line.strip()]
 
 
-def test_legacy_ledger_is_adopted_and_accepts_evidence_and_revoke(tmp_path):
+def test_legacy_ledger_is_adopted_and_accepts_evidence_and_revoke(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")  # a signed main audit log
     path = tmp_path / "trust.ndjson"
     _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
     ledger = ea.TrustLedger(path=path)
@@ -160,7 +161,10 @@ def test_legacy_ledger_is_adopted_and_accepts_evidence_and_revoke(tmp_path):
     assert not any("unverified_ledger" in row for row in ledger._log.rows())
 
 
-def test_removed_signed_heads_never_allow_a_second_adoption(tmp_path):
+def test_removed_signed_heads_never_allow_a_second_adoption(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")  # a signed main audit log
     path = tmp_path / "trust.ndjson"
     _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
     ledger = ea.TrustLedger(path=path)
@@ -172,15 +176,29 @@ def test_removed_signed_heads_never_allow_a_second_adoption(tmp_path):
     path.write_text("".join(lines[:2]))
     assert ledger.verify().startswith("BROKEN: head does not match")
     assert not ledger.record_event("hit", "deploy", card_id="c", ts=5.0)
-    # Deleting the signed heads as well does not make it look never-anchored.
-    from maverick.audit.signing import day_files
-
-    for day in day_files(ledger._log._anchor_location()[1]):
-        day.unlink()
+    # Removing the whole signed namespace does not make it look never-anchored:
+    # the main audit log still records that this store was anchored.
+    shutil.rmtree(ledger._log._anchor_location()[1])
     status = ledger.verify()
-    assert status.startswith("BROKEN") and "adopted" not in status
+    assert status.startswith("BROKEN") and "anchored before" in status
     assert not ledger.record_event("hit", "deploy", card_id="d", ts=6.0)
     assert path.read_text() == "".join(lines[:2])
+    assert ledger.state("deploy").hits == 1
+
+
+def test_fabricated_ledger_at_an_anchored_path_is_not_adopted(tmp_path, monkeypatch):
+    import shutil
+
+    monkeypatch.setenv("MAVERICK_AUDIT_SIGN", "1")
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("miss", "deploy", card_id="a", ts=1.0)
+    shutil.rmtree(ledger._log._anchor_location()[1])
+    _legacy_ledger(path, [_event("hit", float(i), f"h{i}") for i in range(3)]
+                   + [_event("graduate", 4.0)])
+    forged = ea.TrustLedger(path=path)
+    assert "anchored before" in forged.verify()
+    assert not forged.record_event("hit", "deploy", card_id="z", ts=5.0)
 
 
 def test_forced_revoke_lands_on_unverified_evidence_without_laundering_it(tmp_path):
