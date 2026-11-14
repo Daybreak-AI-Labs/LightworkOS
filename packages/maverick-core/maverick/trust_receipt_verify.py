@@ -990,6 +990,14 @@ def _corroborate(commitment: dict, source: str, anchor_digest: str | None,
     """Compare the (issuer-signed) commitment with what the verifier brought."""
     notes: list[str] = []
     if source == "anchor_ledger":
+        if checkpoint_dir is not None:
+            # The requested comparison cannot be performed: never report it
+            # as passed.
+            return ClaimResult(
+                "commitment", FAILS,
+                "--checkpoint-dir was given but this receipt is committed by "
+                "the anchor ledger, not a checkpoint file; no checkpoint "
+                "comparison is possible"), False
         notes.append("the anchor ledger lives beside the log and is signed by the "
                      "same key; it is the issuer's own commitment, not an "
                      "independent one")
