@@ -44,6 +44,7 @@ CHECKPOINT_SCHEMA = "lightwork.audit.checkpoint.v2"
 CHECKPOINT_PREFIX = "audit-checkpoint-"
 _CHECKPOINT_RE = re.compile(r"^audit-checkpoint-(\d{20})\.ndjson$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_STAGE_RE = re.compile(r"\.(.+)\.[0-9a-f]{16}\.stage")
 _KEY_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 _MAX_CHECKPOINT_BYTES = 64 * 1024
@@ -452,17 +453,31 @@ def _read_checkpoint(
     return record, raw
 
 
-def _recover_stage_links(target: Path) -> None:
+def _stage_links_by_target(checkpoint_dir: Path) -> dict[str, list[Path]]:
+    """List publication stage files once, grouped by the target they name."""
+    try:
+        entries = list(checkpoint_dir.iterdir())
+    except OSError as exc:
+        raise AuditCheckpointError(
+            f"cannot enumerate checkpoint directory: {checkpoint_dir}"
+        ) from exc
+    stages: dict[str, list[Path]] = {}
+    for path in entries:
+        match = _STAGE_RE.fullmatch(path.name)
+        if match:
+            stages.setdefault(match.group(1), []).append(path)
+    return stages
+
+
+def _recover_stage_links(target: Path, stages: list[Path]) -> None:
     """Remove interrupted publication links under the caller's index lock.
 
     Equal content alone does not establish a staging file's origin: only a
     regular hard link to this exact target can be the publication crash residue.
     Ordinary evidence readers retain their strict single-link requirement.
+    ``stages`` are this target's ``.<target>.<16 hex>.stage`` names.
     """
-    for stage in target.parent.glob(f".{target.name}.*.stage"):
-        nonce = stage.name[len(target.name) + 2:-6]
-        if not re.fullmatch(r"[0-9a-f]{16}", nonce):
-            continue
+    for stage in stages:
         target_info = target.lstat()
         stage_info = stage.lstat()
         if (
@@ -506,6 +521,9 @@ def _load_checkpoint_chain(
     latest_by_day: dict[str, _ChainEntry] = {}
     era_by_day: dict[str, int] = {}
     retired_days: set[str] = set()
+    # One directory listing per chain load: a per-checkpoint scan made each
+    # publish quadratic in the chain length while holding the audit-day lock.
+    stages = _stage_links_by_target(checkpoint_dir) if recover_stages else {}
     for expected, (filename_sequence, path) in enumerate(
         _checkpoint_files(checkpoint_dir),
         start=1,
@@ -514,8 +532,8 @@ def _load_checkpoint_chain(
             raise AuditCheckpointError(
                 "checkpoint filenames contain a sequence gap or rollback"
             )
-        if recover_stages:
-            _recover_stage_links(path)
+        if path.name in stages:
+            _recover_stage_links(path, stages[path.name])
         record, raw = _read_checkpoint(
             path,
             trusted_keys,
