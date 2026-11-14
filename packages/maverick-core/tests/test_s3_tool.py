@@ -121,3 +121,21 @@ def test_s3_endpoint_is_checked_against_enterprise_egress(monkeypatch, tmp_path)
     created = sys.modules["boto3"].created
     assert len(created) == 1 and created[0]["aws_access_key_id"] == "egress-probe"
     assert created[0]["config"] == {"s3": {"addressing_style": "path"}}
+
+
+def test_s3_unreadable_config_names_the_network_policy(monkeypatch):
+    # With an invalid config the enterprise check can raise (for example
+    # ClientBindingError while recording the audit event); the refusal must
+    # say that the policy could not be read, not "request failed".
+    import maverick.enterprise as enterprise
+    from maverick.client import ClientBindingError
+
+    def _raise(*a, **k):
+        raise ClientBindingError("client binding unavailable: an active config source is invalid")
+
+    _install_fake_boto3(monkeypatch, buckets=[{"Name": "b1"}])
+    monkeypatch.setattr(enterprise, "enterprise_egress_denial", _raise)
+    from maverick.tools.s3_tool import s3_tool
+    out = s3_tool().fn({"op": "list_buckets"})
+    assert out.startswith("ERROR") and "network policy could not be read" in out
+    assert "b1" not in out

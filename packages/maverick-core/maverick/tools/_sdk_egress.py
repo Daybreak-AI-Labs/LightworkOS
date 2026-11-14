@@ -23,7 +23,12 @@ def sdk_egress_denial(tool: str, url: str) -> str | None:
         host = ""
     if not host:
         return f"{tool}: could not tell which host {url!r} names, so the request was not sent"
-    if denial := enterprise_egress_denial(url, tool=tool):
+    try:
+        denial = enterprise_egress_denial(url, tool=tool)
+    except Exception as exc:  # noqa: BLE001 -- e.g. an unreadable config
+        return (f"{tool}: the network policy could not be read ({type(exc).__name__}: {exc}), "
+                f"so the request to {host!r} was not sent")
+    if denial:
         return denial
     try:
         from ..tenant.egress import egress_allowed
