@@ -14,7 +14,7 @@ import pytest
 @pytest.mark.parametrize("expression,after,expected", [
     ("0 0 */2 * 1", "2026-01-01", "2026-01-05"),
     ("0 0 2 * */2", "2026-01-01", "2026-04-02"),
-    ("0 0 1-31 * 1", "2026-01-01", "2026-01-02"),
+    ("0 0 1-31 * 1", "2026-01-01", "2026-01-05"),
 ])
 def test_cron_stars_keep_both_expanded_day_constraints(expression, after, expected):
     from maverick.scheduler import next_run

@@ -141,9 +141,10 @@ def next_run(expr: str, *, after: float | None = None, tz: str = "") -> float:
     **UTC** — so ``0 9 * * *`` with ``tz='America/New_York'`` fires at 09:00 New
     York wall-clock (adjusting across DST), not 09:00 UTC. The returned value is
     always a UTC epoch. Day-of-month and day-of-week follow Vixie cron semantics:
-    if BOTH raw fields are restricted (do not start with ``*``), a match on
-    EITHER fires; otherwise both expanded constraints must match (``*/2`` still
-    narrows its field). (Across a DST
+    if BOTH are restricted (neither field starts with ``*``), a match on EITHER
+    fires; otherwise both must match (``*/2`` still narrows its field). A field
+    listing its whole range (``1-31``, ``0-6``) counts as unrestricted, so a
+    schedule fires on the same days it always has. (Across a DST
     transition a local schedule at the skipped/doubled hour may fire irregularly
     that day -- the standard local-cron caveat.)
     """
@@ -164,8 +165,8 @@ def next_run(expr: str, *, after: float | None = None, tz: str = "") -> float:
     # Vixie cron decides "restricted" from the field text: one starting with
     # ``*`` (``*``, ``*/2``) is unrestricted even when its step narrows it.
     fields = expr.split()
-    dom_restricted = not fields[2].startswith("*")
-    dow_restricted = not fields[4].startswith("*")
+    dom_restricted = dom != set(range(1, 32)) and not fields[2].startswith("*")
+    dow_restricted = dow != set(range(7)) and not fields[4].startswith("*")
 
     def _day_matches(d: _dt.datetime) -> bool:
         if d.month not in mon:
