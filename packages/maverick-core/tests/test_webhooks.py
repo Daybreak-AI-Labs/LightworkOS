@@ -110,3 +110,12 @@ def test_webhooks_outbound_post_allows_public(monkeypatch):
     # Literal public IP -> deterministic offline (no DNS).
     webhooks._post("http://93.184.216.34/wh", b"{}", {}, 5.0)
     assert posted == ["http://93.184.216.34/wh"]
+
+
+def test_string_outbound_is_one_url_not_characters(monkeypatch):
+    """Regression: ``outbound = "https://..."`` became one URL per character."""
+    from maverick import config, webhooks
+    monkeypatch.setattr(config, "load_config", lambda: {
+        "webhooks": {"outbound": "https://example.com/hook"}})
+    urls, _secret = webhooks._load_config_outbound()
+    assert urls == ["https://example.com/hook"]
