@@ -53,15 +53,17 @@ POLL_DEADLINE_SECONDS = 15.0
 MAX_CYCLE_PAGES = 1024
 
 
-def page_before_floor(items, field, floor, *, inclusive=False):
-    """Only a wholly dated page can prove that ordered history is exhausted."""
+def page_before_floor(items, field, floor):
+    """Only a wholly dated page can prove that ordered history is exhausted.
+
+    Use it only for a feed ordered by ``field``; Bluesky's indexedAt is not
+    monotonic, so that adapter pages to the end instead."""
     boundary = parse_timestamp(floor)
     if boundary is None or not items:
         return False
     timestamps = [parse_timestamp(item.get(field, "")) if isinstance(item, dict) else None
                   for item in items]
-    return all(stamp is not None and (stamp <= boundary if inclusive else stamp < boundary)
-               for stamp in timestamps)
+    return all(stamp is not None and stamp < boundary for stamp in timestamps)
 
 
 @dataclass

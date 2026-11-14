@@ -131,8 +131,8 @@ def bluesky_item(identity, timestamp="2026-01-01T00:00:02Z"):
 def test_bluesky_opaque_pages_late_index_and_restart_floor(monkeypatch):
     monkeypatch.setattr(polling, "MAX_PAGES", 1)
     pages = {None: {"notifications": [bluesky_item("z")], "cursor": "opaque-A"},
-             "opaque-A": {"notifications": [bluesky_item("a", "2026-01-01T00:00:01Z")], "cursor": "opaque-B"},
-             "opaque-B": {"notifications": [bluesky_item("old", "2025-01-01T00:00:00Z")], "cursor": "history"}}
+             "opaque-A": {"notifications": [bluesky_item("old", "2025-01-01T00:00:00Z")], "cursor": "opaque-B"},
+             "opaque-B": {"notifications": [bluesky_item("a", "2026-01-01T00:00:01Z")]}}
     transport(monkeypatch, lambda params: Response(pages[params.get("cursor")]))
     handler = AsyncMock(return_value="answer")
     async def run():
@@ -174,7 +174,10 @@ def test_newest_mentions_are_polled_while_backlog_drains_to_floor(monkeypatch, a
         elif cursor == "tail":
             identity, next_cursor = "backlog", "old"
         elif cursor == "old":
-            identity, timestamp, next_cursor = "history", "2025-01-01T00:00:00Z", "ancient"
+            # Threads stops at a page wholly older than the floor; Bluesky
+            # pages to the end because its indexedAt is not monotonic.
+            identity, timestamp = "history", "2025-01-01T00:00:00Z"
+            next_cursor = "ancient" if adapter == "threads" else None
         assert cursor != "ancient", "history older than the floor was paged"
         if adapter == "bluesky":
             return Response({"notifications": [bluesky_item(identity, timestamp)], "cursor": next_cursor})

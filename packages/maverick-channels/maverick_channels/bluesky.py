@@ -139,13 +139,10 @@ class BlueskyChannel(Channel):
                     self._session = {}
                 response.raise_for_status()
                 payload = response.json() or {}
-            from .polling import page_before_floor
-
-            items = payload.get("notifications") or []
-            cursor = payload.get("cursor") or None
-            if page_before_floor(items, "indexedAt", state["floor"], inclusive=True):
-                cursor = None
-            return PollPage(items, cursor)
+            # No early stop at the floor: indexedAt is not monotonic (see
+            # __init__), so a newer mention can follow an older page. The
+            # newest-page probe in drain() keeps fresh mentions visible.
+            return PollPage(payload.get("notifications") or [], payload.get("cursor") or None)
         async def admit(item, state):
             if item.get("reason") not in {"mention", "reply"}:
                 return False
