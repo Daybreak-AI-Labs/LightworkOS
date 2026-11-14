@@ -300,3 +300,27 @@ def test_unreadable_dek_cache_policy_unwraps_again_instead_of_refusing(tmp_path,
         assert "data-key cache" in caplog.text
     finally:
         kms._clear_cache()
+
+
+def test_postgres_legacy_backfill_skips_duplicate_operation_attempts(postgres_test_dsn, caplog):
+    from maverick.world_model_backends.postgres import PostgresWorldModel
+
+    world = PostgresWorldModel(dsn=postgres_test_dsn)
+    operation = {"operation_id": "shared-operation", "attempt_no": 1, "category": "inference",
+                 "parent_category": "inference", "service": None}
+    try:
+        with world._tx() as cursor:
+            cursor.execute("INSERT INTO provider_cap_receipts VALUES (%s, %s, %s)", (
+                "2026-11", "test-provider",
+                json.dumps({"request-a": {"operation": operation}, "request-b": {"operation": operation}})))
+            cursor.execute("INSERT INTO provider_cap_receipts VALUES (%s, %s, %s)", (
+                "2026-11", "other-provider", json.dumps({"request-c": {"operation": operation}})))
+            world._backfill_provider_operation_attempts(cursor)
+        with world._tx() as cursor:
+            cursor.execute("SELECT operation_id, attempt_no FROM provider_operation_attempts")
+            assert cursor.fetchall() == [("shared-operation", 1)]
+            cursor.execute("SELECT count(*) FROM provider_cap_receipts")
+            assert cursor.fetchone()[0] == 2
+        assert "Skipped 2 duplicate legacy provider operation receipt(s)" in caplog.text
+    finally:
+        world.close()

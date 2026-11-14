@@ -6057,7 +6057,12 @@ class PostgresWorldModel:
             "AND jsonb_typeof(operation->'parent_category') = 'string' "
             "AND (operation->'service' IS NULL "
             "OR jsonb_typeof(operation->'service') IN ('string', 'null')), FALSE) AS valid "
-            "FROM entries), inserted AS (INSERT INTO provider_operation_attempts("
+            "FROM entries), candidates AS MATERIALIZED (SELECT * FROM parsed "
+            "WHERE valid AND attempt_no IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM provider_operation_attempts AS a "
+            "WHERE a.provider = parsed.provider AND a.period_key = parsed.period_key "
+            "AND a.request_id = parsed.request_id)), "
+            "inserted AS (INSERT INTO provider_operation_attempts("
             "scope_sha256, operation_id, attempt_no, category, parent_category, "
             "service, provider, period_key, request_id) "
             "SELECT COALESCE(receipt->>'operation_scope_sha256', "
@@ -6065,24 +6070,33 @@ class PostgresWorldModel:
             "'c544f4564db872e0ffb51fa1bb81b3d7089460a7a9a79ad21cd3952e77f0efec'), "  # pragma: allowlist secret
             "operation->>'operation_id', attempt_no, operation->>'category', "
             "operation->>'parent_category', operation->>'service', "
-            "provider, period_key, request_id FROM parsed "
-            "WHERE valid AND attempt_no IS NOT NULL "
-            "AND NOT EXISTS (SELECT 1 FROM provider_operation_attempts AS a "
-            "WHERE a.provider = parsed.provider AND a.period_key = parsed.period_key "
-            "AND a.request_id = parsed.request_id) RETURNING request_id) "
-            "SELECT provider, period_key, request_id FROM parsed "
-            "WHERE NOT valid OR attempt_no IS NULL"
+            "provider, period_key, request_id FROM candidates "
+            # Two legacy receipts may name the same attempt; the first wins
+            # and the rest are counted instead of aborting the backfill.
+            "ON CONFLICT DO NOTHING RETURNING provider, period_key, request_id) "
+            "SELECT provider, period_key, request_id, FALSE FROM parsed "
+            "WHERE NOT valid OR attempt_no IS NULL "
+            "UNION ALL SELECT c.provider, c.period_key, c.request_id, TRUE "
+            "FROM candidates AS c WHERE NOT EXISTS (SELECT 1 FROM inserted AS i "
+            "WHERE i.provider = c.provider AND i.period_key = c.period_key "
+            "AND i.request_id = c.request_id)"
         )
-        skipped = 0
+        skipped = duplicates = 0
         while rows := cur.fetchmany(100):
-            for row in rows:
+            for *row, duplicate in rows:
                 # A digest identifies the retained row without writing any
                 # potentially sensitive legacy identifier into application logs.
                 reference = hashlib.sha256(json.dumps(list(row)).encode()).hexdigest()
-                log.warning("Malformed legacy provider operation receipt retained; row_sha256=%s", reference)
-            skipped += len(rows)
+                if duplicate:
+                    duplicates += 1
+                    log.warning("Duplicate legacy provider operation receipt retained; row_sha256=%s", reference)
+                else:
+                    skipped += 1
+                    log.warning("Malformed legacy provider operation receipt retained; row_sha256=%s", reference)
         if skipped:
             log.warning("Skipped %d malformed legacy provider operation receipt(s); original spend receipts were retained", skipped)
+        if duplicates:
+            log.warning("Skipped %d duplicate legacy provider operation receipt(s); original spend receipts were retained", duplicates)
 
     def reserve_current_provider_cap(
         self,
