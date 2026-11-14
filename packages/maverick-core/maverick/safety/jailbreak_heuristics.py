@@ -268,7 +268,9 @@ def _score_plain(text: str) -> tuple[float, list[str]]:
     return score, matched
 
 
-_BASE64_RUN = re.compile(r"[A-Za-z0-9+/_=-]+")
+# Equals signs can pad a token or separate a preceding assignment/query name
+# from its value. Consume all trailing padding, but never swallow the next run.
+_BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]+=*")
 _MAX_BASE64_CHARS = 8192
 _MAX_DECODED_BYTES = 6144
 
@@ -285,6 +287,9 @@ def _decoded_base64(text: str) -> Iterator[str]:
         if not 4 <= length <= _MAX_BASE64_CHARS:
             continue
         token = match.group()
+        padding = length - len(token.rstrip("="))
+        if padding > 2 or (padding and length % 4):
+            continue
         try:
             decoded = base64.b64decode(token + "=" * (-length % 4), altchars=b"-_", validate=True)
             if len(decoded) <= _MAX_DECODED_BYTES:
