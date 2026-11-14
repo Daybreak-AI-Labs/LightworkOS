@@ -167,6 +167,12 @@ def test_write_review_shows_whole_statement_and_bind_values(tmp_path, monkeypatc
     shown = "".join(item.split(": ", 1)[1] for item in seen["items"])
     assert "OR id = 2" in shown and '"zed"' in shown
 
+    # A line break that ends a `--` comment stays visible on the card.
+    seen.clear()
+    tool.fn({"database": str(db), "query": "DELETE FROM users WHERE id=5 --\nOR 1=1",
+             "read_only": False})
+    assert seen["items"] == ["Query: DELETE FROM users WHERE id=5 -- \\n OR 1=1"]
+
     seen.clear()
     out = tool.fn({"database": str(db), "query": "DELETE FROM users WHERE " + "1=1 AND " * 600 + "1=1",
                    "read_only": False})

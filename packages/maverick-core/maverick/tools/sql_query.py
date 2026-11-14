@@ -283,7 +283,11 @@ def _write_review_items(query: str, params: Any) -> list[str] | None:
     """
     import json
 
-    shown = [("Query", " ".join(query.split()))]
+    # The card collapses whitespace, which would hide where a `--` comment
+    # ends. Line breaks are shown as a visible \n (backslashes escaped first,
+    # so a literal "\n" in the SQL cannot pass for one).
+    visible = query.replace("\\", "\\\\").replace("\r", " \\r ").replace("\n", " \\n ")
+    shown = [("Query", " ".join(visible.split()))]
     if params:
         shown.append(("Bind values", json.dumps(params, default=str)))
     if sum(len(text) for _, text in shown) > _MAX_REVIEW_CHARS:
