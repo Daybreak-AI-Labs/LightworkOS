@@ -90,10 +90,8 @@ class SignalChannel(Channel):
             response = await asyncio.wait_for(future, timeout=RPC_TIMEOUT_SECONDS)
             if "error" in response:
                 error = response["error"]
-                if isinstance(error, dict) and error.get("code") == -32602:
-                    raise DeliveryRejected("Signal rejected the message parameters")
-                if isinstance(error, dict) and error.get("code") in {-32600, -32601}:
-                    raise DeliveryNotSent("Signal rejected an invalid RPC request")
+                if isinstance(error, dict) and error.get("code") in {-32600, -32601, -32602}:
+                    raise DeliveryRejected("Signal rejected an invalid RPC request")
                 raise DeliveryUnknown("Signal RPC send failed without confirmed nonacceptance")
             if "result" not in response:
                 raise DeliveryUnknown("Signal RPC response has no confirmed result")

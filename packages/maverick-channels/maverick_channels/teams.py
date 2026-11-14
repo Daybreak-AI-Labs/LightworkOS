@@ -60,7 +60,13 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
+from .delivery import (
+    DeliveryNotSent,
+    DeliveryRejected,
+    DeliveryUnknown,
+    provider_refusal,
+    send_chunk,
+)
 from .formatting import split_for_discord
 
 log = logging.getLogger(__name__)
@@ -128,7 +134,7 @@ async def default_transport(method: str, url: str, *, headers: dict | None = Non
     from maverick.tools._ssrf import safe_async_client
 
     if urlsplit(url).scheme != "https":
-        raise DeliveryNotSent("Teams service URLs must be https")
+        raise DeliveryRejected("Teams service URLs must be https")
     async with safe_async_client(url, timeout=timeout) as client:
         response = await client.request(method, url, headers=headers or {}, json=json_body,
                                         data=data)
@@ -375,7 +381,7 @@ class TeamsConnector:
     def _base(service_url: str) -> str:
         parts = urlsplit(service_url or "")
         if parts.scheme != "https" or not parts.netloc:
-            raise DeliveryNotSent("Teams service URL is not https")
+            raise DeliveryRejected("Teams service URL is not https")
         return service_url.rstrip("/")
 
     async def _call(self, method: str, url: str, payload: dict) -> dict:

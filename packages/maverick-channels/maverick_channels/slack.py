@@ -491,7 +491,7 @@ class SlackChannel(Channel):
                     "missing_scope", "ratelimited"}
         receipt = None
         if not text:
-            raise DeliveryNotSent("Slack cannot deliver an empty reply")
+            raise DeliveryRejected("Slack cannot deliver an empty reply")
         # Format before splitting so escaping cannot expand a chunk past its
         # bound. Slack otherwise silently truncates a long successful post.
         for index, chunk in enumerate(_slack_literal_chunks(text, limit=4000)):

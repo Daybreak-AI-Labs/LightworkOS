@@ -25,7 +25,7 @@ from .base import (
     is_allowed,
     normalize_allowlist,
 )
-from .delivery import DeliveryNotSent, DeliveryUnknown, provider_refusal, send_chunk
+from .delivery import DeliveryRejected, DeliveryUnknown, provider_refusal, send_chunk
 from .formatting import neutralize_mentions
 from .polling import PollCheckpoint, PollPage
 
@@ -194,7 +194,7 @@ class MastodonChannel(Channel):
         prefix = f"@{account.get('acct')} "
         chunk_size = 480 - len(prefix)
         if chunk_size <= 0:
-            raise DeliveryNotSent("Mastodon reply address exceeds the status bound")
+            raise DeliveryRejected("Mastodon reply address exceeds the status bound")
         result = ""
         for index, start in enumerate(range(0, max(len(text), 1), chunk_size)):
             body = {

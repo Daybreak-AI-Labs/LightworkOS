@@ -1126,7 +1126,7 @@ class _DeliveryAttempt:
         if old and old["state"] == "delivery_unknown" and not idempotent:
             raise DeliveryUnknown("Prior channel send has no confirmed receipt")
         if key not in chunks and len(chunks) >= MAX_CHUNKS:
-            raise DeliveryNotSent("Channel reply exceeds chunk bound")
+            raise DeliveryRejected("Channel reply exceeds chunk bound")
         attempt_id = uuid.uuid4().hex
         chunks[key] = {"state": "sending", "payload_sha256": digest, "attempt_id": attempt_id,
                        "attempts": (old or {}).get("attempts", 0),

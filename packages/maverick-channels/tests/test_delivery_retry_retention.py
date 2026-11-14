@@ -352,3 +352,50 @@ def test_smtp_quota_and_policy_refusals_stay_retryable(replies, expected):
     from maverick_channels.email import _smtp_refusal
 
     assert type(_smtp_refusal(replies, "refused")) is expected
+
+
+def test_refusals_decided_from_the_message_itself_are_definitive(journal):
+    """Identical on every attempt: they must reach the limit, not loop for ever."""
+    import json
+
+    from maverick_channels import teams
+    from maverick_channels.irc import IRCChannel
+    from maverick_channels.mastodon import MastodonChannel
+    from maverick_channels.signal import SignalChannel
+    from maverick_channels.slack import SlackChannel
+
+    async def run():
+        irc = IRCChannel.__new__(IRCChannel)
+        irc._writer = object()
+        with pytest.raises(delivery.DeliveryRejected):
+            await irc._send_line("x" * 600)
+        with pytest.raises(delivery.DeliveryRejected):
+            await SlackChannel.__new__(SlackChannel).send_threaded("C1", "")
+        with pytest.raises(delivery.DeliveryRejected):
+            await MastodonChannel.__new__(MastodonChannel)._post_reply({"id": "1"}, {"acct": "a" * 480}, "hi")
+        with pytest.raises(delivery.DeliveryRejected):
+            teams.TeamsConnector._base("http://smba.example/")
+        with pytest.raises(delivery.DeliveryRejected):
+            await teams.default_transport("POST", "http://smba.example/v3/conversations")
+
+        signal = SignalChannel.__new__(SignalChannel)
+        signal._req_id, signal._pending_rpc, signal._stopping = 0, {}, False
+        signal._write_lock = asyncio.Lock()
+
+        class Stdin:
+            def write(self, data):
+                request = json.loads(data)
+                signal._pending_rpc[request["id"]].set_result({"error": {"code": -32601}})
+
+            async def drain(self):
+                pass
+        signal._proc = SimpleNamespace(stdin=Stdin())
+        with pytest.raises(delivery.DeliveryRejected):
+            await signal._send_rpc("send", {"message": "hi"})
+
+        row = journal.admit(message("many"), external_id="many", account="acct")
+        row = journal.change(row, chunks={f"c{i}": {} for i in range(delivery.MAX_CHUNKS)})
+        attempt = delivery._DeliveryAttempt(journal, row["id"], lambda: True)
+        with pytest.raises(delivery.DeliveryRejected):
+            await attempt.send_chunk("one-more", "text", lambda: None)
+    asyncio.run(run())
