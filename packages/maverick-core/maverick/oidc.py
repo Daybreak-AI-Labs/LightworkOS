@@ -488,8 +488,9 @@ def verify_oidc_token(
         # Covers expiry, aud/iss mismatch, bad signature, disallowed alg
         # (incl. the HS256-with-public-key alg-confusion attempt, which PyJWT
         # rejects because HS256 isn't in `algorithms`), and missing required
-        # claims. All collapse to one opaque OIDCError — no detail that helps
-        # an attacker distinguish failure modes.
+        # claims. All collapse to one OIDCError type; its message carries
+        # PyJWT's reason (expired, audience, signature) for server logs, so
+        # callers must not echo str(exc) to the client.
         raise OIDCError(f"token verification failed: {e}") from e
     except Exception as e:  # defensive: never leak a non-OIDCError to callers
         raise OIDCError(f"token verification failed: {e}") from e
