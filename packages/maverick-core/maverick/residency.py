@@ -35,7 +35,6 @@ from pathlib import Path
 
 from .tools.data_residency import _GROUPS, _expand
 
-
 log = logging.getLogger(__name__)
 
 
