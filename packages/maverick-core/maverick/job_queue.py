@@ -169,7 +169,19 @@ class JobQueue:
         selected = db_path if db_path is not None else _default_db()
         self._workspace_scoped = db_path is None
         self.db_path = Path(selected).expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        from .file_lock import atomic_create_bytes, ensure_private_directory, ensure_private_file
+
+        # The queue holds prompts, owners and channel ids: private like the
+        # world model. A caller-chosen directory is created, never tightened.
+        if self._workspace_scoped:
+            ensure_private_directory(self.db_path.parent)
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            atomic_create_bytes(self.db_path, b"")
+        except FileExistsError:
+            pass
+        ensure_private_file(self.db_path)
         self._lock = threading.Lock()
         self._ensure_schema()
 

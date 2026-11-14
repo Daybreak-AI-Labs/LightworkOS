@@ -219,6 +219,9 @@ class Worker:
             return False
         payload = dict(job.payload)
         payload[_SLOT_DEFERS_KEY] = defers + 1
+        # The occurrence has already re-armed its schedule. A copy carrying the
+        # cron marker would be enqueued as a brand-new recurring schedule.
+        payload.pop("__cron__", None)
         self.queue.enqueue(
             job.kind, payload, run_at=time.time() + _GOAL_SLOT_DEFER_SECONDS,
         )
