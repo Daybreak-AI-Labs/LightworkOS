@@ -79,6 +79,25 @@ def test_confines_paths_to_sandbox_workspace(tmp_path):
     assert rows == [["a", "b"], ["1", "2"]]
 
 
+def test_refuses_git_writes_and_opaque_test_reads(tmp_path, monkeypatch):
+    class _SB:
+        workdir = tmp_path
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("assert f(2) == 41\n")
+    tool = ss.spreadsheet(_SB())
+    out = tool.fn({"op": "write", "path": ".git/config",
+                   "rows": [["[core]"], ["fsmonitor = echo pwned"]]})
+    assert "refusing to write under .git/" in out
+    assert not (tmp_path / ".git" / "config").exists()
+
+    monkeypatch.setenv("MAVERICK_CODING_MODE", "1")
+    monkeypatch.delenv("MAVERICK_BENCHMARK_OPAQUE", raising=False)
+    read = ss.spreadsheet_read(_SB()).fn({"op": "read", "path": "tests/test_x.py"})
+    assert read.startswith("ERROR") and "41" not in read
+
+
 # ---- XLSX (needs openpyxl) --------------------------------------------------
 
 def test_xlsx_write_read_setcell_info(tmp_path):
