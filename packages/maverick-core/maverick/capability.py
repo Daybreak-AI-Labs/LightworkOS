@@ -339,9 +339,12 @@ def _glob_within(pattern: str, parent: str) -> bool:
     characters then match the same literal characters of ``pattern``, and every
     wildcard of ``pattern`` falls inside one of the parent's ``*`` spans
     (``src/app/*`` within ``src/*``, ``api.example.com`` within
-    ``*.example.com``). Anything else is not kept (narrow-only)."""
-    if "?" in parent or "[" in parent or _DENY_ALL in (pattern, parent):
-        return False
+    ``*.example.com``). A ``[`` or ``]`` in the parent, or a ``[`` in
+    ``pattern``, is never decided this way: a class in ``pattern`` can match
+    what a literal ``]`` in the parent does not. Anything else is not kept (narrow-only)."""
+    if ("?" in parent or "[" in parent or "]" in parent or "[" in pattern
+            or _DENY_ALL in (pattern, parent)):
+        return False  # a character class could match outside the parent
     return fnmatch(pattern, parent)
 
 

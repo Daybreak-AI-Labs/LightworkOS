@@ -639,3 +639,5 @@ def test_attenuating_globs_keeps_a_narrower_pattern_inside_the_parent():
     # A pattern the parent cannot be shown to cover is not kept.
     assert not Capability(principal="p", allow_paths=frozenset({"a?"})).attenuate(
         allow_paths={"a*"}).permits_path("abc")
+    assert not Capability(principal="p", allow_paths=frozenset({"*]b"})).attenuate(
+        allow_paths={"[a]b"}).permits_path("ab")
