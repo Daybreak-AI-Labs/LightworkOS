@@ -308,3 +308,34 @@ def test_skipped_revert_keeps_journal_for_retry_and_restores_mode(
     assert (workdir / "a.txt").read_text() == "orig"
     if os.name != "nt":
         assert (workdir / "a.txt").stat().st_mode & 0o777 == 0o640
+
+
+def test_permanent_skip_is_reported_and_journal_still_archived(workdir, journal_on):
+    """A skip that can never succeed (here a missing pre-image) is reported,
+    but must not keep the journal: replaying it later would overwrite edits
+    made since this revert."""
+    (workdir / "a.txt").write_text("orig")
+    _write(workdir, "a.txt", "changed")
+    next(wj.goal_dir().glob("*.pre")).unlink()
+
+    res = wj.revert_goal()
+
+    assert res["complete"] is False and res["retryable"] == 0
+    assert res["skip_reasons"] == {"missing_blob": 1}
+    assert "archived" in res and wj.list_entries() == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX umask semantics")
+def test_default_mode_honours_umask_without_proc(tmp_path, monkeypatch):
+    """Off Linux (no /proc) the fallback mode follows the umask instead of a
+    fixed 0644."""
+    def no_proc(*args, **kwargs):
+        raise OSError("no /proc")
+
+    monkeypatch.setattr(wj, "open", no_proc, raising=False)
+    old = os.umask(0o077)
+    try:
+        assert wj._default_file_mode(tmp_path) == 0o600
+    finally:
+        os.umask(old)
+    assert list(tmp_path.iterdir()) == []

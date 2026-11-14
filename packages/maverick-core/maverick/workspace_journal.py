@@ -28,9 +28,10 @@ refuse to write through a symlink (the target, or a planted temp file). The
 recorded workdir itself is taken from the journal, so the journal store is
 created owner-only (directories 0700, entries and pre-image blobs 0600):
 only the operator's own account can edit it. Each non-dry revert emits one signed
-``workspace_revert`` audit row and, when no entry was skipped, archives the
-journal directory so a second revert cannot silently replay. A revert that
-skipped entries keeps the journal so they can be retried.
+``workspace_revert`` audit row and archives the journal directory so a
+second revert cannot silently replay. A revert in which a write or delete
+failed keeps the journal so it can be retried; other skips (unsafe path,
+symlink, missing pre-image) are reported and the journal is archived.
 """
 from __future__ import annotations
 
@@ -238,10 +239,15 @@ def _write_private(path: Path, data: bytes) -> None:
         fh.write(data)
 
 
-def _default_file_mode() -> int:
-    """``0o666 & ~umask`` -- the mode a plain ``open()`` would create. Read
-    from /proc where available: setting the umask to probe it would briefly
-    change it for every thread in the process."""
+def _default_file_mode(directory: Path) -> int:
+    """``0o666 & ~umask`` -- the mode a plain ``open()`` would create.
+
+    Setting the umask to probe it would briefly change it for every thread in
+    the process, so it is read from /proc where available, and elsewhere by
+    creating a throwaway file with mode 0o666 in ``directory`` and reading
+    back the mode the kernel gave it. 0o644 is the last resort only when
+    neither works.
+    """
     try:
         with open("/proc/self/status", encoding="ascii") as fh:
             for line in fh:
@@ -249,7 +255,17 @@ def _default_file_mode() -> int:
                     return 0o666 & ~int(line.split()[1], 8)
     except (OSError, ValueError, IndexError):
         pass
-    return 0o644
+    probe = directory / f".journal-umask-probe.{os.getpid()}.{time.time_ns()}"
+    try:
+        fd = os.open(str(probe), os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                     | getattr(os, "O_NOFOLLOW", 0), 0o666)
+        try:
+            return os.fstat(fd).st_mode & 0o777
+        finally:
+            os.close(fd)
+            os.unlink(probe)
+    except OSError:
+        return 0o644
 
 
 def _entry_mode(entry: dict) -> int | None:
@@ -272,7 +288,7 @@ def _restore_bytes(target: Path, blob: bytes, mode: int | None = None) -> None:
         except OSError:
             mode = None
     if mode is None:
-        mode = _default_file_mode()
+        mode = _default_file_mode(target.parent)
     fd, tmp = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".journal-revert.tmp",
                                dir=str(target.parent))
     try:
@@ -500,16 +516,26 @@ def _apply_revert(gdir: Path, entries: list[dict], *, dry_run: bool) -> dict:
     reverted = 0
     deleted = 0
     skipped = 0
+    # Write/unlink errors may succeed on a later run; the other skip reasons
+    # (unsafe path, symlink, missing blob) never will.
+    retryable = 0
+    reasons: dict[str, int] = {}
+
+    def _skip(reason: str) -> None:
+        nonlocal skipped
+        skipped += 1
+        reasons[reason] = reasons.get(reason, 0) + 1
+
     for entry in sorted(entries, key=lambda e: int(e.get("seq") or 0),
                         reverse=True):
         target = _resolve_target(entry)
         if target is None:
-            skipped += 1
+            _skip("unsafe_path")
             log.warning("workspace journal: refusing entry with unsafe path %r",
                         entry.get("path"))
             continue
         if target.is_symlink():
-            skipped += 1
+            _skip("symlink")
             log.warning("workspace journal: refusing to restore through "
                         "symlink %s", target)
             continue
@@ -521,11 +547,12 @@ def _apply_revert(gdir: Path, entries: list[dict], *, dry_run: bool) -> dict:
                     target.unlink()
                     deleted += 1
                 except OSError:
-                    skipped += 1
+                    _skip("delete_failed")
+                    retryable += 1
             continue
         blob = _blob_for(gdir, entry)
         if blob is None:
-            skipped += 1
+            _skip(entry.get("skipped_reason") or "missing_blob")
             continue
         if dry_run:
             reverted += 1
@@ -534,8 +561,10 @@ def _apply_revert(gdir: Path, entries: list[dict], *, dry_run: bool) -> dict:
             _restore_bytes(target, blob, _entry_mode(entry))
             reverted += 1
         except OSError:
-            skipped += 1
+            _skip("write_failed")
+            retryable += 1
     return {"reverted": reverted, "deleted": deleted, "skipped": skipped,
+            "retryable": retryable, "skip_reasons": reasons,
             "entries": len(entries), "dry_run": dry_run}
 
 
@@ -550,8 +579,8 @@ def revert_goal(goal_id: object = None, *, partial: bool = False,
     happen without touching the workspace. A real revert first writes one
     signed ``workspace_revert`` audit row (an audit REFUSAL aborts the revert
     before any file changes), then applies, then archives the journal
-    directory so it cannot be replayed by accident -- unless an entry was
-    skipped, in which case the journal stays so revert can be retried.
+    directory so it cannot be replayed by accident -- unless a write or delete
+    failed, in which case the journal stays so revert can be retried.
     """
     gdir = goal_dir(goal_id)
     entries = list_entries(goal_id)
@@ -591,12 +620,14 @@ def revert_goal(goal_id: object = None, *, partial: bool = False,
     if dry_run:
         return result
 
-    if result["skipped"]:
-        # Keep the journal in place so the skipped entries (for example a
-        # transient write error) can be retried by running revert again.
-        log.warning("workspace journal: %d entr%s skipped; %s kept for retry",
-                    result["skipped"], "y" if result["skipped"] == 1 else "ies",
-                    gdir)
+    if result["retryable"]:
+        # A write or unlink failed: keep the journal so running revert again
+        # can retry it. Permanent skips (unsafe path, symlink, missing or
+        # uncaptured pre-image) never succeed on a retry, so they are only
+        # reported, and the journal is archived as usual: replaying it would
+        # overwrite edits made since this revert.
+        log.warning("workspace journal: %d write(s) failed; %s kept for retry",
+                    result["retryable"], gdir)
         return result
     with _lock:
         _usage.pop(str(gdir), None)
