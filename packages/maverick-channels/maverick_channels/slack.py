@@ -213,21 +213,33 @@ class SlackChannel(Channel):
                 if not url:
                     continue
                 size = f.get("size")
-                if size and int(size) > 100 * 1024 * 1024:
-                    continue  # attachments.store would reject it anyway
+                if isinstance(size, str) and len(size) <= 10 and size.isascii() and size.isdecimal():
+                    size = int(size)
+                if type(size) is not int or not 0 < size <= 100 * 1024 * 1024:
+                    log.warning("slack: file has no valid bounded size; attachment refused")
+                    continue
                 try:
                     async with session.get(url) as resp:
                         resp.raise_for_status()
-                        data = await resp.content.read(100 * 1024 * 1024 + 1)
+                        data = bytearray()
+                        # StreamReader.read(n) may return a buffered prefix.
+                        # Read through EOF, allowing one extra byte to detect
+                        # an understated size without buffering an unbounded body.
+                        while len(data) <= size:
+                            block = await resp.content.read(min(64 * 1024, size + 1 - len(data)))
+                            if not block:
+                                break
+                            data.extend(block)
                 except Exception:  # noqa: BLE001 -- never drop the message
                     log.warning("slack: file download failed", exc_info=True)
                     continue
-                if not data or len(data) > 100 * 1024 * 1024:
+                if len(data) != size:
+                    log.warning("slack: downloaded file size differs from its advertised size; attachment refused")
                     continue
                 out.append({
                     "filename": f.get("name") or "file.bin",
                     "mime": f.get("mimetype") or "application/octet-stream",
-                    "data": data,
+                    "data": bytes(data),
                 })
         return out
 
