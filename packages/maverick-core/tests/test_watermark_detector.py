@@ -54,3 +54,9 @@ def test_registered():
 
     names = set(getattr(base_registry(world=_W(), sandbox=_S()), "_tools", {}).keys())
     assert "watermark_detector" in names
+
+
+def test_ordinary_emoji_are_not_watermarks():
+    assert _scan("I ❤️ this \U0001F468‍\U0001F469‍\U0001F467 1️⃣").startswith("CLEAN")
+    # A selector or joiner between letters is still a marker.
+    assert _scan("pass️word wo‍rd").startswith("LIKELY WATERMARKED")
