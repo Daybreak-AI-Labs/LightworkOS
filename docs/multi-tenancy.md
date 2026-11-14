@@ -160,3 +160,18 @@ NULL-tenant rows left), set `[world_model] rls = true` (or `MAVERICK_PG_RLS=1`).
 The installer's advanced step writes this with the same reminder. RLS is
 defense-in-depth: the app-layer `_tenant_scope` predicate already isolates
 tenants NULL-tolerantly, so single-tenant and SQLite installs need none of this.
+
+The webhook and deadline-alert tables (`webhook_subscriptions`,
+`webhook_deliveries`, `deadline_alerts`) store the workspace id as written
+(`slack:U1`), while every `tenant_id` column stores its path-safe form
+(`slack%3AU1`). Their policy therefore compares against a second
+transaction-local setting, `maverick.workspace`. A version before this one
+compared them with `maverick.tenant`, so under RLS a workspace whose id contains
+a character outside `A-Z a-z 0-9 . _ -` could not read or add its own webhooks
+and deadline alerts. The first start of this version as the table owner replaces
+the policy on those three tables; no data changes. Upgrade and restart every
+process that uses the database: a process still on the earlier version sees no
+rows in those tables until it is upgraded. If the application's database role
+does not own those tables, it cannot replace the policy: it still starts, logs
+a warning, and keeps the earlier behaviour until Lightwork is started once as
+the table owner.

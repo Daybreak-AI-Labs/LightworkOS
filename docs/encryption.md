@@ -162,8 +162,9 @@ data they unlock. Operators who inject `MAVERICK_ENCRYPTION_KEY` already hold th
 key in their secrets manager and need no on-disk backup.
 
 `maverick backup create` (like `maverick client export`) leaves the raw key files out of
-the archive: the at-rest key and keyring and the audit signing keys, those of the data
-root and of every workspace under `tenants/<id>/`. `backup create` lists the files it
+the archive: the at-rest key and keyring, the audit signing keys and the consent-ledger
+signing key (`consent.ledger.key`), those of the data root and of every workspace under
+`tenants/<id>/`. `backup create` lists the files it
 left out when it finishes. The escrow copy above is then the only copy of the encryption
 keys, unless you pass `--include-keys` to bundle them.
 

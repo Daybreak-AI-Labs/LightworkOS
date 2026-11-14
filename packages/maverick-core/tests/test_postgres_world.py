@@ -1368,6 +1368,104 @@ def test_rls_enforces_tenant_isolation_at_db_level(monkeypatch):
             cur.execute("DROP ROLE IF EXISTS mvk_rls_app")
 
 
+def test_rls_lets_a_tenant_with_an_encoded_id_use_its_workspace_rows(monkeypatch):
+    """The webhook and deadline tables store the RAW tenant id in ``workspace``
+    while ``maverick.tenant`` carries the path-encoded segment. For an id such
+    as ``slack:U1`` the two differ, so under the earlier policy that tenant
+    could neither insert nor read its own rows, and it could read the rows of a
+    tenant whose raw id equals its segment. The policy on these tables now keys
+    on ``maverick.workspace`` (the raw id), and startup replaces the earlier
+    policy."""
+    import psycopg
+    from maverick import webhook_subscriptions as hooks
+    from maverick.paths import reset_tenant, set_tenant
+    from maverick.world_model_backends.postgres import _RLS_TENANT_COLUMN, PostgresWorldModel
+    from psycopg.conninfo import make_conninfo
+
+    monkeypatch.setenv("MAVERICK_PG_RLS", "1")
+    PostgresWorldModel(dsn=_DSN).close()
+    earlier = "workspace = nullif(current_setting('maverick.tenant', true), '')"
+    with psycopg.connect(_DSN, autocommit=True) as c, c.cursor() as cur:
+        cur.execute("DROP ROLE IF EXISTS mvk_rls_ws")
+        cur.execute("CREATE ROLE mvk_rls_ws LOGIN PASSWORD 'rlspw' NOSUPERUSER NOBYPASSRLS")  # pragma: allowlist secret
+        cur.execute("GRANT USAGE, CREATE ON SCHEMA public TO mvk_rls_ws")
+        cur.execute("GRANT ALL ON ALL TABLES IN SCHEMA public TO mvk_rls_ws")
+        cur.execute("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO mvk_rls_ws")
+        # What an earlier version installed on the workspace-keyed tables.
+        for table in _RLS_TENANT_COLUMN:
+            cur.execute(f"DROP POLICY IF EXISTS mvk_tenant_isolation ON {table}")
+            cur.execute(f"CREATE POLICY mvk_tenant_isolation ON {table} "
+                        f"USING ({earlier}) WITH CHECK ({earlier})")
+    app_dsn = make_conninfo(_DSN, user="mvk_rls_ws", password="rlspw")  # pragma: allowlist secret
+    # A role that cannot replace the earlier policy still starts: the policy is
+    # forced, so isolation holds, and a plainly named tenant works as before.
+    earlier_world = PostgresWorldModel(dsn=app_dsn)
+    try:
+        tok = set_tenant("rls_plain")
+        try:
+            hooks._write(
+                earlier_world,
+                "INSERT INTO webhook_subscriptions(id, workspace, url, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("wh-before", hooks.workspace_id(), "https://hooks.example.invalid/in", 1.0, 1.0),
+            )
+        finally:
+            reset_tenant(tok)
+    finally:
+        earlier_world.close()
+    # The owner's next start replaces it with the current policy.
+    PostgresWorldModel(dsn=_DSN).close()
+    with psycopg.connect(_DSN, autocommit=True) as c, c.cursor() as cur:
+        cur.execute("SELECT pg_get_expr(polqual, polrelid) FROM pg_policy "
+                    "WHERE polrelid = 'webhook_subscriptions'::regclass")
+        assert "maverick.workspace" in cur.fetchone()[0]
+
+    w = PostgresWorldModel(dsn=app_dsn)
+
+    def add(tenant, ident):
+        tok = set_tenant(tenant)
+        try:
+            hooks._write(
+                w,
+                "INSERT INTO webhook_subscriptions(id, workspace, url, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (ident, hooks.workspace_id(), "https://hooks.example.invalid/in", 1.0, 1.0),
+            )
+        finally:
+            reset_tenant(tok)
+
+    def visible(tenant):
+        # A RAW read with no app-layer predicate: only the policy filters it.
+        tok = set_tenant(tenant) if tenant else None
+        try:
+            return sorted(r["id"] for r in hooks._rows(w, "SELECT id FROM webhook_subscriptions"))
+        finally:
+            if tok is not None:
+                reset_tenant(tok)
+
+    try:
+        add("slack:U1", "wh-encoded")
+        add("rls_plain", "wh-plain")
+        # Its raw id is the first tenant's encoded segment.
+        add("slack%3AU1", "wh-lookalike")
+        assert visible("slack:U1") == ["wh-encoded"]
+        assert visible("rls_plain") == ["wh-before", "wh-plain"]
+        assert visible("slack%3AU1") == ["wh-lookalike"]
+        assert visible(None) == []
+    finally:
+        w.close()
+        with psycopg.connect(_DSN, autocommit=True) as c, c.cursor() as cur:
+            for table in _RLS_TENANT_COLUMN:
+                cur.execute(f"DROP POLICY IF EXISTS mvk_tenant_isolation ON {table}")
+                cur.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+                cur.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        _disable_rls(_DSN)
+        with psycopg.connect(_DSN, autocommit=True) as c, c.cursor() as cur:
+            cur.execute("REASSIGN OWNED BY mvk_rls_ws TO CURRENT_USER")
+            cur.execute("DROP OWNED BY mvk_rls_ws")
+            cur.execute("DROP ROLE IF EXISTS mvk_rls_ws")
+
+
 # --- Backend parity (SQLite v13 -> v20 catch-up) -----------------------------
 
 def test_set_goal_domain_and_v14_schema(world):
