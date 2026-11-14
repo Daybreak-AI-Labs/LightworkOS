@@ -241,8 +241,8 @@ class WideningPolicy:
         """The widest tier the track record has earned. With any rollback on
         record, widening is frozen at tier 0 (the narrowest) regardless of the
         promotion count — trust, once broken by a regression, is not auto-restored."""
-        if not self.tiers:
-            return SurfaceTier("empty", (), 0)
+        if not self.tiers or promotions < self.tiers[0].min_promotions:
+            return SurfaceTier("empty", (), 0)  # not even the first tier is earned
         if had_rollback:
             return self.tiers[0]
         earned = self.tiers[0]
