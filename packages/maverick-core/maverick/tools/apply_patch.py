@@ -53,15 +53,41 @@ _APPLY_PATCH_SCHEMA: dict[str, Any] = {
 # `+++ /dev/null`), renames/copies (paths on `rename to`/`copy to`), or
 # `--no-prefix` diffs -- so for those shapes _files_in_patch returned [] and the
 # traversal check was skipped entirely.
-_PATH_RE = re.compile(r"^(?:\+\+\+|---) (?:[ab]/)?(.+)$", re.MULTILINE)
-_RENAME_RE = re.compile(r"^(?:rename|copy) (?:from|to) (.+)$", re.MULTILINE)
+# Header lines are only matched outside hunk bodies: inside a hunk, a removed
+# line "-- comment" or an added line "++ x" is file content, not a path.
+_PATH_RE = re.compile(r"^(?:\+\+\+|---) (?:[ab]/)?(.+)$")
+_RENAME_RE = re.compile(r"^(?:rename|copy) (?:from|to) (.+)$")
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+
+
+def _header_paths(text: str) -> list[str]:
+    """Paths named by file-header lines, skipping hunk bodies by their counts
+    (as ``git apply`` does)."""
+    found: list[str] = []
+    old = new = 0
+    for line in text.splitlines():
+        if old > 0 or new > 0:
+            if line.startswith("\\"):  # "\ No newline at end of file"
+                continue
+            tag = line[:1]
+            if tag in ("-", " ", ""):
+                old -= 1
+            if tag in ("+", " ", ""):
+                new -= 1
+            continue
+        if hunk := _HUNK_RE.match(line):
+            old = int(hunk.group(1) or 1)
+            new = int(hunk.group(2) or 1)
+        elif m := _PATH_RE.match(line) or _RENAME_RE.match(line):
+            found.append(m.group(1))
+    return found
 
 
 def _files_in_patch(text: str) -> list[str]:
     """Pull out every referenced path so we can traversal-check + report them."""
     out: list[str] = []
     seen: set[str] = set()
-    for m in _PATH_RE.findall(text) + _RENAME_RE.findall(text):
+    for m in _header_paths(text):
         # Strip a trailing tab+timestamp (`--- a/x.py\t2024-...`) and skip the
         # /dev/null sentinel used for add/delete; dedupe (--- and +++ name the
         # same file on a modify).
