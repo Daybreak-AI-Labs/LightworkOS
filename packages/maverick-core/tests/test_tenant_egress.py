@@ -136,3 +136,18 @@ def test_active_tenant_lookup_uses_raw_env_tenant_id(monkeypatch):
 
     assert te.host_allowed("api.allowed.test") is True
     assert te.host_allowed("attacker.example") is False
+
+
+def test_unreadable_config_denies_instead_of_allowing_all(tmp_path, monkeypatch):
+    # A malformed config.toml loads as defaults; the deny list it held must not
+    # silently become "unrestricted".
+    from maverick import config
+
+    path = tmp_path / "config.toml"
+    path.write_text('[egress]\ndeny = ["169.254.169.254"]\nthis is not toml\n')
+    monkeypatch.setenv("MAVERICK_CONFIG", str(path))
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    config.load_config()
+    assert config.config_source_errors(include_tenant=True)
+    assert te.host_allowed("169.254.169.254", tenant=None) is False
+    assert te.host_allowed("evil.com", tenant=None) is False
