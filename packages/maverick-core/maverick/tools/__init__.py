@@ -648,7 +648,9 @@ class ToolRegistry:
         if name not in self._tools:
             return f"ERROR: unknown tool {name!r}"
         if not self._acl_allows(name):
-            return f"ERROR: tool {name!r} is denied by the current tool ACL"
+            note = getattr(self, "acl_denial_note", "")
+            message = f"ERROR: tool {name!r} is denied by the current tool ACL"
+            return f"{message} {note}" if note else message
         if not self._mcp_binding_current(name):
             return "ERROR: MCP binding is stale or changed; refresh tools and rebuild the registry"
         return None

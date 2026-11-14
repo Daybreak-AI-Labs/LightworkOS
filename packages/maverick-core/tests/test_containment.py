@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 from maverick import containment
 from maverick.file_lock import private_path_is_restricted
-from maverick.tools import ToolRegistry
+from maverick.tools import Tool, ToolRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -60,6 +60,10 @@ def test_enabled_fails_closed_on_unclear_settings(monkeypatch, tmp_path):
     reg = ToolRegistry()
     containment.apply(containment.active_profile(), registry=reg, sandbox_env={})
     assert "could not be read" in reg.acl_denial_note
+    # The note reaches the denial a tool call sees.
+    reg.register(Tool(name="shell", description="", input_schema={}, fn=lambda **_: ""))
+    reg.set_acl(denied={"shell"})
+    assert "could not be read" in reg._tool_access_error("shell")
 
 
 def test_unreadable_config_without_containment_keeps_it_off(monkeypatch, tmp_path):
