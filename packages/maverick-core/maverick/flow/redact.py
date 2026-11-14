@@ -11,9 +11,34 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_SECRET_KEY = re.compile(
-    r"(token|secret|password|passwd|api[_-]?key|apikey|authorization|auth|"
-    r"bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key)", re.IGNORECASE)
+# Key names are matched by whole word, not substring: ``author``,
+# ``max_tokens``, ``secretary`` or ``authority`` are ordinary execution data,
+# and masking them would silently change what a resumed or queued run sees.
+# Strong words mark a credential wherever they appear in the name; ``token``
+# and ``auth`` only when they end it (``access_token`` but not ``token_count``).
+_KEY_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+_STRONG_KEY_WORDS = frozenset({
+    "secret", "secrets", "password", "passwords", "passwd", "passphrase",
+    "apikey", "authorization", "bearer", "credential", "credentials",
+})
+_TRAILING_KEY_WORDS = frozenset({"token", "auth"})
+_KEY_PAIRS = frozenset({
+    ("api", "key"), ("private", "key"), ("client", "secret"), ("access", "key"),
+    ("secret", "key"),
+})
+
+
+def _secret_key(name: str) -> bool:
+    words = [word.lower() for word in _KEY_WORD.findall(name)]
+    if not words:
+        return False
+    return (
+        any(word in _STRONG_KEY_WORDS for word in words)
+        or words[-1] in _TRAILING_KEY_WORDS
+        or any(pair in _KEY_PAIRS for pair in zip(words, words[1:], strict=False))
+    )
+
+
 _MASK = "***redacted***"
 _MAX_STR = 8_000          # truncate any single string value past this
 _MAX_KEYS = 500           # cap the breadth of a single dict
@@ -27,7 +52,7 @@ def redact(value: Any, *, strict: bool = False) -> Any:
     stored under innocuous keys such as ``result`` or inside a list.
     """
     if isinstance(value, dict):
-        return {k: (_MASK if isinstance(k, str) and _SECRET_KEY.search(k) else redact(v, strict=strict))
+        return {k: (_MASK if isinstance(k, str) and _secret_key(k) else redact(v, strict=strict))
                 for k, v in value.items()}
     if isinstance(value, list):
         return [redact(v, strict=strict) for v in value]

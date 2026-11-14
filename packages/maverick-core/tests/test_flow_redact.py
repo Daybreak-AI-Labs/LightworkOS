@@ -15,6 +15,13 @@ class TestRedact:
         assert out["nested"]["note"] == "keep"
         assert out["list"][0]["access_token"] == "***redacted***"
 
+    def test_ordinary_keys_containing_secret_words_are_kept(self):
+        d = {"author": "Jane", "max_tokens": 500, "token_count": 3, "secretary": "Sam",
+             "pull_request": {"author_association": "MEMBER", "authority": "ops"}}
+        assert redact(d) == d
+        assert redact({"authToken": "t", "X-Auth-Token": "t"}) == {  # pragma: allowlist secret
+            "authToken": "***redacted***", "X-Auth-Token": "***redacted***"}
+
     def test_non_secret_data_is_untouched(self):
         d = {"amount": 100, "items": [1, 2], "flag": True}
         assert redact(d) == d
