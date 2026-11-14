@@ -143,6 +143,8 @@ def override_enabled() -> bool:
 
 
 def _holder_record_unavailable(path: Path, detail: str) -> LeaseUnavailable:
+    """Refusal for an unreadable or malformed holder record. A missing record,
+    or one without ``fencing_token``, is not refused: the token restarts at 1."""
     return LeaseUnavailable(
         f"control-plane holder record {path} is {detail}; the prior fencing "
         "token cannot be proven, so single-writer startup is refusing to "
@@ -353,7 +355,8 @@ def _acquire(root: Path | None, *, role: str) -> Lease | None:
                 f"MAVERICK_HOME."
             )
         # Won the lock. Bump the fencing token under it, so the value is
-        # monotonic across restarts and a stale holder is detectable.
+        # monotonic across restarts and a stale holder is detectable (as long
+        # as the holder record survives: a deleted record restarts it at 1).
         record_path = holder_path(path.parent)
         previous = _read_holder(record_path, strict=True)
         holder = Holder(

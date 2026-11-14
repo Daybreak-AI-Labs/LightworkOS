@@ -18,10 +18,11 @@ goals from the world model plus failure reflexions — groups it by department
     instead of degrading as the NDJSON grows (synaptic pruning).
 
 Deterministic and LLM-free *by default*: dreams are derived with the same
-lexical machinery the distillation loops use, so consolidation can never be
-steered by prompt-injected trajectory text into persisting attacker-authored
-instructions (the same reasoning that keeps MAVERICK_AUTO_DISTILL off by
-default). Governed consolidation is on by default
+lexical machinery the distillation loops use, so no model rewrites trajectory
+text into new instructions (the same reasoning that keeps MAVERICK_AUTO_DISTILL
+off by default). A persisted insight does quote up to 240 characters of the
+newest reflection verbatim (secret-redacted, not Shield-scanned at write
+time), so recall applies Shield when the caller passes one. Governed consolidation is on by default
 (``MAVERICK_DREAMING=0`` opts out) and tolerant of ordinary replay/enrichment
 failures. The global operator HALT
 is different: it is checked fresh and fail-closed at learning transitions, so
@@ -114,7 +115,9 @@ _LEGACY_SCOPE_UNKNOWN = "__legacy_scope_unknown__"
 
 
 def enabled() -> bool:
-    """Whether the offline dreaming loop is active. On by default."""
+    """Whether the offline dreaming loop is active. On by default when every
+    configuration source is trustworthy; off when the configuration cannot be
+    read."""
     try:
         from .config import get_dreaming, governed_learning_env_flag
         override = governed_learning_env_flag("MAVERICK_DREAMING")
@@ -126,7 +129,8 @@ def enabled() -> bool:
 
 
 def settings() -> dict:
-    """The ``[dreaming]`` knobs with defaults filled in (fail-open)."""
+    """The ``[dreaming]`` knobs with defaults filled in. If the settings cannot
+    be read, the fallback has dreaming turned off."""
     try:
         from .config import get_dreaming
         return get_dreaming()
@@ -2454,10 +2458,7 @@ def dream_cycle_dry(world: Any | None = None, **kwargs) -> DreamReport:
             dst = tmp / name
             src = Path(src)
             if src.is_dir():
-                if src.exists():
-                    shutil.copytree(src, dst)
-                else:
-                    dst.mkdir(parents=True)
+                shutil.copytree(src, dst)
             elif src.exists():
                 shutil.copy2(src, dst)
             copies[name] = dst

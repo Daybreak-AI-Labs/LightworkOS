@@ -13,7 +13,9 @@ multi-agent system, gated by a calibrated verifier). It is dependency-injected
 so this module imports nothing heavy and is trivially testable; ``spawn_swarm``
 wires it to ``verifier.verify_proposal`` against the goal brief.
 
-The credit engine is ON by default, but its N+1 verifier calls require the
+The credit engine is ON by default when every configuration source is
+trustworthy (``config.get_credit``; off if the settings cannot be read), but
+its N+1 verifier calls require the
 separate ``[self_learning] allow_provider_egress`` authority. The call site
 also budget-gates it and caps the swarm size it will attribute. Credit is only trustworthy when the
 verifier is calibrated, so the caller skips it when ``calibration`` is frozen.
