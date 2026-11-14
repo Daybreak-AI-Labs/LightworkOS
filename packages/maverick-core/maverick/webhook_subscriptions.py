@@ -488,12 +488,24 @@ def _opened(row: dict) -> dict:
     """A copy of a delivery row with its body unsealed. The body is sealed at
     rest like the signing secret (it can carry data-subject identifiers); a
     row stored before that is plaintext and reads as it is. A body that cannot
-    be opened reads as the withheld placeholder, which is never sent."""
-    from .world_model import _dec_field_or_withheld
+    be opened reads as the withheld placeholder, which is never sent. A sealed
+    body is opened whatever the at-rest setting says now: with encryption
+    turned off later it must not go out as ciphertext."""
+    from .crypto_at_rest import is_sealed_str, unseal_from_str
+    from .world_model import _UNSEALED_WITHHELD, _dec_field_or_withheld
 
     out = dict(row)
-    if "body" in out:
-        out["body"] = _dec_field_or_withheld(out["body"] or "") or ""
+    if "body" not in out:
+        return out
+    body = out["body"] or ""
+    if is_sealed_str(body):
+        try:
+            out["body"] = unseal_from_str(body)
+        except Exception:
+            log.error("webhooks: withholding a delivery body that cannot be opened")
+            out["body"] = _UNSEALED_WITHHELD
+    else:
+        out["body"] = _dec_field_or_withheld(body) or ""
     return out
 
 

@@ -389,3 +389,24 @@ def test_workspace_id_fails_closed_on_invalid_client_binding(monkeypatch):
     monkeypatch.setattr(client, "_strict_cached", client._UNSET)
     with pytest.raises(client.ClientBindingError):
         webhook_subscriptions.workspace_id()
+
+
+def test_a_sealed_body_is_opened_even_after_at_rest_encryption_is_turned_off(world, monkeypatch):
+    # Turning at-rest encryption off must not send the stored ciphertext as the
+    # message (and record it as delivered); the sealed body is still opened.
+    from maverick import crypto_at_rest
+    if not crypto_at_rest._have_crypto():
+        pytest.skip("cryptography not installed")
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    sub = subs.create_subscription("https://a.example.com/h", world=world)
+    target = [{"subscription_id": sub["id"], "url": sub["url"]}]
+    opened, broken = (subs.enqueue("dsar.opened", f"evt_{n}", b'{"x":1}', targets=target,
+                                   world=world, now=NOW)[0] for n in (1, 2))
+    stored = world._read_one("SELECT body FROM webhook_deliveries WHERE id = ?", (broken,))["body"]
+    subs._write(world, "UPDATE webhook_deliveries SET body = ? WHERE id = ?",
+                (stored[:-8] + ("A" * 8 if not stored.endswith("A" * 8) else "B" * 8), broken))
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
+    transport = _Transport(OK)
+    assert subs.attempt_delivery(opened, world=world, now=NOW, transport=transport)["status"] == "delivered"
+    assert subs.attempt_delivery(broken, world=world, now=NOW, transport=transport)["status"] != "delivered"
+    assert [call[1] for call in transport.calls] == [b'{"x":1}']
