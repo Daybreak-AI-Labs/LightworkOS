@@ -485,3 +485,6 @@ def test_fleet_sanitize_passes_clean_text():
         "Deployed the billing service; the rollout succeeded.", shield=None)
     assert ok is not None
     assert "Deployed" in ok
+    token = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"  # pragma: allowlist secret
+    straddling = fleet_memory._sanitize("x " * 990 + token, shield=None)
+    assert token[:12] not in straddling  # redacted whole, not cut into a fragment first

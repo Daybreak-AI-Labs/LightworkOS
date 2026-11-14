@@ -47,6 +47,7 @@ from .file_lock import (
 log = logging.getLogger(__name__)
 
 _MAX_TEXT = 2000
+_SCAN_SLACK_CHARS = 4096
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 KINDS = ("success", "failure", "lesson")
 
@@ -183,12 +184,15 @@ def enabled() -> bool:
 
 def _sanitize(text: str, *, shield: Any | None) -> str | None:
     """Redact + Shield-scan one field; None = reject the record."""
-    safe = str(text or "")[:_MAX_TEXT]
+    # Redact before the final cut, over a slack window, so a secret that
+    # straddles the cut is matched whole instead of kept as a fragment.
+    safe = str(text or "")[:_MAX_TEXT + _SCAN_SLACK_CHARS]
     try:
         from .safety.secret_detector import redact as _redact
         safe, _ = _redact(safe)
     except Exception:
         return None
+    safe = safe[:_MAX_TEXT]
     # Fleet records are EXTERNAL-trust, third-party input that later rides into
     # orchestrator prompts via dream/reflexion recall. Apply the same injection
     # tripwire memory_guard uses for EXTERNAL writes (it documents this list as
