@@ -822,6 +822,14 @@ def expire_insights(
         return 0
 
 
+# The fixed wording synthesize_insight wraps around every lesson.
+_INSIGHT_TEMPLATE_TEXT = (
+    "Recurring failure seen on goals about similar goals. Seen across departments. "
+    "Latest lesson: Before committing budget, reproduce/verify the "
+    "previously-failing step in isolation."
+)
+
+
 def resolve_contradictions(
     successes: list[dict], path: Path | str | None = None, *,
     min_successes: int = 2, similarity: float = 0.5,
@@ -831,8 +839,9 @@ def resolve_contradictions(
     When ``min_successes`` or more successes NEWER than a failure-pattern
     insight lexically match it ("we now reliably do X"), the insight is
     contradicted and dropped instead of coexisting with the new reality.
-    Matching is coverage of the success's tokens by the insight text --
-    jaccard would be diluted by the insight's boilerplate. Returns how many
+    Matching is coverage of the success's tokens by the insight text, less
+    the fixed wording every synthesized insight carries (which would otherwise
+    match any success about reproducing or verifying). Returns how many
     insights were retired.
     """
     default_store = path is None
@@ -845,6 +854,8 @@ def resolve_contradictions(
             if not entries or not successes:
                 return 0
 
+            boilerplate = _tokens(_INSIGHT_TEMPLATE_TEXT)
+
             def _covered(goal: str, ins_tokens: set[str]) -> bool:
                 st = _tokens(goal)
                 if not st:
@@ -854,7 +865,9 @@ def resolve_contradictions(
             keep: list[DreamInsight] = []
             retired = 0
             for ins in entries:
-                it = _tokens(ins.text)
+                # Words every synthesized insight carries say nothing about
+                # its subject; matching on them retired unrelated lessons.
+                it = _tokens(ins.text) - boilerplate
                 newer_wins = sum(
                     1 for s in successes
                     if float(s.get("t", 0) or 0) > ins.ts

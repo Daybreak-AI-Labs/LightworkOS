@@ -792,6 +792,16 @@ class TestInsightLifecycle:
         )], path=path)
         assert dreaming.resolve_contradictions(successes, path) == 0
 
+    def test_template_wording_alone_does_not_retire_an_insight(self, tmp_path):
+        path = tmp_path / "insights.ndjson"
+        cluster = [{"goal_text": "deploy the kubernetes cluster", "failure_class": "agent_error",
+                    "reflection": "pin the chart version", "ts": 1.0}] * 2
+        dreaming.append_insights([dreaming.synthesize_insight(cluster, domain=None, now=10.0)],
+                                 path=path)
+        successes = [{"goal": "Reproduce the failing step", "t": 20.0},
+                     {"goal": "Verify budget before committing", "t": 30.0}]
+        assert dreaming.resolve_contradictions(successes, path) == 0
+
 
 class TestCritiqueMining:
     def test_low_confidence_critiques_become_failures(self, tmp_path, monkeypatch):
