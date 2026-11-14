@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import uuid
 from collections.abc import Mapping
@@ -746,6 +747,54 @@ def _strict_receipt_json(raw: str) -> object:
     )
 
 
+def _append_checked_receipt(path: Path, event: dict[str, Any], approver_trust: dict) -> tuple[dict, str]:
+    from ..audit.signing import AuditSigner
+    from ..file_lock import cross_process_lock
+
+    # These fixed-width signature fields bound the serialized row's size
+    # without granting this module access to the audit signing private key.
+    row_size = len((json.dumps({**event, "prev_hash": "0" * 64,
+                               "key_id": "0" * 16, "hash": "0" * 64,
+                               "sig": "0" * 128}) + "\n").encode("utf-8"))
+    # AuditSigner.write takes this same reentrant sidecar lock before opening
+    # the store. Hold it across admission, append and verification so rollback
+    # cannot remove another writer's row or race a file replacement.
+    with cross_process_lock(path, strict=True):
+        signer = AuditSigner(path)
+        with path.open("r+b") as stream:
+            before = os.fstat(stream.fileno())
+            if not before.st_size:
+                row_size -= 64  # the genesis row has an empty previous hash
+            if (row_size > MAX_RECEIPT_ROW_BYTES
+                    or before.st_size + row_size > MAX_RECEIPT_STORE_BYTES
+                    or sum(1 for _ in stream) >= MAX_RECEIPT_ROWS):
+                raise TrainingReceiptError("training receipt store exceeds its storage boundary")
+            if not signer.write(event):
+                raise TrainingReceiptError("audit signer refused the training receipt")
+            stream.seek(before.st_size)
+            appended = stream.read(MAX_RECEIPT_ROW_BYTES + 1)
+            receipt = _strict_receipt_json(appended.decode("utf-8"))
+            current = path.stat()
+            if (len(appended) != row_size or appended.count(b"\n") != 1
+                    or not appended.endswith(b"\n") or not isinstance(receipt, dict)
+                    or receipt.get("receipt_id") != event["receipt_id"]
+                    or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino)
+                    or current.st_size != before.st_size + len(appended)):
+                raise TrainingReceiptError("training receipt append could not be isolated")
+            key_id = receipt.get("key_id")
+            if not isinstance(key_id, str) or not verify_training_receipt(
+                receipt, trusted_receipt_pubkeys={key_id: signer.public_key_hex},
+                trusted_approver_pubkeys=approver_trust,
+            ):
+                # Only the isolated row above is removed, under the same lock
+                # as its append. Discard the signer with its now-obsolete tip.
+                stream.truncate(before.st_size)
+                stream.flush()
+                os.fsync(stream.fileno())
+                raise TrainingReceiptError("signed training receipt failed self-check")
+            return receipt, signer.public_key_hex
+
+
 def issue_training_receipt(
     evidence: TrainingRunEvidence,
     approval: HumanApprovalEvidence,
@@ -793,26 +842,12 @@ def issue_training_receipt(
     }
     event["receipt_payload_sha256"] = _sha256(event)
 
-    from ..audit.signing import AuditSigner
-
-    path = receipts_path()
-    signer = AuditSigner(path)
-    if not signer.write(event):
-        raise TrainingReceiptError("audit signer refused the training receipt")
-    receipt = _read_receipt(path, receipt_id)
-    key_id = receipt.get("key_id")
-    if not isinstance(key_id, str):
-        raise TrainingReceiptError("signed training receipt has no key id")
-    receipt_trust = {key_id: signer.public_key_hex}
-    if not verify_training_receipt(
-        receipt,
-        trusted_receipt_pubkeys=receipt_trust,
-        trusted_approver_pubkeys=trusted_approver_pubkeys,
-    ):
-        raise TrainingReceiptError("signed training receipt failed self-check")
+    receipt, signing_public_key = _append_checked_receipt(
+        receipts_path(), event, trusted_approver_pubkeys,
+    )
     return IssuedTrainingReceipt(
         receipt=receipt,
-        signing_public_key=signer.public_key_hex,
+        signing_public_key=signing_public_key,
         public_commitment=_public_commitment(receipt),
     )
 

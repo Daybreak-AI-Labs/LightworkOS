@@ -63,12 +63,14 @@ def distill(trajectories: list[dict], *, top_k: int = 3) -> dict | None:
     their goals, and unions their tools.
     """
     from ..pilot_learning import excluded
+    from ..reflexion import _sanitize_text
     good = [t for t in (trajectories or []) if t.get("success") and not excluded(t.get("goal_id"))]
     if not good:
         return None
     good.sort(key=lambda t: t.get("t", 0), reverse=True)
     chosen = good[:top_k]
-    goals = [str(t.get("goal", "")).strip() for t in chosen if t.get("goal")]
+    goals = [_sanitize_text(t.get("goal", "")).strip() for t in chosen if t.get("goal")]
+    goals = [goal for goal in goals if goal]
     if not goals:
         return None
 

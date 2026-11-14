@@ -7,7 +7,7 @@ knob at a time within those bounds, which keeps the search local and the diffs
 auditable.
 
 The default space targets the loop knobs added this cycle (fan-out width,
-adaptive-compute threshold, best-of-N count, verifier accept floor, autonomy
+adaptive-compute threshold, best-of-N count, autonomy
 disagreement threshold). Callers can pass their own ``space`` to widen/narrow it.
 """
 from __future__ import annotations
@@ -19,7 +19,6 @@ SPACE: dict[str, tuple] = {
     "max_swarm_fanout": ("int", 1, 16),
     "adaptive_compute.low_uncertainty": ("float", 0.05, 0.5, 0.05),
     "search.n": ("int", 1, 5),
-    "verifier_confidence": ("float", 0.5, 0.95, 0.05),
     "autonomy.disagreement_high": ("float", 0.3, 0.8, 0.05),
 }
 

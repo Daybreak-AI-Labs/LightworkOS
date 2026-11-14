@@ -52,7 +52,10 @@ def env_for(config: dict) -> dict[str, str]:
     if "max_swarm_fanout" in config:
         env["MAVERICK_MAX_SWARM_FANOUT"] = str(int(config["max_swarm_fanout"]))
     if "verifier_confidence" in config:
-        env["MAVERICK_VERIFIER_CONFIDENCE"] = str(float(config["verifier_confidence"]))
+        # Preserve explicit/archived overrides and their existing sink bounds;
+        # completion-based search must not optimize this verification threshold.
+        confidence = round(max(0.5, min(0.95, float(config["verifier_confidence"]))), 4)
+        env["MAVERICK_VERIFIER_CONFIDENCE"] = str(confidence)
     return env
 
 
@@ -150,7 +153,8 @@ def subprocess_run_one(
         env = {**os.environ, **env_for(config), "MAVERICK_CONFIG_OVERLAY": str(overlay)}
         try:
             proc = subprocess.run(  # noqa: S603 -- launching our own CLI, not a tool shell
-                [python, "-m", "maverick.cli", "start", prompt],
+                [python, "-m", "maverick.cli", "start",
+                 *(["--"] if prompt.startswith("-") else []), prompt],
                 env=env, capture_output=True, text=True, timeout=timeout, cwd=workdir,
             )
         except subprocess.TimeoutExpired as e:

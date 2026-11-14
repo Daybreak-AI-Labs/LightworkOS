@@ -1141,7 +1141,7 @@ class QdrantStore:
             )
 
     def _cname(self, collection: str) -> str:
-        return f"{self._namespace}__{collection}"
+        return f"{self._namespace}__{collection}".replace(":", "_")
 
     def _ensure(self, collection: str, provider_call) -> str:
         from qdrant_client import models
