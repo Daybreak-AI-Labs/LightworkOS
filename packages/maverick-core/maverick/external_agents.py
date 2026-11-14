@@ -340,8 +340,9 @@ def enroll(
     Creates/replaces the managed Agent Trust entry (direction ``inbound`` —
     the agent calls us; we never dial an enrolled foreign runtime), registers
     the agent on the fleet-memory roster when that plane is enabled, and
-    stamps the enrollment metadata sidecar. Returns a summary; raises
-    :class:`ExternalAgentsError` on bad input."""
+    stamps the enrollment metadata sidecar. Re-enrolling keeps every ceiling
+    (tools, risk, dollar and wall caps, data scopes) it does not set. Returns
+    a summary; raises :class:`ExternalAgentsError` on bad input."""
     from .agent_trust import AgentTrustError, put_agent
     platform = str(platform or "").strip().lower()
     if platform not in PLATFORMS:
@@ -418,7 +419,9 @@ def enroll(
             "period": budget_period,
             "period_key": prior.get("period_key") or _month_key(),
             "period_spent": float(prior.get("period_spent") or 0.0),
-            "tool_risks": tool_risks,
+            # A re-enrollment that names no tools keeps the allow-list (see
+            # agent_trust.put_agent), so it keeps the tools' ratings too.
+            "tool_risks": tool_risks if tool_names else dict(prior.get("tool_risks") or {}),
             "run_keys": dict(prior.get("run_keys") or {}),
             "denials": list(prior.get("denials") or []),
             "contained": bool(prior.get("contained")),

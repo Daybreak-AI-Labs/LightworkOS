@@ -866,6 +866,27 @@ def attenuate_agent(
         return persisted, created_overlay
 
 
+_CEILING_FIELDS = (
+    "allow_tools", "deny_tools", "max_risk", "max_dollars", "max_wall_seconds",
+    "data_scopes",
+)
+
+
+def _keep_unrequested_ceilings(clean: dict, prior: dict | None, agent_id: str) -> None:
+    """Carry every ceiling the re-enrollment did not set from the current entry.
+
+    An absent ceiling is not a request to lift it: an empty allow-list means
+    allow-all, and a missing risk or dollar cap means none. The current entry
+    is the managed one, or else the config.toml one the overlay would shadow."""
+    current = prior
+    if current is None:
+        existing = load_registry(strict=True).get(agent_id)
+        current = _entry_from_agent(existing) if existing is not None else {}
+    for field in _CEILING_FIELDS:
+        if field not in clean and current.get(field) not in (None, "", [], {}):
+            clean[field] = current[field]
+
+
 def put_agent(entry: dict, *, preserve_existing_identity: bool = False) -> TrustedAgent:
     """Add or replace a managed agent (by ``id``). Returns the parsed agent.
 
@@ -901,6 +922,8 @@ def put_agent(entry: dict, *, preserve_existing_identity: bool = False) -> Trust
                     clean[field] = prior[field]
                 else:
                     clean.pop(field, None)
+        if preserve_existing_identity:
+            _keep_unrequested_ceilings(clean, prior, agent.id)
         if prior is not None and prior.get("revoked") is True:
             # Generic trust edits must not be an unguarded restore path either.
             # Only the explicit revocation workflow may clear this flag.

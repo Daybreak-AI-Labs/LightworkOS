@@ -518,6 +518,22 @@ def test_reenrollment_preserves_credentials_and_revocation():
                       "revoked": False}).revoked is True
 
 
+def test_reenrollment_without_ceilings_keeps_them():
+    """A description edit must not lift the allow-list (empty == allow-all),
+    the risk ceiling or the dollar cap."""
+    xa.enroll("bot1", "custom", allow_tools=["read_file:low"], deny_tools=["shell"],
+              max_risk="low", max_dollars=5, max_wall_seconds=60, data_scopes=["sales"])
+    xa.enroll("bot1", "custom", description="new desc")
+    agent = lookup("bot1")
+    assert agent.allow_tools == frozenset({"read_file"})
+    assert agent.deny_tools == frozenset({"shell"})
+    assert (agent.max_risk, agent.max_dollars, agent.max_wall_seconds) == ("low", 5, 60)
+    assert agent.data_scopes == frozenset({"sales"})
+    assert xa._load_sidecar()["bot1"]["tool_risks"] == {"read_file": "low"}
+    xa.enroll("bot1", "custom", max_dollars=9)                 # an explicit change applies
+    assert lookup("bot1").max_dollars == 9 and lookup("bot1").max_risk == "low"
+
+
 def test_disabled_plane_refuses_traffic(monkeypatch):
     _enroll()
     monkeypatch.delenv("MAVERICK_EXTERNAL_AGENTS", raising=False)
