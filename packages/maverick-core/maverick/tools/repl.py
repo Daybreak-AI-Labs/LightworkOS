@@ -20,24 +20,29 @@ from typing import Any
 
 from . import Tool
 
-#: Session ids, keyed by goal, for the life of this registry. A goal-less
-#: run (CLI one-shot, benchmark) shares the ``None`` slot.
-_SESSIONS: dict[int | None, str] = {}
+#: Session ids, keyed by goal and principal, for the life of this registry.
+#: A goal-less run (CLI one-shot, benchmark) uses goal ``None``; keying on the
+#: principal too keeps two principals in such a run out of each other's
+#: kernel state.
+_SESSIONS: dict[tuple[int | None, str], str] = {}
 
 
 def _session_for(goal_id: int | None, principal: str) -> str:
     from .. import governed_repl
-    session_id = _SESSIONS.get(goal_id)
+    key = (goal_id, principal)
+    session_id = _SESSIONS.get(key)
     if session_id is not None:
         # A session whose directory was cleaned up underneath us (operator
-        # wipe, tmpdir reaper) must not wedge the tool for the whole run.
+        # wipe, tmpdir reaper), or that was closed, must not wedge the tool
+        # for the whole run.
         try:
-            governed_repl.transcript(session_id)
-            return session_id
+            if not governed_repl.session_info(session_id).get("closed"):
+                return session_id
         except governed_repl.ReplError:
-            _SESSIONS.pop(goal_id, None)
+            pass
+        _SESSIONS.pop(key, None)
     session_id = governed_repl.open_session(goal_id, principal=principal)
-    _SESSIONS[goal_id] = session_id
+    _SESSIONS[key] = session_id
     return session_id
 
 

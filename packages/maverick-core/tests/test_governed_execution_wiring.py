@@ -72,6 +72,20 @@ def test_repl_tool_executes_and_keeps_state(monkeypatch):
     assert "8" in tool.fn({"code": "print(carried)"})
 
 
+def test_repl_sessions_are_per_principal_and_replaced_when_closed(monkeypatch):
+    """A goal-less run shared one kernel across principals, and a closed
+    session passed the liveness probe and wedged the tool."""
+    monkeypatch.setenv("MAVERICK_REPL", "1")
+    from maverick import config, governed_repl
+    config.reset_config_cache()
+    from maverick.tools import repl as repl_tool
+    repl_tool._SESSIONS.clear()
+    alice = repl_tool._session_for(None, "alice")
+    assert repl_tool._session_for(None, "bob") != alice
+    governed_repl.close_session(alice)
+    assert repl_tool._session_for(None, "alice") != alice
+
+
 def test_repl_tool_returns_governance_refusals_as_text(monkeypatch):
     """A refusal is a result the model should read and adapt to, not an
     exception that kills the turn."""
