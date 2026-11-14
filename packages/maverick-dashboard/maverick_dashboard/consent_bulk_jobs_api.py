@@ -328,12 +328,8 @@ def _public_readiness(value: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def create_consent_bulk_jobs_router(  # noqa: C901, PLR0915
-    dependencies: ConsentBulkJobsDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or ConsentBulkJobsDependencies()
-    router = APIRouter(prefix="/consent/bulk-jobs", tags=["consent-bulk-jobs"])
-
+def _consent_bulk_jobs_probes_routes(deps):
+    """Bind probes and related router operations."""
     def probes(request: Request, tenant: str) -> dict[str, Any]:
         enabled_probe = _dependency(
             request,
@@ -461,7 +457,11 @@ def create_consent_bulk_jobs_router(  # noqa: C901, PLR0915
                 status_code=503,
                 detail="consent bulk-job operation failed",
             ) from exc
+    return call_state, composition, composition_state, probes
 
+
+def _consent_bulk_jobs_call_routes(call_state, composition_state, probes, router):
+    """Bind call and related router operations."""
     async def call(ops, function, *args, **kwargs):
         return await run_in_threadpool(call_state, ops, function, *args, **kwargs)
 
@@ -600,7 +600,13 @@ def create_consent_bulk_jobs_router(  # noqa: C901, PLR0915
         result = await run_in_threadpool(controls.submit, request, body, "export_receipts")
         _secure(response)
         return result
+    return call, controls, require_admin, require_audit
 
+
+def _consent_bulk_jobs_create_action_routes(
+    call, composition, controls, require_admin, require_audit, router,
+):
+    """Bind create action and related router operations."""
     @router.post("/actions", status_code=201)
     async def create_action(
         request: Request,
@@ -849,6 +855,21 @@ def create_consent_bulk_jobs_router(  # noqa: C901, PLR0915
         )
         _secure(response)
         return result
+
+
+def create_consent_bulk_jobs_router(
+    dependencies: ConsentBulkJobsDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or ConsentBulkJobsDependencies()
+    router = APIRouter(prefix="/consent/bulk-jobs", tags=["consent-bulk-jobs"])
+
+    call_state, composition, composition_state, probes = _consent_bulk_jobs_probes_routes(deps)
+    (call, controls, require_admin, require_audit) = _consent_bulk_jobs_call_routes(
+        call_state, composition_state, probes, router,
+    )
+    _consent_bulk_jobs_create_action_routes(
+        call, composition, controls, require_admin, require_audit, router,
+    )
 
     return router
 

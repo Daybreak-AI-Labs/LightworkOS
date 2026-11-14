@@ -2600,7 +2600,121 @@ def coerce(setting: Setting, value: object) -> object:
     return result
 
 
-def _coerce_value(setting: Setting, value: object) -> object:  # noqa: C901 - one branch per control
+def _coerce_value_select(setting: Setting, value: object) -> object:
+    label = setting.label
+    allowed = {v for v, _ in setting.choices}
+    text = str(value) if not isinstance(value, bool) and value is not None else None
+    if text is None or text not in allowed:
+        raise SettingError(f"{label}: choose one of the listed options.")
+    if _is_number(setting.default):
+        return int(text)
+    return text
+
+
+def _coerce_value_multiselect(setting: Setting, value: object) -> object:
+    label = setting.label
+    if not isinstance(value, list) or len(value) > len(setting.choices):
+        raise SettingError(f"{label}: choose from the listed options.")
+    allowed = [v for v, _ in setting.choices]
+    picked = []
+    for item in value:
+        if not isinstance(item, str) or item not in allowed:
+            raise SettingError(f"{label}: choose from the listed options.")
+        if item not in picked:
+            picked.append(item)
+    # Nothing ticked means "stop setting this here": an empty list would
+    # otherwise read as "allow none" to the kernel.
+    return sorted(picked, key=allowed.index) or None
+
+
+def _coerce_value_number(setting: Setting, value: object) -> object:
+    label = setting.label
+    if value is None or value == "":
+        if setting.default is None:
+            return None
+        raise SettingError(f"{label}: enter a number.")
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError as exc:
+            raise SettingError(f"{label}: enter a number.") from exc
+    if not _is_number(value) or not math.isfinite(float(value)):
+        raise SettingError(f"{label}: enter a number.")
+    shown = float(value)
+    if setting.minimum is not None and shown < setting.minimum:
+        raise SettingError(f"{label}: enter at least {_fmt(setting.minimum)}.")
+    if setting.maximum is not None and shown > setting.maximum:
+        raise SettingError(f"{label}: enter at most {_fmt(setting.maximum)}.")
+    number = shown * setting.scale
+    if setting.scale != 1.0 and abs(number - round(number)) < 1e-6:
+        number = float(round(number))
+    elif setting.scale < 1.0:
+        # The page shows four decimal places; the stored value needs those
+        # plus the scale's own (57 percent is 0.57, not 0.5700000000000001).
+        number = round(number, 4 + math.ceil(-math.log10(setting.scale)))
+    if setting.integer:
+        if number != int(number):
+            raise SettingError(f"{label}: enter a whole number.")
+        number = int(number)
+    elif isinstance(setting.default, int) and not isinstance(setting.default, bool) \
+            and number == int(number):
+        number = int(number)
+    return number
+
+
+def _coerce_value_text(setting: Setting, value: object) -> object:
+    label = setting.label
+    control = setting.control
+    if not isinstance(value, str):
+        raise SettingError(f"{label}: enter text.")
+    text = value.strip()
+    if len(text) > setting.max_length:
+        raise SettingError(f"{label}: use at most {setting.max_length} characters.")
+    if control == "secret" and not text:
+        raise SettingError(f"{label}: enter a value, or use Reset to remove it.")
+    if setting.pattern and not re.fullmatch(setting.pattern, text):
+        raise SettingError(f"{label}: this value is not in the expected form.")
+    # An emptied text box means "stop setting this here".
+    return text or None
+
+
+def _coerce_value_rate(setting: Setting, value: object) -> object:
+    label = setting.label
+    if value is None or value == "":
+        return None
+    if not isinstance(value, dict):
+        raise SettingError(f"{label}: enter how many and how often.")
+    count, seconds = value.get("count"), value.get("seconds")
+    if not (_is_number(count) and _is_number(seconds)) or count != int(count) \
+            or seconds != int(seconds) or not 1 <= count <= 100000 \
+            or not 1 <= seconds <= 86400:
+        raise SettingError(f"{label}: enter a whole number of times and a period.")
+    return f"{int(count)}/{int(seconds)}"
+
+
+def _coerce_value_list(setting: Setting, value: object) -> object:
+    label = setting.label
+    if not isinstance(value, list) or len(value) > setting.max_items:
+        raise SettingError(f"{label}: use at most {setting.max_items} entries.")
+    items: list[str] = []
+    for raw in value:
+        if not isinstance(raw, str):
+            raise SettingError(f"{label}: each entry must be text.")
+        item = raw.strip()
+        if not item:
+            continue
+        if len(item) > setting.max_length or (
+            setting.pattern and not re.fullmatch(setting.pattern, item)
+        ):
+            raise SettingError(f"{label}: each entry must be {setting.item_error}.")
+        if item not in items:
+            items.append(item)
+    if not items and setting.empty_unset:
+        return None
+    return items
+
+
+def _coerce_value(setting: Setting, value: object) -> object:
     control = setting.control
     label = setting.label
     if control == "toggle":
@@ -2608,58 +2722,11 @@ def _coerce_value(setting: Setting, value: object) -> object:  # noqa: C901 - on
             raise SettingError(f"{label}: choose on or off.")
         return value
     if control == "select":
-        allowed = {v for v, _ in setting.choices}
-        text = str(value) if not isinstance(value, bool) and value is not None else None
-        if text is None or text not in allowed:
-            raise SettingError(f"{label}: choose one of the listed options.")
-        if _is_number(setting.default):
-            return int(text)
-        return text
+        return _coerce_value_select(setting, value)
     if control == "multiselect":
-        if not isinstance(value, list) or len(value) > len(setting.choices):
-            raise SettingError(f"{label}: choose from the listed options.")
-        allowed = [v for v, _ in setting.choices]
-        picked = []
-        for item in value:
-            if not isinstance(item, str) or item not in allowed:
-                raise SettingError(f"{label}: choose from the listed options.")
-            if item not in picked:
-                picked.append(item)
-        # Nothing ticked means "stop setting this here": an empty list would
-        # otherwise read as "allow none" to the kernel.
-        return sorted(picked, key=allowed.index) or None
+        return _coerce_value_multiselect(setting, value)
     if control == "number":
-        if value is None or value == "":
-            if setting.default is None:
-                return None
-            raise SettingError(f"{label}: enter a number.")
-        if isinstance(value, str):
-            try:
-                value = float(value)
-            except ValueError as exc:
-                raise SettingError(f"{label}: enter a number.") from exc
-        if not _is_number(value) or not math.isfinite(float(value)):
-            raise SettingError(f"{label}: enter a number.")
-        shown = float(value)
-        if setting.minimum is not None and shown < setting.minimum:
-            raise SettingError(f"{label}: enter at least {_fmt(setting.minimum)}.")
-        if setting.maximum is not None and shown > setting.maximum:
-            raise SettingError(f"{label}: enter at most {_fmt(setting.maximum)}.")
-        number = shown * setting.scale
-        if setting.scale != 1.0 and abs(number - round(number)) < 1e-6:
-            number = float(round(number))
-        elif setting.scale < 1.0:
-            # The page shows four decimal places; the stored value needs those
-            # plus the scale's own (57 percent is 0.57, not 0.5700000000000001).
-            number = round(number, 4 + math.ceil(-math.log10(setting.scale)))
-        if setting.integer:
-            if number != int(number):
-                raise SettingError(f"{label}: enter a whole number.")
-            number = int(number)
-        elif isinstance(setting.default, int) and not isinstance(setting.default, bool) \
-                and number == int(number):
-            number = int(number)
-        return number
+        return _coerce_value_number(setting, value)
     if control == "path":
         return _coerce_path(setting, value)
     if control == "picks":
@@ -2679,47 +2746,11 @@ def _coerce_value(setting: Setting, value: object) -> object:  # noqa: C901 - on
     if control == "text" and setting.workspace_segment:
         return _coerce_workspace_address(setting, value)
     if control in {"text", "secret"}:
-        if not isinstance(value, str):
-            raise SettingError(f"{label}: enter text.")
-        text = value.strip()
-        if len(text) > setting.max_length:
-            raise SettingError(f"{label}: use at most {setting.max_length} characters.")
-        if control == "secret" and not text:
-            raise SettingError(f"{label}: enter a value, or use Reset to remove it.")
-        if setting.pattern and not re.fullmatch(setting.pattern, text):
-            raise SettingError(f"{label}: this value is not in the expected form.")
-        # An emptied text box means "stop setting this here".
-        return text or None
+        return _coerce_value_text(setting, value)
     if control == "rate":
-        if value is None or value == "":
-            return None
-        if not isinstance(value, dict):
-            raise SettingError(f"{label}: enter how many and how often.")
-        count, seconds = value.get("count"), value.get("seconds")
-        if not (_is_number(count) and _is_number(seconds)) or count != int(count) \
-                or seconds != int(seconds) or not 1 <= count <= 100000 \
-                or not 1 <= seconds <= 86400:
-            raise SettingError(f"{label}: enter a whole number of times and a period.")
-        return f"{int(count)}/{int(seconds)}"
+        return _coerce_value_rate(setting, value)
     if control == "list":
-        if not isinstance(value, list) or len(value) > setting.max_items:
-            raise SettingError(f"{label}: use at most {setting.max_items} entries.")
-        items: list[str] = []
-        for raw in value:
-            if not isinstance(raw, str):
-                raise SettingError(f"{label}: each entry must be text.")
-            item = raw.strip()
-            if not item:
-                continue
-            if len(item) > setting.max_length or (
-                setting.pattern and not re.fullmatch(setting.pattern, item)
-            ):
-                raise SettingError(f"{label}: each entry must be {setting.item_error}.")
-            if item not in items:
-                items.append(item)
-        if not items and setting.empty_unset:
-            return None
-        return items
+        return _coerce_value_list(setting, value)
     if control == "keys":
         return _coerce_keys(setting, value)
     if control == "table":

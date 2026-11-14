@@ -344,12 +344,8 @@ class GovernanceAgentDependencies:
         self.execution_token_resolver = execution_token_resolver
 
 
-def create_governance_agents_router(  # noqa: C901 - explicit endpoint trust boundaries
-    dependencies: GovernanceAgentDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or GovernanceAgentDependencies()
-    router = APIRouter(prefix="/governance-agents", tags=["governance-agents"])
-
+def _governance_agents_authority_routes(deps):
+    """Bind authority and related router operations."""
     def authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
@@ -448,7 +444,11 @@ def create_governance_agents_router(  # noqa: C901 - explicit endpoint trust bou
                 status_code=403,
                 detail="governance-agent kind is disabled by tenant configuration",
             )
+    return authority, require_agent_enabled
 
+
+def _governance_agents_call_routes(authority, deps, require_agent_enabled, router):
+    """Bind call and related router operations."""
     async def call(ops, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
@@ -724,7 +724,13 @@ def create_governance_agents_router(  # noqa: C901 - explicit endpoint trust bou
                 **payload,
             )
         )
+    return call, dispatcher_resolver
 
+
+def _governance_agents_list_policies_routes(
+    authority, call, dispatcher_resolver, require_agent_enabled, router,
+):
+    """Bind list policies and related router operations."""
     @router.get("/policies")
     async def list_policies(
         request: Request,
@@ -893,7 +899,11 @@ def create_governance_agents_router(  # noqa: C901 - explicit endpoint trust bou
                 detail="governance-agent reference maintenance is unavailable",
             )
         return maintenance
+    return reference_maintenance
 
+
+def _governance_agents_maintenance_result_routes(authority, call, reference_maintenance, router):
+    """Bind maintenance result and related router operations."""
     async def maintenance_result(
         request: Request,
         method: str,
@@ -1053,6 +1063,22 @@ def create_governance_agents_router(  # noqa: C901 - explicit endpoint trust bou
         result = _jsonable(await call(ops, store.verify_integrity, tenant))
         result["valid"] = True
         return result
+
+
+def create_governance_agents_router(
+    dependencies: GovernanceAgentDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or GovernanceAgentDependencies()
+    router = APIRouter(prefix="/governance-agents", tags=["governance-agents"])
+
+    authority, require_agent_enabled = _governance_agents_authority_routes(deps)
+    (call, dispatcher_resolver) = _governance_agents_call_routes(
+        authority, deps, require_agent_enabled, router,
+    )
+    reference_maintenance = _governance_agents_list_policies_routes(
+        authority, call, dispatcher_resolver, require_agent_enabled, router,
+    )
+    _governance_agents_maintenance_result_routes(authority, call, reference_maintenance, router)
 
     return router
 
