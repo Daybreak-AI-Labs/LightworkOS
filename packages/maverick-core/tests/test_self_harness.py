@@ -4495,6 +4495,32 @@ def test_cycle_wires_paraphraser_when_metamorphic_on(monkeypatch, tmp_path, stor
     assert seen.get("metamorphic_fn") is None                     # knob off -> not wired
 
 
+def test_cycle_holds_when_enabled_metamorphic_check_cannot_be_built(monkeypatch, tmp_path, store):
+    # Outside risk_limited too: an operator-enabled check is never dropped.
+    _allow_provider_egress(monkeypatch)
+    from maverick import config, llm, self_harness_eval
+    from maverick import self_improvement_runner as runner
+    _enable(monkeypatch)
+    monkeypatch.setattr(sh, "_store_path", lambda: store)
+    cpath = tmp_path / "corpus.json"
+    cpath.write_text(json.dumps(
+        {"M": [{"goal": f"g{i}", "expected": "x"} for i in range(4)]}))
+    monkeypatch.setattr(llm, "model_for_role", lambda role: "role-model")
+    monkeypatch.setattr(
+        self_harness_eval, "llm_paraphraser",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("unavailable")))
+    passes = []
+    monkeypatch.setattr(runner, "run_self_harness_pass",
+                        lambda *a, **k: passes.append(k) or sh.SelfHarnessReport(model_id="M"))
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {
+        "self_harness": {"enable": True, "eval_corpus": str(cpath),
+                         "metamorphic": True, "risk_limited": False}})
+    report, _ = runner.run_self_harness_cycle(reflexions=[], model_id="M", retire=False)
+    assert passes == []
+    assert any("could not construct the authorized paraphraser" in reason
+               for reason in report.skipped)
+
+
 def test_pass_fills_metamorphic_tolerance_from_config(monkeypatch, store):
     from maverick import config
     from maverick import self_improvement_runner as runner

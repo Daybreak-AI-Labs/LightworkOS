@@ -87,6 +87,7 @@ def should_retire(name: str, tracker: ToolOutcomeTracker, *,
 
 def review_generated_tools(names, tracker: ToolOutcomeTracker, *, baseline_success: float = 0.5,
                            rollback_for: Callable[[str], object] | None = None,
+                           capability_widens_for: Callable[[str], bool | None] | None = None,
                            controller=None) -> dict[str, str]:
     """For each synthesized tool decide promote / retire / hold via the gate.
 
@@ -94,15 +95,20 @@ def review_generated_tools(names, tracker: ToolOutcomeTracker, *, baseline_succe
     ``"hold"``. ``retire`` is advisory -- the caller removes the tool file (the
     rollback handle makes that reversible). Promotion runs through the full
     controller, so a tool that beats baseline but would widen authority is held.
+    ``capability_widens_for(name)`` supplies the caller's capability evidence;
+    without it a tool's non-escalation is unproven and the tool is held
+    (see :func:`si_producers.propose_tool`).
     """
     rollback_for = rollback_for or (lambda n: f"retire:{n}")
+    capability_widens_for = capability_widens_for or (lambda _n: None)
     out: dict[str, str] = {}
     for name in names:
         if should_retire(name, tracker):
             out[name] = "retire"
             continue
         verdict = propose_tool(name, tracker, baseline_success,
-                               rollback=rollback_for(name), capability_widens=False,
+                               rollback=rollback_for(name),
+                               capability_widens=capability_widens_for(name),
                                controller=controller)
         out[name] = "promoted" if verdict.ok else "hold"
     return out
@@ -1555,15 +1561,15 @@ def run_self_harness_cycle(  # noqa: C901 - one fail-closed orchestration bounda
                     _evaluator_llm(bound_metamorphic_model, dispatch_guard), budget=eval_budget,
                     authorize_sources=lambda: ev.require_cases_current(source_cases))
             except Exception:
-                log.debug("self-harness paraphraser construction failed",
-                          exc_info=True)
-                if st.get("risk_limited"):
-                    report = self_harness.SelfHarnessReport(
-                        model_id=str(model_id or ""))
-                    report.skipped.append(
-                        "risk-limited metamorphic evaluation could not construct "
-                        "the authorized paraphraser")
-                    return held_qualification(report)
+                # The operator enabled this check; never drop it silently.
+                log.warning("self-harness paraphraser construction failed",
+                            exc_info=True)
+                report = self_harness.SelfHarnessReport(
+                    model_id=str(model_id or ""))
+                report.skipped.append(
+                    "metamorphic evaluation could not construct "
+                    "the authorized paraphraser")
+                return held_qualification(report)
         # Keep every physical provider attempt in this cycle discoverable under
         # one exact work item.  Callers may bind an authoritative business work
         # item; scheduled/local cycles receive a fresh opaque operation id.
@@ -1789,8 +1795,10 @@ def _transfer_context(st: dict, corpus_path: str, *, evaluation_budget=None):
             validate_kwargs["metamorphic_fn"] = _memo_paraphraser(
                 ev.llm_paraphraser(LLM(model_for_role("summarizer")),
                                    budget=budget, authorize_sources=lambda: ev.require_cases_current(source_cases)))
-        except Exception:  # pragma: no cover -- no paraphraser = check off
-            log.debug("transfer paraphraser construction failed", exc_info=True)
+        except Exception:
+            # The operator enabled the check: evaluate no target without it.
+            log.warning("transfer paraphraser construction failed", exc_info=True)
+            return (lambda _model: None), validate_kwargs
     return eval_for_target, validate_kwargs
 
 
