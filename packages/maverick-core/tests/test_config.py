@@ -1715,3 +1715,16 @@ def test_a_knowledge_sources_table_that_is_not_a_table_fails_closed(monkeypatch)
     monkeypatch.setattr(config_module, "load_config", lambda: {"knowledge_sources": "64"})
     with pytest.raises(config_module.KnowledgeSourcesConfigError, match="knowledge_sources must be a table"):
         config_module.get_knowledge_sources()
+
+
+def test_string_switches_parse_as_booleans_not_truthiness(monkeypatch):
+    monkeypatch.setattr(config_module, "load_config", lambda *a, **k: {
+        "capabilities": {"code_exec": "false", "computer_use": "no"},
+        "autonomy": {"enable": "off"},
+        "skills": {"require_signed": "maybe"},
+    })
+    caps = config_module.get_capabilities()
+    assert caps["code_exec"] is False and caps["computer_use"] is False
+    assert config_module.get_autonomy()["enable"] is False
+    # An unrecognized value on a protective switch keeps the protection on.
+    assert config_module.get_skills()["require_signed"] is True

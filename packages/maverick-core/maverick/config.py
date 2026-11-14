@@ -47,6 +47,7 @@ from typing import Any
 
 # Initialize encryption before a worker resolves sealed dashboard settings.
 from . import crypto_at_rest
+from ._envparse import coerce_bool
 from .config_contracts import BOOLEAN_SETTINGS, INTEGER_SETTINGS
 from .file_lock import _windows_extended_path, atomic_read_bytes
 
@@ -1462,19 +1463,20 @@ def get_deferred_tools(*, config: dict | None = None, default: bool = True) -> b
 
 def get_capabilities() -> dict:
     """Return the [capabilities] section (computer_use / browser / web_search /
-    mobile_tools / ros). These gate the optional high-impact tools in
-    ``tools.base_registry``; all default off."""
+    mobile_tools / ros / code_exec / deferred_tools). These gate the optional
+    high-impact tools in ``tools.base_registry``; all default off except
+    ``deferred_tools``, which defaults on."""
     current = load_config()
     cfg = current.get("capabilities", {}) or {}
     return {
-        "computer_use": bool(cfg.get("computer_use", False)),
-        "browser": bool(cfg.get("browser", False)),
-        "web_search": bool(cfg.get("web_search", False)),
-        "mobile_tools": bool(cfg.get("mobile_tools", False)),
-        "ros": bool(cfg.get("ros", False)),
+        "computer_use": coerce_bool(cfg.get("computer_use"), False),
+        "browser": coerce_bool(cfg.get("browser"), False),
+        "web_search": coerce_bool(cfg.get("web_search"), False),
+        "mobile_tools": coerce_bool(cfg.get("mobile_tools"), False),
+        "ros": coerce_bool(cfg.get("ros"), False),
         # Programmatic tool calling: a sandboxed Python script that orchestrates
         # declared tool calls (also enableable via MAVERICK_CODE_EXEC).
-        "code_exec": bool(cfg.get("code_exec", False)),
+        "code_exec": coerce_bool(cfg.get("code_exec"), False),
         # Deferred connector loading (default on); agent.py reads it from this
         # dict, so without it here the documented knob could never turn it off.
         "deferred_tools": get_deferred_tools(config=current),
@@ -1563,11 +1565,11 @@ def get_features() -> dict:
     """
     cfg = load_config().get("features", {}) or {}
     return {
-        "skills": bool(cfg.get("skills", True)),
-        "world_model": bool(cfg.get("world_model", True)),
-        "streaming": bool(cfg.get("streaming", True)),
-        "pack_editing": bool(cfg.get("pack_editing", True)),
-        "role_editing": bool(cfg.get("role_editing", True)),
+        "skills": coerce_bool(cfg.get("skills"), True),
+        "world_model": coerce_bool(cfg.get("world_model"), True),
+        "streaming": coerce_bool(cfg.get("streaming"), True),
+        "pack_editing": coerce_bool(cfg.get("pack_editing"), True),
+        "role_editing": coerce_bool(cfg.get("role_editing"), True),
         "draft_recovery": cfg.get("draft_recovery", True) is True,
         "personal_preferences": cfg.get("personal_preferences", True) is True,
         "configuration_profiles": cfg.get("configuration_profiles", True) is True,
@@ -1617,8 +1619,8 @@ def get_features() -> dict:
             not config_source_errors() and cfg.get("personal_data_controls", False) is True
         ),
         "copilot_operations": (not config_source_errors() and cfg.get("copilot_operations", False) is True),
-        "scheduling": bool(cfg.get("scheduling", True)),
-        "triggers": bool(cfg.get("triggers", True)),
+        "scheduling": coerce_bool(cfg.get("scheduling"), True),
+        "triggers": coerce_bool(cfg.get("triggers"), True),
     }
 
 
@@ -1848,10 +1850,11 @@ def get_skills() -> dict:
     pubkeys = cfg.get("trusted_pubkeys", [])
     return {
         "trusted_pubkeys": [str(k) for k in pubkeys] if isinstance(pubkeys, list) else [],
-        "require_signed": bool(cfg.get("require_signed", False)),
+        "require_signed": (cfg.get("require_signed") is not None
+            and coerce_bool(cfg.get("require_signed"), True)),  # an unrecognized value keeps the check on
         "require_signed_catalog": True,
         # Recall the shipped first-party skills library at runtime (opt-out).
-        "builtin": bool(cfg.get("builtin", True)),
+        "builtin": coerce_bool(cfg.get("builtin"), True),
         # Relevance GATES on skill recall. Precision >> recall for agent memory:
         # weakly-relevant retrieved context regresses the agent (hard negatives
         # flip answers -- GSM-DC/GSM-IC; large/noisy memory degrades -- Lifelong-
@@ -1911,7 +1914,7 @@ def get_knowledge() -> dict:
     """
     cfg = load_config().get("knowledge", {}) or {}
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         "embedder": cfg.get("embedder", "hosted"),
         "store": cfg.get("store", "sqlite"),
         "model": cfg.get("model", "voyage-3"),
@@ -2226,10 +2229,10 @@ def get_governed_connectors() -> dict:
     restore_points = (
         env_restore.strip().lower() in ("1", "true", "yes", "on")
         if env_restore is not None
-        else bool(cfg.get("restore_points", True))
+        else coerce_bool(cfg.get("restore_points"), True)
     )
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         "connectors": names,
         # Standing approver of record for governed connector writes in the live
         # tool path (the agent can't self-approve). Env: MAVERICK_GOVERNED_APPROVER.
@@ -2276,7 +2279,7 @@ def get_self_learning(*, config: dict[str, Any] | None = None) -> dict:
         # skills + synthesized tools its workflow needs (maverick.provision).
         # On by default once self-learning is accepted; still bounded by
         # ``max_acquisitions`` and the per-tool consent gate.
-        "provision_packs": bool(cfg.get("provision_packs", True)),
+        "provision_packs": coerce_bool(cfg.get("provision_packs"), True),
         # Agent-proposed MCP-server acquisition is the highest-trust knob:
         # even gated behind catalog-pinning + operator consent it can start
         # a third-party subprocess, so it ships OFF independently of the
@@ -2622,18 +2625,18 @@ def get_autonomy() -> dict:
         return max(0.0, min(1.0, v))
 
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         # Plan confirmation: show the plan and wait for a person before a task's first
         # action with an outside effect. Independent of ``enable``; off by default.
         "confirm_plan": cfg.get("confirm_plan", False) is True,
         "min_confidence": _clamp01("min_confidence", 0.5),
         "disagreement_high": _clamp01("disagreement_high", 0.5),
-        "escalate_verification": bool(cfg.get("escalate_verification", True)),
-        "tighten_on_low_trust": bool(cfg.get("tighten_on_low_trust", True)),
+        "escalate_verification": coerce_bool(cfg.get("escalate_verification"), True),
+        "tighten_on_low_trust": coerce_bool(cfg.get("tighten_on_low_trust"), True),
         # Independent axis (resolved without ``enable``): assume-and-proceed
         # instead of blocking on ``ask_user`` when no human can answer
         # (headless / batch / benchmark runs). Default off.
-        "headless_assume": bool(cfg.get("headless_assume", False)),
+        "headless_assume": coerce_bool(cfg.get("headless_assume"), False),
     }
 
 
@@ -2731,10 +2734,11 @@ def get_calibration(*, config: dict[str, Any] | None = None) -> dict:
     except (TypeError, ValueError):
         min_res = 0.0
     return {
-        "enforce": bool(cfg.get("enforce", False)),
+        "enforce": (cfg.get("enforce") is not None
+            and coerce_bool(cfg.get("enforce"), True)),  # an unrecognized value keeps the check on
         "min_samples": _int("min_samples", 20),
         "min_discrimination": max(0.0, min(1.0, min_disc)),
-        "collect_from_coding": bool(cfg.get("collect_from_coding", False)),
+        "collect_from_coding": coerce_bool(cfg.get("collect_from_coding"), False),
         # Reward-laundering interlock floor: freeze learning when the verifier's
         # edge on adversarial probes falls below this fraction of its edge on
         # natural traffic. 0.0 = advisory (measured, never freezes).
@@ -2780,7 +2784,7 @@ def get_adaptive_compute() -> dict:
     except (TypeError, ValueError):
         minw = 1
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         "low_uncertainty": max(0.0, min(1.0, low)),
         "min_width": minw,
     }
@@ -2794,7 +2798,7 @@ def get_search() -> dict:
         n = max(1, int(cfg.get("n", 3)))
     except (TypeError, ValueError):
         n = 3
-    return {"enable": bool(cfg.get("enable", False)), "n": n}
+    return {"enable": coerce_bool(cfg.get("enable"), False), "n": n}
 
 
 def get_skill_synthesis() -> dict:
@@ -2918,7 +2922,7 @@ def get_fleet_memory() -> dict:
     OFF by default: exposing governed memory to third-party agents is an
     explicit trust decision."""
     cfg = load_config().get("fleet_memory", {})
-    return {"enable": bool(cfg.get("enable", False))}
+    return {"enable": coerce_bool(cfg.get("enable"), False)}
 
 
 def get_codebase() -> dict:
@@ -3089,7 +3093,7 @@ def get_external_agents() -> dict:
     if isinstance(raw, str):
         raw = raw.split(",")
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         # Signed-identity enforcement on the gateway: when on, an agent
         # enrolled with a strong credential (pinned Ed25519 pubkey or JWT
         # issuer) may no longer authenticate with its minted bearer alone —
@@ -3183,7 +3187,7 @@ def get_memory() -> dict:
     OFF by default (one extra append per fact change); the live-value read path
     is unchanged when off. Also honored via ``MAVERICK_TEMPORAL_MEMORY=1``."""
     cfg = load_config().get("memory", {})
-    return {"temporal": bool(cfg.get("temporal", False))}
+    return {"temporal": coerce_bool(cfg.get("temporal"), False)}
 
 
 def get_memory_guard() -> dict:
@@ -3196,7 +3200,7 @@ def get_memory_guard() -> dict:
     ``MAVERICK_MEMORY_GUARD=1``."""
     cfg = load_config().get("memory_guard", {})
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         "min_recall_trust": int(cfg.get("min_recall_trust", 1)),
     }
 
@@ -3210,7 +3214,7 @@ def get_fairness_monitor() -> dict:
     ``drift_tolerance`` how far the minimum impact ratio may fall below baseline
     before a drift alert. Also honored via ``MAVERICK_FAIRNESS_MONITOR=1``."""
     cfg = load_config().get("fairness_monitor", {})
-    enabled = bool(cfg.get("enable", False))
+    enabled = coerce_bool(cfg.get("enable"), False)
     flag = env_flag("MAVERICK_FAIRNESS_MONITOR")
     if flag is not None:
         enabled = flag
@@ -3234,8 +3238,8 @@ def get_domains() -> dict:
     """
     cfg = load_config().get("domains", {})
     return {
-        "discipline": bool(cfg.get("discipline", True)),
-        "memory": bool(cfg.get("memory", True)),
+        "discipline": coerce_bool(cfg.get("discipline"), True),
+        "memory": coerce_bool(cfg.get("memory"), True),
     }
 
 
@@ -3264,7 +3268,7 @@ def get_tax() -> dict:
     if not isinstance(keys, list):
         keys = []
     return {
-        "auto_update": bool(cfg.get("auto_update", True)),
+        "auto_update": coerce_bool(cfg.get("auto_update"), True),
         "update_url": str(cfg.get("update_url", "") or "").strip(),
         "check_hours": check_hours,
         "trusted_constants_pubkeys": [str(k).strip() for k in keys
@@ -3311,14 +3315,14 @@ def get_dreaming() -> dict:
             cfg, "enable", governed_learning_default()),
         "min_cluster": _int("min_cluster", 2),
         "max_insights": _int("max_insights", 100),
-        "prune": bool(cfg.get("prune", True)),
+        "prune": coerce_bool(cfg.get("prune"), True),
         "keep_reflexions": _int("keep_reflexions", 500),
         # Shared promotion is disabled by default: department-scoped failures
         # must not be written into globally recallable insights.
-        "promote_shared": bool(cfg.get("promote_shared", False)),
+        "promote_shared": coerce_bool(cfg.get("promote_shared"), False),
         # Mine verifier critiques out of donated trajectory records (empty
         # unless [telemetry] donate_trajectories has produced any).
-        "mine_critiques": bool(cfg.get("mine_critiques", True)),
+        "mine_critiques": coerce_bool(cfg.get("mine_critiques"), True),
         # Insights unconfirmed for this many days retire; 0 = never expire.
         "insight_ttl_days": _nonneg_int("insight_ttl_days", 90),
         # Retire a failure insight once this many NEWER similar successes
@@ -3326,27 +3330,27 @@ def get_dreaming() -> dict:
         "contradiction_successes": _int("contradiction_successes", 2),
         # Fact consolidation deletes operator data, so it remains a separate
         # opt-in inside default-on dreaming.
-        "prune_facts": bool(cfg.get("prune_facts", False)),
+        "prune_facts": coerce_bool(cfg.get("prune_facts"), False),
         "facts_max_age_days": _nonneg_int("facts_max_age_days", 180),
         "facts_cap": _nonneg_int("facts_cap", 2000),
         # Distill explicit user-preference statements into per-user notes.
         # Verbatim cross-conversation preference persistence is a separate
         # privacy decision, not inherited from default-on consolidation.
-        "user_notes": bool(cfg.get("user_notes", False)),
+        "user_notes": coerce_bool(cfg.get("user_notes"), False),
         # Quarantine this cycle's NEW skills while the continuously-tracked
         # benchmark suite is regressing (learning-side canary).
-        "benchmark_gate": bool(cfg.get("benchmark_gate", True)),
+        "benchmark_gate": coerce_bool(cfg.get("benchmark_gate"), True),
         # Learning rollback: snapshot every learned store before a CLI dream
         # cycle mutates it, keeping the last N snapshots.
-        "snapshots": bool(cfg.get("snapshots", True)),
+        "snapshots": coerce_bool(cfg.get("snapshots"), True),
         "snapshot_keep_last": _int("snapshot_keep_last", 5),
         # Dream-time rehearsal (maverick-evolve harness) is a separate trust
         # decision from consolidation: it spends real agent runs. Default off.
-        "rehearse": bool(cfg.get("rehearse", False)),
+        "rehearse": coerce_bool(cfg.get("rehearse"), False),
         "max_rehearsals": _int("max_rehearsals", 3),
         # Forgetting loop: retire learned skills whose recall track record
         # decayed below the floor (after enough attempts to judge).
-        "retire_skills": bool(cfg.get("retire_skills", True)),
+        "retire_skills": coerce_bool(cfg.get("retire_skills"), True),
         "retire_min_uses": _int("retire_min_uses", 5),
         "retire_below": _ratio("retire_below", 0.25),
         # LLM-in-the-loop consolidation: when on (and a provider/key is
@@ -3357,7 +3361,7 @@ def get_dreaming() -> dict:
         # deterministic text. OFF by default -- the LLM-free path is the
         # injection-safe baseline. `llm_consolidation_budget` caps the spend
         # one dream cycle may use enriching insights.
-        "llm_consolidation": bool(cfg.get("llm_consolidation", False)),
+        "llm_consolidation": coerce_bool(cfg.get("llm_consolidation"), False),
         "llm_consolidation_budget": _nonneg_float(
             "llm_consolidation_budget", 1.0
         ),
@@ -3854,7 +3858,7 @@ def get_speculative() -> dict:
             return default
 
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         "draft_model": (str(cfg.get("draft_model", "")).strip() or None),
         "min_confidence": _num("min_confidence", 0.85),
         "min_support": _num("min_support", 8, int),
@@ -3998,9 +4002,10 @@ def knowledge_access_enabled(cfg: dict | None = None) -> bool:
     """
 
     try:
-        loaded = cfg if cfg is not None else load_config()
-        if cfg is None and config_source_errors():
-            return False
+        with single_read(fresh=True):  # this read's own errors, not a later clean one's
+            loaded = cfg if cfg is not None else load_config()
+            if cfg is None and config_source_errors():
+                return False
         override = env_flag("MAVERICK_KNOWLEDGE_ACCESS")
         if override is not None:
             return override
@@ -4038,10 +4043,11 @@ def api_key_settings(cfg: dict | None = None) -> dict:
     """
     out = dict(API_KEY_DEFAULTS)
     try:
-        loaded = cfg if cfg is not None else load_config()
-        if cfg is None and config_source_errors():
-            out["enabled"] = False
-            return out
+        with single_read(fresh=True):  # this read's own errors, not a later clean one's
+            loaded = cfg if cfg is not None else load_config()
+            if cfg is None and config_source_errors():
+                out["enabled"] = False
+                return out
         table = loaded.get("dashboard") if isinstance(loaded, dict) else None
         table = table if isinstance(table, dict) else {}
         enabled = table.get("api_keys", True)
@@ -4109,18 +4115,18 @@ def get_flows() -> dict:
     except (TypeError, ValueError):
         max_node_retries = 5
     return {
-        "enable": bool(cfg.get("enable", False)),
+        "enable": coerce_bool(cfg.get("enable"), False),
         # Opt-in autonomous self-correction: a scheduled pass reverts an applied
         # node-kind rewrite whose grounded outcomes measurably regressed. OFF by
         # default -- surfacing proposals + human apply works without it; this only
         # governs whether the loop is allowed to *undo* a bad change on its own.
-        "auto_evolve": bool(cfg.get("auto_evolve", False)),
+        "auto_evolve": coerce_bool(cfg.get("auto_evolve"), False),
         # Opt-in autonomous forward apply: the loop enacts a self-rewrite proposal
         # (not just reverts a bad one). Strictly gated -- auto_apply_enabled() also
         # requires auto_evolve on for the revert safety net. OFF by default. Without
         # this key here auto_apply could never be read from config (only the env
         # var / a monkeypatch), so the [flows] auto_apply knob was inert.
-        "auto_apply": bool(cfg.get("auto_apply", False)),
+        "auto_apply": coerce_bool(cfg.get("auto_apply"), False),
         # Reviewed, bounded pure operators may replace an agent result only on
         # agreement inside their declared input domain. Explicit boolean opt-in.
         "learned_operators": _strict_config_bool(cfg, "learned_operators", False),
@@ -4182,7 +4188,7 @@ def get_emergent_protocol() -> dict:
     the codec is the identity transform, so a default deployment is unaffected.
     """
     cfg = load_config().get("emergent_protocol", {})
-    return {"enable": bool(cfg.get("enable", False))}
+    return {"enable": coerce_bool(cfg.get("enable"), False)}
 
 
 def get_emergent_codec() -> dict:
@@ -4197,7 +4203,7 @@ def get_emergent_codec() -> dict:
     nothing. Flipping agents to actually *read* codes is a separate, stricter step.
     """
     cfg = load_config().get("emergent_codec", {})
-    return {"enable": bool(cfg.get("enable", False))}
+    return {"enable": coerce_bool(cfg.get("enable"), False)}
 
 
 def get_durable() -> dict:
@@ -4214,7 +4220,7 @@ def get_durable() -> dict:
     except (TypeError, ValueError):
         keep = contract.default
     return {
-        "enabled": bool(cfg.get("enabled", BOOLEAN_SETTINGS["durable.enabled"].default)),
+        "enabled": coerce_bool(cfg.get("enabled"), BOOLEAN_SETTINGS["durable.enabled"].default),
         "keep_last": max(contract.minimum, keep),
     }
 
@@ -4231,7 +4237,7 @@ def get_control_plane() -> dict:
     """
     import os
     cfg = load_config().get("control_plane", {}) or {}
-    enable = bool(cfg.get("enable", False))
+    enable = coerce_bool(cfg.get("enable"), False)
     if os.environ.get("MAVERICK_CONTROL_PLANE", "").strip() == "1":
         enable = True
     return {"enable": enable}
@@ -4265,10 +4271,10 @@ def get_assessments() -> dict:
         return os.environ.get(var, "").strip().lower() in ("0", "false", "no")
 
     return {
-        "doc_discovery": (bool(cfg.get("doc_discovery", True))
+        "doc_discovery": (coerce_bool(cfg.get("doc_discovery"), True)
                           and not _env_off("MAVERICK_ASSESS_DISCOVERY")),
         "sources": sources,
-        "learn": (bool(cfg.get("learn", True))
+        "learn": (coerce_bool(cfg.get("learn"), True)
                   and not _env_off("MAVERICK_ASSESS_LEARN")),
     }
 
@@ -4321,7 +4327,7 @@ def get_value(*, config: dict | None = None) -> dict:
                 "hours_per_task": _pos(ov.get("hours_per_task"), hours),
             }
     return {
-        "enable": bool(cfg.get("enable", True)),
+        "enable": coerce_bool(cfg.get("enable"), True),
         "hourly_rate": rate,
         "hours_per_task": hours,
         "currency": str(cfg.get("currency", "USD") or "USD").upper()[:8],
