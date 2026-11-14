@@ -190,6 +190,19 @@ def test_interrupted_archive_creation_does_not_block_provider_calls():
     assert attempt(budget, 1) is not None
 
 
+def test_existing_history_is_still_read_without_its_marker():
+    from maverick.paths import data_dir
+    from maverick.tenant import _provider_archive
+    budget, settlement = start_budget()
+    provider.settle(attempt(budget, 2), 1)
+    budget.dollars = 1
+    settlement.record()
+    path = data_dir('usage', 'provider_history.sqlite3', tenant='acme')
+    path.with_suffix('.required').unlink()
+    with _provider_archive._database('acme') as db:
+        assert db is not None
+
+
 def test_archive_commit_before_hot_removal_can_replay_without_double_charge(monkeypatch):
     from maverick.tenant import _provider_archive
     budget, settlement = start_budget()
