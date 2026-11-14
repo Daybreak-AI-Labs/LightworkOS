@@ -218,6 +218,10 @@ def test_stacked_write_behind_select_needs_confirm(monkeypatch):
     for sql in (
         "SELECT 1; DELETE FROM users",
         "SELECT * FROM t WHERE x=1; DROP TABLE t",
+        # Dollar quotes and `#` comments must not hide a separator.
+        "select $a$ -- $a$; drop table t",
+        "select $$ ' $$; drop table t; select $$ ' $$",
+        "select 1 # '\n; delete from t where true; select 2 # '",
     ):
         out = database_tool().fn({"op": "query", "sql": sql})
         assert "DRY RUN" in out, sql
