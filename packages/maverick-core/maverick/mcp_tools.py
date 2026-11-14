@@ -200,11 +200,13 @@ def _collect_schema_strings(node, out: list[str], _depth: int = 0) -> bool:
     if _depth > _MAX_SCHEMA_SCAN_DEPTH:
         return False
     if isinstance(node, dict):
-        for v in node.values():
+        for k, v in node.items():
             # Collect EVERY string value, not an allowlist of keys: a hostile
             # server can hide attack text under const / $comment / examples / a
             # custom key, and the agent is shown the whole schema as tool
-            # metadata, so the shield must see all of it.
+            # metadata, so the shield must see all of it -- keys included (a
+            # property name is shown to the model too).
+            out.append(str(k))
             if isinstance(v, str):
                 out.append(v)
             elif isinstance(v, (dict, list)):
