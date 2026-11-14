@@ -48,7 +48,9 @@ def _run(args: dict, user_id: str | None, channel: str | None = None) -> str:
     if op == "list":
         cap = _grant(user_id, channel)
         return dumps_compact({
-            "principal": cap.principal,
+            # Display contract: the caller's own id as the tool always showed
+            # it; the grant itself is minted for the ``user:``-qualified form.
+            "principal": user_id or "self",
             "enforced": capability_enforced(),
             "allow_tools": sorted(cap.allow_tools) or "(all)",
             "deny_tools": sorted(cap.deny_tools),

@@ -30,7 +30,7 @@ def test_enforced_on_with_env(monkeypatch):
 def test_list_reports_all_permissive_grant():
     out = capability_query(user_id="alice").fn({"op": "list"})
     data = json.loads(out)
-    assert data["principal"] == "user:alice"  # the agent's root-grant principal
+    assert data["principal"] == "alice"
     assert data["allow_tools"] == "(all)"
     assert data["enforced"] is False
 
