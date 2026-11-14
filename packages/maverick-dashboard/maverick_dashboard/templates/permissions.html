@@ -24,6 +24,7 @@
              badge='on this computer' if perm.sandbox_warning else 'isolated',
              badge_class='warn' if perm.sandbox_warning else 'ok',
              copy='Work runs ' ~ where ~ '. Network access is ' ~ network ~
+                  ('. Why: ' ~ perm.network_reason if perm.network_reason else '') ~
                   '. Allowed tools still need their connections and setup checked.') }}
   {% endcall %}
   {% if permission_tabs %}{% from "_tabs.html" import tab_bar, panel_attrs %}{{ tab_bar('Permissions views', permission_tabs, '') }}<div {{ panel_attrs('') }}>

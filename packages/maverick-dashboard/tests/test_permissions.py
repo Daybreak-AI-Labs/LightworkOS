@@ -272,3 +272,12 @@ def test_permissions_rejects_unbounded_or_unknown_filters(monkeypatch, tmp_path)
     assert client.get("/api/v1/permissions", params={"per_page": 101}).status_code == 422
     response = client.get("/permissions", params={"state": "invented"})
     assert response.status_code == 400
+
+
+def test_permissions_network_follows_the_kernel_when_config_is_unreadable(monkeypatch, tmp_path):
+    from maverick.sandbox import network_policy
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(network_policy, "unreadable_config", lambda: "tenant.toml")
+    body = _client().get("/api/v1/permissions").json()
+    assert body["network"] == "deny-all"
+    assert "could not be read" in body["network_reason"]

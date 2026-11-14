@@ -9663,10 +9663,12 @@ def _permissions_snapshot() -> dict:
     ]
     sec = cfg.get("security") or {}
     # The enforced network posture ([security] network_policy), normalized, so
-    # the page never shows a label the kernel does not apply.
-    from maverick.sandbox.network_policy import network_posture
+    # the page never shows a label the kernel does not apply. Read as the
+    # kernel reads it: an unreadable configuration blocks the network.
+    from maverick.sandbox.network_policy import network_posture, offline_reason
 
-    snap["network"] = network_posture(cfg)
+    snap["network"] = network_posture()
+    snap["network_reason"] = offline_reason()
 
     try:
         from maverick.runtime_overrides import denied_tools as _overlay
