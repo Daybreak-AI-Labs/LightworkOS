@@ -135,8 +135,8 @@ def current_plan(world=None) -> tuple[list[str], int, int, list[Step]]:
     ``world`` is an open world to read the current version from; without one
     the default SQLite world file is read without opening it as a world, since
     opening a world applies every pending migration (no database yet means
-    nothing is pending). A database that cannot be read raises instead of
-    reading as current. Nothing is planned when the migration table fails its
+    nothing is pending). A database that cannot be read raises RuntimeError
+    instead of reading as current. Nothing is planned when the migration table fails its
     structural lint.
     """
     from .world_model import SCHEMA_VERSION
@@ -159,15 +159,18 @@ def _stored_version() -> int:
     path = default_db_path()
     if not path.exists() or path.stat().st_size == 0:
         return SCHEMA_VERSION  # no DB yet -> nothing pending
-    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10.0)
     try:
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
-                        "AND name='schema_version'").fetchone() is None:
-            return 1  # a legacy world without a version table is v1
-        row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    finally:
-        conn.close()
-    return int(row[0]) if row else 1
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10.0)
+        try:
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='schema_version'").fetchone() is None:
+                return 1  # a legacy world without a version table is v1
+            row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        finally:
+            conn.close()
+        return int(row[0]) if row else 1
+    except (sqlite3.Error, TypeError, ValueError) as exc:
+        raise RuntimeError(f"cannot read the world database schema version ({path}): {exc}") from exc
 
 
 def _default_migrations():
