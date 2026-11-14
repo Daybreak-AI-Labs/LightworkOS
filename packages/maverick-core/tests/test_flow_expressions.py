@@ -18,6 +18,16 @@ def test_text_functions_refuse_results_larger_than_a_run_can_hold():
         render("{{concat(x, x)}}", {"x": "a" * (9 * 1024 * 1024)})
 
 
+def test_condition_key_containing_contains_is_a_bare_truthiness_check():
+    data = {"order": {"contains_hazmat": True}}
+    assert eval_condition("order.contains_hazmat", data) is True
+    assert eval_condition("tags contains 'a'", {"tags": ["a"]}) is True
+
+
+def test_regex_group_that_did_not_participate_renders_empty():
+    assert render("x={{regex(v,'(a)?b')}}", {"v": "b"}) == "x="
+
+
 class TestArithmeticAndLists:
     def test_arithmetic(self):
         assert render("{{add(a, b)}}", {"a": 2, "b": 3}) == "5"      # int, not 5.0

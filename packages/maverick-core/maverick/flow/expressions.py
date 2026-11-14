@@ -7,7 +7,7 @@ from typing import Any
 
 from .run_events import FlowCredentialRefused
 
-_COND = re.compile(r"^\s*(\S+)\s*(==|!=|>=|<=|>|<|contains)\s*(.+?)\s*$")
+_COND = re.compile(r"^\s*(\S+)\s*(==|!=|>=|<=|>|<|\bcontains\b)\s*(.+?)\s*$")
 _FN_CALL = re.compile(r"^([a-zA-Z_]\w*)\s*\((.*)\)$")
 
 
@@ -205,7 +205,7 @@ def _fn_regex(a: list) -> str:
         return ""
     if not m:
         return ""
-    return m.group(1) if m.groups() else m.group(0)
+    return (m.group(1) or "") if m.groups() else m.group(0)
 
 
 def _fn_datefmt(a: list) -> str:
