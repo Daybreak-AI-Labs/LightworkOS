@@ -65,11 +65,6 @@ class TestPolicyShouldRetry:
         assert fp.classify_error(ValueError("invalid_request: request id 4012")) == "bad_request"
         assert fp.classify_error(RuntimeError("HTTP 503 from upstream")) == "server"
 
-    def test_an_empty_list_means_never_fail_over(self, monkeypatch):
-        monkeypatch.setattr(fp, "_policy_cfg", lambda: {"failover_on": []})
-        assert fp.failover_classes() == frozenset()
-        assert fp.policy_should_retry(_StatusErr(503)) is False
-
 
 class TestCooldownLedger:
     def test_threshold_then_cooldown_then_expiry(self):

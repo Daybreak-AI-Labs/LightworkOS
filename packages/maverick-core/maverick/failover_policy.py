@@ -103,13 +103,11 @@ def policy_configured() -> bool:
 
 
 def failover_classes() -> frozenset[str]:
-    """Configured error classes that may fail over (default set when unset or
-    when no listed name is a known class). An explicit empty list means never
-    fail over."""
+    """Configured error classes that may fail over. Unset, empty, or with no
+    known class name, the default set applies: the dashboard setting offers
+    "none ticked" as that default, so an empty list cannot mean "never"."""
     raw = _policy_cfg().get("failover_on")
     if isinstance(raw, (list, tuple, set)):
-        if not raw:
-            return frozenset()
         names = {str(c).strip().lower() for c in raw}
         valid = frozenset(n for n in names if n in CLASSES)
         if valid:
