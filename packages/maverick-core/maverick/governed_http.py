@@ -153,7 +153,7 @@ def guarded_redirect_get(
 
 
 def _send_pinned_redirect(client: Any, request: Any) -> Any:
-    """Borrow the selected transport without mutating or closing its owner."""
+    """Pin a redirect in an isolated pool with the caller's transport settings."""
     import httpx
 
     from .egress_guard import _check, _reaches_the_network
@@ -162,11 +162,11 @@ def _send_pinned_redirect(client: Any, request: Any) -> Any:
     _check(str(request.url))
     if not _reaches_the_network(client, request):
         return client.send(request, follow_redirects=False, auth=None)
-    host = request.url.host
+    host = request.url.raw_host.decode("ascii")
     ip = resolve_pinned_ip(host, require_public=True)
-    inner = client._transport_for_url(request.url)
+    inner = _isolated_redirect_transport(client._transport_for_url(request.url), host=host)
 
-    class BorrowedPinnedTransport(_PinnedTransport):
+    class IsolatedPinnedTransport(_PinnedTransport):
         def handle_request(self, request):
             original = request.url
             try:
@@ -176,15 +176,95 @@ def _send_pinned_redirect(client: Any, request: Any) -> Any:
                 # return; that base must remain the original hostname.
                 request.url = original
 
-        def close(self):
-            pass  # The caller owns the underlying transport and connection pool.
-
-    transport = BorrowedPinnedTransport(host, _host_header(urlsplit(str(request.url)), host), ip, inner)
+    transport = IsolatedPinnedTransport(host, _host_header(urlsplit(str(request.url)), host), ip, inner)
     with httpx.Client(transport=transport, cookies=client.cookies,
                       event_hooks=client.event_hooks, follow_redirects=False) as pinned:
         response = pinned.send(request, follow_redirects=False, auth=None)
         client.cookies.extract_cookies(response)
         return response
+
+
+class _RedirectTlsStream:
+    """Keep proxy and origin certificate identities on their own TLS layers."""
+
+    def __init__(self, stream: Any, tls_hosts: tuple[str, ...]) -> None:
+        self._stream, self._tls_hosts = stream, tls_hosts
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+    def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+        del server_hostname  # Pool URLs contain the pin, not the TLS identity.
+        if not self._tls_hosts:
+            raise ValueError("unexpected TLS layer in pinned redirect")
+        stream = self._stream.start_tls(ssl_context=ssl_context,
+                                        server_hostname=self._tls_hosts[0], timeout=timeout)
+        return _RedirectTlsStream(stream, self._tls_hosts[1:])
+
+
+class _RedirectTlsBackend:
+    """Wrap new streams only; the original backend and pools remain untouched."""
+
+    def __init__(self, backend: Any, tls_hosts: tuple[str, ...]) -> None:
+        self._backend, self._tls_hosts = backend, tls_hosts
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._backend, name)
+
+    def connect_tcp(self, *args, **kwargs):
+        return _RedirectTlsStream(self._backend.connect_tcp(*args, **kwargs), self._tls_hosts)
+
+    def connect_unix_socket(self, *args, **kwargs):
+        return _RedirectTlsStream(self._backend.connect_unix_socket(*args, **kwargs), self._tls_hosts)
+
+
+def _isolated_redirect_transport(transport: Any, *, host: str) -> Any:
+    """Copy configuration, never connections, from a standard HTTPX transport.
+
+    Rewriting two HTTPS origins to the same pinned IP collapses httpcore's
+    pool key. Reusing that pool could send the second hostname over a TLS
+    connection verified only for the first. Each redirect needs its own pool.
+    """
+    import copy
+
+    import httpcore
+    import httpx
+
+    if type(transport) is not httpx.HTTPTransport:
+        raise ValueError("cannot safely isolate this network redirect transport")
+    pool = transport._pool
+    if type(pool) not in (httpcore.ConnectionPool, httpcore.HTTPProxy, httpcore.SOCKSProxy):
+        raise ValueError("cannot safely isolate this network redirect connection pool")
+    if type(pool) is httpcore.ConnectionPool and pool._proxy is not None:
+        raise ValueError("cannot safely isolate this custom proxy redirect configuration")
+    tls_hosts = (host,)
+    if type(pool) is httpcore.HTTPProxy and pool._proxy_url.scheme == b"https":
+        tls_hosts = (pool._proxy_url.host.decode("ascii"), host)
+    # HTTPX retains the original CA and client certificate in this SSLContext.
+    # Preserve its proxy/TLS/network settings while constructing empty pool
+    # state; neither the caller's connections nor its locks are shared.
+    options = {name: getattr(pool, "_" + name) for name in (
+        "ssl_context", "max_connections", "max_keepalive_connections",
+        "keepalive_expiry", "http1", "http2", "retries", "network_backend",
+    )}
+    if type(pool) is httpcore.SOCKSProxy:
+        options.update(proxy_url=pool._proxy_url, proxy_auth=pool._proxy_auth)
+    else:
+        options.update((name, getattr(pool, "_" + name)) for name in (
+            "local_address", "uds", "socket_options",
+        ))
+        if type(pool) is httpcore.HTTPProxy:
+            options.update(proxy_url=pool._proxy_url, proxy_headers=list(pool._proxy_headers),
+                           proxy_ssl_context=pool._proxy_ssl_context)
+        else:
+            options["proxy"] = pool._proxy
+    isolated = copy.copy(transport)
+    # CONNECT/SOCKS must address the pinned IP, but httpcore's tunnel TLS
+    # paths do not all honor sni_hostname. Bind each TLS layer explicitly,
+    # passing the original SSLContext through with verification unchanged.
+    options["network_backend"] = _RedirectTlsBackend(pool._network_backend, tls_hosts)
+    isolated._pool = type(pool)(**options)
+    return isolated
 
 
 class GuardedClient:

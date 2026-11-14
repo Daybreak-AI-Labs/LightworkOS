@@ -242,16 +242,16 @@ def test_network_redirect_is_pinned_and_private_destination_is_refused(monkeypat
     monkeypatch.setattr(_ssrf.socket, "getaddrinfo", lambda host, *a, **k: [
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", (host if host == "127.0.0.1" else "93.184.216.34", 0))])
 
-    class NetworkTransport(httpx.BaseTransport):
-        def handle_request(self, request):
-            seen.append((str(request.url), request.headers["Host"], request.extensions.get("sni_hostname")))
-            if len(seen) == 1:
-                return httpx.Response(302, headers={"Location": "https://next.example/step"})
-            if len(seen) == 2:
-                return httpx.Response(302, headers={"Location": "/relative"})
-            return httpx.Response(302, headers={"Location": "http://127.0.0.1/internal"})
+    def network_handle_request(self, request):
+        seen.append((str(request.url), request.headers["Host"], request.extensions.get("sni_hostname")))
+        if len(seen) == 1:
+            return httpx.Response(302, headers={"Location": "https://next.example/step"})
+        if len(seen) == 2:
+            return httpx.Response(302, headers={"Location": "/relative"})
+        return httpx.Response(302, headers={"Location": "http://127.0.0.1/internal"})
 
-    with httpx.Client(transport=NetworkTransport()) as client:
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", network_handle_request)
+    with httpx.Client(transport=httpx.HTTPTransport()) as client:
         with pytest.raises(_ssrf.BlockedHost):
             guarded_redirect_get(client.get)("https://first.example/start")
         assert not client.is_closed
