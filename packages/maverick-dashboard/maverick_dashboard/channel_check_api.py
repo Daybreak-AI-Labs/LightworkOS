@@ -290,18 +290,6 @@ def reviewed_recipient(name, cfg, destination, guard):
     return {"id": destination, "label": label.strip(), "type": str(body.get("type", "conversation"))[:32]}
 
 
-def reviewed_sender(cfg, sender, guard):
-    """Resolve Mattermost's supported username allowlist using the saved bot."""
-    from maverick_channels.mattermost import server_origin
-
-    status, body = _reviewed_http("GET", server_origin(cfg.get("url", "")) + "/api/v4/users/" + quote(sender, safe=""),
-                                 _bot_headers("mattermost", cfg), guard)
-    username = body.get("username")
-    if status != 200 or body.get("id") != sender or not isinstance(username, str) or not 0 < len(username) <= 200:
-        raise HTTPException(409, "The saved bot could not confirm this conversation's current sender.")
-    return username
-
-
 def send_reviewed_test(name, cfg, destination, guard):
     """Offer one fixed sentence, retaining provider acceptance separately."""
     if name == "telegram":

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import errno
 import hashlib
 import json
 import logging
@@ -16,7 +17,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import asdict
 from itertools import islice
 from pathlib import Path
@@ -42,9 +43,11 @@ RETENTION_SECONDS = 30 * 24 * 3600
 # claim that also guards re-execution keeps 30 days), then removed so intake
 # capacity is not consumed forever by messages long since answered.
 TOMBSTONE_SECONDS = 90 * 24 * 3600
-# An execution claim with no recorded outcome after this long belongs to a
-# process that died mid-handler: surface it as unknown, never re-run it.
+# After this bound, an execution claim can be surfaced as unknown only when
+# its local activity guard proves no handler still owns it. Never re-run it.
 STALE_CLAIM_SECONDS = 24 * 3600
+MAX_PROVIDER_ATTEMPTS = 8
+PROVIDER_RETRY_SECONDS = 30
 _INTERNAL_ERROR_REPLY = "⚠ An internal error occurred."
 _ACTIVE = contextvars.ContextVar("channel_delivery", default=None)
 log = logging.getLogger(__name__)
@@ -52,6 +55,10 @@ log = logging.getLogger(__name__)
 
 class DeliveryNotSent(RuntimeError):
     """Provider definitively rejected this attempt before accepting a message."""
+
+
+class _DeliveryNotAuthorized(DeliveryNotSent):
+    """The provider was not called because the sender's permission changed."""
 
 
 class IntakeMessageRejected(ValueError):
@@ -98,6 +105,83 @@ def intake_record_limit():
 
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _activity_scope(*, create=False):
+    """Identify the actual private lock workspace, never just a host/path name."""
+    from maverick import file_lock
+    from maverick.paths import data_dir
+
+    path = data_dir("channels", "receipt-activity", "workspace-id")
+    if os.name == "nt":
+        path = Path(file_lock._windows_extended_path(path))
+    try:
+        fd = file_lock.open_private_read(path)
+    except FileNotFoundError:
+        if not create:
+            raise
+        try:
+            file_lock.atomic_create_bytes(path, uuid.uuid4().hex.encode("ascii"))
+        except FileExistsError:
+            pass  # Another first admission established this workspace identity.
+        fd = file_lock.open_private_read(path)
+    try:
+        nonce = os.read(fd, 33)
+    finally:
+        os.close(fd)
+    if not re.fullmatch(rb"[a-f0-9]{32}", nonce):
+        raise ValueError("Channel activity workspace identity is invalid; retain unresolved receipts for review")
+    return _digest(nonce.decode("ascii"))
+
+
+@contextmanager
+def _receipt_activity(record_id, *, blocking=False, purpose="execution"):
+    """Bounded private OS locks, held across intake or a live handler.
+
+    A busy or unavailable lock never proves an owner dead. Stripes limit the
+    sidecars to 256 per purpose; unrelated busy execution stripes defer work.
+    """
+    from maverick import file_lock
+    from maverick.paths import data_dir
+
+    root = file_lock.ensure_private_directory(data_dir("channels", "receipt-activity"))
+    path = root / (purpose + "-" + _digest(record_id)[:2] + ".lock")
+    if os.name == "nt":
+        path = Path(file_lock._windows_extended_path(path))
+    fd = file_lock._open_lock_file(path)
+    try:
+        file_lock._validate_open_lock_file(path, fd)
+        if os.name == "nt":
+            file_lock.harden_path_permissions(path)
+        else:
+            os.fchmod(fd, 0o600)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_LOCK if blocking else msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except OSError as exc:
+            if not blocking and exc.errno in {errno.EACCES, errno.EAGAIN}:
+                yield False
+                return
+            raise  # Unsupported locking cannot authorize work or stale cleanup.
+        file_lock._validate_open_lock_file(path, fd)
+        yield True
+    finally:
+        os.close(fd)  # Releasing the descriptor also releases its OS lock.
+
+
+def retry_delay(row, *, now=None):
+    """Persisted provider backoff; source-withheld replies retain their policy."""
+    now = time.time() if now is None else now
+    return max((max(0, chunk.get("retry_at", 0) - now)
+                for chunk in row.get("chunks", {}).values()
+                if chunk.get("state") == "retryable" and not chunk.get("withheld")), default=0)
 
 
 def _assert_work_allowed():
@@ -264,7 +348,7 @@ class DeliveryJournal:
             log.warning("Channel receipt maintenance needs review", exc_info=True)
 
     def recovery_window(self, *, channel, account, limit=16, scan_limit=RECOVERY_SCAN_LIMIT,
-                        scan_seconds=RECOVERY_SCAN_SECONDS):
+                        scan_seconds=RECOVERY_SCAN_SECONDS, respect_retry_at=True):
         """Fair bounded recovery; one window never proves an empty queue.
 
         At most ``limit`` rows are returned, but up to ``scan_limit`` receipts
@@ -290,10 +374,14 @@ class DeliveryJournal:
         for position, record_id in self.store.iter_record_ids(start_after=next_cursor,
                                                               limit=max(limit, scan_limit)):
             row = self._surface_stale_claim(self.get(record_id))
+            if row and row["execution"] == "staging":
+                self._compact_receipt(row, time.time())
+                row = self.get(record_id)
             next_cursor = position
             if (row and not row.get("restore_hold") and row["channel"] == channel and row["account_sha256"] == _digest(account)
                     and (row["execution"] == "received" or row["delivery"] in {"ready", "retryable"}
-                         or row.get("question_watch"))):
+                         or row.get("question_watch"))
+                    and (not respect_retry_at or not retry_delay(row))):
                 rows.append(row)
             if len(rows) >= limit or _monotonic() - started >= scan_seconds:
                 break
@@ -317,14 +405,30 @@ class DeliveryJournal:
                 return self.get(row["id"])
         if (row and not row.get("restore_hold") and row["execution"] == "execution_started_unconfirmed"
                 and row["updated_at"] < time.time() - STALE_CLAIM_SECONDS):
-            try:
-                return self.change(row, execution="execution_unknown", delivery="ready",
+            return self._surface_stale_execution(row)
+        return row
+
+    def _surface_stale_execution(self, row):
+        from maverick.privacy_ops import RecordConflict
+
+        # A different-home replica's local lock says nothing about its owner.
+        try:
+            if row.get("activity_scope") != _activity_scope():
+                log.warning("Channel execution has no matching workspace owner; its receipt remains unresolved")
+                return row
+            with _receipt_activity(row["id"]) as idle:
+                current = self.get(row["id"])
+                if not idle or not current or current["revision"] != row["revision"]:
+                    return current
+                return self.change(current, execution="execution_unknown", delivery="ready",
                                    reply=asdict(Reply(_INTERNAL_ERROR_REPLY)),
                                    reason="Execution began but its process stopped before recording a result; "
                                           "review before retrying")
-            except RecordConflict:
-                return self.get(row["id"])
-        return row
+        except RecordConflict:
+            return self.get(row["id"])
+        except (OSError, ImportError, ValueError):
+            log.warning("Channel execution ownership cannot be checked; its receipt remains unresolved")
+            return self.get(row["id"])
 
     def finish_recovery_window(self, checkpoint):
         from maverick.privacy_ops import RecordConflict
@@ -346,6 +450,12 @@ class DeliveryJournal:
         return changed
 
     def admit(self, msg, *, external_id, account, route=None):
+        _assert_work_allowed()
+        record_id = _record_id(msg.channel, account, external_id)
+        with _receipt_activity(record_id, blocking=True, purpose="intake"):
+            return self._admit(msg, external_id=external_id, account=account, route=route)
+
+    def _admit(self, msg, *, external_id, account, route=None):
         from maverick.attachments import _encode_for_disk, _publish_attachment
         from maverick.file_lock import ensure_private_directory
         from maverick.governed_records import GovernedRecordCapacityError
@@ -359,6 +469,11 @@ class DeliveryJournal:
             raise IntakeMessageRejected("Channel reply routing exceeds its bound")
         fingerprint = _digest([payload, route])
         row = self.get(record_id)
+        if row and row.get("staging_retired") and not row.get("restore_hold"):
+            if row.get("activity_scope") != _activity_scope():
+                raise IntakeMessageRejected("Unfinished message cleanup has no matching workspace owner; review its saved receipt")
+            self._retire_staging(row)
+            row = self.get(record_id)
         if row is None:
             self._maintenance_tick()
             # Confirm the existing execution-claim authority is readable before
@@ -373,7 +488,7 @@ class DeliveryJournal:
             record = {"id": record_id, "channel": msg.channel, "account_sha256": _digest(account),
                       "external_id": external_id, "fingerprint": fingerprint, "message": payload,
                       "route": route, "execution": "staging", "delivery": "not_ready", "chunks": {},
-                      "execution_id": str(uuid.uuid4())}
+                      "execution_id": str(uuid.uuid4()), "activity_scope": _activity_scope(create=True)}
             try:
                 row = self.store.create(record, action="intake_admitted", actor="system:channel",
                                         max_records=intake_record_limit())
@@ -431,7 +546,8 @@ class DeliveryJournal:
         try:
             legacy = world.is_processed_message(row["channel"], row["external_id"])
             try:
-                claimed = self.change(row, execution="execution_started_unconfirmed")
+                claimed = self.change(row, execution="execution_started_unconfirmed",
+                                      activity_scope=_activity_scope(create=row.get("activity_scope") is None))
             except RecordConflict:
                 return None
             marked = False
@@ -489,9 +605,44 @@ class DeliveryJournal:
             self.finish_recovery_window((cursors, cursor, next_cursor))
         return released if release_only else compacted
 
+    def _retire_staging(self, row):
+        """Under the activity lock, persist cleanup intent before deleting blobs."""
+        _assert_work_allowed()
+        if not row.get("staging_retired"):
+            digests = list(dict.fromkeys(item["sha256"] for item in row["message"].get("attachments", [])))
+            _cleanup_paths(row["id"], digests)
+            row = self.change(row, staging_retired=True, cleanup_pending=digests)
+        for path in _cleanup_paths(row["id"], row["cleanup_pending"]):
+            _assert_work_allowed()
+            path.unlink(missing_ok=True)
+        return "deleted" if self.store.delete(row["id"], expected_revision=row["revision"]) else False
+
+    def _compact_staging(self, row, now):
+        from maverick.privacy_ops import RecordConflict
+
+        if (row.get("restore_hold")
+                or not row.get("staging_retired") and row["updated_at"] > now - STALE_CLAIM_SECONDS):
+            return False
+        try:
+            if row.get("activity_scope") != _activity_scope():
+                log.warning("Unfinished channel intake has no matching workspace owner; its receipt remains saved")
+                return False
+            with _receipt_activity(row["id"], purpose="intake") as idle:
+                current = self.get(row["id"])
+                if not idle or not current or current["revision"] != row["revision"]:
+                    return False
+                return self._retire_staging(current)
+        except RecordConflict:
+            return False
+        except (OSError, ImportError, ValueError):
+            log.warning("Channel staging cleanup could not confirm idle ownership; its receipt remains saved")
+            return False
+
     def _compact_receipt(self, row, now):
         from maverick.privacy_ops import RecordConflict
 
+        if row and row["execution"] == "staging":
+            return self._compact_staging(row, now)
         if (not row or row.get("restore_hold") or row.get("question_watch")
                 or row["execution"] != "completed" or not _settled(row)):
             return False
@@ -696,7 +847,8 @@ async def _execute_claimed(channel, inbound, claimed, *, journal, authorize):
 
 
 async def process_message(channel, msg, *, external_id, account, authorize, send, route=None,
-                          receipt=None, journal=None, idempotent=False, prepare=None):
+                          receipt=None, journal=None, idempotent=False, prepare=None,
+                          provider_retry_seconds=PROVIDER_RETRY_SECONDS):
     _assert_work_allowed()
     journal = journal or DeliveryJournal()
     if receipt is not None:
@@ -744,16 +896,22 @@ async def process_message(channel, msg, *, external_id, account, authorize, send
                 return await asyncio.to_thread(journal.get, row["id"])
         if not authorize():
             raise PermissionError("Channel sender authorization changed")
-    claimed = await asyncio.to_thread(journal.claim_execution, row)
-    if claimed:
-        row = await _execute_claimed(channel, inbound, claimed, journal=journal, authorize=authorize)
+    if row["execution"] == "received":
+        with _receipt_activity(row["id"]) as idle:
+            if not idle:
+                return await asyncio.to_thread(journal.get, row["id"])
+            claimed = await asyncio.to_thread(journal.claim_execution, row)
+            if claimed:
+                row = await _execute_claimed(channel, inbound, claimed, journal=journal, authorize=authorize)
+            else:
+                row = await asyncio.to_thread(journal.get, row["id"])
     else:
         row = await asyncio.to_thread(journal.get, row["id"])
-    if not row.get("reply") or row["delivery"] == "delivered":
+    if not row.get("reply") or row["delivery"] in {"delivered", "delivery_failed"}:
         return row
     if not authorize():
         raise PermissionError("Channel reply authorization changed")
-    context = _DeliveryAttempt(journal, row["id"], authorize)
+    context = _DeliveryAttempt(journal, row["id"], authorize, retry_seconds=provider_retry_seconds)
     token = _ACTIVE.set(context)
     try:
         reply = Reply(**row["reply"])
@@ -842,14 +1000,18 @@ async def notify_queued_question(row, *, authorize, send, journal=None):
 
 
 async def recover_messages(channel, *, account, authorize, send, prepare=None, limit=16,
-                           journal=None, idempotent=False):
+                           journal=None, idempotent=False, respect_retry_at=False):
     """Recover one fair window with adapter-owned routing and current policy.
+
+    Explicit recovery retains immediate retry; automatic workers respect the
+    persisted provider retry deadline.
 
     authorize(message) -> bool; send(message, saved_reply, route) -> awaitable;
     optional prepare(message, route) -> awaitable[IncomingMessage].
     """
     journal = journal or DeliveryJournal()
-    rows, checkpoint = await asyncio.to_thread(journal.recovery_window, channel=channel.name, account=account, limit=limit)
+    rows, checkpoint = await asyncio.to_thread(journal.recovery_window, channel=channel.name, account=account,
+                                             limit=limit, respect_retry_at=respect_retry_at)
     outcomes = []
     for row in rows:
         try:
@@ -878,8 +1040,9 @@ async def recover_messages(channel, *, account, authorize, send, prepare=None, l
 
 
 class _DeliveryAttempt:
-    def __init__(self, journal, record_id, authorize):
+    def __init__(self, journal, record_id, authorize, *, retry_seconds=PROVIDER_RETRY_SECONDS):
         self.journal, self.record_id, self.authorize = journal, record_id, authorize
+        self.retry_seconds = retry_seconds
         self.outer_attempt_id = None
 
     async def mark_unconfirmed(self):
@@ -913,6 +1076,8 @@ class _DeliveryAttempt:
             raise DeliveryUnknown("Saved channel chunk changed")
         if old and old["state"] == "delivered":
             return old.get("provider_id")
+        if old and old["state"] == "delivery_failed":
+            raise DeliveryNotSent("The provider repeatedly refused this reply; review its saved receipt")
         if old and old["state"] == "sending":
             raise _DeliveryOwnedElsewhere("Another worker owns this channel delivery")
         if old and old["state"] == "delivery_unknown" and not idempotent:
@@ -921,6 +1086,7 @@ class _DeliveryAttempt:
             raise DeliveryNotSent("Channel reply exceeds chunk bound")
         attempt_id = uuid.uuid4().hex
         chunks[key] = {"state": "sending", "payload_sha256": digest, "attempt_id": attempt_id,
+                       "attempts": (old or {}).get("attempts", 0),
                        "idempotency_key": str(uuid.uuid5(uuid.NAMESPACE_URL, self.record_id + ":" + key))}
         try:
             updates = {"chunks": chunks}
@@ -931,10 +1097,11 @@ class _DeliveryAttempt:
             raise _DeliveryOwnedElsewhere("Another worker owns this channel delivery") from exc
         if key == "reply":
             self.outer_attempt_id = attempt_id
+        provider_called = False
         try:
             _assert_work_allowed()
             if not self.authorize():
-                raise DeliveryNotSent("Channel sender authorization changed before sending")
+                raise _DeliveryNotAuthorized("Channel sender authorization changed before sending")
             try:
                 await asyncio.to_thread(_require_reply_source, row)
             except PermissionError as exc:
@@ -943,10 +1110,13 @@ class _DeliveryAttempt:
                 # channel would refuse every replay and the reply never go out).
                 raise DeliveryWithheld(str(exc)) from exc
             if not self.authorize():
-                raise DeliveryNotSent("Channel sender authorization changed before sending")
+                raise _DeliveryNotAuthorized("Channel sender authorization changed before sending")
+            provider_called = True
             result = await call()
         except DeliveryNotSent as exc:
-            await self._finish(key, attempt_id, "retryable", withheld=isinstance(exc, DeliveryWithheld))
+            withheld = isinstance(exc, DeliveryWithheld)
+            await self._finish(key, attempt_id, "retryable", withheld=withheld,
+                               rejected=provider_called and not withheld and not isinstance(exc, _DeliveryNotAuthorized))
             raise
         except BaseException:
             await self._finish(key, attempt_id, "delivery_unknown")
@@ -954,17 +1124,28 @@ class _DeliveryAttempt:
         await self._finish(key, attempt_id, "delivered", str(result or "")[:512])
         return result
 
-    async def _finish(self, key, attempt_id, state, provider_id="", *, withheld=False):
+    async def _finish(self, key, attempt_id, state, provider_id="", *, withheld=False, rejected=False):
         row = await asyncio.to_thread(self.journal.get, self.record_id)
         chunks = dict(row["chunks"])
         if chunks[key]["attempt_id"] != attempt_id:
             raise DeliveryUnknown("Channel send ownership changed")
+        if rejected:
+            attempts = chunks[key].get("attempts", 0) + 1
+            chunks[key]["attempts"] = attempts
+            if attempts >= MAX_PROVIDER_ATTEMPTS:
+                state = "delivery_failed"
+            else:
+                chunks[key]["retry_at"] = time.time() + self.retry_seconds * 2 ** (attempts - 1)
         chunks[key] = {**chunks[key], "state": state, "provider_id": provider_id}
         if withheld:
             chunks[key]["withheld"] = True
         updates = {"chunks": chunks}
         if key == "reply":
             updates["delivery"] = state
+            if state == "delivery_failed":
+                updates["reason"] = "The provider repeatedly refused this reply. Automatic attempts stopped; review the saved delivery receipt."
+                log.warning("Channel %s reply %s was refused repeatedly; automatic attempts stopped and the receipt needs review",
+                            row["channel"], self.record_id)
         await asyncio.to_thread(self.journal.change, row, **updates)
 
 
@@ -1000,6 +1181,8 @@ def delivery_active():
 @asynccontextmanager
 async def recovery_worker(channel, **kwargs):
     """Own one periodic recovery task for a running transport."""
+    kwargs = {**kwargs, "respect_retry_at": True}
+
     async def run():
         while True:
             try:

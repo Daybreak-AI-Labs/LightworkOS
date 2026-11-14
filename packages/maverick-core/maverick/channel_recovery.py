@@ -65,7 +65,7 @@ def _binding(namespace, record):
     _require(type(record.get("revision")) is int and record["revision"] >= 1)
     if namespace == "channel-deliveries":
         _require(record.get("execution") in {"staging", "received", "execution_started_unconfirmed", "execution_unknown", "completed"})
-        _require(record.get("delivery") in {"not_ready", "ready", "retryable", "sending", "delivery_unknown", "delivered"})
+        _require(record.get("delivery") in {"not_ready", "ready", "retryable", "sending", "delivery_unknown", "delivered", "delivery_failed"})
         _require(isinstance(record.get("channel"), str) and 0 < len(record["channel"]) <= 128)
         _require(isinstance(record.get("account_sha256"), str) and re.fullmatch(r"[a-f0-9]{64}", record["account_sha256"]))
         _require(isinstance(record.get("execution_id"), str) and 0 < len(record["execution_id"]) <= 128)
@@ -73,7 +73,7 @@ def _binding(namespace, record):
         _require(isinstance(record.get("chunks"), dict) and len(record["chunks"]) <= 512)
         for key, chunk in record["chunks"].items():
             _require(isinstance(key, str) and 0 < len(key) <= 128 and isinstance(chunk, dict))
-            _require(chunk.get("state") in {"sending", "retryable", "delivery_unknown", "delivered"})
+            _require(chunk.get("state") in {"sending", "retryable", "delivery_unknown", "delivered", "delivery_failed"})
         return {name: record[name] for name in ("id", "channel", "account_sha256", "execution_id", "execution", "delivery")} | {
             "external_id_sha256": _digest(record["external_id"]), "chunks_sha256": _digest(record["chunks"])}
     if namespace == "channel-delivery-cursors":
@@ -84,6 +84,8 @@ def _binding(namespace, record):
         _require(record.get("channel") in {"mastodon", "threads", "bluesky"})
         _require(record.get("cursor") is None or isinstance(record["cursor"], str))
         _require(isinstance(record.get("seen_cursors"), list))
+        if record["channel"] == "mastodon":
+            _require(isinstance(record.get("watermark"), str) and bool(re.fullmatch(r"[0-9]+", record["watermark"])))
     return {"id": record["id"], "checkpoint_sha256": _digest({key: value for key, value in record.items()
             if key not in {"restore_hold", "_audit_pending"}})}
 
