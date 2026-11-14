@@ -5178,7 +5178,35 @@ def lint_config(cfg: dict) -> list[Finding]:
     findings.extend(_lint_governance_nested_tables(cfg))
     findings.extend(_lint_inline_secrets(cfg))
     findings.extend(_lint_group_mappings(cfg))
+    findings.extend(_lint_governance_tool_names(cfg))
     return findings
+
+
+def _lint_governance_tool_names(cfg: dict) -> list[Finding]:
+    """Warn about ``[governance]`` deny/require-human names that match no
+    built-in tool (compared case-insensitively, as the policy matches them).
+    Lives here, not in ``governance.Policy.from_config``, because building the
+    tool registry is too slow and touches storage on the authorization path."""
+    gov = cfg.get("governance")
+    if not isinstance(gov, dict):
+        return []
+    named = {key: [item.strip() for item in value if isinstance(item, str) and item.strip()]
+             for key in ("deny_actions", "require_human_actions")
+             if isinstance(value := gov.get(key), list)}
+    if not any(named.values()):
+        return []
+    from .tools import base_tool_names
+
+    registered = base_tool_names(configured_optional=True, include_plugins=False)
+    if registered is None:
+        return [Finding("governance", None, "warning",
+                        "governance tool names could not be checked against the tool catalog")]
+    known = {name.casefold() for name in registered}
+    return [Finding("governance", key, "warning",
+                    f'governance.{key} name "{name}" is not a built-in tool; '
+                    "check its spelling or its plugin registration")
+            for key, names in named.items() for name in sorted(set(names))
+            if name.casefold() not in known]
 
 
 def _lint_group_mappings(cfg: dict) -> list[Finding]:

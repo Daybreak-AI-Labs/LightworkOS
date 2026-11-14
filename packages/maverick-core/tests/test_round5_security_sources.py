@@ -94,12 +94,14 @@ remove_value = true
     assert snapshot == config.load_global_config()
 
 
-def test_governance_names_match_case_and_warn_on_unregistered(monkeypatch, caplog):
-    from maverick import governance, tools
+def test_governance_names_match_case_and_warn_on_unregistered(monkeypatch):
+    from maverick import config_lint, governance, tools
 
     monkeypatch.setattr(tools, "base_tool_names", lambda **kwargs: {"shell"})
     names = governance._policy_names({"deny_actions": [" SHELL ", "shel"]}, "deny_actions")
-    assert "shel" in caplog.text
+    findings = config_lint._lint_governance_tool_names({"governance": {"deny_actions": [" SHELL ", "shel"]}})
+    assert [f.message for f in findings] == [
+        'governance.deny_actions name "shel" is not a built-in tool; check its spelling or its plugin registration']
     policy = governance.Policy(deny_actions=names)
     assert governance.evaluate("ShElL", policy=policy).decision is governance.Decision.DENY
     assert governance.evaluate("read_file", policy=policy).decision is governance.Decision.ALLOW
