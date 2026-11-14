@@ -334,3 +334,21 @@ def test_bluesky_expired_token_is_temporary(body, expected):
 
     assert type(bluesky._reply_refusal(_Response(400, body))) is expected
     assert type(bluesky._reply_refusal(_Response(404, {}))) is delivery.DeliveryRejected
+
+
+@pytest.mark.parametrize(("replies", "expected"), [
+    ([(550, b"5.1.1 The email account that you tried to reach does not exist")], delivery.DeliveryRejected),
+    ([(553, b"5.1.3 Invalid recipient address syntax")], delivery.DeliveryRejected),
+    ([(552, b"5.3.4 Message size exceeds fixed maximum message size")], delivery.DeliveryRejected),
+    ([(550, b"5.4.5 Daily user sending quota exceeded")], delivery.DeliveryNotSent),
+    ([(554, b"5.2.0 STOREDRV.Submission.Exception:SubmissionQuotaExceededException")], delivery.DeliveryNotSent),
+    ([(550, b"5.7.1 Message rejected by policy")], delivery.DeliveryNotSent),
+    ([(550, b"no such user")], delivery.DeliveryNotSent),
+    ([(450, b"4.1.1 Mailbox temporarily unavailable")], delivery.DeliveryNotSent),
+    ([(550, b"5.1.1 unknown user"), (450, b"4.2.1 try later")], delivery.DeliveryNotSent),
+    ([], delivery.DeliveryNotSent),
+])
+def test_smtp_quota_and_policy_refusals_stay_retryable(replies, expected):
+    from maverick_channels.email import _smtp_refusal
+
+    assert type(_smtp_refusal(replies, "refused")) is expected

@@ -154,13 +154,23 @@ def _trim_reply_noise(body: str) -> str:
 
 
 def _smtp_refusal(replies, message):
-    """A permanent (5xx) refusal of every recipient rejects the message;
-    a temporary (4xx) or unclassified SMTP reply leaves it retryable."""
+    """Reject only when every reply names the recipient or the message.
+
+    Enhanced status 5.1.x (bad destination address) or 5.3.4 (message too
+    big) is positive evidence. Sending quotas and policy throttles also use
+    5xx (5.4.5, 5.2.0, 5.7.x), so they, a reply without an enhanced status,
+    and any 4xx leave the message retryable.
+    """
     from .delivery import DeliveryNotSent, DeliveryRejected
 
-    codes = [reply[0] if isinstance(reply, tuple) and reply else None for reply in replies]
-    permanent = bool(codes) and all(isinstance(code, int) and 500 <= code < 600 for code in codes)
-    return (DeliveryRejected if permanent else DeliveryNotSent)(message)
+    def definitive(reply):
+        if not isinstance(reply, tuple) or len(reply) < 2 or not isinstance(reply[0], int):
+            return False
+        text = reply[1].decode("utf-8", "replace") if isinstance(reply[1], bytes) else str(reply[1])
+        return 500 <= reply[0] < 600 and re.match(r"\s*5\.(1\.\d{1,3}|3\.4)\b", text) is not None
+
+    replies = list(replies)
+    return (DeliveryRejected if replies and all(map(definitive, replies)) else DeliveryNotSent)(message)
 
 
 class EmailChannel(Channel):
@@ -478,7 +488,7 @@ class EmailChannel(Channel):
         except smtplib.SMTPRecipientsRefused as exc:
             raise _smtp_refusal(exc.recipients.values(), "SMTP explicitly rejected the message") from exc
         except smtplib.SMTPDataError as exc:
-            raise _smtp_refusal([(exc.smtp_code, b"")], "SMTP explicitly rejected the message") from exc
+            raise _smtp_refusal([(exc.smtp_code, exc.smtp_error)], "SMTP explicitly rejected the message") from exc
         except Exception as exc:
             if not sending:
                 raise DeliveryNotSent("SMTP unavailable before sending") from exc
