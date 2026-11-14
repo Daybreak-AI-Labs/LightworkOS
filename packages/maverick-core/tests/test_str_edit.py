@@ -95,6 +95,17 @@ class TestStrReplaceEditor:
         assert "already exists" in out
         assert (tmp_path / "existing.py").read_text() == "old\n"
 
+    def test_edits_keep_crlf_line_endings(self, tmp_path):
+        from maverick.tools.str_edit import str_replace_editor
+        f = tmp_path / "win.txt"
+        f.write_bytes(b"line1\r\nline2\r\nline3\r\n")
+        tool = str_replace_editor(self._make_sandbox(tmp_path))
+        assert "edited" in tool.fn({"command": "str_replace", "path": "win.txt",
+                                    "old_str": "line2\n", "new_str": "LINE2\n"})
+        assert "inserted" in tool.fn({"command": "insert", "path": "win.txt",
+                                      "insert_line": 1, "new_str": "X"})
+        assert f.read_bytes() == b"line1\r\nX\r\nLINE2\r\nline3\r\n"
+
 
 @pytest.fixture
 def opaque_mode(monkeypatch):
@@ -139,6 +150,24 @@ class TestStrReplaceEditorOpacity:
         out = tool.fn({"command": "view", "path": ".git/HEAD"})
         assert "ERROR" in out
         assert "ref:" not in out
+
+    def test_edits_block_test_file_in_opaque(self, tmp_path, opaque_mode):
+        from maverick.tools.str_edit import str_replace_editor
+        (tmp_path / "tests").mkdir()
+        gold = tmp_path / "tests" / "test_foo.py"
+        gold.write_text("assert expected_value == 42\n")
+
+        class _Sandbox:
+            workdir = tmp_path
+
+        tool = str_replace_editor(_Sandbox())
+        out = tool.fn({"command": "str_replace", "path": "tests/test_foo.py",
+                       "old_str": "== 42", "new_str": "== 0"})
+        assert out.startswith("ERROR") and "opaque" in out
+        out = tool.fn({"command": "insert", "path": "tests/test_foo.py",
+                       "insert_line": 0, "new_str": "x"})
+        assert out.startswith("ERROR")
+        assert gold.read_text() == "assert expected_value == 42\n"
 
     def test_view_production_file_allowed(self, tmp_path, opaque_mode):
         from maverick.tools.str_edit import str_replace_editor
