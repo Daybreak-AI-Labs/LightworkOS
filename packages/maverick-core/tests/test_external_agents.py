@@ -15,8 +15,7 @@ from maverick.agent_trust import agent_for_token, lookup
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
-    # Lineage receipts fall back to ~/.maverick/lineage (HOME, not
-    # MAVERICK_HOME) when no tenant is active — keep them in the sandbox too.
+    # Keep anything else that resolves under HOME in the sandbox too.
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
     monkeypatch.setenv("MAVERICK_EXTERNAL_AGENTS", "1")
