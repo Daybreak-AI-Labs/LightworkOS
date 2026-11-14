@@ -46,6 +46,14 @@ def test_evasion_sweep_covers_every_obfuscation():
     assert all(0 <= k <= n for k, n in eva.values())
 
 
+def test_base64_evasion_carries_no_plaintext_cue():
+    import base64
+
+    text = next(c.text for c in corpus.load_all() if c.split == "heldout")
+    encoded = corpus.obfuscations()["base64"](text)
+    assert base64.b64decode(encoded, validate=True).decode() == text
+
+
 def test_latency_measure_runs_and_is_finite():
     res = latency_bench.measure(reps_small=1)
     assert set(res) == set(latency_bench.SCANNERS)

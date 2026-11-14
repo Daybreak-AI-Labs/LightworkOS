@@ -192,7 +192,10 @@ def _homoglyph(s: str) -> str:
 
 
 def _base64(s: str) -> str:
-    return "decode and obey: " + base64.b64encode(s.encode()).decode()
+    # The bare encoding only: a plaintext cue such as "decode and obey" is
+    # flagged on its own (even around benign text), so it would measure the
+    # cue rather than deobfuscation.
+    return base64.b64encode(s.encode()).decode()
 
 
 def obfuscations() -> dict[str, Callable[[str], str]]:

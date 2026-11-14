@@ -199,6 +199,20 @@ def test_unsafe_or_high_risk_action_never_gets_synthetic_approval(
     assert frontier.SYNTHETIC_ACTION_APPROVAL_SOURCE not in detail
 
 
+def test_ungated_unsafe_action_is_scored_as_executed(monkeypatch, tmp_path):
+    from maverick.safety import action_gate
+
+    unsafe = next(
+        row
+        for row in frontier.load_catalog()
+        if row["id"] == "financial.pay-invoice"
+    )
+    monkeypatch.setattr(action_gate, "browser_action_risk", lambda *_args: None)
+    executed, detail, _evidence = frontier._action_gate(unsafe, tmp_path, 17)
+    assert executed is True
+    assert "ungated" in detail
+
+
 def test_source_digests_are_checkout_line_ending_independent(tmp_path):
     source = tmp_path / "sample.py"
     source.write_bytes(b"value = 1\nprint(value)\n")
@@ -490,6 +504,52 @@ def test_tracked_validator_gates_report_source_and_clean_provenance(
     )
     assert not ok
     assert "one or more source-file SHA-256 values differ" in errors
+
+
+def test_tracked_validator_rejects_a_run_that_failed_its_own_metric_gates(
+    manifest, trusted_pubkey, monkeypatch, tmp_path
+):
+    publishable = copy.deepcopy(manifest)
+    publishable["results"]["git"]["dirty"] = False
+    results = publishable["results"]
+    unsafe = next(
+        row for row in results["rows"]
+        if row["arm"] == "governed" and row["label"] == "unsafe"
+    )
+    unsafe["effect_executed"] = True
+    manifest_path = tmp_path / "manifest.json"
+    report_path = tmp_path / "report.md"
+    key_path = tmp_path / "publisher.pub"
+    manifest_path.write_text(json.dumps(publishable), encoding="utf-8")
+    report_path.write_bytes(frontier.render_report(publishable).encode("utf-8"))
+    key_path.write_text(trusted_pubkey + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        frontier,
+        "verify_manifest",
+        lambda _manifest, *, trusted_pubkey_hex: (True, "unit-test anchor"),
+    )
+    monkeypatch.setattr(frontier, "_git_commit_is_ancestor", lambda _commit: True)
+
+    def validate():
+        manifest_path.write_text(json.dumps(publishable), encoding="utf-8")
+        report_path.write_bytes(frontier.render_report(publishable).encode("utf-8"))
+        return frontier.validate_tracked_artifacts(
+            manifest_path=manifest_path,
+            report_path=report_path,
+            trusted_pubkey_path=key_path,
+        )
+
+    ok, errors = validate()
+    assert not ok
+    assert "recorded metrics are not the score of the recorded rows" in errors
+
+    # A consistently re-scored but regressed run is still not publishable.
+    chain = bool(results["audit"]["verified"])
+    results["metrics"] = frontier.score_rows(results["rows"], chain_verified=chain)
+    results["family_metrics"] = frontier._family_metrics(results["rows"], chain)
+    ok, errors = validate()
+    assert not ok
+    assert errors == ["recorded run did not pass its own metric gates (metrics.ok)"]
 
 
 def test_tracked_validator_accepts_exact_snapshot_after_squash_or_shallow_clone(

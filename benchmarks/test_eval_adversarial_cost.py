@@ -70,6 +70,13 @@ def test_token_bomb_is_capped(suite):
     assert str(_MAX_TOOL_RESULT_BYTES) in result["detail"]
 
 
+def test_token_bomb_fails_when_the_model_scaled_cap_is_unbounded(suite, monkeypatch):
+    from maverick import context_scaling
+
+    monkeypatch.setattr(context_scaling, "_MAX_TOOL_RESULT_BYTES", 10**12)
+    assert suite.scenario_token_bomb()["clamped"] is False
+
+
 def test_runaway_iterations_halt_at_the_cap(suite):
     result = suite.scenario_runaway_iterations()
     assert result["clamped"] is True

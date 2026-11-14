@@ -29,6 +29,24 @@ import time
 from pathlib import Path
 
 
+def _newest_episode_id(db_path: Path | None) -> int:
+    from maverick.world_model import WorldModel
+
+    eps = WorldModel(db_path).list_episodes(limit=1)
+    return max((int(ep.id) for ep in eps), default=0)
+
+
+def _episode_after(db_path: Path | None, last_id: int):
+    """The single episode recorded after ``last_id``; ``(None, reason)`` if
+    there is none or more than one (another run wrote to the same world)."""
+    from maverick.world_model import WorldModel
+
+    new = [ep for ep in WorldModel(db_path).list_episodes(limit=50) if int(ep.id) > last_id]
+    if len(new) == 1:
+        return new[0], ""
+    return None, "no-episode" if not new else "ambiguous-episode"
+
+
 def run_one(
     benchmark_path: Path,
     max_dollars: float,
@@ -44,14 +62,12 @@ def run_one(
     dry_run = os.environ.get("MAVERICK_BENCH_DRY_RUN") == "1"
 
     start = time.monotonic()
+    cost = 0.0
+    in_tokens = out_tokens = tool_calls = 0
     if dry_run:
         # Synthesize a fake successful run -- useful for CI smoke tests.
         wall_seconds = 0.1
         outcome = "dry-run"
-        cost = 0.0
-        in_tokens = 0
-        out_tokens = 0
-        tool_calls = 0
     else:
         env = os.environ.copy()
         # `maverick start` runs synchronously (it blocks until the goal
@@ -63,25 +79,29 @@ def run_one(
         ]
         if db_path is not None:
             env["MAVERICK_DB"] = str(db_path)
-        proc = subprocess.run(
-            cmd, env=env, capture_output=True, text=True,
-            timeout=max_wall_seconds,
-        )
+        last_id = _newest_episode_id(db_path)
+        try:
+            proc = subprocess.run(
+                cmd, env=env, capture_output=True, text=True,
+                timeout=max_wall_seconds,
+            )
+            outcome = "ok" if proc.returncode == 0 else f"exit-{proc.returncode}"
+        except subprocess.TimeoutExpired:
+            outcome = "timeout"
         wall_seconds = time.monotonic() - start
-        outcome = "ok" if proc.returncode == 0 else f"exit-{proc.returncode}"
 
-        # Read the most recent episode from the world model.
-        from maverick.world_model import WorldModel
-        wm = WorldModel(db_path)
-        eps = wm.list_episodes(limit=1)
-        if eps:
-            cost = eps[0].cost_dollars
-            in_tokens = eps[0].input_tokens
-            out_tokens = eps[0].output_tokens
-            tool_calls = eps[0].tool_calls
-            outcome = eps[0].outcome or outcome
-        else:
-            cost = in_tokens = out_tokens = tool_calls = 0
+        # Attribute only the episode this run recorded, never an older or a
+        # concurrent run's; a failed process keeps its own outcome.
+        episode, missing = _episode_after(db_path, last_id)
+        if episode is not None:
+            cost = episode.cost_dollars
+            in_tokens = episode.input_tokens
+            out_tokens = episode.output_tokens
+            tool_calls = episode.tool_calls
+            if outcome == "ok":
+                outcome = episode.outcome or outcome
+        elif outcome == "ok":
+            outcome = missing
 
     return {
         "benchmark": str(benchmark_path),
@@ -91,7 +111,8 @@ def run_one(
         # to `maverick start`). Comparator rows for other agents are hand-
         # added, so they MUST be marked source=manual to stay honest -- a
         # reader can't otherwise tell a measured row from a typed-in one.
-        "source": "measured",
+        # A dry run measured nothing, so it is labelled as such.
+        "source": "dry-run" if dry_run else "measured",
         "wall_seconds": round(wall_seconds, 2),
         "cost_dollars": round(cost, 4),
         "input_tokens": in_tokens,

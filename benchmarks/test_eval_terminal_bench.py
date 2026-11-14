@@ -144,6 +144,13 @@ def test_malformed_required_command_pattern_degrades(tb):
     assert tb.verify(task, env) == (1.0, "ok")
 
 
+def test_task_without_criteria_is_never_a_pass(tb):
+    # e.g. a row whose only criterion was misspelled ("absent_file").
+    task = tb.TerminalTask(task_id="t", prompt="p")
+    score, detail = tb.verify(task, tb.TerminalEnv({}))
+    assert score == 0.0 and "not evaluated" in detail
+
+
 def test_solver_exception_scores_zero_not_crash(tb):
     def boom(t, tools):
         raise RuntimeError("solver blew up")

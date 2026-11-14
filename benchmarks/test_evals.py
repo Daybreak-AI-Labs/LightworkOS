@@ -157,6 +157,13 @@ class TestGaiaEndToEnd:
         summary = evals.run_benchmark(bench, lambda t: "")
         assert summary["pass_at_1"] == 0.0
 
+    def test_row_without_a_usable_answer_is_never_a_pass(self, evals, gaia, tmp_path):
+        dataset = tmp_path / "gaia.jsonl"
+        dataset.write_text('{"task_id": "x", "Question": "q?"}\n{"task_id": "y", "Question": "q?", "Final answer": "?"}\n')
+        summary = evals.run_benchmark(gaia.GaiaBenchmark(), lambda t: "", dataset=dataset)
+        assert summary["pass_at_1"] == 0.0
+        assert summary["scoring_failures"] == 2
+
 
 # --- in-process live-solver wiring ------------------------------------
 

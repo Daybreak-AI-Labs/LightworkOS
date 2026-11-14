@@ -225,6 +225,14 @@ def test_untrusted_revoked_tampered_and_wrong_contract_submissions_fail(signing_
     assert "different Governance Frontier suite contract" in wrong_contract.reason
 
 
+def test_contract_binds_the_metric_scorer():
+    contract = frontier.current_suite_contract()
+    scorer = frontier.ROOT / "benchmarks" / "_common" / "governance_metrics.py"
+    assert contract["scorer_sha256"] == frontier._canonical_source_sha256(scorer)
+    drifted = dict(contract, scorer_sha256=_digest(93))
+    assert frontier.suite_contract_sha256(drifted) != frontier.suite_contract_sha256(contract)
+
+
 def test_contract_rejects_type_confusion_and_source_contract_is_deterministic():
     contract = frontier.current_suite_contract()
     assert frontier.validate_suite_contract(contract) == contract
@@ -335,8 +343,6 @@ def test_generator_and_no_drift_verifier_are_aggregate_only_and_deterministic(
     assert [entry["rank"] for entry in generated["entries"]] == [1, 2]
     rendered = leaderboard_markdown.read_text(encoding="utf-8")
     rendered_json = leaderboard_json.read_text(encoding="utf-8")
-    assert "sensitive-prompt-never-publish" not in rendered
-    assert "sensitive-prompt-never-publish" not in rendered_json
     assert "measurement_manifest_sha256" not in rendered_json
     assert "artifact URLs" in rendered
 

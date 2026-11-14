@@ -100,21 +100,37 @@ def scenario_tool_loop() -> dict:
 
 # ---- (b) token-bomb: a huge tool result must be capped before context --------
 
+_BOMB_CHARS = 10_000_000
+# A declared window large enough to reach the model-scaled cap's ceiling.
+_HUGE_WINDOW_TOKENS = 100_000_000
+
+
 def scenario_token_bomb() -> dict:
     """A tool emits a multi-MB string; the truncation hook bounds what enters
-    the context window (and therefore the next call's input-token spend)."""
-    from maverick.agent import _MAX_TOOL_RESULT_BYTES, _cap_tool_output
+    the context window (and therefore the next call's input-token spend).
 
-    bomb = "$" * (_MAX_TOOL_RESULT_BYTES * 50)  # ~5 MB at the default cap
-    entered = _cap_tool_output(bomb)
-    limit = _MAX_TOOL_RESULT_BYTES + 1024  # head+tail plus the bounded marker
+    The cap is taken from the agent's own per-model path
+    (``_tool_result_limit``) under the largest declared window, because the
+    agent scales the default cap with the model's window; the default cap
+    alone would not show whether a big-window model is still bounded."""
+    from maverick.agent import _MAX_TOOL_RESULT_BYTES, _cap_tool_output, _tool_result_limit
+
+    with _scoped_env(
+        MAVERICK_MODEL_CONTEXT_WINDOW=str(_HUGE_WINDOW_TOKENS),
+        MAVERICK_CONTEXT_MODEL_SCALED="1",
+    ):
+        cap = _tool_result_limit(None)
+    bomb = "$" * _BOMB_CHARS
+    entered = _cap_tool_output(bomb, limit=cap)
+    limit = cap + 1024  # head+tail plus the bounded marker
     clamped = len(entered) <= limit < len(bomb)
     return {
         "scenario": "token-bomb",
         "clamped": clamped,
         "detail": (
             f"{len(bomb)}-char tool result -> {len(entered)} chars entered "
-            f"context (cap {_MAX_TOOL_RESULT_BYTES})"
+            f"context (cap {cap} at a {_HUGE_WINDOW_TOKENS}-token window; "
+            f"default cap {_MAX_TOOL_RESULT_BYTES})"
         ),
     }
 

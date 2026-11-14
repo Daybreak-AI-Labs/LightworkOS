@@ -82,7 +82,13 @@ def _split_list(s: str) -> list[str]:
 
 
 def question_scorer(model_answer: str, ground_truth: str) -> float:
-    """GAIA's normalized exact match. Returns 1.0 (correct) or 0.0."""
+    """GAIA's normalized exact match. Returns 1.0 (correct) or 0.0.
+
+    Raises ``ValueError`` when the ground truth normalizes to nothing (a row
+    without a usable answer): an empty answer would otherwise match it.
+    """
+    if not _normalize_str(ground_truth):
+        raise ValueError("ground truth is empty after normalization; task cannot be scored")
     model_answer = _extract_final_answer(model_answer)
     if _is_float(ground_truth):
         return 1.0 if _normalize_number(model_answer) == float(ground_truth) else 0.0

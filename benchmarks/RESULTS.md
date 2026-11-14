@@ -23,7 +23,8 @@ Each row is one run of one benchmark. Columns:
 - `benchmark`: path under `benchmarks/`
 - `tag`: release tag the run was at (e.g. `v0.1.0`)
 - `agent`: `maverick`, `openclaw`, `hermes`, `autogen`, or a single-shot baseline
-- `source`: `measured` (auto-written by this harness) or `manual` (hand-added
+- `source`: `measured` (auto-written by this harness), `dry-run` (auto-written
+  by a run that called no model) or `manual` (hand-added
   comparator row). The harness only measures Lightwork; any other-agent row is
   hand-added and **must** be marked `manual` so measured and typed-in numbers
   are never confused.

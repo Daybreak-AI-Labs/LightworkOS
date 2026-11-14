@@ -166,7 +166,11 @@ def verify(task: TerminalTask, env: TerminalEnv) -> tuple[float, str]:
 
     Returns (1.0, "ok") only if every expected file matches, no absent file
     exists, AND every required command was logged; else (0.0, "<what failed>").
+    A task with no criteria at all cannot be evaluated and scores 0.0, never a
+    vacuous pass.
     """
+    if not task.expected_files and not task.absent_files and not task.required_commands:
+        return 0.0, "no grading criteria: not evaluated"
     file_fails = [
         f"{path}={env.files.get(path, _MISSING)!r} (want {content!r})"
         for path, content in (task.expected_files or {}).items()
