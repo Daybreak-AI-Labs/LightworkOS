@@ -117,7 +117,12 @@ def _approval_records(
     for a in approvals:
         if owner is not None and len(out) >= limit:
             break
-        if owner is not None and owner not in {
+        if owner == "":
+            # An empty owner means unowned work (as list_goals treats it):
+            # approvals nobody requested.
+            if getattr(a, "requested_by", None):
+                continue
+        elif owner is not None and owner not in {
             getattr(a, "requested_by", None),
             getattr(a, "claimed_by", None),
             getattr(a, "decided_by", None),
