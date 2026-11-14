@@ -383,6 +383,21 @@ def _canonical_ledger(data: dict) -> dict:
     return out
 
 
+def _save_folded(path: Path, data: dict) -> None:
+    """Write the folded ledger. A fold may be larger than the deployment ledger
+    was, so one that is due for indexed storage (or too large for the JSON
+    form) is published as SQLite instead of having to fit the JSON form."""
+    size = len(json.dumps(data, allow_nan=False).encode("utf-8"))
+    if _use_indexed_ledger(path) or (size < _INDEXED_MIGRATION_BYTES and size <= _MAX_LEDGER_BYTES):
+        _save(path, data)
+        return
+    from . import provider_spend_sqlite
+    try:
+        provider_spend_sqlite.publish(path, data, sys.modules[__name__])
+    except Exception as exc:
+        raise ProviderAccountingUnavailable from exc
+
+
 def _fold_legacy_period(folded: dict, legacy: dict, period: str, name: str) -> None:
     """Add one earlier per-tenant ledger's ``period`` into ``folded``: totals and
     reservation receipts (state, projection and claims unchanged), plus all of
@@ -451,7 +466,7 @@ def _fold_tenant_ledgers(path: Path) -> None:
             pending = {"state": "pending", "period": period, "before": before, "after": after}
             atomic_write_text(journal, json.dumps(pending), mode=0o600)
             if after != before:
-                _save(path, folded)
+                _save_folded(path, folded)
             atomic_write_text(journal, json.dumps({**pending, "state": "done"}), mode=0o600)
     except ProviderAccountingUnavailable:
         raise

@@ -461,3 +461,34 @@ def test_fold_crash_after_the_write_recovers_for_either_deployment_form(monkeypa
     assert (status.spent, status.reserved) == (1.0, 2.0)
     journal = path.with_name(path.name + pcc._TENANT_FOLD_SUFFIX)
     assert json.loads(journal.read_text())["state"] == "done"
+
+
+def test_fold_larger_than_the_json_form_is_published_indexed(monkeypatch, tmp_path):
+    """Two saveable earlier ledgers whose receipts together exceed the JSON
+    ledger limit must fold into indexed storage, not fail on every retry."""
+    from maverick import provider_spend_sqlite
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(pcc, "_admission_cap", lambda name: 1000.0)
+    legacies = []
+    for tenant in ("acme", "globex"):
+        legacy = tmp_path / "home" / "tenants" / tenant / "provider_spend.json"
+        with tenant_scope(tenant=tenant):
+            for n in range(20):
+                hold = pcc.reserve("openai", 1.0, request_id=f"{tenant}-call-{n}", path=legacy)
+                pcc.settle(hold, 0.5)
+        legacies.append(legacy)
+    largest = max(legacy.stat().st_size for legacy in legacies)
+    monkeypatch.setattr(pcc, "_MAX_LEDGER_BYTES", largest + 64)     # each fits, both do not
+    real = _crash_on_journal_done(monkeypatch)                  # stop after the indexed write
+    pcc._FOLDED.clear()
+    with pytest.raises(pcc.ProviderAccountingUnavailable):
+        pcc.check("openai")
+    monkeypatch.setattr(pcc, "atomic_write_text", real)
+    pcc._FOLDED.clear()
+    status = pcc.check("openai")
+    assert status.spent == 20.0 and status.allowed is True
+    assert provider_spend_sqlite.is_active(pcc._deployment_ledger_path())
+    pcc._FOLDED.clear()
+    assert pcc.check("openai") == status                          # no second fold
