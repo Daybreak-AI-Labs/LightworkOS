@@ -534,7 +534,7 @@ def _worker_id(request: Request, actor: str) -> str:
     return f"worker-{digest[:40]}"
 
 
-def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
+def create_policy_publication_routers(
     dependencies: PolicyPublicationDependencies | None = None,
 ) -> tuple[APIRouter, APIRouter]:
     """Create separately mountable authenticated-admin and public routers."""
@@ -626,6 +626,22 @@ def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
             lease_token=body.lease_token,
         )
 
+    _register_policy_artifact_routes(actor, admin, authority, call)
+
+    _register_policy_link_routes(actor, admin, authority, call)
+
+    _register_policy_schedule_routes(actor, admin, authority, call)
+
+    _register_policy_job_routes(actor, admin, authority, call, claim_from_body)
+
+    _register_policy_audit_routes(admin, authority, call)
+
+    _register_public_policy_route(deps, limiter, public)
+
+    return admin, public
+
+
+def _register_policy_artifact_routes(actor, admin, authority, call):
     @admin.post("/artifacts", status_code=201)
     async def create_artifact(request: Request, body: ArtifactIn) -> dict[str, Any]:
         require_global_permission(request, "admin")
@@ -706,6 +722,9 @@ def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
             **body.model_dump(),
         )
 
+
+
+def _register_policy_link_routes(actor, admin, authority, call):
     @admin.post("/links", status_code=201)
     async def create_link(request: Request, body: LinkIn) -> dict[str, Any]:
         require_global_permission(request, "admin")
@@ -806,6 +825,9 @@ def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
             **body.model_dump(),
         )
 
+
+
+def _register_policy_schedule_routes(actor, admin, authority, call):
     @admin.post("/links/{link_id}/schedules/publication", status_code=201)
     async def schedule_publication(
         request: Request,
@@ -857,6 +879,9 @@ def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
             **body.model_dump(),
         )
 
+
+
+def _register_policy_job_routes(actor, admin, authority, call, claim_from_body):
     @admin.post("/jobs/claim")
     async def claim_jobs(request: Request, body: ClaimBatchIn) -> dict[str, Any]:
         require_global_permission(request, "operate")
@@ -925,6 +950,9 @@ def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
             "live_acceptance": False,
         }
 
+
+
+def _register_policy_audit_routes(admin, authority, call):
     @admin.get("/audit")
     async def audit_events(
         request: Request,
@@ -992,6 +1020,9 @@ def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
             "live_external_acceptance": False,
         }
 
+
+
+def _register_public_policy_route(deps, limiter, public):
     @public.get("/{link_id}")
     async def retrieve_policy(
         request: Request,
@@ -1094,7 +1125,6 @@ def create_policy_publication_routers(  # noqa: C901 - explicit route assembly
             },
         )
 
-    return admin, public
 
 
 router, public_router = create_policy_publication_routers()
