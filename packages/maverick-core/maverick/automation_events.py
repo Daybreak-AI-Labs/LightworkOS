@@ -186,10 +186,20 @@ def diff_new_items(items: list[dict], cursor: str, id_field: str, *,
     if not cursor:
         return PollResult(events=[], cursor=_encode_cursor("feed", newest))
     fresh: list[dict] = []
-    for it, iid in zip(ordered, ids, strict=False):
-        if iid == prior:
-            break                                       # reached last-seen
-        fresh.append(it)
+    if prior in ids:
+        for it, iid in zip(ordered, ids, strict=False):
+            if iid == prior:
+                break                                   # reached last-seen
+            fresh.append(it)
+    elif _numeric_id(prior) is not None and all(_numeric_id(i) is not None for i in ids):
+        # The last-seen item left the feed (closed, deleted, rolled off) but
+        # ids are increasing numbers: only ids above it are new.
+        floor = _numeric_id(prior)
+        fresh = [it for it, iid in zip(ordered, ids, strict=True) if _numeric_id(iid) > floor]
+    else:
+        # Otherwise what is before or after it cannot be told: re-baseline
+        # instead of firing every listed (possibly historical) item as new.
+        return PollResult(events=[], cursor=_encode_cursor("feed", newest))
     fresh.reverse()                                     # oldest-first for firing
     # Fire the OLDEST _MAX_EVENTS of a backlog and advance the cursor only to the
     # newest item we actually fired -- so a burst larger than the cap drains over
@@ -201,6 +211,11 @@ def diff_new_items(items: list[dict], cursor: str, id_field: str, *,
     events = [_flatten(it) for it in fresh]
     return PollResult(events=events, cursor=_encode_cursor("feed", next_cursor),
                       event_ids=[_id(item) for item in fresh])
+
+
+def _numeric_id(value: str | None) -> int | None:
+    text = (value or "").strip()
+    return int(text) if text.isascii() and text.isdigit() and len(text) <= 30 else None
 
 
 # ---- built-in source: poll a JSON HTTP endpoint ----------------------------

@@ -60,6 +60,16 @@ def test_burst_over_cap_drains_oldest_first_without_loss():
     assert ev._decode_cursor(second.cursor, "feed") == "40"
 
 
+def test_a_vanished_cursor_item_does_not_replay_history():
+    # Newest issue 100 was closed: 61..99 predate the cursor and must not fire.
+    items = [{"id": str(i)} for i in range(99, 60, -1)]
+    r = ev.diff_new_items(items, cursor="100", id_field="id")
+    assert r.events == []
+    # Opaque ids: re-baseline on the newest rather than fire everything.
+    r = ev.diff_new_items([{"id": "c"}, {"id": "b"}], cursor="a", id_field="id")
+    assert r.events == [] and ev._decode_cursor(r.cursor, "feed") == "c"
+
+
 def test_http_json_source_with_injected_fetch(monkeypatch):
     monkeypatch.setattr(
         ev, "_http_get_json",
