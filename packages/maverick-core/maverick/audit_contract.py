@@ -149,13 +149,25 @@ def _imports_audit_writer(tree: ast.AST) -> bool:
     return False
 
 
+def _writer_aliases(tree: ast.AST) -> set[str]:
+    """Local names bound to an audit writer: ``from .audit import record as X``."""
+    names: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom):
+            mod = n.module or ""
+            if "audit" in mod.split(".") or mod.endswith("audit"):
+                names.update(a.asname for a in n.names if a.name in AUDIT_WRITERS and a.asname)
+    return names
+
+
 def _audit_calls(tree: ast.AST) -> list[int]:
+    writers = AUDIT_WRITERS | _writer_aliases(tree)
     lines = []
     for n in ast.walk(tree):
         if not isinstance(n, ast.Call):
             continue
         f = n.func
-        if isinstance(f, ast.Name) and f.id in AUDIT_WRITERS:
+        if isinstance(f, ast.Name) and f.id in writers:
             lines.append(n.lineno)
         elif isinstance(f, ast.Attribute) and f.attr in AUDIT_WRITERS:
             # audit.record(...) / writer.record_global(...)
