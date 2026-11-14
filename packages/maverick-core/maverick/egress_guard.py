@@ -241,9 +241,9 @@ def _denied(url: str) -> str | None:
             "egress guard: blocked egress to %r but the audit subsystem "
             "refused to record it; the request is still refused",
             host or url)
-    except Exception:
-        # Any other audit failure gets the same treatment: the request is
-        # refused either way, so keep the accurate egress reason.
+    except Exception:  # failure-policy: fail_closed -- the request is refused either way
+        # Any other audit failure gets the same treatment: keep the accurate
+        # egress reason.
         log.exception(
             "egress guard: blocked egress to %r but recording it failed; "
             "the request is still refused", host or url)

@@ -182,12 +182,19 @@ def test_resolve_pinned_fails_closed_on_resolution_error(monkeypatch):
         http_fetch._resolve_pinned("nope.invalid")
 
 
-def test_resolve_pinned_override_returns_host_unchanged(monkeypatch):
+def test_resolve_pinned_override_pins_the_validated_private_address(monkeypatch):
+    import socket
+
     from maverick.tools import http_fetch
     monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
-    # No resolution happens under the override; the hostname passes through.
+    # The override admits private addresses but still pins the one it
+    # validated, so the connection cannot re-resolve the name to the cloud
+    # metadata address after the check.
     assert http_fetch._resolve_pinned("127.0.0.1") == "127.0.0.1"
-    assert http_fetch._resolve_pinned("internal.svc") == "internal.svc"
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda host, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))])
+    assert http_fetch._resolve_pinned("internal.svc") == "10.0.0.5"
 
 
 def test_pinned_connection_opens_socket_to_validated_ip(monkeypatch):
