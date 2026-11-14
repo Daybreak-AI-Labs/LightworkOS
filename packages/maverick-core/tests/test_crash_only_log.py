@@ -95,6 +95,28 @@ def test_complete_record_missing_only_newline_is_kept(tmp_path):
     assert result.torn_tail is False  # nothing was discarded
 
 
+def test_a_write_failing_before_the_newline_never_duplicates_a_seq(tmp_path, monkeypatch):
+    log = _log(tmp_path)
+    log.append("a")
+    real_write, calls = os.write, []
+
+    def short_then_fail(fd, data):
+        calls.append(len(data))
+        if len(calls) == 1:
+            return real_write(fd, bytes(data[:-1]))  # everything but the newline
+        if len(calls) == 2:
+            raise OSError("disk full")
+        return real_write(fd, data)
+
+    monkeypatch.setattr(col.os, "write", short_then_fail)
+    with pytest.raises(OSError):
+        log.append("b")
+    monkeypatch.setattr(col.os, "write", real_write)
+    log.append("c")
+    seqs = [r["seq"] for r in col.replay(log.path)]
+    assert seqs == [1, 2, 3]  # the sealed "b" kept its seq; "c" did not reuse it
+
+
 def test_seq_resumes_after_clean_reopen(tmp_path):
     log = _log(tmp_path)
     log.append("a")
