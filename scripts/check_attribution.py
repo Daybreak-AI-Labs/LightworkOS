@@ -43,18 +43,35 @@ from pathlib import Path
 #: Human co-authors and non-assistant bots (dependabot, renovate) pass.
 _ASSISTANTS = (
     r"(?:claude|anthropic|copilot|chatgpt|openai|codex|gemini|cursor|devin|"
-    r"aider|windsurf)"
+    r"aider|windsurf|jules\[bot\]|amp|openhands|claudebot)"
 )
 
+# A first name alone is not an assistant identity. Pair vendor identities
+# with their known addresses, or match a complete assistant bot login.
+_BOT_LOGIN = r"(?:jules\[bot\]|copilot\[bot\]|claude\[bot\]|claudebot|openhands\[bot\]|gemini-code-assist\[bot\]|devin-ai-integration\[bot\]|cursoragent)"
+IDENTITY_RULE = re.compile(
+    rf"^(?:{_BOT_LOGIN})(?:\s*<[^<>]+>)?$|"
+    r"^(?:claude(?:\s+[^<>]+)?|anthropic|assistant)\s*<noreply@anthropic\.com>$|"
+    r"^(?:chatgpt|openai|codex)\s*<noreply@openai\.com>$|"
+    r"^copilot\s*<copilot@github\.com>$|"
+    r"^devin\s*<(?:devin|noreply)@cognition\.(?:ai|com)>$|"
+    r"^cursor\s*<cursoragent@cursor\.com>$|"
+    r"^amp\s*<amp@ampcode\.com>$|"
+    r"^openhands\s*<openhands@all-hands\.dev>$",
+    re.IGNORECASE,
+)
+_TRAILER = re.compile(
+    r"^\s*(co-authored-by|assisted-by|generated-by|ai-assisted-by|co-developed-by):\s*(.*?)\s*$",
+    re.IGNORECASE,
+)
+_NAME_ONLY = re.compile(rf"(?:{_ASSISTANTS}|claude code)", re.IGNORECASE)
+_GENERATOR = re.compile(r"generated (?:with|by)\s+(.+?)\s*$", re.IGNORECASE)
+
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("AI co-author trailer",
-     re.compile(rf"^\s*co-authored-by:.*\b{_ASSISTANTS}\b", re.IGNORECASE)),
     ("assistant session trailer",
      re.compile(r"^\s*claude-session:", re.IGNORECASE)),
     ("assistant session link",
-     re.compile(r"claude\.ai/code/session", re.IGNORECASE)),
-    ("generator footer",
-     re.compile(rf"generated (?:with|by)\b.*\b{_ASSISTANTS}\b", re.IGNORECASE)),
+     re.compile(r"claude\.(?:ai|com)/code/session", re.IGNORECASE)),
     ("generator footer",
      re.compile(r"\U0001F916\s*generated", re.IGNORECASE)),
     ("Anthropic no-reply trailer",
@@ -62,16 +79,19 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-#: An author/committer identity that the squash merge would turn into an AI
-#: co-author trailer. Human GitHub no-reply identities pass.
-IDENTITY_RULE = re.compile(rf"\b{_ASSISTANTS}\b|noreply@anthropic\.com", re.IGNORECASE)
+def _assistant_credit(value: str) -> bool:
+    credit = value.strip(" *_\t")
+    link = re.fullmatch(r"\[([^\]]+)\]\([^)]+\)", credit)
+    if link:
+        credit = link.group(1)
+    return bool(IDENTITY_RULE.fullmatch(credit) or _NAME_ONLY.fullmatch(credit))
 
 
 def identity_findings(author: str, committer: str, source: str) -> list[str]:
     """Author/committer identities of one commit that are assistant identities."""
     out: list[str] = []
     for role, identity in (("author", author), ("committer", committer)):
-        if IDENTITY_RULE.search(identity):
+        if IDENTITY_RULE.fullmatch(identity.strip()):
             out.append(f"{source}: AI {role} identity: {identity}")
     return out
 
@@ -80,6 +100,16 @@ def findings(text: str, source: str) -> list[str]:
     """Every line of ``text`` that carries AI attribution, labelled by rule."""
     out: list[str] = []
     for number, line in enumerate(text.splitlines(), 1):
+        trailer = _TRAILER.fullmatch(line)
+        if trailer:
+            if _assistant_credit(trailer.group(2)):
+                rule = "AI co-author trailer" if trailer.group(1).lower() == "co-authored-by" else "AI attribution trailer"
+                out.append(f"{source}:{number}: {rule}: {line.strip()}")
+                continue
+        generator = _GENERATOR.search(line)
+        if generator and _assistant_credit(generator.group(1)):
+            out.append(f"{source}:{number}: generator footer: {line.strip()}")
+            continue
         for rule, pattern in RULES:
             if pattern.search(line):
                 out.append(f"{source}:{number}: {rule}: {line.strip()}")
@@ -119,8 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     inspected = 0
+    commits_inspected = 0
     problems: list[str] = []
-    if args.commits:
+    if args.commits is not None:
         try:
             records = commit_records(args.commits, args.repo)
         except subprocess.CalledProcessError as exc:
@@ -128,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"{exc.stderr.strip()}", file=sys.stderr)
             return 2
         for sha, author, committer, body in records:
+            commits_inspected += 1
             inspected += 1
             source = f"commit {sha[:12]}"
             problems.extend(identity_findings(author, committer, source))
@@ -140,9 +172,9 @@ def main(argv: list[str] | None = None) -> int:
         inspected += 1
         problems.extend(findings(sys.stdin.read(), "stdin"))
 
-    if inspected == 0:
-        print("check-attribution: ERROR -- inspected nothing (empty commit range and "
-              "no text); refusing to pass vacuously", file=sys.stderr)
+    if inspected == 0 or (args.commits is not None and commits_inspected == 0):
+        print("check-attribution: ERROR -- inspected nothing in the requested commit "
+              "range, or no input supplied; refusing to pass vacuously", file=sys.stderr)
         return 2
     if problems:
         print("check-attribution: AI attribution is not allowed in commit messages "

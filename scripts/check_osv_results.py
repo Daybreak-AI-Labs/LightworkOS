@@ -27,6 +27,23 @@ LOCAL_LOCKS = {
     "apps/installer-desktop/src-tauri/Cargo.lock",
     "vendor/tests/Cargo.lock",
 }
+EXPECTED_LOCKFILES = frozenset({
+    "requirements/ci.txt", "requirements/docs.txt",
+    "rust/Cargo.lock", "vendor/tests/Cargo.lock", "examples/clients/rust/Cargo.lock",
+    "apps/desktop/src-tauri/Cargo.lock", "apps/installer-desktop/src-tauri/Cargo.lock",
+    "apps/desktop-oauth-return/Cargo.lock", "apps/desktop-runtime/Cargo.lock",
+    "apps/installer-msi/verify-update/Cargo.lock", "apps/zed-extension/Cargo.lock",
+    "apps/jetbrains-plugin/gradle.lockfile", "examples/clients/typescript/package-lock.json",
+    "apps/installer-desktop/pnpm-lock.yaml", "apps/mobile-companion/package-lock.json",
+    "apps/mobile-companion/tests/package-lock.json",
+    "packages/maverick-dashboard/tests/browser/package-lock.json",
+    "packages/maverick-dashboard/tests/js/package-lock.json",
+    "examples/clients/csharp/packages.lock.json", "examples/clients/go/go.mod",
+    "go/model-proxy/go.mod", "examples/clients/java/pom.xml",
+    "demo/dsar-concierge/requirements-standalone.txt", "demo/environment-threat-hunter/requirements.txt",
+    "demo/grc-concierge/requirements.txt", "demo/model-risk-ai-assurance-officer/requirements.txt",
+    "demo/platform-threat-hunter/requirements.txt",
+})
 _MOBILE_LOCK = "apps/mobile-companion/package-lock.json"
 #: Reviewed advisories whose only fixed releases break the pinned toolchain.
 #: Each covers one lockfile, one exact package version and the listed IDs until
@@ -73,8 +90,27 @@ def _accepted_risk(path: Path, package: dict, identifier: str, root: Path, today
     return None
 
 
+def _coverage_errors(
+    results: list[dict], root: Path, python_lock: Path | None, docs_lock: Path | None,
+) -> list[str]:
+    expected = {name: (root / name).resolve() for name in EXPECTED_LOCKFILES}
+    # CI copies these two reviewed files to names understood by OSV. Bind to
+    # those exact scan inputs, never to a matching basename in the report.
+    if python_lock is not None:
+        expected["requirements/ci.txt"] = python_lock.resolve()
+    if docs_lock is not None:
+        expected["requirements/docs.txt"] = docs_lock.resolve()
+    observed = {
+        (root / result["source"]["path"]).resolve()
+        for result in results if result["source"]["type"] == "lockfile"
+    }
+    return [f"OSV report missing lockfile coverage: {name}"
+            for name, path in sorted(expected.items()) if path not in observed]
+
+
 def evaluate(
     report: dict, scanner_exit: int, root: Path = ROOT, today: date | None = None,
+    *, python_lock: Path | None = None, docs_lock: Path | None = None,
 ) -> tuple[list[str], list[dict], list[dict]]:
     errors = validate(root)
     sources_verified = not errors
@@ -86,6 +122,7 @@ def evaluate(
     results = report.get("results")
     if not isinstance(results, list):
         return [*errors, "OSV report has no valid results array"], repaired, accepted
+    errors.extend(_coverage_errors(results, root, python_lock, docs_lock))
     findings = 0
     for result in results:
         source = result["source"]
@@ -127,9 +164,14 @@ def main() -> int:
     parser.add_argument("report", type=Path)
     parser.add_argument("--scanner-exit", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--python-lockfile", type=Path)
+    parser.add_argument("--docs-lockfile", type=Path)
     args = parser.parse_args()
     try:
-        errors, repaired, accepted = evaluate(json.loads(args.report.read_text()), args.scanner_exit)
+        errors, repaired, accepted = evaluate(
+            json.loads(args.report.read_text()), args.scanner_exit,
+            python_lock=args.python_lockfile, docs_lock=args.docs_lockfile,
+        )
         inventory_hash = hashlib.sha256((ROOT / "vendor/provenance.json").read_bytes()).hexdigest()
         args.output.write_text(json.dumps({"inventory_sha256": inventory_hash,
                                           "source_verified_backports": repaired,

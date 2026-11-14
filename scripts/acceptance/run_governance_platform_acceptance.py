@@ -388,11 +388,14 @@ def _run_suite(
         if process is not None and process.stdout is not None:
             process.stdout.close()
     duration = max(0.0, monotonic() - started)
+    counts = capture.counts()
     if spawn_error:
         status = "error"
     elif timed_out:
         status = "timed_out"
-    elif return_code == 0:
+    elif return_code == 0 and counts.get("passed", 0) > 0 and not (
+        counts.get("failed", 0) or counts.get("errors", 0)
+    ):
         status = "passed"
     else:
         status = "failed"
@@ -410,7 +413,7 @@ def _run_suite(
         "timed_out": timed_out,
         "return_code": return_code,
         "spawn_error_category": spawn_error or None,
-        "pytest_counts": capture.counts(),
+        "pytest_counts": counts,
     }
 
 
@@ -460,6 +463,7 @@ def run_acceptance(
                 "PYTHONDONTWRITEBYTECODE": "1",
             })
             environment.pop("MAVERICK_TENANT", None)
+            environment.pop("PYTEST_ADDOPTS", None)
             results.append(_run_suite(
                 suite,
                 repo_root=root,
