@@ -203,8 +203,7 @@ def fork(goal_id: int, *, at_event: int | None = None, label: str = "",
     ``at_event`` is the ``goal_events`` **id** of the last parent event to
     carry over (inclusive); ``None`` carries the trail. Either way only the
     parent's first ``_MAX_REPLAY_EVENTS`` (500) events are read, so a longer
-    trail is copied up to that point and a later fork point is refused. (The
-    marker event still words a ``None`` fork as "its full trail".) Ids, not offsets:
+    trail is copied up to that point and a later fork point is refused. Ids, not offsets:
     ``goal_events.id`` is a global autoincrement with no per-goal sequence
     column, so an offset would silently mean something different on every read.
 
@@ -266,7 +265,8 @@ def fork(goal_id: int, *, at_event: int | None = None, label: str = "",
     # already saw. No tool runs, no tokens spent, no sandbox touched.
     for event in trail:
         world.append_event(child_id, event.agent, FORK_EVENT_KIND, event.content)
-    origin = f"event #{at_event}" if at_event is not None else "its full trail"
+    origin = (f"event #{at_event}" if at_event is not None
+              else f"its trail (up to {_MAX_REPLAY_EVENTS} events)")
     world.append_event(
         child_id, "session_tree", FORK_EVENT_KIND,
         f"forked from goal #{goal_id} at {origin} by {forked_by}"

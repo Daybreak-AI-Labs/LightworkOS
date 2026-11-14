@@ -200,7 +200,8 @@
     </label>
     <button class="btn btn--primary" id="png-runtime-run" type="button">Run one local cycle</button>
   </div>
-  <pre class="png-runtime__output" id="png-runtime-output" aria-live="polite">Availability not loaded.</pre>
+  <p id="png-runtime-output-status" role="status" aria-live="polite"></p>
+  <pre class="png-runtime__output" id="png-runtime-output">Availability not loaded.</pre>
 </section>
 <div class="png-grid">
   <section class="panel png-stack">
@@ -249,7 +250,8 @@
   </section>
   <section class="panel">
     <h2>Result</h2>
-    <pre class="png-output" id="png-output" aria-live="polite">No request made.</pre>
+    <p id="png-output-status" role="status" aria-live="polite"></p>
+    <pre class="png-output" id="png-output">No request made.</pre>
   </section>
 </div>
 
@@ -263,7 +265,9 @@
   var confirmation = document.getElementById("png-confirm");
   var confirmationPanel = document.getElementById("png-confirm-panel");
   var output = document.getElementById("png-output");
+  var outputStatus = document.getElementById("png-output-status");
   var runtimeOutput = document.getElementById("png-runtime-output");
+  var runtimeOutputStatus = document.getElementById("png-runtime-output-status");
   var runtimeConfirmation = document.getElementById("png-runtime-confirm");
   var highImpact = new Set([
     "policy-set", "release-approve", "approval-revoke", "release-schedule",
@@ -278,6 +282,7 @@
 
   function show(value) {
     output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    outputStatus.textContent = typeof value === "string" ? value : "Request completed. Review the result below.";
   }
   // Failures read as plain sentences: never "HTTP 403", "Error:" or raw server text.
   function requestProblem(status, detail) {
@@ -317,6 +322,7 @@
     });
   }
   async function run(method, path, payload) {
+    outputStatus.textContent = "Completing the request…";
     var options = {method: method, headers: {"Accept": "application/json"}};
     if (method !== "GET") {
       options.headers["Content-Type"] = "application/json";
@@ -341,6 +347,7 @@
     run("GET", "/status", {}).catch(function (error) { show(problemText(error)); });
   });
   async function runRuntime(method, path) {
+    runtimeOutputStatus.textContent = "Completing the request…";
     var response = await fetch(API + path, {
       method: method,
       headers: {"Accept": "application/json", "Content-Type": "application/json"},
@@ -354,20 +361,24 @@
       throw new Error(requestProblem(response.status, result && result.detail));
     }
     runtimeOutput.textContent = JSON.stringify(result, null, 2);
+    runtimeOutputStatus.textContent = "Request completed. Review the result below.";
   }
   document.getElementById("png-runtime-status").addEventListener("click", function () {
     runRuntime("GET", "/publication-runtime/status").catch(function (error) {
       runtimeOutput.textContent = problemText(error);
+      runtimeOutputStatus.textContent = runtimeOutput.textContent;
     });
   });
   document.getElementById("png-runtime-run").addEventListener("click", function () {
     if (!runtimeConfirmation.checked) {
       runtimeOutput.textContent = "Confirm the exact local publication cycle before continuing.";
+      runtimeOutputStatus.textContent = runtimeOutput.textContent;
       return;
     }
     runtimeConfirmation.checked = false;
     runRuntime("POST", "/publication-runtime/run-once").catch(function (error) {
       runtimeOutput.textContent = problemText(error);
+      runtimeOutputStatus.textContent = runtimeOutput.textContent;
     });
   });
   operation.addEventListener("change", updateConfirmation);

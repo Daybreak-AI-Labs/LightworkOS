@@ -2140,7 +2140,83 @@ def deliver_text(
             )
 
 
-def _deliver_text_locked(  # noqa: C901 - linear release transaction is auditable
+def _validate_delivery_flags(
+    *,
+    human_interaction: bool,
+    synthetic_content: bool,
+    deepfake: bool,
+    public_interest_text: bool,
+) -> None:
+    for value, label in (
+        (human_interaction, "human_interaction"),
+        (synthetic_content, "synthetic_content"),
+        (deepfake, "deepfake"),
+        (public_interest_text, "public_interest_text"),
+    ):
+        if not isinstance(value, bool):
+            raise ValueError(f"{label} must be a boolean")
+    if synthetic_content is not True:
+        raise EvidenceGatewayStateError(
+            "deliver_text accepts AI-generated content only; "
+            "synthetic_content cannot be disabled by the delivery caller"
+        )
+    if human_interaction is not True:
+        raise EvidenceGatewayStateError(
+            "deliver_text is the human-facing delivery boundary; "
+            "human_interaction cannot be disabled by the delivery caller"
+        )
+
+
+def _validated_delivery_policy(
+    policy_token: str,
+    *,
+    modality_token: str,
+    deepfake: bool,
+    public_interest_text: bool,
+    model_digest: str,
+    context_digest: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    policy_record = _policy_record(policy_token)
+    if policy_record is None:
+        raise EvidenceGatewayStateError(
+            f"AI evidence policy {policy_token!r} does not exist"
+        )
+    policy = _policy_view(policy_record)
+    settings = policy["settings"]
+    if modality_token not in settings["supported_modalities"]:
+        marking_required = bool(
+            settings["require_machine_readable_marking"]
+            or settings["require_visible_marking"]
+            or deepfake
+            or public_interest_text
+        )
+        if marking_required:
+            raise UnsupportedMediaMarking(
+                f"required {modality_token} marking is not implemented; "
+                "delivery withheld"
+            )
+        raise ValueError(f"modality {modality_token!r} is not supported")
+    if modality_token != "text":
+        raise UnsupportedMediaMarking(
+            f"{modality_token} delivery is not implemented by deliver_text"
+        )
+    policy_model = str(policy.get("model_sha256") or "")
+    if policy_model and not hmac.compare_digest(policy_model, model_digest):
+        raise EvidenceGatewayStateError(
+            "model digest does not match the current evidence policy"
+        )
+    policy_context = str(policy.get("context_sha256") or "")
+    if policy_context and not hmac.compare_digest(
+        policy_context,
+        context_digest,
+    ):
+        raise EvidenceGatewayStateError(
+            "context digest does not match the current evidence policy"
+        )
+    return policy, settings
+
+
+def _deliver_text_locked(
     generated_text: str,
     *,
     input_text: str,
@@ -2172,24 +2248,12 @@ def _deliver_text_locked(  # noqa: C901 - linear release transaction is auditabl
     operator = _required_text(actor, "actor", 256)
     policy_token = _token(policy_id, "policy_id")
     modality_token = _token(modality, "modality").lower()
-    for value, label in (
-        (human_interaction, "human_interaction"),
-        (synthetic_content, "synthetic_content"),
-        (deepfake, "deepfake"),
-        (public_interest_text, "public_interest_text"),
-    ):
-        if not isinstance(value, bool):
-            raise ValueError(f"{label} must be a boolean")
-    if synthetic_content is not True:
-        raise EvidenceGatewayStateError(
-            "deliver_text accepts AI-generated content only; "
-            "synthetic_content cannot be disabled by the delivery caller"
-        )
-    if human_interaction is not True:
-        raise EvidenceGatewayStateError(
-            "deliver_text is the human-facing delivery boundary; "
-            "human_interaction cannot be disabled by the delivery caller"
-        )
+    _validate_delivery_flags(
+        human_interaction=human_interaction,
+        synthetic_content=synthetic_content,
+        deepfake=deepfake,
+        public_interest_text=public_interest_text,
+    )
     exception = _editorial_exception(editorial_exception)
     input_sha = _sha256(input_text.encode("utf-8"))
     generated_sha = _sha256(generated_text.encode("utf-8"))
@@ -2305,43 +2369,14 @@ def _deliver_text_locked(  # noqa: C901 - linear release transaction is auditabl
                 }
 
         _assert_receipt_admission_capacity(receipt_id)
-        policy_record = _policy_record(policy_token)
-        if policy_record is None:
-            raise EvidenceGatewayStateError(
-                f"AI evidence policy {policy_token!r} does not exist"
-            )
-        policy = _policy_view(policy_record)
-        settings = policy["settings"]
-        if modality_token not in settings["supported_modalities"]:
-            marking_required = bool(
-                settings["require_machine_readable_marking"]
-                or settings["require_visible_marking"]
-                or deepfake
-                or public_interest_text
-            )
-            if marking_required:
-                raise UnsupportedMediaMarking(
-                    f"required {modality_token} marking is not implemented; "
-                    "delivery withheld"
-                )
-            raise ValueError(f"modality {modality_token!r} is not supported")
-        if modality_token != "text":
-            raise UnsupportedMediaMarking(
-                f"{modality_token} delivery is not implemented by deliver_text"
-            )
-        policy_model = str(policy.get("model_sha256") or "")
-        if policy_model and not hmac.compare_digest(policy_model, model_digest):
-            raise EvidenceGatewayStateError(
-                "model digest does not match the current evidence policy"
-            )
-        policy_context = str(policy.get("context_sha256") or "")
-        if policy_context and not hmac.compare_digest(
-            policy_context,
-            context_digest,
-        ):
-            raise EvidenceGatewayStateError(
-                "context digest does not match the current evidence policy"
-            )
+        policy, settings = _validated_delivery_policy(
+            policy_token,
+            modality_token=modality_token,
+            deepfake=deepfake,
+            public_interest_text=public_interest_text,
+            model_digest=model_digest,
+            context_digest=context_digest,
+        )
         interaction_disclosure_required = bool(
             settings["require_interaction_disclosure"]
         )
@@ -3630,7 +3665,65 @@ def review_regulatory_impact(
             )
 
 
-def _review_regulatory_impact_locked(  # noqa: C901
+def _complete_impact_acceptance(
+    record_id: str,
+    claimed: Mapping[str, Any],
+    *,
+    operator: str,
+    reason: str,
+) -> dict[str, Any]:
+    refreshes: list[dict[str, Any]] = []
+    for policy_id in claimed["affected_policy_ids"]:
+        policy = _bind_impact_to_policy(policy_id, claimed, actor=operator)
+        refreshes.append(
+            {
+                "policy_id": policy_id,
+                "policy_record_id": policy["id"],
+                "policy_record_revision": policy["revision"],
+                "policy_sha256": policy["policy_sha256"],
+            }
+        )
+
+    def finalize_acceptance(row: dict[str, Any]) -> None:
+        row_review = row.get("review")
+        if (
+            row.get("status") != "accepted_refreshing"
+            or not isinstance(row_review, Mapping)
+            or row_review.get("decision") != "accepted"
+            or row_review.get("reviewer") != operator
+            or row_review.get("rationale") != reason
+        ):
+            raise RecordConflict("regulatory impact acceptance authority changed")
+        row["status"] = "accepted"
+        row["policy_refreshes"] = refreshes
+
+    try:
+        updated = _IMPACTS.update(
+            record_id,
+            finalize_acceptance,
+            expected_revision=int(claimed["revision"]),
+            action="regulatory_impact_accepted",
+            actor=operator,
+        )
+    except RecordConflict:
+        latest = _IMPACTS.get(record_id)
+        latest_review = None if latest is None else latest.get("review")
+        if (
+            latest is not None
+            and latest.get("status") == "accepted"
+            and isinstance(latest_review, Mapping)
+            and latest_review.get("decision") == "accepted"
+            and latest_review.get("reviewer") == operator
+            and latest_review.get("rationale") == reason
+        ):
+            return _public(latest)
+        raise
+    if updated is None:
+        raise EvidenceGatewayStateError("regulatory impact disappeared")
+    return _public(updated)
+
+
+def _review_regulatory_impact_locked(
     impact_id: str,
     *,
     decision: str,
@@ -3749,55 +3842,9 @@ def _review_regulatory_impact_locked(  # noqa: C901
         if claimed is None:
             raise EvidenceGatewayStateError("regulatory impact disappeared")
 
-    refreshes: list[dict[str, Any]] = []
-    for policy_id in claimed["affected_policy_ids"]:
-        policy = _bind_impact_to_policy(policy_id, claimed, actor=operator)
-        refreshes.append(
-            {
-                "policy_id": policy_id,
-                "policy_record_id": policy["id"],
-                "policy_record_revision": policy["revision"],
-                "policy_sha256": policy["policy_sha256"],
-            }
-        )
-
-    def finalize_acceptance(row: dict[str, Any]) -> None:
-        row_review = row.get("review")
-        if (
-            row.get("status") != "accepted_refreshing"
-            or not isinstance(row_review, Mapping)
-            or row_review.get("decision") != "accepted"
-            or row_review.get("reviewer") != operator
-            or row_review.get("rationale") != reason
-        ):
-            raise RecordConflict("regulatory impact acceptance authority changed")
-        row["status"] = "accepted"
-        row["policy_refreshes"] = refreshes
-
-    try:
-        updated = _IMPACTS.update(
-            record_id,
-            finalize_acceptance,
-            expected_revision=int(claimed["revision"]),
-            action="regulatory_impact_accepted",
-            actor=operator,
-        )
-    except RecordConflict:
-        latest = _IMPACTS.get(record_id)
-        latest_review = None if latest is None else latest.get("review")
-        if (
-            latest is not None
-            and latest.get("status") == "accepted"
-            and isinstance(latest_review, Mapping)
-            and latest_review.get("decision") == "accepted"
-            and latest_review.get("reviewer") == operator
-            and latest_review.get("rationale") == reason
-        ):
-            return _public(latest)
-        raise
-    if updated is None:
-        raise EvidenceGatewayStateError("regulatory impact disappeared")
-    return _public(updated)
+    return _complete_impact_acceptance(
+        record_id, claimed, operator=operator, reason=reason,
+    )
 
 
 def _receipt_verification_counts(
@@ -4580,7 +4627,88 @@ def render_assurance_packet(
     }
 
 
-def issue_assurance_packet(  # noqa: C901 - explicit crash-recovery state machine
+def _validate_packet_replay_record(
+    record: Mapping[str, Any],
+    *,
+    status: str,
+    replay_id: str,
+    tenant: str,
+    actor_sha: str,
+    profile_name: str,
+    idempotency_sha: str,
+) -> None:
+    if (
+        record.get("schema")
+        != "lightwork.ai-evidence-packet-replay.v1"
+        or record.get("id") != replay_id
+        or record.get("status") != status
+        or record.get("tenant_id") != tenant
+        or record.get("actor_sha256") != actor_sha
+        or record.get("profile") != profile_name
+        or record.get("idempotency_sha256") != idempotency_sha
+    ):
+        raise EvidenceGatewayStateError(
+            "assurance packet replay authority failed validation"
+        )
+
+
+def _recover_assurance_packet_checkpoint(
+    record: Mapping[str, Any],
+    *,
+    signed_packet_id: str,
+    tenant: str,
+    profile_name: str,
+    actor_sha: str,
+    operator: str,
+) -> dict[str, Any]:
+    """Sign or idempotently recover one exact durable packet checkpoint."""
+
+    raw_body = record.get("packet_body")
+    digest = record.get("packet_sha256")
+    if not isinstance(raw_body, Mapping) or not isinstance(digest, str):
+        raise EvidenceGatewayStateError(
+            "assurance packet checkpoint failed validation"
+        )
+    body = _public(raw_body)
+    generated_at = body.get("generated_at")
+    if (
+        body.get("schema") != ASSURANCE_PACKET_SCHEMA
+        or body.get("packet_id") != signed_packet_id
+        or body.get("tenant_id") != tenant
+        or body.get("profile") != profile_name
+        or body.get("generated_by_sha256") != actor_sha
+        or body.get("stores_raw_interaction_content") is not False
+        or body.get("legal_certification") is not False
+        or body.get("compliance_verdict") != "not_provided"
+        or body.get("notice") != NON_CERTIFICATION_NOTICE
+        or not isinstance(generated_at, (int, float))
+        or isinstance(generated_at, bool)
+        or not math.isfinite(float(generated_at))
+        or float(generated_at) <= 0
+        or not hmac.compare_digest(digest, _sha256(body))
+    ):
+        raise EvidenceGatewayStateError(
+            "assurance packet checkpoint failed validation"
+        )
+    attestation = _attestation(
+        packet_id=signed_packet_id,
+        packet_sha256=digest,
+        actor=operator,
+        generated_at=float(generated_at),
+    )
+    packet = {
+        **body,
+        "packet_sha256": digest,
+        "attestation": attestation,
+    }
+    if not verify_assurance_packet(packet, expected_tenant_id=tenant):
+        raise EvidenceGatewayStateError(
+            "recovered assurance packet failed signature validation"
+        )
+    return packet
+
+
+def issue_assurance_packet(
     *,
     profile: str = "combined",
     actor: str = "gateway",
@@ -4618,19 +4746,15 @@ def issue_assurance_packet(  # noqa: C901 - explicit crash-recovery state machin
         *,
         status: str,
     ) -> None:
-        if (
-            record.get("schema")
-            != "lightwork.ai-evidence-packet-replay.v1"
-            or record.get("id") != replay_id
-            or record.get("status") != status
-            or record.get("tenant_id") != tenant
-            or record.get("actor_sha256") != actor_sha
-            or record.get("profile") != profile_name
-            or record.get("idempotency_sha256") != idempotency_sha
-        ):
-            raise EvidenceGatewayStateError(
-                "assurance packet replay authority failed validation"
-            )
+        _validate_packet_replay_record(
+            record,
+            status=status,
+            replay_id=replay_id,
+            tenant=tenant,
+            actor_sha=actor_sha,
+            profile_name=profile_name,
+            idempotency_sha=idempotency_sha,
+        )
 
     def replay(record: Mapping[str, Any]) -> dict[str, Any]:
         validate_request_record(record, status="issued")
@@ -4652,52 +4776,15 @@ def issue_assurance_packet(  # noqa: C901 - explicit crash-recovery state machin
         }
 
     def prepared_packet(record: Mapping[str, Any]) -> dict[str, Any]:
-        """Sign or idempotently recover one exact durable packet checkpoint."""
-
         validate_request_record(record, status="prepared")
-        raw_body = record.get("packet_body")
-        digest = record.get("packet_sha256")
-        if not isinstance(raw_body, Mapping) or not isinstance(digest, str):
-            raise EvidenceGatewayStateError(
-                "assurance packet checkpoint failed validation"
-            )
-        body = _public(raw_body)
-        generated_at = body.get("generated_at")
-        if (
-            body.get("schema") != ASSURANCE_PACKET_SCHEMA
-            or body.get("packet_id") != signed_packet_id
-            or body.get("tenant_id") != tenant
-            or body.get("profile") != profile_name
-            or body.get("generated_by_sha256") != actor_sha
-            or body.get("stores_raw_interaction_content") is not False
-            or body.get("legal_certification") is not False
-            or body.get("compliance_verdict") != "not_provided"
-            or body.get("notice") != NON_CERTIFICATION_NOTICE
-            or not isinstance(generated_at, (int, float))
-            or isinstance(generated_at, bool)
-            or not math.isfinite(float(generated_at))
-            or float(generated_at) <= 0
-            or not hmac.compare_digest(digest, _sha256(body))
-        ):
-            raise EvidenceGatewayStateError(
-                "assurance packet checkpoint failed validation"
-            )
-        attestation = _attestation(
-            packet_id=signed_packet_id,
-            packet_sha256=digest,
-            actor=operator,
-            generated_at=float(generated_at),
+        return _recover_assurance_packet_checkpoint(
+            record,
+            signed_packet_id=signed_packet_id,
+            tenant=tenant,
+            profile_name=profile_name,
+            actor_sha=actor_sha,
+            operator=operator,
         )
-        packet = {
-            **body,
-            "packet_sha256": digest,
-            "attestation": attestation,
-        }
-        if not verify_assurance_packet(packet, expected_tenant_id=tenant):
-            raise EvidenceGatewayStateError(
-                "recovered assurance packet failed signature validation"
-            )
-        return packet
 
     def complete_prepared(
         record: Mapping[str, Any],
@@ -4836,7 +4923,203 @@ def issue_assurance_packet(  # noqa: C901 - explicit crash-recovery state machin
             return complete_prepared(prepared)
 
 
-def verify_assurance_packet(  # noqa: C901 - explicit offline verifier
+def _verify_packet_evidence(
+    body: Mapping[str, Any],
+    *,
+    registry: Mapping[str, str],
+    expected: str,
+) -> bool:
+    interaction_receipts = body.get("interaction_receipts")
+    verification = body.get("verification")
+    evidence_window = body.get("evidence_window")
+    if not isinstance(interaction_receipts, list) or not isinstance(
+        verification,
+        Mapping,
+    ) or not isinstance(evidence_window, Mapping):
+        return False
+    embedded_collections = {
+        "policies": body.get("policies"),
+        "interaction_receipts": interaction_receipts,
+        "regulatory_impacts": body.get("regulatory_impacts"),
+    }
+    if any(
+        not isinstance(rows, list)
+        for rows in embedded_collections.values()
+    ):
+        return False
+    source_counts = evidence_window.get("source_counts")
+    included_counts = evidence_window.get("included_counts")
+    omitted_counts = evidence_window.get("omitted_counts")
+    source_digests = evidence_window.get("source_digests_sha256")
+    included_digests = evidence_window.get(
+        "included_digests_sha256"
+    )
+    window_maps = (
+        source_counts,
+        included_counts,
+        omitted_counts,
+        source_digests,
+        included_digests,
+    )
+    if any(not isinstance(value, Mapping) for value in window_maps):
+        return False
+    names = set(embedded_collections)
+    if any(set(value) != names for value in window_maps):
+        return False
+    for name, rows in embedded_collections.items():
+        source_count = source_counts[name]
+        included_count = included_counts[name]
+        omitted_count = omitted_counts[name]
+        if (
+            isinstance(source_count, bool)
+            or not isinstance(source_count, int)
+            or isinstance(included_count, bool)
+            or not isinstance(included_count, int)
+            or isinstance(omitted_count, bool)
+            or not isinstance(omitted_count, int)
+            or source_count < 0
+            or included_count != len(rows)
+            or omitted_count != source_count - included_count
+            or omitted_count < 0
+        ):
+            return False
+        included_digest = _digest(
+            included_digests[name],
+            f"{name} included digest",
+        )
+        source_digest = _digest(
+            source_digests[name],
+            f"{name} source digest",
+        )
+        if not hmac.compare_digest(
+            included_digest,
+            _streaming_collection_digest(rows),
+        ) or (
+            omitted_count == 0
+            and not hmac.compare_digest(
+                source_digest,
+                included_digest,
+            )
+        ):
+            return False
+    embedded_verified = sum(
+        verify_interaction_receipt(
+            item,
+            trusted_public_keys=registry,
+            expected_tenant_id=expected,
+        )
+        for item in interaction_receipts
+    )
+    embedded_unverified = len(interaction_receipts) - embedded_verified
+    claimed_trusted_ids = verification.get("trusted_key_ids")
+    if (
+        not isinstance(claimed_trusted_ids, list)
+        or claimed_trusted_ids != sorted(set(claimed_trusted_ids))
+        or any(
+            not isinstance(key_id, str)
+            or _trusted_key(key_id, registry) is None
+            for key_id in claimed_trusted_ids
+        )
+    ):
+        return False
+    source_receipt_count = source_counts["interaction_receipts"]
+    source_verified = verification.get(
+        "source_interaction_receipts_verified"
+    )
+    source_unverified = verification.get(
+        "source_interaction_receipts_unverified"
+    )
+    if (
+        isinstance(source_verified, bool)
+        or not isinstance(source_verified, int)
+        or isinstance(source_unverified, bool)
+        or not isinstance(source_unverified, int)
+        or source_verified < 0
+        or source_unverified < 0
+        or source_verified + source_unverified != source_receipt_count
+        or not isinstance(
+            verification.get("source_conversation_chains_valid"),
+            bool,
+        )
+        or not isinstance(
+            verification.get("receipt_ledger_chain_valid"),
+            bool,
+        )
+    ):
+        return False
+    ledger_fields = {
+        "receipt_ledger_state_hash",
+        "receipt_ledger_total",
+        "receipt_ledger_missing_governed",
+        "receipt_ledger_extra_governed",
+    }
+    present_ledger_fields = ledger_fields.intersection(verification)
+    if present_ledger_fields and present_ledger_fields != ledger_fields:
+        return False
+    if present_ledger_fields:
+        ledger_total = verification["receipt_ledger_total"]
+        ledger_missing = verification[
+            "receipt_ledger_missing_governed"
+        ]
+        ledger_extra = verification["receipt_ledger_extra_governed"]
+        if (
+            isinstance(ledger_total, bool)
+            or not isinstance(ledger_total, int)
+            or ledger_total < 0
+            or isinstance(ledger_missing, bool)
+            or not isinstance(ledger_missing, int)
+            or ledger_missing < 0
+            or isinstance(ledger_extra, bool)
+            or not isinstance(ledger_extra, int)
+            or ledger_extra < 0
+            or ledger_total != source_receipt_count + ledger_missing
+        ):
+            return False
+        _digest(
+            verification["receipt_ledger_state_hash"],
+            "receipt ledger state hash",
+        )
+        if verification["receipt_ledger_chain_valid"] and (
+            ledger_total != source_receipt_count
+            or ledger_missing
+            or ledger_extra
+        ):
+            return False
+    embedded_chains_valid = _conversation_chains_valid(
+        interaction_receipts
+    )
+    if (
+        verification.get("interaction_receipts_verified")
+        != embedded_verified
+        or verification.get("interaction_receipts_unverified")
+        != embedded_unverified
+        or verification.get("included_conversation_chains_valid")
+        is not embedded_chains_valid
+    ):
+        return False
+    readiness = body.get("readiness")
+    if not isinstance(readiness, Mapping):
+        return False
+    readiness_gaps = readiness.get("gaps")
+    any_omitted = any(
+        count > 0 for count in omitted_counts.values()
+    )
+    if (
+        not isinstance(readiness_gaps, list)
+        or any(
+            not isinstance(value, str) for value in readiness_gaps
+        )
+        or (
+            "packet_window_truncated" in readiness_gaps
+        )
+        is not any_omitted
+        or readiness.get("ready") is not (not readiness_gaps)
+    ):
+        return False
+    return True
+
+
+def verify_assurance_packet(
     packet: Mapping[str, Any],
     *,
     trusted_public_keys: Mapping[str, str] | None = None,
@@ -4892,194 +5175,7 @@ def verify_assurance_packet(  # noqa: C901 - explicit offline verifier
             return False
         if not _verify_signed_row(receipt, trusted_keys=registry):
             return False
-        interaction_receipts = body.get("interaction_receipts")
-        verification = body.get("verification")
-        evidence_window = body.get("evidence_window")
-        if not isinstance(interaction_receipts, list) or not isinstance(
-            verification,
-            Mapping,
-        ) or not isinstance(evidence_window, Mapping):
-            return False
-        embedded_collections = {
-            "policies": body.get("policies"),
-            "interaction_receipts": interaction_receipts,
-            "regulatory_impacts": body.get("regulatory_impacts"),
-        }
-        if any(
-            not isinstance(rows, list)
-            for rows in embedded_collections.values()
-        ):
-            return False
-        source_counts = evidence_window.get("source_counts")
-        included_counts = evidence_window.get("included_counts")
-        omitted_counts = evidence_window.get("omitted_counts")
-        source_digests = evidence_window.get("source_digests_sha256")
-        included_digests = evidence_window.get(
-            "included_digests_sha256"
-        )
-        window_maps = (
-            source_counts,
-            included_counts,
-            omitted_counts,
-            source_digests,
-            included_digests,
-        )
-        if any(not isinstance(value, Mapping) for value in window_maps):
-            return False
-        names = set(embedded_collections)
-        if any(set(value) != names for value in window_maps):
-            return False
-        for name, rows in embedded_collections.items():
-            source_count = source_counts[name]
-            included_count = included_counts[name]
-            omitted_count = omitted_counts[name]
-            if (
-                isinstance(source_count, bool)
-                or not isinstance(source_count, int)
-                or isinstance(included_count, bool)
-                or not isinstance(included_count, int)
-                or isinstance(omitted_count, bool)
-                or not isinstance(omitted_count, int)
-                or source_count < 0
-                or included_count != len(rows)
-                or omitted_count != source_count - included_count
-                or omitted_count < 0
-            ):
-                return False
-            included_digest = _digest(
-                included_digests[name],
-                f"{name} included digest",
-            )
-            source_digest = _digest(
-                source_digests[name],
-                f"{name} source digest",
-            )
-            if not hmac.compare_digest(
-                included_digest,
-                _streaming_collection_digest(rows),
-            ) or (
-                omitted_count == 0
-                and not hmac.compare_digest(
-                    source_digest,
-                    included_digest,
-                )
-            ):
-                return False
-        embedded_verified = sum(
-            verify_interaction_receipt(
-                item,
-                trusted_public_keys=registry,
-                expected_tenant_id=expected,
-            )
-            for item in interaction_receipts
-        )
-        embedded_unverified = len(interaction_receipts) - embedded_verified
-        claimed_trusted_ids = verification.get("trusted_key_ids")
-        if (
-            not isinstance(claimed_trusted_ids, list)
-            or claimed_trusted_ids != sorted(set(claimed_trusted_ids))
-            or any(
-                not isinstance(key_id, str)
-                or _trusted_key(key_id, registry) is None
-                for key_id in claimed_trusted_ids
-            )
-        ):
-            return False
-        source_receipt_count = source_counts["interaction_receipts"]
-        source_verified = verification.get(
-            "source_interaction_receipts_verified"
-        )
-        source_unverified = verification.get(
-            "source_interaction_receipts_unverified"
-        )
-        if (
-            isinstance(source_verified, bool)
-            or not isinstance(source_verified, int)
-            or isinstance(source_unverified, bool)
-            or not isinstance(source_unverified, int)
-            or source_verified < 0
-            or source_unverified < 0
-            or source_verified + source_unverified != source_receipt_count
-            or not isinstance(
-                verification.get("source_conversation_chains_valid"),
-                bool,
-            )
-            or not isinstance(
-                verification.get("receipt_ledger_chain_valid"),
-                bool,
-            )
-        ):
-            return False
-        ledger_fields = {
-            "receipt_ledger_state_hash",
-            "receipt_ledger_total",
-            "receipt_ledger_missing_governed",
-            "receipt_ledger_extra_governed",
-        }
-        present_ledger_fields = ledger_fields.intersection(verification)
-        if present_ledger_fields and present_ledger_fields != ledger_fields:
-            return False
-        if present_ledger_fields:
-            ledger_total = verification["receipt_ledger_total"]
-            ledger_missing = verification[
-                "receipt_ledger_missing_governed"
-            ]
-            ledger_extra = verification["receipt_ledger_extra_governed"]
-            if (
-                isinstance(ledger_total, bool)
-                or not isinstance(ledger_total, int)
-                or ledger_total < 0
-                or isinstance(ledger_missing, bool)
-                or not isinstance(ledger_missing, int)
-                or ledger_missing < 0
-                or isinstance(ledger_extra, bool)
-                or not isinstance(ledger_extra, int)
-                or ledger_extra < 0
-                or ledger_total != source_receipt_count + ledger_missing
-            ):
-                return False
-            _digest(
-                verification["receipt_ledger_state_hash"],
-                "receipt ledger state hash",
-            )
-            if verification["receipt_ledger_chain_valid"] and (
-                ledger_total != source_receipt_count
-                or ledger_missing
-                or ledger_extra
-            ):
-                return False
-        embedded_chains_valid = _conversation_chains_valid(
-            interaction_receipts
-        )
-        if (
-            verification.get("interaction_receipts_verified")
-            != embedded_verified
-            or verification.get("interaction_receipts_unverified")
-            != embedded_unverified
-            or verification.get("included_conversation_chains_valid")
-            is not embedded_chains_valid
-        ):
-            return False
-        readiness = body.get("readiness")
-        if not isinstance(readiness, Mapping):
-            return False
-        readiness_gaps = readiness.get("gaps")
-        any_omitted = any(
-            count > 0 for count in omitted_counts.values()
-        )
-        if (
-            not isinstance(readiness_gaps, list)
-            or any(
-                not isinstance(value, str) for value in readiness_gaps
-            )
-            or (
-                "packet_window_truncated" in readiness_gaps
-            )
-            is not any_omitted
-            or readiness.get("ready") is not (not readiness_gaps)
-        ):
-            return False
-        return True
+        return _verify_packet_evidence(body, registry=registry, expected=expected)
     except (EvidenceGatewayError, KeyError, TypeError, ValueError):
         return False
 

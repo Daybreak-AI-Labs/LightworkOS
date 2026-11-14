@@ -72,7 +72,7 @@ log = logging.getLogger(__name__)
 # intentional override from the untouched compatibility constant.
 _INITIAL_DEFAULT_DB = data_dir("world.db")
 DEFAULT_DB = _INITIAL_DEFAULT_DB
-SCHEMA_VERSION = 51
+SCHEMA_VERSION = 52
 DEFAULT_BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_BUSY_TIMEOUT_MS = 50
 WAL_SWITCH_RETRY_SECONDS = 5.0
@@ -461,6 +461,11 @@ def _bootstrap_schema(conn: sqlite3.Connection) -> str:
 
 
 MIGRATIONS: dict[int, list[str]] = {
+    # v52: Postgres stores per-tenant rebinding completion in the database.
+    # SQLite retains its adjacent marker; the table keeps schema heads aligned.
+    52: ["CREATE TABLE IF NOT EXISTS encryption_migrations ("
+         "scope TEXT PRIMARY KEY, tenant_id TEXT, migrated_at REAL NOT NULL, "
+         "CHECK (scope = CASE WHEN tenant_id IS NULL THEN 'n:' ELSE 't:' || tenant_id END))"],
     # v51: which decisions can still be undone. Only a request a waiting task
     # holds ("open") can be; the task marks it "settled" when it acts on it.
     51: ["ALTER TABLE approvals ADD COLUMN undo_hold TEXT"],
@@ -869,6 +874,7 @@ def _enc_field(text: str | None, context: str | None = None, *,
 # process keeps the lenient default so an unmigrated tenant stays readable.
 _MIGRATED_STORES: set[str] = set()
 _LEGACY_STORES: set[str] = set()
+_POSTGRES_STORE_POSTURES: dict[tuple[str, str | None], bool] = {}
 _MIGRATED_MARKER_SUFFIX = ".at-rest-migrated.json"
 
 
@@ -894,8 +900,16 @@ def _note_store_posture(db_path) -> None:
 
 def auto_strict_at_rest() -> bool:
     """True when every world store this process opened carries the migration
-    marker, so an unsealed value in a sealed column can only be tampering."""
-    return bool(_MIGRATED_STORES) and not _LEGACY_STORES
+    marker, so an unsealed value in a sealed column can only be tampering.
+    Postgres markers apply only to the active tenant."""
+    if not _POSTGRES_STORE_POSTURES:
+        return bool(_MIGRATED_STORES) and not _LEGACY_STORES
+    from .paths import current_tenant_strict
+
+    tenant = current_tenant_strict()
+    postgres = [bound for (_, owner), bound in _POSTGRES_STORE_POSTURES.copy().items()
+                if owner == tenant]
+    return bool(_MIGRATED_STORES or postgres) and not _LEGACY_STORES and all(postgres)
 
 
 def _strict_reads() -> bool:
@@ -903,9 +917,9 @@ def _strict_reads() -> bool:
     return strict_at_rest() or auto_strict_at_rest()
 
 
-# Backends with no rebinding migration (Postgres). Values sealed there before
-# column binding existed are still unbound, so an unbound value is not
-# evidence of tampering in a process that reads one.
+# Backends without a verified rebinding posture can opt out of treating legacy
+# unbound values as tampering. Postgres now reports its per-tenant database
+# marker through _POSTGRES_STORE_POSTURES instead of opting out wholesale.
 _UNREBOUND_BACKENDS: set[str] = set()
 
 

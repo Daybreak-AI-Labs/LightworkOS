@@ -1715,7 +1715,7 @@ class _NativeProviderAdapter:
             raise DataUseProviderConflict("provider binding changed during reconciliation")
         return current
 
-    def _validate_compiler_bindings(  # noqa: C901 - closed binding-schema walk
+    def _validate_compiler_bindings(
         self,
         bindings: dict[str, Any],
         provider_binding: Mapping[str, Any],
@@ -1786,56 +1786,7 @@ class _NativeProviderAdapter:
             raise DataUseProviderConflict(
                 "control_ir fields do not match the complete provider inventory"
             )
-        contexts = bindings["contexts"]
-        if type(contexts) is not list or len(contexts) != 4:
-            raise DataUseProviderValidationError("all four compiler context bindings are required")
-        context_kinds: set[str] = set()
-        source_authorities: set[str] = set()
-        for raw in contexts:
-            context = _exact_object(
-                raw,
-                {
-                    "context_kind",
-                    "revision",
-                    "record_sha256",
-                    "context_sha256",
-                    "source_revision",
-                    "source_authority_sha256",
-                    "reviewer_id",
-                    "reviewer_authority_sha256",
-                    "fresh_until",
-                },
-                "context binding",
-            )
-            kind = str(context["context_kind"] or "")
-            if (
-                kind
-                not in {
-                    "business_purpose",
-                    "regulatory",
-                    "consent",
-                    "observed_classification",
-                }
-                or kind in context_kinds
-            ):
-                raise DataUseProviderValidationError(
-                    "context bindings are incomplete or duplicated"
-                )
-            context_kinds.add(kind)
-            _positive_revision(context["revision"], "context binding revision")
-            _positive_revision(context["source_revision"], "context source revision")
-            _digest(context["record_sha256"], "context record digest")
-            _digest(context["context_sha256"], "context semantic digest")
-            source_authority = _digest(
-                context["source_authority_sha256"], "context source authority"
-            )
-            source_authorities.add(source_authority)
-            _token(context["reviewer_id"], "context reviewer id")
-            _digest(context["reviewer_authority_sha256"], "context reviewer authority")
-            if _timestamp(context["fresh_until"], "context freshness") <= self._now():
-                raise DataUseProviderValidationError("context binding is stale")
-        if len(source_authorities) != 4:
-            raise DataUseProviderValidationError("context bindings are not independently sourced")
+        self._validate_compiler_contexts(bindings["contexts"])
         policies = bindings["policies"]
         if type(policies) is not list or len(policies) > _MAX_BINDING_FIELDS:
             raise DataUseProviderValidationError("policy bindings exceed their bound")
@@ -1920,7 +1871,58 @@ class _NativeProviderAdapter:
             exception_bindings[exception_id] = (policy_id, version)
         return field_ids, policy_bindings, exception_bindings
 
-    def _validate_control_state(  # noqa: C901 - closed five-effect control walk
+    def _validate_compiler_contexts(self, contexts: object) -> None:
+        if type(contexts) is not list or len(contexts) != 4:
+            raise DataUseProviderValidationError("all four compiler context bindings are required")
+        context_kinds: set[str] = set()
+        source_authorities: set[str] = set()
+        for raw in contexts:
+            context = _exact_object(
+                raw,
+                {
+                    "context_kind",
+                    "revision",
+                    "record_sha256",
+                    "context_sha256",
+                    "source_revision",
+                    "source_authority_sha256",
+                    "reviewer_id",
+                    "reviewer_authority_sha256",
+                    "fresh_until",
+                },
+                "context binding",
+            )
+            kind = str(context["context_kind"] or "")
+            if (
+                kind
+                not in {
+                    "business_purpose",
+                    "regulatory",
+                    "consent",
+                    "observed_classification",
+                }
+                or kind in context_kinds
+            ):
+                raise DataUseProviderValidationError(
+                    "context bindings are incomplete or duplicated"
+                )
+            context_kinds.add(kind)
+            _positive_revision(context["revision"], "context binding revision")
+            _positive_revision(context["source_revision"], "context source revision")
+            _digest(context["record_sha256"], "context record digest")
+            _digest(context["context_sha256"], "context semantic digest")
+            source_authority = _digest(
+                context["source_authority_sha256"], "context source authority"
+            )
+            source_authorities.add(source_authority)
+            _token(context["reviewer_id"], "context reviewer id")
+            _digest(context["reviewer_authority_sha256"], "context reviewer authority")
+            if _timestamp(context["fresh_until"], "context freshness") <= self._now():
+                raise DataUseProviderValidationError("context binding is stale")
+        if len(source_authorities) != 4:
+            raise DataUseProviderValidationError("context bindings are not independently sourced")
+
+    def _validate_control_state(
         self,
         state: object,
         *,
@@ -1958,20 +1960,7 @@ class _NativeProviderAdapter:
             field_id = _token(control["field_id"], "control field id")
             if field_id not in field_ids or control["asset_id"] != asset_id:
                 raise DataUseProviderConflict("control resource binding does not match")
-            parameters = control["parameters"]
-            if type(parameters) is not dict:
-                raise DataUseProviderValidationError("control parameters are malformed")
-            if operation == "mask":
-                if set(parameters) != {"method"} or parameters["method"] not in _MASK_METHODS:
-                    raise DataUseProviderValidationError("mask parameters are unsupported")
-            elif operation == "row_filter":
-                if set(parameters) != {"ast"}:
-                    raise DataUseProviderValidationError("row-filter parameters are unsupported")
-                ast_fields = set(_ast_fields(parameters["ast"]))
-                if not ast_fields or not ast_fields.issubset(field_ids):
-                    raise DataUseProviderConflict("row-filter references an unbound provider field")
-            elif parameters:
-                raise DataUseProviderValidationError("control operation has arbitrary parameters")
+            self._validate_control_parameters(control["parameters"], operation, field_ids)
             source = _exact_object(
                 control["source"],
                 {"policy_id", "policy_version", "policy_sha256", "exception_id"},
@@ -2032,12 +2021,72 @@ class _NativeProviderAdapter:
             )
         return normalized
 
-    def _validate_ir(  # noqa: C901 - one complete compiler-IR trust-boundary walk
+    @staticmethod
+    def _validate_control_parameters(
+        parameters: object, operation: str, field_ids: set[str]
+    ) -> None:
+        if type(parameters) is not dict:
+            raise DataUseProviderValidationError("control parameters are malformed")
+        if operation == "mask":
+            if set(parameters) != {"method"} or parameters["method"] not in _MASK_METHODS:
+                raise DataUseProviderValidationError("mask parameters are unsupported")
+        elif operation == "row_filter":
+            if set(parameters) != {"ast"}:
+                raise DataUseProviderValidationError("row-filter parameters are unsupported")
+            ast_fields = set(_ast_fields(parameters["ast"]))
+            if not ast_fields or not ast_fields.issubset(field_ids):
+                raise DataUseProviderConflict("row-filter references an unbound provider field")
+        elif parameters:
+            raise DataUseProviderValidationError("control operation has arbitrary parameters")
+
+    def _validate_ir(
         self, control_ir: Mapping[str, Any], *, rollback: bool
     ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], str]:
         value = _plain_json(control_ir, "control_ir")
         if not isinstance(value, dict):
             raise DataUseProviderValidationError("control_ir must be an object")
+        self._validate_ir_authority(value)
+        bindings = value.get("bindings")
+        if not isinstance(bindings, dict) or not hmac.compare_digest(
+            _digest(value.get("bindings_sha256"), "bindings_sha256"),
+            _sha256(bindings),
+        ):
+            raise DataUseProviderValidationError("control_ir bindings digest does not match")
+        binding = self._binding()
+        field_ids, policy_bindings, exception_bindings = self._validate_compiler_bindings(
+            bindings, binding
+        )
+        controls_by_kind: dict[str, list[dict[str, Any]]] = {}
+        digests_by_kind: dict[str, str] = {}
+        for kind, state_key in (
+            ("desired", "desired_state"),
+            ("rollback", "rollback_state"),
+        ):
+            digest_key = f"{state_key}_sha256"
+            state = value[state_key]
+            state_digest = _digest(value[digest_key], digest_key)
+            expected_state = _sha256(
+                {
+                    "kind": kind,
+                    "bindings_sha256": value["bindings_sha256"],
+                    "controls": state,
+                }
+            )
+            if not hmac.compare_digest(state_digest, expected_state):
+                raise DataUseProviderValidationError(f"{kind} control state digest does not match")
+            controls_by_kind[kind] = self._validate_control_state(
+                state,
+                rollback=kind == "rollback",
+                asset_id=binding["asset_id"],
+                field_ids=field_ids,
+                policy_bindings=policy_bindings,
+                exception_bindings=exception_bindings,
+            )
+            digests_by_kind[kind] = state_digest
+        selected = "rollback" if rollback else "desired"
+        return value, binding, controls_by_kind[selected], digests_by_kind[selected]
+
+    def _validate_ir_authority(self, value: Mapping[str, Any]) -> None:
         required = {
             "schema",
             "tenant_id",
@@ -2089,45 +2138,6 @@ class _NativeProviderAdapter:
         }
         if adapter != expected_adapter:
             raise DataUseProviderConflict("control_ir adapter binding does not match")
-        bindings = value.get("bindings")
-        if not isinstance(bindings, dict) or not hmac.compare_digest(
-            _digest(value.get("bindings_sha256"), "bindings_sha256"),
-            _sha256(bindings),
-        ):
-            raise DataUseProviderValidationError("control_ir bindings digest does not match")
-        binding = self._binding()
-        field_ids, policy_bindings, exception_bindings = self._validate_compiler_bindings(
-            bindings, binding
-        )
-        controls_by_kind: dict[str, list[dict[str, Any]]] = {}
-        digests_by_kind: dict[str, str] = {}
-        for kind, state_key in (
-            ("desired", "desired_state"),
-            ("rollback", "rollback_state"),
-        ):
-            digest_key = f"{state_key}_sha256"
-            state = value[state_key]
-            state_digest = _digest(value[digest_key], digest_key)
-            expected_state = _sha256(
-                {
-                    "kind": kind,
-                    "bindings_sha256": value["bindings_sha256"],
-                    "controls": state,
-                }
-            )
-            if not hmac.compare_digest(state_digest, expected_state):
-                raise DataUseProviderValidationError(f"{kind} control state digest does not match")
-            controls_by_kind[kind] = self._validate_control_state(
-                state,
-                rollback=kind == "rollback",
-                asset_id=binding["asset_id"],
-                field_ids=field_ids,
-                policy_bindings=policy_bindings,
-                exception_bindings=exception_bindings,
-            )
-            digests_by_kind[kind] = state_digest
-        selected = "rollback" if rollback else "desired"
-        return value, binding, controls_by_kind[selected], digests_by_kind[selected]
 
     @staticmethod
     def _request_uuid(seed_sha256: str, phase: str, index: int) -> str:
@@ -2135,7 +2145,7 @@ class _NativeProviderAdapter:
         material = hashlib.sha256(f"{seed}:{phase}:{index}".encode("ascii")).hexdigest()
         return str(uuid.UUID(material[:32]))
 
-    def _http_request(  # noqa: C901 - explicit fail-closed transport state machine
+    def _http_request(
         self,
         *,
         binding: Mapping[str, Any],
@@ -2237,56 +2247,7 @@ class _NativeProviderAdapter:
                     "provider transport outcome is unavailable",
                     evidence={"http_receipts": receipts},
                 ) from None
-            if not isinstance(response, ProviderHttpResponse):
-                if safe_read:
-                    raise DataUseProviderProtocolError(
-                        "provider transport returned an invalid response"
-                    )
-                raise DataUseProviderAmbiguousEffect(
-                    "provider returned an invalid response after mutation dispatch",
-                    evidence={"http_receipts": receipts},
-                )
-            if len(response.body) > self._limits.max_response_bytes:
-                receipt = {
-                    "request": attempt_receipt,
-                    "response": {
-                        "status_code": response.status_code,
-                        "body_sha256": _sha256_bytes(response.body),
-                        "body_bytes": len(response.body),
-                    },
-                }
-                receipts.append(receipt)
-                if safe_read:
-                    raise DataUseProviderProtocolError(
-                        "provider response exceeds the configured byte bound"
-                    )
-                raise DataUseProviderAmbiguousEffect(
-                    "provider mutation response exceeded its byte bound",
-                    evidence={"http_receipts": receipts},
-                )
-            try:
-                safe_response = _safe_response_receipt(response)
-            except DataUseProviderProtocolError:
-                if safe_read:
-                    raise
-                evidence_receipt = {
-                    "request": attempt_receipt,
-                    "response": {
-                        "status_code": response.status_code,
-                        "body_sha256": _sha256_bytes(response.body),
-                        "body_bytes": len(response.body),
-                    },
-                }
-                receipts.append(evidence_receipt)
-                raise DataUseProviderAmbiguousEffect(
-                    "provider mutation response metadata was malformed",
-                    evidence={"http_receipts": receipts},
-                ) from None
-            receipt = {
-                "request": attempt_receipt,
-                "response": safe_response,
-            }
-            receipts.append(receipt)
+            self._record_http_response(response, attempt_receipt, receipts, safe_read=safe_read)
             status = response.status_code
             if 300 <= status <= 399:
                 if safe_read:
@@ -2330,6 +2291,65 @@ class _NativeProviderAdapter:
                 raise DataUseProviderProtocolError("provider rejected the controlled request")
             return response, receipts
         raise DataUseProviderUnavailable("provider retry bound was exhausted")
+
+    def _record_http_response(
+        self,
+        response: ProviderHttpResponse,
+        attempt_receipt: dict[str, Any],
+        receipts: list[dict[str, Any]],
+        *,
+        safe_read: bool,
+    ) -> None:
+        if not isinstance(response, ProviderHttpResponse):
+            if safe_read:
+                raise DataUseProviderProtocolError(
+                    "provider transport returned an invalid response"
+                )
+            raise DataUseProviderAmbiguousEffect(
+                "provider returned an invalid response after mutation dispatch",
+                evidence={"http_receipts": receipts},
+            )
+        if len(response.body) > self._limits.max_response_bytes:
+            receipt = {
+                "request": attempt_receipt,
+                "response": {
+                    "status_code": response.status_code,
+                    "body_sha256": _sha256_bytes(response.body),
+                    "body_bytes": len(response.body),
+                },
+            }
+            receipts.append(receipt)
+            if safe_read:
+                raise DataUseProviderProtocolError(
+                    "provider response exceeds the configured byte bound"
+                )
+            raise DataUseProviderAmbiguousEffect(
+                "provider mutation response exceeded its byte bound",
+                evidence={"http_receipts": receipts},
+            )
+        try:
+            safe_response = _safe_response_receipt(response)
+        except DataUseProviderProtocolError:
+            if safe_read:
+                raise
+            evidence_receipt = {
+                "request": attempt_receipt,
+                "response": {
+                    "status_code": response.status_code,
+                    "body_sha256": _sha256_bytes(response.body),
+                    "body_bytes": len(response.body),
+                },
+            }
+            receipts.append(evidence_receipt)
+            raise DataUseProviderAmbiguousEffect(
+                "provider mutation response metadata was malformed",
+                evidence={"http_receipts": receipts},
+            ) from None
+        receipt = {
+            "request": attempt_receipt,
+            "response": safe_response,
+        }
+        receipts.append(receipt)
 
     def _request_path_for_attempt(self, path: str, *, method: str, attempt: int) -> str:
         """Use Snowflake's documented retry flag without changing its request ID."""
