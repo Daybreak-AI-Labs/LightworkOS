@@ -10,8 +10,8 @@
 ## Run identity
 
 - Suite: `governance-frontier-v1`
-- Started: `2026-11-14T14:31:40.931613+00:00`
-- Git commit: `913f49d90c439d3b19f3db8702470b16c495b402`
+- Started: `2026-11-14T15:12:34.100641+00:00`
+- Git commit: `ac4fd4e9487465c506b6df16633c15189ac6abd6`
 - Working tree dirty during run: `false`
 - Definitions: 40 (24 unsafe, 16 benign) × seeds [17, 29, 43]
 - Arms: 120 governed and 120 disabled-baseline instances
@@ -19,12 +19,12 @@
 - Network claim basis: no model/network API is called; config/overlay, deployment profile, tenant/client, and injected or KMS-wrapped audit-key inputs are cleared; the egress adapter only evaluates URL and provider policy
 - Inherited config/overlay, profile/trust, tenant/client binding, consent override, and audit-key injection inputs: cleared; related process caches reset
 - Consent mode override: cleared outside the action adapter; unsafe action fixtures receive no approval and are deterministically denied; benign action fixtures receive a labelled synthetic explicit decision whose exact one-use permit is consumed by an in-memory simulated effect
-- Input digest: `a50b5a05473f03932ff48125d54d4d66f0955e0bed2575a6d1ba08721d756e32`
+- Input digest: `180426bb881b764ebe640ac5437e9286546a0aa984f48677e5562602b10655f2`
 - Manifest signature: `ed25519` (self-signed run integrity)
 - Public evidence: [signed measured manifest](./results/governance-frontier-v1/measured-manifest.json), [trusted publisher key](./results/governance-frontier-v1/trusted-publisher.pub), and [standalone verifier](./results/governance-frontier-v1/verify_manifest.py)
-- Signed manifest file SHA-256 (UTF-8/LF): `ccaf4a4b1ef201d3eac3696f46560d02f75f4acf99cc914cb535c504b6fa42e0`
-- Trusted-key file SHA-256 (UTF-8/LF): `fa18043bed85bb469bbf72d75e9e8b34167b78de3daa47ffcd88b81b06ef0720`
-- Ed25519 public-key fingerprint (SHA-256 of the 32 raw key bytes): `65acd4ecc1ff71d771cec4b0e711adac8d6517dd5adf7a8dbf8912bf0925f509`
+- Signed manifest file SHA-256 (UTF-8/LF): `bd6efd641dfa2b3229e5a7679b714eef374b47d0a3bd96a7ecb0e3ebea0cb74a`
+- Trusted-key file SHA-256 (UTF-8/LF): `be29d52374d23537045f391814a241e80018fc01d30c855f05d640ab76b9b0dd`
+- Ed25519 public-key fingerprint (SHA-256 of the 32 raw key bytes): `f65ff7549cb7fb919446133b1b8aac11aad16bbda489a8c8d3491bc4adcfe645`
 - Publication verification requires the separately downloaded trusted key; the manifest-embedded key is not trusted by itself
 
 ## Scorecard
@@ -67,10 +67,10 @@ reported outside that denominator.
 
 | Path | Samples | Median | p95 |
 |---|---:|---:|---:|
-| Governed control call | 120 | 329.113 µs | 14090.457 µs |
-| Disabled baseline call | 120 | 13.205 µs | 259.565 µs |
-| Paired governance overhead | 120 | 175.468 µs | 14076.218 µs |
-| Harness signed decision append | 120 | 1334.993 µs | 1938.744 µs |
+| Governed control call | 120 | 256.978 µs | 10764.630 µs |
+| Disabled baseline call | 120 | 12.893 µs | 210.265 µs |
+| Paired governance overhead | 120 | 136.976 µs | 10750.548 µs |
+| Harness signed decision append | 120 | 1256.508 µs | 1843.693 µs |
 
 Times are local-machine observations, not an SLA. Each seed changes
 execution order to expose state/order dependence; it is not model
@@ -79,7 +79,7 @@ sampling. Verdicts, not timings, are required to be seed-invariant.
 ## Evidence and custody
 
 - Signed audit events: 190
-- Audit-chain SHA-256: `3b9a130fc2b315fd5af4648233851869e0929c96dc3d234c1e381f2cb7fd608f`
+- Audit-chain SHA-256: `b77f81839f7966e459458c22a363941ab59080b7272e09189a70350a573e145d`
 - Audit chain verified in-run against the run public key: `true`
 - Manifest schema: `maverick-bench-repro/1`
 - Key custody: ephemeral co-located benchmark key; self-signed run integrity only, not off-host custody, publisher identity, or resistance to a same-user actor.
@@ -164,8 +164,10 @@ python -m pytest -q benchmarks/test_eval_governance_frontier.py benchmarks/test_
 
 Publication validation checks the external trusted-key file, current
 signed harness, control-implementation, and config digests; a clean
-measured commit; commit ancestry when history preserves it (or the
-exact signed control-source snapshot after a shallow checkout, squash,
-or rebase); and deterministic report rendering. Strict UTF-8 source
+measured commit; the exact signed control-source snapshot (required
+even when the commit is an ancestor, so a shallow checkout, squash, or
+rebase still verifies); that the recorded metrics re-score from the
+recorded rows and passed their gates; and deterministic report
+rendering. Strict UTF-8 source
 content is normalized to LF before hashing so identical Windows and
 Linux Git checkouts verify the same signed snapshot.
