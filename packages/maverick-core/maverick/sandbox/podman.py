@@ -27,6 +27,7 @@ smoke test catches it before the agent runs.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 import time
@@ -107,6 +108,8 @@ class PodmanBackend:
         from .workspace_guard import validate_container_workspace
         validate_container_workspace(self.workdir)
         effective = self.timeout if timeout is None else timeout
+        if not math.isfinite(effective) or effective <= 0:
+            return ExecResult(stdout="", stderr="Invalid Podman command timeout", exit_code=1)
         container_name = f"maverick-sandbox-{uuid.uuid4().hex}"
         # `:Z` relabels the SELinux context for the mount so rootless
         # podman on Fedora / RHEL can read+write the workspace.
@@ -133,7 +136,10 @@ class PodmanBackend:
             args.extend(["--cpus", str(self.cpus)])
         if not self.allow_network:
             args.extend(["--network", "none"])
-        args.extend([self.image, "sh", "-c", cmd])
+        # Enforce the deadline in the guest even if the harness/CLI dies.
+        # Images without timeout fail closed before executing the command.
+        args.extend([self.image, "timeout", "-s", "KILL",
+                     f"{max(effective, 0.001):.6f}s", "sh", "-c", cmd])
 
         try:
             result = subprocess.run(

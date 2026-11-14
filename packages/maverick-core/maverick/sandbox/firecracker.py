@@ -122,18 +122,11 @@ class FirecrackerBackend:
             )
 
     def exec(self, cmd: str, timeout: float | None = None) -> ExecResult:
-        # Per-call timeout propagated to underlying providers
-        # via a temporary self.timeout swap. Both _exec_e2b and
-        # _exec_local read self.timeout; restore on exit.
-        prior = self.timeout
-        if timeout is not None:
-            self.timeout = timeout
-        try:
-            if self.provider == "e2b":
-                return self._exec_e2b(cmd)
-            return self._exec_local(cmd)
-        finally:
-            self.timeout = prior
+        # Keep overrides local to the call; overlapping executions must not
+        # borrow or restore each other's deadline as the instance default.
+        if self.provider == "e2b":
+            return self._exec_e2b(cmd, timeout)
+        return self._exec_local(cmd, timeout)
 
 
     def _e2b_network_config(self) -> dict:
@@ -148,7 +141,7 @@ class FirecrackerBackend:
             "'egress-deny', 'egress-allow', or 'bridge=<name>'"
         )
 
-    def _exec_local(self, cmd: str) -> ExecResult:
+    def _exec_local(self, cmd: str, timeout: float | None = None) -> ExecResult:
         """Run inside a freshly-booted local microVM.
 
         Full impl: spin up a microVM with kernel+rootfs, copy workdir
@@ -161,7 +154,7 @@ class FirecrackerBackend:
         `docker run --read-only` and log the gap.
         """
         if shutil.which("firectl"):
-            return self._firectl(cmd)
+            return self._firectl(cmd) if timeout is None else self._firectl(cmd, timeout)
         # No firectl: an operator who configured `provider = "firecracker"`
         # asked for hard microVM isolation, so silently downgrading to a Docker
         # namespace boundary defeats that choice. Fail CLOSED by default; the
@@ -189,9 +182,9 @@ class FirecrackerBackend:
             "`docker --network=none --read-only` for this run. Install "
             "firectl for full microVM isolation."
         )
-        return self._docker_fallback(cmd)
+        return self._docker_fallback(cmd) if timeout is None else self._docker_fallback(cmd, timeout)
 
-    def _firectl(self, cmd: str) -> ExecResult:
+    def _firectl(self, cmd: str, timeout: float | None = None) -> ExecResult:
         """Run a one-shot command via firectl. Scaffold."""
         # firectl invocation pattern (kernel + rootfs paths come from
         # ~/.maverick/firecracker/{kernel,rootfs}.img by convention).
@@ -235,7 +228,8 @@ class FirecrackerBackend:
             # other backend's host-CLI calls (docker/podman/k8s/ssh) -- the
             # CLI shouldn't inherit ANTHROPIC_API_KEY et al.
             proc = subprocess.run(
-                args, capture_output=True, text=True, errors="replace", timeout=self.timeout,
+                args, capture_output=True, text=True, errors="replace",
+                timeout=self.timeout if timeout is None else timeout,
                 env=scrub_env(),
             )
         except subprocess.TimeoutExpired:
@@ -246,7 +240,7 @@ class FirecrackerBackend:
             stderr=proc.stderr,
         )
 
-    def _docker_fallback(self, cmd: str) -> ExecResult:
+    def _docker_fallback(self, cmd: str, timeout: float | None = None) -> ExecResult:
         """Best-effort sandbox when firectl isn't available.
 
         Applies the same containment the regular ``DockerBackend`` uses
@@ -269,7 +263,8 @@ class FirecrackerBackend:
         ]
         try:
             proc = subprocess.run(
-                args, capture_output=True, text=True, errors="replace", timeout=self.timeout,
+                args, capture_output=True, text=True, errors="replace",
+                timeout=self.timeout if timeout is None else timeout,
                 env=scrub_env(),
             )
         except subprocess.TimeoutExpired:
@@ -317,7 +312,7 @@ class FirecrackerBackend:
                       or (f"http {run.status_code}" if run.status_code >= 300 else ""),
         )
 
-    def _exec_e2b(self, cmd: str) -> ExecResult:
+    def _exec_e2b(self, cmd: str, timeout: float | None = None) -> ExecResult:
         """Run on E2B's hosted Firecracker. Requires E2B_API_KEY."""
         try:
             import httpx
@@ -334,7 +329,7 @@ class FirecrackerBackend:
         # Full lifecycle (start/poll/tear down) is in the e2b SDK; this
         # scaffold uses the raw REST.
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with httpx.Client(timeout=self.timeout if timeout is None else timeout) as client:
                 if self.warm:
                     return self._exec_e2b_warm(client, cmd)
                 sb_id, status = self._e2b_create(client)
