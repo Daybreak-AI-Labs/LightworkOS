@@ -384,8 +384,9 @@ def note_side_effect(tool: Any) -> None:
     Snapshot deletion is serialized with local saves and loads, preventing a
     concurrent save from putting this process's stale snapshot back on disk.
     Generation checks fence other workers and late read publication.
-    An unavailable coordinator bypasses reads; a failed invalidation still
-    requires operator recovery before shared caching can be trusted.
+    An unavailable coordinator bypasses reads; a failed shared invalidation is
+    logged as an error and still requires operator recovery (a purge) before
+    shared caching can be trusted.
     """
     if cacheable(tool):
         return
@@ -395,8 +396,13 @@ def note_side_effect(tool: Any) -> None:
 
         local_epoch(advance=True)
         shared = _shared_backend()
-        if shared is not None:
-            shared.epoch(advance=True)
+        if shared is not None and shared.epoch(advance=True) is None:
+            log.error(
+                "tool cache: could not advance the shared Redis generation after "
+                "side-effect tool %r; other workers may serve pre-write results "
+                "until the shared cache is purged",
+                getattr(tool, "name", "?"),
+            )
         purge()
         with _lock:
             _warmed = True
