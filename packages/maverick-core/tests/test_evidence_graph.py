@@ -207,6 +207,30 @@ def test_collect_approved_security_evidence_preserves_review_provenance():
     assert imported[0]["source"] == "security_ops"
 
 
+def test_partial_security_evidence_does_not_count_as_coverage():
+    mapped = security_ops.map_evidence(
+        "MFA note",
+        "MFA",
+        control_ids=["IAM-02"],
+        submitted_by="grc-analyst",
+    )
+    assert [v["status"] for v in mapped["verdicts"]] == ["partial"]
+    approved = security_ops.decide_evidence(
+        mapped["id"],
+        "approved",
+        "Reviewed; the note only partly supports the control.",
+        "control-owner",
+        mapped["revision"],
+    )
+    assert approved is not None
+    projected = evidence_graph.collect_security_evidence(actor="collector")[0]
+    assert projected["controls"] == []
+    assert projected["attributes"]["partial_controls"] == ["IAM-02"]
+    report = evidence_graph.coverage_report(["IAM-02"])
+    assert report["coverage_percent"] == 0.0
+    assert report["missing_controls"] == ["IAM-02"]
+
+
 def test_inherited_security_approval_is_revalidated_for_get_coverage_and_pack():
     mapped = security_ops.map_evidence(
         "MFA policy",

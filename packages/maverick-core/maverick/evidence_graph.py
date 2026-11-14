@@ -660,10 +660,19 @@ def collect_security_evidence(*, actor: str) -> list[dict[str, Any]]:
         if not isinstance(evidence, dict) or evidence.get("status") != "approved":
             continue
         verdicts = list(evidence.get("verdicts") or [])
+        # Only fully supported controls count toward coverage; a "partial"
+        # mapping (one signal, or non-current language) is reported beside
+        # them so a pack cannot show a control as covered on partial proof.
         controls = sorted({
             str(verdict.get("control_id") or "")
             for verdict in verdicts
-            if verdict.get("status") in {"present", "partial"}
+            if verdict.get("status") == "present"
+            and str(verdict.get("control_id") or "")
+        })
+        partial_controls = sorted({
+            str(verdict.get("control_id") or "")
+            for verdict in verdicts
+            if verdict.get("status") == "partial"
             and str(verdict.get("control_id") or "")
         })
         decision = dict(evidence.get("decision") or {})
@@ -694,6 +703,7 @@ def collect_security_evidence(*, actor: str) -> list[dict[str, Any]]:
                 "mapping_method": str(evidence.get("mapping_method") or ""),
                 "present": int((evidence.get("counts") or {}).get("present") or 0),
                 "partial": int((evidence.get("counts") or {}).get("partial") or 0),
+                "partial_controls": partial_controls,
             },
             links=[{
                 "relation": "projects",
