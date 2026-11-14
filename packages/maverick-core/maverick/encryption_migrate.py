@@ -173,6 +173,13 @@ def migrate_world_db(
         if dry_run or not work:
             log.info("encryption migrate (dry_run=%s): %s", dry_run, report)
             if not dry_run:
+                if _has_message_index(conn):
+                    # A store sealed before the index rebuild existed can still
+                    # hold plaintext terms there; clear them on any re-run.
+                    conn.execute("PRAGMA secure_delete=ON")
+                    _rebuild_message_index(conn)
+                    conn.commit()
+                    _shred_residue(conn, {"messages_fts": 1})
                 _mark_migrated(db_path)
             return report
         # Phase 2 -- optionally back up the plaintext, then reseal in place.
@@ -323,6 +330,12 @@ def migrate_postgres_world(world, *, dry_run: bool = False) -> dict[str, int]:
         from .world_model import _POSTGRES_STORE_POSTURES
         _POSTGRES_STORE_POSTURES[(world._posture_identity, tenant)] = True
     return report
+
+
+def _has_message_index(conn: sqlite3.Connection) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts'"
+    ).fetchone() is not None
 
 
 def _rebuild_message_index(conn: sqlite3.Connection) -> None:
