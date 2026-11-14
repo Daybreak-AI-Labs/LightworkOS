@@ -66,6 +66,33 @@ async def _request_code_permit(agent, code: str, declared: list):
     )
 
 
+def _stop_reason(agent) -> str | None:
+    """Why the run must stop now (a halt or a cancelled goal), else ``None``.
+
+    The agent's serial tool loop checks both between tools; the declared
+    fan-out below is several tool calls inside one, so it checks them too.
+    """
+    from .. import killswitch
+
+    try:
+        killswitch.check()
+    except killswitch.Halted as e:
+        return str(e)
+    cancelled = getattr(agent, "_goal_cancelled", None)
+    if callable(cancelled) and cancelled():
+        return "goal cancelled"
+    return None
+
+
+def _stopped(reason: str, ran: int) -> str:
+    if ran == 0:
+        return f"ERROR: {reason}; no tool or script was run"
+    return (
+        f"INDETERMINATE: {reason} after {ran} declared tool call(s). Script withheld; "
+        "reconcile prior tool calls and do not repeat them blindly."
+    )
+
+
 def _run_approved_script(agent, permit, script: str):
     with consume_operation_consent(permit):
         return sandbox_run(agent.ctx.sandbox, ["python3", "-"],
@@ -123,6 +150,8 @@ def code_exec_tool(agent) -> Tool:
             if cargs is None:
                 cargs = call.get("input") or {}
             var = str(call.get("as") or f"{name}_{i}")
+            if reason := _stop_reason(agent):
+                return _stopped(reason, i)
             try:
                 agent.ctx.budget.record_tool_call()
             except BudgetExceeded as e:
@@ -151,12 +180,17 @@ def code_exec_tool(agent) -> Tool:
                 )
             tool_outputs[var] = value
 
+        if reason := _stop_reason(agent):
+            return _stopped(reason, len(declared))
+
         # 2. Build the script: the complete screened outputs as a dict,
-        # then the model's code. json.dumps of a str->str dict is valid Python.
+        # then the model's code. json.dumps of a str->str dict is valid Python
+        # only without ASCII escaping: "\ud83d\ude00" would become two lone
+        # surrogates in a Python literal, not the original character.
         preamble = (
             "# Injected by code_exec: outputs of the tool_calls you declared,\n"
             "# keyed by your `as` (or '<name>_<index>'). Read them via tools[...].\n"
-            "tools = " + json.dumps(tool_outputs) + "\n\n"
+            "tools = " + json.dumps(tool_outputs, ensure_ascii=False) + "\n\n"
         )
         script = preamble + code
         try:
