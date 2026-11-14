@@ -434,6 +434,15 @@ class TestReflexionPruning:
         parser = [r for r in kept if "parser" in r.goal_text]
         assert parser and parser[0].reflection == "new"
 
+    def test_duplicates_from_different_users_are_both_kept(self, tmp_path):
+        path = tmp_path / "reflexions.ndjson"
+        rows = [{"ts": ts, "goal_text": "fix the flaky parser test", "failure_class": "agent_error",
+                 "reflection": user, "channel": channel, "user_id": user, "owner": f"user:{user}"}
+                for ts, channel, user in ((1.0, "slack", "alice"), (2.0, "teams", "bob"))]
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+        assert dreaming.prune_reflexions(path, keep=10) == 0
+        assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+
     def test_noop_when_nothing_to_drop(self, tmp_path):
         path = tmp_path / "reflexions.ndjson"
         reflexion.record(goal_text="one distinct lesson",

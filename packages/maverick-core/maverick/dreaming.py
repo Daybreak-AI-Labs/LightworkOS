@@ -728,7 +728,9 @@ def prune_reflexions(
             ensure_private_file(p)
             with open(p, encoding="utf-8") as f:
                 raw_lines = [ln for ln in f if ln.strip()]
-            parsed: list[tuple[float, set[str], str]] = []
+            # Recall is filtered by channel, user and owner, so a near-duplicate
+            # only replaces a lesson the same scope can still see.
+            parsed: list[tuple[float, set[str], str, tuple]] = []
             for ln in raw_lines:
                 try:
                     d = json.loads(ln)
@@ -743,24 +745,26 @@ def prune_reflexions(
                         + str(d.get("failure_class", ""))
                     ),
                     ln if ln.endswith("\n") else ln + "\n",
+                    (d.get("channel"), d.get("user_id"), d.get("owner")),
                 ))
             # Newest first so the duplicate survivor is the fresher lesson.
             # Wall-clock resolution can give successive appends equal times.
             # The last appended record wins that tie, including on Windows.
             parsed.reverse()
             parsed.sort(key=lambda t: t[0], reverse=True)
-            kept: list[tuple[float, set[str], str]] = []
+            kept: list[tuple[float, set[str], str, tuple]] = []
             for entry in parsed:
                 if len(kept) >= max(1, keep):
                     break
-                if any(_jaccard(entry[1], k[1]) >= dedup_threshold for k in kept):
+                if any(k[3] == entry[3] and _jaccard(entry[1], k[1]) >= dedup_threshold
+                       for k in kept):
                     continue
                 kept.append(entry)
             dropped = len(parsed) - len(kept)
             if dropped <= 0:
                 return 0
             # Restore chronological order through a private atomic rewrite.
-            _atomic_write_lines(p, (ln for _, _, ln in reversed(kept)))
+            _atomic_write_lines(p, (ln for _, _, ln, _ in reversed(kept)))
     except (OSError, RuntimeError) as e:
         log.warning("dreaming: reflexion prune failed: %s", e)
         return 0
