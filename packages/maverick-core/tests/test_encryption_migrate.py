@@ -445,3 +445,26 @@ def test_migrate_seals_legacy_webhook_bodies_so_strict_reads_still_send(monkeypa
     row = subs.attempt_delivery("whd_legacy", world=WorldModel(db), now=2,
                                 transport=lambda url, body, headers, timeout: sent.append(body) or (200, 1, "ok", ""))
     assert row["status"] == "delivered" and sent == [b'{"x":1}']
+
+
+@requires_crypto
+def test_migration_never_collects_an_entire_plaintext_column(monkeypatch, tmp_path):
+    from maverick import encryption_migrate as migration
+    db = tmp_path / "paged.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE turns (content TEXT)")
+        conn.executemany("INSERT INTO turns VALUES (?)", [(f"private row {i}",) for i in range(600)])
+    real_connect = sqlite3.connect
+    class BoundedCursor(sqlite3.Cursor):
+        def fetchall(self):
+            rows = super().fetchall()
+            assert len(rows) <= 256, "plaintext scan exceeded one bounded page"
+            return rows
+    class BoundedConnection(sqlite3.Connection):
+        def execute(self, *args, **kwargs):
+            return self.cursor(factory=BoundedCursor).execute(*args, **kwargs)
+    monkeypatch.setattr(migration.sqlite3, "connect", lambda *a, **kw: real_connect(*a, factory=BoundedConnection, **kw))
+    monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "1")
+    assert migration.migrate_world_db(db)["turns.content"] == 600
+    with real_connect(db) as conn:
+        assert all(car.unseal_from_str(row[0]).startswith("private row ") for row in conn.execute("SELECT content FROM turns"))

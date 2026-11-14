@@ -952,3 +952,15 @@ def test_huge_decimal_exponent_is_a_value_error():
     caps = ResearchResourceCaps(max_wall_seconds=1, max_provider_calls=0,
                                 max_storage_bytes=1, max_cost="0E-1000", currency="USD")
     assert caps.max_cost == "0"
+
+
+def test_execution_observation_revalidates_worker_and_evidence(services, monkeypatch):
+    registry, runs, state = services
+    planned = _plan(runs, _dataset(registry, state))
+    queued = runs.queue(TENANT, "user:researcher", planned["run_id"], expected_revision=planned["revision"])
+    running = runs.start(TENANT, "user:worker", queued["run_id"], expected_revision=queued["revision"])
+    with pytest.raises(ValueError, match="evidence"):
+        runs.execution_observation(TENANT, "user:worker", running["run_id"], {})
+    monkeypatch.setattr(runs, "worker_authority_resolver", lambda tenant, actor: (_ for _ in ()).throw(PermissionError("withdrawn")))
+    with pytest.raises(PermissionError, match="authority"):
+        runs.execution_observation(TENANT, "user:worker", running["run_id"], {"state": "active"})

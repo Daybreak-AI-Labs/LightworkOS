@@ -207,7 +207,7 @@ class ConversationInbox:
             fingerprint = digest([args, task_selection])
         prior = value["operations"].get(operation_id)
         if prior:
-            if prior["fingerprint"] != fingerprint:
+            if prior.get("fingerprint") != fingerprint:
                 raise RecordConflict("This request identity already belongs to different message contents")
             return copy.deepcopy(prior["item"])
         if type(expected_generation) is not int or expected_generation != value.get("generation", 0):
@@ -263,9 +263,11 @@ class ConversationInbox:
         fingerprint = digest([item_id, expected_revision, action, decision, expected_review])
         prior = value["operations"].get(operation_id)
         if prior:
-            if prior["fingerprint"] != fingerprint:
+            if prior.get("fingerprint") != fingerprint:
                 raise RecordConflict("This request identity belongs to another change")
             return copy.deepcopy(prior["item"])
+        if len(value["operations"]) >= 4000:
+            raise ValueError("This conversation receipt history is full; start a separate conversation")
         item = next((row for row in value["items"] if row["id"] == item_id), None)
         if not item or item["revision"] != expected_revision or item["state"] not in EDITABLE:
             raise RecordConflict("The message changed or was already consumed; refresh before changing it")
@@ -534,6 +536,9 @@ def erase_owned(principal, record_id, expected_revision, operation_id, *, actor)
     if "label" in value:
         value.update(label="",until=0)
     for receipt in value["operations"].values():
+        # Retain the request identity as a replay tombstone, without retaining
+        # a guessable commitment to the erased message or review arguments.
+        receipt.pop("fingerprint", None)
         if "item_id" not in receipt:
             continue
         receipt["item"] = public_item(next(item for item in value["items"] if item["id"] == receipt["item_id"]))

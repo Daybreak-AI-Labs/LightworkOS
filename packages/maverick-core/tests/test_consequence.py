@@ -398,3 +398,16 @@ def test_local_uncertainty_keeps_task_output_and_is_not_confirmed_failure(monkey
 
     monkeypatch.setattr(cq, "record_outcome", uncertain)
     assert cq.record_self_outcome(_FakeWorld([_FakeEpisode(99)]), 7, 1.0, kind="signoff") is None
+
+
+def test_journal_compaction_preserves_only_the_complete_retained_tail(tmp_path, monkeypatch):
+    path = tmp_path / "bounded.ndjson"
+    monkeypatch.setattr(cq, "_MAX_TAIL_BYTES", 1024)
+    store = cq.ConsequenceStore(path=path)
+    for number in range(40):
+        assert store.record(number, number, 0.5, ts=number)
+    assert path.stat().st_size <= 2048
+    assert store.resolve(39, 39) == 0.5
+    assert store.resolve(0, 0) is None
+    assert cq.ConsequenceStore(path=path).resolve(39, 39) == 0.5
+    assert all(json.loads(line)["value"] == 0.5 for line in path.read_text().splitlines())

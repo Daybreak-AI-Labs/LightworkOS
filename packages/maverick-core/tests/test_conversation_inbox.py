@@ -215,3 +215,30 @@ def test_owned_inventory_is_not_capped_by_other_owners_records(monkeypatch):
     monkeypatch.setattr(module, "_MAX_INVENTORY_SCAN", 100)
     with pytest.raises(ValueError, match="narrower"):
         module.owned_inventory("user:alice")
+
+
+def test_erasure_removes_message_fingerprints_and_old_replays_are_refused(setup, monkeypatch):
+    world, goal, inbox, _ = setup
+    token = uuid.uuid4().hex
+    send(inbox, goal, operation_id=token, text="yes")
+    record, before = inbox._read(world.get_goal(goal))
+    assert before["operations"][token]["fingerprint"]
+    monkeypatch.setattr("maverick.ediscovery.assert_personal_chats_erasable", lambda *a, **kw: None)
+    module.erase_owned("user:owner", record["id"], record["revision"], uuid.uuid4().hex, actor="user:owner")
+    _, erased = inbox._read(world.get_goal(goal))
+    assert "fingerprint" not in erased["operations"][token]
+    assert inbox.receipt(goal, token)["item"]["state"] == "erased"
+    with pytest.raises(RecordConflict):
+        send(inbox, goal, operation_id=token, text="yes")
+
+
+def test_change_refuses_a_full_receipt_history_before_the_effect(setup):
+    world, goal, inbox, _ = setup
+    item = send(inbox, goal)
+    record, value = inbox._read(world.get_goal(goal))
+    for number in range(4000 - len(value["operations"])):
+        value["operations"][f"older-{number}"] = {"fingerprint": "0" * 64, "item_id": item["id"], "item": item}
+    inbox._save(record, value, actor="user:owner", action="test.history")
+    with pytest.raises(ValueError, match="history is full"):
+        inbox.change(goal, item["id"], expected_revision=item["revision"], operation_id=uuid.uuid4().hex, action="cancel")
+    assert inbox.state(goal)["items"][0]["state"] == "queued"

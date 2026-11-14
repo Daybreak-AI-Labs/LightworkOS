@@ -1869,20 +1869,32 @@ class ResearchRuns:
             return self._view(saved)
 
     def execution_observation(self, tenant, actor, run_id, evidence):
-        """Trusted controller facts only; no synthetic completion or new ledger."""
-        current = self._record(tenant, run_id)
-        if self._attempt(current).get("worker_authority", {}).get("principal") != actor:
-            raise ResearchRunConflict("This execution belongs to another owner")
-        def mutate(record):
-            selected = self._attempt(record)
-            if record["status"] != "running":
-                raise ResearchRunConflict("This execution is no longer active")
-            selected["execution"] = dict(evidence)
-            selected["events"].append(_event(selected["events"], state="running",
-                recorded_at=self.store.authoritative_time(), actor=actor,
-                details={"execution_state": evidence["state"], "execution_sha256": _digest(evidence)}))
-        return self.store.update(current["id"], mutate, expected_revision=current["revision"],
-            actor=actor, action="research.run.execution_observation")
+        """Trusted controller facts only; recheck the current execution owner."""
+        canonical, principal = canonical_tenant_id(tenant), _actor(actor, "execution owner")
+        if (not isinstance(evidence, dict) or not isinstance(evidence.get("state"), str)
+                or not evidence["state"].strip() or len(evidence["state"]) > 128):
+            raise ValueError("Execution evidence must include a bounded state name")
+        try:
+            observed = json.loads(json.dumps(evidence, allow_nan=False))
+        except (TypeError, ValueError, OverflowError, RecursionError) as exc:
+            raise ValueError("Execution evidence must contain finite JSON values") from exc
+        with tenant_scope(tenant=canonical), self.effect_fence():
+            current = self._record(canonical, run_id)
+            authority = self._worker_authority(canonical, principal)
+            if self._attempt(current).get("worker_authority") != asdict(authority):
+                raise ResearchRunConflict("This execution belongs to another owner")
+            def mutate(record):
+                selected = self._attempt(record)
+                if (record["status"] != "running"
+                        or selected.get("worker_authority") != asdict(authority)
+                        or self._worker_authority(canonical, principal) != authority):
+                    raise ResearchRunConflict("This execution or its owner authority changed")
+                selected["execution"] = observed
+                selected["events"].append(_event(selected["events"], state="running",
+                    recorded_at=self.store.authoritative_time(), actor=principal,
+                    details={"execution_state": observed["state"], "execution_sha256": _digest(observed)}))
+            return self.store.update(current["id"], mutate, expected_revision=current["revision"],
+                actor=principal, action="research.run.execution_observation")
 
     def stop_execution(self, tenant, principal, run_id, *, expected_revision):
         """Request bounded cleanup; the actual execution owner alone may stop it."""

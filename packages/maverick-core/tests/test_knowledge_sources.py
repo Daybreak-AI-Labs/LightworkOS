@@ -708,3 +708,28 @@ def test_a_projection_without_an_authority_projects_no_item_under_the_filter(ser
     result = native.exact_source_snapshot(TENANT, identifier, version, knowledge_base=kb)
     assert result["visible_items"] == [] and result["withheld_for_permissions"] == 2
     assert len(result["items"]) == 2  # the commitment still covers every item
+
+
+def test_published_remote_analysis_revalidates_original_analyze_authority(service, monkeypatch):
+    from dataclasses import asdict
+
+    from maverick import knowledge_task_context as context
+    kb, identifier, version = _retained_snapshot(service, 1, text="permitted source")
+    _grant_items(service, identifier, version, {"item-0": _grant(anyone=True)})
+    goal = SimpleNamespace(id=1, title="Analysis", description="Compare evidence", created_at=1,
+                           owner=OWNER, status="done")
+    reference = ResearchAssetRef(kind="dataset", asset_id=identifier, version=version, manifest_sha256=SHA)
+    context._write(goal.id, {"tenant": TENANT, "owner": OWNER, "brief_sha": context._brief(goal),
+        "references": [asdict(reference)], "purpose": "support", "phase": "published", "result": "Approved derivative"})
+    monkeypatch.setattr(context, "enabled", lambda: True)
+    def materialize(tenant, actor, refs, **kwargs):
+        authority = SimpleNamespace(action=kwargs["action"], purpose=kwargs["purpose"], principal=actor, verified_email="alice@contoso.com")
+        return native.exact_source_snapshot(tenant, identifier, version, knowledge_base=kb, authority=authority)
+    monkeypatch.setattr(context, "service", lambda: SimpleNamespace(materialize_at_job_start=materialize))
+    world = SimpleNamespace(get_goal=lambda goal_id: goal)
+    assert context.read_analysis(world, goal.id, OWNER)["result"] == "Approved derivative"
+    row = service.sources.get(identifier)
+    service.sources.update(identifier, lambda current: current.update(projection_allowed=False),
+        expected_revision=row["revision"], action="test.withdraw", actor=OWNER)
+    with pytest.raises(context.SourceContextUnavailable):
+        context.read_analysis(world, goal.id, OWNER)

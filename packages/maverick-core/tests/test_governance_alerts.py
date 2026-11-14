@@ -169,3 +169,17 @@ def test_expiring_soon_counts_within_the_horizon(tmp_path):
     assert literacy["expiring_soon"] == 1
     assert literacy["unreconciled_ai_literacy_data"] is True
     assert report["attention_count"] == 2
+
+
+def test_malformed_registers_make_the_digest_incomplete(monkeypatch):
+    from maverick import ai_literacy, vendor_management
+    monkeypatch.setattr(ai_literacy, "enabled", lambda: True)
+    monkeypatch.setattr(ai_literacy, "literacy_gaps", lambda **kw: {
+        "persons": [{"trainings": [{"status": "current", "valid_until": "invalid"}]}]})
+    monkeypatch.setattr(ai_literacy, "literacy_plane_status", lambda **kw: {})
+    monkeypatch.setattr(vendor_management, "enabled", lambda: True)
+    monkeypatch.setattr(vendor_management, "contract_renewals", lambda **kw: {})
+    report = governance_alerts.digest()
+    assert report["complete"] is False
+    assert report["sections"]["ai_literacy"]["error"] == "unavailable"
+    assert report["sections"]["vendors"]["error"] == "unavailable"

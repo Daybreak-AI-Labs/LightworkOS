@@ -104,6 +104,35 @@ def backup_world_db(db_path: Path) -> Path:
     return dest
 
 
+def _needs_seal(table: str, value) -> bool:
+    return value is not None and not (is_sealed_str(value) if table == "harness_corpus" else is_bound_str(value))
+
+
+def _column_pages(conn, table: str, col: str):
+    """Read fixed-size rowid pages through the scan's original high-water mark."""
+    high = conn.execute(f"SELECT MAX(rowid) FROM {table}").fetchone()[0]
+    if high is None:
+        return
+    last = None
+    while True:
+        filters, args = ["rowid <= ?"], [high]
+        if last is not None:
+            filters.append("rowid > ?")
+            args.append(last)
+        if table == "harness_corpus":
+            filters.append("kind IN ('pending', 'rejected')")
+        page = conn.execute(
+            f"SELECT rowid AS rid, {col} AS val FROM {table} "
+            f"WHERE {' AND '.join(filters)} ORDER BY rowid LIMIT 256", args,
+        ).fetchall()
+        if not page:
+            return
+        last = page[-1]["rid"]
+        yield page
+        if last >= high:
+            return
+
+
 def migrate_world_db(
     db_path: Path, *, dry_run: bool = False, backup: bool = False
 ) -> dict[str, int]:
@@ -132,51 +161,20 @@ def migrate_world_db(
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA busy_timeout=5000")
-        # Phase 1 -- read-only scan: find the plaintext rows. No transaction/lock
-        # is held after this (default isolation only locks on DML), so the backup
-        # below can open its own connection cleanly.
-        work: list[tuple[str, str, int, str]] = []
-        for table, col in _SEALED_COLUMNS:
+        # First count bounded rowid pages without retaining plaintext work.
+        # The optional backup still precedes every mutation.
+        for table, col in (*_SEALED_COLUMNS, ("harness_corpus", "row")):
             try:
-                rows = conn.execute(
-                    f"SELECT rowid AS rid, {col} AS val FROM {table}"
-                ).fetchall()
+                report[f"{table}.{col}"] = sum(
+                    _needs_seal(table, row["val"])
+                    for page in _column_pages(conn, table, col) for row in page
+                )
             except sqlite3.OperationalError:
                 continue  # table/column absent on an older schema
-            sealed = 0
-            for r in rows:
-                val = r["val"]
-                # Plaintext, and tokens sealed before binding existed
-                # (unbound MVKAR1), both need the bound seal.
-                if val is None or is_bound_str(val):
-                    continue
-                sealed += 1
-                if not dry_run:
-                    work.append((table, col, r["rid"], val))
-            report[f"{table}.{col}"] = sealed
-        try:
-            rows = conn.execute(
-                "SELECT rowid AS rid, row AS val FROM harness_corpus "
-                "WHERE kind IN ('pending', 'rejected')"
-            ).fetchall()
-        except sqlite3.OperationalError:
-            pass  # corpus table absent on an older schema
-        else:
-            sealed = 0
-            for r in rows:
-                val = r["val"]
-                if val is None or is_sealed_str(val):
-                    continue
-                sealed += 1
-                if not dry_run:
-                    work.append(("harness_corpus", "row", r["rid"], val))
-            report["harness_corpus.row"] = sealed
-        if dry_run or not work:
+        if dry_run or not any(report.values()):
             log.info("encryption migrate (dry_run=%s): %s", dry_run, report)
             if not dry_run:
                 if _has_message_index(conn):
-                    # A store sealed before the index rebuild existed can still
-                    # hold plaintext terms there; clear them on any re-run.
                     _clear_leftover_index(conn)
                 _mark_if_sealed(conn, db_path)
             return report
@@ -187,22 +185,28 @@ def migrate_world_db(
         # Zero freed cells as rows are re-sealed in place, so the pre-encryption
         # plaintext can't be recovered from the DB file's free list.
         conn.execute("PRAGMA secure_delete=ON")
-        # The scan above intentionally holds no writer reservation (the backup
-        # uses another connection). Never overwrite work edited after that scan.
+        # The count scan holds no writer reservation (the backup uses another
+        # connection). Never overwrite a value changed after its page was read.
         # Reports count only rows this execution actually changed; a subsequent
         # scan can find newer plaintext without mistaking it for a completed seal.
         report = dict.fromkeys(report, 0)
-        for table, col, rid, val in work:
-            if table == "harness_corpus":
-                resealed = seal_to_str(val)
-            else:
-                plain = unseal_from_str(val) if is_sealed_str(val) else val
-                resealed = seal_bound_to_str(plain, bound_context(table, col), bind_tenant=False)
-            changed = conn.execute(
-                f"UPDATE {table} SET {col} = ? WHERE rowid = ? AND {col} IS ?",
-                (resealed, rid, val),
-            )
-            report[f"{table}.{col}"] += changed.rowcount
+        for key in report:
+            table, col = key.split(".")
+            for page in _column_pages(conn, table, col):
+                for row in page:
+                    val = row["val"]
+                    if not _needs_seal(table, val):
+                        continue
+                    if table == "harness_corpus":
+                        resealed = seal_to_str(val)
+                    else:
+                        plain = unseal_from_str(val) if is_sealed_str(val) else val
+                        resealed = seal_bound_to_str(plain, bound_context(table, col), bind_tenant=False)
+                    changed = conn.execute(
+                        f"UPDATE {table} SET {col} = ? WHERE rowid = ? AND {col} IS ?",
+                        (resealed, row["rid"], val),
+                    )
+                    report[key] += changed.rowcount
         _rebuild_message_index(conn)
         conn.commit()
         _shred_residue(conn, report)
@@ -223,20 +227,14 @@ def _mark_if_sealed(conn: sqlite3.Connection, db_path: Path) -> None:
 def _unsealed_remaining(conn: sqlite3.Connection) -> bool:
     """True while any sealed column still holds plaintext or an unbound token
     (a concurrent write that landed after the scan, say)."""
-    for table, col in _SEALED_COLUMNS:
+    for table, col in (*_SEALED_COLUMNS, ("harness_corpus", "row")):
         try:
-            rows = conn.execute(f"SELECT {col} AS val FROM {table}").fetchall()
+            for page in _column_pages(conn, table, col):
+                if any(_needs_seal(table, row["val"]) for row in page):
+                    return True
         except sqlite3.OperationalError:
             continue
-        if any(r["val"] is not None and not is_bound_str(r["val"]) for r in rows):
-            return True
-    try:
-        rows = conn.execute(
-            "SELECT row AS val FROM harness_corpus WHERE kind IN ('pending', 'rejected')"
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return False
-    return any(r["val"] is not None and not is_sealed_str(r["val"]) for r in rows)
+    return False
 
 
 def _mark_migrated(db_path: Path) -> None:

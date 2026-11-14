@@ -2238,3 +2238,22 @@ def test_untracked_lexical_projection_makes_revocation_clear_everything(access):
     # The fail-safe cleared the stale set; only the re-derived survivor is back.
     assert len(service._lexical) == 1
     assert set(service._lexical) == set(service._lexical_owner)
+
+
+def test_recovery_delivers_the_confirmed_source_revocation_hook(access):
+    service, registry, rights, _ = access
+    source = _dataset(registry, rights, "tenant-a", "hook-recovery")
+    request = service.submit_request("tenant-a", "user:admin", source,
+        request_type="exclusion", reason="Exclude source", request_key="hook-recovery")
+    service.after_source_revoked = lambda row: (_ for _ in ()).throw(RuntimeError("interrupted hook"))
+    evidence = _sha("hook review")
+    with pytest.raises(RuntimeError, match="interrupted hook"):
+        service.decide_request("tenant-a", "user:admin", request["id"], expected_revision=request["revision"],
+            decision="approve", evidence_sha256=evidence)
+    applying = service.get_request("tenant-a", request["id"])
+    delivered = []
+    service.after_source_revoked = lambda row: delivered.append((row["id"], registry.inspect("tenant-a", source)["state"]))
+    done = service.decide_request("tenant-a", "user:admin", request["id"], expected_revision=applying["revision"],
+        decision="approve", evidence_sha256=evidence)
+    assert delivered == [(request["id"], "revoked")]
+    assert done["status"] == "approved"

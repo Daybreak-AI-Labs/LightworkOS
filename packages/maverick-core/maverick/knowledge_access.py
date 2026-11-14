@@ -2643,6 +2643,8 @@ class KnowledgeAccessService:
                     raise KnowledgeRequestConflict(
                         "source retirement outcome is uncertain; inspect the exact registry version"
                     )
+                if self.after_source_revoked is not None:
+                    self.after_source_revoked(dict(current))
                 return self._finish_approved_request(canonical, current)
             if status != "submitted":
                 raise KnowledgeRequestConflict("knowledge request cannot be reviewed in this state")

@@ -143,7 +143,9 @@ def require_read(goal, actor: str | None, *, action="read"):
         if not actor:
             raise SourceContextUnavailable("This analysis requires a named account with current source access.")
         try:
-            _materialize(goal, actor, action=action)
+            # Opening this derivative revalidates the exact analyze permission
+            # that produced it. It does not grant a new raw-source read right.
+            _materialize(goal, actor, action="analyze" if action == "read" else action)
         except Exception as exc:
             raise SourceContextUnavailable("Current source permission is required to open this analysis. Request fresh evidence or access.") from exc
 
