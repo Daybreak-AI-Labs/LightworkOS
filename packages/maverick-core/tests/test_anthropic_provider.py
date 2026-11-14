@@ -4,6 +4,9 @@ interleaved thinking, tool ordering and usage accounting.
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
+
+import pytest
 
 # ---- MAVERICK_TEMPERATURE is read by the Anthropic provider ----
 
@@ -482,8 +485,8 @@ class TestAnthropicProviderRobust:
         assert abs(budget.dollars - 4.875) < 0.001
         assert budget.cache_write_tokens == 1_000_000
 
-    def test_string_usage_garbage_does_not_crash(self):
-        from maverick.budget import Budget
+    def test_string_usage_garbage_fails_closed_under_a_budget(self):
+        from maverick.budget import Budget, UsageAccountingError
         from maverick.providers.anthropic_provider import AnthropicClient
 
         client = AnthropicClient.__new__(AnthropicClient)
@@ -498,22 +501,26 @@ class TestAnthropicProviderRobust:
             stop_reason = "end_turn"
 
         budget = Budget(max_dollars=10.0)
-        # Must not raise — defensive _safe_int returns 0.
-        client._parse_response(_Resp(), budget, model="claude-sonnet-4-6")
-        assert budget.input_tokens == 0
-        assert budget.output_tokens == 50
+        # A present but unreadable count used to read as 0, so the paid call
+        # slipped past the caps. It is refused when a budget is attached...
+        with pytest.raises(UsageAccountingError, match="invalid Anthropic usage"):
+            client._parse_response(_Resp(), budget, model="claude-sonnet-4-6")
+        assert budget.input_tokens == 0 and budget.output_tokens == 0
+        # ...and still does not crash a budget-less parse.
+        assert client._parse_response(_Resp(), None, model="claude-sonnet-4-6").text == ""
 
-    def test_non_finite_usage_fails_closed(self):
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), "NaN", "inf",
+                                     Decimal("NaN"), True, -5])
+    def test_non_finite_usage_fails_closed(self, bad):
         # A NaN count used to read as 0, so a paid call recorded $0 and
         # never tripped max_dollars or the token caps.
-        import pytest
         from maverick.budget import Budget, UsageAccountingError
         from maverick.providers.anthropic_provider import AnthropicClient
 
         client = AnthropicClient.__new__(AnthropicClient)
 
         class _Usage:
-            input_tokens = float("nan")
+            input_tokens = bad
             output_tokens = 50
 
         class _Resp:
@@ -522,7 +529,7 @@ class TestAnthropicProviderRobust:
             stop_reason = "end_turn"
 
         budget = Budget(max_dollars=10.0)
-        with pytest.raises(UsageAccountingError, match="non-finite"):
+        with pytest.raises(UsageAccountingError, match="invalid Anthropic usage"):
             client._parse_response(_Resp(), budget, model="claude-sonnet-4-6")
         assert budget.output_tokens == 0
 
