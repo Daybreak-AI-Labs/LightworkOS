@@ -452,10 +452,12 @@ def _run_transcribe_internal(args: dict[str, Any]) -> str:
     if not source:
         return "ERROR: source is required"
     path = Path(source).absolute()
-    return _run_transcribe({**args, "source": str(path)}, SimpleNamespace(workdir=path.parent))
+    return _run_transcribe({**args, "source": str(path)}, SimpleNamespace(workdir=path.parent),
+                           operator_backend=True)
 
 
-def _run_transcribe(args: dict[str, Any], sandbox: Any = None) -> str:
+def _run_transcribe(args: dict[str, Any], sandbox: Any = None, *,
+                    operator_backend: bool = False) -> str:
     from ..tool_results import confirmed_success_text
 
     src = (args.get("source") or "").strip()
@@ -476,8 +478,10 @@ def _run_transcribe(args: dict[str, Any], sandbox: Any = None) -> str:
     pinned = _default_stt_backend()
     backend = str(args.get("backend") or pinned).lower()
     # An operator pin (e.g. "local" to keep audio on the machine) may only be
-    # narrowed to "local" by a call, never widened to another provider.
-    if pinned != "auto" and backend not in (pinned, "local"):
+    # narrowed to "local" by a model-invoked call, never widened to another
+    # provider. A trusted caller's explicit choice (the operator's own
+    # `maverick voice transcribe --backend`) is not bound by it.
+    if not operator_backend and pinned != "auto" and backend not in (pinned, "local"):
         return (f"ERROR: speech-to-text is pinned to {pinned!r} by the operator; "
                 f"backend {backend!r} is not allowed")
 

@@ -253,6 +253,10 @@ def test_stt_backend_env_pins_local(monkeypatch, tmp_path):
         out = voice_mod._run_transcribe({"source": str(audio), "backend": backend},
                                         sandbox=SimpleNamespace(workdir=tmp_path))
         assert out.startswith("ERROR") and "pinned" in out
+    # The operator's own CLI flag (trusted internal entry point) is not bound.
+    monkeypatch.setattr(voice_mod, "_whisper_openai", lambda p, lang: "operator chose openai")
+    assert voice_mod._run_transcribe_internal({"source": str(audio), "backend": "openai"}) == (
+        "operator chose openai")
 
 
 def test_explicit_arg_backend_beats_env_default(monkeypatch, tmp_path):
