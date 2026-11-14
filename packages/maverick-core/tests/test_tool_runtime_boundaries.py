@@ -246,3 +246,23 @@ def test_x11_focus_changes_computer_approval_digest(monkeypatch):
     after = module._computer_approval_context()
     assert before["foreground_window_sha256"] != after["foreground_window_sha256"]
     assert closed == [True, True]
+
+
+def test_database_autocommit_postgres_read_uses_no_named_cursor(monkeypatch):
+    from maverick.tools import database_tool as module
+    events = []
+    class Connection:
+        dialect = types.SimpleNamespace(supports_server_side_cursors=True, name="postgresql")
+        def execution_options(self, **kwargs):
+            events.append(("options", kwargs))
+            return self
+        def execute(self, statement):
+            events.append(("execute", str(statement)))
+            raise ValueError("end probe before data")
+    execution = types.SimpleNamespace(started=lambda: None, transactional=False,
+        cancellation_support="postgres_statement_timeout_and_cancel_safe", rollback=lambda conn: None,
+        failure=lambda exc: "ERROR", stop_monitor=lambda: None, state="rolled_back")
+    monkeypatch.setattr(module, "_prepare_query_driver", lambda *a: None)
+    module._query_connection(Connection(), "SELECT n FROM records", 10, False, "text", execution)
+    # PostgreSQL rejects DECLARE outside a transaction block (autocommit).
+    assert events == [("execute", "SELECT n FROM records")]

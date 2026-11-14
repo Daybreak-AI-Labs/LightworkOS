@@ -330,13 +330,19 @@ def _query_connection(conn, sql, limit, needs_confirm, response_format, executio
     try:
         _prepare_query_driver(conn, execution)
         execution.started()
+        dialect = getattr(conn, "dialect", None)
         if (not needs_confirm and _leading_keyword(sql) == "select"
-                and getattr(getattr(conn, "dialect", None), "supports_server_side_cursors", False)):
+                and getattr(dialect, "supports_server_side_cursors", False)
+                and (execution.transactional
+                     or getattr(dialect, "name", None) in {"mysql", "mariadb"})):
             # Use the dialect's server cursor (including MySQL and non-psycopg
             # PostgreSQL drivers), before execute can buffer the result. SQLite
             # and Oracle's synchronous cursors already fetch incrementally.
             # Keep non-SELECT statements out: named PostgreSQL cursors cannot
             # execute DML/RETURNING, and authorization must not be inferred here.
+            # Outside MySQL a named cursor needs a known open transaction:
+            # PostgreSQL rejects DECLARE in autocommit mode, and an unbound
+            # driver's autocommit state is unknown.
             conn = conn.execution_options(yield_per=limit + 1)
         elif (not needs_confirm and _leading_keyword(sql) == "select"
               and getattr(getattr(conn, "dialect", None), "name", None) in {"mysql", "mariadb"}):
