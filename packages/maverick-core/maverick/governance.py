@@ -19,8 +19,9 @@ allows anything the capability already permits, so a non-enterprise deployment
 behaves exactly as before. Enterprise deployments set ``[governance]`` directly
 or via a compliance-regime pack, which compiles down to the same :class:`Policy`.
 
-This module is pure (no I/O, no network, no agent-loop coupling) so the decision
-logic is exhaustively unit-testable; wiring it into the kernel's tool path and
+The decision logic (``evaluate``) is pure (no I/O, no network, no agent-loop
+coupling) so it is exhaustively unit-testable; ``Policy.from_config`` is the one
+place that reads configuration and the policy overlays; wiring it into the kernel's tool path and
 recording verdicts to the audit chain are separate, deliberate steps.
 """
 from __future__ import annotations
@@ -279,8 +280,11 @@ class Policy:
       whose classified risk is at or above it gets the verdict. ``None`` == no
       floor. (Risk order: low < medium < high.)
     - ``deny_above`` / ``require_human_above``: dollar-amount thresholds per action
-      (a ``"*"`` key applies to every action). When a call carries an ``amount``
-      above the threshold it gets the verdict — the finance delegation-of-authority
+      (a ``"*"`` key applies to every action). A call whose amount cannot be
+      verified (most tools; see the unverifiable-amount rule) also gets the
+      verdict once a threshold applies to it, so a ``"*"`` threshold gates
+      almost every tool. When a call carries an ``amount`` above the threshold
+      it gets the verdict — the finance delegation-of-authority
       tier ("< $5k auto, $5k–50k human, > $50k denied"). Thresholds are in one
       reporting currency; the caller normalises ``amount`` into it.
     - ``automation``: action (lower-case tool name) -> finance automation level

@@ -2792,8 +2792,9 @@ class Agent:
     def _maybe_seal(self, quarantine, verdict) -> None:
         """Conservatively escalate a shield block to a Rung-1 seal.
 
-        Workers only; the trusted root orchestrator (the privileged promoter)
-        is never sealed. Do not trust ``role`` alone here: child agents receive
+        Workers only; the trusted root orchestrator (the privileged promoter:
+        role ``orchestrator`` at depth 0 with no parent) is never sealed. A
+        domain-routed goal root with another role can be sealed. Do not trust ``role`` alone here: child agents receive
         model-supplied role strings from spawn tools. Fail-open -- containment
         must never break the agent loop.
         """
@@ -2899,6 +2900,10 @@ class Agent:
         above already authorized the call; a verification *failure* (expired,
         tampered, replayed, wrong tool) fail-closes only because the operator
         explicitly turned the feature on.
+
+        The token is minted and verified within this call and is not passed to
+        the tool or bound to the dispatch; its lasting effect is the
+        ``TOKEN_EXCHANGE`` audit row.
         """
         if cap is None:
             return None
@@ -4914,7 +4919,8 @@ class Agent:
         Returns ``(ckpt, start_step, messages)``. When durable checkpointing is
         disabled, there is no goal id, or this is not the root agent, returns
         ``(None, 0, messages)`` unchanged. Missing history starts at zero;
-        corrupt/unavailable history or exhausted current caps blocks execution.
+        corrupt/unavailable history or exhausted current caps blocks execution
+        by raising (``ValueError`` / ``BudgetExceeded``) out of ``Agent.run``.
         Usage is restored into the authoritative shared Budget.
 
         ``messages[0]`` on entry is the brief this run was JUST built

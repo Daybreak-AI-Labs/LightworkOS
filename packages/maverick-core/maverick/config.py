@@ -2,7 +2,10 @@
 
 Reads ``~/.maverick/config.toml`` (or the path set by ``$MAVERICK_CONFIG``).
 Supports environment variable interpolation in string values: ``${VAR_NAME}``
-is replaced with the env value, or the empty string if unset.
+is replaced with the env value, or the empty string if unset. Only
+operator-owned files interpolate: the dashboard Settings overlay and per-tenant
+``config.toml`` files keep ``${VAR}`` literally, because their authors have no
+authority to read process secrets.
 
 This is the surface the installer wizard writes to. Users can also edit
 the TOML by hand. The kernel falls back to sensible defaults if no
@@ -2351,7 +2354,8 @@ def get_self_harness() -> dict:
       constituent settings may tighten but cannot weaken this contract.
     - ``min_support``: recurring failures before a weakness is mined (>=1).
     - ``require_held_out`` / ``min_held_out`` / ``min_delta``: the validation
-      evidence floors (default off / 0 / 0.0) -- never promote on only the mined
+      evidence floors (off / 0 / 0.0 on their own; the default ``risk_limited``
+      profile raises them, to on / 8 / 0.02 on a pristine install) -- never promote on only the mined
       examples, an unseen-sample floor, an effect-size floor.
     - ``semantic_mining``: cluster failure diagnoses by embedding similarity
       when embeddings are available (default off -> deterministic Jaccard).
@@ -4167,11 +4171,9 @@ def get_flows() -> dict:
         # default -- surfacing proposals + human apply works without it; this only
         # governs whether the loop is allowed to *undo* a bad change on its own.
         "auto_evolve": coerce_bool(cfg.get("auto_evolve"), False),
-        # Opt-in autonomous forward apply: the loop enacts a self-rewrite proposal
-        # (not just reverts a bad one). Strictly gated -- auto_apply_enabled() also
-        # requires auto_evolve on for the revert safety net. OFF by default. Without
-        # this key here auto_apply could never be read from config (only the env
-        # var / a monkeypatch), so the [flows] auto_apply knob was inert.
+        # Retired: autonomous forward apply no longer runs (see
+        # automation_queue and docs/configuration.md); the key is still read so
+        # an old config parses and the setting can be reported.
         "auto_apply": coerce_bool(cfg.get("auto_apply"), False),
         # Reviewed, bounded pure operators may replace an agent result only on
         # agreement inside their declared input domain. Explicit boolean opt-in.
