@@ -553,8 +553,9 @@ class PgVectorStore:
 
     Same surface + collection-scoped compartments as :class:`SqliteVectorStore`,
     but cosine search runs in Postgres via the ``<=>`` operator, so retrieval
-    doesn't scan every row in the process. The search is exact within the
-    collection (see ``search``), not an approximate index scan. Vectors are
+    doesn't scan every row in the process. The search uses the IVFFlat index
+    and falls back to an exact scan of the collection when the index returns
+    fewer rows than requested (see ``search``). Vectors are
     passed as text literals cast to ``::vector``; only ``psycopg`` and the
     Postgres ``vector`` extension are required (no numpy / pgvector-python).
 
@@ -731,8 +732,8 @@ class PgVectorStore:
             # pgvector cannot build an IVFFlat or HNSW index on a vector over
             # 2,000 dimensions; searches stay exact without one.
             return
-        # Cosine IVFFlat index, kept for existing deployments; search does not
-        # rely on it for correctness (see ``search``).
+        # Cosine IVFFlat index; search falls back to an exact scan when a
+        # filtered index scan comes back short (see ``search``).
         provider_call(
             lambda: self._db.execute(
                 f"CREATE INDEX IF NOT EXISTS {self._table}_embedding_idx "
@@ -853,23 +854,37 @@ class PgVectorStore:
 
         def dispatch():
             with self._lock, self._db.cursor() as cur:
-                # The IVFFlat index probes 1 of its lists and applies the
-                # namespace/collection filter afterwards, so a search through
-                # it could return fewer than k rows, or none. OFFSET 0 keeps
-                # the filtered subquery from being flattened, so the ordering
-                # is computed exactly over the collection's rows (narrowed by
-                # the primary key) instead of through the ANN index.
+                # The index-backed query runs first. IVFFlat probes 1 of its
+                # lists and applies the namespace/collection filter afterwards,
+                # so it can return fewer than k rows, or none. Only then does
+                # the exact branch run: OFFSET 0 keeps its filtered subquery
+                # from being flattened, so it orders the collection's rows
+                # (narrowed by the primary key) without the ANN index. Its
+                # gate references only the CTE, so PostgreSQL plans it as a
+                # one-time filter and skips the exact sort when the index
+                # query already found k rows. One statement, one round trip.
+                t = self._table
                 return cur.execute(
-                    "SELECT text, meta, 1 - (embedding <=> %s::vector) AS score "
-                    f"FROM (SELECT text, meta, embedding FROM {self._table} "
+                    "SELECT text, meta, 1 - distance AS score FROM ("
+                    "WITH approx AS ("
+                    f"SELECT text, meta, embedding <=> %s::vector AS distance FROM {t} "
+                    "WHERE namespace = %s AND collection = %s "
+                    "ORDER BY embedding <=> %s::vector LIMIT %s) "
+                    "SELECT text, meta, distance FROM approx "
+                    "WHERE (SELECT count(*) FROM approx) >= %s "
+                    "UNION ALL "
+                    "SELECT text, meta, distance FROM ("
+                    "SELECT text, meta, embedding <=> %s::vector AS distance FROM ("
+                    f"SELECT text, meta, embedding FROM {t} "
                     "WHERE namespace = %s AND collection = %s OFFSET 0) AS scoped "
-                    "ORDER BY embedding <=> %s::vector LIMIT %s",
+                    "ORDER BY distance LIMIT %s) AS exact "
+                    "WHERE (SELECT count(*) FROM approx) < %s"
+                    ") AS hits ORDER BY distance LIMIT %s",
                     (
-                        vector_literal,
-                        self._namespace,
-                        collection,
-                        vector_literal,
+                        vector_literal, self._namespace, collection, vector_literal, int(k),
                         int(k),
+                        vector_literal, self._namespace, collection, int(k),
+                        int(k), int(k),
                     ),
                 ).fetchall()
 

@@ -180,7 +180,7 @@ class TestBuildStore:
                 return None
 
             def execute(self, sql, params=None):
-                calls.append(sql)
+                calls.append((sql, params))
                 return self
 
             def fetchone(self):
@@ -191,7 +191,7 @@ class TestBuildStore:
 
         class _Conn:
             def execute(self, sql, params=None):
-                calls.append(sql)
+                calls.append((sql, params))
 
             def cursor(self):
                 return _Cursor()
@@ -205,14 +205,23 @@ class TestBuildStore:
         for dim, indexed in ((1024, True), (3072, False)):
             calls.clear()
             store = PgVectorStore("postgresql://shared", dim=dim, table="knowledge_chunks")
-            assert any("USING ivfflat" in sql for sql in calls) is indexed
-            store.search("hr", [1.0] * dim)
-            search_sql = calls[-1]
-            # The collection filter runs inside a fenced subquery; the ordering
-            # is applied to its rows, never through the approximate index.
+            assert any("USING ivfflat" in sql for sql, _ in calls) is indexed
+            store.search("hr", [1.0] * dim, k=3)
+            search_sql, params = calls[-1]
+            # Index-backed query first; its rows are used when it found k.
+            assert ("WITH approx AS (SELECT text, meta, embedding <=> %s::vector AS distance "
+                    "FROM knowledge_chunks WHERE namespace = %s AND collection = %s "
+                    "ORDER BY embedding <=> %s::vector LIMIT %s) "
+                    "SELECT text, meta, distance FROM approx "
+                    "WHERE (SELECT count(*) FROM approx) >= %s") in search_sql
+            # Otherwise the exact branch: the collection filter runs in a fenced
+            # subquery and is ordered without the approximate index.
             assert ("FROM (SELECT text, meta, embedding FROM knowledge_chunks "
                     "WHERE namespace = %s AND collection = %s OFFSET 0) AS scoped "
-                    "ORDER BY embedding <=> %s::vector LIMIT %s") in search_sql
+                    "ORDER BY distance LIMIT %s) AS exact "
+                    "WHERE (SELECT count(*) FROM approx) < %s") in search_sql
+            assert search_sql.count("%s") == len(params)
+            assert params[4:6] == (3, 3) and params[-3:] == (3, 3, 3)
 
     def test_pgvector_open_existing_runs_no_ddl(self, monkeypatch):
         sqls = []
