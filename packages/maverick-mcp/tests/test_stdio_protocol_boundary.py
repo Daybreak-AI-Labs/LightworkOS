@@ -39,6 +39,16 @@ def test_null_id_is_answered_but_missing_id_is_a_notification():
     assert server.messages == [("result", None, {})]
 
 
+def test_request_method_sent_as_notification_is_not_executed():
+    server = _Server()
+    calls = []
+    server.handle_tools_call = lambda params: calls.append(params) or {}
+    _handle(server, '{"method":"tools/call", "params":{"name":"x"}}')
+    _handle(server, '{"method":"notifications/initialized"}')
+    _handle(server, '{"method":"ping"}')
+    assert calls == [] and server.messages == []
+
+
 def test_tool_result_precedes_resource_notifications():
     server = _Server()
     _handle(server, '{"method":"tools/call", "id":1, "params":{}}')
