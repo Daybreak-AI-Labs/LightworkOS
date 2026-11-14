@@ -180,3 +180,15 @@ def test_unreadable_day_does_not_stop_later_days_being_anchored(tmp_path, monkey
     monkeypatch.setattr(signing, "_file_tip_and_count", _flaky)
     assert ensure_anchors(tmp_path) == 1
     assert signing._anchored_days(tmp_path) == {good}
+
+
+def test_highwater_is_not_written_from_a_half_written_ledger_line(tmp_path, monkeypatch):
+    _isolate_keys(monkeypatch, tmp_path)
+    _write_signed_day(tmp_path, _past_day(2), 1)
+    ensure_anchors(tmp_path)
+    hw = tmp_path / signing.ANCHOR_HIGHWATER_FILENAME
+    before = hw.read_bytes()
+    with open(tmp_path / signing.ANCHOR_FILENAME, "a", encoding="utf-8") as f:
+        f.write('{"kind": "anchor", "day": "')     # append still in progress
+    signing._write_anchor_highwater(tmp_path)
+    assert hw.read_bytes() == before

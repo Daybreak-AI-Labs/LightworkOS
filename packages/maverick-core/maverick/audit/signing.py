@@ -1434,6 +1434,11 @@ def _write_anchor_highwater(audit_dir: Path) -> None:
             rows = _ledger_rows(anchor_path)
             if not rows:
                 return
+            if not _HASH_RE.fullmatch(str(rows[-1].get("hash") or "")):
+                # This lock does not exclude a concurrent ledger append, so the
+                # last line may be half-written. Recording it would pin an empty
+                # tip that later reads can never match; the next anchor retries.
+                return
             if hw_path.exists() and not _ledger_extends_highwater(
                 rows, _read_highwater(hw_path)
             ):
