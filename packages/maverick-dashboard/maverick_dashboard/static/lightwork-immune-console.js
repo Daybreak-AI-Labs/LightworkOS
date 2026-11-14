@@ -75,7 +75,7 @@
     return b;
   }
 
-  function rows(id, items, columns, empty) {
+  function rows(id, items, columns, empty, detail) {
     var body = document.getElementById(id);
     if (!body) { return; }
     clear(body);
@@ -96,6 +96,14 @@
         tr.appendChild(td);
       });
       body.appendChild(tr);
+      var description = detail && detail(item);
+      if (description) {
+        var detailRow = el("tr");
+        var detailCell = el("td", null, description);
+        detailCell.colSpan = columns.length;
+        detailRow.appendChild(detailCell);
+        body.appendChild(detailRow);
+      }
     });
   }
 
@@ -103,6 +111,7 @@
     titles = data.goal_titles || {};
     var comp = data.composition || {};
     var ifc = data.ifc || {};
+    var labelDescriptions = ifc.label_descriptions || {};
     var over = data.oversight || {};
     var twin = data.twin || {};
     text("ic-trifectas", comp.available ? (comp.by_kind || {}).trifecta || 0 : "Not available");
@@ -120,10 +129,19 @@
     rows("ic-ifc-rows", ifc.recent, [
       function (r) { return task(r.goal_id); },
       function (r) { return human(r.tool); },
-      function (r) { return (r.labels || []).map(function (l) { return human(String(l).replace(/^data:/, "")); }).join(", "); },
+      function (r) {
+        return (r.labels || []).map(function (label) {
+          return label === "ifc:earlier-labels-unreadable" ?
+            "Earlier labels unavailable" : human(String(label).replace(/^data:/, ""));
+        }).join(", ");
+      },
       function (r) { return (r.explicit || []).length ? "Yes" : "No"; },
       function (r) { return OUTCOME[r.outcome] || human(r.outcome); }
-    ], "No sensitive data has reached a tool that sends it outside.");
+    ], "No sensitive data has reached a tool that sends it outside.", function (r) {
+      return (r.labels || []).filter(function (label) {
+        return Object.prototype.hasOwnProperty.call(labelDescriptions, label);
+      }).map(function (label) { return labelDescriptions[label]; }).join(" ");
+    });
     function scoreRows(id, list, emptyText, yes, no) {
       rows(id, list, [
         function (r) { return r.person_label || r.person; },
