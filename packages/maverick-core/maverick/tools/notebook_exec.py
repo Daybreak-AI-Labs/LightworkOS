@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,19 @@ def _extract_code(nb: dict) -> str:
     return "\n\n".join(chunks)
 
 
+def _interpreter_command(sandbox) -> list[str] | None:
+    from ..sandbox.local import LocalBackend
+
+    if sandbox is None or isinstance(sandbox, LocalBackend):
+        interpreter = shutil.which("python3") or shutil.which("python")
+        return [interpreter, "-"] if interpreter else None
+    # Resolve inside the configured execution environment. Only one branch
+    # executes code: a notebook exiting 127 must never trigger a second run.
+    return ["sh", "-c", "if command -v python3 >/dev/null 2>&1; then exec python3 -; "
+            "elif command -v python >/dev/null 2>&1; then exec python -; "
+            "else printf '%s\\n' 'notebook interpreter unavailable' >&2; exit 127; fi"]
+
+
 def _run(args: dict[str, Any], sandbox) -> str:
     path = str(args.get("path") or "").strip()
     if not path:
@@ -130,6 +144,9 @@ def _run(args: dict[str, Any], sandbox) -> str:
             "isolation": isolation,
         }
 
+    command = _interpreter_command(sandbox)
+    if command is None:
+        return "ERROR: notebook execution requires python3 or python in the sandbox"
     source_sha256 = hashlib.sha256(notebook_bytes).hexdigest()
     cell_count = sum(cell.get("cell_type") == "code" for cell in nb.get("cells") or [])
     preview_lines = [
@@ -141,9 +158,10 @@ def _run(args: dict[str, Any], sandbox) -> str:
         "notebook": str(p),
         "code_sha256": hashlib.sha256(code_bytes).hexdigest(),
         "timeout_seconds": timeout,
+        "command": command,
     }
 
-    def current_parameters() -> dict[str, str | float]:
+    def current_parameters() -> dict[str, Any]:
         if hashlib.sha256(_read_notebook(p)).hexdigest() != source_sha256:
             raise ApprovalCardError("the notebook changed after its code was read")
         return parameters
@@ -192,10 +210,16 @@ def _run(args: dict[str, Any], sandbox) -> str:
     try:
         with consume_operation_consent(permit):
             exit_code, stdout, stderr = sandbox_run(
-                sandbox, ["python", "-"], stdin=code, timeout=timeout,
+                sandbox, command, stdin=code, timeout=timeout,
             )
     except ApprovalCardError:
         return "ERROR: notebook, execution target, or approval authority changed; review it again"
+    return _execution_result(exit_code, stdout, stderr)
+
+
+def _execution_result(exit_code: int, stdout: str, stderr: str) -> str:
+    if exit_code == 127 and stderr.strip() == "notebook interpreter unavailable":
+        return "ERROR: notebook execution requires python3 or python in the sandbox"
     parts = [f"exit_code: {exit_code}"]
     if stdout.strip():
         parts.append("stdout:\n" + stdout.rstrip())
