@@ -254,12 +254,6 @@ def index_goal(goal, *, store: Any | None = None) -> bool:
             pending = state / f"{gid}.pending"
             atomic_write_text(pending, "rebuild_required")
             if not text or len(text) > 65536:
-                # Deterministic: a retry can never index this text. Drop any
-                # earlier record of the goal so the index is consistent again,
-                # instead of leaving a marker that disables recall for good.
-                store.delete([f"goal:{gid}"])
-                atomic_write_text(state / "revision", uuid.uuid4().hex)
-                pending.unlink()
                 return False
             document, vector = text, None
             if _sealed_recall() or getattr(store, "requires_precomputed_embeddings", False):

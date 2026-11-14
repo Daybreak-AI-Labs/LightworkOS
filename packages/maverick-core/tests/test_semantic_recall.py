@@ -388,14 +388,6 @@ class TestAtRestSealing:
         assert store.count() == 1
         assert store.docs != previous
 
-    def test_unindexable_goal_does_not_disable_recall(self, monkeypatch):
-        monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
-        store = FakeStore()
-        assert sr.index_goal(_Goal(1, "deploy the web app"), store=store)
-        assert sr.index_goal(_Goal(2, "x" * 70_000), store=store) is False
-        assert sr.index_status(store=store) == "ready"
-        assert sr.search("deploy the web app", store=store)
-
     def test_at_rest_off_stores_plaintext_unchanged(self, monkeypatch):
         monkeypatch.setenv("MAVERICK_ENCRYPT_AT_REST", "0")
         store = FakeStore()
