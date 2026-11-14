@@ -33,3 +33,23 @@ fn malformed_segments_stop_after_a_bounded_failure_report() {
     assert_eq!(breaks.len(), 1000);
     assert!(breaks.iter().all(|item| item.reason == "malformed"));
 }
+
+#[test]
+fn capped_unsigned_report_warns_and_states_no_exact_count() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("unsigned.ndjson");
+    std::fs::write(&path, "{\"event\": \"x\"}\n".repeat(1001)).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_maverick-verify-audit"))
+        .arg("--keys-dir")
+        .arg(directory.path().join("keys"))
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let warning = stderr.find("failure report limit").expect(&stderr);
+    let verdict = stderr.find("UNVERIFIABLE").expect(&stderr);
+    assert!(warning < verdict, "{stderr}");
+    assert!(stderr.contains("at least 1000 unsigned row(s)"), "{stderr}");
+    assert!(!stderr.contains("— 1000 unsigned row(s)"), "{stderr}");
+}

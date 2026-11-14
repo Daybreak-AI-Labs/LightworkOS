@@ -13,6 +13,9 @@ use maverick_verify_audit::{verify_file_report, ChainBreak, KeySource};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// The library keeps at most this many breaks (its `MAX_BREAKS`).
+const MAX_REPORTED_BREAKS: usize = 1000;
+
 /// Independent Ed25519 hash-chain verifier for Lightwork audit logs.
 #[derive(Parser, Debug)]
 #[command(
@@ -76,16 +79,38 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // At the cap the rows past the last kept break were never examined: say so
+    // before any verdict, and never state an exact count for the whole log.
+    let limit_reached = breaks.len() >= MAX_REPORTED_BREAKS;
+    if limit_reached {
+        eprintln!(
+            "warning: failure report limit ({MAX_REPORTED_BREAKS}) reached in {}; the \
+             remaining input is not certified",
+            args.file.display()
+        );
+    }
+
     // An entirely-unsigned log: one actionable line, still non-zero (parity with
     // the CLI's UNVERIFIABLE branch).
     if breaks.iter().all(|b| b.reason == "unsigned") {
-        eprintln!(
-            "UNVERIFIABLE: {} — {} unsigned row(s); these rows have no signatures. The log carries \
-             no hash chain, so it cannot be proven intact. Enable [audit] sign = true \
-             (or MAVERICK_AUDIT_SIGN=1) so future rows are tamper-evident.",
-            args.file.display(),
-            breaks.len()
-        );
+        if limit_reached {
+            eprintln!(
+                "UNVERIFIABLE: {} — at least {} unsigned row(s), and the rows past the \
+                 report limit were not examined; the log cannot be proven intact. Enable \
+                 [audit] sign = true (or MAVERICK_AUDIT_SIGN=1) so future rows are \
+                 tamper-evident.",
+                args.file.display(),
+                breaks.len()
+            );
+        } else {
+            eprintln!(
+                "UNVERIFIABLE: {} — {} unsigned row(s); these rows have no signatures. The log \
+                 carries no hash chain, so it cannot be proven intact. Enable [audit] sign = \
+                 true (or MAVERICK_AUDIT_SIGN=1) so future rows are tamper-evident.",
+                args.file.display(),
+                breaks.len()
+            );
+        }
         return ExitCode::FAILURE;
     }
 
@@ -96,9 +121,6 @@ fn main() -> ExitCode {
 fn report(file: &std::path::Path, breaks: &[ChainBreak], all: bool) {
     eprintln!("FAIL: {} issue(s) in {}", breaks.len(), file.display());
     let shown: &[ChainBreak] = if all { breaks } else { &breaks[..1] };
-    if breaks.len() == 1000 {
-        eprintln!("  failure report limit reached; the remaining input is not certified");
-    }
     for b in shown {
         if b.line_no == 0 {
             eprintln!("  {} — {}", b.reason, b.detail);
