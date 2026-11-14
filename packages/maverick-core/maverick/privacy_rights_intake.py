@@ -222,7 +222,10 @@ def _rights(value: object) -> tuple[str, ...]:
 
 def _required_phases(rights: Sequence[str]) -> tuple[str, ...]:
     phases: list[str] = []
-    for right in rights:
+    # Keep retrieval ahead of deletion, matching the orchestration authority.
+    for right in _RIGHT_PHASES:
+        if right not in rights:
+            continue
         for phase in _RIGHT_PHASES[right]:
             if phase not in phases:
                 phases.append(phase)

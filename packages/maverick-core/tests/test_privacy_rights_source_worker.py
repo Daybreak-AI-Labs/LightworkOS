@@ -105,6 +105,7 @@ def _prepare(
     phase: str,
     requested_right: str,
     source=None,
+    approve: bool = True,
 ):
     store, actor, clock = estate
     source = source or store.enroll_source(
@@ -112,7 +113,7 @@ def _prepare(
         "crm",
         adapter_ref="salesforce-contact-v1",
         credential_ref="env:SALESFORCE_RIGHTS_TOKEN",
-        capabilities=[phase],
+        capabilities=sorted({"discover", phase}),
         expected_revision=0,
         idempotency_key=f"source-{case_id}",
     )
@@ -135,6 +136,29 @@ def _prepare(
         expected_revision=case.revision,
         idempotency_key=f"verify-{case_id}",
     )
+    if phase != "discover":
+        store.plan_source_tasks(
+            "tenant-a", case_id, "crm", phases=["discover"],
+            expected_case_revision=case.revision,
+            idempotency_key=f"plan-discover-{case_id}",
+        )
+        callback, = store.claim_callbacks(
+            "tenant-a", limit=1, lease_seconds=30,
+            idempotency_key=f"claim-discover-{case_id}",
+        )
+        assert callback.phase == "discover" and callback.case_id == case_id
+        store.complete_callback(
+            "tenant-a", callback.callback_id,
+            lease_token=callback.lease_token or "",
+            acknowledgement_sha256=_digest(f"discover-ack-{case_id}"),
+            acknowledgement_ref=f"provider:discover:{case_id}",
+            evidence_status="complete",
+            provider_evidence_sha256=_digest(f"discover-evidence-{case_id}"),
+            record_count=1, opaque_ref=f"provider:discovered:{case_id}",
+            expected_revision=callback.revision,
+            idempotency_key=f"complete-discover-{case_id}",
+        )
+        case = store.get_case("tenant-a", case_id)
     task = store.plan_source_tasks(
         "tenant-a",
         case_id,
@@ -144,7 +168,7 @@ def _prepare(
         expected_case_revision=case.revision,
         idempotency_key=f"plan-{case_id}",
     )[0]
-    if task.destructive:
+    if task.destructive and approve:
         actor["value"] = "approver"
         task = store.approve_destructive_work(
             "tenant-a",
@@ -153,7 +177,7 @@ def _prepare(
             idempotency_key=f"approve-{case_id}",
         )
     actor["value"] = "source-worker"
-    return source, case, task
+    return source, store.get_case("tenant-a", case_id), task
 
 
 def _runtime(
@@ -350,7 +374,10 @@ def test_ambiguous_delete_is_read_only_reconciled_without_optimistic_replay(
         retry_delay_seconds=10,
     )
     store, _actor, _clock = estate
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert reconciled.inspected == 1
     assert getattr(reconciled, result_field) == 1
     assert callback.state == expected_state
@@ -380,10 +407,18 @@ def test_ambiguous_delete_is_read_only_reconciled_without_optimistic_replay(
 
 
 def test_failing_reconciliation_defers_durably_and_next_case_progresses(estate):
-    source, first, _ = _prepare(
+    source, first, task = _prepare(
         estate, case_id="case-failing", phase="delete", requested_right="erasure",
+        approve=False,
     )
     _prepare(estate, case_id="case-ready", phase="delete", requested_right="erasure", source=source)
+    store, actor, _clock = estate
+    actor["value"] = "approver"
+    store.approve_destructive_work(
+        "tenant-a", task.task_id, expected_revision=task.revision,
+        idempotency_key="approve-case-failing",
+    )
+    actor["value"] = "source-worker"
     calls = []
     mutation_calls = []
 
@@ -472,7 +507,10 @@ def test_pre_dispatch_authority_outage_retries_delete_without_false_ambiguity(
         retry_delay_seconds=10,
     )
     store, _actor, _clock = estate
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert result.retried == 1
     assert result.ambiguous == 0
     assert result.dead_lettered == 0
@@ -566,7 +604,10 @@ def test_same_run_id_concurrency_reserves_one_provider_mutation(estate) -> None:
         results = [future.result(timeout=10) for future in futures]
 
     store, _actor, _clock = estate
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert mutation_calls["value"] == 1
     assert sum(result.ambiguous for result in results) == 1
     assert callback.state == "ambiguous"
@@ -603,7 +644,10 @@ def test_process_exit_after_provider_success_is_never_lease_replayed(estate) -> 
         )
 
     store, _actor, clock = estate
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert callback.state == "ambiguous"
     assert callback.lease_until is None
     clock.advance(60)
@@ -642,7 +686,10 @@ def test_lease_expiry_during_prepare_blocks_provider_mutation(estate) -> None:
         run_id="run-expired-before-dispatch",
         lease_seconds=10,
     )
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert result.ambiguous == 0
     assert mutation_calls["value"] == 0
     assert callback.state == "leased"
@@ -681,7 +728,10 @@ def test_legal_hold_added_during_prepare_blocks_provider_mutation(estate) -> Non
         worker_ref="source-worker",
         run_id="run-hold-before-dispatch",
     )
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert result.ambiguous == 0
     assert mutation_calls["value"] == 0
     assert callback.state == "leased"
@@ -722,7 +772,10 @@ def test_source_rotation_after_approval_requires_replan_with_zero_provider_calls
         worker_ref="source-worker",
         run_id="run-after-source-rotation",
     )
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert result.claimed == 0
     assert calls == {"prepare": 0, "mutate": 0}
     assert callback.state == "pending"
@@ -761,7 +814,10 @@ def test_adapter_authority_rotation_after_approval_makes_zero_provider_calls(
         run_id="run-after-adapter-authority-rotation",
     )
     store, _actor, _clock = estate
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert result.retried == 1
     assert calls == {"prepare": 0, "mutate": 0}
     assert callback.state == "pending"
@@ -880,7 +936,9 @@ def test_already_absent_delete_completes_as_truthful_no_change(estate) -> None:
         retained_until=clock() + 60,
         idempotency_key="export-already-absent",
     )
-    evidence = exported.body["evidence"][0]
+    evidence = next(
+        item for item in exported.body["evidence"] if item["phase"] == "delete"
+    )
     assert result.not_found == 1
     assert result.ambiguous == 0
     assert mutation_calls["value"] == 0
@@ -933,7 +991,9 @@ def test_reconciled_mutation_persists_immutable_execution_provenance(estate) -> 
         retained_until=clock() + 60,
         idempotency_key="export-provenance",
     )
-    evidence = exported.body["evidence"][0]
+    evidence = next(
+        item for item in exported.body["evidence"] if item["phase"] == "delete"
+    )
     assert dispatched.ambiguous == 1
     assert reconciled.resolved == 1
     assert store.get_task("tenant-a", task.task_id).state == "complete"
@@ -993,7 +1053,10 @@ def test_soft_deleted_provider_record_keeps_delete_ambiguous(estate) -> None:
         run_id="reconcile-soft-delete",
     )
     store, _actor, _clock = estate
-    callback = store.list_callbacks("tenant-a", limit=10)[0]
+    callback = next(
+        item for item in store.list_callbacks("tenant-a", limit=10)
+        if item.phase == "delete"
+    )
     assert reconciled.still_ambiguous == 1
     assert reconciled.resolved == 0
     assert callback.state == "ambiguous"
