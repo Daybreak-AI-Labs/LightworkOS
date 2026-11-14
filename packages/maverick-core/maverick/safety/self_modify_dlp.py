@@ -12,12 +12,13 @@ import re
 
 log = logging.getLogger(__name__)
 
-# The whitespace before ``=`` sits inside the optional annotation group: two
-# adjacent ``\s*`` split a run of blank lines every possible way (quadratic).
+# One quantifier per stretch before ``=``: adjacent ``\s*`` (or ``\s*`` next to
+# ``[^=\n]+``) split a run of blanks every possible way (quadratic or worse).
+# A type annotation runs to the ``=`` on the same line.
 _LOWERCASE_QUOTED_SECRET = re.compile(
     r"(?im)^[^\S\n]*(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
     r"(?:api_key|client_secret|password|passwd|auth_token|access_token|"
-    r"secret_key|private_key)\s*(?::\s*[^=\n]+\s*)?=\s*"
+    r"secret_key|private_key)\s*(?::[^=\n]*)?=\s*"
     r"(?P<quote>['\"])(?P<value>[^'\"\n]{8,})(?P=quote)"
 )
 _LOWERCASE_MAPPING_SECRET = re.compile(
@@ -29,7 +30,7 @@ _LOWERCASE_UNQUOTED_SECRET = re.compile(
     r"(?im)^[^\S\n]*(?:[A-Za-z_][A-Za-z0-9_]*\.)?"
     r"(?:[a-z][a-z0-9_]*_)?(?:api_key|client_secret|password|passwd|"
     r"auth_token|access_token|secret_key|private_key)\s*"
-    r"(?::\s*[^=\n]+\s*)?=\s*"
+    r"(?::[^=\n]*)?=\s*"
     r"(?P<value>[A-Za-z0-9_./+=!@#$%^&*-]{12,})(?:\s*(?:#.*)?)?$"
 )
 _KNOWN_PLACEHOLDER_FRAGMENTS = (
