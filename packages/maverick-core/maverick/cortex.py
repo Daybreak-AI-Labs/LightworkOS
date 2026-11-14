@@ -360,14 +360,17 @@ def recall(
 
 def _provenance(principal: str, label: str) -> str:
     """Stored knowledge provenance: the verified depositor first, then the
-    caller's own label, JSON-quoted with every control, format and line
-    separator escaped, so a label can describe the text but never read as
-    another depositor or as the end of this one's label."""
+    caller's own label, JSON-quoted with every control, format, line
+    separator and look-alike quote character escaped, so a label can
+    describe the text but never read as another depositor or as the end of
+    this one's label."""
     label = (label or "").strip()
     if not label:
         return principal
     quoted = "".join(
-        f"\\u{ord(ch):04x}" if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") else ch
+        f"\\u{ord(ch):04x}"
+        if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp", "Pi", "Pf") or ch == "\uff02"
+        else ch
         for ch in json.dumps(label, ensure_ascii=False))
     return f"{principal} (label: {quoted})"
 
