@@ -836,3 +836,8 @@ def test_integer_does_not_pass_for_a_json_boolean():
     result = env.score_output(case, candidate)
     assert result.passed is False
     assert result.correctness < 1.0
+    # A JSON number written as 30.0 still equals an expected 30.
+    ints = [k for k, v in case.expected.items() if type(v) is int]
+    assert ints
+    floats = env.score_output(case, {**exact, **{k: float(exact[k]) for k in ints}})
+    assert floats.passed is True

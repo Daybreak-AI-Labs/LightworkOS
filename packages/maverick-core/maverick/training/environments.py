@@ -1556,6 +1556,21 @@ def check_boundary(
     )
 
 
+def _json_equal(left: object, right: object) -> bool:
+    """JSON value equality: ``==`` (so ``30`` equals ``30.0``), except that a
+    boolean only equals a boolean -- Python's ``True == 1`` let
+    ``{"is_dsar": 1}`` pass for an expected ``true``."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_equal(a, b) for a, b in zip(left, right, strict=True))
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return left.keys() == right.keys() and all(
+            _json_equal(left[k], right[k]) for k in left)
+    return left == right
+
+
 def _leaf_pairs(
     value: object,
     prefix: str = "",
@@ -1739,9 +1754,7 @@ def score_output(case: EnvironmentCase, output: str | Mapping[str, Any]) -> Rewa
     }, unordered_fields=unordered)
     matches = sum(
         1 for path, value in expected_leaves.items()
-        # Compare canonical JSON, not Python ``==``: True == 1 and False == 0
-        # let ``{"is_dsar": 1}`` pass for an expected ``true``.
-        if path in candidate_leaves and _canonical(candidate_leaves[path]) == _canonical(value)
+        if path in candidate_leaves and _json_equal(candidate_leaves[path], value)
     )
     correctness = matches / len(expected_leaves) if expected_leaves else 1.0
     extra_leaf_paths = sorted(set(candidate_leaves) - set(expected_leaves))
