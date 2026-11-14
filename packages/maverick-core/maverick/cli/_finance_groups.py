@@ -218,11 +218,12 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
         # the shield. Fail-open: with the knob off this stays the deterministic path.
         dream_llm = dream_budget = dream_shield = None
         if dreaming._llm_consolidation_authorized(cfg):
-            from ..budget import Budget
             from ..llm import LLM, model_for_role
+            from . import _cli_task_budget
             dream_llm = LLM(model=model_for_role("summarizer"))
-            dream_budget = Budget(
-                max_dollars=float(cfg.get("llm_consolidation_budget", 1.0)),
+            consolidation_dollars = float(cfg.get("llm_consolidation_budget", 1.0))
+            dream_budget = _cli_task_budget(
+                "dream consolidation", consolidation_dollars, consolidation_dollars,
             )
             try:
                 from maverick_shield import Shield
@@ -275,10 +276,10 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
         click.echo("Rehearsal: no queued cases (enable [dreaming] rehearse "
                    "so dream cycles queue recurring failures).")
         return
-    from ..budget import Budget
     from ..llm import LLM, model_for_role
     from ..orchestrator import run_goal
     from ..sandbox import build_sandbox
+    from . import _cli_task_budget
 
     llm = LLM(model=ctx.obj["model"] or model_for_role("orchestrator"))
     sandbox = build_sandbox()
@@ -286,12 +287,15 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
 
     async def _practice(prompt: str) -> str:
         case = cases_by_prompt.get(prompt, {})
+        title = f"[rehearsal] {prompt[:200]}"
         gid = world.create_goal(
-            f"[rehearsal] {prompt[:200]}",
-            "Dream-time rehearsal of a previously-failing goal pattern.",
+            title, "Dream-time rehearsal of a previously-failing goal pattern.",
         )
+        # Through the configured funnel so the [budget] wall-clock, token and
+        # tool-call caps apply, not only the dollar figure.
         return await run_goal(
-            llm=llm, world=world, budget=Budget(max_dollars=rehearse_budget),
+            llm=llm, world=world,
+            budget=_cli_task_budget(title, rehearse_budget, rehearse_budget),
             goal_id=gid, sandbox=sandbox, domain=case.get("domain"),
         )
 
@@ -301,7 +305,9 @@ def dream(ctx, max_goals: int, rehearse: bool, rehearse_budget: float,
         # the answer too. Scoring spends from its own small budget.
         from ..verifier import verify_proposal
         v = await verify_proposal(
-            prompt, output, llm, Budget(max_dollars=max(0.25, rehearse_budget / 4)),
+            prompt, output, llm,
+            _cli_task_budget(f"[rehearsal score] {prompt[:200]}",
+                             max(0.25, rehearse_budget / 4), 0.25),
         )
         return float(getattr(v, "confidence", 0.0) or 0.0)
 

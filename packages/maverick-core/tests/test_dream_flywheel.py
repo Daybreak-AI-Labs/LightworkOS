@@ -180,3 +180,38 @@ def test_dream_skips_the_self_harness_when_disabled(tmp_path, monkeypatch):
     res = CliRunner().invoke(main, ["--db", str(tmp_path / "w.db"), "dream"])
     assert res.exit_code == 0, res.output
     assert "[self-harness]" not in res.output
+
+
+def test_dream_rehearse_budget_honours_configured_caps(tmp_path, monkeypatch):
+    """Rehearsal goals go through the configured budget funnel, so the
+    [budget] wall-clock / tool-call caps apply, not only the dollar flag."""
+    _stub_dreaming(monkeypatch, tmp_path)
+    monkeypatch.delenv("MAVERICK_DATA_ENGINE", raising=False)
+    monkeypatch.setattr("maverick.config.get_data_engine", lambda: {"enable": False})
+    monkeypatch.setattr("maverick.config.get_budget_overrides",
+                        lambda: {"max_tool_calls": 7, "max_wall_seconds": 33})
+    monkeypatch.setattr("maverick.dreaming.load_rehearsals",
+                        lambda *a, **k: [{"prompt": "redo the report"}])
+    monkeypatch.setattr("maverick.llm.LLM", lambda *a, **k: object())
+    monkeypatch.setattr("maverick.sandbox.build_sandbox", lambda *a, **k: object())
+    seen = []
+
+    async def _run_goal(**kw):
+        seen.append(kw["budget"])
+        return "done"
+
+    async def _rehearse(agent, scorer=None):
+        await agent("redo the report")
+        return (1, 1)
+
+    monkeypatch.setattr("maverick.orchestrator.run_goal", _run_goal)
+    monkeypatch.setattr("maverick.dreaming.rehearse", _rehearse)
+
+    res = CliRunner().invoke(
+        main, ["--db", str(tmp_path / "w.db"), "dream", "--rehearse",
+               "--rehearse-budget", "0.5"])
+    assert res.exit_code == 0, res.output
+    (budget,) = seen
+    assert budget.max_dollars == 0.5
+    assert budget.max_tool_calls == 7
+    assert budget.max_wall_seconds == 33
