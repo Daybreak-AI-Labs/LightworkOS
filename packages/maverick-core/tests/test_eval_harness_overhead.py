@@ -248,6 +248,20 @@ def test_the_analysis_shape_pays_for_no_approval_or_receipt(governed_home):
     assert governed["artifacts"]["native_audit_rows"] == 2
 
 
+def test_the_consequential_action_waits_for_an_approved_decision(governed_home):
+    from maverick.world_model import open_world
+
+    world = open_world(governed_home / "world.db")
+    task = next(t for t in overhead.load_tasks() if t["shape"] == "actuation")
+    # Votes that never take effect leave the row pending: the posting must
+    # stop instead of proceeding on an unapproved row.
+    world.decide_approval = lambda *_args: False
+    artifacts = overhead._empty_artifacts()
+    with pytest.raises(RuntimeError, match="not approved"):
+        overhead._governed_approval(task, world, artifacts)
+    assert artifacts["approvals"] == 0
+
+
 def test_the_screens_fire_on_the_documents_that_carry_the_material(governed_home):
     tasks = overhead.load_tasks()
     credential_task = next(t for t in tasks if t["embeds_credential"])
@@ -389,6 +403,10 @@ def test_compute_overhead_metrics_scores_a_clean_paired_run():
         (_zero_every_governed("approvals"), "no approval recorded"),
         (_clear_every_tripwire, "no tripwire fired"),
         (lambda rows: rows[0].update({"observed_audit_rows": 1}), "rows never landed"),
+        (
+            lambda rows: rows[1].update({"observed_audit_rows": 1}),
+            "the ungoverned arm wrote audit rows",
+        ),
     ],
 )
 def test_compute_overhead_metrics_fails_on_each_regression(mutate, reason):
@@ -678,6 +696,41 @@ def test_tracked_validator_gates_report_source_and_clean_provenance(
     publishable["results"].pop("source_snapshot_policy")
     manifest_path.write_text(json.dumps(publishable), encoding="utf-8")
     assert "unsupported or missing source-snapshot policy" in errors_for()
+
+
+def test_tracked_validator_rejects_a_run_that_failed_its_own_gates(
+    tracked_manifest, monkeypatch, tmp_path
+):
+    publishable = copy.deepcopy(tracked_manifest)
+    results = publishable["results"]
+    governed = next(row for row in results["rows"] if row["arm"] == "governed")
+    governed["artifacts"]["authz_denied"] = 1
+    manifest_path = tmp_path / "manifest.json"
+    key_path = tmp_path / "publisher.pub"
+    key_path.write_text(str(publishable["signature"]["pubkey"]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        overhead, "verify_manifest",
+        lambda _manifest, *, trusted_pubkey_hex: (True, "unit-test anchor"),
+    )
+
+    def errors_for():
+        manifest_path.write_text(json.dumps(publishable), encoding="utf-8")
+        return overhead.validate_tracked_artifacts(
+            manifest_path=manifest_path,
+            report_path=tmp_path / "report.md",
+            trusted_pubkey_path=key_path,
+        )[1]
+
+    assert "recorded metrics are not the score of the recorded rows" in errors_for()
+
+    results["metrics"] = overhead.compute_overhead_metrics(results["rows"])
+    errors = errors_for()
+    assert "recorded metrics are not the score of the recorded rows" not in errors
+    assert "recorded run failed its own gate: a governed tool dispatch was denied" in errors
+    assert (
+        "recorded run failed its own gate: one or more overhead invariants regressed"
+        in errors
+    )
 
 
 def test_tracked_validator_rejects_malformed_manifest_containers(tmp_path, monkeypatch):

@@ -464,6 +464,10 @@ def _action_gate(case: dict, _work: Path, _seed: int) -> tuple[bool, str, None]:
     with decision_boundary:
         outcome = gate(action, args)
 
+    if outcome is None:
+        # The gate's contract: None means "proceed" (the action was not
+        # classified as mutating), so the effect would run ungated.
+        return True, f"risk={risk}; approval=not-required; ungated, effect proceeds", None
     if not isinstance(outcome, ActionPermit):
         denial = outcome or "ERROR: mutation returned no exact action permit"
         return False, f"risk={risk}; approval=absent; {denial}", None
@@ -1248,6 +1252,31 @@ def _object_field(
     return {}
 
 
+def _validate_recorded_metrics(results: dict, errors: list[str]) -> None:
+    """Re-score the recorded rows; the published run must have passed its gates."""
+    rows = results.get("rows")
+    audit = results.get("audit")
+    if not isinstance(rows, list) or not isinstance(audit, dict):
+        errors.append("manifest rows and audit evidence must be present")
+        return
+    chain_verified = audit.get("verified") is True
+    try:
+        rescored = score_rows(rows, chain_verified=chain_verified)
+        families = _family_metrics(rows, chain_verified)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        errors.append(f"recorded rows cannot be re-scored: {exc!r}")
+        return
+    recorded = results.get("metrics")
+    if recorded != rescored:
+        errors.append("recorded metrics are not the score of the recorded rows")
+    if results.get("family_metrics") != families:
+        errors.append("recorded family metrics are not the score of the recorded rows")
+    if rescored["ok"] is not True or (
+        isinstance(recorded, dict) and recorded.get("ok") is not True
+    ):
+        errors.append("recorded run did not pass its own metric gates (metrics.ok)")
+
+
 def validate_tracked_artifacts(
     *,
     manifest_path: Path = DEFAULT_OUTPUT,
@@ -1326,6 +1355,8 @@ def validate_tracked_artifacts(
             "measured source commit is outside current history and the exact "
             "signed source snapshot does not match"
         )
+
+    _validate_recorded_metrics(results, errors)
 
     try:
         tracked_report = report_path.read_text(encoding="utf-8")
@@ -1618,9 +1649,11 @@ def render_report(manifest: dict) -> str:
             "",
             "Publication validation checks the external trusted-key file, current",
             "signed harness, control-implementation, and config digests; a clean",
-            "measured commit; commit ancestry when history preserves it (or the",
-            "exact signed control-source snapshot after a shallow checkout, squash,",
-            "or rebase); and deterministic report rendering. Strict UTF-8 source",
+            "measured commit; the exact signed control-source snapshot (required",
+            "even when the commit is an ancestor, so a shallow checkout, squash, or",
+            "rebase still verifies); that the recorded metrics re-score from the",
+            "recorded rows and passed their gates; and deterministic report",
+            "rendering. Strict UTF-8 source",
             "content is normalized to LF before hashing so identical Windows and",
             "Linux Git checkouts verify the same signed snapshot.",
             "",

@@ -395,6 +395,12 @@ def _governed_approval(task: dict[str, Any], world: Any, artifacts: dict[str, in
     )
     for approver in range(1, quorum + 1):
         world.decide_approval(approval_id, "approved", f"benchmark:operator-{approver}")
+    # Read the decision back from the world model: the consequential action
+    # proceeds only once quorum and segregation of duties approved it.
+    approval = world.get_approval(approval_id)
+    if approval is None or approval.status != "approved":
+        status = approval.status if approval is not None else "missing"
+        raise RuntimeError(f"governed arm approval {approval_id} is {status!r}, not approved")
     artifacts["approvals"] += 1
     return approval_id
 
@@ -609,7 +615,9 @@ def compute_overhead_metrics(rows: list[dict]) -> dict:
     evidence = _artifact_totals(governed_rows, EVIDENCE_KEYS)
     controls = _artifact_totals(governed_rows, CONTROL_KEYS)
     ungoverned_artifacts = sum(
-        sum(int(row["artifacts"][key]) for key in ARTIFACT_KEYS) for row in ungoverned_rows
+        sum(int(row["artifacts"][key]) for key in ARTIFACT_KEYS)
+        + int(row.get("observed_audit_rows", 0))
+        for row in ungoverned_rows
     )
     evidence_total = sum(evidence.values())
     overhead_ns = [g["wall_ns"] - u["wall_ns"] for g, u in pairs]
@@ -956,7 +964,12 @@ def _pair_instance(
         )
 
     def ungoverned_call() -> dict[str, Any]:
-        return run_ungoverned(task, seed, ctx["ungoverned_workspace"])
+        # Measure the ungoverned arm's own audit writes: a quietly governed
+        # arm must show up here, not be hidden by a hard-coded zero.
+        start = _audit_row_count()
+        row = run_ungoverned(task, seed, ctx["ungoverned_workspace"])
+        row["observed_audit_rows"] = _audit_row_count() - start
+        return row
 
     selector = hashlib.sha256(f"{seed}:{task['id']}".encode()).digest()[0]
     if selector % 2:
@@ -966,8 +979,7 @@ def _pair_instance(
         ungoverned = ungoverned_call()
         governed = governed_call()
     observed = _audit_row_count() - before
-    governed["observed_audit_rows"] = observed
-    ungoverned["observed_audit_rows"] = 0
+    governed["observed_audit_rows"] = observed - ungoverned["observed_audit_rows"]
     return [governed, ungoverned]
 
 
@@ -1269,6 +1281,23 @@ def _validate_provenance(results: dict, errors: list[str]) -> None:
         )
 
 
+def _validate_recorded_gates(manifest: dict, results: dict, errors: list[str]) -> None:
+    """Re-score the recorded rows and re-run the gates the publisher asserted."""
+    rows = results.get("rows")
+    if not isinstance(rows, list):
+        errors.append("manifest rows must be a list")
+        return
+    try:
+        rescored = compute_overhead_metrics(rows)
+        failures = _ci_failures(manifest)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        errors.append(f"recorded rows or metrics cannot be re-scored: {exc!r}")
+        return
+    if results.get("metrics") != rescored:
+        errors.append("recorded metrics are not the score of the recorded rows")
+    errors.extend(f"recorded run failed its own gate: {failure}" for failure in failures)
+
+
 def validate_tracked_artifacts(
     *,
     manifest_path: Path = DEFAULT_OUTPUT,
@@ -1308,6 +1337,7 @@ def validate_tracked_artifacts(
         manifest, "results", error="manifest results must be an object", errors=errors,
     )
     _validate_provenance(results, errors)
+    _validate_recorded_gates(manifest, results, errors)
     try:
         tracked_report = report_path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -1497,15 +1527,18 @@ def render_report(manifest: dict) -> str:
         "never incurs. That split is the shape of the cost: governance overhead tracks the",
         "number of *consequential* actions, not the number of steps.",
         "",
-        "Durable artifacts are counted from what was *persisted* — receipts are read back",
-        "from the lineage store, audit rows from the signed chain, approvals from the",
-        "world model. Control invocations gate the run but persist nothing on their own,",
-        "so they are reported separately and never inflate the artifact count.",
+        "Lineage receipts are counted from what the lineage store read back; an approval",
+        "is counted only after the world model reads the decision back as approved (the",
+        "posting does not run otherwise); audit rows are counted per write and reconciled",
+        "in aggregate against the rows read back off the signed chain (below). Control",
+        "invocations gate the run but persist nothing on their own, so they are reported",
+        "separately and never inflate the artifact count.",
         "",
         "The ungoverned arm produced "
-        f"{metrics['ungoverned_governance_artifacts']} governance artifacts of any kind.",
-        "That is the control on this measurement: if the ungoverned arm were quietly",
-        "governed, this number would not be zero.",
+        f"{metrics['ungoverned_governance_artifacts']} governance artifacts of any kind,",
+        "counting the audit rows measured on the chain around its own calls. That is the",
+        "control on this measurement: if the ungoverned arm wrote audit rows, this number",
+        "would not be zero.",
         "",
         "## Evidence integrity",
         "",
