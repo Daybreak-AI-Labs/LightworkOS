@@ -80,7 +80,38 @@ _FETCH_INPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-_HTML_BLOCK_TAGS = re.compile(r"<(p|br|div|li|tr|h[1-6])[^>]*>", re.IGNORECASE)
+# Fetched HTML is attacker-controlled, so every pattern below runs in linear
+# time: tag bodies exclude ``<`` as well as ``>`` (so an unclosed ``<p<p<p``
+# cannot make each start rescan to the end), and paired tags go through
+# ``_sub_paired`` instead of a lazy ``<x>(.+?)</x>`` regex, which rescans the
+# rest of the document for every opening tag that has no close.
+_HTML_BLOCK_TAGS = re.compile(r"<(p|br|div|li|tr|h[1-6])[^<>]*>", re.IGNORECASE)
+_HREF = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
+
+
+def _sub_paired(text: str, open_pat: str, close_pat: str, render) -> str:
+    """Replace each ``open ... close`` pair, nearest close first, in one pass.
+
+    Matches what ``re.sub(open + "(.*?)" + close, ...)`` does, but searches
+    for a close tag at most once per pair and stops at the first opening tag
+    with no close after it (no later opening tag can have one either).
+    """
+    open_re = re.compile(open_pat, re.IGNORECASE)
+    close_re = re.compile(close_pat, re.IGNORECASE)
+    out: list[str] = []
+    pos = 0
+    while True:
+        opened = open_re.search(text, pos)
+        if opened is None:
+            break
+        closed = close_re.search(text, opened.end())
+        if closed is None:
+            break
+        out.append(text[pos:opened.start()])
+        out.append(render(opened, text[opened.end():closed.start()]))
+        pos = closed.end()
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def _strip_html_to_text(html: str) -> str:
@@ -89,12 +120,12 @@ def _strip_html_to_text(html: str) -> str:
     Not a full readability extractor -- just a cleanup: drop scripts/
     styles, render block tags as newlines, strip remaining tags.
     """
-    html = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
-    html = re.sub(r"<!--.*?-->", " ", html, flags=re.DOTALL)
+    html = _sub_paired(html, r"<script[^<>]*>", r"</script>", lambda _m, _body: " ")
+    html = _sub_paired(html, r"<style[^<>]*>", r"</style>", lambda _m, _body: " ")
+    html = _sub_paired(html, r"<!--", r"-->", lambda _m, _body: " ")
     html = _HTML_BLOCK_TAGS.sub("\n", html)
     html = re.sub(r"</(p|div|li|tr|h[1-6])>", "\n", html, flags=re.IGNORECASE)
-    html = re.sub(r"<[^>]+>", " ", html)
+    html = re.sub(r"<[^<>]+>", " ", html)
     # Collapse whitespace.
     html = re.sub(r"[ \t]+", " ", html)
     html = re.sub(r"\n{3,}", "\n\n", html)
@@ -110,27 +141,26 @@ def _strip_html_to_text(html: str) -> str:
     return html.strip()
 
 
+def _render_link(opened: re.Match, body: str) -> str:
+    href = _HREF.search(opened.group(0))
+    if href is None:
+        return f"{opened.group(0)}{body}</a>"
+    return f"[{_strip_html_to_text(body)}]({href.group(1)})"
+
+
 def _to_markdown(html: str) -> str:
     """Cheap HTML -> markdown: preserve links + headings + lists."""
     out = html
-    out = re.sub(r"<h1[^>]*>(.+?)</h1>", r"# \1\n", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<h2[^>]*>(.+?)</h2>", r"## \1\n", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<h3[^>]*>(.+?)</h3>", r"### \1\n", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<h([4-6])[^>]*>(.+?)</h\1>", r"#### \2\n", out, flags=re.DOTALL | re.IGNORECASE)
+    for level, prefix in ((1, "#"), (2, "##"), (3, "###"), (4, "####"), (5, "####"), (6, "####")):
+        out = _sub_paired(out, rf"<h{level}[^<>]*>", rf"</h{level}>",
+                          lambda _m, body, prefix=prefix: f"{prefix} {body}\n")
     # Accept both single- and double-quoted href values; some HTML in
     # the wild uses ' instead of ".
-    out = re.sub(
-        r"""<a[^>]+href=["']([^"']+)["'][^>]*>(.+?)</a>""",
-        lambda m: f"[{_strip_html_to_text(m.group(2))}]({m.group(1)})",
-        out,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    out = re.sub(r"<li[^>]*>(.+?)</li>", r"- \1", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<strong[^>]*>(.+?)</strong>", r"**\1**", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<b[^>]*>(.+?)</b>", r"**\1**", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<em[^>]*>(.+?)</em>", r"_\1_", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<i[^>]*>(.+?)</i>", r"_\1_", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<code[^>]*>(.+?)</code>", r"`\1`", out, flags=re.DOTALL | re.IGNORECASE)
+    out = _sub_paired(out, r"<a\s[^<>]*>", r"</a>", _render_link)
+    for tag, mark in (("li", "- "), ("strong", "**"), ("b", "**"), ("em", "_"), ("i", "_"), ("code", "`")):
+        tail = "" if tag == "li" else mark
+        out = _sub_paired(out, rf"<{tag}[^<>]*>", rf"</{tag}>",
+                          lambda _m, body, mark=mark, tail=tail: f"{mark}{body}{tail}")
     return _strip_html_to_text(out)
 
 

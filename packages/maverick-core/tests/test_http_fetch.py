@@ -128,6 +128,19 @@ def _no_allow_private(monkeypatch):
 
 # --- web_archive fetches go through the guarded opener ---------------
 
+def test_html_conversion_handles_unclosed_tags_without_rescanning():
+    """Each unclosed tag used to rescan the rest of the page (quadratic):
+    a few hundred KB of ``<b>`` stalled the process for hours. The paired-tag
+    pass now stops at the first opening tag that has no close."""
+    from maverick.tools.http_fetch import _strip_html_to_text, _to_markdown
+
+    for payload in ("<b>" * 200_000, "<!--" * 150_000, "<script>" * 80_000,
+                    '<a href="x">' * 50_000, "<" * 600_000):
+        _to_markdown(payload)
+    assert _to_markdown('<h2>T</h2><p>a <b>b</b> <a href="/x">l</a> <b>open') == "## T\n\na **b** [l](/x) open"
+    assert _strip_html_to_text("x<script>y</script>z<!--c-->") == "x z"
+
+
 def test_web_archive_routes_through_guarded_urlopen(monkeypatch):
     import json as _json
 
