@@ -925,10 +925,10 @@ def seal(plaintext: bytes) -> bytes:
     # Per-tenant mode: route through the tenant's own data key. Output carries the
     # tenant magic header, so unseal()/is_sealed() handle it transparently and
     # globally-sealed data written before the switch still opens.
-    if not _FORCE_DEPLOYMENT_KEY.get() and per_tenant_at_rest():
-        from .paths import current_tenant_id
+    if not (_FORCE_DEPLOYMENT_KEY.get() or _FORCE_EXTERNAL_FLEET_KEY.get()) and per_tenant_at_rest():
+        from .paths import current_tenant_id_strict
         from .tenant.kms import seal_for_tenant
-        return seal_for_tenant(current_tenant_id(), plaintext)
+        return seal_for_tenant(current_tenant_id_strict(), plaintext)
     if not _have_crypto():
         raise EncryptionUnavailable(
             "at-rest encryption enabled but 'cryptography' is not installed "
@@ -982,9 +982,9 @@ def _unseal_with_key_cache(
             raise EncryptionUnavailable(
                 "shared authority refuses tenant-envelope ciphertext"
             )
-        from .paths import current_tenant_id
+        from .paths import current_tenant_id_strict
         from .tenant.kms import unseal_for_tenant
-        return unseal_for_tenant(current_tenant_id(), blob)
+        return unseal_for_tenant(current_tenant_id_strict(), blob)
     if not is_sealed(blob):
         return blob
     if not _have_crypto():
@@ -1094,17 +1094,19 @@ def seal_bound(plaintext: bytes, context: str, *, portable: bool = False,
         raise EncryptionUnavailable("at-rest encryption needs 'cryptography'")
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-    from .paths import current_tenant_id
-    tenant = current_tenant_id()
-    if per_tenant_at_rest() and not portable:
+    from .paths import current_tenant_id_strict
+    fleet = _FORCE_EXTERNAL_FLEET_KEY.get()
+    tenant_key = not (portable or _FORCE_DEPLOYMENT_KEY.get() or fleet) and per_tenant_at_rest()
+    tenant = current_tenant_id_strict() if bind_tenant or tenant_key else None
+    if tenant_key:
         from .tenant.kms import tenant_dek
         kind, keyid, key = b"T", bytes(_KEYID_BYTES), tenant_dek(tenant)
     else:
-        active = _active_keyring_key()
+        active = None if fleet else _active_keyring_key()
         if active is not None:
             key, keyid = active
         else:
-            key = _load_or_create_key()
+            key = _admitted_shared_key() if fleet else _load_or_create_key()
             keyid = _key_fingerprint(key)
         kind = b"K" if bind_tenant else b"D"
     if kind == b"D":
@@ -1130,21 +1132,28 @@ def unseal_bound(blob: bytes, context: str,
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-    from .paths import current_tenant_id
+    from .paths import current_tenant_id_strict
     body = blob[len(_BOUND_MAGIC):]
     if len(body) < 1 + _KEYID_BYTES + _NONCE_BYTES + 16:
         raise EncryptionUnavailable("bound blob is truncated")
     kind, keyid = body[:1], body[1:1 + _KEYID_BYTES]
     nonce = body[1 + _KEYID_BYTES:1 + _KEYID_BYTES + _NONCE_BYTES]
-    tenant = None if kind == b"D" else current_tenant_id()
-    cache_key = ("bound:" + kind.decode("ascii", "replace") + ":" + (tenant or ""), keyid)
+    fleet = _FORCE_EXTERNAL_FLEET_KEY.get()
+    if kind == b"T" and (fleet or _FORCE_DEPLOYMENT_KEY.get()):
+        raise EncryptionUnavailable("shared authority refuses tenant-envelope ciphertext")
+    tenant = None if kind == b"D" else current_tenant_id_strict()
+    cache_key = ("bound:" + ("fleet:" if fleet else "") + kind.decode("ascii", "replace") + ":" + (tenant or ""), keyid)
     cipher = key_cache.get(cache_key) if key_cache is not None else None
     if cipher is None:
         if kind == b"T":
             from .tenant.kms import tenant_dek
             key = tenant_dek(tenant)
         elif kind in (b"K", b"D"):
-            if (_keyring_dir() / (keyid.hex() + ".key")).exists():
+            if fleet:
+                key = _admitted_shared_key()
+                if _key_fingerprint(key) != keyid:
+                    raise EncryptionUnavailable("shared authority refuses node-local key ciphertext")
+            elif (_keyring_dir() / (keyid.hex() + ".key")).exists():
                 key = _resolve_key_by_id(keyid)
             else:
                 # The legacy single key: one load, then the fingerprint check
@@ -1188,10 +1197,10 @@ def reseal(original: bytes, plaintext: bytes) -> bytes:
     key_cache: dict[tuple[str, bytes], object] = {}
     _unseal_with_key_cache(original, key_cache)
     if original.startswith(_TENANT_MAGIC):
-        from .paths import current_tenant_id
+        from .paths import current_tenant_id_strict
         from .tenant.kms import seal_for_tenant
 
-        return seal_for_tenant(current_tenant_id(), plaintext)
+        return seal_for_tenant(current_tenant_id_strict(), plaintext)
     if original.startswith(_MAGIC_V2):
         keyid = original[len(_MAGIC_V2):len(_MAGIC_V2) + _KEYID_BYTES]
         header, cipher = _MAGIC_V2 + keyid, key_cache[("v2", keyid)]
