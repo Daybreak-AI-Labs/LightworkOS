@@ -332,7 +332,7 @@ def enroll(
     max_wall_seconds: float | None = None,
     data_scopes: list[str] | None = None,
     expires_days: float | None = None,
-    budget_period: str = "monthly",
+    budget_period: str | None = None,
     enrolled_by: str = "",
 ) -> dict:
     """Enroll one external agent across every plane in a single call.
@@ -341,7 +341,8 @@ def enroll(
     the agent calls us; we never dial an enrolled foreign runtime), registers
     the agent on the fleet-memory roster when that plane is enabled, and
     stamps the enrollment metadata sidecar. Re-enrolling keeps every ceiling
-    (tools, risk, dollar and wall caps, data scopes) it does not set. Returns
+    (tools, risk, dollar and wall caps, data scopes) and the budget period it
+    does not set (``budget_period=None``; a new agent gets "monthly"). Returns
     a summary; raises :class:`ExternalAgentsError` on bad input."""
     from .agent_trust import AgentTrustError, put_agent
     platform = str(platform or "").strip().lower()
@@ -349,7 +350,7 @@ def enroll(
         raise ExternalAgentsError(
             f"unknown platform {platform!r}; expected one of "
             f"{', '.join(sorted(PLATFORMS))}")
-    if budget_period not in BUDGET_PERIODS:
+    if budget_period is not None and budget_period not in BUDGET_PERIODS:
         raise ExternalAgentsError(
             f"unknown budget_period {budget_period!r}; expected one of "
             f"{', '.join(BUDGET_PERIODS)}")
@@ -364,6 +365,7 @@ def enroll(
             if tool_risk:
                 tool_risks[name] = tool_risk
     sidecar = _load_sidecar()
+    _require_period_change_allowed(sidecar.get(agent_id), budget_period)
     if agent_id not in sidecar and len(sidecar) >= _seat_limit():
         raise ExternalAgentsError(
             f"enrollment limit reached ({_seat_limit()} seats); raise "
@@ -401,6 +403,7 @@ def enroll(
     with _sidecar_locked():
         sidecar = _load_sidecar()
         prior = sidecar.get(agent.id, {})
+        _require_period_change_allowed(sidecar.get(agent.id), budget_period)
         # Re-enrollment updates the enrollment fields and keeps everything
         # else the entry carries (execution and mint ledgers, last contact).
         sidecar[agent.id] = {
@@ -416,7 +419,7 @@ def enroll(
             "last_run_at": prior.get("last_run_at"),
             # v1.1 governance state (re-enrollment preserves the meters and
             # NEVER silently lifts a containment — that's the release action).
-            "period": budget_period,
+            "period": budget_period or (prior.get("period", "total") if prior else "monthly"),
             "period_key": prior.get("period_key") or _month_key(),
             "period_spent": float(prior.get("period_spent") or 0.0),
             # A re-enrollment that names no tools keeps the allow-list (see
@@ -434,6 +437,20 @@ def enroll(
                 department=department, enrolled_by=enrolled_by)
     return {"id": agent.id, "platform": platform, "trust": "registered",
             "fleet_memory": fleet, "expires_at": agent.expires_at}
+
+
+def _require_period_change_allowed(prior: dict | None, budget_period: str | None) -> None:
+    """A re-enrollment keeps the budget period unless it names a new one, and
+    may not move a lifetime ("total") cap to a monthly one: the monthly meter
+    starts from what was recorded this month, which would lift the lifetime
+    cap without the audited reset. Moving monthly to total only tightens."""
+    if prior is None or budget_period is None:
+        return
+    if prior.get("period", "total") == "total" and budget_period == "monthly":
+        raise ExternalAgentsError(
+            "This agent's spending limit applies in total. Re-enrolling cannot "
+            "change it to a monthly limit; use the agent's budget reset action, "
+            "which is recorded, and then set the monthly limit.")
 
 
 def unenroll(agent_id: str) -> bool:

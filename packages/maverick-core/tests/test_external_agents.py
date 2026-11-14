@@ -534,6 +534,21 @@ def test_reenrollment_without_ceilings_keeps_them():
     assert lookup("bot1").max_dollars == 9 and lookup("bot1").max_risk == "low"
 
 
+def test_reenrollment_cannot_lift_a_lifetime_spending_cap():
+    """Switching a "total" agent to the monthly meter (never incremented,
+    reads 0) would lift its lifetime cap without the audited reset."""
+    xa.enroll("bot2", "custom", max_dollars=5, budget_period="total")
+    xa.enroll("bot2", "custom", description="edit")            # no period given: kept
+    assert xa._load_sidecar()["bot2"]["period"] == "total"
+    with pytest.raises(xa.ExternalAgentsError, match="budget reset"):
+        xa.enroll("bot2", "custom", budget_period="monthly")
+    assert xa._load_sidecar()["bot2"]["period"] == "total"
+    xa.enroll("bot3", "custom")
+    assert xa._load_sidecar()["bot3"]["period"] == "monthly"   # a new agent's default
+    xa.enroll("bot3", "custom", budget_period="total")         # tightening is allowed
+    assert xa._load_sidecar()["bot3"]["period"] == "total"
+
+
 def test_disabled_plane_refuses_traffic(monkeypatch):
     _enroll()
     monkeypatch.delenv("MAVERICK_EXTERNAL_AGENTS", raising=False)
