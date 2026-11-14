@@ -373,6 +373,53 @@ def test_withheld_key_files_lists_what_the_operator_must_escrow(tmp_path):
     ])
 
 
+def test_backup_withholds_the_browser_vault_key_beside_its_ciphertext():
+    """The browser vault's Fernet key (``vault/key``, or one per authority)
+    decrypts the stored sessions in ``vault/browser.json``; a default archive
+    must not carry both."""
+    from maverick.paths import data_dir
+    root = data_dir()
+    _seed(root)
+    (root / "vault" / "authorities" / "a1").mkdir(parents=True)
+    (root / "vault" / "key").write_bytes(b"k" * 44)
+    (root / "vault" / "authorities" / "a1" / "key").write_bytes(b"k" * 44)
+    (root / "vault" / "browser.json").write_text("{}")
+
+    tar = backup.create_backup()
+    with tarfile.open(tar, "r:gz") as archive:
+        members = archive.getnames()
+    assert "data/vault/key" not in members
+    assert "data/vault/authorities/a1/key" not in members
+    assert "data/vault/browser.json" in members
+    withheld = ["vault/authorities/a1/key", "vault/key"]
+    assert backup.withheld_key_files() == withheld
+    assert backup.read_manifest(tar)["withheld_key_files"] == withheld
+
+
+def test_leftover_rollback_journal_is_not_snapshotted_so_the_backup_restores():
+    from maverick.paths import data_dir
+    root = data_dir()
+    _seed(root)
+    (root / "world.db-journal").write_bytes(b"")
+
+    tar = backup.create_backup()
+    with tarfile.open(tar, "r:gz") as archive:
+        assert "data/world.db-journal" not in archive.getnames()
+    (root / "world.db-journal").unlink()
+    backup.restore_backup(tar, replace_existing=True, force=True)
+
+
+def test_oversized_extended_header_is_refused_before_it_is_read(tmp_path):
+    """tarfile reads a pax header whole before the member budget sees it."""
+    crafted = tmp_path / "crafted.tgz"
+    with tarfile.open(crafted, "w:gz", format=tarfile.PAX_FORMAT) as archive:
+        info = tarfile.TarInfo(backup.MANIFEST)
+        info.pax_headers = {"comment": "x" * (backup.MAX_EXTENDED_HEADER_BYTES + 1)}
+        archive.addfile(info, io.BytesIO(b""))
+    with pytest.raises(backup.BackupError, match="extended header"):
+        backup.read_manifest(crafted)
+
+
 def _is_closed(connection):
     try:
         connection.execute("SELECT 1")
