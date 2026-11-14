@@ -7,6 +7,12 @@ import pytest
 from maverick import parser_isolation as pi
 
 
+def _answer_through_file(kwargs, payload):
+    # Resource-limited parsers read the child's stdout from a regular file.
+    if hasattr(kwargs.get("stdout"), "write"):
+        kwargs["stdout"].write(payload)
+
+
 def test_whitelist_enforced():
     with pytest.raises(ValueError, match="unknown parser"):
         pi.parse_isolated("arbitrary.module:evil", b"x")
@@ -33,6 +39,7 @@ def test_child_uses_isolated_mode_and_neutral_cwd(monkeypatch):
     def _run(args, **kwargs):
         captured["args"] = args
         captured.update(kwargs)
+        _answer_through_file(kwargs, _OK.stdout)
         return _OK()
 
     monkeypatch.setattr(subprocess, "run", _run)
@@ -104,6 +111,24 @@ def test_evidence_output_is_file_bounded_and_stderr_discarded(monkeypatch):
 
 
 @pytest.mark.skipif(pi.os.name != "posix", reason="evidence PDF limits require POSIX")
+@pytest.mark.parametrize("name", ["pdf_text", "image_meta"])
+def test_channel_document_parsers_get_resource_limits(monkeypatch, name):
+    # A compression-bomb PDF or image must meet the same RLIMIT_AS/CPU/FSIZE
+    # bounds and file-backed stdout as the evidence parser.
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen.update(kwargs)
+        assert "RLIMIT_AS" in args[-1] and "RLIMIT_FSIZE" in args[-1]
+        kwargs["stdout"].write(b'{"ok": true, "result": "ok"}')
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert pi.parse_isolated(name, b"document") == "ok"
+    assert "capture_output" not in seen
+
+
+@pytest.mark.skipif(pi.os.name != "posix", reason="evidence PDF limits require POSIX")
 def test_evidence_worker_resource_limits_bound_regular_file(tmp_path):
     output = tmp_path / "output"
     with output.open("wb") as target:
@@ -154,6 +179,7 @@ def test_child_env_is_scrubbed(monkeypatch):
 
     def _run(*a, **k):
         captured.update(k)
+        _answer_through_file(k, _OK.stdout)
         return _OK()
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")  # pragma: allowlist secret

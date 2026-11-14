@@ -41,7 +41,8 @@ DEFAULT_TIMEOUT = 60.0
 _EVIDENCE_OUTPUT_LIMIT = 16 * 1024 * 1024
 _POSIX_RESOURCE_LIMITS = os.name == "posix"
 _RESOURCE_LIMITED_PARSERS = {
-    "evidence_pdf_text", "spreadsheet_read", "spreadsheet_info", "spreadsheet_set_cell",
+    "pdf_text", "evidence_pdf_text", "image_meta",
+    "spreadsheet_read", "spreadsheet_info", "spreadsheet_set_cell",
 }
 
 # Applied inside the child, before loading data or importing the parser. A
