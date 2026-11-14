@@ -1377,8 +1377,10 @@ def _tenant_daily_cap(tenant_id: str) -> float:
     cap = rec.max_daily_dollars
     if cap <= 0 and _enforce_plan_caps():
         try:
-            from ..billing import entitlements_for
-            cap = entitlements_for(rec.plan).max_daily_dollars
+            from ..billing import _effective_plan, entitlements_for
+            # The served plan: a tenant whose payment lapsed gets the base
+            # plan's cap, not its subscribed plan's.
+            cap = entitlements_for(_effective_plan(rec)).max_daily_dollars
         except Exception as exc:
             raise TenantRegistryError(
                 f"tenant plan-cap entitlement unavailable for {rec.id!r}: {exc}"

@@ -85,3 +85,15 @@ def test_release_of_an_uncounted_grant_does_not_free_a_counted_slot(monkeypatch)
     tc.release("acme")                         # the first run finishes
     assert tc.in_flight("acme") == 1
     assert tc.acquire("acme") is False
+
+
+def test_limit_uses_the_served_plan_when_payment_lapsed(monkeypatch):
+    # A past-due tenant is served the base plan; its paid concurrency must
+    # not survive the downgrade.
+    from types import SimpleNamespace
+
+    from maverick.billing import entitlements_for
+
+    rec = SimpleNamespace(plan="enterprise", billing_status="past_due")
+    monkeypatch.setattr("maverick.tenant.registry.get_tenant", lambda t: rec)
+    assert tc._limit_for("acme") == entitlements_for("free").max_concurrent_goals
