@@ -328,24 +328,36 @@ def _to_wav16k(audio_path: Path) -> Path | None:
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False,
                                       dir=context[1] if sandbox is not None else None)
     tmp.close()
-    # Model-selected audio stays in its configured sandbox. Trusted internal
-    # callers retain the host conversion path for their private attachments.
-    source, target = str(audio_path), tmp.name
-    if sandbox is not None:
-        source = "./" + str(audio_path.relative_to(context[1]))
-        target = "./" + str(Path(tmp.name).relative_to(context[1]))
-    code, _out, err = sandbox_run(
-        sandbox,
-        ["ffmpeg", "-y", "-i", source,
-         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", target],
-        timeout=300.0,
-    )
-    if code != 0:
-        log.warning("ffmpeg convert for whisper.cpp failed: %s",
-                    err.strip()[-300:])
-        Path(tmp.name).unlink(missing_ok=True)
-        return None
-    return Path(tmp.name)
+    converted = False
+    try:
+        # Model-selected audio stays in its configured sandbox. Trusted internal
+        # callers retain the host conversion path for their private attachments.
+        source, target = str(audio_path), tmp.name
+        if sandbox is not None:
+            source = "./" + str(audio_path.relative_to(context[1]))
+            target = "./" + str(Path(tmp.name).relative_to(context[1]))
+        try:
+            code, _out, err = sandbox_run(
+                sandbox,
+                ["ffmpeg", "-y", "-i", source,
+                 "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", target],
+                timeout=300.0,
+            )
+        except (FileNotFoundError, PermissionError) as e:
+            code, err = 127, str(e)
+        if code in (126, 127) and audio_path.suffix.lower() == ".wav":
+            # ffmpeg cannot run where the audio lives; a WAV input is passed
+            # through as-is (best effort), as without a sandbox.
+            return audio_path
+        if code != 0:
+            log.warning("ffmpeg convert for whisper.cpp failed: %s",
+                        err.strip()[-300:])
+            return None
+        converted = True
+        return Path(tmp.name)
+    finally:
+        if not converted:
+            Path(tmp.name).unlink(missing_ok=True)
 
 
 def _whisper_cpp(audio_path: Path, language: str | None) -> str | None:

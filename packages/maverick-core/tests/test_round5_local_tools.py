@@ -68,6 +68,30 @@ def test_voice_conversion_uses_bound_workspace_sandbox(monkeypatch, tmp_path):
     assert not Path(seen[0][1][seen[0][1].index("-i") + 1]).is_absolute()
 
 
+@pytest.mark.parametrize("missing", ["exit127", "raises"])
+@pytest.mark.parametrize("suffix", [".wav", ".webm"])
+def test_voice_conversion_without_sandbox_ffmpeg_keeps_wav_and_cleans_up(monkeypatch, tmp_path, missing, suffix):
+    from maverick import tools
+    from maverick.tools import voice
+
+    audio = tmp_path / f"clip{suffix}"
+    audio.write_bytes(b"RIFFfixture")
+
+    def run(_backend, argv, **_kwargs):
+        if missing == "raises":
+            raise FileNotFoundError(2, "No such file or directory", argv[0])
+        return 127, "", f"sh: {argv[0]}: not found"
+
+    monkeypatch.setattr(tools, "sandbox_run", run)
+    token = voice._TRANSCRIBE_CONTEXT.set((SimpleNamespace(workdir=tmp_path), tmp_path))
+    try:
+        converted = voice._to_wav16k(audio)
+    finally:
+        voice._TRANSCRIBE_CONTEXT.reset(token)
+    assert converted == (audio if suffix == ".wav" else None)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [audio.name]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink race probe")
 def test_hosted_voice_refuses_swapped_audio_parent(monkeypatch, tmp_path):
     import openai
