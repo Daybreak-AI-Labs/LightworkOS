@@ -86,6 +86,8 @@ class TestLoadSpecsFromConfig:
         )
         monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
         assert load_mcp_specs_from_config() == []
+        cfg.write_text('[mcp_servers.fs]\nenabled = "false"\ncommand = "npx"\n')
+        assert load_mcp_specs_from_config() == []  # a string is not a boolean
 
     def test_missing_command_skipped(self, tmp_path, monkeypatch):
         cfg = tmp_path / "config.toml"
