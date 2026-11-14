@@ -73,6 +73,10 @@ def _aggregate(args: dict[str, Any]) -> str:
     return json.dumps(out, sort_keys=True)
 
 
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
 def _verify_install(args: dict[str, Any]) -> str:
     declared = args.get("declared_sha256")
     if not isinstance(declared, str) or not declared.strip():
@@ -90,6 +94,8 @@ def _verify_install(args: dict[str, Any]) -> str:
                 "precomputed 'computed_sha256'")
     a = declared.strip().lower()
     b = computed.strip().lower()
+    if not all(_is_sha256_hex(v) for v in (a, b)):
+        return "ERROR: sha256 digests must be 64 hexadecimal characters"
     if hmac.compare_digest(a.encode(), b.encode()):
         return f"VERIFIED: sha256 {a}"
     return f"MISMATCH: declared {a} != computed {b}"
