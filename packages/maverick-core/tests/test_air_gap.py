@@ -235,3 +235,26 @@ def test_cli_airgap_check_passes_when_clean(monkeypatch):
     res = CliRunner().invoke(main, ["airgap", "check"])
     assert res.exit_code == 0
     assert "AIR-GAPPED" in res.output
+
+
+def test_stdio_mcp_disabled_channels_and_live_overrides_are_not_findings(monkeypatch, tmp_path):
+    from maverick import role_edit, runtime_overrides
+
+    roles = tmp_path / "roles.toml"
+    roles.write_text('[orchestrator]\nmodel = "openai:remote-test"\n')
+    monkeypatch.setattr(role_edit, "roles_file", lambda: roles)
+    monkeypatch.setattr(runtime_overrides, "mcp_overlay",
+                        lambda: {"live": {"url": "https://public.example/mcp"}})
+    cfg = {"models": _all_local_models(), "egress": {"deny": ["*"]},
+           "sandbox": {"backend": "docker"}, "enterprise": {"mode": True},
+           "mcp_servers": {"files": {"command": "mcp-files", "args": ["--root", "/data"]}},
+           "channels": {"slack": {"enabled": False}}}
+    # A passed config is audited alone: the live roles.toml and MCP overlay are not read.
+    assert audit(config=cfg) == {"clean": True, "violations": []}
+    rep = audit(config={**cfg, "channels": {"slack": {"enabled": True}}})
+    assert rep["violations"] == ["channel 'slack' is configured — chat transport egress "
+                                 "cannot be proven local by this audit"]
+    monkeypatch.setattr("maverick.config.load_config", lambda: cfg)
+    live = audit()["violations"]                   # the live audit still reads both
+    assert any("openai:remote-test" in v for v in live)
+    assert any("'live'" in v for v in live)

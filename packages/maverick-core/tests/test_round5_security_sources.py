@@ -151,7 +151,8 @@ def test_airgap_audits_tenant_roles_mcp_and_federation(monkeypatch, tmp_path):
              "egress": {"deny": ["*"]}, "enterprise": {"mode": True}, "sandbox": {"backend": "docker"}}
     assert air_gap.audit(config=local)["clean"]
     roles.write_text('[orchestrator]\nmodel = "openai:remote-test"\n')
-    assert not air_gap.audit(config=local)["clean"]
+    monkeypatch.setattr("maverick.config.load_config", lambda: local)
+    assert not air_gap.audit()["clean"]           # the live audit reads roles.toml
     roles.unlink()
     for extra in ({"mcp_servers": {"remote": {"url": "https://public.example/mcp"}}},
                   {"federation": {"peers": [{"name": "remote", "target": "public.example:50051"}]}}):
