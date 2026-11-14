@@ -21,6 +21,7 @@ Opt-in and offline-testable. Requires the ``cryptography`` extra (AES-GCM).
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import os
 import secrets
@@ -39,6 +40,8 @@ from ..file_lock import (
     ensure_private_file,
 )
 from ..paths import data_dir
+
+log = logging.getLogger(__name__)
 
 # Monotonic clock for cache expiry (immune to wall-clock jumps).
 _now = time.monotonic
@@ -281,26 +284,34 @@ _dek_lock = threading.Lock()
 _dek_tenant_locks: dict[str, threading.Lock] = {}
 
 
-def _dek_cache_ttl(tenant_id: str | None = None) -> float:
+def _dek_cache_ttl(tenant_id: str | None = None) -> float | None:
     """Seconds a tenant DEK stays cached before it must be re-unwrapped by the
     KMS. ``0`` (default) = cache for the process lifetime, unchanged behavior. A
     positive TTL bounds how long a *revoked* cloud-KMS key keeps opening data:
     after it lapses the next access re-hits the KMS, which then fails closed.
-    ``MAVERICK_KMS_DEK_CACHE_TTL`` env wins over ``[kms] dek_cache_ttl``."""
+    ``MAVERICK_KMS_DEK_CACHE_TTL`` env wins over ``[kms] dek_cache_ttl``.
+
+    ``None`` means the lifetime could not be determined (an unreadable config
+    source or an invalid value): the cache is not trusted and the DEK is
+    unwrapped again now. It never refuses the data on its own."""
     raw = os.environ.get("MAVERICK_KMS_DEK_CACHE_TTL")
     if raw is None or raw.strip() == "":
         try:
             raw = _kms_config_for(tenant_id).get("dek_cache_ttl")
-        except Exception as exc:
-            raise EncryptionUnavailable("cannot read the tenant data-key cache policy") from exc
-        if _kms_config_unreadable(tenant_id):
-            raise EncryptionUnavailable("cannot read the tenant data-key cache policy")
+            unreadable = _kms_config_unreadable(tenant_id)
+        except Exception as exc:  # config never blocks key access
+            log.warning("cannot read the tenant data-key cache policy (%s); unwrapping again", exc)
+            return None
+        if unreadable:
+            log.warning("cannot read the tenant data-key cache policy; unwrapping again")
+            return None
     try:
         ttl = float(raw) if raw is not None else 0.0
-    except (TypeError, ValueError) as exc:
-        raise EncryptionUnavailable("tenant data-key cache lifetime must be a nonnegative number") from exc
+    except (TypeError, ValueError):
+        ttl = math.nan
     if not math.isfinite(ttl) or ttl < 0:
-        raise EncryptionUnavailable("tenant data-key cache lifetime must be a finite nonnegative number")
+        log.warning("tenant data-key cache lifetime must be a finite nonnegative number; unwrapping again")
+        return None
     return ttl
 
 
@@ -353,7 +364,7 @@ def _cached_dek(cache_key: str, tenant_id: str | None) -> bytes | None:
         return None
     dek, cached_at = cached
     ttl = _dek_cache_ttl(tenant_id)  # reads config: outside the lock
-    if ttl <= 0 or cached_at + ttl > _now():
+    if ttl is not None and (ttl <= 0 or cached_at + ttl > _now()):
         return dek
     with _dek_lock:
         if _dek_cache.get(cache_key) == cached:

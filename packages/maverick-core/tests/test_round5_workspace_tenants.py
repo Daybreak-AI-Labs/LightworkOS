@@ -92,8 +92,8 @@ def test_dek_cache_uses_the_requested_tenants_ttl(tmp_path, monkeypatch):
         kms.tenant_dek("long", kms=long)
         assert long.unwraps == 1
         monkeypatch.setenv("MAVERICK_KMS_DEK_CACHE_TTL", "nan")
-        with pytest.raises(kms.EncryptionUnavailable, match="finite"):
-            kms.tenant_dek("long", kms=long)
+        kms.tenant_dek("long", kms=long)  # an invalid lifetime bypasses the cache
+        assert long.unwraps == 2
     finally:
         kms._clear_cache()
 
@@ -264,3 +264,39 @@ def test_unusable_pending_review_never_blocks_recovery(tmp_path, monkeypatch, ca
         assert safety.exists()
     finally:
         client.reset_client_cache()
+
+
+def test_unreadable_dek_cache_policy_unwraps_again_instead_of_refusing(tmp_path, monkeypatch, caplog):
+    from maverick.tenant import kms
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    global_config = tmp_path / "config.toml"
+    global_config.write_text("[kms]\ndek_cache_ttl = 100\n")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(global_config))
+    monkeypatch.delenv("MAVERICK_KMS_DEK_CACHE_TTL", raising=False)
+    (tmp_path / "tenants" / "acme").mkdir(parents=True)
+
+    class CountingKMS:
+        unwraps = 0
+
+        def wrap(self, value, *, context=None):
+            return value
+
+        def unwrap(self, value, *, context=None):
+            self.unwraps += 1
+            return value
+
+    counting = CountingKMS()
+    kms._clear_cache()
+    try:
+        dek = kms.tenant_dek("acme", kms=counting)
+        assert kms.tenant_dek("acme", kms=counting) == dek and counting.unwraps == 0
+        global_config.write_text("[kms\ndek_cache_ttl = 100\n")  # one typo
+        assert kms.tenant_dek("acme", kms=counting) == dek
+        assert counting.unwraps == 1  # the cache was bypassed, not trusted
+        monkeypatch.setenv("MAVERICK_KMS_DEK_CACHE_TTL", "nan")
+        assert kms.tenant_dek("acme", kms=counting) == dek
+        assert counting.unwraps == 2
+        assert "data-key cache" in caplog.text
+    finally:
+        kms._clear_cache()
