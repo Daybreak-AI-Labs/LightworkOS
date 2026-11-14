@@ -95,9 +95,13 @@ Identity fields live on the agent's Agent Trust entry. A hand-managed entry
 is the `[agent_trust] agents` list in `~/.maverick/config.toml`; an agent
 enrolled from the dashboard lives in the managed overlay
 (`agent_trust.json` under the data dir), which overrides a TOML entry with
-the same id. Credential mints, revokes, and restores preserve the fields;
-**re-enrolling rewrites the managed entry**, so re-apply identity fields
-after a re-enroll.
+the same id. Credential mints, revokes, restores and re-enrollment preserve
+the identity fields of an agent that is already in the managed overlay;
+re-enrollment also keeps its tool, risk, spending, wall-time and data-scope
+limits that are not supplied in the update. **Re-enrolling an agent that
+exists only in `config.toml` creates a managed entry that replaces the TOML
+one**, so its TOML public key, tokens and JWT fields no longer apply: re-apply
+identity fields after that first re-enroll.
 
 ```toml
 [[agent_trust.agents]]
@@ -558,6 +562,10 @@ so spend is never uncounted). To lift the cutoff early, either re-enroll
 with a higher `max_dollars` or use **Reset budget** on the console (`POST
 /api/v1/external-agents/{id}/reset-budget`, audited) — lifetime totals are
 always preserved.
+
+Re-enrollment keeps the existing budget period when no period is supplied and
+refuses a change from a lifetime (`total`) period to `monthly`; it cannot be
+used to reset lifetime spending by changing periods.
 
 ## Live runs (start / heartbeat / finish)
 

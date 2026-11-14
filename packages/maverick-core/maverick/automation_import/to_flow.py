@@ -51,8 +51,24 @@ from ..flow.ir import (
     ensure_high_risk_approvals,
     partition_draft_validation_errors,
 )
-from .ir import ImportedAutomation, ImportedStep, _safe_line, operational_inputs, operational_params
-from .predicates import branches, make_predicate, n8n_predicate, repair, wdl_predicate
+from .ir import (
+    ImportedAutomation,
+    ImportedStep,
+    _safe_line,
+    operational_inputs,
+    operational_params,
+)
+from .predicates import (
+    _checked_operand,
+    _literal,
+    _path,
+    branches,
+    make_predicate,
+    n8n_predicate,
+    repair,
+    wdl_key,
+    wdl_predicate,
+)
 
 
 def _has_blocking_draft_errors(
@@ -280,14 +296,13 @@ def _n8n_to_flow(automation: ImportedAutomation) -> Flow | None:
 # ---- Power Automate (WDL) graph capture --------------------------------------
 
 def _pa_operand(v) -> str:
-    """A WDL operand (`@triggerBody()?['status']`, `@outputs('X')?['body/id']`,
-    a literal) reduced to a flow-data key / literal the condition grammar takes."""
-    s = str(v).strip().strip("'\"")
-    fields = re.findall(r"\['([^']+)'\]", s)
-    if fields:
-        return _safe_line(fields[-1].rsplit("/", 1)[-1], max_chars=40)
-    s = s.removeprefix("@")
-    return _safe_line(s, max_chars=40)
+    """Keep complete trigger data paths; never guess a producer output binding."""
+    if not isinstance(v, str) or len(v) > 1024:
+        raise repair("Power Automate operand must name a data field")
+    value = _checked_operand(v).strip()
+    if value.startswith(("@", "triggerBody(")):
+        return wdl_key(value)
+    return _path(value)
 
 
 def _pa_condition(expr) -> str:
@@ -322,18 +337,26 @@ def _pa_wire_tail(nodes: dict[str, FlowNode], nxt: str | None) -> None:
             n.next = nxt
 
 
+def _merge_nodes(nodes: dict[str, FlowNode], added: dict[str, FlowNode]) -> None:
+    if nodes.keys() & added.keys():
+        raise repair("imported node identifiers collide")
+    nodes.update(added)
+
+
 def _pa_lower(actions: dict, prefix: str,
               report: list[dict]) -> tuple[dict[str, FlowNode], str | None]:
     """Lower one WDL action dict (one nesting level) into chained flow nodes.
     Returns ``(nodes, start_id)``. ``If`` arms live in the SAME node dict (wired
     to rejoin after the branch); a ``Foreach`` body becomes a nested Flow."""
-    from .power_automate import _step, _toposort_actions
-    order = [n for n in _toposort_actions(actions) if isinstance(actions.get(n), dict)]
+    from .power_automate import _chain_actions, _step
+    order = _chain_actions(actions)
     ids = {name: f"{prefix}{i}" for i, name in enumerate(order)}
     nodes: dict[str, FlowNode] = {}
     for i, name in enumerate(order):
         spec = actions[name]
         nid = ids[name]
+        if nid in nodes:
+            raise repair("imported node identifiers collide")
         nxt = ids[order[i + 1]] if i + 1 < len(order) else None
         atype = str(spec.get("type") or "")
         label = name.replace("_", " ").strip()
@@ -345,12 +368,14 @@ def _pa_lower(actions: dict, prefix: str,
             f_nodes, f_start = _pa_lower(else_d, nid + "f", report)
             _pa_wire_tail(t_nodes, nxt)
             _pa_wire_tail(f_nodes, nxt)
-            nodes.update(t_nodes)
-            nodes.update(f_nodes)
-            nodes.update(branches(wdl_predicate(spec.get("expression")), nid,
-                                  t_start or nxt, f_start or nxt, label, nxt))
+            _merge_nodes(nodes, t_nodes)
+            _merge_nodes(nodes, f_nodes)
+            predicate = wdl_predicate(spec.get("expression"))
+            _merge_nodes(nodes, branches(predicate, nid, t_start or nxt, f_start or nxt, label, nxt))
             report.append({"step": name, "node": nid, "kind": NODE_BRANCH,
-                           "fidelity": "preserved", "note": "WDL If -> branch (both arms wired)"})
+                           "fidelity": "approximated" if predicate.has_approximation else "preserved",
+                           "note": ("WDL contains uses string-substring matching, including arrays and objects"
+                                    if predicate.has_approximation else "WDL If -> branch (both arms wired)")})
         elif atype == "Foreach":
             body_d = spec.get("actions") if isinstance(spec.get("actions"), dict) else {}
             b_nodes, b_start = _pa_lower(body_d, "b", report)
@@ -374,14 +399,14 @@ def _pa_lower(actions: dict, prefix: str,
             for ci, (cname, cspec) in enumerate(cases_d.items()):
                 cspec = cspec if isinstance(cspec, dict) else {}
                 arm_d = cspec.get("actions") if isinstance(cspec.get("actions"), dict) else {}
-                a_nodes, a_start = _pa_lower(arm_d, f"{nid}c{ci}", report)
+                a_nodes, a_start = _pa_lower(arm_d, f"{nid}c{ci}_", report)
                 _pa_wire_tail(a_nodes, nxt)
-                nodes.update(a_nodes)
+                _merge_nodes(nodes, a_nodes)
                 case_entries.append({"value": _safe_line(cspec.get("case", cname), max_chars=60),
                                      "to": a_start or nxt})
             d_nodes, d_start = _pa_lower(default_d, nid + "d", report)
             _pa_wire_tail(d_nodes, nxt)
-            nodes.update(d_nodes)
+            _merge_nodes(nodes, d_nodes)
             if case_entries:
                 nodes[nid] = FlowNode(id=nid, kind=NODE_SWITCH,
                                       condition=_pa_operand(spec.get("expression") or ""),
@@ -468,27 +493,71 @@ _WK_OPS = {"equals_to": "==", "not_equals_to": "!=", "greater_than": ">",
            "less_than_or_equals_to": "<=", "contains": "contains"}
 
 
-def _wk_operand(v) -> str:
-    """A Workato operand (``#{_('data.salesforce.opportunity.stage')}``, a
-    literal) reduced to a flow-data key / literal."""
-    s = str(v).strip()
-    m = re.search(r"_\('([^']+)'\)", s)
-    if m:
-        return _safe_line(m.group(1).rsplit(".", 1)[-1], max_chars=40)
-    return _safe_line(s, max_chars=40)
+# Workato step aliases (the ``as`` key) are 8 hex digits; data pills carry them.
+_WK_ALIAS = re.compile(r"[0-9a-f]{8}")
 
 
-def _wk_condition(inp: dict) -> str:
-    op = _WK_OPS.get(str(inp.get("operation") or ""), "==")
-    left = _wk_operand(inp.get("a") or inp.get("left") or "")
-    right = _wk_operand(inp.get("b") or inp.get("right") or "")
-    if left:
-        return f"{left} {op} {right}".strip()
-    return "result == true"
+def _wk_step_aliases(block) -> set[str]:
+    aliases: set[str] = set()
+    for node in block or []:
+        if isinstance(node, dict):
+            if node.get("as"):
+                aliases.add(str(node["as"]))
+            aliases |= _wk_step_aliases(node.get("block"))
+    return aliases
+
+
+def _wk_trigger_field(pill: str, trigger: dict) -> str:
+    """Return the trigger field a pill reads, or refuse a pill that cannot be
+    shown to read the trigger (an action's output never exists as run data)."""
+    provider = str(trigger.get("provider") or "")
+    prefix = f"data.{provider}."
+    if not provider or not pill.startswith(prefix):
+        raise repair("Workato action output needs an explicit data binding")
+    field = pill[len(prefix):]
+    head, _, rest = field.partition(".")
+    alias = str(trigger.get("as") or "")
+    if alias:
+        if head != alias or not rest:
+            raise repair("Workato action output needs an explicit data binding")
+        return rest
+    if head in _wk_step_aliases(trigger.get("block")) or _WK_ALIAS.fullmatch(head):
+        raise repair("Workato action output needs an explicit data binding")
+    return field
+
+
+def _wk_operand(v, trigger: dict) -> str:
+    """Retain trigger paths; action data pills need an explicit output binding."""
+    if not isinstance(v, str) or len(v) > 1024:
+        raise repair("Workato operand must name a data field")
+    value = _checked_operand(v).strip()
+    match = re.fullmatch(r"#\{_\('([^']+)'\)\}", value)
+    if match:
+        value = _wk_trigger_field(match[1], trigger)
+    return _path(value)
+
+
+def _wk_condition(inp: dict, trigger: dict) -> str:
+    op = _WK_OPS.get(str(inp.get("operation") or ""))
+    if op is None:
+        raise repair("unsupported Workato comparison operator")
+    if not ({"a", "left"} & inp.keys()) or not ({"b", "right"} & inp.keys()):
+        raise repair("Workato comparison requires both operands")
+    left = _wk_operand(inp.get("a", inp.get("left")), trigger)
+    right = _checked_operand(inp.get("b", inp.get("right")))
+    # Workato's numeric comparison inputs are serialized as strings.
+    if isinstance(right, str) and op in {">", ">=", "<", "<="}:
+        if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", right):
+            if len(right) > 512:
+                raise repair("Workato number exceeds the supported size")
+            right = float(right) if "." in right else int(right)
+    if isinstance(right, str) and "#{" in right:
+        raise repair("dynamic Workato right operand must be bound explicitly")
+    return f"{left} {op} {_literal(right)}"
 
 
 def _wk_lower(block: list, prefix: str,
-              report: list[dict]) -> tuple[dict[str, FlowNode], str | None]:
+              report: list[dict], trigger: dict) -> tuple[dict[str, FlowNode], str | None]:
     """Lower one Workato ``block`` list (one nesting level) into chained nodes.
     ``if`` steps become branch nodes (the nested block is the then-arm, wired to
     rejoin); ``foreach``/``repeat`` steps become foreach nodes with the nested
@@ -505,20 +574,20 @@ def _wk_lower(block: list, prefix: str,
         inp = node.get("input") if isinstance(node.get("input"), dict) else {}
         nested = node.get("block") if isinstance(node.get("block"), list) else []
         if keyword == "if":
-            t_nodes, t_start = _wk_lower(nested, nid + "t", report)
+            t_nodes, t_start = _wk_lower(nested, nid + "t", report, trigger)
             _pa_wire_tail(t_nodes, nxt)
             nodes.update(t_nodes)
-            nodes[nid] = FlowNode(id=nid, kind=NODE_BRANCH, condition=_wk_condition(inp),
+            nodes[nid] = FlowNode(id=nid, kind=NODE_BRANCH, condition=_wk_condition(inp, trigger),
                                   if_true=t_start or nxt, if_false=nxt, next=nxt,
                                   label=_safe_line(name, max_chars=60))
             report.append({"step": name, "node": nid, "kind": NODE_BRANCH,
                            "fidelity": "preserved",
                            "note": "Workato IF -> branch (then-arm wired; no-match falls through)"})
         elif keyword in ("foreach", "repeat"):
-            b_nodes, b_start = _wk_lower(nested, "b", report)
+            b_nodes, b_start = _wk_lower(nested, "b", report, trigger)
             body = Flow(id="", name=f"{name} body", start=b_start or "",
                         nodes=b_nodes) if b_nodes else None
-            items = _wk_operand(inp.get("source") or inp.get("list") or "") or "items"
+            items = _wk_operand(inp.get("source", inp.get("list", "")), trigger)
             if body is not None:
                 nodes[nid] = FlowNode(id=nid, kind=NODE_FOREACH, items=items, body=body,
                                       next=nxt, output=f"{nid}_out",
@@ -532,6 +601,8 @@ def _wk_lower(block: list, prefix: str,
                                "fidelity": "approximated",
                                "note": "repeat body unreadable -> agent step"})
         else:
+            if nested or keyword in {"else", "elsif", "try", "catch"}:
+                raise repair("unsupported Workato control block needs an explicit mapping")
             fnode = _node_for_step(_wk_step(node), nid, nxt)
             nodes[nid] = fnode
             report.append({"step": name, "node": nid, "kind": fnode.kind,
@@ -556,7 +627,7 @@ def _wk_to_flow(automation: ImportedAutomation,
     block = tree.get("block") if isinstance(tree, dict) else None
     if not isinstance(block, list) or not block:
         return None
-    nodes, start = _wk_lower(block, "n", report)
+    nodes, start = _wk_lower(block, "n", report, tree)
     if not nodes or not start:
         return None
     flow = Flow(id=automation.template_name(), name=automation.name,
@@ -598,6 +669,34 @@ def _uipath_label(node: dict) -> str:
                       or node.get("name") or _uipath_type(node) or "step", max_chars=60)
 
 
+def _uipath_condition(value) -> str:
+    """Accept one comparison, without evaluating or truncating VB expressions."""
+    if not isinstance(value, str) or len(value) > 8192:
+        raise repair("UiPath condition must be a single comparison")
+    _checked_operand(value)
+    match = re.fullmatch(r"\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*(==|!=|>=|<=|<>|=|>|<)\s*(.+?)\s*", value)
+    if not match:
+        raise repair("UiPath condition must be a single comparison")
+    left, op, right = match.groups()
+    if right.startswith('"') and right.endswith('"'):
+        inner = right[1:-1]
+        if '"' in inner.replace('""', ''):
+            raise repair("UiPath condition has an unsupported string expression")
+        right = inner.replace('""', '"')
+    elif re.fullmatch(r"[+-]?\d+(?:\.\d+)?", right):
+        if len(right) > 512:
+            raise repair("UiPath number exceeds the supported size")
+        right = float(right) if "." in right else int(right)
+    elif right.lower() in {"true", "false"}:
+        right = right.lower() == "true"
+    # Explicit native-style ==/!= retain their bareword literal compatibility.
+    # VB comparisons with an identifier on the right need a variable binding.
+    elif op not in {"==", "!="} or not re.fullmatch(r"[A-Za-z_]\w*", right):
+        raise repair("UiPath condition must be a single comparison with a literal")
+    op = {"=": "==", "<>": "!="}.get(op, op)
+    return f"{_path(left)} {op} {_literal(right)}"
+
+
 def _uipath_lower(activities: list, prefix: str,
                   report: list[dict]) -> tuple[dict[str, FlowNode], str | None]:
     """Lower an ordered UiPath activity list (one nesting level) into chained
@@ -631,7 +730,8 @@ def _uipath_lower(activities: list, prefix: str,
         nxt = ids[i + 1] if i + 1 < len(flat) else None
         atype = _uipath_type(act)
         label = _uipath_label(act)
-        cond = _safe_line(act.get("condition") or act.get("Condition") or "result == true", max_chars=60)
+        cond = (_uipath_condition(act.get("condition", act.get("Condition")))
+                if atype in ("if", "while", "dowhile") else "")
         if atype == "if":
             then_acts = _uipath_children(act.get("then") or act.get("Then") or {}) or _uipath_children(act)
             else_acts = _uipath_children(act.get("else") or act.get("Else") or {})
@@ -739,14 +839,13 @@ _STRUCTURAL_LOWERERS = {
 
 # ---- Make (Integromat) router capture ----------------------------------------
 
-def _has_router(modules: list) -> bool:
-    """Whether any module (or nested route) is a router -- if not, the flat
-    fallback already captures the scenario faithfully, so we skip this path."""
+def _needs_make_structure(modules: list) -> bool:
+    """Routers and module filters need structural lowering instead of a chain."""
     for m in modules or []:
         if not isinstance(m, dict):
             continue
         routes = m.get("routes")
-        if routes:
+        if routes or "filter" in m:
             return True
     return False
 
@@ -761,17 +860,26 @@ def _make_seq(modules: list, nodes: dict, ctr: dict, report: list[dict],
     for mod in reversed([m for m in modules if isinstance(m, dict)]):
         if mod.get("routes"):
             nxt = _make_router(mod.get("routes"), nodes, ctr, report, nxt)
-            continue
-        nid = f"n{ctr['i']}"
-        ctr["i"] += 1
-        step = _step_from_module(mod)
-        fnode = _node_for_step(step, nid, nxt)
-        nodes[nid] = fnode
-        report.append({"step": step.name, "node": nid, "kind": fnode.kind,
-                       "fidelity": ("preserved" if fnode.kind == NODE_ACTION else "approximated"),
-                       "note": ("connector call -> action node" if fnode.kind == NODE_ACTION
-                                else "no single-tool mapping -> agent step")})
-        nxt = nid
+        else:
+            nid = f"n{ctr['i']}"
+            ctr["i"] += 1
+            step = _step_from_module(mod)
+            fnode = _node_for_step(step, nid, nxt)
+            nodes[nid] = fnode
+            report.append({"step": step.name, "node": nid, "kind": fnode.kind,
+                           "fidelity": ("preserved" if fnode.kind == NODE_ACTION else "approximated"),
+                           "note": ("connector call -> action node" if fnode.kind == NODE_ACTION
+                                    else "no single-tool mapping -> agent step")})
+            nxt = nid
+        predicate = make_predicate(mod)
+        if predicate is not None:
+            bid = f"n{ctr['i']}_guard"
+            ctr["i"] += 1
+            _merge_nodes(nodes, branches(predicate, bid, nxt, join, "module filter"))
+            report.append({"step": "module filter", "node": bid, "kind": NODE_BRANCH,
+                           "fidelity": "preserved",
+                           "note": "Make module filter -> complete OR-of-AND branch guards"})
+            nxt = bid
     return nxt
 
 
@@ -796,8 +904,9 @@ def _make_route_flow(route: dict, idx: int, report: list[dict]) -> Flow | None:
     # coarse approval before the parallel container, so validate this fragment
     # under inherited authorization without putting an unresumable approval in
     # the branch itself.
-    return None if _has_blocking_draft_errors(
-        flow, inherited_approval=True) else flow
+    if _has_blocking_draft_errors(flow, inherited_approval=True):
+        raise repair("Make route has invalid or unsafe steps")
+    return flow
 
 
 def _make_router(routes: list, nodes: dict, ctr: dict, report: list[dict],
@@ -827,7 +936,7 @@ def _make_router(routes: list, nodes: dict, ctr: dict, report: list[dict],
 def _make_to_flow(automation: ImportedAutomation, report: list[dict]) -> Flow | None:
     """Lower a Make scenario's blueprint, preserving ``BasicRouter`` routes as real
     ``branch`` nodes instead of the flat ``_flatten_flow`` inlining. Returns
-    ``None`` when there's no router (flat fallback suffices) or the blueprint isn't
+    ``None`` when there's no router or filter (flat fallback suffices) or the blueprint isn't
     usable (caller falls back to the linear lowering)."""
     from .make import _unwrap
     raw = automation.raw if isinstance(automation.raw, dict) else {}
@@ -838,7 +947,7 @@ def _make_to_flow(automation: ImportedAutomation, report: list[dict]) -> Flow | 
     if not isinstance(flow_list, list) or len(flow_list) < 2:
         return None
     modules = flow_list[1:]                       # drop the trigger module
-    if not _has_router(modules):
+    if not _needs_make_structure(modules):
         return None
     ctr = {"i": 0}
     nodes: dict[str, FlowNode] = {}
@@ -849,8 +958,7 @@ def _make_to_flow(automation: ImportedAutomation, report: list[dict]) -> Flow | 
                 start=start, nodes=nodes)
     flow = _govern_imported(flow, report)
     if _has_blocking_draft_errors(flow):
-        report.clear()
-        return None
+        raise repair("Make workflow has invalid or unsafe steps")
     return flow
 
 

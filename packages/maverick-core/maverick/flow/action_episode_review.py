@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 import re
 import time
@@ -39,6 +40,8 @@ MAX_RETENTION_SECONDS = 604800
 # Their JSON depth is distinct from the unchanged eight-level business limit.
 _METADATA_DEPTH = 24
 _RECORDS = GovernedRecordStore("flow_action_episodes", "LAE", "flow_action_episode")
+_EXPIRY_CURSORS: dict[str, str] = {}
+log = logging.getLogger(__name__)
 _CALL_ID = re.compile(r"[0-9a-f]{24}\Z")
 _META = ("schema", "id", "binding", "contract_sha256", "enrollment_sha256", "retain_until",
          "status", "reason", "completed_steps", "planned_steps", "episode_sha256", "payload_revision")
@@ -159,6 +162,56 @@ def _contract(allowed_tools, input_schema, tool_data_schemas):
 
 def _identifier(tenant, flow_id, run_id):
     return "LAE-" + digest({"tenant": tenant, "flow_id": flow_id, "run_id": run_id})[:32]
+
+
+def _retention_due(row, tenant, now):
+    binding = row.get("binding")
+    expiry = row.get("retain_until")
+    return (row.get("schema") == SCHEMA and isinstance(binding, dict)
+            and binding.get("tenant_sha256") == digest(tenant)
+            and row.get("id") == _identifier(tenant, binding.get("flow_id"), binding.get("run_id"))
+            and type(expiry) in (int, float) and math.isfinite(expiry)
+            and now >= expiry and row.get("status") != "expired")
+
+
+def _expire_retained_record(records, row, tenant, now):
+    """Erase expired ciphertext by tenant-bound CAS, without source access.
+
+    This maintenance transition cannot reveal or grant use of any payload. Its
+    existing hash-only audit outbox is preserved even if delivery is pending.
+    """
+    if not _retention_due(row, tenant, now):
+        return row
+
+    def expire(current):
+        if not _retention_due(current, tenant, now):
+            raise RecordConflict("capture retention changed before expiry")
+        current.pop("sensitive_envelope", None)
+        current.update(status="expired", reason="retention_expired", payload_revision=current["revision"] + 1)
+
+    return records.update(row["id"], expire, expected_revision=row["revision"],
+                          action="action_episode_expired", actor="flow retention") or row
+
+
+def expire_retained(*, now=None) -> int:
+    """Sweep a bounded rotating page in the current tenant without loading flows."""
+    tenant = current_tenant_id_strict()
+    tenant_key = digest(tenant)
+    now = _number(time.time() if now is None else now, "retention clock")
+    count = 0
+    for cursor, identity in _RECORDS.iter_record_ids(
+            start_after=_EXPIRY_CURSORS.get(tenant_key, ""), limit=MAX_RECORDS):
+        _EXPIRY_CURSORS[tenant_key] = cursor
+        try:
+            row = _RECORDS.get(identity)
+            if row is not None and _retention_due(row, tenant, now):
+                expired = _expire_retained_record(_RECORDS, row, tenant, now)
+                count += expired.get("status") == "expired"
+        except RecordConflict:
+            continue  # A later pass observes the winning revision.
+        except Exception as exc:
+            log.warning("Expired action evidence %s could not be erased (%s)", identity, type(exc).__name__)
+    return count
 
 
 def _binding(ctx, run, pinned):
@@ -444,6 +497,7 @@ class ActionEpisodeReviewService:
         row = self.records.get(_identifier(ctx.tenant, flow_id, run_id))
         if row is None:
             raise LookupError("action episode is unavailable")
+        row = _expire_retained_record(self.records, row, ctx.tenant, self.clock())
         payload = _open(ctx, row)
         # Ownership is mandatory before recovery, but an edited historical source
         # must not strand the already committed hash-only audit outbox.
@@ -457,9 +511,7 @@ class ActionEpisodeReviewService:
         if payload is not None:
             _validate_teaching_capture(row, payload, run, pinned)
         if row["status"] != "expired" and self.clock() >= row["retain_until"]:
-            if not row.get("_audit_pending"):
-                row = self._commit(ctx, row, None, status="expired", reason="retention_expired",
-                                   action="action_episode_expired", capability=capability)
+            row = _expire_retained_record(self.records, row, ctx.tenant, self.clock())
             payload = None
         elif (reconcile and not row.get("_audit_pending")
               and row["status"] in {"enrolled", "capturing", "paused"}):

@@ -135,11 +135,10 @@ def _runner_accepts_wall(runner: AgentRunner) -> bool:
 def _call_agent(runner: AgentRunner, brief: str, data: dict, wall: float,
                 flow_id: str = "", node_id: str = "", revision: str = "",
                 cohort: str = "", run_id: str = "") -> tuple:
-    """Invoke an agent runner, bounding its wall-clock to a node ``timeout`` when
-    set so a timed-out node's underlying goal self-terminates near the point the
-    flow gives up waiting -- instead of running on to its default cap, still
-    spending budget after the flow moved on. Injected 2-arg test runners that
-    don't accept ``wall`` are called plainly. Publishes the current node id on a
+    """Invoke an agent runner with a node ``timeout`` as its goal's wall-clock
+    allowance. The flow waits for the result; it does not abandon running work.
+    Action nodes do not apply this allowance. Injected 2-arg runners that do not
+    accept ``wall`` are called plainly. Publishes the current node id on a
     ContextVar so the production runner can attribute its goal's tools to it."""
     token = _active_node.set((flow_id, node_id, revision, cohort))
     value_token = _active_value_run.set(run_id)
@@ -500,9 +499,8 @@ def default_agent_runner(
         gid = world.create_goal(str(brief)[:200], str(brief)[:8000], owner=owner)
         if _active_value_run.get():
             world.record_goal_origin(gid, "flow_run", _active_value_run.get())
-        # A per-node timeout bounds this goal's wall so a timed-out node's goal
-        # self-terminates instead of running to the default cap after the flow
-        # gave up on it (kernel rule 3 still holds -- this only ever lowers it).
+        # A per-node timeout lowers this goal's own wall allowance. The flow
+        # waits for its result; the goal enforces the lower cap (kernel rule 3).
         ws = clamp_task_limit(budget_wall_seconds, configured_max_wall_seconds())
         ws = clamp_task_limit(wall if wall and wall > 0 else None, ws)
         dollars = clamp_task_limit(budget_dollars, configured_max_dollars())
