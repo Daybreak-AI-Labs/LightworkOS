@@ -53,6 +53,31 @@ def test_search_api_candidates_require_the_requested_host(monkeypatch):
     assert records and previews == ["openapi_runner"] and "Found" in out
 
 
+@pytest.mark.parametrize("base_url,spec_url,reason", [
+    ("http://api.example", "http://api.example/openapi.json", "https"),
+    ("https://api.example", "https://api.example:8443/openapi.json", "port"),
+    ("https://api.example", "https://other.example/openapi.json", "host was not the requested host"),
+    ("", "https://api.example/openapi.json", "no base_url"),
+])
+def test_unverified_api_candidate_says_what_is_wrong(monkeypatch, base_url, spec_url, reason):
+    from maverick.tools import learn
+
+    discovery = SimpleNamespace(probe_openapi_spec=lambda _: spec_url,
+                                discover_openapi_spec=lambda **_: spec_url, record=lambda *a, **k: None)
+
+    async def run_tool(_name, _args):
+        return "search result"
+
+    agent = SimpleNamespace(name="fixture", tools=SimpleNamespace(all=lambda: [
+        SimpleNamespace(name="web_search")]), _run_tool=run_tool)
+    monkeypatch.setattr("maverick.tenant.egress.egress_allowed", lambda *_: True)
+    out = asyncio.run(learn._op_find_api(
+        agent, SimpleNamespace(post=lambda *_: None), discovery, {"base_url": base_url}, "catalog"))
+    assert out.startswith("Unverified OpenAPI candidate") and reason in out
+    if reason != "host was not the requested host":
+        assert "host was not the requested host" not in out
+
+
 def test_robots_multiple_agents_and_allow_rules(monkeypatch):
     from maverick.tools import _ssrf, http_fetch
 

@@ -157,12 +157,12 @@ async def _op_find_api(agent: Agent, bb, self_learning, args: dict, need: str) -
             "params={...} headers={...}\n"
             f"Need: {need or '(unspecified)'}"
         )
-    if not _spec_matches_requested_host(base_url, spec_url):
+    problem = _spec_host_problem(base_url, spec_url)
+    if problem:
         return (
             f"Unverified OpenAPI candidate: {spec_url}\n"
-            "It was fetched for validation but not saved or previewed because its host "
-            "was not the requested host. "
-            "Ask the operator to verify the service and supply its base_url before retrying."
+            f"It was fetched for validation but not saved or previewed because {problem}. "
+            "Ask the operator to verify the service and supply its https base_url before retrying."
         )
     self_learning.record(need or base_url, "api", spec_url, source=spec_url)
     bb.post(agent.name, "observation", f"found API spec: {spec_url}")
@@ -184,23 +184,29 @@ async def _op_find_api(agent: Agent, bb, self_learning, args: dict, need: str) -
     return msg
 
 
-def _spec_matches_requested_host(base_url: str, spec_url: str) -> bool:
+def _spec_host_problem(base_url: str, spec_url: str) -> str | None:
+    """Why a found spec cannot be saved for the requested service, or None."""
     from urllib.parse import urlparse
 
     if not base_url:
-        return False
+        return "no base_url was given, so its host could not be checked"
     try:
         requested = urlparse(base_url if "://" in base_url else f"https://{base_url}")
         candidate = urlparse(spec_url)
-        return bool(
-            requested.hostname and candidate.hostname == requested.hostname
-            and candidate.scheme == requested.scheme == "https"
-            and (candidate.port or 443) == (requested.port or 443)
-            and not candidate.username and not candidate.password
-            and not requested.username and not requested.password
-        )
+        if (candidate.username or candidate.password
+                or requested.username or requested.password):
+            return "a URL carries embedded credentials"
+        if requested.scheme != "https":
+            return f"the requested base_url is {requested.scheme or 'schemeless'}, not https; only specs served over https are saved"
+        if candidate.scheme != "https":
+            return "the spec URL is not https"
+        if not requested.hostname or candidate.hostname != requested.hostname:
+            return "its host was not the requested host"
+        if (candidate.port or 443) != (requested.port or 443):
+            return "its port was not the requested port"
     except ValueError:
-        return False
+        return "its URL could not be parsed"
+    return None
 
 
 async def _dispatch_learn_op(agent: Agent, ctx, args: dict) -> str:
