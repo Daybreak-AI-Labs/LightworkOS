@@ -6374,6 +6374,37 @@ def record_verify(capsule: str, pubkeys: tuple[str, ...], trusted_file: str | No
 
 
 
+def _write_private_export(output, text: str) -> None:
+    """Write an export file as a new 0600 file, never through a final symlink.
+
+    The parent directory is resolved first, so a symlinked parent (``/tmp`` on
+    macOS, ``-o link/out.json``) is fine; the final component is replaced
+    atomically, so an existing file's mode or a symlink there is not kept. A
+    path that is not a regular file or directory (a FIFO, a device) is written
+    in place, and ``-``, ``/dev/stdout`` and ``/dev/stderr`` go to that stream:
+    replacing them atomically would replace the ``/dev`` entry itself when the
+    stream is redirected to a file.
+    """
+    import stat as _stat
+
+    from ..file_lock import atomic_write_text
+
+    if str(output) in ("-", "/dev/stdout", "/dev/stderr"):
+        click.echo(text, nl=False, err=str(output) == "/dev/stderr")
+        return
+    given = Path(output)
+    target = given.parent.resolve() / given.name
+    try:
+        mode = os.stat(target).st_mode
+    except FileNotFoundError:
+        mode = None
+    if mode is not None and not (_stat.S_ISREG(mode) or _stat.S_ISDIR(mode)):
+        with open(target, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        return
+    atomic_write_text(target, text, mode=0o600)
+
+
 @main.command("export-user")
 @click.option("--channel", required=True, help="Channel name.")
 @click.option("--user", required=True, help="The channel user_id to export.")
@@ -6446,10 +6477,7 @@ def export_user(ctx, channel: str, user: str, output) -> None:
         # co-tenant can't read it, and fail cleanly instead of dumping a
         # traceback on a bad/unwritable path.
         try:
-            from ..file_lock import atomic_write_text
-            # Atomic replace: a new 0600 file even over an existing
-            # file or a symlink, never its old mode or target.
-            atomic_write_text(output, payload, mode=0o600)
+            _write_private_export(output, payload)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"exported to {output}")

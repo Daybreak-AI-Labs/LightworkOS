@@ -198,3 +198,33 @@ def test_dsar_export_output_is_private_even_over_an_existing_file(tmp_path):
     assert json.loads(output.read_text(encoding="utf-8"))["subject"]["user_id"] == "alice"
     if os.name != "nt":
         assert output.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privileges on Windows")
+def test_dsar_export_output_through_a_symlinked_parent_but_not_a_symlinked_file(tmp_path):
+    _seed_world()
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real, target_is_directory=True)
+    result = CliRunner().invoke(
+        main, ["dsar", "export", "--user", "alice", "--output", str(tmp_path / "link" / "out.json")])
+    assert result.exit_code == 0, result.output
+    assert (real / "out.json").stat().st_mode & 0o777 == 0o600
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep", encoding="utf-8")
+    (real / "trap.json").symlink_to(victim)
+    result = CliRunner().invoke(
+        main, ["dsar", "export", "--user", "alice", "--output", str(real / "trap.json")])
+    assert result.exit_code == 0, result.output
+    assert victim.read_text(encoding="utf-8") == "keep"
+    assert not (real / "trap.json").is_symlink()
+
+
+def test_dsar_export_output_to_dev_stdout_writes_the_stream():
+    _seed_world()
+    result = CliRunner().invoke(
+        main, ["dsar", "export", "--user", "alice", "--json", "--output", "/dev/stdout"])
+    assert result.exit_code == 0, result.output
+    bundle, _end = json.JSONDecoder().raw_decode(result.output)
+    assert bundle["subject"]["user_id"] == "alice"

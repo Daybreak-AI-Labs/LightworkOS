@@ -106,10 +106,8 @@ def ropa_cmd(fmt: str, output) -> None:
     payload = render_ropa_json(record) if fmt == "json" else render_ropa_text(record)
     if output:
         try:
-            from ..file_lock import atomic_write_text
-            # Atomic replace: a new 0600 file even over an existing
-            # file or a symlink, never its old mode or target.
-            atomic_write_text(output, payload + "\n", mode=0o600)
+            from . import _write_private_export
+            _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"wrote {output}")
@@ -294,10 +292,8 @@ def dpia_cmd(fmt: str, output) -> None:
     payload = render_dpia_json(dpia) if fmt == "json" else render_dpia_text(dpia)
     if output:
         try:
-            from ..file_lock import atomic_write_text
-            # Atomic replace: a new 0600 file even over an existing
-            # file or a symlink, never its old mode or target.
-            atomic_write_text(output, payload + "\n", mode=0o600)
+            from . import _write_private_export
+            _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"wrote {output}")
@@ -598,10 +594,8 @@ def dsar_export(user_id: str, tenant: str | None, output, compact: bool) -> None
         # co-tenant can't read it, and fail cleanly instead of dumping a
         # traceback on a bad/unwritable path.
         try:
-            from ..file_lock import atomic_write_text
-            # Atomic replace: a new 0600 file even over an existing
-            # file or a symlink, never its old mode or target.
-            atomic_write_text(output, payload, mode=0o600)
+            from . import _write_private_export
+            _write_private_export(output, payload)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"exported to {output}")
@@ -1253,10 +1247,8 @@ def ai_literacy_export(output) -> None:
         raise click.ClickException(str(e)) from e
     if output:
         try:
-            from ..file_lock import atomic_write_text
-            # Atomic replace: a new 0600 file even over an existing
-            # file or a symlink, never its old mode or target.
-            atomic_write_text(output, payload + "\n", mode=0o600)
+            from . import _write_private_export
+            _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
         click.echo(f"wrote {output}")
