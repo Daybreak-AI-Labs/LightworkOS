@@ -398,6 +398,13 @@ def test_the_approver_sees_every_recipient_and_no_message_content():
     assert "#x@evil.com" in shown and "SECRET" not in shown and "1017" not in shown and whole
 
 
+def test_message_text_that_starts_with_a_bracket_is_content_not_a_hidden_destination():
+    shown, whole = ifc.shown_destination({"to": "a@b.com", "subject": "[JIRA-12] build broke"})
+    assert shown == 'to="a@b.com"' and whole
+    shown, whole = ifc.shown_destination({"to": "a@b.com", "body": '{"attendees": ["x@y"]}'})
+    assert "x@y" not in shown and not whole      # a parsed JSON body is still inspected
+
+
 def test_a_destination_too_long_to_show_is_never_remembered():
     many = {"to": [f"user{i}@example.com" for i in range(301)], "body": "x"}
     t = _tracker(mode="approve")
