@@ -501,6 +501,7 @@ def test_saga_records_failed_compensation():
     assert result.committed is False
     assert [(r.step, r.ok) for r in result.compensated] == [("hold", False)]
     assert "RuntimeError" in result.compensated[0].detail
+    assert "rolled back 0 of 1" in result.reason
 
 
 # -- run-path wiring -------------------------------------------------------

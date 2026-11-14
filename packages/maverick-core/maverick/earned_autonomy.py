@@ -1000,7 +1000,9 @@ def run_saga(steps: list[SagaStep] | tuple[SagaStep, ...], *,
             )
             return SagaResult(
                 False, results=tuple(r for _, r in done), compensated=compensated,
-                reason=f"step {step.name!r} failed; rolled back {len(compensated)} step(s)")
+                reason=(f"step {step.name!r} failed (not compensated); rolled back "
+                        f"{sum(1 for r in compensated if r.ok)} of "
+                        f"{len(compensated)} earlier step(s)"))
     return SagaResult(True, results=tuple(r for _, r in done))
 
 
