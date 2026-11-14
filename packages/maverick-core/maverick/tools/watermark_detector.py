@@ -40,20 +40,27 @@ def _category(cp: int) -> str | None:
 _HOMOGLYPHS = set("аеорсхуАВЕКМНОРСТХ" "οατνρ")  # Cyrillic + a few Greek
 
 
-def _emoji_part(ch: str) -> bool:
-    """A symbol, emoji modifier or presentation selector that emoji use."""
-    return unicodedata.category(ch) in ("So", "Sk") or ch in "\ufe0e\ufe0f"
+def _emoji_base(ch: str) -> bool:
+    """A symbol or emoji modifier (not a selector) that can start an emoji."""
+    return bool(ch) and unicodedata.category(ch) in ("So", "Sk")
 
 
 def _emoji_use(text: str, i: int) -> bool:
-    """True when the invisible char at ``i`` is ordinary emoji syntax."""
+    """True when the invisible char at ``i`` is ordinary emoji syntax.
+
+    A selector counts only directly after its base character (one per base),
+    so a run of selectors after one symbol is still reported. A joiner counts
+    between a base (optionally with its one selector) and the next base.
+    """
     cp = ord(text[i])
     prev = text[i - 1] if i > 0 else ""
     if cp in (0xFE0E, 0xFE0F):
-        return bool(prev) and (_emoji_part(prev) or prev in "0123456789#*")
+        return _emoji_base(prev) or (bool(prev) and prev in "0123456789#*")
     if cp == 0x200D:
         nxt = text[i + 1] if i + 1 < len(text) else ""
-        return bool(prev) and bool(nxt) and _emoji_part(prev) and _emoji_part(nxt)
+        if prev in ("\ufe0e", "\ufe0f") and i > 1:
+            prev = text[i - 2]
+        return _emoji_base(prev) and _emoji_base(nxt)
     return False
 
 
