@@ -36,6 +36,8 @@ _ASYMMETRIC_ALGS = frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS51
 def _b64url_decode(seg: str) -> bytes:
     # urlsafe_b64decode silently drops characters outside the alphabet, so a
     # tampered segment would still decode (and a signature still verify).
+    # Some issuers emit "=" padding; accept it, then require the alphabet.
+    seg = seg.rstrip("=")
     if not set(seg) <= _B64URL_CHARS:
         raise binascii.Error("non-base64url character")
     pad = "=" * (-len(seg) % 4)

@@ -128,3 +128,12 @@ def test_lenient_inputs_are_not_reported_valid():
     h, p, sig = good.split(".")
     assert _i(f"{h}.{p}.{sig[:4]}!!{sig[4:]}", now=1000, secret="topsecret").startswith("INVALID")
     assert "unrecognised alg hs256" in _i(_make({"alg": "hs256"}, {"sub": "u"}), now=1000, secret="s")
+
+
+def test_padded_segments_still_decode():
+    tok = _make({"alg": "HS256"}, {"sub": "u", "exp": 2000}, secret="topsecret")
+    h, p, sig = tok.split(".")
+    pad = lambda seg: seg + "=" * (-len(seg) % 4)  # noqa: E731
+    out = _i(f"{pad(h)}.{pad(p)}.{sig}", now=1000)
+    assert out.startswith("UNVERIFIED") and "sub=u" in out
+    assert _i(f"{h}.{p}.{pad(sig)}", now=1000, secret="topsecret").startswith("VALID")
