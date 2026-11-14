@@ -642,6 +642,22 @@ def suites_for_domain(name: str, profile: DomainProfile | None = None) -> frozen
     )
 
 
+_SUITES_UNREADABLE = ("Department agents are turned off because the configuration "
+                      "could not be read; fix the configuration file to restore them.")
+
+
+def suites_unavailable_reason() -> str | None:
+    """Why every suite is off, when it is because configuration could not be
+    read (the plain sentence to show instead of "unknown agent"); else None."""
+    try:
+        from .config import config_source_errors, load_config
+        load_config()
+        unreadable = bool(config_source_errors(include_tenant=True))
+    except Exception:
+        unreadable = True
+    return _SUITES_UNREADABLE if unreadable else None
+
+
 def _disabled_suites(cfg: dict | None = None) -> set[str]:
     """Suites turned OFF in the ``[suites]`` table (``suite = false``).
 
@@ -657,6 +673,8 @@ def _disabled_suites(cfg: dict | None = None) -> set[str]:
             # Unreadable TOML loads as defaults; a suite the operator turned
             # off must not come back on, so every suite stays off instead.
             if config_source_errors(include_tenant=True):
+                import logging
+                logging.getLogger(__name__).warning("%s", _SUITES_UNREADABLE)
                 return every_suite
         table = cfg.get("suites") or {}
     except Exception:

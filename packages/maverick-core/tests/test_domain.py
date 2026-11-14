@@ -562,3 +562,5 @@ def test_unreadable_config_keeps_every_suite_off(tmp_path, monkeypatch):
     cfg.write_text('[suites]\ncapital_markets = false\nbroken = [\n', encoding="utf-8")
     monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
     assert _disabled_suites() == set(SUITE_PREFIXES.values())
+    from maverick.domain import suites_unavailable_reason
+    assert "could not be read" in suites_unavailable_reason()
