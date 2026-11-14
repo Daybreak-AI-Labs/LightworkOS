@@ -477,41 +477,8 @@ class OpenAIClient:
         price_model_prefix: str = "",
         usage_required: bool = True,
     ) -> LLMResponse:
-        if not getattr(resp, "choices", None):
-            # Some OpenAI-compatible gateways (and OpenAI/Azure content-filter)
-            # return an empty ``choices`` list on an upstream/filter error. An
-            # unguarded ``resp.choices[0]`` would raise a cryptic IndexError that
-            # propagates out of Agent.run(); surface a clear, actionable message.
-            raise RuntimeError(
-                "OpenAI-compatible provider returned no choices "
-                "(empty response — content filter or upstream gateway error)"
-            )
-        choice = resp.choices[0]
-        text = choice.message.content or ""
-        # DeepSeek reasoner and Gemini-thinking (via the OpenAI-compat shim)
-        # return the chain-of-thought in a separate reasoning_content field,
-        # never in content. Hard-coding thinking=None discarded it entirely.
-        thinking = getattr(choice.message, "reasoning_content", None) or None
-        tool_calls: list[ToolCall] = []
-        if getattr(choice.message, "tool_calls", None):
-            for tc in choice.message.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except (json.JSONDecodeError, AttributeError):
-                    # Truncated (length-capped) or malformed tool arguments from
-                    # a weak model behind vllm/tgi/openrouter. Running the tool
-                    # with {} silently can do the wrong thing, so surface it
-                    # rather than swallowing it without a trace.
-                    args = {}
-                    log.warning(
-                        "tool call %r had unparseable arguments; running with {} "
-                        "(raw=%.200r)",
-                        scrub(str(getattr(tc.function, "name", "?") or "?")),
-                        scrub(str(getattr(tc.function, "arguments", None) or "")),
-                    )
-                tool_calls.append(ToolCall(
-                    id=tc.id, name=tc.function.name, input=args,
-                ))
+        # Record usage first: the call is paid even when its content cannot
+        # be parsed below, and a parse error must not skip the charge.
         if budget is not None:
             usage = getattr(resp, "usage", None)
             if not usage and usage_required:
@@ -571,6 +538,43 @@ class OpenAIClient:
                 cache_read_tok=cache_read_tok,
                 cache_read_mult=cls.CACHE_READ_MULT,
             )
+        if not getattr(resp, "choices", None):
+            # Some OpenAI-compatible gateways (and OpenAI/Azure content-filter)
+            # return an empty ``choices`` list on an upstream/filter error. An
+            # unguarded ``resp.choices[0]`` would raise a cryptic IndexError that
+            # propagates out of Agent.run(); surface a clear, actionable message.
+            raise RuntimeError(
+                "OpenAI-compatible provider returned no choices "
+                "(empty response — content filter or upstream gateway error)"
+            )
+        choice = resp.choices[0]
+        text = choice.message.content or ""
+        # DeepSeek reasoner and Gemini-thinking (via the OpenAI-compat shim)
+        # return the chain-of-thought in a separate reasoning_content field,
+        # never in content. Hard-coding thinking=None discarded it entirely.
+        thinking = getattr(choice.message, "reasoning_content", None) or None
+        tool_calls: list[ToolCall] = []
+        if getattr(choice.message, "tool_calls", None):
+            for tc in choice.message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    args = None
+                if not isinstance(args, dict):
+                    # Truncated (length-capped), malformed or non-object tool
+                    # arguments from a weak model behind vllm/tgi/openrouter.
+                    # Running the tool with {} silently can do the wrong thing,
+                    # so surface it rather than swallowing it without a trace.
+                    args = {}
+                    log.warning(
+                        "tool call %r had unparseable arguments; running with {} "
+                        "(raw=%.200r)",
+                        scrub(str(getattr(tc.function, "name", "?") or "?")),
+                        scrub(str(getattr(tc.function, "arguments", None) or "")),
+                    )
+                tool_calls.append(ToolCall(
+                    id=tc.id, name=tc.function.name, input=args,
+                ))
         # Map finish_reason to Anthropic stop_reason vocab so consumers that
         # check Anthropic values (e.g., 'tool_use', 'end_turn') branch correctly.
         raw_reason = choice.finish_reason or "stop"
