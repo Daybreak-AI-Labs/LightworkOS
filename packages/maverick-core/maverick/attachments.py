@@ -409,15 +409,13 @@ def s3_mirror_enabled() -> bool:
 
 
 def _s3_client():
-    import boto3  # the [s3] extra; lazy so the default path never imports it
-    kwargs = {}
-    endpoint = os.environ.get("AWS_ENDPOINT_URL", "").strip()
-    if endpoint:
-        kwargs["endpoint_url"] = endpoint
-    region = os.environ.get("AWS_REGION", "").strip()
-    if region:
-        kwargs["region_name"] = region
-    return boto3.client("s3", **kwargs)
+    # The [s3] extra; lazy so the default path never imports it. The endpoint
+    # is checked against the egress policy before any credential provider
+    # runs, and path-style addressing keeps requests on the checked host.
+    from botocore.config import Config
+
+    from .tools._sdk_egress import aws_client
+    return aws_client("s3", "s3", config=Config(s3={"addressing_style": "path"}))
 
 
 def _s3_key(goal_id: int, name: str) -> str:
