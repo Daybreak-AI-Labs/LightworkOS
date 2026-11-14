@@ -84,6 +84,16 @@ def test_web_search_forced_backend_skipped_if_no_creds(monkeypatch):
     assert "ERROR" in out
 
 
+def test_web_search_unknown_forced_backend_is_refused(monkeypatch):
+    """A misspelt forced backend must not silently fall through to all four."""
+    import maverick.tools.web_search as ws
+    monkeypatch.setenv("MAVERICK_SEARCH_BACKEND", "tavilly")
+    monkeypatch.setattr(ws, "_try_duckduckgo", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("fell through to DuckDuckGo")))
+    out = ws.web_search().fn({"query": "test"})
+    assert out.startswith("ERROR") and "tavilly" in out
+
+
 def test_web_search_site_filter(monkeypatch):
     """site arg should add 'site:' to the query."""
     monkeypatch.setenv("TAVILY_API_KEY", "k")
