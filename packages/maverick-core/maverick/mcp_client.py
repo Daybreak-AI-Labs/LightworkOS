@@ -248,7 +248,8 @@ _DENY_SHELL_METAS = (";", "|", "&", "$(", "`", ">", "<")
 
 
 def _validate_http_spec(spec: MCPServerSpec) -> None:
-    """Validate a remote (HTTP) MCP server spec: scheme + no control chars.
+    """Validate a remote (HTTP) MCP server spec: scheme + no control chars, and
+    https:// (or a loopback host) whenever a credential is configured.
 
     The url is operator config (not model-controlled), so this is a sanity
     guard, not an SSRF defense -- it rejects obvious mistakes (non-http schemes,
@@ -266,6 +267,25 @@ def _validate_http_spec(spec: MCPServerSpec) -> None:
     if spec.oauth and parsed.scheme != "https":
         raise ValueError(
             f"MCP server {spec.name!r} url must be https:// when oauth is configured; got {url!r}")
+    has_credential = bool(spec.auth_token) or any(
+        str(k).strip().lower() == "authorization" for k in (spec.headers or {}))
+    if has_credential and parsed.scheme != "https" and not _is_loopback_host(parsed.hostname):
+        raise ValueError(
+            f"MCP server {spec.name!r} sends a token or Authorization header, which "
+            f"plain http:// would expose on the network: change the url to https:// "
+            f"(or point it at localhost); got {url!r}")
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    import ipaddress
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _validate_subprocess_inputs(spec: MCPServerSpec) -> None:
