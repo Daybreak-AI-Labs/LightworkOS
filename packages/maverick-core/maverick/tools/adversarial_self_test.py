@@ -18,6 +18,7 @@ import base64
 import re
 from typing import Any
 
+from ..flow.expressions import _REGEX_MAX_PATTERN, _regex_is_safe
 from . import Tool
 
 _LEET = str.maketrans({"a": "4", "e": "3", "i": "1", "o": "0", "s": "5", "t": "7"})
@@ -30,11 +31,30 @@ _SUFFIXES = [
 ]
 
 
+# Python's ``re`` has no match timeout and holds the GIL while it backtracks,
+# so a model-supplied pattern such as ``(a+)+$`` would freeze the whole
+# process. Patterns are limited to the flow engine's safe subset (at most one
+# quantifier, no nesting, alternation or counted repetition), and the output and
+# pattern count are capped so the remaining worst case stays bounded.
+_MAX_OUTPUT_CHARS = 8192
+_MAX_PATTERNS = 32
+
+
 def _probe(output: str, patterns: list[Any]) -> str:
+    if len(output) > _MAX_OUTPUT_CHARS:
+        return f"ERROR: output is too long to probe (max {_MAX_OUTPUT_CHARS} characters)"
+    if len(patterns) > _MAX_PATTERNS:
+        return f"ERROR: too many patterns (max {_MAX_PATTERNS})"
     matched: list[str] = []
     errors: list[str] = []
     for p in patterns:
         pat = str(p)
+        if len(pat) > _REGEX_MAX_PATTERN or not _regex_is_safe(pat):
+            errors.append(
+                f"{pat!r} (unsupported: use at most one quantifier, no alternation, "
+                "nested groups or counted repetition; split alternatives into separate patterns)"
+            )
+            continue
         try:
             rx = re.compile(pat, re.IGNORECASE)
         except re.error as e:
@@ -108,7 +128,8 @@ def adversarial_self_test() -> Tool:
         description=(
             "Adversarial self-test (red-team yourself), offline. op=probe with "
             "'output' and 'patterns' (regex strings the output must NOT emit) "
-            "returns CLEAN or FAIL with the matched patterns. op=mutate with "
+            "returns CLEAN or FAIL with the matched patterns (simple patterns "
+            "only: one quantifier, no alternation; output up to 8192 chars). op=mutate with "
             "'seed' returns deterministic injection-style mutations (base64 "
             "wrap, leetspeak, reversed, suffix injection) to probe defenses. "
             "Pure stdlib re + base64."
