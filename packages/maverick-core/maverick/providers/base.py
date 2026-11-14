@@ -108,6 +108,11 @@ def sdk_http_timeout(sdk: Any, *, environment=None) -> Any | None:
 # Output rate assumed when sizing a non-streamed request's read timeout: the
 # Anthropic SDK's own estimate (an hour per 128,000 output tokens).
 _SECONDS_PER_OUTPUT_TOKEN = 3600.0 / 128_000
+# Ceiling for that sized timeout: the Anthropic SDK refuses non-streamed calls
+# expected to exceed 10 minutes without an explicit timeout, so 15 minutes
+# covers every call it would send while keeping one stalled attempt (which
+# the retry layer may repeat) bounded.
+MAX_GENERATION_READ_TIMEOUT = 900.0
 
 
 def generation_timeout(sdk: Any, max_tokens: Any, *, environment=None) -> dict[str, Any]:
@@ -124,7 +129,7 @@ def generation_timeout(sdk: Any, max_tokens: Any, *, environment=None) -> dict[s
         tokens = int(max_tokens or 0)
     except (TypeError, ValueError):
         return {}
-    expected = tokens * _SECONDS_PER_OUTPUT_TOKEN
+    expected = min(tokens * _SECONDS_PER_OUTPUT_TOKEN, MAX_GENERATION_READ_TIMEOUT)
     if timeout is None or timeout.read is None or expected <= timeout.read:
         return {}
     sdk_timeout = getattr(sdk, "Timeout", None)

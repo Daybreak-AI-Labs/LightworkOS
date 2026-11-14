@@ -188,6 +188,8 @@ class AzureOpenAIClient(OpenAIClient):
         # we bypass it here, so wire it in manually or Azure calls can hang).
         from .base import sdk_http_timeout
         _timeout = sdk_http_timeout(openai, environment=environment)
+        # Non-streamed calls size their read timeout from the same settings.
+        self._timeout_environment = environment
         _extra = {"timeout": _timeout} if _timeout is not None else {}
         # OPENAI_ORG_ID / OPENAI_PROJECT_ID identify an OpenAI account and are
         # never sent to Azure. Empty sentinels block the SDK's own env read.

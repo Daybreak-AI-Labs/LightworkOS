@@ -35,3 +35,5 @@ def test_non_streamed_generation_gets_a_read_timeout_sized_to_max_tokens(monkeyp
                             max_tokens=max_tokens, model="claude-sonnet-4-5")
     assert sent[0]["timeout"].read >= 32_000 * 3600 / 128_000
     assert "timeout" not in sent[1]  # the configured 120 s already covers it
+    from maverick.providers.base import MAX_GENERATION_READ_TIMEOUT, generation_timeout
+    assert generation_timeout(__import__("anthropic"), 1_000_000)["timeout"].read == MAX_GENERATION_READ_TIMEOUT
