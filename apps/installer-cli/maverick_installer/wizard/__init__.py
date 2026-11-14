@@ -126,6 +126,7 @@ from .advanced import _local_first_model as _local_first_model
 from .advanced import _monthly_limit as _monthly_limit
 from .advanced import _pick_action_recipe_lineage as _pick_action_recipe_lineage
 from .advanced import _pick_agent_budget_reporting as _pick_agent_budget_reporting
+from .advanced import _pick_approval_url as _pick_approval_url
 from .advanced import _pick_client_id as _pick_client_id
 from .advanced import _pick_codebase as _pick_codebase
 from .advanced import _pick_data_protection_toggles as _pick_data_protection_toggles
@@ -2053,8 +2054,6 @@ def pick_flows() -> dict[str, Any]:
         "the dashboard needs its externally-reachable base URL. Leave blank to "
         "skip -- approvals then happen from the dashboard.[/dim]"
     )
-    from .advanced import _pick_approval_url
-
     url = _pick_approval_url("Public base URL for approval links (e.g. https://ops.acme.com)")
     if url:
         out["public_url"] = url
