@@ -157,6 +157,12 @@ async def _op_find_api(agent: Agent, bb, self_learning, args: dict, need: str) -
             "params={...} headers={...}\n"
             f"Need: {need or '(unspecified)'}"
         )
+    if not _spec_matches_requested_host(base_url, spec_url):
+        return (
+            f"Unverified OpenAPI candidate: {spec_url}\n"
+            "It was not saved or opened because its host was not the requested host. "
+            "Ask the operator to verify the service and supply its base_url before retrying."
+        )
     self_learning.record(need or base_url, "api", spec_url, source=spec_url)
     bb.post(agent.name, "observation", f"found API spec: {spec_url}")
     ops_preview = ""
@@ -175,6 +181,25 @@ async def _op_find_api(agent: Agent, bb, self_learning, args: dict, need: str) -
         "op_id=<id> params={...} headers={...} (headers for auth)."
     )
     return msg
+
+
+def _spec_matches_requested_host(base_url: str, spec_url: str) -> bool:
+    from urllib.parse import urlparse
+
+    if not base_url:
+        return False
+    try:
+        requested = urlparse(base_url if "://" in base_url else f"https://{base_url}")
+        candidate = urlparse(spec_url)
+        return bool(
+            requested.hostname and candidate.hostname == requested.hostname
+            and candidate.scheme == requested.scheme == "https"
+            and (candidate.port or 443) == (requested.port or 443)
+            and not candidate.username and not candidate.password
+            and not requested.username and not requested.password
+        )
+    except ValueError:
+        return False
 
 
 async def _dispatch_learn_op(agent: Agent, ctx, args: dict) -> str:
@@ -215,8 +240,8 @@ def learn_capability(agent: Agent) -> Tool:
             "to do the task. op=search to find existing skills; "
             "op=acquire_skill to install one; op=create_tool to generate a new "
             "tool from a description (persists for future runs); op=find_api to "
-            "discover an API's OpenAPI spec (pass base_url or let it web-search) "
-            "and drive it via openapi_runner. Catalog MCP acquisition is "
+            "discover an API's OpenAPI spec. Pass base_url to save matching-host "
+            "results; web-search alone returns unverified candidates. Catalog MCP acquisition is "
             "unavailable until publisher authentication exists. Prefer search first."
         ),
         input_schema={
@@ -248,7 +273,7 @@ def learn_capability(agent: Agent) -> Tool:
                     "type": "string",
                     "description": "find_api: the service's base URL (e.g. "
                                    "https://api.example.com) to probe for an "
-                                   "OpenAPI spec. Optional — omit to web-search.",
+                                   "OpenAPI spec. Omit only to search for unverified candidates.",
                 },
             },
             "required": ["op"],
