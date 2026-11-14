@@ -230,9 +230,12 @@
   async function openRegister() {
     var form = document.getElementById("nca-register-form");
     var select = form.elements.public_client_ref;
+    select.replaceChildren();
     try {
-      var result = await request(clientsBase, "?limit=500", null, false);
-      var items = (Array.isArray(result.items) ? result.items : []).filter(function (c) {
+      var clients = await CW.publicClients(function (path) {
+        return request(clientsBase, path, null, false);
+      });
+      var items = clients.filter(function (c) {
         return c.status === "active" && c.client_kind === "service" && c.target_bundle_id;
       });
       CW.fill(select, items.map(function (c) {
@@ -243,6 +246,7 @@
       }
     } catch (error) {
       fail(error, "load your app keys");
+      return;
     }
     CW.open(form, "select");
   }

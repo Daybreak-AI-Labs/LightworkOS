@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from maverick_dashboard.consent_public_api import (
     PublicConsentCredentialError,
     PublicConsentCredentialStore,
 )
+from starlette.requests import Request
 
 client = TestClient(app, base_url="http://127.0.0.1", headers={"Origin": "http://127.0.0.1"})
 API = "/api/v1/consent/public-clients"
@@ -233,6 +235,56 @@ def test_admin_mints_once_lists_safely_and_revokes_by_safe_id(authorities) -> No
     assert revoked.status_code == 200
     with pytest.raises(PublicConsentCredentialError):
         registry.resolve_client(raw)
+
+
+def test_client_pagination_keeps_branding_authority_beyond_first_page(
+    authorities, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from maverick_dashboard import consent_public_admin_api as admin
+    from maverick_dashboard import trust_center_branding_composition as branding
+
+    registry, _preferences, _config = authorities
+    created = client.post(API, json=_body())
+    assert created.status_code == 201, created.text
+    binding = registry.resolve_client(created.json()["client_credential"])
+    enrollment = {
+        key: value
+        for key, value in vars(binding).items()
+        if key not in {"credential_id", "credential_sha256", "revision", "record_sha256"}
+    }
+    identifiers = [binding.credential_id]
+    for index in range(500):
+        enrolled = registry.enroll_client(
+            f"pagination-client-{index:032d}", expected_revision=0, **enrollment
+        )
+        identifiers.append(enrolled.credential_id)
+
+    first = client.get(API, params={"limit": 500}).json()
+    assert len(first["items"]) == 500
+    assert first["truncated"] is True
+    assert first["next_offset"] == 500
+    second_response = client.get(API, params={"limit": 500, "offset": first["next_offset"]})
+    assert second_response.status_code == 200, second_response.text
+    second = second_response.json()
+    assert second["truncated"] is False
+    assert second["next_offset"] is None
+    assert [item["credential_id"] for item in first["items"] + second["items"]] == sorted(identifiers)
+    assert all("credential_sha256" not in item for item in first["items"] + second["items"])
+    assert registry.list_clients("other-tenant", offset=500)["items"] == []
+    assert client.get(API, params={"offset": -1}).status_code == 422
+
+    monkeypatch.setattr(
+        branding,
+        "_public_dependencies",
+        lambda _request: SimpleNamespace(
+            credential_store=registry,
+            publishing_store_for=admin._publishing_store,
+        ),
+    )
+    resolve = branding._publication_resolver(Request({"type": "http", "app": app}), "tenant-a")
+    authority = resolve("web-main", second["items"][0]["credential_id"])
+    assert authority.client_credential_id == sorted(identifiers)[-1]
+    assert authority.public_origin == ORIGIN
 
 
 def test_admin_profile_revocation_invalidates_capability(authorities) -> None:

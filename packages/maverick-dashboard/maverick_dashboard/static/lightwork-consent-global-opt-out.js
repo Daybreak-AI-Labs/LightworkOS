@@ -68,8 +68,7 @@
 
   async function loadKeys() {
     try {
-      var data = await CW.client("/api/v1/consent/public-clients")("?limit=500");
-      state.keys = data.items || [];
+      state.keys = await CW.publicClients();
     } catch (_error) { state.keys = []; }
   }
   async function load() {

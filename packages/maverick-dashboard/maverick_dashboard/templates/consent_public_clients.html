@@ -110,8 +110,8 @@
     async function loadKeys() {
       if (!can.audit) { $("pcc-table").replaceChildren(CW.el("p", "muted", "You need audit access to see existing keys.")); return; }
       try {
-        var data = await call("?limit=500");
-        CW.table($("pcc-table"), data.items || [], {
+        var keys = await CW.publicClients();
+        CW.table($("pcc-table"), keys, {
           label: "Keys", name: function (k) { return CW.human(k.property_id) + " " + (k.browser_origin || k.target_origin || k.target_bundle_id || ""); },
           columns: [
             {label: "Website or app", value: function (k) { return CW.human(k.property_id); }},

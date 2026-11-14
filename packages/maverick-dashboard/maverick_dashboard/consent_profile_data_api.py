@@ -294,9 +294,12 @@ def published_contract_for_key(
     """
     from . import consent_public_admin_api as admin
 
-    listed = admin._registry().list_clients(tenant_id, limit=500)
     binding = next(
-        (item for item in listed["items"] if item.get("credential_id") == credential_id),
+        (
+            item
+            for item in admin._registry().iter_clients(tenant_id)
+            if item.get("credential_id") == credential_id
+        ),
         None,
     )
     if binding is None or binding.get("status") != "active":
