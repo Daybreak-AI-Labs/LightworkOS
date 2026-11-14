@@ -54,6 +54,13 @@ def test_policy_lock_cannot_be_removed_by_inherit(isolated, monkeypatch):
     assert prefs.state('user:bob')['values']['tone'] == 'formal'
 
 
+def test_a_lock_written_as_one_name_still_applies(isolated, monkeypatch):
+    monkeypatch.setattr(prefs.config, 'load_global_config', lambda: {'personalization': {
+        'locked_fields': 'tone', 'defaults': {'tone': 'formal'}}})
+    assert 'tone' in prefs.state('user:bob')['locked']
+    assert prefs.state('user:bob')['values']['tone'] == 'formal'
+
+
 def test_personal_name_and_authority_cannot_be_shared_preferences(isolated):
     with pytest.raises(ValueError):
         write('user:alice', {'preferred_name': 'Alice'}, scope='organization')
@@ -159,11 +166,16 @@ def test_recent_pages_follow_the_personal_preferences_switch(isolated, monkeypat
     assert prefs.recent_pages('user:alice') == []
 
 
-def test_a_damaged_recent_list_reads_as_empty(isolated, tmp_path):
+def test_a_damaged_recent_list_reads_as_empty(isolated, tmp_path, monkeypatch):
     prefs.record_visit('user:alice', '/goals')
     path, = (tmp_path / 'experience-preferences').glob('*-recent.enc')
     path.write_bytes(b'{"values": {"pages": "not a list"}}')
     assert prefs.recent_pages('user:alice') == []
+    def undecryptable(value):
+        raise prefs.EncryptionUnavailable("key rotated away")
+    monkeypatch.setattr(prefs, 'unseal', undecryptable)
+    assert prefs.recent_pages('user:alice') == []
+    monkeypatch.setattr(prefs, 'unseal', lambda value: value)
     prefs.record_visit('user:alice', '/approvals')
     assert prefs.recent_pages('user:alice') == ['/approvals']
 

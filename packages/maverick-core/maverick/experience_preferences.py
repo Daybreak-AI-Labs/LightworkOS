@@ -13,7 +13,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 from . import config
-from .crypto_at_rest import deployment_key_scope, seal, unseal
+from .crypto_at_rest import EncryptionUnavailable, deployment_key_scope, seal, unseal
 from .file_lock import atomic_write_bytes, cross_process_lock, ensure_private_directory
 from .paths import current_tenant_id_strict, data_dir
 
@@ -109,7 +109,7 @@ def state(principal: str, *, thread: int | None = None) -> dict:
     # Organization ceilings are read before tenant overlays. A workspace may
     # choose presentation defaults, but cannot remove an organization lock.
     policy = config.load_global_config().get("personalization", {})
-    locks = set(policy.get("locked_fields", [])) & (DEFAULTS.keys() - PERSONAL_ONLY)
+    locks = _locked_fields(policy.get("locked_fields", [])) & (DEFAULTS.keys() - PERSONAL_ONLY)
     effective_by_scope = {}
     inherited_by_scope = {}
     for scope, record in layers:
@@ -246,6 +246,17 @@ RECENT_KEEP = 12
 _PAGE_ADDRESS = re.compile(r"/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)?")
 
 
+def _locked_fields(raw: object) -> set[str]:
+    """``locked_fields`` as a set of names. A single name may be written as a
+    string; any other shape locks every field rather than none, so a
+    malformed organisation lock never silently stops applying."""
+    if isinstance(raw, str):
+        return {raw}
+    if isinstance(raw, (list, tuple)):
+        return {str(name) for name in raw}
+    return set(DEFAULTS)
+
+
 def _recent_path(principal: str) -> Path:
     return data_dir("experience-preferences", _principal_key(principal) + "-recent.enc")
 
@@ -253,7 +264,7 @@ def _recent_path(principal: str) -> Path:
 def _stored_recent(path: Path) -> list[str]:
     try:
         pages = _read(path)["values"].get("pages")
-    except (OSError, ValueError, TypeError):  # damaged or unreadable: nothing to offer
+    except (OSError, ValueError, TypeError, EncryptionUnavailable):  # damaged or unreadable: nothing to offer
         return []
     if not isinstance(pages, list):
         return []
