@@ -84,7 +84,8 @@ def guarded_redirect_get(
 
     HTTPX builds each next request. Redirects reuse the original client's
     transport configuration and strip credentials on an origin change. Each
-    network redirect is checked and pinned to a public address before sending.
+    network redirect is checked under the private-network setting, and a
+    direct one is pinned to the checked address before sending.
     """
     def guarded(url: str, *args: Any, **kwargs: Any) -> Any:
         if require_https and urlsplit(str(url)).scheme.lower() != "https":
@@ -152,8 +153,42 @@ def guarded_redirect_get(
     return guarded
 
 
+def _proxy_carries(transport: Any) -> bool:
+    """Whether a standard HTTPX transport hands each request to a proxy."""
+    import httpcore
+    import httpx
+
+    if type(transport) is not httpx.HTTPTransport:
+        return False
+    pool = transport._pool
+    return (type(pool) in (httpcore.HTTPProxy, httpcore.SOCKSProxy)
+            or getattr(pool, "_proxy", None) is not None)
+
+
+def _check_proxied_destination(host: str) -> None:
+    """Apply the address policy to a hop whose proxy resolves the name.
+
+    IP literals and names this host can resolve get the same check as a direct
+    hop, including the private-network setting. A name that does not resolve
+    here is left to the proxy, which chooses its address.
+    """
+    import socket
+
+    from .tools import _ssrf
+
+    try:
+        socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError):
+        return
+    _ssrf.resolve_pinned_ip(host)
+
+
 def _send_pinned_redirect(client: Any, request: Any) -> Any:
-    """Pin a redirect in an isolated pool with the caller's transport settings."""
+    """Pin a redirect in an isolated pool with the caller's transport settings.
+
+    A proxied hop sends the hostname to the proxy, as the initial request
+    does, after the same address check; only direct hops are pinned.
+    """
     import httpx
 
     from .egress_guard import _check, _reaches_the_network
@@ -163,8 +198,12 @@ def _send_pinned_redirect(client: Any, request: Any) -> Any:
     if not _reaches_the_network(client, request):
         return client.send(request, follow_redirects=False, auth=None)
     host = request.url.raw_host.decode("ascii")
-    ip = resolve_pinned_ip(host, require_public=True)
-    inner = _isolated_redirect_transport(client._transport_for_url(request.url), host=host)
+    selected = client._transport_for_url(request.url)
+    if _proxy_carries(selected):
+        _check_proxied_destination(host)
+        return client.send(request, follow_redirects=False, auth=None)
+    ip = resolve_pinned_ip(host)
+    inner = _isolated_redirect_transport(selected, host=host)
 
     class IsolatedPinnedTransport(_PinnedTransport):
         def handle_request(self, request):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+import ipaddress
 import select
 import socket
 import ssl
@@ -151,7 +152,7 @@ def test_unknown_network_redirect_transport_is_refused(monkeypatch):
     ("http", "/start", True, False), ("https", "/start", True, False),
     ("https", "/idn", True, True),
 ])
-def test_proxy_redirect_pins_connect_and_verifies_each_tls_identity(
+def test_proxy_redirect_connects_by_name_and_verifies_each_tls_identity(
     tls_origins, scheme, path, wrong_certificate, bad_proxy,
 ):
     port, trust, seen, snis, server_tls = tls_origins
@@ -206,9 +207,84 @@ def test_proxy_redirect_pins_connect_and_verifies_each_tls_identity(
         return
     expected = ["first.example", "alpha.example"] if wrong_certificate else ["first.example", "xn--bcher-kva.example"]
     assert seen == expected
-    assert tunnels[0][0] == f"first.example:{port}"
-    assert all(target == f"127.0.0.1:{port}" for target, _auth in tunnels[1:])
-    assert all(auth == "Basic YWNjb3VudDpzYW1wbGU=" for _target, auth in tunnels)
     tls_names = ["first.example", "alpha.example", "beta.example"] if wrong_certificate else expected
+    # Every CONNECT names the origin host; the proxy resolves it.
+    assert [target for target, _auth in tunnels] == [f"{name}:{port}" for name in tls_names]
+    assert all(auth == "Basic YWNjb3VudDpzYW1wbGU=" for _target, auth in tunnels)
     expected_snis = [name for origin in tls_names for name in (("proxy.example", origin) if scheme == "https" else (origin,))]
     assert snis == expected_snis
+
+
+def test_proxy_resolves_redirect_names_this_host_cannot(monkeypatch):
+    """Proxy-only egress: the proxy, not local DNS, resolves each redirect hop."""
+    from maverick.tools import _ssrf
+
+    real_resolve = socket.getaddrinfo
+    forwarded = []
+
+    def no_public_dns(host, *args, **kwargs):
+        try:
+            ipaddress.ip_address(str(host))
+        except ValueError:
+            raise socket.gaierror(socket.EAI_NONAME, "no local resolver") from None
+        return real_resolve(host, *args, **kwargs)
+
+    class ForwardProxy(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            forwarded.append(self.path)
+            location = {"http://first.example/start": "http://next.example/done",
+                        "http://next.example/done": "http://169.254.169.254/latest/meta-data/"}.get(self.path)
+            self.send_response(302 if location else 200)
+            if location:
+                self.send_header("Location", location)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_public_dns)
+    monkeypatch.setattr("maverick.egress_guard._check", lambda url: None)
+    monkeypatch.delenv("MAVERICK_FETCH_ALLOW_PRIVATE", raising=False)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ForwardProxy)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with httpx.Client(proxy=f"http://127.0.0.1:{server.server_port}", trust_env=False, timeout=2) as client:
+            # The metadata literal is refused before it reaches the proxy.
+            with pytest.raises(_ssrf.BlockedHost):
+                guarded_redirect_get(client.get)("http://first.example/start")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    assert forwarded == ["http://first.example/start", "http://next.example/done"]
+
+
+def test_direct_redirect_honors_private_network_setting(monkeypatch):
+    """With private networks allowed, an internal issuer may redirect to itself."""
+    from maverick.tools import _ssrf
+
+    seen = []
+    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+    monkeypatch.setattr("maverick.egress_guard._check", lambda url: None)
+    monkeypatch.setattr(_ssrf.socket, "getaddrinfo", lambda host, *a, **k: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", (host if host[0].isdigit() else "10.0.0.5", 0))])
+
+    def network_handle_request(self, request):
+        seen.append(str(request.url))
+        if len(seen) == 1:
+            return httpx.Response(302, headers={"Location": "/realms/main/config"})
+        if len(seen) == 2:
+            return httpx.Response(302, headers={"Location": "https://169.254.169.254/latest/"})
+        return httpx.Response(200, text="ok")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", network_handle_request)
+    with httpx.Client(transport=httpx.HTTPTransport()) as client:
+        # The private same-origin hop is pinned and sent; metadata stays blocked.
+        with pytest.raises(_ssrf.BlockedHost):
+            guarded_redirect_get(client.get)("https://issuer.internal/start")
+    assert seen == ["https://issuer.internal/start", "https://10.0.0.5/realms/main/config"]
