@@ -799,8 +799,11 @@ def _check_governed_execution() -> None:
     try:
         from .harness_refine import list_proposals
         pending = len(list_proposals(status="pending"))
-    except Exception:  # pragma: no cover
-        pending = 0
+    except Exception as exc:
+        _row(YELLOW, "self-refinement",
+             f"enabled, but the proposal ledger is unreadable ({type(exc).__name__})",
+             fix="inspect the harness-refine proposals.json")
+        return
     detail = "enabled — every change needs a human approval"
     if pending:
         _row(YELLOW, "self-refinement",

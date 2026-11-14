@@ -228,3 +228,20 @@ def test_doctor_warns_when_the_kernel_runs_without_a_container(monkeypatch,
     kernel = [r for r in rows if r[1] == "session-kernel"]
     assert kernel and kernel[0][0] == health.YELLOW
     assert "container" in kernel[0][2]
+
+
+def test_doctor_does_not_show_an_unreadable_refinement_ledger_as_green(
+        monkeypatch, tmp_path):
+    (tmp_path / "config.toml").write_text(
+        "[harness_refine]\nenable = true\n", encoding="utf-8")
+    from maverick import config, harness_refine, health
+    config.reset_config_cache()
+
+    def broken(**_kwargs):
+        raise harness_refine.RefineError("corrupt ledger")
+
+    monkeypatch.setattr(harness_refine, "list_proposals", broken)
+    rows = _doctor_rows(monkeypatch)
+    refine = [r for r in rows if r[1] == "self-refinement"]
+    assert refine and refine[0][0] == health.YELLOW
+    assert "unreadable" in refine[0][2]
