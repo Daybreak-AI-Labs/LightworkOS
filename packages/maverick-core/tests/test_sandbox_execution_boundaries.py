@@ -155,7 +155,7 @@ def test_ssh_readiness_requires_remote_gnu_timeout(monkeypatch):
 
     def run(args, **kwargs):
         calls.append(args)
-        code = 127 if "timeout --version" in args[-1] and missing else 0
+        code = 127 if "timeout --signal=KILL 1s true" in args[-1] and missing else 0
         return subprocess.CompletedProcess(args, code, stdout=b"", stderr=b"timeout: not found" if code else b"")
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -163,4 +163,4 @@ def test_ssh_readiness_requires_remote_gnu_timeout(monkeypatch):
         SSHBackend(host="synthetic.example", ssh_args=["-p", "2222"])
     missing = False
     assert SSHBackend(host="synthetic.example").host == "synthetic.example"
-    assert any("timeout --version" in args[-1] for args in calls)
+    assert any("timeout --signal=KILL 1s true" in args[-1] for args in calls)

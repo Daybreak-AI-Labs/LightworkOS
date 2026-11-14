@@ -71,6 +71,35 @@ def test_verify_ssh_failed_probe_raises(monkeypatch):
         SSHBackend(host="me@example.com")
 
 
+@pytest.mark.parametrize("code,stderr,expected", [
+    (0, b"", None),
+    (255, b"Connection reset by peer", "could not check GNU timeout: the ssh connection failed: Connection reset by peer"),
+    (127, b"sh: timeout: not found", "does not accept --signal=KILL: sh: timeout: not found"),
+])
+def test_timeout_probe_runs_the_form_exec_uses_and_reports_why(monkeypatch, code, stderr, expected):
+    """The probe is what exec runs (``timeout --signal=KILL <n>s``), so a remote
+    whose timeout lacks ``--version`` is accepted; a failed probe keeps the
+    remote stderr and tells a dropped connection from a missing timeout."""
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/ssh")
+    calls = []
+
+    def _fake_run(args, **kwargs):
+        calls.append(args[-1])
+        if args[-1] == "true":
+            return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
+        if args[-1] == "timeout --signal=KILL 1s true":
+            return subprocess.CompletedProcess(args, code, stdout=b"", stderr=stderr)
+        return subprocess.CompletedProcess(args, 125, stdout=b"", stderr=b"unrecognized option")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+    if expected is None:
+        assert SSHBackend(host="me@example.com").host == "me@example.com"
+    else:
+        with pytest.raises(RuntimeError, match=expected):
+            SSHBackend(host="me@example.com")
+    assert calls == ["true", "timeout --signal=KILL 1s true"]
+
+
 def test_exec_builds_mkdir_cd_and_quotes_command(monkeypatch):
     calls = []
     _patch_ssh_ok(monkeypatch)
