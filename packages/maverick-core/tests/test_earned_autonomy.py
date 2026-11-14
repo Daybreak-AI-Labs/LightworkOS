@@ -118,6 +118,89 @@ def test_states_skips_type_corrupt_rows(tmp_path):
     assert fresh.state("deploy").hits == 1  # bad row skipped, no crash
 
 
+def _event(kind, ts, card_id=""):
+    return {"kind": kind, "action": "deploy", "principal": "", "card_id": card_id,
+            "ts": ts, "reason": ""}
+
+
+def _legacy_ledger(path, events):
+    """Write evidence the way the release before signed heads did: chained
+    rows, sorted-key JSON lines, and no signed audit head anywhere."""
+    prev, lines = ea._GENESIS, []
+    for fields in events:
+        row = {**fields, "prev": prev, "hash": ea._ChainedLog._row_hash(fields, prev)}
+        lines.append(json.dumps(row, sort_keys=True) + "\n")
+        prev = row["hash"]
+    path.write_text("".join(lines))
+
+
+def _signed_heads(ledger):
+    from maverick.audit.signing import _segment_text, day_files
+
+    directory = ledger._log._anchor_location()[1]
+    return [json.loads(line) for day in day_files(directory)
+            for line in _segment_text(day).splitlines() if line.strip()]
+
+
+def test_legacy_ledger_is_adopted_and_accepts_evidence_and_revoke(tmp_path):
+    path = tmp_path / "trust.ndjson"
+    _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.state("deploy").graduated
+    assert ledger.record_event("hit", "deploy", card_id="b", ts=3.0)
+    assert ledger.verify().startswith("VALID: 3")
+    assert ledger.record_event("revoke", "deploy", reason="operator", ts=4.0)
+    assert ledger.state("deploy").graduated is False
+    assert ledger.verify().startswith("VALID: 4")
+    heads = _signed_heads(ledger)
+    # The adoption is itself a signed record, anchored at the legacy head.
+    assert heads[0]["adopted_from_unanchored"] is True
+    assert heads[0]["row_count"] == 2
+    assert [h.get("adopted_from_unanchored") for h in heads[1:]] == [None, None]
+    assert not any("unverified_ledger" in row for row in ledger._log.rows())
+
+
+def test_removed_signed_heads_never_allow_a_second_adoption(tmp_path):
+    path = tmp_path / "trust.ndjson"
+    _legacy_ledger(path, [_event("hit", 1.0, "a"), _event("graduate", 2.0)])
+    ledger = ea.TrustLedger(path=path)
+    assert ledger.record_event("miss", "deploy", card_id="b", ts=3.0)
+    assert ledger.record_event("demote", "deploy", ts=4.0)
+    assert ledger.state("deploy").graduated is False
+    lines = path.read_text().splitlines(keepends=True)
+    # Deleting the latest miss/demote rows of an anchored ledger is detected.
+    path.write_text("".join(lines[:2]))
+    assert ledger.verify().startswith("BROKEN: head does not match")
+    assert not ledger.record_event("hit", "deploy", card_id="c", ts=5.0)
+    # Deleting the signed heads as well does not make it look never-anchored.
+    from maverick.audit.signing import day_files
+
+    for day in day_files(ledger._log._anchor_location()[1]):
+        day.unlink()
+    status = ledger.verify()
+    assert status.startswith("BROKEN") and "adopted" not in status
+    assert not ledger.record_event("hit", "deploy", card_id="d", ts=6.0)
+    assert path.read_text() == "".join(lines[:2])
+
+
+def test_forced_revoke_lands_on_unverified_evidence_without_laundering_it(tmp_path):
+    path = tmp_path / "trust.ndjson"
+    ledger = ea.TrustLedger(path=path)
+    for kind, ts in (("hit", 1.0), ("graduate", 2.0), ("miss", 3.0), ("demote", 4.0)):
+        assert ledger.record_event(kind, "deploy", card_id=f"c{ts:.0f}", ts=ts)
+    lines = path.read_text().splitlines(keepends=True)
+    path.write_text("".join(lines[:2]))  # drop the miss + demote
+    assert ledger.state("deploy").graduated
+    assert ledger.record_event("revoke", "deploy", reason="operator", ts=5.0)
+    assert ledger.state("deploy").graduated is False
+    row = ledger._log.rows()[-1]
+    assert row["kind"] == "revoke"
+    assert row["unverified_ledger"].startswith("BROKEN: head does not match")
+    # The truncation stays visible and ordinary evidence is still refused.
+    assert ledger.verify().startswith("BROKEN")
+    assert not ledger.record_event("hit", "deploy", card_id="c6", ts=6.0)
+
+
 # -- the enable gate -------------------------------------------------------
 
 

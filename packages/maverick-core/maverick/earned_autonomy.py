@@ -24,6 +24,11 @@ from .config import env_flag
 log = logging.getLogger(__name__)
 
 _GENESIS = "0" * 64
+#: Why :meth:`_ChainedLog.verify` fails for evidence that was never anchored.
+_UNANCHORED = (
+    "signed audit head is missing: the evidence predates anchoring and is "
+    "adopted by its next append"
+)
 _MAX_ROWS = 100_000
 _MAX_TEXT = 300
 
@@ -87,10 +92,12 @@ class _ChainedLog:
     writers appended first, so the on-disk chain never forks. ``path=None``
     keeps the chain in memory (tests / ephemeral runs). Appends return False
     on incidental persistence/lock failure; explicit audit refusals propagate.
-    Persisted heads are anchored in a signed audit namespace; legacy evidence
-    without an anchor is unverified and cannot be extended automatically. ``force=True`` lets a
-    safety-critical row (a demotion/revocation) through even at capacity --
-    the bound is a growth guard, never a reason to keep stale authority.
+    Persisted heads are anchored in a signed audit namespace. Evidence written
+    before anchoring existed is adopted once, by the first append, and only
+    while no signed head was ever recorded for it. ``force=True`` lets a
+    safety-critical row (a demotion/revocation) through even at capacity or
+    on unverified evidence (the row then says so) -- the bound is a growth
+    guard, and taking authority away is never refused.
     """
 
     def __init__(self, path: Path | None = None, *, max_rows: int = _MAX_ROWS) -> None:
@@ -164,12 +171,42 @@ class _ChainedLog:
                             and row.get("store_id") == identity):
                         latest = row
         if latest is None:
-            return "signed audit head is missing" if self._rows else None
+            if not self._rows:
+                return None
+            if self._never_anchored(directory):
+                return _UNANCHORED
+            return "signed audit head is missing"
         if latest.get("head") != head or latest.get("row_count") != len(self._rows):
             return "head does not match the signed audit record"
         return None
 
-    def _record_anchor(self, head: str, count: int) -> bool:
+    @staticmethod
+    def _never_anchored(directory: Path) -> bool:
+        """Whether no signed head was ever recorded for this evidence file.
+
+        The first anchor creates the namespace's anchor ledger, its
+        required-marker, its high-water record and a non-empty day-file, and
+        nothing here removes them. Any one of them, or an entry that cannot be
+        inspected, means "anchored before"; only their complete absence means
+        "never anchored". Erasing them takes write access to the signed audit
+        directory, not just to the evidence file.
+        """
+        from .audit.signing import (
+            ANCHOR_FILENAME,
+            ANCHOR_HIGHWATER_FILENAME,
+            ANCHOR_MARKER_FILENAME,
+            day_files,
+        )
+
+        try:
+            if any((directory / name).exists() for name in (
+                    ANCHOR_FILENAME, ANCHOR_MARKER_FILENAME, ANCHOR_HIGHWATER_FILENAME)):
+                return False
+            return all(path.stat().st_size == 0 for path in day_files(directory))
+        except OSError:
+            return False
+
+    def _record_anchor(self, head: str, count: int, **extra: object) -> bool:
         from .audit import AuditEvent, AuditLog, EventKind
         from .audit.signing import _append_anchor, _segment_text, verify_chain
         from .file_lock import cross_process_lock
@@ -183,7 +220,7 @@ class _ChainedLog:
             ts=time.time(), kind=EventKind.AUTONOMY_GRADUATION,
             agent="earned_autonomy", payload={
                 "decision": "chain_head", "store_id": identity,
-                "head": head, "row_count": count,
+                "head": head, "row_count": count, **extra,
             },
         )):
             return False
@@ -204,13 +241,94 @@ class _ChainedLog:
                 return False
             return _append_anchor(directory, path.stem, rows[-1]["hash"], len(rows))
 
-    def _append_unlocked(self, fields: dict, *, force: bool) -> bool:
-        if self.path is not None and not self.verify().startswith("VALID:"):
-            log.warning("earned-autonomy append refused: prior evidence is not verified")
+    def _adopt_unlocked(self) -> bool:
+        """Anchor never-anchored legacy evidence at its current, intact head.
+
+        The signed head row says it was adopted, and the adoption is also
+        recorded in the main audit log, so it stays visible after the fact.
+        """
+        head, count = self._rows[-1]["hash"], len(self._rows)
+        if not self._record_anchor(head, count, adopted_from_unanchored=True):
             return False
+        log.warning("earned-autonomy: adopted %d row(s) of unanchored legacy evidence", count)
+        from .audit import EventKind
+
+        _default_audit_fn(
+            EventKind.AUTONOMY_GRADUATION, decision="evidence_adopted",
+            store_id=self._anchor_location()[0], head=head, row_count=count,
+        )
+        return True
+
+    def _append_unlocked(self, fields: dict, *, force: bool) -> bool:
+        if self.path is None:
+            return self._write_row_unlocked(fields, force=force) is not None
+        try:
+            status = self.verify()
+            if status == f"BROKEN: {_UNANCHORED}":
+                status = ("VALID: adopted" if self._adopt_unlocked()
+                          else "BROKEN: legacy evidence could not be anchored")
+        except AuditRefused:
+            if not force:
+                raise
+            status = "BROKEN: signed audit head is unavailable"
+        if not status.startswith("VALID:"):
+            if not force:
+                log.warning("earned-autonomy append refused: prior evidence is not verified")
+                return False
+            return self._append_unverified_unlocked(fields, status)
+        row = self._write_row_unlocked(fields, force=force)
+        if row is None:
+            return False
+        try:
+            if not self._record_anchor(row["hash"], len(self._rows)):
+                log.warning("earned-autonomy append refused: signed head was not recorded")
+                return False
+        except AuditRefused:
+            raise
+        except Exception:  # pragma: no cover -- best-effort persistence
+            log.debug("earned-autonomy anchor failed", exc_info=True)
+            return False
+        return True
+
+    def _append_unverified_unlocked(self, fields: dict, status: str) -> bool:
+        """Record a forced (authority-shedding) row on evidence that does not verify.
+
+        The row names the failed check and is not anchored: anchoring it
+        would make a tampered history verify again. The evidence keeps
+        reading as BROKEN, but the demotion/revocation counts.
+        """
+        log.warning("earned-autonomy: recording a forced row on unverified evidence (%s)", status)
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                if fh.tell():
+                    fh.seek(-1, os.SEEK_END)
+                    if fh.read(1) != b"\n":
+                        # Never let a torn last line swallow this row.
+                        with open(self.path, "a", encoding="utf-8") as out:
+                            out.write("\n")
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.debug("earned-autonomy tail check failed", exc_info=True)
+        self._size = -1
+        row = self._write_row_unlocked(
+            {**fields, "unverified_ledger": _safe_text(status, max_len=200)}, force=True)
+        if row is None:
+            return False
+        from .audit import EventKind
+
+        _default_audit_fn(
+            EventKind.AUTONOMY_GRADUATION, decision="unverified_evidence_recorded",
+            store_id=self._anchor_location()[0], reason=_safe_text(status, max_len=200),
+            row_kind=str(fields.get("kind", "")), action=str(fields.get("action", "")),
+        )
+        return True
+
+    def _write_row_unlocked(self, fields: dict, *, force: bool) -> dict | None:
         if len(self._rows) >= self.max_rows and not force:
             log.warning("earned-autonomy log at capacity; row dropped")
-            return False
+            return None
         prev = self._rows[-1]["hash"] if self._rows else _GENESIS
         row = dict(fields)
         row["prev"] = prev
@@ -226,17 +344,13 @@ class _ChainedLog:
                     fh.write(line)
                     fh.flush()
                     os.fsync(fh.fileno())
-                if not self._record_anchor(row["hash"], len(self._rows) + 1):
-                    log.warning("earned-autonomy append refused: signed head was not recorded")
-                    return False
-            except AuditRefused:
-                raise
             except Exception:  # pragma: no cover -- best-effort persistence
                 log.debug("earned-autonomy append failed", exc_info=True)
-                return False
-            self._size += len(line.encode("utf-8"))
+                return None
+            if self._size >= 0:
+                self._size += len(line.encode("utf-8"))
         self._rows.append(row)
-        return True
+        return row
 
     def append(self, fields: dict, *, force: bool = False) -> bool:
         with self._lock:
