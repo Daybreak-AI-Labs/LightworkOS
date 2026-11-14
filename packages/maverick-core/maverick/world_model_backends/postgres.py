@@ -4874,6 +4874,20 @@ class PostgresWorldModel:
                 sql += " AND " + frag
                 p += params
             with self._tx() as cur:
+                # Lock first, then read the outbox in a new statement: the
+                # audited path locks this row and inserts its outbox row without
+                # updating the approval, so an UPDATE that merely waited would
+                # keep a snapshot that predates that outbox row.
+                lock_sql = "SELECT id FROM approvals WHERE id = %s"
+                if frag:
+                    lock_sql += " AND " + frag
+                cur.execute(lock_sql + " FOR UPDATE", (approval_id, *params) if frag else (approval_id,))
+                cur.execute(
+                    "SELECT 1 FROM approval_audit_outbox WHERE approval_id = %s LIMIT 1",
+                    (approval_id,),
+                )
+                if cur.fetchone() is not None:
+                    return False
                 cur.execute(sql, tuple(p))
                 decided = cur.rowcount > 0
             if decided:
