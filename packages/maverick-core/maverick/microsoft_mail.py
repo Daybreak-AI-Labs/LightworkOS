@@ -51,8 +51,14 @@ def verified_identity(response, *, client_id, nonce=""):
 
 
 def _authority(tenant, actor):
-    from maverick_dashboard import rbac, scim_groups
-    from maverick_dashboard.auth import global_role_for_principal
+    try:
+        from maverick_dashboard import rbac, scim_groups
+        from maverick_dashboard.auth import global_role_for_principal
+    except ImportError:
+        # Administrator access is checked through the dashboard; without it the
+        # authority cannot be evaluated, so refuse rather than crash.
+        raise PermissionError("Microsoft email requires the Lightwork dashboard to confirm "
+                              "administrator access, and it is not installed.") from None
 
     from .tenant.registry import assert_tenant_active
 
