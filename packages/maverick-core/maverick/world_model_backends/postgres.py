@@ -16,11 +16,9 @@ Or env:
 
 Behind ``maverick-agent[postgres]`` extra (pulls in ``psycopg[binary]``).
 
-Implementation scope: enough to pass the ``conn``-only paths the agent
-kernel uses (goals, episodes, events, attachments). For the small
-metadata tables that are write-heavy mostly used by channels, we
-defer to a future iteration -- this batch ships the shape + the
-hot-path methods.
+Implementation scope: the full ``WorldModel`` surface (goals, projects,
+episodes, events, facts, questions, approvals, conversations, erasure,
+messages, attachments, the cluster halt and the provider spend ledger).
 """
 from __future__ import annotations
 
@@ -1279,8 +1277,9 @@ class PostgresWorldModel:
         # single-connection + RLock ownership model.
         self._pool = None
         size = _pool_size()
-        # A statement timeout is rolled back by _tx; a terminated idle
-        # transaction closes the connection. Retain these options on reconnect.
+        # A statement timeout (QueryCanceled, an OperationalError) and a
+        # terminated idle transaction both make _tx close the connection; the
+        # next call reconnects. Retain these options on reconnect.
         self._io_timeout_seconds = postgres_io_timeout_seconds()
         self._connect_kwargs = _connection_kwargs(self._dsn)
         if size > 0:

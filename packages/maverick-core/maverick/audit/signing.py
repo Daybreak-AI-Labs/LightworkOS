@@ -1751,9 +1751,9 @@ def reanchor_file(path: Path, *, force: bool = False, preverified: bool = False)
     ``prev_hash``/``hash``/``sig`` chain, so ``verify_chain()`` then reports
     breaks that are indistinguishable from tampering. This rewrites the file,
     recomputing each row's chain fields under the current key so the chain
-    verifies clean again, preserving row content and order. The caller writes
-    a signed ``erase`` marker first so a verifier holding the trusted pubkey
-    can see the cut was authorized.
+    verifies clean again, preserving row content and order. The caller also
+    records a signed ``erase`` marker (the CLI writes it after the scrub) so a
+    verifier holding the trusted pubkey can see the cut was authorized.
 
     By default, re-anchoring first verifies the existing file and refuses to
     rewrite a broken chain. Callers that just performed an authorized erase

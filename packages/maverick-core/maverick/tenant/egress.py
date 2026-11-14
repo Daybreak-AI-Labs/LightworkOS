@@ -9,10 +9,11 @@ reachable only if it passes *both* the tenant plane and the per-tool policy.
 Config:
 
     [egress]                       # default plane (all tenants without an override)
-    deny  = ["169.254.169.254"]    # block cloud metadata for everyone
+    deny  = ["169.254.169.254"]    # block cloud metadata (tenants without an override)
     allow = []                     # empty = allow-all (after deny)
 
-    [tenancy.egress.acme]          # per-tenant override (wins over [egress])
+    [tenancy.egress.acme]          # per-tenant override: REPLACES [egress], so
+                                   # repeat any default deny it must keep
     allow = ["api.acme.com", "*.acme-internal.net"]
     deny  = ["*"]
 

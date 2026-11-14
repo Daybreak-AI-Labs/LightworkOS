@@ -2,7 +2,9 @@
 
 The tenant roster and UsageLedger remain the organization policy/accounting
 authority. This store bridges dispatch to acknowledged cumulative usage. Holds
-never expire; a provider receipt is required to resolve an uncertain call.
+are never deleted, but a hold admitted on an earlier UTC day stops counting
+against today's cap; a provider receipt is required to resolve an uncertain
+call.
 """
 from __future__ import annotations
 
