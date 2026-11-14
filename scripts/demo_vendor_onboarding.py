@@ -236,6 +236,8 @@ def serve(service, ctx, port):
 
     @demo.middleware("http")
     async def local_demo_boundary(request: Request, call_next):
+        if request.headers.getlist("host") != [f"127.0.0.1:{port}"]:
+            return JSONResponse({"detail": "Loopback local demonstration only"}, status_code=403)
         if request.method != "GET" and request.headers.get("origin") != f"http://127.0.0.1:{port}":
             return JSONResponse({"detail": "Same-origin local demonstration only"}, status_code=403)
         with tenant_scope(tenant=ctx.tenant):
