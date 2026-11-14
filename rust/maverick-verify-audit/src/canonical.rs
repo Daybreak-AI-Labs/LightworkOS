@@ -1,4 +1,4 @@
-//! Byte-exact reproduction of CPython `json.dumps(obj, sort_keys=True)`.
+//! Reproduce CPython's canonical separators and string escaping for strict JSON.
 //!
 //! The audit chain's hash is `sha256(json.dumps(payload, sort_keys=True,
 //! default=str).encode("utf-8"))` over every row field EXCEPT `hash`/`sig`
@@ -21,7 +21,9 @@
 //! `default=str` only matters on the *write* path (it stringifies datetimes etc.
 //! before they ever reach JSON); by the time the verifier reads a row those
 //! values are already JSON strings/numbers, so faithfully re-serializing the
-//! parsed JSON is sufficient.
+//! parsed JSON is sufficient for the covered writer output. Non-standard
+//! NaN/Infinity and lone surrogates are rejected by the strict parser, and number
+//! spellings must retain the writer's representation; see the crate README.
 
 use serde_json::Value;
 

@@ -26,7 +26,11 @@ pub mod canonical;
 use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+const MAX_SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_BREAKS: usize = 1000;
 
 /// One detected break in the chain. `line_no` is 1-indexed (0 for file/setup
 /// level issues), matching Python's `ChainBreak`.
@@ -77,7 +81,7 @@ fn pinned_key(keys: &KeySource) -> Result<Option<Option<VerifyingKey>>, ChainBre
     };
     // Like bytes.fromhex, allow ASCII whitespace between hex byte pairs.
     let bytes = value
-        .split(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c'))
+        .split([' ', '\t', '\n', '\r', '\x0b', '\x0c'])
         .map(hex::decode)
         .collect::<Result<Vec<_>, _>>()
         .ok()
@@ -117,6 +121,10 @@ pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
     let mut registry: Option<HashMap<String, VerifyingKey>> = None;
 
     for (idx, line) in text.lines().enumerate() {
+        // A nonempty failure result cannot certify the unexamined remainder.
+        if breaks.len() >= MAX_BREAKS {
+            break;
+        }
         let n = idx + 1;
         if line.trim().is_empty() {
             continue;
@@ -272,7 +280,28 @@ pub fn verify_chain_text(text: &str, keys: &KeySource) -> Vec<ChainBreak> {
         prev = row_hash.to_string();
     }
 
+    breaks.truncate(MAX_BREAKS);
     breaks
+}
+
+fn read_bounded_file(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    let metadata = std::fs::metadata(path)?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "expected a regular file within the size limit",
+        ));
+    }
+    let file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "file exceeds size limit",
+        ));
+    }
+    Ok(bytes)
 }
 
 fn load_keys_from_dir(dir: &Path) -> Option<HashMap<String, VerifyingKey>> {
@@ -300,8 +329,8 @@ fn load_keys_from_dir(dir: &Path) -> Option<HashMap<String, VerifyingKey>> {
             }
             return None;
         }
-        let public = std::fs::read(entry.path()).ok()?;
-        let private: [u8; 32] = std::fs::read(private_path).ok()?.try_into().ok()?;
+        let public = read_bounded_file(&entry.path(), 32).ok()?;
+        let private: [u8; 32] = read_bounded_file(&private_path, 32).ok()?.try_into().ok()?;
         if public.len() != 32 || &hex::encode(Sha256::digest(&public))[..16] != key_id {
             return None;
         }
@@ -326,48 +355,68 @@ fn truncate12(s: &str) -> String {
 /// never a false "intact". Plaintext NDJSON — the format an auditor is handed —
 /// verifies fully.
 pub fn verify_file(path: &Path, keys: &KeySource) -> Vec<ChainBreak> {
+    verify_file_report(path, keys).1
+}
+
+/// Return the nonblank row count and verdict from the same bounded snapshot.
+pub fn verify_file_report(path: &Path, keys: &KeySource) -> (usize, Vec<ChainBreak>) {
     if let Err(error) = pinned_key(keys) {
-        return vec![error];
+        return (0, vec![error]);
     }
     if !path.exists() {
-        return vec![ChainBreak::new(
+        return (
             0,
-            "missing_file",
-            path.display().to_string(),
-        )];
+            vec![ChainBreak::new(
+                0,
+                "missing_file",
+                path.display().to_string(),
+            )],
+        );
     }
-    let raw = match std::fs::read(path) {
+    let raw = match read_bounded_file(path, MAX_SEGMENT_BYTES) {
         Ok(b) => b,
         Err(e) => {
-            return vec![ChainBreak::new(
+            return (
                 0,
-                "unreadable_segment",
-                format!("cannot read {}: {e}", path.display()),
-            )]
+                vec![ChainBreak::new(
+                    0,
+                    "unreadable_segment",
+                    format!("cannot read {}: {e}", path.display()),
+                )],
+            );
         }
     };
     if is_sealed(&raw) {
-        return vec![ChainBreak::new(
+        return (
             0,
-            "unreadable_segment",
-            format!(
-                "{} is an at-rest-sealed segment; decrypt it with `maverick audit verify` \
+            vec![ChainBreak::new(
+                0,
+                "unreadable_segment",
+                format!(
+                    "{} is an at-rest-sealed segment; decrypt it with `maverick audit verify` \
                  on the originating host (the seal key is not portable)",
-                path.display()
-            ),
-        )];
+                    path.display()
+                ),
+            )],
+        );
     }
     let text = match String::from_utf8(raw) {
         Ok(t) => t,
         Err(e) => {
-            return vec![ChainBreak::new(
+            return (
                 0,
-                "unreadable_segment",
-                format!("{} is not valid UTF-8: {e}", path.display()),
-            )]
+                vec![ChainBreak::new(
+                    0,
+                    "unreadable_segment",
+                    format!("{} is not valid UTF-8: {e}", path.display()),
+                )],
+            );
         }
     };
-    verify_chain_text(&text, keys)
+    (
+        text.lines().filter(|line| !line.trim().is_empty()).count(),
+        verify_chain_text(&text, keys),
+    )
 }
 
 /// Detect the at-rest seal magic headers (mirrors `crypto_at_rest.is_sealed`),
