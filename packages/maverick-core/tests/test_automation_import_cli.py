@@ -99,3 +99,25 @@ def test_reimport_with_activate_schedules_does_not_duplicate_the_cron_job(tmp_pa
     assert any("different text" in n for n in json.loads(changed.output)[0]["notes"])
     jobs = list(job_queue.JobQueue().iter_pending("start_goal"))
     assert len(jobs) == 1 and "Send the nightly digest" not in jobs[0].payload["text"]
+
+
+def test_untranslatable_n8n_schedule_is_reported_not_silently_dropped(tmp_path):
+    good = {"id": "1", "name": "Flow", "active": True,
+            "nodes": [{"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {}}],
+            "connections": {}}
+    fortnightly = {"id": "2", "name": "Fortnightly report", "active": True, "nodes": [{
+        "name": "Schedule", "type": "n8n-nodes-base.scheduleTrigger",
+        "parameters": {"rule": {"interval": [{"field": "weeks", "weeksInterval": 2}]}},
+    }], "connections": {}}
+    f = tmp_path / "wf.json"
+    f.write_text(json.dumps([good, fortnightly]))
+    r = _run(["import", "run", "n8n", "--from-file", str(f), "--dry-run"])
+    assert r.exit_code == 0, r.output
+    assert "Would import 1 automation(s)" in r.output
+    assert "Not imported: Fortnightly report" in r.output
+    assert "interval cannot be represented exactly by cron" in r.output
+    f.write_text(json.dumps([fortnightly]))
+    r = _run(["import", "run", "n8n", "--from-file", str(f), "--dry-run"])
+    assert r.exit_code != 0
+    assert "Not imported: Fortnightly report" in r.output
+    assert "interval cannot be represented exactly by cron" in r.output

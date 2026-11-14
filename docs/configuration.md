@@ -784,7 +784,9 @@ The installer keeps these separated automatically.
 > `difflib` "did you mean" suggestions), plus a few obvious type errors. This
 > catches the classic footgun where a typo like `[budget] max_dollarss` would
 > otherwise be silently ignored and the run go **uncapped**. The check is
-> advisory — the kernel still fails soft on a bad config — so after editing
+> advisory. A policy gate refuses work only when its configuration file exists
+> and cannot be read or parsed; a misspelled key, or no file at all, still
+> means the defaults apply. So after editing
 > `config.toml` by hand, run `maverick config-lint` (or `maverick doctor`) and
 > confirm the security/cost-critical values (`[budget]`, `[enterprise]`,
 > `[encryption]`, `[audit]`, `[safety]`) read back as you intend.

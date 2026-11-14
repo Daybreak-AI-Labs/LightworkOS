@@ -81,6 +81,29 @@ def _toposort_actions(actions: dict) -> list[str]:
     return ordered
 
 
+def _chain_actions(actions: dict) -> list[str]:
+    """Only success-dependent chains can become unconditional next edges."""
+    from .predicates import repair
+
+    order = _toposort_actions(actions)
+    placed: set[str] = set()
+    previous = None
+    for name in order:
+        spec = actions[name]
+        if not isinstance(spec, dict):
+            raise repair("Power Automate action is malformed")
+        deps = spec.get("runAfter", {})
+        if not isinstance(deps, dict) or any(statuses != ["Succeeded"] for statuses in deps.values()):
+            raise repair("Power Automate runAfter requires success-only dependencies")
+        if not set(deps) <= placed:
+            raise repair("Power Automate dependencies are missing or cyclic")
+        if previous is not None and previous not in deps:
+            raise repair("Power Automate parallel actions require an explicit routing mapping")
+        placed.add(name)
+        previous = name
+    return order
+
+
 def _step(name: str, spec: dict) -> ImportedStep:
     spec = spec if isinstance(spec, dict) else {}  # an action value can be null
     inputs = spec.get("inputs") if isinstance(spec.get("inputs"), dict) else {}

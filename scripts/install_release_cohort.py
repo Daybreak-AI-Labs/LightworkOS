@@ -49,6 +49,12 @@ print(json.dumps(value, sort_keys=True))
         # an importable pip vendor. Bootstrap the exact reviewed tomli pin into
         # an isolated temporary target before parsing any repository metadata.
         with tempfile.TemporaryDirectory(prefix="lightwork-tomli-") as tmp:
+            requirements = Path(tmp) / "requirements.txt"
+            requirements.write_text(
+                "tomli==2.5.0 --hash=sha256:"
+                "32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b\n",
+                encoding="utf-8",
+            )
             subprocess.run(
                 [
                     python,
@@ -57,9 +63,15 @@ print(json.dumps(value, sort_keys=True))
                     "install",
                     "--disable-pip-version-check",
                     "--no-deps",
+                    "--require-hashes",
+                    "--only-binary=:all:",
+                    "--platform=any",
+                    "--implementation=py",
+                    "--abi=none",
                     "--target",
                     tmp,
-                    "tomli==2.5.0",
+                    "--requirement",
+                    str(requirements),
                 ],
                 check=True,
             )
@@ -71,8 +83,11 @@ import sys
 sys.path.insert(0, sys.argv[1])
 import tomli
 
-if getattr(tomli, "__version__", "") != "2.5.0":
-    raise SystemExit("unexpected tomli bootstrap version")
+if (
+    getattr(tomli, "__version__", "") != "2.5.0"
+    or not Path(tomli.__file__).resolve().is_relative_to(Path(sys.argv[1]).resolve())
+):
+    raise SystemExit("unexpected tomli bootstrap provenance")
 value = tomli.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 print(json.dumps(value, sort_keys=True))
 """

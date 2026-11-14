@@ -52,7 +52,13 @@ def execute_chain_result(flow: Flow, data: dict, ctx, start: str | None, *, run_
         return FlowRunResult(status=status, data=p.data, cursor=p.node.id,
                              resume_at=p.resume_at, prompt=prompt)
     except _Reject as r:
-        return FlowRunResult(status=STATUS_FAILED if r.error else STATUS_REJECTED,
+        if r.error:
+            return FlowRunResult(
+                status=STATUS_FAILED, data=data, error=r.error,
+                cursor=ctx.frame.get("cursor") or r.node.id,
+                continuation={"version": 1, "frame": ctx.frame},
+            )
+        return FlowRunResult(status=STATUS_REJECTED,
                              data=r.data, cursor=r.node.id, error=r.error)
     except _NodeError as e:  # an executor blew up inside a known node -- keep the
         # node id as the cursor so the run can be retried from right there.

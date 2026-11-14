@@ -11,7 +11,14 @@ from pathlib import Path
 
 import click
 
-from . import _strip_terminal_control, main, open_world
+from . import _strip_terminal_control, _write_private_export, main, open_world
+
+
+def _write_export(output: str, text: str) -> bool:
+    try:
+        return _write_private_export(output, text)
+    except OSError as exc:
+        raise click.ClickException(f"could not write {output}: {exc}") from exc
 
 
 def _load(path: str) -> dict:
@@ -158,8 +165,8 @@ def title_check(dossier) -> None:
 def title_seal(dossier, out) -> None:
     """Sign a dossier with this deployment's audit identity."""
     from ..immune import title as t
-    Path(out).write_text(json.dumps(t.seal(_load(dossier)), indent=2), encoding="utf-8")
-    click.echo(f"sealed -> {out}")
+    streamed = _write_export(out, json.dumps(t.seal(_load(dossier)), indent=2))
+    click.echo(f"sealed -> {out}", err=streamed)
 
 
 @title_group.command("verify")
@@ -194,9 +201,9 @@ def title_research(dossier, runs, elements, out) -> None:
         merged = title.add_research_runs(_load(dossier), [_load(r) for r in runs], list(elements))
     except (KeyError, TypeError, AttributeError, ValueError) as exc:
         raise click.ClickException(f"cannot use research run: {exc}") from exc
-    Path(out).write_text(json.dumps(merged, indent=2, sort_keys=True), encoding="utf-8")
+    streamed = _write_export(out, json.dumps(merged, indent=2, sort_keys=True))
     added = len(merged["gates"]) - len(_load(dossier).get("gates", []))
-    click.echo(f"{added} conception gate(s) added -> {out}")
+    click.echo(f"{added} conception gate(s) added -> {out}", err=streamed)
 
 
 @immune_group.command("rules")

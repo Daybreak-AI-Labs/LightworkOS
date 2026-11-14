@@ -3030,6 +3030,8 @@ Built-in tool modules. Highlights by group (all under `tools/`):
   holding a file its RECORD lists, and every directory below it) without
   being in the signed manifest. Files another distribution installs into a
   shared namespace package, outside those directories, are not checked.
+  See the [plugin signing author guide](plugin-signing-author-guide.md) for
+  manifest coverage, on-disk checks, and packaging tests or generated files.
   **Plugin compatibility matrix** (`plugin_matrix.py`, `python -m
   maverick.plugin_matrix [--ci]`, wired as a CI lint step): one table per
   installed entry point — dist, declared API major, loadable/deprecated/

@@ -7,11 +7,26 @@ See :mod:`._seams` for how the prompt primitives stay patchable through the
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from ._common import _append_nested_product_config, _emit_kv, _safe_int, _valid_config_name
 from ._seams import _q_checkbox, _q_confirm, _q_select, _q_text, console
+
+_ENVIRONMENT_REFERENCE = re.compile(
+    r"(?:[A-Z][A-Z0-9_]{0,127}|\$(?:\{[A-Z][A-Z0-9_]{0,127}\}|[A-Z][A-Z0-9_]{0,127}))"
+)
+_DROP_KEY_REFERENCE_ERROR = (
+    "[yellow]Enter an environment variable name (or env:NAME) or a key-store "
+    "address (kms://, secret://, vault://, aws-kms://, azure-keyvault:// or "
+    "gcp-kms://). Do not paste the key itself.[/yellow]"
+)
+_ENVIRONMENT_REFERENCE_ERROR = (
+    "[yellow]Enter the environment variable name, using uppercase letters, "
+    "digits and underscores, starting with a letter (up to 128 characters). "
+    "Do not paste the secret itself.[/yellow]"
+)
 
 
 @dataclass
@@ -401,10 +416,11 @@ def _pick_consent_destinations() -> dict[str, Any] | None:
         return _q_text(f"  {label}", default=default).strip() or default
 
     def credential_reference(label: str, default: str) -> str:
-        name = destination_text(label, default)
-        if name.startswith("$"):
-            return name
-        return "${" + name + "}"
+        while True:
+            value = destination_text(label, default)
+            if _ENVIRONMENT_REFERENCE.fullmatch(value):
+                return value if value.startswith("$") else "${" + value + "}"
+            console.print(_ENVIRONMENT_REFERENCE_ERROR)
 
     if "salesforce" in destination_providers:
         destination_tables["salesforce"] = {
@@ -618,6 +634,26 @@ def _pick_privacy_discovery() -> dict[str, Any]:
 
 def _pick_privacy_rights_source_adapters() -> dict[str, Any]:
     """Stock privacy-rights source adapters (directory, CRM and ITSM providers)."""
+    def instance_origin(choice: str, provider: str) -> str:
+        from maverick.privacy_rights_source_adapters import _origin
+        from maverick.privacy_rights_source_worker import PrivacyRightsSourceWorkerConfigError
+
+        while True:
+            value = _q_text(
+                f"  Exact HTTPS instance origin for {choice} (leave blank to keep disabled)",
+                default="",
+            ).strip()
+            if not value:
+                console.print(f"[yellow]{choice} remains disabled until its instance origin is configured.[/yellow]")
+                return ""
+            try:
+                return _origin(provider, value)
+            except (ValueError, PrivacyRightsSourceWorkerConfigError):
+                console.print(
+                    "[yellow]Enter your provider's HTTPS instance origin only, without "
+                    "credentials, a path, a query or a fragment. Only the default HTTPS port is allowed.[/yellow]"
+                )
+
     source_choices = _q_checkbox(
         "Select privacy-rights source providers",
         [
@@ -644,21 +680,23 @@ def _pick_privacy_rights_source_adapters() -> dict[str, Any]:
         "Salesforce contacts": (
             "salesforce_contacts",
             "crm-salesforce",
-            "https://tenant.salesforce.com",
+            "",
             "env:SALESFORCE_RIGHTS_TOKEN",
         ),
         "ServiceNow users": (
             "servicenow_users",
             "itsm-servicenow",
-            "https://tenant.service-now.com",
+            "",
             "env:SERVICENOW_RIGHTS_TOKEN",
         ),
     }
     selected_providers: dict[str, Any] = {}
     for choice in source_choices:
         provider, source_id, origin, credential_ref = provider_specs[choice]
+        if not origin:
+            origin = instance_origin(choice, provider)
         selected_providers[provider] = {
-            "enable": True,
+            "enable": bool(origin),
             "source_id": source_id,
             "origin": origin,
             "credential_ref": credential_ref,
@@ -670,7 +708,7 @@ def _pick_privacy_rights_source_adapters() -> dict[str, Any]:
             ],
         }
     return {
-        "enable": bool(selected_providers),
+        "enable": any(item["enable"] for item in selected_providers.values()),
         "timeout_seconds": 15,
         "max_response_bytes": 1_048_576,
         "max_retrieval_bytes": 8_388_608,
@@ -839,13 +877,20 @@ def _pick_privacy_automation(consent: _ConsentChoices) -> dict[str, Any] | None:
     privacy_drop_key_ref = "env:MAVERICK_PRIVACY_RIGHTS_DIGEST_KEY"
     privacy_drop_scheduler = False
     if privacy_drop_management:
-        privacy_drop_key_ref = (
-            _q_text(
-                "DROP principal-binding secret-provider reference (never key material)",
+        from maverick.config_lint import _is_drop_principal_key_reference
+
+        while True:
+            value = _q_text(
+                "DROP principal-binding key reference: environment variable or "
+                "key-store address (never key material)",
                 default=privacy_drop_key_ref,
-            ).strip()
-            or privacy_drop_key_ref
-        )
+            ).strip() or privacy_drop_key_ref
+            if re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", value):
+                value = "env:" + value
+            if _is_drop_principal_key_reference(value):
+                privacy_drop_key_ref = value
+                break
+            console.print(_DROP_KEY_REFERENCE_ERROR)
         privacy_drop_scheduler = _q_confirm(
             "Enable the managed DROP reconciliation and retention scheduler? "
             "This runs bounded tenant-local maintenance; California delivery and "
@@ -1018,11 +1063,17 @@ def _pick_data_use_governance() -> dict[str, Any] | None:
                 else "https://workspace.cloud.databricks.com"
             ),
         ).strip()
-        native_secret_ref = _q_text(
-            "Secret-provider reference containing the bearer token (for example "
-            "$LIGHTWORK_DATA_USE_PROVIDER_TOKEN)",
-            default="$LIGHTWORK_DATA_USE_PROVIDER_TOKEN",
-        ).strip()
+        while True:
+            native_secret_ref = _q_text(
+                "Environment variable holding the native provider bearer token (for example "
+                "$LIGHTWORK_DATA_USE_PROVIDER_TOKEN)",
+                default="$LIGHTWORK_DATA_USE_PROVIDER_TOKEN",
+            ).strip() or "$LIGHTWORK_DATA_USE_PROVIDER_TOKEN"
+            if _ENVIRONMENT_REFERENCE.fullmatch(native_secret_ref):
+                if not native_secret_ref.startswith("$"):
+                    native_secret_ref = "$" + native_secret_ref
+                break
+            console.print(_ENVIRONMENT_REFERENCE_ERROR)
         native_revision = _safe_int(
             _q_text(
                 "Credential authority revision (increment on rotation)",

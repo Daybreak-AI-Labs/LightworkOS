@@ -4,7 +4,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .ir import NODE_ACTION, NODE_AGENT, FlowNode
+from .ir import NODE_ACTION, NODE_AGENT, Flow, FlowNode
+
+
+def agent_error_route_errors(flow: Flow) -> list[str]:
+    """Authoring refusals only; existing saved releases remain loadable."""
+    errors = []
+    for node in flow.nodes.values():
+        if node.kind == NODE_AGENT and node.on_error:
+            errors.append(f"agent node {node.id!r}: on_error is not supported; "
+                          "failed agent work requires reconciliation before continuing")
+        if node.body is not None:
+            errors.extend(agent_error_route_errors(node.body))
+        for branch in node.branches:
+            errors.extend(agent_error_route_errors(branch))
+    return errors
 
 
 @dataclass(frozen=True)
