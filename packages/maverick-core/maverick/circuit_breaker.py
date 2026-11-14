@@ -85,6 +85,7 @@ class CircuitBreaker:
         # fast-fail until it resolves (cleared by record_success/failure).
         self._probe_in_flight = False
         self._probe_started_mono: float | None = None
+        self._probe_owner: object | None = None
 
     @property
     def state(self) -> CircuitState:
@@ -103,8 +104,10 @@ class CircuitBreaker:
         ):
             self._state = CircuitState.HALF_OPEN
 
-    def record_success(self) -> None:
+    def record_success(self, *, probe: object | None = None) -> None:
         with self._lock:
+            if probe is not self._probe_owner:
+                return  # A replaced probe cannot resolve its successor.
             self._stats.total_successes += 1
             self._tick()
             if self._state is CircuitState.OPEN:
@@ -114,12 +117,16 @@ class CircuitBreaker:
             self._stats.consecutive_failures = 0
             self._state = CircuitState.CLOSED
             self._probe_in_flight = False
+            self._probe_owner = None
 
-    def record_failure(self) -> None:
+    def record_failure(self, *, probe: object | None = None) -> None:
         with self._lock:
+            if probe is not self._probe_owner:
+                return
             now = time.time()
             now_mono = time.monotonic()
             self._probe_in_flight = False
+            self._probe_owner = None
             self._stats.consecutive_failures += 1
             self._stats.total_failures += 1
             self._stats.last_failure_at = now
@@ -134,9 +141,13 @@ class CircuitBreaker:
                 self._stats.opened_at = now
                 self._stats.opened_mono = now_mono
 
-    def admit(self) -> bool:
-        """Admit one manually observed call; return whether it owns the probe."""
-        probe_started = False
+    def admit(self) -> object | None:
+        """Admit a call; return its opaque probe owner, or None when closed.
+
+        Pass the owner to result/release methods. A timed-out probe can still
+        finish after its replacement, but cannot change the replacement's lease.
+        """
+        probe_owner = None
         with self._lock:
             self._tick()
             if self._state is CircuitState.OPEN:
@@ -162,27 +173,30 @@ class CircuitBreaker:
                     )
                 self._probe_in_flight = True
                 self._probe_started_mono = time.monotonic()
-                probe_started = True
-        return probe_started
+                probe_owner = self._probe_owner = object()
+        return probe_owner
 
-    def release_probe(self) -> None:
+    def release_probe(self, probe: object) -> None:
         """Abandon an owned probe after a local refusal, without a health result."""
         with self._lock:
+            if probe is not self._probe_owner:
+                return
             self._probe_in_flight = False
+            self._probe_owner = None
 
     def call(self, fn: Callable[[], T]) -> T:
         """Run ``fn`` if allowed; raise ``CircuitOpen`` otherwise."""
-        probe_started = self.admit()
+        probe_owner = self.admit()
         try:
             result = fn()
         except Exception:
-            self.record_failure()
+            self.record_failure(probe=probe_owner)
             raise
         except BaseException:
-            if probe_started:
-                self.record_failure()
+            if probe_owner is not None:
+                self.record_failure(probe=probe_owner)
             raise
-        self.record_success()
+        self.record_success(probe=probe_owner)
         return result
 
     def reset(self) -> None:
@@ -190,6 +204,7 @@ class CircuitBreaker:
             self._stats = _Stats()
             self._state = CircuitState.CLOSED
             self._probe_in_flight = False
+            self._probe_owner = None
 
     def snapshot(self) -> dict:
         with self._lock:

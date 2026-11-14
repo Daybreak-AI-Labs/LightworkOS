@@ -2365,8 +2365,6 @@ def _record_goal_success(*, world: WorldModel, goal: Any, goal_id: int, summary:
             )
         except Exception:  # pragma: no cover -- observability is best-effort
             pass
-    lifecycle.end_episode(summary, "success")
-    world.set_goal_status(goal_id, "done", result=summary)
     # Success-path audit: GOAL_END on the signed chain records the outcome,
     # closing the GOAL_START..GOAL_END pair for a completed run. Block/denial
     # exits are already covered by their own audit events. A write error is
@@ -2377,6 +2375,8 @@ def _record_goal_success(*, world: WorldModel, goal: Any, goal_id: int, summary:
     audit_event(EventKind.GOAL_END, goal_id=goal_id, agent="orchestrator",
                 status="succeeded",
                 result=(_res[:500] + "…") if _res and len(_res) > 500 else _res)
+    world.set_goal_status(goal_id, "done", result=summary)
+    lifecycle.end_episode(summary, "success")
     # Index this finished goal into the semantic store so future
     # runs recall it via vector search. No-op unless a [memory] backend is
     # configured; re-reads the goal so the indexed status/result reflect

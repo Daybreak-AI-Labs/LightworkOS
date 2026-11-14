@@ -49,3 +49,40 @@ def test_unverifiable_gateway_cache_cost_is_refused(cost):
 
     with pytest.raises(UsageAccountingError):
         OpenRouterClient._from_response(_response(cost=cost), Budget(), model="gpt-5.5")
+
+
+@pytest.mark.parametrize("details_as_dict", [False, True])
+@pytest.mark.parametrize("fee", [0.0, 0.1])
+def test_openrouter_byok_includes_upstream_charge_in_goal_and_ledger(details_as_dict, fee):
+    from dataclasses import replace
+
+    from maverick.budget import Budget, BudgetExceeded, _attempt_price_scope, _lookup_price_quote
+    from maverick.llm import _gateway_response_cost
+
+    quote = replace(_lookup_price_quote("xai:grok-4.5"), model_id="openrouter:x-ai/grok-4.5")
+    response = _response(cost=fee)
+    response.usage.is_byok = True
+    details = {"upstream_inference_cost": 2.0}
+    response.usage.cost_details = details if details_as_dict else SimpleNamespace(**details)
+    budget = Budget(max_dollars=0.1)
+    with _attempt_price_scope(lambda *_args: quote), pytest.raises(BudgetExceeded):
+        OpenRouterClient._from_response(response, budget, model="x-ai/grok-4.5", price_model_prefix="openrouter:")
+    assert budget.dollars == pytest.approx(2.0 + fee)
+    assert _gateway_response_cost("openrouter:x-ai/grok-4.5", response.usage, quote) == pytest.approx(budget.dollars)
+    # Older Chat Completions receipts identify BYOK through upstream cost alone.
+    del response.usage.is_byok
+    assert _gateway_response_cost("openrouter:x-ai/grok-4.5", response.usage, quote) == pytest.approx(budget.dollars)
+    # An explicit ordinary-routing receipt already includes inference in cost.
+    response.usage.is_byok = False
+    assert _gateway_response_cost("openrouter:x-ai/grok-4.5", response.usage, quote) == fee
+
+
+@pytest.mark.parametrize("upstream", [None, -1, float("nan"), float("inf"), True, "unavailable"])
+def test_openrouter_byok_unresolved_upstream_charge_is_refused(upstream):
+    from maverick.budget import Budget, UsageAccountingError
+
+    response = _response(cost=0.0)
+    response.usage.is_byok = True
+    response.usage.cost_details = {"upstream_inference_cost": upstream}
+    with pytest.raises(UsageAccountingError):
+        OpenRouterClient._from_response(response, Budget(), model="gpt-5.5")

@@ -90,3 +90,59 @@ def test_canceled_hedge_charges_reserved_tokens_and_cost(dispatch, monkeypatch, 
     assert budget.input_tokens >= 1
     assert budget.output_tokens >= 100
     assert budget._reserved == 0
+
+
+@pytest.mark.parametrize("late_result", ["local_refusal", "success", "failure"])
+def test_expired_llm_probe_cannot_release_or_complete_replacement(monkeypatch, late_result):
+    clock = [100.0]
+    monkeypatch.setattr(circuit_breaker.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(llm_module, "_note_bandit", lambda *args: None)
+    circuit_breaker.reset_all()
+    try:
+        breaker = circuit_breaker.get("llm:probe-owner", failure_threshold=1, cooldown_seconds=10)
+        breaker.record_failure()
+        clock[0] += 10
+        first = llm_module._enforce_circuit("probe-owner")
+        clock[0] += 10
+        replacement = llm_module._enforce_circuit("probe-owner")
+        before = breaker.snapshot()
+        exception = UnpricedModelError("local refusal") if late_result == "local_refusal" else None
+        llm_module._observe_provider_result(
+            "probe-owner", "model", 1, 0, late_result == "failure", exception,
+            probe=first, attempt_started=late_result != "local_refusal",
+        )
+        assert breaker.snapshot() == before
+        with pytest.raises(circuit_breaker.CircuitOpen):
+            breaker.admit()
+        llm_module._observe_provider_result("probe-owner", "model", 1, 0, False, None, probe=replacement)
+        assert breaker.state is circuit_breaker.CircuitState.CLOSED
+    finally:
+        circuit_breaker.reset_all()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_expired_call_probe_cannot_complete_replacement(monkeypatch, fails):
+    clock = [100.0]
+    monkeypatch.setattr(circuit_breaker.time, "monotonic", lambda: clock[0])
+    breaker = circuit_breaker.CircuitBreaker("call-probe-owner", failure_threshold=1, cooldown_seconds=10)
+    breaker.record_failure()
+    clock[0] += 10
+    replacement = []
+
+    def slow_call():
+        clock[0] += 10
+        replacement.append(breaker.admit())
+        if fails:
+            raise RuntimeError("expired probe failed")
+        return "late success"
+
+    if fails:
+        with pytest.raises(RuntimeError, match="expired probe"):
+            breaker.call(slow_call)
+    else:
+        assert breaker.call(slow_call) == "late success"
+    assert breaker.state is circuit_breaker.CircuitState.HALF_OPEN
+    with pytest.raises(circuit_breaker.CircuitOpen):
+        breaker.admit()
+    breaker.record_success(probe=replacement[0])
+    assert breaker.state is circuit_breaker.CircuitState.CLOSED

@@ -932,7 +932,7 @@ def _provider_failure_flag(exc: BaseException) -> bool:
     return _is_provider_transport_failure(exc) if isinstance(exc, Exception) else True
 
 
-def _feed_circuit(provider: str, error: bool) -> None:
+def _feed_circuit(provider: str, error: bool, probe: object | None = None) -> None:
     """Record a provider call's outcome on its circuit breaker so repeated
     failures trip it (observable via ``maverick diag circuits``). This is the
     recorder half; ``_enforce_circuit`` admits the call and owns any probe.
@@ -940,7 +940,7 @@ def _feed_circuit(provider: str, error: bool) -> None:
     try:
         from .circuit_breaker import get
         br = get(f"llm:{provider}")
-        br.record_failure() if error else br.record_success()
+        br.record_failure(probe=probe) if error else br.record_success(probe=probe)
     except Exception:  # pragma: no cover -- breaker never blocks a call
         pass
 
@@ -955,7 +955,7 @@ def _observe_provider_result(provider, model_id, latency_ms, dollars, error, exc
             or isinstance(exception, ProviderDispatchDenied)):
         if probe:
             try:
-                get_circuit(f"llm:{circuit_scope or provider}").release_probe()
+                get_circuit(f"llm:{circuit_scope or provider}").release_probe(probe)
             except Exception:  # pragma: no cover -- health bookkeeping stays best effort
                 pass
         return
@@ -969,10 +969,13 @@ def _observe_provider_result(provider, model_id, latency_ms, dollars, error, exc
     # A non-transient 4xx need not mark a provider unhealthy, but the logical
     # call still failed. Never turn that health classification into a reward.
     _note_bandit(provider, model_id, error or exception is not None, dollars, routing_credit)
-    _feed_circuit(circuit_scope or provider, error)
+    if probe:
+        _feed_circuit(circuit_scope or provider, error, probe)
+    else:
+        _feed_circuit(circuit_scope or provider, error)
 
 
-def _enforce_circuit(provider: str) -> bool:
+def _enforce_circuit(provider: str) -> object | None:
     """Fast-fail BEFORE dispatch when this provider's breaker is OPEN.
 
     Raises ``CircuitOpen`` -- a transient provider signal the failover chain
@@ -990,7 +993,7 @@ def _enforce_circuit(provider: str) -> bool:
     except CircuitOpen:
         raise
     except Exception:  # pragma: no cover -- bookkeeping cannot stop a healthy call
-        return False
+        return None
 
 
 def _safe_cap_projection(model_id, system, messages, tools, max_tokens,

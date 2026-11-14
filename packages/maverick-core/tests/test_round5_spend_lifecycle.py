@@ -106,3 +106,35 @@ def test_federation_claim_survives_pre_execution_refusal(monkeypatch, refusal):
     result = asyncio.run(orchestrator.run_goal(None, world, Budget(), 1, sandbox=object()))
     assert result.startswith("BLOCKED:")
     assert True not in consumed
+
+
+def test_success_audit_refusal_never_publishes_done(monkeypatch):
+    from maverick import audit, orchestrator
+    from maverick.audit import AuditWriteRefused
+
+    goal = SimpleNamespace(status="active")
+    statuses = []
+
+    def set_status(_id, status, **_kwargs):
+        statuses.append(status)
+        goal.status = status
+
+    world = SimpleNamespace(get_goal=lambda _id: goal, set_goal_status=set_status,
+                            append_event=lambda *args: None)
+    lifecycle = orchestrator._RunLifecycle(world, 1, Budget())
+    lifecycle.started = True
+
+    def refuse(*args, **kwargs):
+        raise AuditWriteRefused("configured signing floor refused completion")
+
+    monkeypatch.setattr(audit, "audit_event", refuse)
+    with pytest.raises(AuditWriteRefused) as error:
+        orchestrator._record_goal_success(
+            world=world, goal=goal, goal_id=1, summary="completed", is_rendered_diff=False,
+            quarantine=None, shield=None, blackboard=None, lifecycle=lifecycle, domain=None,
+            domain_profile=None, ctx=None, planning_mode=None,
+        )
+    lifecycle.finish(error.value)
+    assert "done" not in statuses
+    assert goal.status == "failed"
+    assert lifecycle.outcome == "failure"
