@@ -987,7 +987,9 @@ class KnowledgeAccessService:
 
         Registry pages are candidate metadata only. Never release a purpose
         until the same live source, consent, lineage and principal checks used
-        for detail succeed. Storage/projection failures propagate as unavailable.
+        for detail succeed. A source whose content is unavailable (a storage or
+        projection failure) is treated like a denied source: it backs no
+        purpose, so the purpose is omitted rather than reported as an error.
         """
         canonical = canonical_tenant_id(tenant)
         found: set[str] = set()

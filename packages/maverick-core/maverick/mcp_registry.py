@@ -16,9 +16,9 @@ review and configure servers. Registry-provided HTTP entries are also refused
 until their complete configuration can be authenticated by a trusted publisher.
 
 Install validates the spec through `MCPServerSpec.from_config` (the same
-subprocess-injection / url checks the kernel applies to hand-written config),
-then applies registry-specific hardening before writing it to
-``~/.maverick/config.toml`` under ``[mcp_servers.<name>]``.
+subprocess-injection / url checks the kernel applies to hand-written config)
+and registry-specific hardening, and then refuses: with both entry kinds
+refused above, no registry entry is installed into config today.
 """
 from __future__ import annotations
 
@@ -200,10 +200,12 @@ def _validate_registry_spec(spec: MCPServerSpec) -> None:
 
 
 def spec_from_entry(entry: catalog.CatalogEntry) -> MCPServerSpec:
-    """Build a validated MCPServerSpec from a registry entry's inline spec.
+    """Validate a registry entry's inline spec, then refuse to install it.
 
-    Raises CatalogError if the entry has no inline spec, and ValueError if the
-    spec is malformed or violates registry-specific untrusted-input policy."""
+    Raises CatalogError if the entry has no inline spec, and ValueError in
+    every other case: a malformed spec, a registry-policy violation, or (for a
+    valid spec) because registry configuration cannot yet be authenticated.
+    It never returns today."""
     if not entry.spec:
         raise catalog.CatalogError(
             f"MCP registry entry {entry.name!r} has no inline spec to install")
@@ -224,10 +226,10 @@ def spec_from_entry(entry: catalog.CatalogEntry) -> MCPServerSpec:
 
 
 def install_mcp_from_registry(name: str, *, indexes: list[str] | None = None) -> MCPServerSpec:
-    """Resolve ``name`` in the registry and return a validated spec to install.
+    """Resolve ``name`` in the registry and validate it for install.
 
-    Pure lookup + validation; the caller writes it to config (so a dry-run /
-    preview is possible). Raises ValueError if the name isn't in the registry."""
+    Raises ValueError if the name isn't in the registry, and otherwise raises
+    from :func:`spec_from_entry`, which refuses every registry entry today."""
     entry = resolve_mcp(name, indexes=indexes)
     if entry is None:
         raise ValueError(f"no MCP server {name!r} in the registry")

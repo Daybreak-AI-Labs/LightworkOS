@@ -142,9 +142,10 @@ class MCPServerSpec:
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     inherit_env: bool = False  # opt-in to full os.environ inheritance
-    # SHA-256 of the executable / NPM package SHASUM / image digest the
-    # operator expects. When set, MCPClient.start() refuses to spawn if
-    # the actual command resolves to a different hash. Defends the
+    # SHA-256 of the resolved executable file (argv[0]) the operator expects.
+    # When set, MCPClient.start() refuses to spawn if that file hashes
+    # differently. It pins only the launcher: a pin on npx/docker does not pin
+    # the package or image they fetch. Defends the
     # supply-chain attack class shipped to STDIO MCP in April 2026
     # (CVE-2026-30615 et al). Default None = no pin (legacy behavior).
     pin_sha256: str | None = None
@@ -268,7 +269,7 @@ def _validate_subprocess_inputs(spec: MCPServerSpec) -> None:
       - command must be a simple program name or absolute path; no
         shell metacharacters, no embedded NUL / newline.
       - each arg must not contain NUL / newline / CR.
-      - env keys must match [A-Z][A-Z0-9_]*; values must not contain
+      - env keys must match [A-Za-z_][A-Za-z0-9_]*; values must not contain
         NUL / newline / CR.
     """
     for ch in _DENY_CHARS:
