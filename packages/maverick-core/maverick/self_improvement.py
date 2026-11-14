@@ -2463,7 +2463,11 @@ class PromotionLedger:
             raise PromotionLedgerError("cannot audit promotion journal tail repair")
         from .file_lock import atomic_write_text
 
-        atomic_write_text(self._journal_path, repaired.decode("utf-8"), mode=0o600)
+        # Publish exactly the verified/audited bytes, including legacy CRLF
+        # delimiters; platform newline translation would change their digest.
+        atomic_write_text(
+            self._journal_path, repaired.decode("utf-8"), mode=0o600, newline="\n",
+        )
         _sync_file(self._journal_path)
         _sync_directory(self._journal_path.parent)
         log.warning("repaired promotion ledger journal tail (%s)", repair)

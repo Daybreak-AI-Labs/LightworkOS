@@ -325,6 +325,7 @@ def _record_impl(
                     path,
                     previous + line,
                     mode=0o600,
+                    newline="\n",  # Keep physical bytes equal to the bounded UTF-8 payload.
                 )
             return True
         except (OSError, RuntimeError, ValueError) as e:
