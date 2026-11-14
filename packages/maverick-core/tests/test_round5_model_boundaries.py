@@ -131,6 +131,51 @@ def test_discovery_retains_pricing_evidence_and_caches_truncation(monkeypatch, t
     assert restored["truncated"] is True and restored["models"] == entry["models"]
 
 
+def test_discovery_retains_verified_price_outside_picker_catalog(monkeypatch):
+    from maverick import llm
+    from maverick import model_discovery as discovery
+    from maverick.budget import _lookup_price_quote
+
+    model = "gpt-5.6"
+    assert model not in llm.MODEL_CATALOG["openai"]
+    assert _lookup_price_quote(f"openai:{model}", estimate_only=False).verified
+    monkeypatch.setattr(discovery, "discovery_enabled", lambda: True)
+    monkeypatch.setattr(discovery, "_provider_material", lambda provider: {"configured": True, "api_key": "synthetic", "base_url": ""})
+    rows = [{"id": f"a-unpriced-{i:03}"} for i in range(discovery.MAX_MODELS_PER_PROVIDER)]
+    rows.append({"id": model, "context_length": 32768})
+    entry = discovery.discover("openai", fetch=lambda *args, **kwargs: (200, json.dumps({"data": rows}).encode()))
+    assert model in entry["models"] and model in entry["capabilities"]
+    assert len(entry["models"]) == discovery.MAX_MODELS_PER_PROVIDER
+    assert entry["truncated"] is True and "501" in entry["detail"]
+    # A first-party quote cannot qualify the same spelling at another gateway.
+    routed = discovery.discover("openrouter", fetch=lambda *args, **kwargs: (200, json.dumps({"data": rows}).encode()))
+    assert model not in routed["models"]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_kv_memory_refuses_uncertain_shield(monkeypatch, raises):
+    from maverick import memory_guard
+    from maverick.tools.kv_memory import kv_memory
+
+    monkeypatch.setenv("MAVERICK_MEMORY_GUARD", "1")
+    monkeypatch.setattr(memory_guard, "audit_write", lambda *args, **kwargs: None)
+    written = []
+
+    def scan(text):
+        if raises:
+            raise RuntimeError("synthetic detector failure")
+        return SimpleNamespace(allowed=True, scan_error=True)
+
+    shield = SimpleNamespace(scan_input=scan)
+    if not raises:
+        decision = memory_guard.screen_write("ordinary note", memory_guard.agent_fact_provenance(), shield=shield)
+        assert not decision.allowed and "could not" in decision.reason
+    world = SimpleNamespace(upsert_fact=lambda *args, **kwargs: written.append(args) or 1)
+    result = kv_memory(world, 7, shield=shield).fn({"op": "set", "key": "note", "value": "ordinary note"})
+    assert "blocked by Memory Guard" in result and "could not" in result
+    assert written == []
+
+
 def test_llamacpp_launcher_replicas_have_distinct_cache_files(tmp_path):
     from maverick import local_runtime
 

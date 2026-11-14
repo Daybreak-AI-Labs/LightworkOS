@@ -68,7 +68,7 @@ def _screen_write(value, provenance, shield):
             except Exception:
                 return memory_guard.WriteDecision(
                     False, "safety shield configuration is unavailable; review safety settings", ["shield"])
-    return memory_guard.screen_write(value, provenance, shield=shield)
+    return memory_guard.screen_write(value, provenance, shield=shield, deny_on_shield_error=True)
 
 
 def _run_factory(world, goal_id: int | None, *, shield=None):

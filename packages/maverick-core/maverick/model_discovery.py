@@ -371,6 +371,42 @@ def _page_capabilities(style: str, payload: dict) -> dict:
     return capabilities
 
 
+def _prioritize_models(provider: str, models: list[str], free: list[str]) -> list[str]:
+    """Keep verified pricing evidence first, then free/catalog picker evidence."""
+    from .llm import MODEL_CATALOG, MODEL_PRICES, model_price_quote
+    from .pricing import UnverifiedRateError
+
+    # As in Budget, a bare quote applies only to its evidence's own provider.
+    # Catalog membership is display guidance, never pricing authority.
+    evidence_prefix = {
+        "anthropic": "anthropic-", "openai": "openai-", "gemini": "google-",
+        "moonshot": "moonshot-", "deepseek": "deepseek-", "xai": "xai-",
+        "openrouter": "openrouter-",
+    }.get(provider)
+    priced = set()
+    for model in models:
+        qualified = f"{provider}:{model}"
+        for key in (qualified, model):
+            try:
+                quote = model_price_quote(key)
+            except UnverifiedRateError:
+                continue
+            if (quote is None or quote.currency != "USD"
+                    or MODEL_PRICES.get(key, quote.rates) != quote.rates):
+                continue
+            if key == qualified or (evidence_prefix is not None
+                                    and quote.evidence_id.startswith(evidence_prefix)):
+                priced.add(model)
+                break
+    free_ids = set(free)
+    catalog = set(MODEL_CATALOG.get(provider, ()))
+    # Metadata-free compatibility rates remain display hints, below verified
+    # quotes. Selection never changes Budget's independent admission checks.
+    hints = catalog | {model for model in models if spec_for(provider, model) in MODEL_PRICES}
+    return sorted(models, key=lambda model: (
+        0 if model in priced else 1 if model in free_ids else 2 if model in hints else 3, model))
+
+
 def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, Any] | None = None) -> dict[str, Any]:
     """Ask one provider which models its configured key can reach (no cache)."""
     name = _canonical(provider)
@@ -428,15 +464,7 @@ def discover(provider: str, *, fetch: Fetch | None = None, material: dict[str, A
     total_models = len(models)
     truncated = total_models > MAX_MODELS_PER_PROVIDER
     if truncated:
-        from .llm import MODEL_CATALOG, MODEL_PRICES
-        catalog = set(MODEL_CATALOG.get(name, ()))
-        free_ids = set(free)
-        priced_ids = {model for model in models
-                      if spec_for(name, model) in MODEL_PRICES
-                      or (model in catalog and model in MODEL_PRICES)}
-        # This is picker retention only; it grants no pricing authority.
-        # Billing still requires its normal verified evidence checks.
-        models.sort(key=lambda model: (0 if model in free_ids else 1 if model in priced_ids else 2, model))
+        models = _prioritize_models(name, models, free)
     models = sorted(models[:MAX_MODELS_PER_PROVIDER])
     kept = set(models)
     return _entry(

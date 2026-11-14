@@ -1,12 +1,13 @@
-"""Local-first model routing: prefer a reachable local provider when enabled.
+"""Local-first model routing: prefer a reachable self-hosted endpoint when enabled.
 
 Opt-in (``[system] local_first`` / ``MAVERICK_LOCAL_FIRST=1``); default OFF so
 "users own model choice" (CLAUDE.md #2) is preserved — and even when on, this only
 applies *after* an explicit per-role / CLI / config model has had its say (see
-``model_for_role``). When enabled and a configured local model's server is
-reachable, ``pick_local(role)`` returns that spec so privacy-sensitive work stays
-on the machine; otherwise it returns ``None`` and resolution falls through to the
-remote default (graceful fallback).
+``model_for_role``). When enabled and the configured self-hosted endpoint is
+reachable, ``pick_local(role)`` returns that spec; otherwise it returns ``None``
+and resolution falls through to the remote default (graceful fallback). The
+endpoint may be on another host. Reachability does not grant permission to send
+prompts; dispatch still applies the configured privacy and egress policies.
 
 ``is_local`` / ``reorder`` / ``local_model_for_role`` are pure and unit-tested;
 ``pick_local`` takes an injectable probe so reachability is testable without a
