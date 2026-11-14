@@ -141,6 +141,9 @@ def test_kill_switch_holds_on_unreadable_config_and_true_env(monkeypatch):
     monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
     monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "true")
     assert mailer.sending_disabled() is True
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {"config.toml": "bad"})
+    assert mailer.unavailable_reason() == "sending disabled"
+    monkeypatch.setattr(cfg, "config_source_errors", lambda **_k: {})
     monkeypatch.setenv("MAVERICK_EMAIL_DISABLE", "0")
     assert mailer.sending_disabled() is False
 

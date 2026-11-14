@@ -105,6 +105,9 @@ def unavailable_reason() -> str:
     for the kill switch, "no sending account configured" otherwise.
     """
     if sending_disabled():
+        import os
+        if (os.environ.get("MAVERICK_EMAIL_DISABLE") or "").strip():
+            return "sending disabled"  # the environment decides; config is not consulted
         try:
             from .config import config_source_errors
             unreadable = bool(config_source_errors(include_tenant=True))
