@@ -1363,6 +1363,16 @@ def test_unreadable_config_keeps_the_mint_and_approval_gates_strict(tmp_path):
     assert xa._approval_floor() == "low"
 
 
+def test_re_enrollment_keeps_the_execution_ledger(monkeypatch):
+    _wire_fakecrm(monkeypatch)
+    _enroll(max_risk="high")
+    parked = xa.execute("sf-quotebot", _write_request(idempotency_key="k1"))
+    _enroll(max_risk="high")
+    assert xa.execute_status("sf-quotebot", parked["execution_id"])["status"] == "pending"
+    again = xa.execute("sf-quotebot", _write_request(idempotency_key="k1"))
+    assert again.get("execution_id") == parked["execution_id"]
+
+
 def test_commit_of_an_approved_long_path_reaches_the_connector(monkeypatch):
     conn = _wire_fakecrm(monkeypatch)
     _enroll(max_risk="high")

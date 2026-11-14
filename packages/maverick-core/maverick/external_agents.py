@@ -400,7 +400,10 @@ def enroll(
     with _sidecar_locked():
         sidecar = _load_sidecar()
         prior = sidecar.get(agent.id, {})
+        # Re-enrollment updates the enrollment fields and keeps everything
+        # else the entry carries (execution and mint ledgers, last contact).
         sidecar[agent.id] = {
+            **prior,
             "platform": platform,
             "description": str(description or "")[:500],
             "owner": str(owner or "")[:200],
