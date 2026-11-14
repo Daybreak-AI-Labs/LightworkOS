@@ -217,7 +217,7 @@ def _audited_fleet_activity(audit_dir: Path | str | None = None,
                                        list[str]]:
     """Per-source ingest and recall counts, read off the signed audit chain.
 
-    Only rows that actually carry a signature are counted. The bundle's whole
+    Only rows whose signature and hash chain verify are counted. The bundle's whole
     justification for preferring this source over the inbox is that an audit row
     is signed and hash-chained; counting bare rows from a deployment with
     signing switched off would assert cross-vendor totals over evidence nobody
@@ -236,6 +236,7 @@ def _audited_fleet_activity(audit_dir: Path | str | None = None,
         return ingests, recalls, unprovenanced, [
             "no audit directory: fleet activity cannot be evidenced"]
     sealed_days = 0
+    unverified_days = 0
     unsigned_rows = 0
     days = day_files(root)
     if len(days) > _MAX_ACTIVITY_DAYS:
@@ -251,6 +252,9 @@ def _audited_fleet_activity(audit_dir: Path | str | None = None,
             # out loud, because a silently short total would understate the
             # very claim this bundle exists to make.
             sealed_days += 1
+            continue
+        if not _day_chain_verified(path, text):
+            unverified_days += 1
             continue
         for line in text.splitlines():
             if not line.strip():
@@ -278,11 +282,30 @@ def _audited_fleet_activity(audit_dir: Path | str | None = None,
         warnings.append(
             f"{sealed_days} audit day-file(s) could not be read; fleet activity "
             "counts are a lower bound, not a total")
+    if unverified_days:
+        warnings.append(
+            f"{unverified_days} audit day-file(s) failed signature or hash-chain "
+            "verification; their fleet rows were not counted")
     if unsigned_rows:
         warnings.append(
             f"{unsigned_rows} fleet row(s) carry no signature and were not "
             "counted; audit signing appears to be off")
     return ingests, recalls, unprovenanced, warnings
+
+
+def _day_chain_verified(path: Path, text: str) -> bool:
+    """Whether a day's signed rows verify (signature and hash chain).
+
+    Rows written with signing off are reported as ``unsigned`` and are
+    skipped by the caller anyway; any other break means a row's signature or
+    chain cannot be trusted, so none of that day's rows count as evidence.
+    """
+    from .audit.signing import verify_chain
+    try:
+        breaks = verify_chain(path, segment=text)
+    except Exception:
+        return False
+    return all(b.reason == "unsigned" for b in breaks)
 
 
 def _tenant_binding() -> dict:
