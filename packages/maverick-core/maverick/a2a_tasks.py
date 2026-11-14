@@ -375,6 +375,8 @@ def _a2a_capability() -> Any:
             vals = [vals]
         if not isinstance(vals, list) or not all(isinstance(v, str) for v in vals):
             raise RuntimeError(f"A2A {cfg_key} policy must be a list of names")
+        if cfg_key == "deny_tools":
+            vals = [*vals, *os.environ.get(env_key, "").split(",")]
         return frozenset(v.strip() for v in vals if v.strip())
 
     cap = Capability(

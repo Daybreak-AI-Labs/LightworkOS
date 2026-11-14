@@ -160,7 +160,7 @@ _ABSENT = (FileNotFoundError, NotADirectoryError)
 
 
 class _UnreadableTable(dict):
-    """The empty table a corrupt file is cached as; every hit reports it again."""
+    """A cached source with unreadable content; every hit reports it again."""
 
     def __init__(self, message: str) -> None:
         super().__init__()
@@ -352,6 +352,16 @@ def _read_toml_raw(path: Path) -> dict:
         # rename completes. A reader can see the name before that handle closes.
         with io.BytesIO(atomic_read_bytes(path)) as f:
             raw = tomllib.load(f)
+        malformed = [name for name in ("safety", "sandbox")
+                     if name in raw and not isinstance(raw[name], dict)]
+        if malformed:
+            error = ", ".join(f"[{name}] must be a configuration table" for name in malformed)
+            logging.getLogger(__name__).warning("invalid %s: %s; treating these sections as empty", path, error)
+            normalized = _UnreadableTable(error)
+            normalized.update(raw)
+            raw = normalized
+            for name in malformed:
+                raw[name] = {}
     except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as e:
         # The kernel must tolerate a missing config (returns {} above); a
         # corrupt/unreadable one is the adjacent case. Fail soft to defaults
@@ -3788,9 +3798,11 @@ def _model_improvement_policy_sources() -> tuple[dict, dict | None]:
     _load_wizard_env()
     paths = [config_path(), dashboard_overrides_path()]
     global_snapshot = _load_config_file(paths[0])
-    global_snapshot = _deep_merge_config(
+    from .config_resets import merge_dashboard
+    global_snapshot = merge_dashboard(
         global_snapshot,
         _load_config_file(paths[1]),
+        _deep_merge_config,
     )
 
     overlay = os.environ.get(CONFIG_OVERLAY_ENV)

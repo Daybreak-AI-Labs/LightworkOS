@@ -30,6 +30,7 @@ import logging
 import math
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import lru_cache
 
 from .safety.tool_risk import risk_rank, tool_risk
 
@@ -213,6 +214,19 @@ def _governance_config(snapshot: dict | None = None) -> dict:
     return cfg
 
 
+@lru_cache(maxsize=128)
+def _warn_unknown_policy_names(names: frozenset[str], key: str) -> None:
+    from .tools import base_tool_names
+
+    registered = base_tool_names(configured_optional=True, include_plugins=False)
+    if registered is None:
+        log.warning("governance.%s tool names could not be checked against the registry", key)
+        return
+    for name in sorted(names - {item.casefold() for item in registered}):
+        log.warning("governance.%s name %r is not registered in the built-in tool catalog; "
+                    "check its spelling or its plugin registration", key, name)
+
+
 def _policy_names(cfg: dict, key: str) -> frozenset[str]:
     if key not in cfg:
         return frozenset()
@@ -223,7 +237,10 @@ def _policy_names(cfg: dict, key: str) -> frozenset[str]:
         raise GovernancePolicyError(
             f"governance.{key} must be a list of non-empty strings"
         )
-    return frozenset(item.strip() for item in value)
+    names = frozenset(item.strip().casefold() for item in value)
+    if names:
+        _warn_unknown_policy_names(names, key)
+    return names
 
 
 def _policy_floor(cfg: dict, key: str) -> str | None:
@@ -558,7 +575,7 @@ def evaluate(
                        "capability", policy.compliance_profiles)
 
     # 2. Org hard-deny.
-    if action in policy.deny_actions:
+    if action.casefold() in {name.casefold() for name in policy.deny_actions}:
         return Verdict(Decision.DENY, f"{action!r} is denied by org policy",
                        "deny_actions", policy.compliance_profiles)
     if policy.deny_min_risk and risk_rank(eff_risk) >= risk_rank(policy.deny_min_risk):
@@ -579,7 +596,7 @@ def evaluate(
         return drafted
 
     # 3. Human-oversight gate (EU AI Act Art 14).
-    if action in policy.require_human_actions:
+    if action.casefold() in {name.casefold() for name in policy.require_human_actions}:
         return Verdict(Decision.REQUIRE_HUMAN,
                        f"{action!r} requires human approval", "require_human_actions",
                        policy.compliance_profiles)
