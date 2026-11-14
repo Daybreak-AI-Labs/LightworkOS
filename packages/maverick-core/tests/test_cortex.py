@@ -359,6 +359,17 @@ def test_deposit_into_knowledge_is_audited(sources, events):
     assert payload["deposit_kind"] == "knowledge" and payload["chunks"] == 3 and payload["collection"] == "finance"
 
 
+def test_deposit_provenance_is_the_authenticated_caller(sources, events):
+    ok, reason = cortex.deposit("Unreviewed text", collection="finance",
+                                source="approved-controller-policy.md",
+                                caller=cortex.Caller(principal="user:operator"))
+    assert ok, reason
+    assert sources["kb"].ingested == [("finance", "Unreviewed text", "user:operator")]
+    kind, payload = events[-1]
+    assert kind == audit.EventKind.CORTEX_DEPOSIT
+    assert payload["source"] == payload["caller"] == "user:operator"
+
+
 def test_external_deposit_only_reaches_fleet_memory(sources, events):
     ext = cortex.Caller(principal="copilot:ops-02", agent_id="ops-02", vendor="copilot", external=True)
     ok, reason = cortex.deposit("lesson", kind="knowledge", caller=ext, domain="finance")

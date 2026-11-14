@@ -65,7 +65,7 @@ class DepositIn(_StrictModel):
     text: DepositText
     kind: DepositKind = "knowledge"
     collection: Collection = "cortex"
-    #: Where the text came from -- the citation later recalls carry.
+    #: Legacy input accepted for compatibility; stored provenance names the caller.
     source: SourceLabel = ""
     domain: Domain | None = None
 
