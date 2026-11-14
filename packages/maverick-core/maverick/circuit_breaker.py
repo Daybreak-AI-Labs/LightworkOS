@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -53,6 +54,12 @@ class CircuitOpen(Exception):
 
 
 T = TypeVar("T")
+
+
+class _Probe:
+    """Opaque HALF_OPEN probe owner (weak-referenceable)."""
+
+    __slots__ = ("__weakref__",)
 
 
 @dataclass
@@ -86,6 +93,10 @@ class CircuitBreaker:
         self._probe_in_flight = False
         self._probe_started_mono: float | None = None
         self._probe_owner: object | None = None
+        # Probes whose lease expired and were replaced. A late SUCCESS from one
+        # still proves the dependency healthy (a slow call outlived the lease);
+        # a late failure does not resolve the replacement.
+        self._expired_probes: weakref.WeakSet[_Probe] = weakref.WeakSet()
 
     @property
     def state(self) -> CircuitState:
@@ -106,8 +117,8 @@ class CircuitBreaker:
 
     def record_success(self, *, probe: object | None = None) -> None:
         with self._lock:
-            if probe is not self._probe_owner:
-                return  # A replaced probe cannot resolve its successor.
+            if probe is not self._probe_owner and probe not in self._expired_probes:
+                return  # A stale non-probe call cannot resolve a live probe.
             self._stats.total_successes += 1
             self._tick()
             if self._state is CircuitState.OPEN:
@@ -118,6 +129,7 @@ class CircuitBreaker:
             self._state = CircuitState.CLOSED
             self._probe_in_flight = False
             self._probe_owner = None
+            self._expired_probes.clear()
 
     def record_failure(self, *, probe: object | None = None) -> None:
         with self._lock:
@@ -145,7 +157,9 @@ class CircuitBreaker:
         """Admit a call; return its opaque probe owner, or None when closed.
 
         Pass the owner to result/release methods. A timed-out probe can still
-        finish after its replacement, but cannot change the replacement's lease.
+        finish after its replacement: its late success closes the breaker (a
+        slow healthy provider must recover), but its late failure or release
+        cannot change the replacement's lease.
         """
         probe_owner = None
         with self._lock:
@@ -167,13 +181,15 @@ class CircuitBreaker:
                 if (self._probe_in_flight and self._probe_started_mono is not None
                         and time.monotonic() - self._probe_started_mono >= probe_timeout):
                     self._probe_in_flight = False
+                    if isinstance(self._probe_owner, _Probe):
+                        self._expired_probes.add(self._probe_owner)
                 if self._probe_in_flight:
                     raise CircuitOpen(
                         f"circuit {self.key!r} HALF_OPEN: a probe is already in flight"
                     )
                 self._probe_in_flight = True
                 self._probe_started_mono = time.monotonic()
-                probe_owner = self._probe_owner = object()
+                probe_owner = self._probe_owner = _Probe()
         return probe_owner
 
     def release_probe(self, probe: object) -> None:
@@ -205,6 +221,7 @@ class CircuitBreaker:
             self._state = CircuitState.CLOSED
             self._probe_in_flight = False
             self._probe_owner = None
+            self._expired_probes.clear()
 
     def snapshot(self) -> dict:
         with self._lock:

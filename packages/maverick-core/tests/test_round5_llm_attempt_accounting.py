@@ -111,9 +111,13 @@ def test_expired_llm_probe_cannot_release_or_complete_replacement(monkeypatch, l
             "probe-owner", "model", 1, 0, late_result == "failure", exception,
             probe=first, attempt_started=late_result != "local_refusal",
         )
-        assert breaker.snapshot() == before
-        with pytest.raises(circuit_breaker.CircuitOpen):
-            breaker.admit()
+        if late_result == "success":
+            # A slow but successful probe proves the provider healthy.
+            assert breaker.state is circuit_breaker.CircuitState.CLOSED
+        else:
+            assert breaker.snapshot() == before
+            with pytest.raises(circuit_breaker.CircuitOpen):
+                breaker.admit()
         llm_module._observe_provider_result("probe-owner", "model", 1, 0, False, None, probe=replacement)
         assert breaker.state is circuit_breaker.CircuitState.CLOSED
     finally:
@@ -141,8 +145,11 @@ def test_expired_call_probe_cannot_complete_replacement(monkeypatch, fails):
             breaker.call(slow_call)
     else:
         assert breaker.call(slow_call) == "late success"
-    assert breaker.state is circuit_breaker.CircuitState.HALF_OPEN
-    with pytest.raises(circuit_breaker.CircuitOpen):
-        breaker.admit()
+        # A slow but successful probe closes the breaker after its lease.
+        assert breaker.state is circuit_breaker.CircuitState.CLOSED
+    if fails:
+        assert breaker.state is circuit_breaker.CircuitState.HALF_OPEN
+        with pytest.raises(circuit_breaker.CircuitOpen):
+            breaker.admit()
     breaker.record_success(probe=replacement[0])
     assert breaker.state is circuit_breaker.CircuitState.CLOSED
