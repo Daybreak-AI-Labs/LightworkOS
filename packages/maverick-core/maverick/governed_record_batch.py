@@ -25,7 +25,10 @@ from .privacy_ops import RecordConflict
 
 
 class RecordBatch:
-    """An owned, thread-bound transaction with at most 512 record operations."""
+    """An owned, thread-bound transaction with at most 512 record operations.
+
+    Each ``load`` counts as one; ``save`` and ``delete`` each load first, so
+    they count as two, which bounds a batch to 256 saves or deletes."""
 
     def __init__(self, backend: PostgresGovernedRecordBackend, cursor: Any, tenant: str):
         self._backend = backend

@@ -10,8 +10,10 @@ authority:
 * every source is read twice and a changed authority fails closed;
 * absent, disabled, partial, and truncated sources are represented explicitly;
 * raw source records are never persisted here; and
-* preview references are resolved against the *current* source digest, so a
-  stale preview cannot be submitted as current context.
+* preview references are resolved against a revision derived from the
+  *current* source digest (its first 32 bits, reduced to a positive 31-bit
+  int; the content carries the full digest), so a stale preview cannot be
+  submitted as current context.
 
 Readers are injected because source stores live in several product packages.
 The dashboard production composition binds those readers to the existing

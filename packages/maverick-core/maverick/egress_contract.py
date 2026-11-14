@@ -17,7 +17,12 @@ So this gate enumerates every production module that issues outbound HTTP and
 classifies the library it uses:
 
 ``COVERED``    httpx / httpx2 / requests / urllib -- guard wrappers apply
-``UNCOVERED``  anything else (aiohttp, raw sockets, http.client)
+``UNCOVERED``  another known HTTP entry point (aiohttp, http.client)
+
+Only calls to the known HTTP entry points are seen. Network access through
+other libraries (SMTP, cloud SDKs, database and cache clients, raw sockets,
+``asyncio.open_connection``) is not in the census at all, so the covered and
+uncovered counts describe HTTP only.
 
 An UNCOVERED module is not automatically a build failure -- one exists today
 and is recorded below. It is a failure to add a *new* one, or to leave a

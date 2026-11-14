@@ -2459,8 +2459,9 @@ class GovernedRecordStore:
 
         One bounded id-scan window (the iterator's rotating cursor makes
         multi-page counting ambiguous, so this is a single window and
-        ``maximum`` is the honest ceiling). Capacity checks and posture
-        tiles need the number, not thousands of parsed JSON bodies.
+        ``maximum`` is the ceiling; the Postgres backend scans at most 10,000
+        ids per window, so it cannot count past that). Capacity checks and
+        posture tiles need the number, not thousands of parsed JSON bodies.
         """
 
         return sum(

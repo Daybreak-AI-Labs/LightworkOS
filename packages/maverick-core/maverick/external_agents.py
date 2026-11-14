@@ -28,8 +28,8 @@ for learning) and the Operating Record:
 
 The external boundary is fail-closed throughout: an unenrolled agent is
 denied, a Shield scanner error DENIES (never waves through), a malformed
-sidecar is treated as empty-but-alarmed, and over-budget agents are refused
-further actions rather than silently accumulating spend.
+sidecar reads as empty-but-alarmed and is never overwritten, and over-budget
+agents are refused further actions rather than silently accumulating spend.
 """
 from __future__ import annotations
 
