@@ -94,6 +94,9 @@ def test_profile_from_config_bad_values_fall_back(monkeypatch, tmp_path):
     p = containment.profile_from_config()
     assert p.max_wall_seconds == 1800.0
     assert p.deny_tools == containment.DEFAULT_DENY_TOOLS
+    for bad in ('"nan"', "inf"):
+        _config(monkeypatch, tmp_path, f"[containment]\nmax_wall_seconds = {bad}\n")
+        assert containment.profile_from_config().max_wall_seconds == 1800.0
 
 
 # --- apply: ACL composition ---------------------------------------------------

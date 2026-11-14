@@ -50,6 +50,7 @@ and the task budget is capped at ``max_wall_seconds`` (``budget``).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -202,7 +203,7 @@ def profile_from_config() -> ContainmentProfile:
         wall = float(cfg.get("max_wall_seconds", _DEFAULT_MAX_WALL_SECONDS))
     except (TypeError, ValueError):
         wall = _DEFAULT_MAX_WALL_SECONDS
-    if wall <= 0:
+    if not math.isfinite(wall) or wall <= 0:
         wall = _DEFAULT_MAX_WALL_SECONDS
     return ContainmentProfile(
         no_network=bool(cfg.get("no_network", True)),
