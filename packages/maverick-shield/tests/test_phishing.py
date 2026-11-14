@@ -48,6 +48,22 @@ class TestDetector:
         v = detect_phishing("Confirm your identity: https://xn--80ak6aa92e.com/verify")
         assert v.suspicious
 
+    def test_link_patterns_linear_on_unterminated_openers(self):
+        # Every "[" / "<a" used to scan to the end of the text (40,000 "["
+        # took ~6.5 s). A real mismatched link after the decoys still counts.
+        import time
+
+        start = time.perf_counter()
+        detect_phishing("[" * 40_000)
+        detect_phishing("<a " * 13_000)
+        assert time.perf_counter() - start < 2.0
+        for decoys, link in (
+            ("[" * 2000, " [paypal.com](http://evil.example/login)"),
+            ("<a " * 700, '<a class="x" href="https://evil.example/">chase.com</a>'),
+        ):
+            v = detect_phishing(decoys + link)
+            assert any("different domain" in r for r in v.reasons)
+
 
 class TestShieldWiring:
     def test_scan_output_blocks_high_phishing(self):
