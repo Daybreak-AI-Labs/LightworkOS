@@ -6071,13 +6071,16 @@ class Agent:
         _norm: list[str] = []
         _tool_stop: Exception | None = None
         for o in outputs:
-            if isinstance(o, asyncio.CancelledError) and not isinstance(o, GoalCancelled):
+            if (isinstance(o, asyncio.CancelledError) and not isinstance(o, GoalCancelled)
+                    and self._goal_cancelled()):
                 # gather hands back a bare CancelledError for a task that raised
                 # GoalCancelled, losing it; a sibling's effect may be unknown.
+                # Any other cancellation (an MCP or anyio scope inside the tool)
+                # stays an error result for that tool.
                 o = GoalCancelled("cancelled during tool execution")
                 o.tool_execution_unknown = True
             if isinstance(o, (BudgetExceeded, UsageAccountingError, killswitch.Halted,
-                              AuditRefused, asyncio.CancelledError)):
+                              AuditRefused, GoalCancelled)):
                 # Keep budget/halt precedence over an audit refusal, but finish
                 # normalizing: every sibling already ran under gather.
                 if _tool_stop is None or (

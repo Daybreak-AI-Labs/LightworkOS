@@ -2041,20 +2041,44 @@ async def test_tool_output_close_tag_unforgeable(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_parallel_path_cancellation_stops_the_run_as_cancelled(tmp_path, monkeypatch):
+async def test_parallel_path_cancellation_stops_the_run_only_when_the_goal_was_cancelled(
+    tmp_path, monkeypatch,
+):
+    import asyncio
+
     from maverick.run_outcome import GoalCancelled
 
-    llm = _CapturingLLM([
-        LLMResponse(text="reading", thinking=None, stop_reason="tool_use", tool_calls=[
+    def turn():
+        return LLMResponse(text="reading", thinking=None, stop_reason="tool_use", tool_calls=[
             ToolCall(id="a", name="read_file", input={"path": "f.txt"}),
             ToolCall(id="b", name="read_file", input={"path": "f.txt"}),
-        ]),
-    ])
+        ])
+
+    # The owner cancelled while the tools ran: the run stops as cancelled.
+    llm = _CapturingLLM([turn()])
     agent = Agent(ctx=_ctx(tmp_path, llm), role="researcher", brief="...")
+    owner = {"cancelled": False}
+    monkeypatch.setattr(agent, "_goal_cancelled", lambda: owner["cancelled"])
 
     async def cancelled(name, args):
+        owner["cancelled"] = True
         raise GoalCancelled("owner cancelled")
 
     monkeypatch.setattr(agent, "_run_tool", cancelled)
     result = await agent.run()
     assert result.stop_kind == "cancelled" and result.tool_execution_unknown is True
+
+    # A cancel scope inside a tool, with nobody cancelling the goal: an error
+    # result for that tool, every tool_use answered, and the run goes on.
+    llm = _CapturingLLM([turn(), LLMResponse(text="FINAL: done", thinking=None,
+                                             tool_calls=[], stop_reason="end_turn")])
+    agent = Agent(ctx=_ctx(tmp_path, llm), role="researcher", brief="...")
+    monkeypatch.setattr(agent, "_goal_cancelled", lambda: False)
+
+    async def scope_cancelled(name, args):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(agent, "_run_tool", scope_cancelled)
+    result = await agent.run()
+    assert result.stop_kind != "cancelled" and result.final == "done"
+    _assert_no_orphan_tool_use(llm.last_messages)
