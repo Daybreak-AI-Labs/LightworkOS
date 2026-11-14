@@ -273,8 +273,10 @@ def test_record_source_is_scoped_to_a_named_user(sources, events, monkeypatch):
                         lambda world, *, limit=500, owner=None: seen.append(owner) or [])
     cortex.recall("payment", sources=("record",), world=object(),
                   caller=cortex.Caller(principal="user:alice"))
+    cortex.recall("payment", sources=("record",), world=object(),
+                  caller=cortex.Caller(principal="dashboard"))
     cortex.recall("payment", sources=("record",), world=object())
-    assert seen == ["user:alice", None]
+    assert seen == ["user:alice", "", None]
 
 
 def test_fleet_source_is_for_enrolled_external_callers(sources, events):

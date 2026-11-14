@@ -10,7 +10,7 @@ One governed read/write surface over every memory the workforce has:
   (:mod:`maverick.self_harness`);
 * **record** -- the Operating Record: every decision and sign-off
   (:mod:`maverick.operating_record`); a named ``user:`` caller sees only the
-  record of their own work;
+  record of their own work and other dashboard credentials only unowned work;
 * **fleet** -- what agents you didn't build deposited, roster-gated and
   Shield-scanned (:mod:`maverick.fleet_memory`).
 
@@ -216,10 +216,15 @@ def _recall_lessons(query: str, k: int, *, model_id: str | None,
 
 
 def _record_owner(caller: Caller) -> str | None:
-    """A named user reads only the record of their own work (as the dashboard
-    lists goals); internal and operator callers keep the workspace view."""
+    """The owner filter for the record source, matching how the dashboard
+    lists goals: a named user reads only their own work, and any other
+    credential (the dashboard's static-token or anonymous ``"dashboard"``
+    caller) reads only unowned work. Only the in-process default ``"system"``
+    caller keeps the workspace view."""
     principal = caller.principal or ""
-    return principal if principal.startswith("user:") else None
+    if principal.startswith("user:"):
+        return principal
+    return None if principal == "system" else ""
 
 
 def _recall_record(query: str, k: int, *, domain: str | None, world: Any,
