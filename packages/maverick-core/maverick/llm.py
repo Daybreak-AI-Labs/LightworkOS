@@ -1931,7 +1931,14 @@ def _response_call_cost(model_id, resp, cache_read_mult: float | None = None,
         # Physical-attempt observers see the SDK response before the provider
         # adapter builds LLMResponse (for example prompt-cache prewarm).
         usage = getattr(resp, "usage", None)
-    gateway_cost = _gateway_response_cost(model_id, usage, quote)
+    try:
+        gateway_cost = _gateway_response_cost(model_id, usage, quote)
+    except Exception:
+        # Called from ``finally``: never raise. The provider's own strict
+        # record_tokens already refused malformed gateway usage; fall through
+        # to the tolerant token estimate below for the ledger.
+        logging.getLogger(__name__).debug("gateway response cost unavailable for %s", model_id, exc_info=True)
+        gateway_cost = None
     if gateway_cost is not None:
         return gateway_cost
 

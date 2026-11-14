@@ -12,7 +12,7 @@ import math
 import os
 from collections.abc import Mapping
 
-from ..budget import UsageAccountingError
+from ..budget import _CACHE_WRITE_MULT_1H, UsageAccountingError
 from .openai_provider import OpenAIClient, _strict_usage_count
 
 
@@ -102,9 +102,10 @@ class OpenRouterClient(_GatewayClient):
         # https://openrouter.ai/docs/cookbook/administration/usage-accounting
         cost = _openrouter_cost(usage)
         if cost is None:
-            _, _, read, write = _gateway_usage(usage)
-            if read or write:
-                raise UsageAccountingError("OpenRouter cached usage omitted billed cost; cannot enforce budget")
+            # usage.cost is not requested, so it may be absent after the call
+            # was billed. Price conservatively instead: reads never below the
+            # uncached input rate, writes at the highest cache-write tier.
+            return 1.0, _CACHE_WRITE_MULT_1H, None
         return 1.0, None, cost
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None, *, environment=None):

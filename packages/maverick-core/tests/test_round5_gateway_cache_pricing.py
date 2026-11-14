@@ -43,7 +43,7 @@ def test_openrouter_uses_actual_cost_and_counts_cache_writes():
     assert _response_call_cost("openrouter:gpt-5.5", response) == budget.dollars
 
 
-@pytest.mark.parametrize("cost", [None, -1, float("nan"), float("inf"), True])
+@pytest.mark.parametrize("cost", [-1, float("nan"), float("inf"), True])
 def test_unverifiable_gateway_cache_cost_is_refused(cost):
     from maverick.budget import Budget, UsageAccountingError
 
@@ -86,3 +86,26 @@ def test_openrouter_byok_unresolved_upstream_charge_is_refused(upstream):
     response.usage.cost_details = {"upstream_inference_cost": upstream}
     with pytest.raises(UsageAccountingError):
         OpenRouterClient._from_response(response, Budget(), model="gpt-5.5")
+
+
+@pytest.mark.parametrize("writes", [0, 20])
+def test_openrouter_missing_cost_prices_cache_conservatively(writes):
+    """No usage.cost is not under our control; the billed call is still charged."""
+    from maverick.budget import _CACHE_WRITE_MULT_1H, Budget, _lookup_price_quote
+    from maverick.llm import _response_call_cost
+
+    in_rate, out_rate = _lookup_price_quote("gpt-5.5").rates
+    budget = Budget()
+    response = OpenRouterClient._from_response(_response(cost=None, writes=writes), budget, model="gpt-5.5")
+    expected = ((50 - writes + 50 * 1.0 + writes * _CACHE_WRITE_MULT_1H) * in_rate + 10 * out_rate) / 1_000_000
+    assert budget.dollars == pytest.approx(expected)
+    assert budget.dollars >= (100 * in_rate + 10 * out_rate) / 1_000_000
+    assert _response_call_cost("openrouter:gpt-5.5", response) == pytest.approx(budget.dollars)
+
+
+@pytest.mark.parametrize("cost", [-1, float("nan"), True])
+def test_gateway_response_call_cost_never_raises(cost):
+    from maverick.llm import _response_call_cost
+
+    response = SimpleNamespace(raw=_response(cost=cost))
+    assert _response_call_cost("openrouter:gpt-5.5", response) > 0
