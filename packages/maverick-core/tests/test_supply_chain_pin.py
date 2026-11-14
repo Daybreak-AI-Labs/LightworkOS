@@ -64,6 +64,15 @@ def test_wildcard_x_component_flagged():
     assert "version range" in out and "react" in out
 
 
+def test_tags_branches_and_urls_are_not_pins():
+    deps = [{"name": f"p{i}", "version": v, "hash": "sha256:z"}
+            for i, v in enumerate(("latest", "main", "git+https://x/y"))]
+    out = _run(deps=deps)
+    assert out.startswith("VIOLATIONS: 3")
+    assert _run(deps=[{"name": "a", "version": "==1.0", "hash": "h"},
+                      {"name": "b", "version": "v2.1.0", "hash": "h"}]).startswith("OK")
+
+
 def test_errors():
     t = supply_chain_pin()
     assert t.fn({"op": "check"}).startswith("ERROR")
