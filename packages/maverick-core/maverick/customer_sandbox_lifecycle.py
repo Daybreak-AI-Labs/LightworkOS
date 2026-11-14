@@ -1363,7 +1363,37 @@ class LocalCustomerSandboxProvisioner:
                 allow_missing_owner=allow_missing_owner,
             )
 
-    def _validate_partial_workspace_locked(  # noqa: C901
+    def _validate_partial_snapshot(
+        self,
+        path: Path,
+        *,
+        sandbox_id: str,
+        target_sandbox_id: str,
+    ) -> None:
+        """Check one immutable snapshot left in a partially removed workspace."""
+
+        value = self._decode(atomic_read_text(path), label="workspace_snapshot")
+        if not isinstance(value, Mapping):
+            raise CustomerSandboxIntegrityError("sandbox_snapshot_corrupt")
+        try:
+            snapshot = SanitizedSandboxSnapshot(**dict(value))
+            actual_digest = _sha256(_snapshot_material(snapshot))
+        except (TypeError, ValueError) as exc:
+            raise CustomerSandboxIntegrityError("sandbox_snapshot_corrupt") from exc
+        expected_name = (
+            f"{snapshot.snapshot_revision:02d}-"
+            f"{snapshot.snapshot_sha256[:20]}.json"
+        )
+        if (
+            snapshot.schema != SNAPSHOT_SCHEMA
+            or snapshot.sandbox_id != sandbox_id
+            or snapshot.target_sandbox_id != target_sandbox_id
+            or path.name != expected_name
+            or not hmac.compare_digest(actual_digest, snapshot.snapshot_sha256)
+        ):
+            raise CustomerSandboxConflict("sandbox_target_authority_changed")
+
+    def _validate_partial_workspace_locked(
         self,
         *,
         quarantine: Path,
@@ -1395,26 +1425,11 @@ class LocalCustomerSandboxProvisioner:
                 continue
             if path.parent != quarantine / "snapshots":
                 raise CustomerSandboxConflict("sandbox_target_authority_changed")
-            value = self._decode(atomic_read_text(path), label="workspace_snapshot")
-            if not isinstance(value, Mapping):
-                raise CustomerSandboxIntegrityError("sandbox_snapshot_corrupt")
-            try:
-                snapshot = SanitizedSandboxSnapshot(**dict(value))
-                actual_digest = _sha256(_snapshot_material(snapshot))
-            except (TypeError, ValueError) as exc:
-                raise CustomerSandboxIntegrityError("sandbox_snapshot_corrupt") from exc
-            expected_name = (
-                f"{snapshot.snapshot_revision:02d}-"
-                f"{snapshot.snapshot_sha256[:20]}.json"
+            self._validate_partial_snapshot(
+                path,
+                sandbox_id=sandbox_id,
+                target_sandbox_id=target_sandbox_id,
             )
-            if (
-                snapshot.schema != SNAPSHOT_SCHEMA
-                or snapshot.sandbox_id != sandbox_id
-                or snapshot.target_sandbox_id != target_sandbox_id
-                or path.name != expected_name
-                or not hmac.compare_digest(actual_digest, snapshot.snapshot_sha256)
-            ):
-                raise CustomerSandboxConflict("sandbox_target_authority_changed")
         if owner_path.exists() and dict(self._owner(quarantine) or {}) != expected_owner:
             raise CustomerSandboxConflict("sandbox_target_authority_changed")
         if current_path.exists():
@@ -1427,7 +1442,86 @@ class LocalCustomerSandboxProvisioner:
             ):
                 raise CustomerSandboxConflict("sandbox_target_authority_changed")
 
-    def abandon(  # noqa: C901 - exact lost-ack states remain visibly ordered
+    def _remove_abandoned_quarantine_locked(
+        self,
+        *,
+        quarantine: Path,
+        registry: Mapping[str, Mapping[str, Any]],
+        selected_sandbox: str,
+        target_id: str,
+        selected_snapshot: str,
+        selected_quota: int,
+        expected: str | None,
+        marker_matches: Callable[[str], bool],
+    ) -> None:
+        """Validate the authorized remainder before removing the quarantine."""
+
+        if quarantine.exists():
+            if marker_matches("intent") or marker_matches("completed"):
+                row = registry.get(target_id)
+                registered = (
+                    None if row is None else self._authority_from_mapping(row)
+                )
+                if registered is not None and (
+                    registered.sandbox_id != selected_sandbox
+                    or registered.target_sandbox_id != target_id
+                    or not hmac.compare_digest(
+                        registered.snapshot_sha256,
+                        selected_snapshot,
+                    )
+                ):
+                    raise CustomerSandboxConflict(
+                        "sandbox_target_authority_changed"
+                    )
+                self._validate_partial_workspace_locked(
+                    quarantine=quarantine,
+                    sandbox_id=selected_sandbox,
+                    target_sandbox_id=target_id,
+                    snapshot_sha256=selected_snapshot,
+                    quota_bytes=selected_quota,
+                    registered=registered,
+                )
+            else:
+                quarantined = self._abandon_fingerprint_locked(
+                    target=quarantine,
+                    registry_row=registry.get(target_id),
+                    sandbox_id=selected_sandbox,
+                    target_sandbox_id=target_id,
+                    snapshot_sha256=selected_snapshot,
+                    quota_bytes=selected_quota,
+                )
+                if quarantined != expected:
+                    raise CustomerSandboxConflict(
+                        "sandbox_target_authority_changed"
+                    )
+            shutil.rmtree(quarantine)
+
+    def _abandon_marker_matches(
+        self,
+        marker: Mapping[str, object] | None,
+        *,
+        expected: str | None,
+        selected_sandbox: str,
+        target_id: str,
+        selected_snapshot: str,
+        selected_quota: int,
+        state: str,
+    ) -> bool:
+        if marker is None or expected is None:
+            return False
+        value = dict(marker)
+        value.pop("marker_sha256", None)
+        return value == self._abandon_marker_material(
+            sandbox_id=selected_sandbox,
+            target_sandbox_id=target_id,
+            snapshot_sha256=selected_snapshot,
+            fingerprint=expected,
+            quota_bytes=selected_quota,
+            state=state,
+        )
+
+
+    def abandon(
         self,
         *,
         sandbox_id: str,
@@ -1464,16 +1558,13 @@ class LocalCustomerSandboxProvisioner:
                 raise CustomerSandboxConflict("sandbox_target_authority_changed")
 
             def marker_matches(state: str) -> bool:
-                if marker is None or expected is None:
-                    return False
-                value = dict(marker)
-                value.pop("marker_sha256", None)
-                return value == self._abandon_marker_material(
-                    sandbox_id=selected_sandbox,
-                    target_sandbox_id=target_id,
-                    snapshot_sha256=selected_snapshot,
-                    fingerprint=expected,
-                    quota_bytes=selected_quota,
+                return self._abandon_marker_matches(
+                    marker,
+                    expected=expected,
+                    selected_sandbox=selected_sandbox,
+                    target_id=target_id,
+                    selected_snapshot=selected_snapshot,
+                    selected_quota=selected_quota,
                     state=state,
                 )
 
@@ -1536,45 +1627,16 @@ class LocalCustomerSandboxProvisioner:
             elif not (marker_matches("intent") or marker_matches("completed")):
                 raise CustomerSandboxConflict("sandbox_target_authority_changed")
 
-            if quarantine.exists():
-                if marker_matches("intent") or marker_matches("completed"):
-                    row = registry.get(target_id)
-                    registered = (
-                        None if row is None else self._authority_from_mapping(row)
-                    )
-                    if registered is not None and (
-                        registered.sandbox_id != selected_sandbox
-                        or registered.target_sandbox_id != target_id
-                        or not hmac.compare_digest(
-                            registered.snapshot_sha256,
-                            selected_snapshot,
-                        )
-                    ):
-                        raise CustomerSandboxConflict(
-                            "sandbox_target_authority_changed"
-                        )
-                    self._validate_partial_workspace_locked(
-                        quarantine=quarantine,
-                        sandbox_id=selected_sandbox,
-                        target_sandbox_id=target_id,
-                        snapshot_sha256=selected_snapshot,
-                        quota_bytes=selected_quota,
-                        registered=registered,
-                    )
-                else:
-                    quarantined = self._abandon_fingerprint_locked(
-                        target=quarantine,
-                        registry_row=registry.get(target_id),
-                        sandbox_id=selected_sandbox,
-                        target_sandbox_id=target_id,
-                        snapshot_sha256=selected_snapshot,
-                        quota_bytes=selected_quota,
-                    )
-                    if quarantined != expected:
-                        raise CustomerSandboxConflict(
-                            "sandbox_target_authority_changed"
-                        )
-                shutil.rmtree(quarantine)
+            self._remove_abandoned_quarantine_locked(
+                quarantine=quarantine,
+                registry=registry,
+                selected_sandbox=selected_sandbox,
+                target_id=target_id,
+                selected_snapshot=selected_snapshot,
+                selected_quota=selected_quota,
+                expected=expected,
+                marker_matches=marker_matches,
+            )
             if target_id in registry:
                 registered = self._authority_from_mapping(registry[target_id])
                 if (
@@ -1600,7 +1662,144 @@ class LocalCustomerSandboxProvisioner:
                 ensure_private_file(provision_marker_path)
                 provision_marker_path.unlink()
 
-    def apply(  # noqa: C901 - closed fail-fast validation keeps mutation ordering visible
+    def _prepare_apply_target_locked(
+        self,
+        snapshot: SanitizedSandboxSnapshot,
+        *,
+        target: Path,
+        target_id: str,
+        registered: SandboxTargetAuthority | None,
+        expected_workspace: str | None,
+    ) -> tuple[Mapping[str, object] | None, dict[str, str], Path, Mapping[str, object] | None]:
+        """Preserve create intent and validate ownership before applying a snapshot."""
+
+        if target.exists():
+            self._assert_plain_confined_tree(target)
+        owner = self._owner(target) if target.exists() else None
+        expected_owner = {
+            "schema": "lightwork.customer-sandbox-owner.v1",
+            "sandbox_id": snapshot.sandbox_id,
+            "target_sandbox_id": target_id,
+        }
+        provision_marker_path = self._provision_marker_path(target_id)
+        provision_marker = self._read_provision_marker(provision_marker_path)
+        provision_marker_matches = self._provision_marker_matches(
+            provision_marker,
+            sandbox_id=snapshot.sandbox_id,
+            target_sandbox_id=target_id,
+            snapshot_sha256=snapshot.snapshot_sha256,
+        )
+        if provision_marker is not None and not provision_marker_matches:
+            raise CustomerSandboxConflict("sandbox_target_authority_changed")
+        if expected_workspace is None and provision_marker is None and not target.exists():
+            intent = self._provision_marker_material(
+                sandbox_id=snapshot.sandbox_id,
+                target_sandbox_id=target_id,
+                snapshot_sha256=snapshot.snapshot_sha256,
+            )
+            self._write_provision_marker(provision_marker_path, intent)
+            provision_marker = {**intent, "marker_sha256": _sha256(intent)}
+            provision_marker_matches = True
+        if expected_workspace is not None and provision_marker is not None:
+            raise CustomerSandboxConflict("sandbox_target_authority_changed")
+        if target.exists() and dict(owner or {}) != expected_owner and not (
+            owner is None and expected_workspace is None and provision_marker_matches
+        ):
+            raise CustomerSandboxConflict("sandbox_target_collision")
+        if registered is not None and registered.sandbox_id != snapshot.sandbox_id:
+            raise CustomerSandboxConflict("sandbox_target_collision")
+        if target.exists() and owner is None and provision_marker_matches:
+            self._validate_partial_workspace_locked(
+                quarantine=target,
+                sandbox_id=snapshot.sandbox_id,
+                target_sandbox_id=target_id,
+                snapshot_sha256=snapshot.snapshot_sha256,
+                quota_bytes=snapshot.quota_bytes,
+                registered=registered,
+            )
+        return owner, expected_owner, provision_marker_path, provision_marker
+
+    @staticmethod
+    def _validate_apply_predecessor(
+        *,
+        target: Path,
+        prior: SandboxTargetAuthority | None,
+        registered: SandboxTargetAuthority | None,
+        authority: SandboxTargetAuthority,
+        expected_workspace: str | None,
+    ) -> None:
+        """Accept only the exact predecessor or a recoverable partial successor."""
+
+        if not target.exists():
+            if registered is not None or expected_workspace is not None:
+                raise CustomerSandboxConflict("sandbox_target_authority_changed")
+        elif prior is None:
+            if registered is not None or expected_workspace is not None:
+                raise CustomerSandboxConflict("sandbox_target_authority_changed")
+        elif prior == authority:
+            registry_is_successor = registered == authority
+            registry_is_predecessor = (
+                expected_workspace is not None
+                and registered is not None
+                and hmac.compare_digest(
+                    registered.workspace_sha256,
+                    expected_workspace,
+                )
+            )
+            registry_is_new_create_partial = (
+                expected_workspace is None and registered is None
+            )
+            if not (
+                registry_is_successor
+                or registry_is_predecessor
+                or registry_is_new_create_partial
+            ):
+                raise CustomerSandboxConflict("sandbox_target_authority_changed")
+        elif (
+            expected_workspace is None
+            or not hmac.compare_digest(prior.workspace_sha256, expected_workspace)
+            or registered != prior
+        ):
+            raise CustomerSandboxConflict("sandbox_target_authority_changed")
+
+    @staticmethod
+    def _validate_apply_capacity(
+        snapshot: SanitizedSandboxSnapshot,
+        *,
+        target: Path,
+        snapshots: Path,
+        snapshot_path: Path,
+        owner: Mapping[str, object] | None,
+        owner_bytes: bytes,
+        snapshot_bytes: bytes,
+        current: Path,
+        encoded_authority: str,
+    ) -> None:
+        """Check snapshot history and prospective size before any workspace writes."""
+
+        existing_files: list[Path] = []
+        if target.exists():
+            for path in target.rglob("*"):
+                if path.is_file():
+                    path.resolve().relative_to(target.resolve())
+                    existing_files.append(path)
+        snapshot_files = [path for path in existing_files if path.parent == snapshots]
+        if len(snapshot_files) > _MAX_SNAPSHOTS_PER_SANDBOX:
+            raise CustomerSandboxIntegrityError("sandbox_snapshot_history_corrupt")
+        if not snapshot_path.exists() and len(snapshot_files) >= _MAX_SNAPSHOTS_PER_SANDBOX:
+            raise CustomerSandboxValidationError("sandbox_snapshot_limit_exhausted")
+        prospective_bytes = sum(path.stat().st_size for path in existing_files)
+        if owner is None:
+            prospective_bytes += len(owner_bytes)
+        if not snapshot_path.exists():
+            prospective_bytes += len(snapshot_bytes)
+        if current.exists():
+            prospective_bytes -= current.stat().st_size
+        prospective_bytes += len(encoded_authority.encode("ascii"))
+        if prospective_bytes > snapshot.quota_bytes:
+            raise CustomerSandboxValidationError("sandbox_workspace_exceeds_quota")
+
+    def apply(
         self,
         snapshot: SanitizedSandboxSnapshot,
         *,
@@ -1630,50 +1829,15 @@ class LocalCustomerSandboxProvisioner:
                 if existing_registry is None
                 else self._authority_from_mapping(existing_registry)
             )
-            if target.exists():
-                self._assert_plain_confined_tree(target)
-            owner = self._owner(target) if target.exists() else None
-            expected_owner = {
-                "schema": "lightwork.customer-sandbox-owner.v1",
-                "sandbox_id": snapshot.sandbox_id,
-                "target_sandbox_id": target_id,
-            }
-            provision_marker_path = self._provision_marker_path(target_id)
-            provision_marker = self._read_provision_marker(provision_marker_path)
-            provision_marker_matches = self._provision_marker_matches(
-                provision_marker,
-                sandbox_id=snapshot.sandbox_id,
-                target_sandbox_id=target_id,
-                snapshot_sha256=snapshot.snapshot_sha256,
-            )
-            if provision_marker is not None and not provision_marker_matches:
-                raise CustomerSandboxConflict("sandbox_target_authority_changed")
-            if expected_workspace is None and provision_marker is None and not target.exists():
-                intent = self._provision_marker_material(
-                    sandbox_id=snapshot.sandbox_id,
-                    target_sandbox_id=target_id,
-                    snapshot_sha256=snapshot.snapshot_sha256,
-                )
-                self._write_provision_marker(provision_marker_path, intent)
-                provision_marker = {**intent, "marker_sha256": _sha256(intent)}
-                provision_marker_matches = True
-            if expected_workspace is not None and provision_marker is not None:
-                raise CustomerSandboxConflict("sandbox_target_authority_changed")
-            if target.exists() and dict(owner or {}) != expected_owner and not (
-                owner is None and expected_workspace is None and provision_marker_matches
-            ):
-                raise CustomerSandboxConflict("sandbox_target_collision")
-            if registered is not None and registered.sandbox_id != snapshot.sandbox_id:
-                raise CustomerSandboxConflict("sandbox_target_collision")
-            if target.exists() and owner is None and provision_marker_matches:
-                self._validate_partial_workspace_locked(
-                    quarantine=target,
-                    sandbox_id=snapshot.sandbox_id,
-                    target_sandbox_id=target_id,
-                    snapshot_sha256=snapshot.snapshot_sha256,
-                    quota_bytes=snapshot.quota_bytes,
+            owner, expected_owner, provision_marker_path, provision_marker = (
+                self._prepare_apply_target_locked(
+                    snapshot,
+                    target=target,
+                    target_id=target_id,
                     registered=registered,
+                    expected_workspace=expected_workspace,
                 )
+            )
             snapshots = target / "snapshots"
             snapshot_path = (
                 snapshots
@@ -1735,58 +1899,24 @@ class LocalCustomerSandboxProvisioner:
                     files_written=0 if registered == expired_authority else 1,
                     bytes_written=0,
                 )
-            if not target.exists():
-                if registered is not None or expected_workspace is not None:
-                    raise CustomerSandboxConflict("sandbox_target_authority_changed")
-            elif prior is None:
-                if registered is not None or expected_workspace is not None:
-                    raise CustomerSandboxConflict("sandbox_target_authority_changed")
-            elif prior == authority:
-                registry_is_successor = registered == authority
-                registry_is_predecessor = (
-                    expected_workspace is not None
-                    and registered is not None
-                    and hmac.compare_digest(
-                        registered.workspace_sha256,
-                        expected_workspace,
-                    )
-                )
-                registry_is_new_create_partial = (
-                    expected_workspace is None and registered is None
-                )
-                if not (
-                    registry_is_successor
-                    or registry_is_predecessor
-                    or registry_is_new_create_partial
-                ):
-                    raise CustomerSandboxConflict("sandbox_target_authority_changed")
-            elif (
-                expected_workspace is None
-                or not hmac.compare_digest(prior.workspace_sha256, expected_workspace)
-                or registered != prior
-            ):
-                raise CustomerSandboxConflict("sandbox_target_authority_changed")
-            existing_files: list[Path] = []
-            if target.exists():
-                for path in target.rglob("*"):
-                    if path.is_file():
-                        path.resolve().relative_to(target.resolve())
-                        existing_files.append(path)
-            snapshot_files = [path for path in existing_files if path.parent == snapshots]
-            if len(snapshot_files) > _MAX_SNAPSHOTS_PER_SANDBOX:
-                raise CustomerSandboxIntegrityError("sandbox_snapshot_history_corrupt")
-            if not snapshot_path.exists() and len(snapshot_files) >= _MAX_SNAPSHOTS_PER_SANDBOX:
-                raise CustomerSandboxValidationError("sandbox_snapshot_limit_exhausted")
-            prospective_bytes = sum(path.stat().st_size for path in existing_files)
-            if owner is None:
-                prospective_bytes += len(owner_bytes)
-            if not snapshot_path.exists():
-                prospective_bytes += len(snapshot_bytes)
-            if current.exists():
-                prospective_bytes -= current.stat().st_size
-            prospective_bytes += len(encoded_authority.encode("ascii"))
-            if prospective_bytes > snapshot.quota_bytes:
-                raise CustomerSandboxValidationError("sandbox_workspace_exceeds_quota")
+            self._validate_apply_predecessor(
+                target=target,
+                prior=prior,
+                registered=registered,
+                authority=authority,
+                expected_workspace=expected_workspace,
+            )
+            self._validate_apply_capacity(
+                snapshot,
+                target=target,
+                snapshots=snapshots,
+                snapshot_path=snapshot_path,
+                owner=owner,
+                owner_bytes=owner_bytes,
+                snapshot_bytes=snapshot_bytes,
+                current=current,
+                encoded_authority=encoded_authority,
+            )
             ensure_private_directory(target)
             if owner is None:
                 atomic_write_text(target / "owner.json", owner_bytes.decode("ascii"))
@@ -2344,7 +2474,36 @@ class LocalCustomerSandboxProvisioner:
             expected_workspace_sha256=predecessor,
         )
 
-    def destroy(  # noqa: C901 - destructive recovery cases stay explicit
+    def _destroy_marker_matches(
+        self,
+        marker: Mapping[str, object] | None,
+        *,
+        selected_sandbox: str,
+        target_id: str,
+        expected: str,
+        snapshot_sha256: str | None = None,
+    ) -> bool:
+        if marker is None:
+            return False
+        material = dict(marker)
+        material.pop("marker_sha256", None)
+        if (
+            material.get("schema")
+            != "lightwork.customer-sandbox-destroy-marker.v1"
+            or material.get("sandbox_id_sha256")
+            != _text_sha256(selected_sandbox)
+            or material.get("target_sandbox_id_sha256")
+            != _text_sha256(target_id)
+            or material.get("workspace_sha256") != expected
+            or material.get("state") != "intent"
+        ):
+            return False
+        return snapshot_sha256 is None or material.get(
+            "snapshot_sha256"
+        ) == snapshot_sha256
+
+
+    def destroy(
         self,
         *,
         sandbox_id: str,
@@ -2362,24 +2521,13 @@ class LocalCustomerSandboxProvisioner:
             marker = self._read_destroy_marker(marker_path)
 
             def marker_matches(snapshot_sha256: str | None = None) -> bool:
-                if marker is None:
-                    return False
-                material = dict(marker)
-                material.pop("marker_sha256", None)
-                if (
-                    material.get("schema")
-                    != "lightwork.customer-sandbox-destroy-marker.v1"
-                    or material.get("sandbox_id_sha256")
-                    != _text_sha256(selected_sandbox)
-                    or material.get("target_sandbox_id_sha256")
-                    != _text_sha256(target_id)
-                    or material.get("workspace_sha256") != expected
-                    or material.get("state") != "intent"
-                ):
-                    return False
-                return snapshot_sha256 is None or material.get(
-                    "snapshot_sha256"
-                ) == snapshot_sha256
+                return self._destroy_marker_matches(
+                    marker,
+                    selected_sandbox=selected_sandbox,
+                    target_id=target_id,
+                    expected=expected,
+                    snapshot_sha256=snapshot_sha256,
+                )
 
             def clear_marker() -> None:
                 if marker_path.exists():
@@ -3805,7 +3953,87 @@ class CustomerSandboxLifecycleStore:
                     ) from exc
         raise CustomerSandboxProvisioningError("sandbox_expiry_transition_retryable")
 
-    def provision_sandbox(  # noqa: C901 - durable intent recovery is intentionally explicit
+    def _resume_provisioning_intent(
+        self,
+        connection: sqlite3.Connection,
+        current: CustomerSandboxRecord,
+        replay: CustomerSandboxRecord,
+    ) -> tuple[bool, SanitizedSandboxSnapshot | None]:
+        """Validate a replay against its durable provisioning intent."""
+
+        if current.state == "failed" and current.attempts >= current.max_attempts:
+            if current.operation_kind != "resync":
+                raise CustomerSandboxConflict("sandbox_attempt_limit_exhausted")
+            connection.commit()
+            return True, None
+        elif not hmac.compare_digest(
+            current.integrity_sha256,
+            replay.integrity_sha256,
+        ):
+            raise CustomerSandboxConflict("sandbox_provision_retry_required")
+        elif (
+            current.state != "provisioning"
+            or current.sandbox_id != replay.sandbox_id
+            or current.operation_kind != replay.operation_kind
+            or current.snapshot_revision != replay.snapshot_revision
+            or not hmac.compare_digest(
+                current.snapshot_sha256,
+                replay.snapshot_sha256,
+            )
+        ):
+            raise CustomerSandboxIntegrityError("sandbox_operation_intent_drift")
+        else:
+            snapshot = self._snapshot(connection, current)
+            connection.commit()
+            return False, snapshot
+
+    def _record_provisioning_failure(
+        self,
+        *,
+        selected_id: str,
+        current: CustomerSandboxRecord,
+        principal: str,
+        exc: Exception,
+    ) -> None:
+        """Record the failed attempt and recover an exhausted resync when possible."""
+
+        error_code = (
+            exc.error_code
+            if isinstance(exc, CustomerSandboxError)
+            else "sandbox_provisioner_failed"
+        )
+        now = self._now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            latest = self._get(connection, selected_id)
+            if latest.revision != current.revision or latest.state != "provisioning":
+                raise CustomerSandboxConflict("sandbox_revision_conflict") from exc
+            failed = self._with_integrity(
+                replace(
+                    latest,
+                    state="failed" if latest.attempts >= latest.max_attempts else "provisioning",
+                    revision=latest.revision + 1,
+                    last_error_code=error_code,
+                    updated_at=now,
+                )
+            )
+            self._update_record(connection, failed)
+            self._audit(
+                connection,
+                sandbox_id=selected_id,
+                action="sandbox_provisioning_failed",
+                detail_sha256=failed.integrity_sha256,
+                principal_sha256=principal,
+                now=now,
+            )
+            connection.commit()
+        if failed.state == "failed" and failed.operation_kind == "resync":
+            try:
+                self._rollback_terminal_resync(selected_id, principal)
+            except CustomerSandboxError:
+                pass
+
+    def provision_sandbox(
         self,
         sandbox_id: str,
         *,
@@ -3838,30 +4066,9 @@ class CustomerSandboxLifecycleStore:
                     connection.commit()
                     return replay
                 current = self._get(connection, selected_id)
-                if current.state == "failed" and current.attempts >= current.max_attempts:
-                    if current.operation_kind != "resync":
-                        raise CustomerSandboxConflict("sandbox_attempt_limit_exhausted")
-                    terminal_resync = True
-                    connection.commit()
-                elif not hmac.compare_digest(
-                    current.integrity_sha256,
-                    replay.integrity_sha256,
-                ):
-                    raise CustomerSandboxConflict("sandbox_provision_retry_required")
-                elif (
-                    current.state != "provisioning"
-                    or current.sandbox_id != replay.sandbox_id
-                    or current.operation_kind != replay.operation_kind
-                    or current.snapshot_revision != replay.snapshot_revision
-                    or not hmac.compare_digest(
-                        current.snapshot_sha256,
-                        replay.snapshot_sha256,
-                    )
-                ):
-                    raise CustomerSandboxIntegrityError("sandbox_operation_intent_drift")
-                else:
-                    snapshot = self._snapshot(connection, current)
-                    connection.commit()
+                terminal_resync, snapshot = self._resume_provisioning_intent(
+                    connection, current, replay,
+                )
             else:
                 current = self._get(connection, selected_id)
                 terminal_resync = (
@@ -3936,41 +4143,12 @@ class CustomerSandboxLifecycleStore:
                 # independently resolved production collision remains active.
                 self._provisioner.discard_collision_recreation(snapshot)
                 raise
-            error_code = (
-                exc.error_code
-                if isinstance(exc, CustomerSandboxError)
-                else "sandbox_provisioner_failed"
+            self._record_provisioning_failure(
+                selected_id=selected_id,
+                current=current,
+                principal=principal,
+                exc=exc,
             )
-            now = self._now()
-            with self._connection() as connection:
-                connection.execute("BEGIN IMMEDIATE")
-                latest = self._get(connection, selected_id)
-                if latest.revision != current.revision or latest.state != "provisioning":
-                    raise CustomerSandboxConflict("sandbox_revision_conflict") from exc
-                failed = self._with_integrity(
-                    replace(
-                        latest,
-                        state="failed" if latest.attempts >= latest.max_attempts else "provisioning",
-                        revision=latest.revision + 1,
-                        last_error_code=error_code,
-                        updated_at=now,
-                    )
-                )
-                self._update_record(connection, failed)
-                self._audit(
-                    connection,
-                    sandbox_id=selected_id,
-                    action="sandbox_provisioning_failed",
-                    detail_sha256=failed.integrity_sha256,
-                    principal_sha256=principal,
-                    now=now,
-                )
-                connection.commit()
-            if failed.state == "failed" and failed.operation_kind == "resync":
-                try:
-                    self._rollback_terminal_resync(selected_id, principal)
-                except CustomerSandboxError:
-                    pass
             raise CustomerSandboxProvisioningError("sandbox_provisioning_retryable") from exc
         now = self._now()
         if completion_state == "active" and now >= current.expires_at:
@@ -3979,6 +4157,35 @@ class CustomerSandboxLifecycleStore:
                 expected_workspace_sha256=completion_workspace,
             )
             completion_state = "expired"
+        return self._commit_provisioning(
+            selected_id=selected_id,
+            current=current,
+            snapshot=snapshot,
+            completion_state=completion_state,
+            completion_workspace=completion_workspace,
+            key=key,
+            action=action,
+            request_sha=request_sha,
+            principal=principal,
+            now=now,
+        )
+
+    def _commit_provisioning(
+        self,
+        *,
+        selected_id: str,
+        current: CustomerSandboxRecord,
+        snapshot: SanitizedSandboxSnapshot,
+        completion_state: str,
+        completion_workspace: str,
+        key: str,
+        action: str,
+        request_sha: str,
+        principal: str,
+        now: float,
+    ) -> CustomerSandboxRecord:
+        """Recheck authority and commit the completed durable operation together."""
+
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
