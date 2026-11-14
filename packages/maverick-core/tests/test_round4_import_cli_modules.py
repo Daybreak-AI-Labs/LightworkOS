@@ -201,6 +201,26 @@ def test_repl_refuses_goal_rebinding_before_receipt_or_execution(monkeypatch):
     assert [row[0] for row in receipts] == [7, 7]
 
 
+def test_repl_without_a_goal_uses_the_sessions_bound_goal(monkeypatch):
+    from maverick import audit, config
+    from maverick import governed_repl as repl
+
+    monkeypatch.setattr(config, "get_repl", lambda: {
+        "enable": True, "max_statements": 10, "max_output_chars": 1000,
+    })
+    monkeypatch.setattr(audit, "audit_event", lambda *_a, **_k: None)
+    monkeypatch.setattr(repl, "_sandbox_for", lambda _p: object())
+    receipts = []
+    monkeypatch.setattr(repl, "_receipt", lambda *a, **k: receipts.append(a) or True)
+    monkeypatch.setattr(repl, "_run_statement", lambda *_a: ({"ok": True}, 0, 0.0))
+    session = repl.open_session(goal_id=7)
+    assert repl.execute(session, "x = 1")["ok"] is True
+    assert [row[0] for row in receipts] == [7, 7]
+    unbound = repl.open_session()
+    with pytest.raises(repl.ReplError, match="goal"):
+        repl.execute(unbound, "x = 1", goal_id=8)
+
+
 def test_run_tree_strips_terminal_controls_from_display(monkeypatch):
     from maverick import session_tree
     from maverick.cli import main
