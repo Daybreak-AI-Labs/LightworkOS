@@ -182,7 +182,7 @@
     "learning": 60,
     "sqlite_domain": 81,
     "configuration": 69,
-    "read_projection": 24,
+    "read_projection": 25,
     "audit": 24,
     "transient": 26,
     "business_records": 21,
@@ -30092,6 +30092,29 @@
           "function": "install_plugin",
           "kind": "write_text",
           "expression": "req.write_text(f\"{name}=={version} \" + \" \".join(f\"--hash={h}\" for h in hashes) + \"\\n\", encoding=\"utf-8\")"
+        }
+      ]
+    },
+    {
+      "path": "packages/maverick-core/maverick/schema_migrations.py",
+      "contract": "read_projection",
+      "owner": "packages/maverick-core/maverick/world_model.py",
+      "purpose": "Classify world-model migrations online/offline and preview pending steps; reads the stored world schema version read-only without migrating.",
+      "referenced_store_owners": [
+        "packages/maverick-core/maverick/world_model.py"
+      ],
+      "review": "module purpose and persistence seam read; read-only sqlite3 connect (mode=ro) of the world database, no writes",
+      "governed_namespaces": [],
+      "literal_path_hints": [],
+      "observed_mechanism_markers": {
+        "schema_version": 1
+      },
+      "source_sites": [
+        {
+          "line": 163,
+          "function": "_stored_version",
+          "kind": "connect",
+          "expression": "sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=10.0)"
         }
       ]
     }
