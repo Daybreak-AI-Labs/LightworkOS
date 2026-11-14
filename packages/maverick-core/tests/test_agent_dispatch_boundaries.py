@@ -62,10 +62,11 @@ async def test_verifier_uses_guarded_completion(agent, monkeypatch, entry):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.parametrize("interrupted", [False, True, "cancel"])
 async def test_completed_tool_turn_is_checkpointed_before_background_work(agent, monkeypatch, interrupted):
     from maverick.checkpoint import Checkpointer
     from maverick.killswitch import Halted
+    from maverick.run_outcome import GoalCancelled
     st = _state(agent)
     st.ckpt = Checkpointer(agent.ctx.world)
     response = LLMResponse(text="", thinking=None, stop_reason="tool_use",
@@ -75,6 +76,10 @@ async def test_completed_tool_turn_is_checkpointed_before_background_work(agent,
     agent._record_assistant_turn(st, response)
     async def run(_name, args):
         if args.get("stop"):
+            if interrupted == "cancel":
+                stopped = GoalCancelled("cancelled after dispatch")
+                stopped.tool_execution_unknown = True
+                raise stopped
             raise Halted("after the first effect", "test")
         agent.ctx.budget.record_tokens(7, 3)
         return "effect committed"
@@ -84,13 +89,18 @@ async def test_completed_tool_turn_is_checkpointed_before_background_work(agent,
         raise RuntimeError("crash before next turn")
     monkeypatch.setattr(agent, "_maybe_speculate_reads", crash)
     agent._save_checkpoint(st.ckpt, step=0, messages=st.messages[:1], ep_id=0)
-    with pytest.raises(Halted if interrupted else RuntimeError):
+    expected = GoalCancelled if interrupted == "cancel" else Halted if interrupted else RuntimeError
+    with pytest.raises(expected) as stopped:
         await agent._dispatch_tools(st, 0, response)
+    if interrupted == "cancel":
+        assert stopped.value.tool_execution_unknown is True
     saved = st.ckpt.latest(agent.ctx.goal_id, agent.checkpoint_id, episode_id=0)
     assert saved.step_seq == 1
     assert saved.messages[-1]["content"][0]["content"] == "effect committed"
     assert saved.budget["tool_calls"] == (2 if interrupted else 1)
     assert saved.budget["dollars"] > 0
+    if interrupted:
+        assert "reconcile state before retrying" in saved.messages[-1]["content"][1]["content"]
 
 
 def _git(root, *args):

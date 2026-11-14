@@ -6276,7 +6276,8 @@ class Agent:
                 # Model-written arguments can decode to null, a list or a string.
                 output = (await self._run_tool(tc.name, tc.input) if isinstance(tc.input, dict)
                           else _NotExecutedToolResult("ERROR: tool input must be a JSON object"))
-            except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted) as exc:
+            except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted,
+                    GoalCancelled) as exc:
                 _stop_reason = "audit refused" if isinstance(exc, AuditRefused) else type(exc).__name__
                 self._answer_pending_tool_uses(
                     resp, messages, tool_results,
