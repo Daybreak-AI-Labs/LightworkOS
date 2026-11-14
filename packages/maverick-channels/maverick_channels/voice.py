@@ -361,11 +361,11 @@ class VoiceChannel(Channel):
                     # The revision-checked claim still allows one execution.
                     row = await self.process_message(message, external_id=identity, account=account,
                                                      authorize=authorize, send=offered, route=route,
-                                                     receipt=row, journal=journal)
+                                                     receipt=row, journal=journal, wait_for_activity=True)
             else:
                 row = await self.process_message(message, external_id=identity, account=account,
                                                  authorize=authorize, send=offered, route=route,
-                                                 journal=journal)
+                                                 journal=journal, wait_for_activity=True)
             with authority_effect_fence():
                 if not authorize():
                     raise PermissionError("Current phone call settings changed.")

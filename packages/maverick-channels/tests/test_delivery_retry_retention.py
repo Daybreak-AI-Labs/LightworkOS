@@ -399,3 +399,37 @@ def test_refusals_decided_from_the_message_itself_are_definitive(journal):
         with pytest.raises(delivery.DeliveryRejected):
             await attempt.send_chunk("one-more", "text", lambda: None)
     asyncio.run(run())
+
+
+def test_only_a_caller_that_asks_waits_for_a_busy_activity_stripe(journal, monkeypatch):
+    monkeypatch.setattr(delivery, "ACTIVITY_WAIT_SECONDS", 30.0)
+    handled = []
+
+    async def handler(inbound):
+        handled.append(inbound.text)
+        return "answer"
+
+    async def send(reply):
+        return "accepted"
+
+    async def run():
+        channel = Adapter(handler)
+        row = journal.admit(message("busy"), external_id="busy", account="acct")
+        with delivery._receipt_activity(row["id"]) as idle:  # An unrelated live handler.
+            assert idle
+            started = delivery._monotonic()
+            result = await channel.process_message(message("busy"), external_id="busy", account="acct",
+                         authorize=lambda: True, send=send, receipt=row, journal=journal)
+            assert delivery._monotonic() - started < 5
+            assert result["execution"] == "received" and handled == []
+
+            async def erase():
+                await asyncio.sleep(0.1)
+                journal.store.delete(row["id"], expected_revision=row["revision"])
+            eraser = asyncio.create_task(erase())
+            with pytest.raises(delivery.DeliveryUnknown):
+                await channel.process_message(message("busy"), external_id="busy", account="acct",
+                    authorize=lambda: True, send=send, receipt=row, journal=journal, wait_for_activity=True)
+            await eraser
+        assert handled == []
+    asyncio.run(run())

@@ -48,8 +48,8 @@ TOMBSTONE_SECONDS = 90 * 24 * 3600
 STALE_CLAIM_SECONDS = 24 * 3600
 MAX_PROVIDER_ATTEMPTS = 8
 PROVIDER_RETRY_SECONDS = 30
-# An unclaimed message whose activity stripe another handler holds waits this
-# long for it (stripes are shared), then stays received for a later attempt.
+# A caller with no later attempt (voice) waits this long for an unclaimed
+# message's busy activity stripe (stripes are shared); others defer at once.
 ACTIVITY_WAIT_SECONDS = 5.0
 _INTERNAL_ERROR_REPLY = "⚠ An internal error occurred."
 _ACTIVE = contextvars.ContextVar("channel_delivery", default=None)
@@ -874,13 +874,13 @@ async def _execute_claimed(channel, inbound, claimed, *, journal, authorize):
                                        reason="Execution began without a confirmed stored result; review before retrying")
 
 
-async def _claim_when_idle(channel, inbound, row, *, journal, authorize):
-    """Claim and run under the activity lock, waiting a bounded time for a busy stripe.
+async def _claim_when_idle(channel, inbound, row, *, journal, authorize, wait):
+    """Claim and run under the activity lock; ``wait`` bounds a busy-stripe wait.
 
     The claim is a revision check, so a handler that ran meanwhile is never
     started a second time; the current row is returned instead.
     """
-    deadline = _monotonic() + ACTIVITY_WAIT_SECONDS
+    deadline = _monotonic() + (ACTIVITY_WAIT_SECONDS if wait else 0)
     while True:
         with _receipt_activity(row["id"]) as idle:
             if idle:
@@ -889,6 +889,8 @@ async def _claim_when_idle(channel, inbound, row, *, journal, authorize):
                     return await _execute_claimed(channel, inbound, claimed, journal=journal, authorize=authorize)
                 return await asyncio.to_thread(journal.get, row["id"])
         current = await asyncio.to_thread(journal.get, row["id"])
+        if current is None:
+            raise DeliveryUnknown("Admitted channel receipt is unavailable")
         if current["execution"] != "received" or _monotonic() >= deadline:
             return current
         await asyncio.sleep(0.05)
@@ -896,7 +898,7 @@ async def _claim_when_idle(channel, inbound, row, *, journal, authorize):
 
 async def process_message(channel, msg, *, external_id, account, authorize, send, route=None,
                           receipt=None, journal=None, idempotent=False, prepare=None,
-                          provider_retry_seconds=PROVIDER_RETRY_SECONDS):
+                          provider_retry_seconds=PROVIDER_RETRY_SECONDS, wait_for_activity=False):
     _assert_work_allowed()
     journal = journal or DeliveryJournal()
     if receipt is not None:
@@ -945,7 +947,8 @@ async def process_message(channel, msg, *, external_id, account, authorize, send
         if not authorize():
             raise PermissionError("Channel sender authorization changed")
     if row["execution"] == "received":
-        row = await _claim_when_idle(channel, inbound, row, journal=journal, authorize=authorize)
+        row = await _claim_when_idle(channel, inbound, row, journal=journal, authorize=authorize,
+                                     wait=wait_for_activity)
         if row["execution"] == "received":
             return row
     else:
