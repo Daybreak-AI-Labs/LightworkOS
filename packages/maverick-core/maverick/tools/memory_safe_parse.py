@@ -1,8 +1,9 @@
 """Memory-safe parsers.
 
 Parse untrusted text (JSON or CSV) under hard resource bounds so a hostile
-input can't exhaust memory or blow the stack: cap raw byte size, nesting depth,
-and item/row count BEFORE and DURING parsing. Never raises on bad input — a
+input can't exhaust memory or blow the stack: the raw byte size is capped before
+parsing; CSV rows are counted while streaming; JSON depth and item count are
+measured after ``json.loads`` (bounded in practice by the byte cap). Never raises on bad input — a
 breach returns ``REJECT: ...`` naming the limit hit; a clean parse returns
 ``OK`` with a shape summary (never the full payload back).
 

@@ -2,11 +2,13 @@
 
 Lets long-running agents persist facts across turns without bloating
 the conversation. Backed by the world_model's ``facts`` table (already
-exists). Three ops:
+exists). Five ops:
 
-  - kv_set(key, value)  — write (overwrites if key already exists for goal)
-  - kv_get(key)         — read; returns missing-sentinel if absent
-  - kv_search(query)    — substring search across keys/values for the goal
+  - set(key, value)  — write (overwrites if key already exists for goal)
+  - get(key)         — read; returns missing-sentinel if absent
+  - search(query)    — substring search across keys/values for the goal
+  - delete(key)      — remove a key
+  - list()           — list the goal's keys
 
 Scoped to the current goal so memory doesn't leak across runs. Use the
 ``recall_past_goals`` tool when you need cross-goal context.

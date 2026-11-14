@@ -83,8 +83,8 @@ def intake_tools(session, *, llm=None, kb=None) -> list[Tool]:
         ),
         Tool(
             name="add_document",
-            description="Attach an uploaded document or diagram (by path) to "
-                        "ingest into the business's knowledge base on finalize.",
+            description="Record an uploaded document or diagram (by path) on "
+                        "the intake; finalize does not ingest it.",
             input_schema={
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
