@@ -114,8 +114,8 @@ def _requires_scoped_connection() -> bool:
 
         from ..template_connections import active
         return active() or bool(enterprise_enabled() and connections.current_principal())
-    except Exception:  # pragma: no cover -- policy lookup fails closed elsewhere
-        return False
+    except Exception:  # pragma: no cover -- an unknown policy forbids ambient credentials
+        return True
 
 
 def _credential_config(
@@ -407,6 +407,12 @@ def _execute_connector_http(method, url, request_headers, *, params, body, args,
         kind = "response_limit" if isinstance(exc, ConnectorResponseLimit) else "deadline"
         return outcome(f"ERROR: connector {kind}; no complete response was admitted",
                        kind, unknown=dispatched and operation != "safe_read")
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        # The connection was never established, so no request bytes left.
+        invocation.check()
+        dispatched = False
+        return outcome(f"ERROR: {label} request failed (could not connect)",
+                       "transient_network")
     except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
         invocation.check()
         return outcome(f"ERROR: {label} request failed (transport failure)",
