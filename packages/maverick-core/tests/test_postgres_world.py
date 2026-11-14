@@ -681,6 +681,42 @@ def test_ask_answer_open_questions(world):
     assert answered.answered_at is not None
 
 
+def test_answer_is_recorded_once(world):
+    # Parity with SQLite: the agent may already have acted on the first
+    # answer, so a second one is refused rather than replacing it.
+    gid = world.create_goal("answered once")
+    qid = world.ask("which region?", goal_id=gid)
+    assert world.answer(qid, "us-east-1") is True
+    assert world.answer(qid, "eu-west-1") is False
+    assert [q.answer for q in world.all_questions(gid) if q.id == qid] == ["us-east-1"]
+
+
+def test_erase_conversations_clears_the_subject_approval_content(world):
+    # Parity with SQLite: approvals parked by an erased goal keep their id and
+    # decision for the audit outbox, but lose the sealed action, scope, detail
+    # and sign-off notes.
+    import time as _time
+
+    conv = world.get_or_create_conversation("gdpr-pg-appr", "erase-" + uuid.uuid4().hex)
+    gid = world.create_goal("approval goal")
+    world.append_turn(conv.id, "user", "private text", goal_id=gid)
+    aid = world.create_approval("send private email", scope="inbox", detail="to jane")
+    with world._tx() as cur:
+        cur.execute("UPDATE approvals SET goal_id=%s, status='approved' WHERE id=%s", (gid, aid))
+        cur.execute("INSERT INTO approval_signoffs(approval_id, approver, decision, decided_at, note) "
+                    "VALUES (%s, 'rev', 'approved', %s, 'private note')", (aid, _time.time()))
+    plan = world.plan_conversation_erasure([conv.id])
+    world.erase_conversations([conv.id], expected_conversation_ids=plan["conversation_ids"],
+                              expected_goal_ids=plan["goal_ids"],
+                              expected_episode_ids=plan["episode_ids"])
+    approval = world.get_approval(aid)
+    assert approval is not None and approval.status == "approved"
+    assert approval.action == "[erased]" and approval.scope is None and approval.detail is None
+    with world._tx() as cur:
+        cur.execute("SELECT note FROM approval_signoffs WHERE approval_id=%s", (aid,))
+        assert cur.fetchone()[0] is None
+
+
 def test_answer_unknown_question_id_returns_false(world):
     # Parity with SQLite: a typo'd id is reported, not a false success.
     assert world.answer(987_654_321, "nope") is False

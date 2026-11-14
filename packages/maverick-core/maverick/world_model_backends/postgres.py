@@ -961,6 +961,10 @@ class _PgRow(tuple):
         return list(self._columns)
 
 
+#: Placeholder action for an approval whose goal was erased (as on SQLite).
+_ERASED_APPROVAL_ACTION = "[erased]"
+
+
 def _tenant_scope(column: str = "tenant_id") -> tuple[str, list]:
     """Read predicate scoping rows to the active tenant.
 
@@ -4140,13 +4144,16 @@ class PostgresWorldModel:
         *,
         expected_owner: str | None = None,
     ) -> bool:
-        """Record an answer. Returns False if no question has that id, so a
-        typo'd id is flagged instead of reported as a false success.
+        """Record an answer. Returns False if no unanswered question has that
+        id, so a typo'd id is flagged instead of reported as a false success.
+        An answer is recorded once: the agent may already have acted on it, so
+        it is never silently replaced (as on SQLite).
 
         Scoped through the parent goal's tenant so a tenant cannot answer
-        (overwrite) another tenant's question by id (no-op single-tenant)."""
+        another tenant's question by id."""
         frag, fparams = _mutation_tenant_scope("g.tenant_id")
-        sql = "UPDATE questions SET answer = %s, answered_at = %s WHERE id = %s"
+        sql = ("UPDATE questions SET answer = %s, answered_at = %s "
+               "WHERE id = %s AND answer IS NULL")
         params: list = [_seal(answer, "questions.answer"), time.time(), question_id]
         if expected_owner is not None:
             sql += " AND goal_id IN (SELECT id FROM goals WHERE owner = %s)"
@@ -5611,6 +5618,21 @@ class PostgresWorldModel:
                     "UPDATE event_goal_admissions SET sealed_contract=NULL, "
                     "delivery_state='federation_retired' WHERE admission_key LIKE 'federation:%%' "
                     "AND goal_id = ANY(%s)", (gids,),
+                )
+                # Approvals keep their identities and decisions (the audit
+                # outbox refers to them), but the subject's content -- the
+                # sealed action, scope and detail, and sign-off notes -- goes,
+                # as on SQLite.
+                afrag, afparams = _erasure_tenant_scope("tenant_id")
+                cur.execute(
+                    "UPDATE approval_signoffs SET note = NULL WHERE approval_id IN "
+                    "(SELECT id FROM approvals WHERE goal_id = ANY(%s) AND " + afrag + ")",
+                    (gids, *afparams),
+                )
+                cur.execute(
+                    "UPDATE approvals SET action = %s, scope = NULL, detail = NULL "
+                    "WHERE goal_id = ANY(%s) AND " + afrag,
+                    (_seal(_ERASED_APPROVAL_ACTION, "approvals.action"), gids, *afparams),
                 )
                 cur.execute("DELETE FROM goals WHERE id = ANY(%s)", (gids,))
 
