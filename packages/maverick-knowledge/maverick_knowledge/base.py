@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 _EXACT_DOCUMENT_SCHEMA = "lightwork.vector-document-layout.v1"
 _EXACT_CHUNK_KEYS = {"chunk_index", "chunk_start", "chunk_end"}
 MAX_DOCUMENT_CHUNKS = 2048
+# Inputs per embedding request, for ingestion and reindex alike.
+EMBED_BATCH = 64
 
 # Built-in injection tripwire applied to every ingested chunk, even when no
 # Shield is configured. maverick-knowledge is standalone (no maverick-core dep),
@@ -364,12 +366,18 @@ class KnowledgeBase:
                 "knowledge store cannot atomically publish document provenance; "
                 "use SQLite or pgvector for ingestion"
             )
-        with operation_scope(
-            category="storage",
-            service=f"embedder:{type(self.embedder).__name__}",
-            operation="knowledge-document-embedding",
-        ):
-            vectors = self.embedder.embed(chunks)
+        # Batched as reindex does: one request for a whole document (up to
+        # MAX_DOCUMENT_CHUNKS inputs) exceeds hosted providers' batch limits.
+        vectors = []
+        for start in range(0, len(chunks), EMBED_BATCH):
+            with operation_scope(
+                category="storage",
+                service=f"embedder:{type(self.embedder).__name__}",
+                operation="knowledge-document-embedding",
+            ):
+                part = self.embedder.embed(chunks[start:start + EMBED_BATCH])
+            validate_batch(part, len(chunks[start:start + EMBED_BATCH]), descriptor["dimension"])
+            vectors.extend(part)
         validate_batch(vectors, len(chunks), descriptor["dimension"])
         if identity(self.embedder)[1] != fingerprint:
             raise RuntimeError("knowledge embedder changed during ingestion; retry")
@@ -699,8 +707,8 @@ class KnowledgeBase:
             raise RuntimeError("knowledge reindex exceeds its chunk limit")
         descriptor, fingerprint = identity(self.embedder)
         items = []
-        for start in range(0, len(rows), 64):
-            batch = rows[start:start + 64]
+        for start in range(0, len(rows), EMBED_BATCH):
+            batch = rows[start:start + EMBED_BATCH]
             with operation_scope(category="storage", service=f"embedder:{type(self.embedder).__name__}",
                                  operation="knowledge-reindex-embedding"):
                 vectors = self.embedder.embed([row.text for row in batch])

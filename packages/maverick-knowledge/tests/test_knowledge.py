@@ -167,6 +167,53 @@ class TestBuildStore:
         assert "WHERE namespace = %s AND collection = %s" in delete_sql
         assert delete_params[0] == insert_params[0][0]
 
+    def test_pgvector_search_is_exact_and_large_dims_skip_the_index(self, monkeypatch):
+        # A filtered search through an IVFFlat index probing 1 of 100 lists
+        # could miss rows; and pgvector cannot index a vector over 2,000 dims.
+        calls = []
+
+        class _Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return None
+
+            def execute(self, sql, params=None):
+                calls.append(sql)
+                return self
+
+            def fetchone(self):
+                return (1,)
+
+            def fetchall(self):
+                return []
+
+        class _Conn:
+            def execute(self, sql, params=None):
+                calls.append(sql)
+
+            def cursor(self):
+                return _Cursor()
+
+        monkeypatch.setitem(
+            sys.modules, "psycopg",
+            types.SimpleNamespace(connect=lambda *a, **k: _Conn()),
+        )
+        from maverick_knowledge.store import PgVectorStore
+
+        for dim, indexed in ((1024, True), (3072, False)):
+            calls.clear()
+            store = PgVectorStore("postgresql://shared", dim=dim, table="knowledge_chunks")
+            assert any("USING ivfflat" in sql for sql in calls) is indexed
+            store.search("hr", [1.0] * dim)
+            search_sql = calls[-1]
+            # The collection filter runs inside a fenced subquery; the ordering
+            # is applied to its rows, never through the approximate index.
+            assert ("FROM (SELECT text, meta, embedding FROM knowledge_chunks "
+                    "WHERE namespace = %s AND collection = %s OFFSET 0) AS scoped "
+                    "ORDER BY embedding <=> %s::vector LIMIT %s") in search_sql
+
     def test_pgvector_migrates_legacy_table_to_namespace(self, monkeypatch):
         """A pre-namespacing table (no namespace column) is migrated in place:
         column added, existing rows backfilled to 'default', PK moved to include
@@ -789,6 +836,21 @@ class TestSearchFormatted:
         assert calls == [["contract"]]
 
 
+    def test_ingest_embeds_a_large_document_in_bounded_batches(self):
+        from maverick_knowledge.base import EMBED_BATCH
+        calls = []
+
+        class _Spy(DeterministicEmbedder):
+            def embed(self, texts):
+                calls.append(len(texts))
+                return super().embed(texts)
+
+        kb = KnowledgeBase(embedder=_Spy(dim=64), chunk_size=20, chunk_overlap=0)
+        text = " ".join(f"w{i:05d}" for i in range(600))  # ~210 chunks
+        n = kb.ingest_text("big", text, source="big")
+        assert n > EMBED_BATCH * 2
+        assert sum(calls) == n and max(calls) <= EMBED_BATCH
+
 class TestDedupHits:
     def _kb(self):
         return KnowledgeBase(embedder=DeterministicEmbedder(dim=64),
@@ -908,7 +970,7 @@ class TestImageIngestion:
         fake_image_module = SimpleNamespace(
             MAX_IMAGE_PIXELS=None,
             DecompressionBombWarning=Warning,
-            open=lambda _path: _FakeImage(),
+            open=lambda _path, **_kw: _FakeImage(),
         )
         fake_pytesseract = SimpleNamespace(
             image_to_string=lambda *_args, **_kwargs: ocr_calls.append(True) or "text"
@@ -920,6 +982,22 @@ class TestImageIngestion:
         with pytest.raises(ValueError, match="too many pixels"):
             describer(str(img))
         assert ocr_calls == []
+
+    def test_ocr_refuses_formats_outside_the_allow_list(self, tmp_path):
+        Image = pytest.importorskip("PIL.Image")
+        from maverick_knowledge.image import _validate_image
+
+        # EPS content behind an image suffix: Pillow would identify it as EPS
+        # (and decode it through Ghostscript) without the formats allow-list.
+        eps = tmp_path / "diagram.png"
+        eps.write_bytes(b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\n")
+        with Image.open(eps) as probe:
+            assert probe.format == "EPS"
+        with pytest.raises(ValueError, match="OCR refused the image"):
+            _validate_image(str(eps), Image, 10_000, 1024)
+        png = tmp_path / "ok.png"
+        Image.new("RGB", (4, 4)).save(png)
+        _validate_image(str(png), Image, 10_000, 1024)
 
     def test_ocr_describer_passes_timeout_to_tesseract(self, tmp_path, monkeypatch):
         from maverick_knowledge.image import build_ocr_describer
@@ -943,7 +1021,7 @@ class TestImageIngestion:
         fake_image_module = SimpleNamespace(
             MAX_IMAGE_PIXELS=None,
             DecompressionBombWarning=Warning,
-            open=lambda _path: _FakeImage(),
+            open=lambda _path, **_kw: _FakeImage(),
         )
 
         def image_to_string(image, **kwargs):

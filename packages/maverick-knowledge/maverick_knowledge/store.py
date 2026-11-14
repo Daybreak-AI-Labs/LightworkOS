@@ -544,13 +544,17 @@ def _to_pgvector(vec: list[float]) -> str:
     return "[" + ",".join(repr(x) for x in floats) + "]"
 
 
+_PG_INDEX_MAX_DIM = 2000  # pgvector's limit for indexing the vector type
+
+
 class PgVectorStore:
     """pgvector-backed scale-out vector store -- the opt-in backend for corpora
     too large for the brute-force SQLite index.
 
     Same surface + collection-scoped compartments as :class:`SqliteVectorStore`,
-    but cosine search runs in Postgres via the ``<=>`` operator (with an IVFFlat
-    index), so retrieval doesn't scan every row in the process. Vectors are
+    but cosine search runs in Postgres via the ``<=>`` operator, so retrieval
+    doesn't scan every row in the process. The search is exact within the
+    collection (see ``search``), not an approximate index scan. Vectors are
     passed as text literals cast to ``::vector``; only ``psycopg`` and the
     Postgres ``vector`` extension are required (no numpy / pgvector-python).
 
@@ -677,7 +681,12 @@ class PgVectorStore:
                     "PRIMARY KEY (namespace, collection, id)"
                 )
             )
-        # Cosine IVFFlat index -- approximate but the point of the scale backend.
+        if self._dim > _PG_INDEX_MAX_DIM:
+            # pgvector cannot build an IVFFlat or HNSW index on a vector over
+            # 2,000 dimensions; searches stay exact without one.
+            return
+        # Cosine IVFFlat index, kept for existing deployments; search does not
+        # rely on it for correctness (see ``search``).
         provider_call(
             lambda: self._db.execute(
                 f"CREATE INDEX IF NOT EXISTS {self._table}_embedding_idx "
@@ -798,9 +807,16 @@ class PgVectorStore:
 
         def dispatch():
             with self._lock, self._db.cursor() as cur:
+                # The IVFFlat index probes 1 of its lists and applies the
+                # namespace/collection filter afterwards, so a search through
+                # it could return fewer than k rows, or none. OFFSET 0 keeps
+                # the filtered subquery from being flattened, so the ordering
+                # is computed exactly over the collection's rows (narrowed by
+                # the primary key) instead of through the ANN index.
                 return cur.execute(
-                    f"SELECT text, meta, 1 - (embedding <=> %s::vector) AS score "
-                    f"FROM {self._table} WHERE namespace = %s AND collection = %s "
+                    "SELECT text, meta, 1 - (embedding <=> %s::vector) AS score "
+                    f"FROM (SELECT text, meta, embedding FROM {self._table} "
+                    "WHERE namespace = %s AND collection = %s OFFSET 0) AS scoped "
                     "ORDER BY embedding <=> %s::vector LIMIT %s",
                     (
                         vector_literal,
