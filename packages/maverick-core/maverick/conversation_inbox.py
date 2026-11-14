@@ -434,6 +434,9 @@ def _human_held(value):
     return any(session.get("state") in HELD for session in value.get("human",{}).get("sessions",{}).values())
 
 
+_MAX_INVENTORY_SCAN = 100_000
+
+
 def owned_inventory(principal):
     """Owned My Data inventory; the adapter owns verified actor admission."""
     if not isinstance(principal, str) or not principal.startswith("user:"):
@@ -448,6 +451,10 @@ def owned_inventory(principal):
             if record_id in seen:
                 return result
             seen.add(record_id)
+            if len(seen) > _MAX_INVENTORY_SCAN:
+                # The store has no owner index, so this bounds the work of one
+                # request; it sits far above the per-owner cap.
+                raise ValueError("Conversation inventory needs a narrower reviewed owner scope")
             record = STORE.get(record_id)
             if record and record.get("owner") == principal:
                 # Only this owner's records count: other people's volume

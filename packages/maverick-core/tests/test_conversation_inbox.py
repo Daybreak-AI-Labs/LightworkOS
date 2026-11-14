@@ -212,3 +212,6 @@ def test_owned_inventory_is_not_capped_by_other_owners_records(monkeypatch):
 
     monkeypatch.setattr(module, "STORE", _Store())
     assert module.owned_inventory("user:alice") == []
+    monkeypatch.setattr(module, "_MAX_INVENTORY_SCAN", 100)
+    with pytest.raises(ValueError, match="narrower"):
+        module.owned_inventory("user:alice")
