@@ -146,6 +146,16 @@ def test_file_write_refuses_fifo_without_waiting(tmp_path):
     assert result.stdout.startswith("ERROR")
 
 
+@pytest.mark.parametrize("path", ["src", "src/", ".", ""])
+def test_file_write_to_directory_says_it_is_a_directory(tmp_path, path):
+    from maverick.tools.fs import write_file
+
+    (tmp_path / "src").mkdir()
+    out = write_file(SimpleNamespace(workdir=tmp_path)).fn({"path": path, "content": "x"})
+    assert out.startswith("ERROR") and "Is a directory" in out
+    assert "symlink race" not in out
+
+
 @pytest.mark.parametrize("attack", ["symlink", "replacement"])
 def test_large_stdin_does_not_stage_in_untrusted_workspace(tmp_path, monkeypatch, attack):
     import tempfile

@@ -10,6 +10,7 @@ that's its purpose. Shield's `scan_tool_call` chokepoint guards it.
 """
 from __future__ import annotations
 
+import errno
 import os
 import stat
 from contextlib import contextmanager
@@ -126,6 +127,10 @@ def _require_regular_target(target: Path) -> None:
         info = target.lstat()
     except FileNotFoundError:
         return
+    if stat.S_ISDIR(info.st_mode):
+        # lstat does not follow links: a real directory is a plain mistake,
+        # not a race, so answer the way the open used to.
+        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(target))
     if not stat.S_ISREG(info.st_mode):
         raise ValueError("refusing non-regular write target (possible symlink race)")
 
