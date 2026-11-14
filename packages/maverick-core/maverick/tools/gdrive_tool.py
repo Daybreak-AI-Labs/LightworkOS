@@ -83,7 +83,10 @@ def _get_raw(url: str, params: dict | None = None, max_bytes: int = 4096) -> tup
     # a cross-origin 30x (it strips only the `auth=` param, not header creds), so
     # a redirect off the Drive API host would leak the access token. A genuine
     # download/export redirect surfaces as its 3xx code rather than leaking.
-    r = _governed_sender(httpx.get)(url, headers={"Authorization": f"Bearer {_token()}"},
+    # Ask only for the preview bytes; a server that ignores Range still has
+    # its body sliced below.
+    r = _governed_sender(httpx.get)(url, headers={"Authorization": f"Bearer {_token()}",
+                                                  "Range": f"bytes=0-{max_bytes - 1}"},
                   params=params or {}, timeout=30.0, follow_redirects=False)
     if r.status_code >= 400:
         return r.status_code, r.text[:300]

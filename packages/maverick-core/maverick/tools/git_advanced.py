@@ -109,7 +109,9 @@ def _reject_option_like(*values: str) -> str | None:
 def _shape(code: int, out: str, err: str, *, label: str) -> str:
     if code == 0:
         return f"[{label}] OK\n{out}".rstrip() if out else f"[{label}] OK"
-    return f"[{label}] FAILED (exit {code})\n{err}".rstrip() if err else f"[{label}] FAILED (exit {code})"
+    # git prints merge/rebase conflicts on stdout, so keep it on failure too.
+    detail = "\n".join(s for s in (out.strip(), err.strip()) if s)
+    return f"[{label}] FAILED (exit {code})\n{detail}".rstrip()
 
 
 def _op_bisect_start(sandbox, workdir: Path, args: dict[str, Any]) -> str:
