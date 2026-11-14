@@ -315,6 +315,38 @@ def test_list_callers_returns_the_most_recent_rows():
     assert gw.gateway_status()["caller_model_pairs"] == 12
 
 
+def test_redaction_keeps_tool_contracts_and_withholds_sensitive_tool_arguments(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        "[llm_gateway]\nenable = true\nredact_prompts = true\n"
+        "redact_completions = true\n"
+        'upstream_url = "https://api.openai.com"\n',
+        encoding="utf-8",
+    )
+    config.reset_config_cache()
+    forwarded = []
+    reply = {"choices": [{"message": {"role": "assistant", "tool_calls": [{
+        "type": "function",
+        "function": {"name": "send", "arguments": '{"to": "bob@example.com"}'}}]}}],
+        "usage": {}}
+
+    def upstream(url, headers, body):
+        forwarded.append(body)
+        return 200, reply
+
+    tools = [{"type": "function", "function": {
+        "name": "ping", "description": "Ping 10.0.0.1 for the user",
+        "parameters": {"type": "object", "properties": {"host": {
+            "type": "string", "default": "10.0.0.1"}}}}}]
+    status, payload = gw.handle_chat_completion(
+        _body(tools=tools), caller_token="gw-secret", upstream=upstream)
+    sent = forwarded[0]["tools"][0]["function"]
+    assert sent["parameters"]["properties"]["host"]["default"] == "10.0.0.1"
+    assert "10.0.0.1" not in sent["description"]
+    assert status == 502
+    assert "withheld" in payload["error"]["message"]
+    assert "bob@example.com" not in str(payload)
+
+
 def test_otel_spans_land_in_the_caller_ledger():
     payload = {
         "resourceSpans": [{

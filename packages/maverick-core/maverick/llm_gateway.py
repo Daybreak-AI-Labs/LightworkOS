@@ -773,15 +773,25 @@ def _provider_error(provider: str, status: int, message: str) -> tuple[int, dict
     }
 
 
-# Tool descriptions and schemas are shown to the model too, so they are
-# screened, redacted and counted like message text.
-_PROMPT_TEXT_KEYS = frozenset({
-    "arguments", "content", "description", "input", "input_schema",
-    "instructions", "parameters", "prompt", "system", "text",
+# Keys whose text is redacted in a prompt. In tool schemas only free-text
+# description/title strings are rewritten: enum/const/default/examples values
+# are the tool's contract and must reach the model unchanged.
+_PROMPT_REDACT_KEYS = frozenset({
+    "arguments", "content", "description", "input", "instructions", "prompt",
+    "system", "text", "title",
 })
-_RESPONSE_TEXT_KEYS = frozenset({
-    "arguments", "content", "input", "output_text", "refusal", "text",
-})
+# Everything shown to the model (tool schemas included) is screened and
+# counted toward the prompt reservation.
+_PROMPT_TEXT_KEYS = _PROMPT_REDACT_KEYS | frozenset({"input_schema", "parameters"})
+_RESPONSE_TEXT_KEYS = frozenset({"content", "output_text", "refusal", "text"})
+# Model-emitted tool-call arguments are never rewritten (a client would act on
+# a corrupted argument); with completion redaction on, a response whose
+# arguments carry sensitive data is withheld instead.
+_RESPONSE_TOOL_ARGUMENT_KEYS = frozenset({"arguments", "input"})
+
+
+class _ToolArgumentsWithheld(LLMGatewayError):
+    """A completion's tool-call arguments carry data redaction would remove."""
 
 
 def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -853,7 +863,7 @@ def _transform_text_leaves(
 def _redact_prompt(body: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
     copied = _json_copy(body)
     transformed, count = _transform_text_leaves(
-        copied, text_keys=_PROMPT_TEXT_KEYS
+        copied, text_keys=_PROMPT_REDACT_KEYS
     )
     if not isinstance(transformed, dict):  # pragma: no cover - guarded by _json_copy
         raise LLMGatewayError("the request body must be a JSON object")
@@ -867,10 +877,22 @@ def _redact_response(payload: Mapping[str, Any]) -> tuple[dict[str, Any], int]:
     )
     if not isinstance(transformed, dict):  # pragma: no cover - guarded by _json_copy
         raise LLMGatewayError("the upstream response must be a JSON object")
+    arguments = "\n".join(_collect_prompt_text(
+        copied, text_keys=_RESPONSE_TOOL_ARGUMENT_KEYS))
+    if arguments and _redact_text(arguments)[1]:
+        raise _ToolArgumentsWithheld(
+            "The AI service's reply asked to call a tool with sensitive data in its "
+            "arguments, so the gateway withheld it. Nothing was changed.")
     return transformed, count
 
 
-def _collect_prompt_text(value: object, *, inherited_text: bool = False, depth: int = 0) -> list[str]:
+def _collect_prompt_text(
+    value: object,
+    *,
+    inherited_text: bool = False,
+    depth: int = 0,
+    text_keys: frozenset[str] = _PROMPT_TEXT_KEYS,
+) -> list[str]:
     """Collect only text that can reach an LLM, for Shield and input reserve."""
 
     if depth > 32:
@@ -881,7 +903,8 @@ def _collect_prompt_text(value: object, *, inherited_text: bool = False, depth: 
         parts: list[str] = []
         for item in value:
             parts.extend(
-                _collect_prompt_text(item, inherited_text=inherited_text, depth=depth + 1)
+                _collect_prompt_text(item, inherited_text=inherited_text,
+                                     depth=depth + 1, text_keys=text_keys)
             )
         return parts
     if isinstance(value, Mapping):
@@ -890,8 +913,9 @@ def _collect_prompt_text(value: object, *, inherited_text: bool = False, depth: 
             parts.extend(
                 _collect_prompt_text(
                     item,
-                    inherited_text=inherited_text or str(key) in _PROMPT_TEXT_KEYS,
+                    inherited_text=inherited_text or str(key) in text_keys,
                     depth=depth + 1,
+                    text_keys=text_keys,
                 )
             )
         return parts
@@ -1449,13 +1473,16 @@ def _handle_completion(  # noqa: C901 - the request boundary is deliberately lin
             response, response_redactions = _redact_response(response)
     except LLMGatewayError as exc:
         # The upstream effect is known but an unredacted response is not safe
-        # to relay.  Keep the reservation and report an explicit outage.
+        # to relay.  Keep the reservation and report an explicit outage, or
+        # (sensitive tool-call arguments) a withheld response.
+        withheld = isinstance(exc, _ToolArgumentsWithheld)
         _record_call(
-            caller=caller, team=team, model=model, status="response_redaction_unavailable",
+            caller=caller, team=team, model=model,
+            status="response_withheld" if withheld else "response_redaction_unavailable",
             prompt_sha256=prompt_sha, usage=None, now=current,
             redaction_count=prompt_redactions,
         )
-        return _provider_error(provider, 503, str(exc))
+        return _provider_error(provider, 502 if withheld else 503, str(exc))
     _TEAM_BUDGET.reconcile(
         reservation,
         prompt_tokens=usage["prompt_tokens"] if usage is not None else None,
