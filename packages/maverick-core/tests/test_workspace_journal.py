@@ -278,3 +278,33 @@ def test_revert_with_skipped_entry_is_not_complete(workdir, journal_on):
 
     assert res["skipped"] == 1
     assert res["complete"] is False
+
+
+def test_skipped_revert_keeps_journal_for_retry_and_restores_mode(
+        workdir, journal_on, monkeypatch):
+    """Regression: a revert with a transient write error archived the journal,
+    so the skipped entry could never be retried; and a file deleted during the
+    run came back 0600 instead of its recorded mode."""
+    (workdir / "a.txt").write_text("orig")
+    os.chmod(workdir / "a.txt", 0o640)
+    _write(workdir, "a.txt", "changed")
+    (workdir / "a.txt").unlink()
+    real = wj._restore_bytes
+    calls = []
+
+    def flaky(target, blob, mode=None):
+        calls.append(target)
+        if len(calls) == 1:
+            raise OSError("transient")
+        return real(target, blob, mode)
+
+    monkeypatch.setattr(wj, "_restore_bytes", flaky)
+    first = wj.revert_goal()
+    assert first["skipped"] == 1 and first["complete"] is False
+    assert "archived" not in first and wj.list_entries()
+
+    second = wj.revert_goal()
+    assert second["complete"] is True and "archived" in second
+    assert (workdir / "a.txt").read_text() == "orig"
+    if os.name != "nt":
+        assert (workdir / "a.txt").stat().st_mode & 0o777 == 0o640
