@@ -418,3 +418,46 @@ def test_fold_refuses_a_reference_used_by_two_workspaces(monkeypatch, tmp_path):
     pcc._FOLDED.clear()
     with pytest.raises(pcc.EarlierTenantLedgerConflict, match="tenants/globex"):
         pcc.check("openai")
+
+
+def _crash_on_journal_done(monkeypatch):
+    """Stop the process between the ledger write and the journal's "done"."""
+    real = pcc.atomic_write_text
+
+    def write(path, text, **kw):
+        if str(path).endswith(pcc._TENANT_FOLD_SUFFIX) and '"done"' in text:
+            raise OSError("process stopped before the journal was marked done")
+        return real(path, text, **kw)
+
+    monkeypatch.setattr(pcc, "atomic_write_text", write)
+    return real
+
+
+@pytest.mark.parametrize("indexed", [False, True], ids=["json", "sqlite"])
+def test_fold_crash_after_the_write_recovers_for_either_deployment_form(monkeypatch, tmp_path, indexed):
+    """The journal's digests must describe what a reload of the saved ledger
+    produces, or a stop after the write blocks capped calls for good."""
+    import json
+
+    from maverick import provider_spend_sqlite
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(pcc, "_admission_cap", lambda name: 20.0)
+    path = pcc._deployment_ledger_path()
+    pcc.record("openai", 1.0, path=path)
+    if indexed:
+        provider_spend_sqlite.ensure(path, pcc)
+    legacy = tmp_path / "home" / "tenants" / "acme" / "provider_spend.json"
+    with tenant_scope(tenant="acme"):
+        pcc.reserve("openai", 2.0, request_id="ordinary-hold", path=legacy)   # no operation metadata
+    real = _crash_on_journal_done(monkeypatch)
+    pcc._FOLDED.clear()
+    with pytest.raises(pcc.ProviderAccountingUnavailable):
+        pcc.check("openai")
+    monkeypatch.setattr(pcc, "atomic_write_text", real)
+    pcc._FOLDED.clear()
+    status = pcc.check("openai")                                  # the restart finishes the fold
+    assert (status.spent, status.reserved) == (1.0, 2.0)
+    journal = path.with_name(path.name + pcc._TENANT_FOLD_SUFFIX)
+    assert json.loads(journal.read_text())["state"] == "done"

@@ -367,6 +367,22 @@ def mark_tenant_fold_reviewed(path: Path) -> None:
     _FOLDED.add(str(path.absolute()))
 
 
+def _canonical_ledger(data: dict) -> dict:
+    """``data`` without empty period buckets, receipt maps or attempt index.
+
+    The SQLite form never stores those, so a reload omits them; the fold
+    journal's digests are taken over this form so a reload of either storage
+    form matches the digest recorded before it was written."""
+    out: dict = {}
+    for key, value in data.items():
+        if key == _RECEIPTS:
+            value = {period: kept for period, providers in value.items()
+                     if (kept := {name: rows for name, rows in providers.items() if rows})}
+        if not isinstance(value, dict) or value:
+            out[key] = value
+    return out
+
+
 def _fold_legacy_period(folded: dict, legacy: dict, period: str, name: str) -> None:
     """Add one earlier per-tenant ledger's ``period`` into ``folded``: totals and
     reservation receipts (state, projection and claims unchanged), plus all of
@@ -408,7 +424,7 @@ def _fold_tenant_ledgers(path: Path) -> None:
             state = json.loads(atomic_read_text(journal)) if journal.exists() else {}
             if state.get("state") == "done":
                 return
-            current = _load(path)
+            current = _canonical_ledger(_load(path))
             before = _ledger_digest(current)
             if state.get("state") == "pending":
                 if before == state["after"]:
@@ -430,6 +446,7 @@ def _fold_tenant_ledgers(path: Path) -> None:
                     _validate_ledger(folded)
                 except ProviderAccountingUnavailable as exc:
                     raise EarlierTenantLedgerConflict("tenants/*/provider_spend.json") from exc
+            folded = _canonical_ledger(folded)
             after = _ledger_digest(folded)
             pending = {"state": "pending", "period": period, "before": before, "after": after}
             atomic_write_text(journal, json.dumps(pending), mode=0o600)
