@@ -40,6 +40,7 @@ from . import (
     MAX_TOTAL_BYTES,
     compact_messages,
     digest_cutoff,
+    frame_digest_body,
 )
 from .requests import request, run_async, run_sync
 
@@ -451,7 +452,7 @@ class LearnedSummarizer:
             "role": "user",
             "content": (
                 f'<learned-digest kind="{kind}" template="{template_id}" '
-                f'turns="{self._turns}">\n{digest}\n</learned-digest>'
+                f'turns="{self._turns}">\n{frame_digest_body(digest)}\n</learned-digest>'
             ),
         }
         self._digest = _fingerprint(digest_msg)

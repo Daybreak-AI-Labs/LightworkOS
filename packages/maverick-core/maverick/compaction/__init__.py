@@ -53,7 +53,9 @@ def _env_int(name: str, default: int, key: str = "") -> int:
 
 
 MAX_TOOL_OUTPUT_BYTES = _env_int("MAVERICK_COMPACT_MAX_TOOL_BYTES", 2 * 1024, "max_tool_bytes")
-KEEP_RECENT_TURNS = _env_int("MAVERICK_COMPACT_KEEP_RECENT", 4, "keep_recent")
+# At least 1, as LearnedRunState clamps it: 0 also shrank the newest message,
+# and a negative value pushed the cutoff past the end so nothing was shrunk.
+KEEP_RECENT_TURNS = max(1, _env_int("MAVERICK_COMPACT_KEEP_RECENT", 4, "keep_recent"))
 DIGEST_EVERY = _env_int("MAVERICK_COMPACT_DIGEST_EVERY", 10, "digest_every")
 # Ceiling on the WHOLE live window. The per-block pass above only trims
 # content behind keep_recent, so a few results at the per-result cap
@@ -143,6 +145,28 @@ def _framed_tool_result_preview(preview: str, nonce: str) -> str:
         f"<tool_output_preview id={nonce}>\n"
         f"{preview}\n"
         f"</tool_output_preview {nonce}>"
+    )
+
+
+def frame_digest_body(body: str) -> str:
+    """Wrap a compaction digest body in the agent loop's tool-output frame.
+
+    Learned, graph and streaming digests are built from earlier turns,
+    including ``tool_result`` text an attacker may control, and re-enter the
+    history as a ``user`` message. Agent._run_tool marks tool output as data
+    with ``<tool_output tool=... id=<nonce>>`` and a matching close; the
+    digest body gets the same frame, so injected text cannot pass for the
+    user's own words. As in ``_framed_tool_result_preview``, the nonce is the
+    body's full SHA-256: sync and async compaction stay byte-identical, and a
+    body cannot contain the close delimiter that names its own hash.
+    """
+    import hashlib
+
+    nonce = hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()
+    return (
+        f"<tool_output tool='compaction_digest' id={nonce}>\n"
+        f"{body}\n"
+        f"</tool_output {nonce}>"
     )
 
 
