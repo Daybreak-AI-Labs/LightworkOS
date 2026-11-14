@@ -55,7 +55,7 @@ def test_accounts_renders_and_sends_bearer(monkeypatch):
     sink = _fake_httpx(monkeypatch, 200, body)
     out = truelayer_tool().fn({"op": "accounts", "access_token": "tok-xyz"})
     assert "Current" in out and "GBP" in out
-    assert "56c7b029e0f8ec5a2334fb0ffc2fface" in out  # full id, usable by balance
+    assert "56c7b029e0f8ec5a2334fb0ffc2fface" in out  # full id, usable by balance  # pragma: allowlist secret
     req = sink[0]
     assert req["url"].endswith("/data/v1/accounts")
     assert req["headers"].get("Authorization") == "Bearer tok-xyz"

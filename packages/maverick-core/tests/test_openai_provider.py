@@ -63,7 +63,7 @@ def test_openai_org_and_project_ids_are_not_sent_to_other_vendors(monkeypatch):
     for name, value in ids.items():
         monkeypatch.setenv(name, value)
     for client in (DeepSeekClient(api_key="dk-test", environment=dict(ids)),
-                   DeepSeekClient(api_key="dk-test")):
+                   DeepSeekClient(api_key="dk-test")):  # pragma: allowlist secret
         for sdk in (client._sync, client._async):
             assert sdk.organization is None and sdk.project is None
             assert not isinstance(sdk.default_headers["OpenAI-Organization"], str)
