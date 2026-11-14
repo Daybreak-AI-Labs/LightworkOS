@@ -103,6 +103,28 @@ def test_mongodb_database_is_operator_selected(monkeypatch):
     assert mongo._db_for({"db": "app"})[1].startswith("ERROR")
 
 
+def test_mongodb_database_falls_back_to_uri_default(monkeypatch):
+    from maverick.tools import mongodb_tool as mongo
+
+    accessed = []
+
+    class Client:
+        def __getitem__(self, name):
+            accessed.append(name)
+            return name
+
+    monkeypatch.setattr(mongo, "_client", Client)
+    monkeypatch.setattr(mongo, "_config", lambda: ("mongodb://u:p@h1:27017,h2/app%2Ddb?authSource=admin", ""))
+    assert mongo._db_for({}) == ("app-db", None)
+    assert mongo._db_for({"db": "app-db"}) == ("app-db", None)
+    assert mongo._db_for({"db": "admin"})[1].startswith("ERROR")
+    for uri in ("mongodb://h1", "mongodb://h1/", "mongodb://h1/?authSource=admin"):
+        monkeypatch.setattr(mongo, "_config", lambda uri=uri: (uri, ""))
+        error = mongo._db_for({"db": "app"})[1]
+        assert error.startswith("ERROR") and "MONGODB_URI" in error
+    assert accessed == ["app-db", "app-db"]
+
+
 @pytest.mark.parametrize("limit,batch", [(25, 25), (1000, 100)])
 def test_mongodb_find_batches_up_to_100_documents(monkeypatch, limit, batch):
     from maverick.tools import mongodb_tool as mongo

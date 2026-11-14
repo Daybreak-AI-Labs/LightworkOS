@@ -2,7 +2,8 @@
 
 Connect to a MongoDB cluster and run common CRUD operations from
 inside an agent task. Auth + connection string from ``MONGODB_URI``;
-and ``MONGODB_DB`` for the only database this tool may use.
+and ``MONGODB_DB`` (else the database in the URI path) for the only
+database this tool may use.
 
 ops:
   - find(collection, filter, limit, sort)
@@ -26,6 +27,7 @@ import logging
 import os
 import threading
 from typing import Any
+from urllib.parse import unquote
 
 from ..fastjson import dumps_compact
 from . import Tool, as_bool
@@ -45,7 +47,7 @@ _MONGO_SCHEMA: dict[str, Any] = {
             "enum": ["find", "find_one", "insert", "update",
                      "delete", "count", "collections"],
         },
-        "db": {"type": "string", "description": "Must match the configured MONGODB_DB if supplied."},
+        "db": {"type": "string", "description": "Must match the configured database (MONGODB_DB, else the MONGODB_URI path) if supplied."},
         "collection": {"type": "string"},
         "filter": {"type": "object", "description": "Mongo query filter."},
         "set_": {"type": "object", "description": "$set fields (update)."},
@@ -111,13 +113,21 @@ def _client():
                        socketTimeoutMS=_SOCKET_TIMEOUT_MS)
 
 
+def _uri_database(uri: str) -> str:
+    """The default database named in a MongoDB URI's path, if any."""
+    rest = uri.split("://", 1)[-1].split("?", 1)[0]
+    return unquote(rest.partition("/")[2]).strip()
+
+
 def _db_for(args: dict[str, Any]):
-    _uri, default_db = _config()
+    uri, default_db = _config()
+    default_db = default_db or _uri_database(uri)
     if not default_db:
-        return None, "ERROR: MONGODB_DB must be configured by the operator"
+        return None, ("ERROR: no database configured; the operator must set MONGODB_DB "
+                      "or name the database in the MONGODB_URI path")
     name = (args.get("db") or "").strip()
     if name and name != default_db:
-        return None, "ERROR: db must match the configured MONGODB_DB"
+        return None, "ERROR: db must match the configured database (MONGODB_DB or the MONGODB_URI path)"
     return _client()[default_db], None
 
 
@@ -378,7 +388,7 @@ def mongodb_tool() -> Tool:
             "MongoDB CRUD. ops: collections, find (filter + sort + "
             "limit), find_one, count, insert, update (with $set + "
             "upsert), delete. Mutations gated by confirm=true. "
-            "Auth: MONGODB_URI + MONGODB_DB."
+            "Auth: MONGODB_URI (+ MONGODB_DB, else the URI's database)."
         ),
         input_schema=_MONGO_SCHEMA,
         fn=_run,
