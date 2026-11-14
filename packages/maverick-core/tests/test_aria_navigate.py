@@ -109,14 +109,46 @@ def test_find_requires_role_or_name(monkeypatch):
     assert _use(monkeypatch, FakePage())({"op": "find"}).startswith("ERROR")
 
 
+def _route_clicks(monkeypatch, page):
+    """Stand in for the browser tool's gated click path."""
+    def gated(args):
+        page.actions.append(("gated", args["selector"]))
+        return "clicked"
+    monkeypatch.setattr(mod, "_gated_click", gated)
+
+
 def test_activate_clicks_via_role_locator(monkeypatch):
     page = FakePage()
     run = _use(monkeypatch, page)
+    _route_clicks(monkeypatch, page)
     run({"op": "snapshot"})
     out = run({"op": "activate", "node_id": "n5"})  # the Sign in button
     assert out == "click: n5 [button] 'Sign in'"
-    assert page.actions == ["click"]
+    assert page.actions == [("gated", 'role=button[name="Sign in"s]')]
     assert page.locator_queries == [("button", "Sign in", True)]
+
+
+def test_activate_click_needs_browser_approval(monkeypatch):
+    # The click goes through the browser tool's approval gate: with no human
+    # decision it is refused and nothing reaches the page.
+    from maverick.tools import browser as browser_mod
+
+    page = FakePage()
+    page.url = "https://example.com/"
+    page.locator = lambda selector: FakeLocator(page, 1)
+
+    class Session:
+        def __init__(self):
+            self.page = page
+
+        def approval_context(self, action, args):
+            return {"target_summary": "Sign in", "target_state_sha256": "0" * 64}
+
+    monkeypatch.setattr(browser_mod, "_get_session", lambda: Session())
+    run = _use(monkeypatch, page)
+    out = run({"op": "activate", "node_id": "n5"})
+    assert out.startswith("ERROR") and "not approved" in out
+    assert page.actions == []
 
 
 def test_activate_focus_action(monkeypatch):
@@ -130,7 +162,9 @@ def test_activate_focus_action(monkeypatch):
 
 def test_activate_without_prior_snapshot_resolves_itself(monkeypatch):
     page = FakePage()
-    out = _use(monkeypatch, page)({"op": "activate", "node_id": "n6"})
+    run = _use(monkeypatch, page)
+    _route_clicks(monkeypatch, page)
+    out = run({"op": "activate", "node_id": "n6"})
     assert out == "click: n6 [link] 'Forgot password?'"
     assert page.accessibility.calls == 1  # auto-snapshot happened
 
