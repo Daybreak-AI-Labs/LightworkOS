@@ -311,9 +311,11 @@ RULES: list[Rule] = [
          # over-blocks normal IT/dev text (measured ~13% false-positive on
          # benign inputs). The real "Developer Mode" jailbreak always
          # sheds restrictions, so require a restriction-removal cue within a
-         # short window (either order). Bounds keep it ReDoS-safe.
+         # short window (either order). Bounds keep it ReDoS-safe. "DAN" is
+         # matched case-sensitively: the jailbreak persona is always written in
+         # capitals, and the name "Dan" blocked ordinary text at critical.
          _compile(
-             r"\b(?:DAN|do anything now|jailbreak|unfiltered\s+ai)\b"
+             r"\b(?:(?-i:DAN)|do anything now|jailbreak|unfiltered\s+ai)\b"
              r"|\bdeveloper\s+mode\b[\s\S]{0,80}(?:unrestricted|unfiltered|anything\s+goes|free\s+from|no\s+(?:restrictions?|rules?|filters?|limits?)|without\s+(?:restrictions?|rules?|filters?)|bypass|never\s+(?:refuse|decline|deny)|(?:can|may)\s+say\s+anything|ignore\s+(?:all|your|the)?[\w\s]{0,12}(?:rules?|restrictions?|instructions?|guidelines?|policy|policies))"
              r"|(?:unrestricted|unfiltered|anything\s+goes|no\s+(?:restrictions?|rules?|filters?)|bypass|never\s+(?:refuse|decline|deny)|(?:can|may)\s+say\s+anything|ignore\s+(?:all|your|the)?[\w\s]{0,12}(?:rules?|restrictions?|instructions?))[\s\S]{0,80}\bdeveloper\s+mode\b"
          ),
