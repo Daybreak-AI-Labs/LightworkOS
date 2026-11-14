@@ -22,6 +22,18 @@ def test_purge_audit_files_disabled():
     assert res["reason"] == "disabled"
 
 
+def test_purge_audit_files_refuses_boolean_days(tmp_path: Path):
+    # `audit_days = true` is int(True) == 1; it must not purge every day but today.
+    from maverick.audit.retention import purge_audit_files
+    audit_dir = tmp_path / "audit"
+    _make_audit_file(audit_dir, "2025-06-01")
+    fixed_now = time.mktime(time.strptime("2025-06-30", "%Y-%m-%d"))
+    for bad in (True, 1.5, "30"):
+        with pytest.raises(ValueError, match="whole number of days"):
+            purge_audit_files(days=bad, audit_dir=audit_dir, now=fixed_now)
+    assert (audit_dir / "2025-06-01.ndjson").exists()
+
+
 def test_purge_audit_files_no_dir(tmp_path: Path):
     from maverick.audit.retention import purge_audit_files
     res = purge_audit_files(days=30, audit_dir=tmp_path / "nope")

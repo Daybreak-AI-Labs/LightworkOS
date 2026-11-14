@@ -40,6 +40,21 @@ def _config() -> dict:
         return {}
 
 
+def _disabled(days: object) -> bool:
+    """True when a rule is off; refuse a value that is not a whole number.
+
+    ``int(True)`` is 1, so a config typo such as ``audit_days = true`` would
+    otherwise purge everything older than one day.
+    """
+    if days is None:
+        return True
+    if isinstance(days, bool) or not isinstance(days, int):
+        raise ValueError(
+            f"Retention period {days!r} is not a whole number of days; nothing was deleted."
+        )
+    return days <= 0
+
+
 def _cutoff_for_days(days: int, *, now: float | None = None) -> float:
     now = now if now is not None else time.time()
     return now - max(1, int(days)) * 86400.0
@@ -91,7 +106,7 @@ def _purge_audit_files(
     Filename date wins over mtime — easier to reason about, immune to
     filesystem mtime drift from backups/rsync.
     """
-    if days is None or int(days) <= 0:
+    if _disabled(days):
         return {"removed": [], "kept": 0, "reason": "disabled"}
     if audit_dir is None:
         # Match the writer's (home + active-tenant) audit dir; a frozen
@@ -313,7 +328,7 @@ def purge_world_episodes(
     review_binding: dict | None = None,
 ) -> dict:
     """Delete ``episodes`` rows ended before ``days`` ago."""
-    if days is None or int(days) <= 0:
+    if _disabled(days):
         return {"deleted": 0, "reason": "disabled"}
     cutoff_ts = _cutoff_for_days(days, now=now)
     if review_binding is not None and db_path is not None:
@@ -339,7 +354,7 @@ def purge_world_events(
     review_binding: dict | None = None,
 ) -> dict:
     """Delete ``goal_events`` rows older than ``days``."""
-    if days is None or int(days) <= 0:
+    if _disabled(days):
         return {"deleted": 0, "reason": "disabled"}
     cutoff_ts = _cutoff_for_days(days, now=now)
     if review_binding is not None and db_path is not None:
@@ -365,7 +380,7 @@ def purge_world_messages(
     review_binding: dict | None = None,
 ) -> dict:
     """Delete ``messages`` rows older than ``days``."""
-    if days is None or int(days) <= 0:
+    if _disabled(days):
         return {"deleted": 0, "reason": "disabled"}
     cutoff_ts = _cutoff_for_days(days, now=now)
     if review_binding is not None and db_path is not None:
@@ -430,7 +445,7 @@ def purge_usage_ledger(
     review_binding: dict | None = None,
 ) -> dict:
     """Prune usage-ledger ``(principal, day)`` buckets older than ``days``."""
-    if days is None or int(days) <= 0:
+    if _disabled(days):
         return {"removed_buckets": 0, "reason": "disabled"}
     from ..quotas import UsageLedger
     ledger = UsageLedger(ledger_path) if ledger_path is not None else UsageLedger()
