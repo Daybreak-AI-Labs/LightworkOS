@@ -87,6 +87,21 @@ def test_azure_uses_dedicated_client(monkeypatch):
     assert c.auth_mode == "api_key"
 
 
+def test_azure_does_not_send_openai_org_or_project_ids(monkeypatch):
+    from maverick.providers.azure_openai_provider import AzureOpenAIClient
+    ids = {"OPENAI_ORG_ID": "org-secret-123", "OPENAI_PROJECT_ID": "proj-9"}
+    azure = {"AZURE_OPENAI_ENDPOINT": "https://res.openai.azure.com",
+             "AZURE_OPENAI_DEPLOYMENT": "gpt5", "AZURE_OPENAI_API_KEY": "k"}
+    for name, value in {**ids, **azure}.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("AZURE_OPENAI_AD_TOKEN", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_AUTH", raising=False)
+    for client in (AzureOpenAIClient(), AzureOpenAIClient(environment={**ids, **azure})):
+        for sdk in (client._sync, client._async):
+            assert sdk.organization is None and sdk.project is None
+            assert not isinstance(sdk.default_headers["OpenAI-Organization"], str)
+
+
 def test_azure_auth_never_substitutes_fake_key(monkeypatch):
     from maverick.providers.azure_openai_provider import _azure_auth
 
