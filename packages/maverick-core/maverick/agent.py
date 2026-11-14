@@ -798,30 +798,77 @@ def _normalize_file_tool_args(
 
 _PATCH_HEADER_RE = re.compile(r"^(\+\+\+|---|rename from|rename to|copy from|copy to) (.+)$",
                               re.MULTILINE)
+_DIFF_GIT_RE = re.compile(r"^diff --git (.+)$", re.MULTILINE)
+_QUOTED_OR_WORD_RE = re.compile(r'"((?:[^"\\]|\\.)*)"|(\S+)')
+
+
+class _UnreadablePatchTargets(ValueError):
+    """A non-empty patch whose target paths cannot be read: gates deny it."""
+
+
+def _unquote_git_name(value: str) -> str | None:
+    """A C-quoted git path name decoded, an unquoted one as is; None if bad."""
+    import codecs
+
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        try:
+            return codecs.escape_decode(value[1:-1].encode("latin-1", "backslashreplace"))[0].decode(
+                "utf-8", "replace")
+        except Exception:
+            return None
+    return value
+
+
+def _strip_first_component(value: str) -> str:
+    return value.split("/", 1)[1] if "/" in value else value
+
+
+def _diff_git_names(rest: str) -> list[str] | None:
+    """Paths named by ``diff --git A B`` (the only names a binary or
+    mode-only patch carries), with git's ``-p1`` prefix removed."""
+    rest = rest.strip()
+    if '"' in rest:
+        tokens = [_unquote_git_name(f'"{q}"') if q or not w else w
+                  for q, w in _QUOTED_OR_WORD_RE.findall(rest)]
+        if len(tokens) != 2 or None in tokens:
+            return None
+        return [_strip_first_component(t) for t in tokens if t]
+    # Unquoted names may hold spaces: git reads the split where both sides
+    # name the same file.
+    for i, ch in enumerate(rest):
+        if ch == " ":
+            left, right = rest[:i], rest[i + 1:]
+            if _strip_first_component(left) == _strip_first_component(right):
+                return [_strip_first_component(left)]
+    return None
 
 
 def _git_apply_targets(patch_text: str) -> list[str]:
     """The paths ``git apply`` (default ``-p1``) will touch, as it reads them.
 
-    ``_files_in_patch`` strips only an ``a/``/``b/`` prefix and keeps a quoted
-    name quoted, while git strips any first component (``--- x/f``) and
-    unquotes C-style names (``"b/pro\\164ected"``). Gates check both readings."""
-    import codecs
-
+    ``_files_in_patch`` strips only an ``a/``/``b/`` prefix, keeps a quoted
+    name quoted and ignores ``diff --git`` headers, while git strips any first
+    component (``--- x/f``), unquotes C-style names (``"b/pro\\164ected"``)
+    and takes a binary or mode-only patch's names from ``diff --git``. Gates
+    check both readings. Raises :class:`_UnreadablePatchTargets` when a header
+    cannot be read or a non-empty patch names no path at all."""
     out: list[str] = []
     for kind, value in _PATCH_HEADER_RE.findall(patch_text):
-        value = value.split("\t", 1)[0].strip()
-        if len(value) >= 2 and value[0] == value[-1] == '"':
-            try:
-                value = codecs.escape_decode(value[1:-1].encode("latin-1", "backslashreplace"))[0].decode(
-                    "utf-8", "replace")
-            except Exception:
-                continue  # an undecodable name: _files_in_patch still reports the raw one
+        value = _unquote_git_name(value.split("\t", 1)[0].strip())
+        if value is None:
+            raise _UnreadablePatchTargets("unreadable patch path")
         if not value or value == "/dev/null":
             continue
-        if kind in ("+++", "---") and "/" in value:
-            value = value.split("/", 1)[1]
-        out.append(value)
+        out.append(_strip_first_component(value) if kind in ("+++", "---") else value)
+    has_rename = any(kind.startswith(("rename", "copy"))
+                     for kind, _ in _PATCH_HEADER_RE.findall(patch_text))
+    for rest in _DIFF_GIT_RE.findall(patch_text):
+        names = _diff_git_names(rest)
+        if names is None and not has_rename:
+            raise _UnreadablePatchTargets("unreadable diff --git header")
+        out.extend(names or ())
+    if not out and patch_text.strip():
+        raise _UnreadablePatchTargets("patch names no path")
     return out
 
 
@@ -3030,11 +3077,14 @@ class Agent:
                 self.ctx.sandbox,
                 mutating_only=True,
             )
+        except _UnreadablePatchTargets:
+            # git may touch paths no reader here can name: never assume safe.
+            accesses = ["<unreadable patch paths>"]
         except ValueError:
             return None
         if not accesses:
             return None
-        denied = [
+        denied = list(accesses) if isinstance(accesses[0], str) else [
             access.path
             for access in accesses
             if any(
