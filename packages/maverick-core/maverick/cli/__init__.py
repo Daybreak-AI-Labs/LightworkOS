@@ -5707,15 +5707,103 @@ def _persist_erasure_auxiliary_closure(
     return True, None
 
 
+def _refuse_subject_under_legal_hold(ctx, channel: str, user: str) -> None:
+    """Refuse a subject-keyed erase while any active matter names the subject.
+
+    With no conversation row there is no closure for the usual hold check to
+    match, so match the subject against each matter's custodians instead: a
+    held subject's goals, chats and records are all in scope through them.
+    """
+    from ..ediscovery import (
+        HOLD_UNVERIFIED_MESSAGE,
+        LEGAL_HOLD_MESSAGE,
+        _audit_refusal,
+        account_user_matches,
+        active_matters,
+        is_account_custodian,
+    )
+
+    try:
+        matters = active_matters()
+    except Exception:  # failure-policy: fail_closed -- an unreadable ledger holds everything
+        message = HOLD_UNVERIFIED_MESSAGE
+    else:
+        principals = {f"user:{channel}:{user}", f"user:{user}"}
+        message = None
+        for matter in matters:
+            custodians = [str(c) for c in matter.get("custodians") or ()]
+            if any(c in principals or (is_account_custodian(c) and account_user_matches(user, c))
+                   for c in custodians):
+                _audit_refusal(matter, actor="cli", conversations=0, goals=0)
+                message = LEGAL_HOLD_MESSAGE
+                break
+    if message:
+        ctx.obj["erase_refusal"] = message
+        click.echo(message, err=True)
+        ctx.exit(1)
+
+
+def _scrub_subject_audit(channel: str, user: str, failures: list[str]) -> int:
+    """Scrub the subject's prior audit lines; record a failure instead of raising."""
+    from .. import audit
+
+    scrubbed = 0
+    try:
+        scrubbed, _ = audit.scrub_user(channel, user, strict=True)
+    except Exception as exc:
+        failures.append(f"audit_scrub: {_erasure_failure_label(exc)}")
+    try:
+        audit.reanchor_after_erase()
+    except Exception as exc:  # pragma: no cover - defensive
+        failures.append(f"audit_reanchor: {_erasure_failure_label(exc)}")
+    return scrubbed
+
+
+def _erase_subject_knowledge_strict(channel: str, user: str, failures: list[str]) -> dict[str, int]:
+    try:
+        from .. import knowledge_admin
+        return knowledge_admin.erase_subject(channel, user)
+    except Exception as exc:
+        failures.append(f"knowledge: {_erasure_failure_label(exc)}")
+        return {}
+
+
+def _subject_residue_verification(world, channel: str, user: str, failures: list[str]) -> None:
+    """Fold residual counts and unreadable subject-keyed stores into ``failures``.
+
+    Without a receipt the goal-linked stores are always unchecked, so only the
+    stores this path erases count as a verification error.
+    """
+    from ..erasure_verify import verify_erasure
+
+    try:
+        result = verify_erasure(user, channel=channel, world=world)
+    except Exception as exc:
+        failures.append(f"verification: {_erasure_failure_label(exc)}")
+        return
+    residual = result.get("residual") or {}
+    if residual:
+        failures.append("residual data: " + ", ".join(
+            f"{store}={count}" for store, count in sorted(residual.items())
+        ))
+    errors = result.get("errors") or {}
+    unread = sorted(s for s in ("facts", "fact_history", "knowledge_chunks") if s in errors)
+    if unread:
+        failures.append("could not verify: " + ", ".join(unread))
+
+
 def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> None:
     """Scrub the subject-keyed stores when no conversation row matches.
 
     Exits 1 when a scrub fails or residual data remains, so a re-run after a
     partly failed erase can finish the job and a script can tell.
     """
+    import secrets
     import types
 
-    _refuse_under_legal_hold(ctx, world, [])
+    from .. import audit
+
+    _refuse_subject_under_legal_hold(ctx, channel, user)
     if not yes:
         click.echo(f"This will erase stored facts, notes, audit lines and "
                    f"knowledge for {channel}:{user}.")
@@ -5725,33 +5813,36 @@ def _erase_subject_residue(ctx, world, channel: str, user: str, yes: bool) -> No
         channel, [types.SimpleNamespace(user_id=user)]
     )
     failures = [f"user_notes: {notes_error}"] if notes_error else []
-    audit_scrubbed = 0
+    audit_scrubbed = _scrub_subject_audit(channel, user, failures)
+    knowledge_removed = _erase_subject_knowledge_strict(channel, user, failures)
+    knowledge_chunks = sum(knowledge_removed.values())
+    # The same record-of-processing marker as a conversation erase, without
+    # any identifier derived from the subject.
     try:
-        from ..audit import reanchor_after_erase, scrub_user
-        audit_scrubbed, _ = scrub_user(channel, user, strict=True)
-        if audit_scrubbed:
-            reanchor_after_erase()
-    except Exception as exc:
-        failures.append(f"audit_scrub: {_erasure_failure_label(exc)}")
-    knowledge_removed = _erase_subject_knowledge(channel, user)
+        recorded = audit.record(
+            "erase", channel=channel, erasure_id=secrets.token_hex(16),
+            durable_proof=False, auxiliary_checks_passed=not failures,
+            conversations=0, turns=0, goals=0, attachments=0,
+            audit_lines_scrubbed=audit_scrubbed,
+            facts_scrubbed=len(scrubbed_fact_keys),
+            user_notes_scrubbed=removed_notes,
+            knowledge_chunks_scrubbed=knowledge_chunks,
+        )
+        if not recorded:
+            failures.append("audit_record: audit sink did not acknowledge the erase marker")
+    except audit.AuditRefused:
+        # Deletion has already happened; a policy refusal must reach the caller.
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        failures.append(f"audit_record: {_erasure_failure_label(exc)}")
     click.echo(
         f"{audit_scrubbed} audit event(s) scrubbed, "
         f"{len(scrubbed_fact_keys)} fact(s) scrubbed, "
         f"{removed_notes} user note(s) scrubbed, "
-        f"{sum(knowledge_removed.values())} knowledge chunk(s) scrubbed"
+        f"{knowledge_chunks} knowledge chunk(s) scrubbed"
     )
     _print_erased_extras(knowledge_removed, scrubbed_fact_keys)
-    from ..erasure_verify import verify_erasure
-
-    try:
-        residual = verify_erasure(user, channel=channel, world=world).get("residual") or {}
-    except Exception as exc:
-        failures.append(f"verification: {_erasure_failure_label(exc)}")
-        residual = {}
-    if residual:
-        failures.append("residual data: " + ", ".join(
-            f"{store}={count}" for store, count in sorted(residual.items())
-        ))
+    _subject_residue_verification(world, channel, user, failures)
     if failures:
         click.echo("error: erasure incomplete (" + "; ".join(failures) + ")", err=True)
         ctx.exit(1)

@@ -131,6 +131,9 @@ def test_erase_scrubs_subject_facts_when_no_conversation_matches(tmp_path, monke
     os.environ.pop("MAVERICK_DB", None)
     import maverick.audit as audit_mod
     monkeypatch.setattr(audit_mod, "scrub_user", lambda *a, **k: (0, 0))
+    markers = []
+    monkeypatch.setattr(audit_mod, "record",
+                        lambda kind, **payload: markers.append((kind, payload)) or True)
     db = tmp_path / "world.db"
     wm = WorldModel(db)
     wm.upsert_fact("user:telegram:alice:home_address", "1 Privacy Lane")
@@ -143,9 +146,28 @@ def test_erase_scrubs_subject_facts_when_no_conversation_matches(tmp_path, monke
     assert result.exit_code == 0, result.output
     assert "no conversation found" in result.output
     assert "1 fact(s) scrubbed" in result.output
+    # The record-of-processing marker is written, without a subject identifier.
+    assert [(k, p["conversations"], p["facts_scrubbed"]) for k, p in markers] == [("erase", 0, 1)]
+    assert "alice" not in repr(markers)
     wm = WorldModel(db)
     assert wm.get_facts() == {}
     wm.close()
+
+    from maverick import knowledge_admin
+
+    erase_subject = knowledge_admin.erase_subject
+
+    def _kb_down(*a, **k):
+        raise knowledge_admin.KnowledgeUnavailable("knowledge store unreadable")
+
+    monkeypatch.setattr(knowledge_admin, "erase_subject", _kb_down)
+    kb_failed = CliRunner().invoke(
+        cli_mod.main,
+        ["--db", str(db), "erase", "--channel", "telegram", "--user", "alice", "--yes"],
+    )
+    assert kb_failed.exit_code == 1
+    assert "knowledge" in kb_failed.output
+    monkeypatch.setattr(knowledge_admin, "erase_subject", erase_subject)
 
     def _boom(*a, **k):
         raise OSError("audit storage unavailable")
