@@ -809,6 +809,35 @@ def _validate_node_numbers(n: FlowNode) -> list[str]:
     return errs
 
 
+def clamp_saved_numbers(flow: Flow) -> list[str]:
+    """Bring a stored definition inside the numeric bounds that saving enforces.
+
+    A snapshot published before the bounds existed must stay loadable: a loop
+    limit above the maximum runs to the maximum, and a NaN, infinite or negative
+    duration or budget means "not set" (0), which is how the runtime already
+    treated it.  Returns a description of each change for the caller to log.
+    """
+    changes: list[str] = []
+    for name in ("max_seconds", "max_dollars"):
+        if not _finite_non_negative(getattr(flow, name)):
+            setattr(flow, name, 0.0)
+            changes.append(f"{flow.id}.{name}")
+    for node in flow.nodes.values():
+        for name in ("seconds", "timeout", "expires_after", "retry_backoff"):
+            if not _finite_non_negative(getattr(node, name)):
+                setattr(node, name, 0.0)
+                changes.append(f"{flow.id}/{node.id}.{name}")
+        if type(node.limit) is int and node.limit > MAX_FLOW_LOOP_LIMIT:
+            node.limit = MAX_FLOW_LOOP_LIMIT
+            changes.append(f"{flow.id}/{node.id}.limit")
+        elif type(node.limit) is int and node.limit < 0:
+            node.limit = 0
+            changes.append(f"{flow.id}/{node.id}.limit")
+        for sub in ([node.body] if node.body is not None else []) + list(node.branches):
+            changes.extend(clamp_saved_numbers(sub))
+    return changes
+
+
 def _is_high_risk_action(node: FlowNode) -> bool:
     from ..tool_reliability import is_retry_safe
 

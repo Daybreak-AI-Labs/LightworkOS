@@ -324,6 +324,18 @@ class TestFlowStore:
         assert store.delete_flow("f1") is True
         assert store.load_flow("f1") is None
 
+    def test_snapshot_published_before_numeric_bounds_still_loads(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("maverick.paths.data_dir", lambda *p, **k: tmp_path.joinpath(*p))
+        from maverick.flow import store
+        body = _flow([FlowNode(id="x", kind="agent", brief="b")], start="x")
+        f = _flow([FlowNode(id="a", kind="while", condition="go", body=body,
+                            limit=10**9, timeout=float("inf"))])
+        f.max_dollars = -1.0
+        digest, _version, _children = store.snapshot_flow_bundle(f)
+        loaded = store.load_flow_snapshot(digest)
+        assert loaded.nodes["a"].limit == 10_000 and loaded.nodes["a"].timeout == 0.0
+        assert loaded.max_dollars == 0.0 and loaded.validate() == []
+
     def test_run_state_roundtrip_and_resume_fields(self, tmp_path, monkeypatch):
         monkeypatch.setattr("maverick.paths.data_dir", lambda *p, **k: tmp_path.joinpath(*p))
         from maverick.flow import store
