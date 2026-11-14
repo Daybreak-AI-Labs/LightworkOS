@@ -58,15 +58,37 @@ def _load_raws(from_file: str | None, source: str) -> list[dict]:
     return get_importer(source).fetch()
 
 
-def _active_cron_jobs(queue) -> dict[tuple[str, str], int]:
-    """``(title, cron) -> job id`` for the pending or running cron goal jobs."""
-    active: dict[tuple[str, str], int] = {}
+def _active_cron_jobs(queue) -> dict[tuple[str, str], tuple[int, str]]:
+    """``(title, cron) -> (job id, goal text)`` for pending or running cron goal jobs."""
+    active: dict[tuple[str, str], tuple[int, str]] = {}
     for job in queue.iter_pending("start_goal", include_running=True):
         payload = job.payload if isinstance(job.payload, dict) else {}
         cron = payload.get("__cron__")
         if cron:
-            active.setdefault((str(payload.get("title") or ""), str(cron)), job.id)
+            active.setdefault((str(payload.get("title") or ""), str(cron)),
+                              (job.id, str(payload.get("text") or "")))
     return active
+
+
+def _reuse_or_replace(queue, active, automation) -> tuple[int | None, str | None]:
+    """Decide what to do with an already-scheduled copy of ``automation``.
+
+    Returns ``(job id to keep, note)``. Each activation mints a new schedule,
+    so an unchanged automation keeps its job. When the text changed, the old
+    pending job is cancelled so a fresh one carries the new text; a running
+    job cannot be cancelled and is left, saying so.
+    """
+    title, body = automation.render()
+    found = active.get((title[:200], automation.trigger.cron or ""))
+    if found is None:
+        return None, None
+    job_id, text = found
+    if text == body:
+        return job_id, f"schedule already active (job {job_id}); not duplicated"
+    if queue.cancel(job_id):
+        return None, f"replaced schedule job {job_id}: the automation's text changed"
+    return job_id, (f"schedule job {job_id} has different text but is running; left "
+                    "unchanged -- re-run the import after it finishes to replace it")
 
 
 @import_group.command("run")
@@ -107,13 +129,15 @@ def import_run_cmd(ctx, source, from_file, dry_run, activate_schedules, as_json)
     for a in automations:
         # Each activation mints a new schedule, so a repeated import would
         # enqueue a second copy of every recurring job.
-        existing = active.get((a.render()[0][:200], a.trigger.cron or ""))
+        existing, note = (_reuse_or_replace(queue, active, a) if queue is not None
+                          else (None, None))
         res = materialize(a, save=not dry_run,
                           queue=None if existing is not None else queue)
         if existing is not None:
             res.suggested_trigger = None
             res.notes = [n for n in res.notes if not n.startswith("schedule recovered;")]
-            res.notes.append(f"schedule already active (job {existing}); not duplicated")
+        if note:
+            res.notes.append(note)
         results.append({
             "source": a.source, "name": a.name, "template": res.template_name,
             "created": res.created_template, "trigger": a.trigger.kind,
