@@ -23,7 +23,7 @@ from typing import Any
 from . import Tool
 
 # Slack callback_id / input key convention: lowercase, digits, underscores.
-_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,49}$")
+_KEY_RE = re.compile(r"[a-z][a-z0-9_]{0,49}\Z")  # used with match(); \Z rejects "abc\n"
 
 
 def _input_props(inputs: Any) -> dict[str, Any] | str:
@@ -76,6 +76,8 @@ def _build_step(args: dict[str, Any]) -> str:
         # Builder rejects. Prefix a letter so derived ids are always valid.
         if not _KEY_RE.match(callback_id):
             callback_id = "s_" + callback_id
+        # Long names: keep the derived id within the same 50-character limit.
+        callback_id = callback_id[:50]
 
     input_props = _input_props(args.get("inputs"))
     if isinstance(input_props, str):

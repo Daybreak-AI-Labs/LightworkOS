@@ -41,6 +41,13 @@ def test_build_step_derived_callback_id_from_digit_leading_name():
     assert cb == "s_2027_report"
 
 
+def test_build_step_long_name_and_trailing_newline_key():
+    obj = json.loads(_run(op="build_step", name="x" * 60, inputs={"x": {"type": "string"}}))
+    assert len(obj["callback_id"]) <= 50
+    out = _run(op="build_step", name="n", inputs={"abc\n": {"type": "string"}})
+    assert out.startswith("ERROR")
+
+
 def test_build_step_explicit_callback_id():
     out = _run(
         op="build_step",
