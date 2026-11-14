@@ -639,6 +639,9 @@ class MCPClient:
                 except json.JSONDecodeError:
                     log.debug("MCP %s non-JSON line: %s", self.spec.name, line[:200])
                     continue
+                if not isinstance(msg, dict):
+                    log.debug("MCP %s non-object message ignored", self.spec.name)
+                    continue
                 self._dispatch(msg)
         except asyncio.CancelledError:
             return
@@ -675,6 +678,10 @@ class MCPClient:
         msg_id = msg.get("id")
         if msg_id is None:
             return  # a notification: nothing to route, ignored as before
+        if isinstance(msg_id, bool) or not isinstance(msg_id, (int, str)):
+            # Unhashable ids would crash the reader; true == 1 would resolve
+            # someone else's request. Neither can be a reply to us.
+            return
         future = self._pending.pop(msg_id, None)
         if future is None:
             # Reply for an id we no longer track (already timed out / cancelled
@@ -1098,6 +1105,13 @@ class StreamableHttpMCPClient:
             h["Mcp-Session-Id"] = self._session_id
         if self._initialized:
             h["MCP-Protocol-Version"] = self._protocol_version
+        if self.spec.oauth:
+            # Re-read per request: the provider caches the access token and
+            # refreshes it when it expires, so a long-lived client keeps a
+            # valid bearer instead of the one fetched at start().
+            bearer = self._bearer()
+            if bearer:
+                h["Authorization"] = f"Bearer {bearer}"
         return h
 
     async def _post(self, payload: dict, req_id: int | None = None) -> Any:

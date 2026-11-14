@@ -93,3 +93,14 @@ def test_bearer_static_fallback():
 def test_bearer_none_when_unset():
     spec = MCPServerSpec(name="s", url="https://h/mcp")
     assert StreamableHttpMCPClient(spec)._bearer() is None
+
+
+def test_request_headers_carry_the_current_oauth_token(monkeypatch):
+    tokens = iter(["tok-1", "tok-2"])
+    monkeypatch.setattr(mcp_oauth, "_default_fetch",
+                        lambda cfg: {"access_token": next(tokens), "expires_in": 0})
+    spec = MCPServerSpec(name="s", url="https://h/mcp",
+                         oauth={"token_url": "https://i/t", "client_id": "c"})
+    client = StreamableHttpMCPClient(spec)
+    assert client._headers()["Authorization"] == "Bearer tok-1"
+    assert client._headers()["Authorization"] == "Bearer tok-2"
