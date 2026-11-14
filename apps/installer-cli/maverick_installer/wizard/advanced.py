@@ -183,6 +183,14 @@ def _secure_or_loopback_url(value: str) -> bool:
         return False
 
 
+def _pick_approval_url(prompt: str) -> str:
+    while True:
+        value = _q_text(prompt, default="").strip()
+        if not value or _secure_or_loopback_url(value):
+            return value
+        console.print("Use an HTTPS URL for approval links (loopback HTTP allowed).", style="yellow")
+
+
 def _require_secure_url(value: str, label: str) -> None:
     if not _secure_or_loopback_url(value):
         raise ValueError(f"{label} requires an HTTPS URL (loopback HTTP allowed).")
@@ -1510,13 +1518,14 @@ def _pick_workflow_and_extension_toggles() -> dict[str, Any]:
     }
 
 
-def _monthly_limit(raw: Any) -> float:
+def _monthly_limit(raw: Any, *, label: str = "") -> float:
+    prefix = f"{label}: " if label else ""
     text = str(raw).strip().removeprefix("$").strip()
     if not re.fullmatch(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]{1,2})?", text):
-        raise ValueError("Enter a nonnegative dollar amount, such as $500 or 1,000.00.")
+        raise ValueError(prefix + "Enter a nonnegative dollar amount, such as $500 or 1,000.00.")
     value = float(text.replace(",", ""))
     if not math.isfinite(value) or value > 1_000_000_000:
-        raise ValueError("Enter a dollar amount no greater than 1,000,000,000.")
+        raise ValueError(prefix + "Enter a dollar amount no greater than 1,000,000,000.")
     return value
 
 
@@ -1895,11 +1904,10 @@ def _ask_flow_followups(advanced: dict[str, Any]) -> None:
             default=False,
         )
         advanced.update({"flows_" + key: value for key, value in _pick_action_recipe_lineage().items()})
-        flows_url = _q_text(
+        flows_url = _pick_approval_url(
             "  Public base URL for flow approval links (e.g. https://ops.acme.com; "
             "blank = approve from the dashboard)",
-            default="",
-        ).strip()
+        )
         if flows_url:
             advanced["flows_public_url"] = flows_url
 
@@ -2300,12 +2308,26 @@ def _collect_group_pairs(prompt: str, *, csv_value: bool) -> dict[str, Any]:
     out: dict[str, Any] = {}
     while True:
         line = _q_text(prompt, default="").strip()
-        if not line or "=" not in line:
+        if not line:
             break
+        if "=" not in line:
+            console.print("Enter Group Name = value, or leave blank to finish.", style="yellow")
+            continue
         name, _, rhs = line.partition("=")
         name, rhs = name.strip(), rhs.strip()
         if not name or not rhs:
+            console.print("Enter both a group name and a value separated by =.", style="yellow")
             continue
+        if not csv_value:
+            try:
+                from maverick_dashboard.rbac import is_known_role
+            except ImportError:
+                console.print("Roles cannot be checked. Install the dashboard before adding a group role.", style="yellow")
+                continue
+            rhs = rhs.lower()
+            if not is_known_role(rhs):
+                console.print("That role is not available. Enter a known role, such as viewer.", style="yellow")
+                continue
         out[name] = _split_csv(rhs) if csv_value else rhs
     return out
 
@@ -2811,8 +2833,10 @@ def _cfg_advanced_quotas_and_tenancy(advanced: dict[str, Any]) -> list[str]:
         # dimension. The kernel also reads MAVERICK_QUOTA_* env overrides.
         lines.append("max_dollars_per_day = 25.0")
         lines.append("max_tokens_per_day = 5000000")
-    _workspace_limit = _monthly_limit(advanced.get("spending_workspace_monthly", 0))
-    _person_limit = _monthly_limit(advanced.get("spending_person_monthly", 0))
+    _workspace_limit = _monthly_limit(advanced.get("spending_workspace_monthly", 0),
+                                      label="Monthly spending limit for the whole workspace")
+    _person_limit = _monthly_limit(advanced.get("spending_person_monthly", 0),
+                                   label="Monthly spending limit for each person")
     _alert_at = _spending_alert_at(advanced.get("spending_alert_at"))
     _min_runs = _typical_cost_min_runs(advanced.get("typical_cost_min_runs"))
     if _workspace_limit > 0 or _person_limit > 0 or _alert_at is not None or _min_runs is not None:
