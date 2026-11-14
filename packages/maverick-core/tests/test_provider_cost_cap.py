@@ -284,3 +284,14 @@ def test_bogus_period_falls_back_to_day(monkeypatch, tmp_path):
     cfg.write_text('[budget]\nprovider_caps_period = "week"\n', encoding="utf-8")
     monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
     assert pcc.period_from_config() == "day"
+
+
+def test_ledger_is_deployment_wide_under_a_tenant(monkeypatch, tmp_path):
+    """The cap is a deployment-wide ceiling (the Postgres table is not tenant
+    scoped either): N tenants on SQLite must not get N times the cap."""
+    from maverick.paths import tenant_scope
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path / "home"))
+    shared = pcc._ledger_path()
+    with tenant_scope(tenant="acme"):
+        assert pcc._ledger_path() == shared

@@ -22,7 +22,8 @@ admission (:func:`check`, :func:`reserve`) refuses with
 :class:`ProviderAccountingUnavailable` while any config source is unreadable:
 the caps may have been lost with the file, so "no caps" cannot be assumed.
 
-The ledger (``data_dir("provider_spend.json")``) maps
+The ledger (``provider_spend.json`` in the deployment's data root: the bound
+client's, else the shared root; one per deployment, not per tenant) maps
 ``{period_key: {provider: dollars}}`` — period keys are ``YYYY-MM-DD`` (day)
 or ``YYYY-MM`` (month), always UTC so the window doesn't shift with host
 timezone/DST. Writes are atomic (unique temp file + ``os.replace``, 0600)
@@ -257,7 +258,11 @@ def period_key(now: float | None = None, period: str | None = None) -> str:
 
 
 def _ledger_path() -> Path:
-    return data_dir("provider_spend.json")
+    # Deployment-wide, like the Postgres table: a per-tenant file would give N
+    # tenants N times the configured ceiling. The deployment is the bound
+    # client (its data root), or the shared root when none is bound.
+    from .client import strict_client_id
+    return data_dir("provider_spend.json", tenant=strict_client_id())
 
 
 def recorded_at() -> float | None:
