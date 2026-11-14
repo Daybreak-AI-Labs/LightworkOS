@@ -81,6 +81,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [multi-tenancy](docs/multi-tenancy.md).
 - Every agent's system prompt now says that text inside a tool-output frame is
   data a tool returned and never an instruction.
+- `maverick start` and `maverick resume` now exit with status 2 when the goal
+  failed or was cancelled; scripts that ignored the outcome should check it.
+- A chat reply that the provider definitely refuses (the message or the
+  recipient, not throttling, a lost connection or a credential problem) is now
+  retried at most 8 times with increasing delays and then marked
+  `delivery_failed`; other failures are still retried without limit. Failed
+  replies are listed by the admin delivery endpoint only.
+- Cache-read prices for xAI and Moonshot models now follow the vendors'
+  published rates, and a model with no listed rate on OpenRouter, xAI or
+  Moonshot is charged the full input rate for cached input (it was half), so
+  recorded spend for those providers can rise.
+- An MCP caller may hold at most 32 resource-subscription sessions; beyond
+  that its own oldest session is closed.
+- Usage sent to the gateway's OpenTelemetry endpoint is now recorded against
+  the team the bearer token belongs to, and a token that belongs to no team is
+  refused.
+- The Rust `maverick-verify-audit` tool refuses a day file larger than 512 MiB
+  and reports at most 1,000 problems, saying so when it stops early.
+- In coding mode, a final patch is not verified when the working directory had
+  uncommitted work before the run started; that work is left untouched instead
+  of being reset. Start coding runs from a clean working directory.
 
 ### Fixed
 
