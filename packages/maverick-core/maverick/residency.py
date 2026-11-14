@@ -67,19 +67,19 @@ def _unreadable_sources() -> dict[str, str] | None:
 
 
 def _config_unreadable() -> bool:
-    return _unreadable_sources() != {}
+    errors = _unreadable_sources()
+    return True if errors is None else bool(errors)
 
 
 def _mentions_residency(path: str) -> bool:
-    """Whether an unreadable source's raw bytes mention residency (a
+    """Whether an unparseable source's raw bytes mention residency (a
     ``[residency]`` table or a ``residency`` key). Not parsed: it cannot be.
-    A file that cannot be read at all counts as evidence."""
+    Only positive evidence counts: a source whose bytes cannot be read, or
+    whose key is not a file, is not evidence that residency was configured."""
     try:
         return b"residency" in Path(path).read_bytes().lower()
-    except FileNotFoundError:
+    except (OSError, ValueError):
         return False
-    except OSError:
-        return True
 
 
 def _env_set(name: str) -> bool:
@@ -185,10 +185,14 @@ def require_residency_or_die() -> None:
     residency; otherwise the unreadable files are logged and start-up goes on,
     so a typo in an install that never enabled residency does not block it.
     """
-    env_set = _env_set("MAVERICK_RESIDENCY_STRICT")
-    unreadable = _unreadable_sources()
-    if not env_set and unreadable:
-        if not any(_mentions_residency(path) for path in unreadable):
+    if not _env_set("MAVERICK_RESIDENCY_STRICT"):
+        unreadable = _unreadable_sources()
+        if unreadable is None:
+            log.error("residency: configuration health could not be checked; "
+                      "strict residency follows the readable configuration")
+            if not _truthy(_cfg("strict")):
+                return
+        elif unreadable and not any(_mentions_residency(path) for path in unreadable):
             log.error("residency: configuration could not be read (%s); it does "
                       "not mention residency, so strict residency stays off",
                       ", ".join(sorted(unreadable)))

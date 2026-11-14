@@ -116,6 +116,12 @@ def test_unreadable_config_fails_closed_only_with_residency_evidence(
     with caplog.at_level("ERROR", logger="maverick.residency"):
         residency.require_residency_or_die()               # starts
     assert str(cfg) in caplog.text
+    # A source whose bytes cannot be read is not evidence either.
+    monkeypatch.setattr("maverick.config.config_source_errors",
+                        lambda *a, **k: {str(tmp_path): "PermissionError"})
+    residency.require_residency_or_die()
+    monkeypatch.setattr("maverick.config.config_source_errors",
+                        lambda *a, **k: {str(cfg): "TOMLDecodeError"})
     cfg.write_text("[residency]\nstrict = true\nregion = \n", encoding="utf-8")
     with pytest.raises(residency.ResidencyError):
         residency.require_residency_or_die()
