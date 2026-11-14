@@ -729,8 +729,10 @@ class SoftwareWorldFixture:
             "step": self._step,
             "page_size": self._page_size,
             "rng_probe": self._rng_probe(),
+            # One more than the reset set, so an extra memory still shows up.
             "procedural_memory": [
-                memory.to_dict() for memory in self._memory.recall(top_k=100)
+                memory.to_dict() for memory in
+                self._memory.recall(top_k=len(self._initial_memories) + 1)
             ],
         }
 
@@ -752,7 +754,8 @@ class SoftwareWorldFixture:
             "procedural_memory": [
                 memory.to_dict()
                 for memory in sorted(
-                    self._initial_memories,
+                    # The store keeps one memory per action (the last given).
+                    {memory.action: memory for memory in self._initial_memories}.values(),
                     key=lambda memory: memory.strength,
                     reverse=True,
                 )
@@ -1042,6 +1045,14 @@ class ResearchWorkerSession:
         self._max_operations = max_operations
         self._used_operations = 0
         self._actions = actions or GovernedActions()
+        for action in ("read", "list", "upsert"):
+            try:
+                self._actions.get(f"software-world.{action}")
+            except ActionError:
+                continue
+            # Re-registering would route another session's approved actions
+            # into this session's world.
+            raise ValueError("these governed actions already belong to another worker session")
         self._last_result: SimulationResultV1 | None = None
         self._cost_receipts: list[SimulationCostReceiptV1] = []
         for action, risk in (("read", "low"), ("list", "low"), ("upsert", "high")):
