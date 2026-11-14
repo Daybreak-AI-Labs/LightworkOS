@@ -119,9 +119,9 @@ def _pin_url(url: str) -> str:
         # http:// has no certificate to bind the name to the host, so pin the
         # connection target to the vetted public IP to close the rebind window.
         # Preserve the port (and userinfo, if any) while swapping only the host.
-        netloc = ip
+        netloc = f"[{ip}]" if ":" in ip else ip
         if parsed.port:
-            netloc = f"{ip}:{parsed.port}"
+            netloc = f"{netloc}:{parsed.port}"
         if parsed.username:
             cred = parsed.username
             if parsed.password:

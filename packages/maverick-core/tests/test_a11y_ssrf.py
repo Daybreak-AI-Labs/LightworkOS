@@ -42,6 +42,8 @@ def test_pin_url_rewrites_host_to_pinned_ip(monkeypatch):
     import maverick.tools._ssrf as _ssrf
     monkeypatch.setattr(_ssrf, "resolve_pinned_ip", lambda host: "93.184.216.34")
     assert _pin_url("http://evil.example:8080/x") == "http://93.184.216.34:8080/x"
+    monkeypatch.setattr(_ssrf, "resolve_pinned_ip", lambda host: "2606:4700:4700::1111")
+    assert _pin_url("http://v6.example:8080/x") == "http://[2606:4700:4700::1111]:8080/x"
 
 
 def test_pin_url_refuses_rebind_to_private_ip(monkeypatch):
