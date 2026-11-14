@@ -482,6 +482,19 @@ def _load_config_file(path: Path, *, interpolate: bool = True) -> dict:
                 path, exc,
             )
             return {}
+        try:
+            from .config_resets import _specs
+            for _ in _specs(unsealed):
+                pass
+        except ValueError as exc:
+            # Malformed reset metadata (hand edit, another version) would make
+            # every merge raise; drop the overlay and report it like above.
+            with _toml_lock:
+                _record_source_error(key, f"{type(exc).__name__}: {exc}", _unseal_errors)
+            logging.getLogger(__name__).warning(
+                "dashboard overlay %s has unreadable reset metadata; dropping it", path,
+            )
+            return {}
         # A corrected key can recover the same cached TOML without a file
         # edit, and a tree with nothing sealed has nothing left to open. Only a
         # complete read clears a decryption error (a recursive one returns the
@@ -1238,7 +1251,7 @@ def provider_test_receipt_max_age_days() -> int:
         raw = providers.get("test_receipt_max_age_days", 30) if isinstance(providers, dict) else 30
     try:
         days = int(raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 30
     return max(1, days)
 
@@ -1803,6 +1816,9 @@ def get_ip_allowlist() -> dict:
 
     env = os.environ.get("MAVERICK_IP_ALLOWLIST")
     cidrs = _str_list(env, ()) if env is not None and env.strip() else entries("cidrs")
+    if env is not None and env.strip() and not cidrs:
+        # "," lists nothing; an empty list would allow every address.
+        raise ValueError("MAVERICK_IP_ALLOWLIST lists no addresses or ranges")
     return {
         "cidrs": cidrs,
         "workspace_cidrs": entries("workspace_cidrs"),
@@ -1825,7 +1841,7 @@ def get_auth_sessions() -> dict:
     raw = cfg.get("retention_days", 30)
     try:
         days = int(raw) if not isinstance(raw, bool) else 30
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         days = 30
     limits = {}
     for name, maximum in (("company_hours", 168), ("idle_minutes", 1440)):
@@ -2265,7 +2281,7 @@ def get_self_learning(*, config: dict[str, Any] | None = None) -> dict:
     cfg = (load_config() if config is None else config).get("self_learning", {})
     try:
         max_acq = int(cfg.get("max_acquisitions", 5))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         max_acq = 5
     return {
         "enable": _strict_config_bool(
@@ -2620,7 +2636,7 @@ def get_autonomy() -> dict:
     def _clamp01(key: str, default: float) -> float:
         try:
             v = float(cfg.get(key, default))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             v = default
         return max(0.0, min(1.0, v))
 
@@ -2722,16 +2738,16 @@ def get_calibration(*, config: dict[str, Any] | None = None) -> dict:
     def _int(key: str, default: int) -> int:
         try:
             return max(1, int(cfg.get(key, default)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     try:
         min_disc = float(cfg.get("min_discrimination", 0.15))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         min_disc = 0.15
     try:
         min_res = float(cfg.get("min_resistance", 0.0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         min_res = 0.0
     return {
         "enforce": (cfg.get("enforce") is not None
@@ -2756,11 +2772,11 @@ def get_credit() -> dict:
     cfg = load_config().get("credit", {})
     try:
         maxc = max(2, int(cfg.get("max_children", 6)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         maxc = 6
     try:
         head = float(cfg.get("min_budget_headroom", 0.4))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         head = 0.4
     return {
         "enable": _strict_config_bool(
@@ -2777,11 +2793,11 @@ def get_adaptive_compute() -> dict:
     cfg = load_config().get("adaptive_compute", {})
     try:
         low = float(cfg.get("low_uncertainty", 0.2))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         low = 0.2
     try:
         minw = max(1, int(cfg.get("min_width", 1)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         minw = 1
     return {
         "enable": coerce_bool(cfg.get("enable"), False),
@@ -2796,7 +2812,7 @@ def get_search() -> dict:
     cfg = load_config().get("search", {})
     try:
         n = max(1, int(cfg.get("n", 3)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         n = 3
     return {"enable": coerce_bool(cfg.get("enable"), False), "n": n}
 
@@ -2949,16 +2965,20 @@ def get_ifc() -> dict:
     ``context`` (default: an agent that has seen labelled data is labelled) or
     ``explicit`` (act only when the data appears literally in the call).
     ``allow_sinks``: external tools exempt from the check (e.g. ``web_search``).
-    ``MAVERICK_IFC_MODE`` overrides ``mode``. A malformed value falls back to
-    the default rather than silently disabling a stricter setting."""
+    ``MAVERICK_IFC_MODE`` overrides ``mode``; a malformed override is ignored
+    so it cannot replace a stricter configured mode, and a malformed
+    configured ``mode`` falls back to the default."""
     cfg = load_config().get("ifc", {})
     if not isinstance(cfg, dict):
         cfg = {}
-    mode = str(os.environ.get("MAVERICK_IFC_MODE") or cfg.get("mode", "audit")).strip().lower()
+    modes = ("off", "audit", "approve", "block")
+    mode = str(os.environ.get("MAVERICK_IFC_MODE") or "").strip().lower()
+    if mode not in modes:  # an unset or mistyped override never replaces the configured mode
+        mode = str(cfg.get("mode", "audit")).strip().lower()
     scope = str(cfg.get("scope", "context")).strip().lower()
     sinks = cfg.get("allow_sinks", [])
     return {
-        "mode": mode if mode in ("off", "audit", "approve", "block") else "audit",
+        "mode": mode if mode in modes else "audit",
         "scope": scope if scope in ("context", "explicit") else "context",
         "allow_sinks": sorted({str(t) for t in sinks}) if isinstance(sinks, list) else [],
     }
@@ -2983,7 +3003,7 @@ def get_swarm() -> dict:
     def _int(key: str, default: int, floor: int) -> int:
         try:
             return max(floor, int(cfg.get(key, default)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     return {"max_total_spawns": _int("max_total_spawns", 64, 1),
@@ -3031,9 +3051,9 @@ def get_commerce() -> dict:
         raw = cfg.get(key, default)
         try:
             value = cast(raw) if not isinstance(raw, bool) else default
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             value = default
-        out[key] = value if value > 0 else default
+        out[key] = value if value > 0 and math.isfinite(value) else default
     return out
 
 
@@ -3117,6 +3137,11 @@ def get_external_agents() -> dict:
     }
 
 
+def _finite_or(value: float, default: float) -> float:
+    """``value``, or ``default`` when it is infinite or NaN (TOML accepts ``inf``)."""
+    return value if math.isfinite(value) else default
+
+
 def get_repl() -> dict:
     """Return the ``[repl]`` section (governed code execution).
 
@@ -3136,7 +3161,7 @@ def get_repl() -> dict:
         # Per-statement wall ceiling, output cap, and the size of the carried
         # namespace. All bounded: an unbounded kernel is a denial-of-service
         # surface and an unbounded transcript is an audit liability.
-        "max_seconds": max(1.0, float(cfg.get("max_seconds", 30.0) or 30.0)),
+        "max_seconds": _finite_or(max(1.0, float(cfg.get("max_seconds", 30.0) or 30.0)), 30.0),
         "max_output_chars": max(
             256, int(cfg.get("max_output_chars", 8000) or 8000)),
         "max_state_bytes": max(
@@ -3262,7 +3287,7 @@ def get_tax() -> dict:
     cfg = load_config().get("tax", {})
     try:
         check_hours = max(1.0, float(cfg.get("check_hours", 20.0)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         check_hours = 20.0
     keys = cfg.get("trusted_constants_pubkeys", [])
     if not isinstance(keys, list):
@@ -3289,25 +3314,25 @@ def get_dreaming() -> dict:
     def _int(key: str, default: int) -> int:
         try:
             return max(1, int(cfg.get(key, default)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     def _ratio(key: str, default: float) -> float:
         try:
             return max(0.0, min(1.0, float(cfg.get(key, default))))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     def _nonneg_int(key: str, default: int) -> int:
         try:
             return max(0, int(cfg.get(key, default)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     def _nonneg_float(key: str, default: float) -> float:
         try:
             return max(0.0, float(cfg.get(key, default)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     return {
@@ -3395,7 +3420,7 @@ def get_self_improvement() -> dict:
     def _ratio(key: str, default: float) -> float:
         try:
             return max(0.0, float(cfg.get(key, default)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     raw_keys = cfg.get("approver_keys")
@@ -3509,12 +3534,12 @@ def get_jit_rl() -> dict:
     def _int(key: str, default: int) -> int:
         try:
             return max(1, int(cfg.get(key, default)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     try:
         beta = float(cfg.get("beta", 1.0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         beta = 1.0
     return {
         "enable": _strict_config_bool(
@@ -3823,7 +3848,7 @@ def get_rehearsal() -> dict:
     def _num(key: str, default: float, cast=float):
         try:
             return cast(cfg.get(key, default))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     return {
@@ -3854,7 +3879,7 @@ def get_speculative() -> dict:
     def _num(key: str, default: float, cast=float):
         try:
             return cast(cfg.get(key, default))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     return {
@@ -3881,7 +3906,7 @@ def get_data_engine() -> dict:
     def _num(key: str, default: float, cast=float):
         try:
             return cast(cfg.get(key, default))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
 
     return {
@@ -3929,7 +3954,7 @@ def get_earned_autonomy() -> dict:
             return default
         try:
             value = cast(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
         if not math.isfinite(float(value)) or value < lo:
             return default
@@ -4112,7 +4137,7 @@ def get_flows() -> dict:
         cfg = {}
     try:
         max_node_retries = int(cfg.get("max_node_retries", 5))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         max_node_retries = 5
     return {
         "enable": coerce_bool(cfg.get("enable"), False),
@@ -4217,7 +4242,7 @@ def get_durable() -> dict:
     contract = INTEGER_SETTINGS["durable.keep_last"]
     try:
         keep = int(cfg.get("keep_last", contract.default))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         keep = contract.default
     return {
         "enabled": coerce_bool(cfg.get("enabled"), BOOLEAN_SETTINGS["durable.enabled"].default),
@@ -4307,7 +4332,7 @@ def get_value(*, config: dict | None = None) -> dict:
     def _pos(v: object, default: float) -> float:
         try:
             f = float(v)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return default
         return f if f >= 0 else default
 

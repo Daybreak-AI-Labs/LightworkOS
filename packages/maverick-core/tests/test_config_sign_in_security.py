@@ -71,6 +71,9 @@ def test_environment_wins(tmp_path, monkeypatch):
     mfa = config.get_auth_mfa()
     assert mfa["require"] is False and mfa["step_up_minutes"] == 3
     assert config.get_ip_allowlist()["cidrs"] == ["192.0.2.0/24", "198.51.100.7"]
+    monkeypatch.setenv("MAVERICK_IP_ALLOWLIST", " , ")  # lists nothing: never "allow everyone"
+    with pytest.raises(ValueError):
+        config.get_ip_allowlist()
 
 
 def test_bad_values_fail_closed_or_fall_back(tmp_path):

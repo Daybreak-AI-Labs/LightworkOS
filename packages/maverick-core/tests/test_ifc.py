@@ -74,6 +74,9 @@ def test_config_and_run_scope(monkeypatch):
         "mode": "nonsense", "scope": "explicit", "allow_sinks": ["web_search"]}})
     assert config.get_ifc() == {"mode": "audit", "scope": "explicit",
                                 "allow_sinks": ["web_search"]}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {"ifc": {"mode": "block"}})
+    monkeypatch.setenv("MAVERICK_IFC_MODE", "blokc")              # a typo cannot loosen it
+    assert config.get_ifc()["mode"] == "block"
     monkeypatch.setenv("MAVERICK_IFC_MODE", "off")
     assert ifc.tracker_for_run() is None
     with ifc.labelled_run({"code:api"}, mode="block"):
