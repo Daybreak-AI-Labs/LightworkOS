@@ -3666,7 +3666,10 @@ def diag_health(ctx, goal_id: int) -> None:
     """Compute a 0-100 health score for a finished goal from its episode."""
     from ..health_score import goal_health, render
     from ..world_model import close_world_if_owned, open_world
-    w = open_world(ctx.obj["db"])
+    # An explicit --db selects this diagnostic's database; otherwise retain
+    # open_world's canonical default/backend and active-tenant resolution.
+    path = ctx.obj["db"] if ctx.find_root().params.get("db") is not None else None
+    w = open_world(path)
     try:
         found = goal_health(w, goal_id)
     finally:
@@ -3705,7 +3708,8 @@ def diag_cost_by_tag(ctx, as_json: bool) -> None:
 
     from ..cost.by_tag import gather, render
     from ..world_model import close_world_if_owned, open_world
-    world = open_world(ctx.obj["db"])
+    path = ctx.obj["db"] if ctx.find_root().params.get("db") is not None else None
+    world = open_world(path)
     try:
         buckets = gather(world)
     finally:
