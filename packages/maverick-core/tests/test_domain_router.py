@@ -221,12 +221,32 @@ def test_rank_specialists_caches_explicit_domain_embedding_index(monkeypatch):
         def __init__(self, domains):
             super().__init__(domains, embed_fn=counting_embed)
 
-    monkeypatch.setattr(dr, "_LEX", None)
-    monkeypatch.setattr(dr, "_EMB", None)
-    monkeypatch.setattr(dr, "_KEY", None)
+    monkeypatch.setattr(dr, "_CACHE", None)
     monkeypatch.setattr(dr, "EmbeddingRouter", CountingEmbeddingRouter)
 
     dr.rank_specialists("review an NDA", k=3, domains=_PACKS)
     dr.rank_specialists("draft a press release", k=3, domains=_PACKS)
 
     assert calls == [len(_PACKS), 1, 1]
+
+
+def test_concurrent_build_for_another_roster_cannot_leak_into_this_one(monkeypatch):
+    # Simulate a second request finishing its build while this one is between
+    # building its index and publishing it.
+    import maverick.domain_router as dr
+    from maverick.domain import DomainProfile
+
+    mine = {"alpha_pack": DomainProfile(name="alpha_pack", description="review an NDA")}
+    theirs = {"beta_secret": DomainProfile(name="beta_secret", description="review an NDA")}
+    monkeypatch.setattr(dr, "_CACHE", None)
+    interleaved = []
+
+    def embedding(domains):
+        if not interleaved:
+            interleaved.append(True)
+            dr._indexes(theirs)
+        raise RuntimeError("no model")
+
+    monkeypatch.setattr(dr, "EmbeddingRouter", embedding)
+    assert [n for n, _ in dr.rank_specialists("review an NDA", domains=mine)] == ["alpha_pack"]
+    assert [n for n, _ in dr.rank_specialists("review an NDA", domains=mine)] == ["alpha_pack"]
