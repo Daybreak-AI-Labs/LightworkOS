@@ -57,6 +57,9 @@ def test_database_streams_or_bounds_mysql_read_before_execute(monkeypatch, strea
         def execution_options(self, **kwargs):
             events.append(("options", kwargs))
             return self
+        def exec_driver_sql(self, statement):
+            events.append(("driver", statement))
+            return types.SimpleNamespace(scalar=lambda: 5, close=lambda: None)
         def execute(self, statement):
             events.append(("execute", str(statement)))
             raise ValueError("end probe before data")
@@ -69,7 +72,50 @@ def test_database_streams_or_bounds_mysql_read_before_execute(monkeypatch, strea
         assert events[0] == ("options", {"yield_per": 11})
         assert events[1][0] == "execute"
     else:
-        assert events == [("execute", "SELECT * FROM (SELECT n FROM records\n) AS maverick_bounded_result LIMIT 11")]
+        assert ("execute", "SELECT n FROM records") in events
+        assert not any(kind == "options" for kind, _ in events)
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 1; -- note",
+    "SELECT a.id, b.id FROM a JOIN b ON a.id = b.id",
+    "SELECT n FROM records ORDER BY n DESC",
+])
+@pytest.mark.parametrize("fails", [False, True])
+def test_database_buffered_mysql_read_is_sent_unmodified_and_bounded(monkeypatch, sql, fails):
+    from maverick.tools import database_tool as module
+    sent = []
+    class Result:
+        returns_rows = True
+        def __init__(self, value=None):
+            self.value = value
+        def scalar(self):
+            return self.value
+        def keys(self):
+            return ["n"]
+        def fetchmany(self, n):
+            return [(1,)]
+        def close(self):
+            pass
+    class Connection:
+        dialect = types.SimpleNamespace(supports_server_side_cursors=False, name="mysql")
+        def exec_driver_sql(self, statement):
+            sent.append(statement)
+            return Result(18446744073709551615 if "@@" in statement else None)
+        def execute(self, statement):
+            sent.append(str(statement))
+            if fails:
+                raise ValueError("server error")
+            return Result()
+        def rollback(self):
+            pass
+    execution = types.SimpleNamespace(started=lambda: None, transactional=True,
+        cancellation_support="unsupported", rollback=lambda conn: None, check=lambda: None,
+        failure=lambda exc: "ERROR", stop_monitor=lambda: None, state="rolled_back")
+    monkeypatch.setattr(module, "_prepare_query_driver", lambda *a: None)
+    module._query_connection(Connection(), sql, 10, False, "text", execution)
+    assert sent == ["SELECT @@SESSION.sql_select_limit", "SET SESSION sql_select_limit = 11",
+                    sql, "SET SESSION sql_select_limit = 18446744073709551615"]
 
 
 @pytest.mark.parametrize("reply", [False, True])
