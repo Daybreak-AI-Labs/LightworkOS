@@ -332,6 +332,9 @@ def _remove_client_path(path, windows_identity) -> int:
     if path.is_dir():
         path.rmdir()
         return 0
+    if os.path.lexists(path):  # a FIFO, socket or device node
+        path.unlink()
+        return 1
     raise FileNotFoundError("a prepared deletion target disappeared")
 
 
