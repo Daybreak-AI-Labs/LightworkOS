@@ -209,7 +209,8 @@ class TestMoneyCoercion:
     def test_parses_the_shapes_these_apis_actually_return(self, raw, expected):
         assert cp._as_money(raw) == expected
 
-    @pytest.mark.parametrize("raw", ["", "N/A", None, True, ["1"], {"x": 1}])
+    @pytest.mark.parametrize("raw", ["", "N/A", None, True, ["1"], {"x": 1},
+                                     "nan", "inf", float("nan")])
     def test_non_money_is_none_not_zero(self, raw):
         # Zero would silently understate exposure; None means "no figure".
         assert cp._as_money(raw) is None
@@ -340,6 +341,14 @@ class TestCaptureReadIsNarrowedAndRaw:
             conn, {"op": "delete", "path": SN_PATH, "body": {}}, capture=True)
         assert "sysparm_fields" not in conn.reads[0]["params"]
         assert conn.reads[0]["params"]["sysparm_display_value"] == "false"
+
+
+    def test_a_truncated_read_is_no_record_rather_than_the_record(self):
+        envelope = json.dumps({"status_code": 200, "headers": {}, "truncated": True,
+                               "response_chars": 9000, "preview": _sf_record(Amount=1_000_000)[:40]})
+        conn = FakeConnector(read=envelope)
+        plan = cp.plan_write(conn, {"op": "delete", "path": SF_PATH, "body": {}}, capture=True)
+        assert "restore read returned no single record" in plan.warnings
 
 
 class TestConcurrentEditsCannotBeSilentlyOverwritten:
