@@ -11,6 +11,7 @@ the agent calls preview_diff to verify its work matches intent.
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -51,6 +52,60 @@ _MAX_BYTES_CEILING = 1_000_000
 _SANDBOX_STDOUT_BYTES = 7_900
 
 
+def _git_env() -> dict[str, str]:
+    from ..git_safety import git_env_without_user_config
+    return git_env_without_user_config()
+
+
+def _sandbox_diff(sandbox, git_args: list[str], max_bytes: int) -> str:
+    # exec keeps only the last 8000 characters of stdout, so on a POSIX
+    # shell the diff is cut to its head first; otherwise the agent would get
+    # an unmarked tail. cmd.exe (Windows LocalBackend) has no such pipeline,
+    # so there the plain command runs and a possibly clipped result is marked.
+    cap = min(max_bytes, _SANDBOX_STDOUT_BYTES)
+    git_cmd = "git " + " ".join(shlex.quote(a) for a in git_args)
+    if os.name == "nt":
+        shell_cmd = "git " + subprocess.list2cmdline(git_args)
+    else:
+        env = " ".join(f"{k}={shlex.quote(v)}" for k, v in _git_env().items()
+                       if k.startswith("GIT_"))
+        shell_cmd = f'out=$({env} {git_cmd}); rc=$?; printf "%s" "$out" | head -c {cap}; exit $rc'
+    try:
+        res = sandbox.exec(shell_cmd, timeout=15)
+    except Exception as e:
+        return f"ERROR: cannot run git: {e}"
+    if getattr(res, "exit_code", 1) != 0:
+        return f"ERROR: git diff exited {getattr(res, 'exit_code', '?')}: {(res.stderr or '')[:500]}"
+    out = res.stdout or ""
+    if not out.strip():
+        return "(no changes)"
+    if len(out.encode("utf-8", errors="replace")) >= cap:
+        where = "the beginning may be missing" if os.name == "nt" else f"truncated at {cap} bytes"
+        out += f"\n\n[... {where}; narrow it with paths=[...] or stat_only=true]"
+    return out
+
+
+def _host_diff(cwd: str, git_args: list[str], max_bytes: int) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", cwd, *git_args], capture_output=True, timeout=15,
+            env=_git_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return "ERROR: git diff timed out (15s)"
+    except OSError as e:
+        return f"ERROR: cannot run git: {e}"
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode("utf-8", errors="replace")
+        return f"ERROR: git diff exited {proc.returncode}: {err[:500]}"
+    out = (proc.stdout or b"").decode("utf-8", errors="replace")
+    if not out.strip():
+        return "(no changes)"
+    if len(out) > max_bytes:
+        out = out[:max_bytes] + f"\n\n[... truncated at {max_bytes} bytes]"
+    return out
+
+
 def _run_factory(sandbox):
     def _run(args: dict[str, Any]) -> str:
         cwd = str(Path(getattr(sandbox, "workdir", ".")).resolve())
@@ -66,9 +121,18 @@ def _run_factory(sandbox):
         except (TypeError, ValueError):
             return "ERROR: max_bytes must be an integer"
         max_bytes = max(1, min(max_bytes, _MAX_BYTES_CEILING))
-        # Repository config is workspace content: core.fsmonitor names a
-        # command git would run, so it is switched off for this read.
-        git_args = ["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv"]
+        # Repository config and attributes are workspace content: a filter's
+        # clean/smudge/process command, a config include or core.fsmonitor
+        # would make git run a workspace-chosen program during diff. Refuse
+        # those repositories, as the other host-side git helpers do, and run
+        # without user/system config, fsmonitor or hooks.
+        from ..git_safety import git_metadata_may_execute_filters
+        if git_metadata_may_execute_filters(Path(cwd)):
+            return ("ERROR: this repository's git config or attributes define a "
+                    "filter, include or fsmonitor that git would run during a "
+                    "diff (git-lfs counts); preview_diff refuses to run it.")
+        git_args = ["-c", "core.fsmonitor=false", "-c", f"core.hooksPath={os.devnull}",
+                    "diff", "--no-ext-diff", "--no-textconv"]
         if as_bool(args.get("staged")):
             git_args.append("--cached")
         if as_bool(args.get("stat_only")):
@@ -78,50 +142,11 @@ def _run_factory(sandbox):
             git_args.append(str(p))
         # CLAUDE.md rule 4: route git through sandbox.exec so the diff
         # reflects the configured backend's filesystem (ssh/k8s/fc), not
-        # the host. exec runs a shell string at workdir and keeps only the
-        # last 8000 characters of stdout, so the diff is cut to its head in
-        # the shell first; otherwise the agent would get an unmarked tail.
-        # Fall back to host subprocess (env-scrubbed) when there's no exec.
+        # the host. Fall back to host subprocess (env-scrubbed) when there's
+        # no exec.
         if hasattr(sandbox, "exec"):
-            cap = min(max_bytes, _SANDBOX_STDOUT_BYTES)
-            git_cmd = "git " + " ".join(shlex.quote(a) for a in git_args)
-            shell_cmd = f'out=$({git_cmd}); rc=$?; printf "%s" "$out" | head -c {cap}; exit $rc'
-            try:
-                res = sandbox.exec(shell_cmd, timeout=15)
-            except Exception as e:
-                return f"ERROR: cannot run git: {e}"
-            if getattr(res, "exit_code", 1) not in (0, 1):
-                return f"ERROR: git diff exited {res.exit_code}: {(res.stderr or '')[:500]}"
-            out = res.stdout or ""
-            if not out.strip():
-                return "(no changes)"
-            if len(out.encode("utf-8", errors="replace")) >= cap:
-                out += (f"\n\n[... truncated at {cap} bytes; narrow it with paths=[...] "
-                        "or stat_only=true]")
-            return out
-
-        cmd = ["git", "-C", cwd, *git_args]
-        from ..sandbox.local import scrub_env
-        child_env = scrub_env()
-        child_env["GIT_PAGER"] = ""
-        try:
-            proc = subprocess.run(
-                cmd, capture_output=True, timeout=15,
-                env=child_env,
-            )
-        except subprocess.TimeoutExpired:
-            return "ERROR: git diff timed out (15s)"
-        except OSError as e:
-            return f"ERROR: cannot run git: {e}"
-        if proc.returncode not in (0, 1):
-            err = (proc.stderr or b"").decode("utf-8", errors="replace")
-            return f"ERROR: git diff exited {proc.returncode}: {err[:500]}"
-        out = (proc.stdout or b"").decode("utf-8", errors="replace")
-        if not out.strip():
-            return "(no changes)"
-        if len(out) > max_bytes:
-            out = out[:max_bytes] + f"\n\n[... truncated at {max_bytes} bytes]"
-        return out
+            return _sandbox_diff(sandbox, git_args, max_bytes)
+        return _host_diff(cwd, git_args, max_bytes)
     return _run
 
 
