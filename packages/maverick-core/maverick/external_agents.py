@@ -1070,6 +1070,12 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
         record_denied(agent_id, decision, direction="inbound",
                       correlation_id="finish_run")
         raise ExternalAgentsError(f"denied: {decision.reason}")
+    meta = _load_sidecar().get(agent_id)
+    if meta is None:
+        raise ExternalAgentsError(
+            f"agent {agent_id!r} has a trust entry but no enrollment")
+    if meta.get("contained"):
+        raise ExternalAgentsError("denied: agent is contained pending review")
     principal = f"agent:{agent_id}"
     from .world_model import open_world
     w = open_world()
@@ -2139,7 +2145,7 @@ def _park_execution(agent_id: str, conn, meta: dict, *, tool: str,
                 live[execution_id] = {
                     "approval_id": None, "digest": digest,
                     "approval_action": approval_action,
-                    "connector": connector, "op": op, "path": path[:500],
+                    "connector": connector, "op": op, "path": path,
                     "goal_id": goal_id, "created_at": now,
                     "status": "pending",
                     "idempotency_key": idempotency_key or None,

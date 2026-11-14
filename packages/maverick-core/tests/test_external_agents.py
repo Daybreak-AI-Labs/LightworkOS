@@ -760,6 +760,8 @@ def test_containment_reaches_midflight_via_heartbeat():
     assert xa.heartbeat("sf-quotebot", gid)["continue"] is False
     with pytest.raises(xa.ExternalAgentsError):
         xa.start_run("sf-quotebot", {"title": "Another"})
+    with pytest.raises(xa.ExternalAgentsError, match="contained"):
+        xa.finish_run("sf-quotebot", gid, {"summary": "done", "outcome": "success"})
 
 
 def test_parked_approval_notifies_and_fires_webhook(monkeypatch, tmp_path):
@@ -1359,6 +1361,19 @@ def test_unreadable_config_keeps_the_mint_and_approval_gates_strict(tmp_path):
     config.reset_config_cache()
     assert xa._mint_approval_required() is True
     assert xa._approval_floor() == "low"
+
+
+def test_commit_of_an_approved_long_path_reaches_the_connector(monkeypatch):
+    conn = _wire_fakecrm(monkeypatch)
+    _enroll(max_risk="high")
+    request = _write_request(path="/opportunities/" + "4" * 600)
+    parked = xa.execute("sf-quotebot", request)
+    from maverick.world_model import WorldModel
+    WorldModel().decide_approval(parked["approval_id"], "approved",
+                                 decided_by="admin@corp.test")
+    verdict = xa.execute_commit("sf-quotebot", parked["execution_id"], request)
+    assert verdict["rule"] == "executed"
+    assert conn.writes[0]["path"] == request["path"]
 
 
 def test_commit_digest_mismatch_voids_and_counts_toward_containment(
