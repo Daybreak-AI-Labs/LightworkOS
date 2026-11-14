@@ -1282,6 +1282,27 @@ def tenant_provider_key_env(tenant_id: str, provider: str) -> str:
     return f"MAVERICK_TENANT_{digest}_{_canonical(provider).upper()}_API_KEY"
 
 
+def tenant_sets_provider_endpoint_without_key(provider: str) -> bool:
+    """Whether the active tenant overlay points ``[providers.<provider>]`` at
+    its own ``base_url`` without supplying its own ``api_key``.
+
+    The tenant layer is merged field by field over the deployment layers, so
+    such a table would pair the deployment's key with the tenant's endpoint.
+    An unreadable overlay counts as setting one (callers refuse)."""
+    path = tenant_config_path()
+    if path is None or not _present(path):
+        return False
+    try:
+        table = (_load_config_file(path, interpolate=False).get("providers") or {}).get(provider)
+    except Exception:
+        return True
+    if not isinstance(table, dict):
+        return False
+    base_url, key = table.get("base_url"), table.get("api_key")
+    return (bool(str(base_url).strip()) if base_url is not None else False) and not (
+        isinstance(key, str) and key.strip())
+
+
 def tenant_provider_api_key(provider: str) -> str | None:
     """The ACTIVE tenant's own provider key, or ``None`` to defer to the global
     key.

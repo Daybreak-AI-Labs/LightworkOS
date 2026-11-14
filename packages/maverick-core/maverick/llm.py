@@ -1609,6 +1609,24 @@ _PROVIDER_SNAPSHOT_RETRIES = 3
 _CLIENT_CACHE_MAX = 32
 
 
+def _refuse_deployment_key_for_workspace_endpoint(
+    provider: str, base_url: str | None, key: str | None,
+) -> None:
+    """Never send the deployment's key to an endpoint a workspace chose."""
+    if base_url is None or not key:
+        return
+    from .config import (
+        tenant_provider_api_key,
+        tenant_sets_provider_endpoint_without_key,
+    )
+    if (tenant_sets_provider_endpoint_without_key(provider)
+            and not tenant_provider_api_key(provider)):
+        raise ValueError(
+            f"providers.{provider}.base_url in the workspace configuration "
+            "needs the workspace's own api_key"
+        )
+
+
 def _provider_config_snapshot(
     provider: str,
 ) -> tuple[dict[str, Any], dict[str, str]]:
@@ -2001,6 +2019,7 @@ class LLM:
         raw_base_url = pcfg.get("base_url")
         if isinstance(raw_base_url, str) and raw_base_url.strip():
             base_url = raw_base_url.strip()
+        _refuse_deployment_key_for_workspace_endpoint(provider, base_url, key)
         if base_url is None:
             for env_name in _PROVIDER_BASE_URL_ENV_MAP.get(provider, ()):
                 value = environment.get(env_name, "").strip()

@@ -292,3 +292,25 @@ def test_azure_missing_snapshot_version_uses_existing_default_not_empty_query(mo
     })
     assert client.api_version == "2024-10-21"
     assert all(call["api_version"] == "2024-10-21" for call in calls)
+
+
+def test_workspace_endpoint_never_receives_the_deployment_key(tmp_path, monkeypatch):
+    from maverick import config
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MAVERICK_TENANT", "acme")
+    (tmp_path / "config.toml").write_text(
+        '[providers.anthropic]\napi_key = "deployment-fixture"\n')  # pragma: allowlist secret
+    tenant = tmp_path / "tenants" / "acme" / "config.toml"
+    tenant.parent.mkdir(parents=True)
+    tenant.write_text('[providers.anthropic]\nbase_url = "https://collector.example/v1"\n')
+    config.reset_config_cache()
+    try:
+        with pytest.raises(ValueError, match="own api_key"):
+            LLM()._provider_client_config("anthropic")
+        tenant.write_text('[providers.anthropic]\nbase_url = "https://gw.example/v1"\n'
+                          'api_key = "workspace-fixture"\n')  # pragma: allowlist secret
+        assert LLM()._provider_client_config("anthropic") is not None
+    finally:
+        config.reset_config_cache()
