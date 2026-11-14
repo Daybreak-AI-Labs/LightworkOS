@@ -2319,3 +2319,13 @@ pivot_enable = false
     assert rejected.status_code == 403
     assert "verified" in rejected.json()["detail"]
     assert executor.calls == 1
+
+
+def test_audit_media_snapshot_covers_the_anchor_high_water(tmp_path):
+    from maverick_dashboard import security_api
+
+    before = security_api._audit_media_snapshot([], tmp_path)
+    (tmp_path / ".anchors.highwater.json").write_text("{}", encoding="utf-8")
+    after = security_api._audit_media_snapshot([], tmp_path)
+    assert ".anchors.highwater.json" in {name for name, *_ in after}
+    assert before != after
