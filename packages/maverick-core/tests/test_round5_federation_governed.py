@@ -141,7 +141,7 @@ def test_indeterminate_connector_result_preserves_redacted_reconciliation(monkey
 
     wrapped, receipts = _approved_connector(monkeypatch, ToolOutcome(
         ToolResultState.INDETERMINATE,
-        "Job job-123 in US is running; postgres://admin:secret@db.internal/data",
+        "Job job-123 in US is running; postgres://admin:secret@db.internal/data",  # pragma: allowlist secret -- synthetic redaction fixture
     ))
     result = wrapped.fn({"op": "post", "path": "/jobs"})
     assert "job-123" in result and "US" in result
