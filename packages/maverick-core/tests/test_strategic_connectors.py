@@ -65,6 +65,11 @@ def test_servicenow_query_hits_table_api(monkeypatch):
     assert req.call_args.args[1].endswith("/api/now/table/incident")
 
 
+def test_servicenow_rejects_dot_sys_id():
+    from maverick.tools.servicenow_tool import _safe_seg
+    assert not _safe_seg(".") and not _safe_seg("..") and _safe_seg("abc.1")
+
+
 def test_servicenow_create_needs_confirm(monkeypatch):
     monkeypatch.setenv("SERVICENOW_INSTANCE_URL", "https://x.service-now.com")
     monkeypatch.setenv("SERVICENOW_TOKEN", "t")
