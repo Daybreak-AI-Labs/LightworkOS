@@ -490,3 +490,32 @@ def test_cli_start_refuses_suspended_tenant(monkeypatch):
     res = CliRunner().invoke(main, ["start", "do something", "--sandbox", "local"])
     assert res.exit_code == 3, res.output
     assert "suspended" in res.output.lower()
+
+
+def test_sentinel_ids_and_negative_quotas_are_refused():
+    # "__active__" means "the ambient tenant" to data_dir, so purging a
+    # workspace with that id deleted whichever tenant was bound.
+    for reserved in ("__active__", "__default__"):
+        with pytest.raises(ValueError, match="reserved"):
+            tr.create_tenant(reserved)
+    tr.create_tenant("p")
+    with pytest.raises(ValueError, match="negative"):
+        tr.set_quota("p", -5)
+    assert tr.get_tenant("p").max_daily_dollars == 0.0
+
+
+def test_purge_refuses_a_workspace_under_legal_hold(tmp_path):
+    from maverick import ediscovery
+    from maverick.paths import tenant_scope
+
+    tr.create_tenant("held")
+    root = tmp_path / "tenants" / "held"
+    (root / "kept.txt").write_text("held", encoding="utf-8")
+    with tenant_scope(tenant="held"):
+        store = ediscovery.MatterStore(ediscovery.store_path())
+        store.create("held", actor="auditor", values={
+            "name": "Acme dispute", "custodians": ["user:cli:alice"], "record_kinds": ["goals"]})
+    with pytest.raises(tr.TenantRegistryError, match="legal hold is active"):
+        tr.delete_tenant("held", purge=True)
+    assert (root / "kept.txt").read_text(encoding="utf-8") == "held"
+    assert tr.get_tenant("held") is not None
