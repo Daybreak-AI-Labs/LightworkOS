@@ -1,8 +1,10 @@
-"""Lossless supported import predicates, or an explicit repair requirement.
+"""Supported import predicates, or an explicit repair requirement.
 
 Boolean trees become branch graphs. No clause is discarded and NOT swaps
 destinations, including when an operand is missing, rather than guessing an
 inverse comparison. Source expressions are data; they are never evaluated.
+WDL ``contains`` uses the runtime's string-substring comparison, including for
+arrays and objects; its fidelity must be reported as approximated.
 """
 from __future__ import annotations
 
@@ -40,6 +42,11 @@ class Predicate:
     kind: str
     text: str = ""
     children: tuple[Predicate, ...] = ()
+    approximated: bool = False
+
+    @property
+    def has_approximation(self) -> bool:
+        return self.approximated or any(child.has_approximation for child in self.children)
 
 
 # The flow runtime splits conditions on these words, so a field with this
@@ -151,7 +158,7 @@ def n8n_predicate(node: dict) -> Predicate:
 
 
 def make_predicate(route: dict) -> Predicate | None:
-    """Retain Make's complete OR-of-AND route filter using native branches."""
+    """Retain a Make module or route's OR-of-AND filter using native branches."""
     if "filter" not in route:
         return None  # An explicitly unfiltered route runs unconditionally.
     filt = route["filter"]
@@ -276,7 +283,8 @@ def wdl_predicate(expr: Any, _depth: int = 0, _remaining: list[int] | None = Non
     if op not in _WDL_OPS or not isinstance(args, list) or len(args) != 2:
         raise repair("unsupported WDL comparison")
     right = _wdl_value(args[1]) if from_string else args[1]
-    return Predicate("atom", f"{wdl_key(args[0])} {_WDL_OPS[op]} {_literal(right)}")
+    return Predicate("atom", f"{wdl_key(args[0])} {_WDL_OPS[op]} {_literal(right)}",
+                     approximated=op == "contains")
 
 
 def branches(predicate: Predicate, node_id: str, yes: str | None, no: str | None,
