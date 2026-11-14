@@ -107,6 +107,17 @@ def test_bulk_import_caps_row_count():
     assert d["skipped_over_cap"] == 5
 
 
+def test_bulk_import_reports_an_audit_refusal(monkeypatch):
+    from maverick.audit import AuditRefused
+
+    def _refuse(kind, **kw):
+        raise AuditRefused("signed chain required")
+    monkeypatch.setattr("maverick.audit.record", _refuse)
+    r = client.post("/api/v1/assess/bulk-import", json={"csv": "Acme,vendor_risk"})
+    assert r.status_code == 503
+    assert "1 assessment(s) were queued" in r.json()["detail"]
+
+
 # --- B14 re-review triggers ------------------------------------------------
 def test_trigger_review_forces_due_and_renewal_flips_due():
     s = _seed(risky=False)

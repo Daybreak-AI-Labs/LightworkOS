@@ -5218,14 +5218,18 @@ async def bulk_import_assessments(
             created.append({"id": session.id, "subject": subject, "type": atype})
         except Exception as e:  # noqa: BLE001 -- report the row, keep going
             errors.append({"row": i + 1, "subject": subject, "error": str(e)})
-    try:  # best-effort: the import already committed each session atomically
-        from maverick.audit import record as _audit_record
+    # The import already committed each session atomically: a failed write is
+    # logged by audit_event, and a refusal says the import stands.
+    from maverick.audit import AuditRefused, audit_event
 
-        _audit_record(
+    try:
+        audit_event(
             "ASSESSMENTS_BULK_IMPORTED", agent=who, created=len(created), errors=len(errors)
         )
-    except Exception:  # pragma: no cover -- audit write never blocks the import
-        pass
+    except AuditRefused as exc:
+        raise HTTPException(status_code=503, detail=(
+            f"{len(created)} assessment(s) were queued, but the activity log refused "
+            "to record the import. Tell an administrator.")) from exc
     return {
         "created": created,
         "errors": errors,

@@ -2,7 +2,6 @@
   "_comment": "Ratcheted pre-existing violations of the audit refusal contract. This is a debt register, not an exemption list -- shrink it. Regenerate with `python -m maverick.audit_contract --regen`.",
   "known": [
     "packages/maverick-core/maverick/assessment.py::_deliver_audit",
-    "packages/maverick-core/maverick/cli/__init__.py::support",
     "packages/maverick-core/maverick/cli/_ekko_groups.py::_audit",
     "packages/maverick-core/maverick/dreaming.py::_audit_cycle",
     "packages/maverick-core/maverick/earned_autonomy.py::_default_audit_fn",
@@ -19,7 +18,6 @@
     "packages/maverick-core/maverick/tools/spawn.py::_record_swarm_disagreement",
     "packages/maverick-core/maverick/verifier.py::_maybe_audit_reward",
     "packages/maverick-core/maverick/work_discovery_store.py::WorkDiscoveryStore.flush_audit_outbox",
-    "packages/maverick-dashboard/maverick_dashboard/api.py::bulk_import_assessments",
     "packages/maverick-dashboard/maverick_dashboard/content_access.py::may_read_employee_content"
   ]
 }

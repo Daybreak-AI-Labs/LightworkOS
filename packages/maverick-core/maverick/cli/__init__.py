@@ -969,16 +969,17 @@ def support(output: str | None) -> None:
         click.echo(f"support bundle written: {path}")
         # Record the export on the signed audit trail — redacted METADATA only
         # (correlation_id / basename; never bundle contents), so a CISO can see
-        # every support touch on their own log. Fail-soft: a stripped-audit
-        # build or a write error must never break the export.
+        # every support touch on their own log. A write error is logged and
+        # does not break the export; a refusal by the audit subsystem fails it.
+        from ..audit import AuditRefused, audit_event
         try:
-            from ..audit import record as _audit_record
-            _audit_record(
+            audit_event(
                 "support_bundle_exported", agent="cli",
                 correlation_id=bundle.get("correlation_id"),
                 filename=path.name)
-        except Exception:  # pragma: no cover - audit must never crash the CLI
-            pass
+        except AuditRefused as exc:
+            raise click.ClickException(
+                f"the audit trail refused to record this export: {exc}") from exc
     else:
         click.echo(text)
 
