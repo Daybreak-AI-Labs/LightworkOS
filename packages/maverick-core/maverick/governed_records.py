@@ -1943,6 +1943,9 @@ class GovernedRecordStore:
         self._authority_lock = threading.Lock()
         self._postgres_backend: PostgresGovernedRecordBackend | None = None
         self._postgres_key = ""
+        # Where the next ``retry_pending`` pass resumes, so a bounded pass
+        # rotates through the whole store instead of the first ``limit`` ids.
+        self._retry_cursor = ""
 
     def _assert_backend_authority(self, selection: _BackendSelection) -> None:
         """Pin selector-backed stores before any persistence-plane I/O.
@@ -2485,10 +2488,13 @@ class GovernedRecordStore:
         )
 
     def retry_pending(self, *, limit: int = 100) -> int:
-        """Retry a bounded set of stable audit receipts."""
+        """Retry a bounded set of stable audit receipts. Each pass resumes
+        after the last record the previous pass scanned."""
         cleared = 0
         backend = self._backend()
-        for _, record_id in backend.iter_record_ids(limit=max(0, int(limit))):
+        for cursor, record_id in backend.iter_record_ids(
+                start_after=self._retry_cursor, limit=max(0, int(limit))):
+            self._retry_cursor = cursor
             before = backend.load(record_id)
             if not before or not before.get("_audit_pending"):
                 continue

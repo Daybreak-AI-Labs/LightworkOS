@@ -732,6 +732,19 @@ def test_failed_audit_is_durable_and_retryable(monkeypatch):
     assert "_audit_pending" not in loaded
 
 
+def test_retry_pending_rotates_past_the_first_window(monkeypatch):
+    import maverick.audit as audit
+
+    accepted = False
+    monkeypatch.setattr(audit, "record", lambda *_a, **_k: accepted)
+    store = GovernedRecordStore("test_retry_window", "TGW", "test_record")
+    for _ in range(6):
+        store.create({"id": store.new_id(), "status": "open"},
+                     action="create", actor="operator")
+    accepted = True
+    assert sum(store.retry_pending(limit=2) for _ in range(3)) == 6
+
+
 def test_public_update_cannot_bypass_revision_or_audit(monkeypatch):
     import maverick.audit as audit
 
