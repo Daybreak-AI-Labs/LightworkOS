@@ -102,3 +102,11 @@ def test_changed_policy_refuses_stale_submission(policy):
         service.submit(employee, "tool", "shell", "A specific business purpose", current["snapshot"])
     assert error.value.status_code == 409
     assert service.STORE.rows == {}
+
+
+def test_layer_reads_the_acl_as_the_kernel_does():
+    # A lone string is one tool name and a mixed-case ceiling still applies.
+    assert service._layer("x", {"denied_tools": "shell"}, "shell")["allowed"] is False
+    assert service._layer("x", {"denied_tools": "shell"}, "s")["allowed"] is True
+    capped = service._layer("x", {"max_risk": "LOW"}, "shell")
+    assert capped["allowed"] is False and "low ceiling" in capped["reason"]

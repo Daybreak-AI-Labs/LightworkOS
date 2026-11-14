@@ -10554,12 +10554,11 @@ _CONTAINER_PRODUCTS = {"docker": "Docker", "podman": "Podman"}
 def _file_work_status(loaded: dict) -> dict:
     """Report the effective global tool rules, not a button's optimistic state."""
     from maverick.runtime_overrides import denied_tools as runtime_denied_tools
+    from maverick.safety.tool_acl import layer_policy
 
     from maverick_dashboard.settings_store import CONTAINER_FILE_TOOLS
 
-    security = loaded.get("security") or {}
-    denied = set(security.get("denied_tools") or [])
-    allowed = set(security.get("allowed_tools") or [])
+    allowed, denied, _max_risk = layer_policy(loaded.get("security") or {})
     runtime_denied = runtime_denied_tools()
     return {
         "blocked_tools": [name for name in CONTAINER_FILE_TOOLS if name in denied],
