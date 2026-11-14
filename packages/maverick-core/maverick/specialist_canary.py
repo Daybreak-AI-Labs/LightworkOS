@@ -20,7 +20,7 @@ import time
 from fractions import Fraction
 
 from . import agent_tests_policy
-from .governed_records import GovernedRecordStore
+from .governed_records import GovernedRecordCapacityError, GovernedRecordStore
 
 log = logging.getLogger(__name__)
 
@@ -191,11 +191,9 @@ def version_for_goal(name: str, goal_id: int, *, world=None, resume: bool = Fals
             return CURRENT, None
         version = CANDIDATE if bucket(name, goal_id) < trial["percent"] else CURRENT
         try:
-            row = TRIAL_GOALS.create({"id": record_id, "name": name, "goal_id": goal_id,
-                                      "candidate_id": trial["candidate_id"], "version": version,
-                                      "assigned_at": time.time()},
-                                     action="specialist_canary.goal_assigned", actor=SYSTEM_ACTOR,
-                                     max_records=MAX_ROWS)
+            row = _record_goal_choice({"id": record_id, "name": name, "goal_id": goal_id,
+                                       "candidate_id": trial["candidate_id"], "version": version,
+                                       "assigned_at": time.time()})
         except Exception:  # the record is the only proof a goal may use the trial
             row = TRIAL_GOALS.get(record_id)
             if row is None:
@@ -204,6 +202,44 @@ def version_for_goal(name: str, goal_id: int, *, world=None, resume: bool = Fals
     if row["version"] == CANDIDATE and row["candidate_id"] == trial["candidate_id"]:
         return CANDIDATE, trial
     return CURRENT, None
+
+
+def _prune_finished_trial_goals() -> int:
+    """Delete goal records of trials that are no longer live; returns how many.
+
+    Only the live trial's records are read (statistics and the goals' recorded
+    choices), so a full store is freed by dropping the records of ended trials.
+    """
+    rows = TRIAL_GOALS.list(limit=MAX_ROWS)
+    live_ids: dict[str, str | None] = {}
+    dead = []
+    for row in rows:
+        name = row.get("name")
+        if name not in live_ids:
+            trial = live(name)
+            live_ids[name] = trial["candidate_id"] if trial else None
+        if row.get("candidate_id") != live_ids[name] and not row.get("_audit_pending"):
+            dead.append(row)
+    if not dead:
+        return 0
+    from maverick.audit import EventKind, audit_event
+
+    audit_event(EventKind.CONTROL_PLANE_ACTION, agent="system", verb="agent_trial_goal_records_pruned",
+                actor=SYSTEM_ACTOR, records=len(dead))
+    return sum(1 for row in dead if TRIAL_GOALS.delete(row["id"], expected_revision=row["revision"]))
+
+
+def _record_goal_choice(record: dict) -> dict:
+    def create() -> dict:
+        return TRIAL_GOALS.create(record, action="specialist_canary.goal_assigned", actor=SYSTEM_ACTOR,
+                                  max_records=MAX_ROWS)
+
+    try:
+        return create()
+    except GovernedRecordCapacityError:
+        if not _prune_finished_trial_goals():
+            raise
+        return create()
 
 
 def profile_for_goal(name: str, profile, goal_id: int, *, world=None, resume: bool = False):

@@ -98,6 +98,21 @@ def test_a_recorded_choice_is_kept_after_the_trial_has_ended(env):
     assert later["candidate_id"] != trial["candidate_id"]
 
 
+def test_a_full_trial_store_drops_ended_trials_records_so_new_trials_get_traffic(env, monkeypatch):
+    canary = env.canary
+    monkeypatch.setattr(canary, "MAX_ROWS", 4)
+    first = _start(canary, percent=50)
+    for goal_id in range(1, 5):
+        canary.version_for_goal(PACK, goal_id)
+    canary.finish(PACK, candidate_id=first["candidate_id"], outcome=canary.ROLLED_BACK, actor="owner")
+    second = _start(canary, percent=50)
+
+    canary.version_for_goal(PACK, 100)
+    row = canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 100))
+    assert row is not None and row["candidate_id"] == second["candidate_id"]
+    assert all(r["candidate_id"] == second["candidate_id"] for r in canary.TRIAL_GOALS.list())
+
+
 def test_a_resumed_goal_with_no_recorded_choice_keeps_the_current_version(env):
     canary = env.canary
     _start(canary, percent=50)
