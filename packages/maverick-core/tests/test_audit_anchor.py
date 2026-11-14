@@ -161,3 +161,22 @@ def test_ledger_truncated_with_day_files_is_detected(tmp_path, monkeypatch):
     (legacy / signing.ANCHOR_HIGHWATER_FILENAME).unlink()
     (legacy / signing.ANCHOR_MARKER_FILENAME).write_text("anchors.ndjson is required\n")
     assert verify_anchors(legacy) == []
+
+
+def test_unreadable_day_does_not_stop_later_days_being_anchored(tmp_path, monkeypatch):
+    _isolate_keys(monkeypatch, tmp_path)
+    bad, good = _past_day(2), _past_day(1)
+    _write_signed_day(tmp_path, bad, 1)
+    _write_signed_day(tmp_path, good, 1)
+    real = signing._file_tip_and_count
+
+    def _flaky(path):
+        from maverick.audit.segments import SegmentReadError
+
+        if path.stem == bad:
+            raise SegmentReadError("cannot decrypt")
+        return real(path)
+
+    monkeypatch.setattr(signing, "_file_tip_and_count", _flaky)
+    assert ensure_anchors(tmp_path) == 1
+    assert signing._anchored_days(tmp_path) == {good}

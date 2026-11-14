@@ -618,3 +618,16 @@ def test_erase_still_refuses_a_file_whose_chain_is_already_broken(
 
     matched, _ = erase.scrub_user("slack", "victim", audit_dir=audit_dir)
     assert matched == 0, "an erase must not rewrite an already-broken chain"
+
+
+def test_a_purge_marker_that_was_not_written_is_reported(audit_dir, monkeypatch) -> None:
+    from maverick.audit import signing
+
+    for day in (_day(40), _day(1)):
+        _write_day(audit_dir, day)
+    assert ensure_anchors(audit_dir) == 2
+    monkeypatch.setattr(signing, "record_retention_purge", lambda *a, **k: False)
+    report = retention.enforce(config={"audit_days": 30}, audit_dir=audit_dir)["audit"]
+    assert report["removed"] == [f"{_day(40)}.ndjson"]
+    assert report["purge_marker"] == "failed"
+    assert report["status"] == "partial"

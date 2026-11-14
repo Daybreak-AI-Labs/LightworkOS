@@ -1609,7 +1609,15 @@ def ensure_anchors(audit_dir: Path) -> int:
         day = day_file.stem
         if day >= today or day in anchored:
             continue
-        tip, count = _file_tip_and_count(day_file)
+        try:
+            tip, count = _file_tip_and_count(day_file)
+        # failure-policy: fail_soft_with_audit
+        except Exception as e:
+            # One unreadable day must not leave every later day un-anchored
+            # (and so deletable without detection). verify_chain reports the
+            # unreadable file itself.
+            log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
+            continue
         if count and _append_anchor(audit_dir, day, tip, count):
             written += 1
     return written
