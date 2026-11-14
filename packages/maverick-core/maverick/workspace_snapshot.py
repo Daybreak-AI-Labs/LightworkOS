@@ -17,7 +17,7 @@ import tarfile
 import time
 from pathlib import Path
 
-from .paths import current_tenant, data_dir
+from .paths import current_tenant, data_dir, explicit_tenant_id, maverick_home
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +33,22 @@ _MAX_SNAPSHOTS = 200
 _SOURCE_HEADER = "maverick.snapshot_source"
 
 
+def _configured_store() -> Path | None:
+    from .config import load_config
+    try:
+        cfg = (load_config() or {}).get("workspace") or {}
+        sd = str(cfg.get("snapshot_dir") or "").strip()
+    except Exception:  # pragma: no cover -- config never blocks snapshots
+        sd = ""
+    return Path(sd).expanduser() if sd else None
+
+
+def _shared_store() -> Path:
+    """The un-namespaced store: ``[workspace] snapshot_dir`` or
+    ``<home>/snapshots``."""
+    return _configured_store() or maverick_home() / "snapshots"
+
+
 def store_dir() -> Path:
     """The snapshot store for the ACTIVE tenant, resolved at call time.
 
@@ -40,17 +56,35 @@ def store_dir() -> Path:
     way :func:`paths.data_dir` is, so one tenant can never list or restore
     another tenant's archives.
     """
-    from .config import load_config
-    try:
-        cfg = (load_config() or {}).get("workspace") or {}
-        sd = str(cfg.get("snapshot_dir") or "").strip()
-    except Exception:  # pragma: no cover -- config never blocks snapshots
-        sd = ""
-    if not sd:
+    base = _configured_store()
+    if base is None:
         return data_dir("snapshots")
     tenant = current_tenant()
-    base = Path(sd).expanduser()
     return base / "tenants" / tenant if tenant else base
+
+
+def legacy_store_notice(store: Path) -> str:
+    """A warning when a client-bound deployment's own store is empty but the
+    shared pre-tenancy store still holds archives.
+
+    Archives there are not shown or restored: nothing records which client
+    made them, so serving them could expose another tenant's workspace. The
+    operator is told where they are instead. Only a deployment bound by its
+    client id (no explicit per-request tenant scope) is told; a tenant inside
+    a multi-tenant host never learns about the shared directory.
+    """
+    if explicit_tenant_id() or not current_tenant() or _snapshot_ids(store):
+        return ""
+    legacy = _shared_store()
+    if legacy == store or not _snapshot_ids(legacy):
+        return ""
+    log.warning(
+        "workspace_snapshot: snapshots from before tenant scoping remain in "
+        "%s and are not listed for this client; an operator can move the ones "
+        "that belong to this deployment into %s", legacy, store)
+    return (f"Snapshots made before this deployment was bound to its client id "
+            f"are still in {legacy} and are not shown here. An operator can "
+            f"move the ones that belong to this deployment into {store}.")
 
 
 def _slug(label: str) -> str:
@@ -71,9 +105,12 @@ def _snapshot_ids(store: Path) -> list[int]:
 def _next_id(store: Path) -> str:
     ids = _snapshot_ids(store)
     if len(ids) >= _MAX_SNAPSHOTS:
+        # The tool has no delete op and the store is outside the workspace,
+        # so say plainly who has to act: the model relays this to the user.
         raise ValueError(
-            f"snapshot store holds {len(ids)} snapshots (limit "
-            f"{_MAX_SNAPSHOTS}); remove old archives from {store} first")
+            f"the snapshot store is full ({len(ids)} of {_MAX_SNAPSHOTS} "
+            "snapshots), so no new snapshot was taken. An operator must remove "
+            f"old snapshots from {store} before another can be created.")
     return f"{max(ids, default=0) + 1:04d}"
 
 
@@ -202,12 +239,16 @@ def _resolved_within(base: Path, target: Path) -> bool:
     return True
 
 
-def restore_snapshot(store: Path, snap_id: str, dest: Path) -> dict:
+def restore_snapshot(store: Path, snap_id: str, dest: Path, *,
+                     legacy_in_place: bool = False) -> dict:
     """Extract a snapshot into ``dest`` with path-traversal protection.
 
     Files in ``dest`` that the snapshot lacks are deleted only when ``dest``
     is the directory the snapshot was taken from (an in-place rollback).
     Restoring into any other directory only creates and overwrites members.
+    An archive made before the source directory was recorded cannot prove
+    that; a caller that knows ``dest`` is its source (a release rollback)
+    passes ``legacy_in_place=True`` to keep the old reconciling behaviour.
     """
     archive = _resolve_archive(store, snap_id)
     dest = Path(dest)
@@ -260,12 +301,13 @@ def restore_snapshot(store: Path, snap_id: str, dest: Path) -> dict:
         log.warning(
             "restore_snapshot: skipped %d link member(s) not recreated in %s",
             skipped_links, dest)
-    in_place = bool(source) and Path(source) == dest.resolve()
+    in_place = (Path(source) == dest.resolve()) if source else legacy_in_place
     removed = _reconcile(dest, members_seen) if in_place else 0
     m = _ID_RE.match(archive.name[: -len(".tar.gz")])
     return {"id": f"snap-{m.group(1)}" if m else archive.name,
             "restored": restored, "skipped_links": skipped_links,
-            "removed": removed, "reconciled": in_place, "dest": str(dest)}
+            "removed": removed, "reconciled": in_place,
+            "source_recorded": bool(source), "dest": str(dest)}
 
 
 def _reconcile(dest: Path, members_seen: set[str]) -> int:
@@ -343,16 +385,27 @@ def _run(args: dict, sandbox=None) -> str:
                     f"{man['bytes']} bytes) -> {man['path']}")
         if op == "list":
             snaps = list_snapshots(store)
-            return _json.dumps(snaps, indent=2) if snaps else "(no snapshots)"
+            notice = legacy_store_notice(store)
+            out = _json.dumps(snaps, indent=2) if snaps else "(no snapshots)"
+            return f"{out}\n{notice}" if notice else out
         if op == "restore":
             dest = args.get("dest")
             if not dest:
                 return "ERROR: restore requires dest"
             res = restore_snapshot(store, args.get("id") or "",
                                    Path(_safe_path(sandbox, dest)))
-            return (f"restored {res['restored']} files from {res['id']} -> "
-                    f"{res['dest']} (removed {res['removed']} entries absent "
-                    f"from the snapshot)")
+            head = (f"restored {res['restored']} files from {res['id']} -> "
+                    f"{res['dest']}")
+            if res["reconciled"]:
+                return (f"{head} (removed {res['removed']} entries absent "
+                        f"from the snapshot)")
+            if not res["source_recorded"]:
+                return (f"{head}. Files added after the snapshot were KEPT: "
+                        "this snapshot predates source tracking, so restore "
+                        "cannot confirm this is its original directory.")
+            return (f"{head}. Files absent from the snapshot were kept: the "
+                    "destination is not the directory the snapshot was taken "
+                    "from.")
     except (ValueError, OSError, tarfile.TarError) as e:
         return f"ERROR: {e}"
     return f"ERROR: unknown op {op!r}"
