@@ -4,8 +4,9 @@ When a capability is revoked from a principal, every principal that holds that
 capability *only* by transitive delegation from the revoked holder must lose it
 too. Given a delegation graph (grants: principal -> grantee : capability) and a
 revocation (principal, capability), compute the full set of principals that
-transitively lose the capability via BFS over the grant edges for that
-capability. Deterministic and offline.
+transitively lose the capability: those downstream of it that no other native
+holder still reaches along that capability's grant edges. Deterministic and
+offline.
 
 ops:
   - propagate(grants, principal, capability)  — grants: [{from,to,capability}].
@@ -22,6 +23,7 @@ def _propagate(grants: list[dict], principal: str, capability: str) -> str:
     # Build the in-edges for THIS capability only: who granted the capability
     # TO each principal. A principal can hold it via several grantors.
     in_sources: defaultdict[str, set[str]] = defaultdict(set)
+    out_edges: defaultdict[str, set[str]] = defaultdict(set)
     nodes: set[str] = set()
     for g in grants:
         if not isinstance(g, dict):
@@ -33,26 +35,28 @@ def _propagate(grants: list[dict], principal: str, capability: str) -> str:
         if not src or not dst:
             continue
         in_sources[dst].add(src)
+        out_edges[src].add(dst)
         nodes.add(src)
         nodes.add(dst)
 
-    # A principal loses the capability ONLY if it holds it solely by delegation
-    # from the revoked holder -- i.e. EVERY grantor that delegated it to them has
-    # also lost it. A principal with a surviving (independent) grant path, or a
-    # native holder with no in-edges, keeps it. This is the fixpoint of
-    # "lose iff all your grantors lost it"; the earlier BFS over-revoked anyone
-    # merely reachable from the revoked holder, ignoring alternative paths.
-    lost: set[str] = {principal}
-    changed = True
-    while changed:
-        changed = False
-        for n in nodes:
-            if n in lost or n == principal:
-                continue
-            srcs = in_sources.get(n)
-            if srcs and srcs <= lost:  # all of n's grantors have lost it
-                lost.add(n)
-                changed = True
+    def _reach(starts: set[str]) -> set[str]:
+        seen = set(starts)
+        queue = list(starts)
+        while queue:
+            for nxt in out_edges.get(queue.pop(), ()):
+                if nxt != principal and nxt not in seen:
+                    seen.add(nxt)
+                    queue.append(nxt)
+        return seen
+
+    # A principal keeps the capability iff some native holder (a node with no
+    # grantor, other than the revoked one) still reaches it along grant edges
+    # that do not pass through the revoked holder. Everyone downstream of the
+    # revoked holder without such a path loses it -- including principals that
+    # only granted it to each other in a cycle.
+    roots = {n for n in nodes if n != principal and not in_sources.get(n)}
+    surviving = _reach(roots)
+    lost = (_reach({principal}) - surviving) | {principal}
 
     affected = sorted(lost - {principal})
     if not affected:
@@ -101,8 +105,8 @@ def capability_revocation() -> Tool:
             "Propagate a capability revocation through a delegation graph. "
             "op=propagate with 'grants' ([{from,to,capability}]), 'principal' "
             "(the revoked holder), and 'capability'. Returns every principal "
-            "that transitively loses the capability (BFS over that capability's "
-            "grant edges). Deterministic, offline."
+            "that transitively loses the capability (no surviving grant path from "
+            "another native holder). Deterministic, offline."
         ),
         input_schema=_SCHEMA,
         fn=_run,

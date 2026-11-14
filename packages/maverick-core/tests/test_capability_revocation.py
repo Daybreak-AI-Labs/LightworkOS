@@ -76,6 +76,18 @@ def test_cycle_terminates():
     assert "b" in out and "c" in out
 
 
+def test_mutual_grants_downstream_do_not_keep_capability():
+    # b and c granted x to each other, but their only root source was a.
+    grants = [
+        {"from": "a", "to": "b", "capability": "x"},
+        {"from": "b", "to": "c", "capability": "x"},
+        {"from": "c", "to": "b", "capability": "x"},
+    ]
+    out = _run(grants=grants, principal="a", capability="x")
+    assert "2 principal(s) transitively lose it" in out
+    assert "- b" in out and "- c" in out
+
+
 def test_errors():
     assert _run(grants="nope", principal="a", capability="x").startswith("ERROR")
     assert _run(grants=[], principal="", capability="x").startswith("ERROR")
