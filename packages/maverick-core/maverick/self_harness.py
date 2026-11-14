@@ -912,6 +912,17 @@ def forget_addendum(model_id: str, *, line: str | None = None,
     return True
 
 
+def _retirement_state(path: Path, *, strict: bool):
+    """Governed (strict) callers must see a corrupt store, not read it as
+    "nothing stale". A store from before line metadata existed has no sidecar:
+    its lines have no age, so nothing retires, as for any undated line."""
+    meta_path = _meta_path(path)
+    if (strict and not _world_routed(path) and not meta_path.exists()
+            and not meta_path.is_symlink()):
+        return _load_addenda_strict(path), {}
+    return _lifecycle_state(path, strict=strict)
+
+
 def retire_stale(*, older_than_days: float, model_id: str | None = None,
                  now: float | None = None, path: Path | None = None,
                  strict: bool = False, before_write=None, write_guard_factory=None) -> int:
@@ -931,9 +942,7 @@ def retire_stale(*, older_than_days: float, model_id: str | None = None,
     from .file_lock import cross_process_lock
     try:
         with _lock, cross_process_lock(p, strict=strict), _store_rmw_lock(p):
-            # Governed (strict) callers must see a corrupt store, not read it
-            # as "nothing stale".
-            add, meta = _lifecycle_state(p, strict=strict)
+            add, meta = _retirement_state(p, strict=strict)
             after = dict(add)
             before_meta = {key: dict(row) for key, row in meta.items()}
             for m, block in list(add.items()):

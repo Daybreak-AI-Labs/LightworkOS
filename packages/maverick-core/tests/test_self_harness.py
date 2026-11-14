@@ -991,6 +991,19 @@ def test_retire_keeps_refreshed_line(monkeypatch, store):
     assert "kept line" in sh.recall_addendum("M", store)
 
 
+def test_strict_retire_on_pre_metadata_store_retires_nothing_but_refuses_corruption(store):
+    import time
+    # A store from before line metadata existed: lines have no age, so none retire.
+    sh._write_addenda({"M": sh._ADDENDUM_HEADER + "\n- legacy line"}, store)
+    assert not sh._meta_path(store).exists()
+    assert sh.retire_stale(older_than_days=1, now=time.time() + 86400, path=store,
+                           strict=True) == 0
+    assert "legacy line" in sh.load_addenda(store)["M"]
+    sh._meta_path(store).write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError):
+        sh.retire_stale(older_than_days=1, path=store, strict=True)
+
+
 # ---------- conflict detection (advisory) ----------
 
 def test_find_conflicts_flags_opposite_polarity_same_topic():
