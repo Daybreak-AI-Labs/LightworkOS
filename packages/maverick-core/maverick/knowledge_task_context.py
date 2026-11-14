@@ -135,7 +135,8 @@ def _materialize(goal, actor: str, *, action="analyze"):
         raise SourceContextUnavailable("The task owner or brief changed. Select sources again in a new analysis task.")
     refs = tuple(ResearchAssetRef(**ref) for ref in record["references"])
     return service().materialize_at_job_start(record["tenant"], actor, refs,
-        purpose=record["purpose"], action=action, job_id="task-" + str(goal.id))
+        purpose=record["purpose"], action=action, job_id="task-" + str(goal.id),
+        derivative_read=action == "read" and record["phase"] == "published")
 
 
 def require_read(goal, actor: str | None, *, action="read"):
@@ -143,9 +144,7 @@ def require_read(goal, actor: str | None, *, action="read"):
         if not actor:
             raise SourceContextUnavailable("This analysis requires a named account with current source access.")
         try:
-            # Opening this derivative revalidates the exact analyze permission
-            # that produced it. It does not grant a new raw-source read right.
-            _materialize(goal, actor, action="analyze" if action == "read" else action)
+            _materialize(goal, actor, action=action)
         except Exception as exc:
             raise SourceContextUnavailable("Current source permission is required to open this analysis. Request fresh evidence or access.") from exc
 

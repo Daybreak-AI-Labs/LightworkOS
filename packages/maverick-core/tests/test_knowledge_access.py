@@ -2257,3 +2257,26 @@ def test_recovery_delivers_the_confirmed_source_revocation_hook(access):
         decision="approve", evidence_sha256=evidence)
     assert delivered == [(request["id"], "revoked")]
     assert done["status"] == "approved"
+
+
+@pytest.mark.parametrize("constraint", ["no_human_display", "machine_use_only", "no_read"])
+def test_published_derivatives_keep_current_human_display_constraints(access, monkeypatch, constraint):
+    from dataclasses import asdict
+
+    from maverick import knowledge_task_context as context
+
+    service, registry, rights, _ = access
+    reference = _dataset(registry, rights, "tenant-a", "restricted-analysis",
+        action="analyze", usage_constraints=(constraint,))
+    goal = SimpleNamespace(id=1, title="Analysis", description="Compare evidence", created_at=1,
+                           owner="user:alice", status="done")
+    monkeypatch.setattr(context, "enabled", lambda: True)
+    monkeypatch.setattr(context, "service", lambda: service)
+    with tenant_scope(tenant="tenant-a"):
+        context._write(goal.id, {"tenant": "tenant-a", "owner": goal.owner, "brief_sha": context._brief(goal),
+            "references": [asdict(reference)], "purpose": PURPOSE, "phase": "published", "result": "Restricted derivative"})
+        # The source is legitimately usable by an analysis worker, but not for display.
+        assert service.materialize_at_job_start("tenant-a", goal.owner, [reference],
+            purpose=PURPOSE, action="analyze", job_id="check-analysis")["count"] == 1
+        with pytest.raises(context.SourceContextUnavailable):
+            context.read_analysis(SimpleNamespace(get_goal=lambda _: goal), goal.id, goal.owner)

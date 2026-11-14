@@ -1189,12 +1189,17 @@ class KnowledgeAccessService:
         action: str,
         job_id: str,
         retrieval_query: str | None = None,
+        derivative_read: bool = False,
     ) -> dict:
         """Revalidate and materialize an exact catalogue inside a queued worker.
 
         Call this after a job is claimed, immediately before the worker may use
         source material.  The method returns no partial catalogue if any source
         changed while the job waited.
+
+        A published derivative still requires human-read authority and every
+        read constraint. Its inputs are projected under separate current
+        analysis authority; a narrowed view cannot authorize an older result.
         """
 
         canonical = canonical_tenant_id(tenant)
@@ -1204,7 +1209,20 @@ class KnowledgeAccessService:
             retrieval_query = _text(retrieval_query, "knowledge query", 512, required=False)
         if action not in _ACTIONS:
             raise ValueError("knowledge job action is unsupported")
+        if derivative_read and action != "read":
+            raise ValueError("a derivative display requires the read action")
         with tenant_scope(tenant=canonical), self.registry.effect_fence():
+            display_authority = None
+            display_admissions = ()
+            if derivative_read:
+                display_authority = self._actor_authority(
+                    canonical, actor, action="read", purpose=purpose, human_display=True,
+                )
+                display_admissions = tuple(
+                    self._admission(canonical, reference, purpose=purpose, action="read")
+                    for reference in exact
+                )
+                action = "analyze"
             authority = self._actor_authority(
                 canonical,
                 actor,
@@ -1225,6 +1243,23 @@ class KnowledgeAccessService:
                 for reference in exact
             ]
             with self.registry.effect_fence():
+                if derivative_read:
+                    # The stored derivative has no per-input visibility manifest.
+                    # Current access to the entire exact source is sufficient;
+                    # access to a filtered subset cannot prove access to its result.
+                    if any(item["permissions_withheld"] != 0 for item in items):
+                        raise KnowledgeAccessDenied(
+                            "current item permissions do not cover the saved analysis"
+                        )
+                    current_admissions = tuple(
+                        self._admission(canonical, reference, purpose=purpose, action="read")
+                        for reference in exact
+                    )
+                    current_display = self._actor_authority(
+                        canonical, actor, action="read", purpose=purpose, human_display=True,
+                    )
+                    if current_admissions != display_admissions or current_display != display_authority:
+                        raise KnowledgeAccessDenied("human-display authority changed during knowledge access")
                 self._revalidate_return_set(
                     canonical,
                     authority,
