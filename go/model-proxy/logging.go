@@ -17,12 +17,13 @@ func (c *Config) scrubError(message string) string {
 	}
 	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
 	pairs := make([]string, 0, 2*len(secrets))
-	for _, secret := range secrets {
-		if secret != "" {
-			pairs = append(pairs, secret, "[REDACTED:configured_credential]")
+	for _, value := range secrets {
+		if value != "" {
+			pairs = append(pairs, value, "[REDACTED:configured_credential]")
 		}
 	}
-	return scrub(strings.NewReplacer(pairs...).Replace(message))
+	// Preserve recognizable credential shapes before replacing overlapping literals.
+	return strings.NewReplacer(pairs...).Replace(scrub(message))
 }
 
 // UpstreamLogLabel reports only the configured origin. Userinfo, path, query

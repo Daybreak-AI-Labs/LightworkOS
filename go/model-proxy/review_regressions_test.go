@@ -62,4 +62,16 @@ func TestHandleRedactsConfiguredOpaqueCredentials(t *testing.T) {
 			t.Error("the error response exposed an explicitly configured credential")
 		}
 	}
+	for _, tc := range []struct{ token, message, redaction, forbidden string }{
+		{"abcdefghijklmnopqrstuv", "upstream rejected sk-abcdefghijklmnopqrstuvxyz12345", "[REDACTED:openai_key]", "xyz12345"}, // pragma: allowlist secret -- synthetic overlap regression
+		{"Authorization", "Authorization: Bearer abcdef0123456789ABCDEF", "[REDACTED:bearer]", "abcdef0123456789ABCDEF"},       // pragma: allowlist secret -- synthetic bearer regression
+	} {
+		cfg.ClientToken = tc.token
+		status, _, body := Handle(cfg, "POST", "/v1/messages", map[string]string{
+			"Authorization": "Bearer " + cfg.ClientToken,
+		}, nil, &fakeUpstream{err: fmt.Errorf("%s", tc.message)})
+		if status != 502 || !strings.Contains(string(body), tc.redaction) || strings.Contains(string(body), tc.forbidden) {
+			t.Error("configured-value replacement weakened existing credential redaction")
+		}
+	}
 }
