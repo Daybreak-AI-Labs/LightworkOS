@@ -696,7 +696,7 @@ _NET_TOOL_URL_ARGS: dict[str, str] = {
     "websocket": "url",
     "http_fetch": "url",
     "browser": "url",
-    "oidc": "token_url",
+    "oidc": "authorize_url",
     "oauth_helper": "token_url",
 }
 
@@ -2270,6 +2270,19 @@ class Agent:
             enable_mobile_tools=bool(caps.get("mobile_tools", False)),
             enable_ros=bool(caps.get("ros", False)),
         )
+        # Pin the built-in factory bindings before additional registrations.
+        # The factory checks the actual configured base URL on every request;
+        # a same-named replacement must not inherit that authority.
+        from .tools._lazy import LazyTool
+        from .tools.enterprise_connectors import enterprise_connector_descriptors
+        descriptors = {d.name: d for d in enterprise_connector_descriptors()}
+        self._host_scoped_connectors = {
+            name: (tool, tool.fn) for name, tool in reg._tools.items()
+            if isinstance(tool, LazyTool) and name in descriptors
+            and tool.descriptor.factory_module == descriptors[name].factory_module
+            and tool.descriptor.factory_name == descriptors[name].factory_name
+            and tool.descriptor.factory_kwargs == descriptors[name].factory_kwargs
+        }
         # Cross-agent bus tools, bound to this agent's id so send records
         # the right sender and recv drains the right inbox.
         reg.register(send_to_agent(self.name, ctx=self.ctx))
@@ -2643,6 +2656,7 @@ class Agent:
         )
 
         workdir = _Path(getattr(self.ctx.sandbox, "workdir", "."))
+        self._patch_applied_in_place = False
         blocks = parse_blocks(final)
         if blocks:
             import subprocess as _sub
@@ -2714,8 +2728,19 @@ class Agent:
                     ))
                     return None, summary
 
+            elif not self._verification_workdir_clean():
+                summary = ApplySummary()
+                summary.results.append(ApplyResult(
+                    ok=False,
+                    block=SearchReplaceBlock(path="<workdir>", search="", replace=""),
+                    reason=("In-place patch verification requires a clean workdir. "
+                            "Uncommitted work was preserved; no blocks were applied."),
+                ))
+                return None, summary
+
             try:
                 summary = apply_blocks(blocks, apply_workdir, atomic=True)
+                self._patch_applied_in_place = not used_temp_worktree
                 if not summary.ok:
                     return None, summary
                 touched_paths = sorted(summary.files_touched)
@@ -2819,6 +2844,14 @@ class Agent:
         from pathlib import Path as _Path
         sandbox = self.ctx.sandbox
         workdir = _Path(getattr(sandbox, "workdir", "."))
+        if (getattr(self, "_verification_requires_clean", False)
+                and not self._verification_workdir_clean()):
+            self.ctx.blackboard.post(
+                self.name, "error",
+                "Patch verification refused: the workdir has uncommitted work "
+                "or its clean state could not be checked. No patch was applied.",
+            )
+            return False
         if sandbox is not None and hasattr(sandbox, "exec"):
             import os as _os
             import tempfile as _tempfile
@@ -2864,6 +2897,27 @@ class Agent:
                 env=git_env_without_user_config(),
             )
             return ap.returncode == 0
+        except Exception:
+            return False
+
+    def _verification_workdir_clean(self) -> bool:
+        """Only a verified clean tree may enter apply/test/reset verification."""
+        sandbox = self.ctx.sandbox
+        try:
+            if sandbox is not None and hasattr(sandbox, "exec"):
+                result = sandbox.exec("git status --porcelain --untracked-files=all", timeout=30)
+                return result.exit_code == 0 and not result.stdout.strip()
+            import subprocess
+
+            from .git_safety import git_env_without_user_config, git_metadata_may_execute_filters
+            workdir = Path(getattr(sandbox, "workdir", "."))
+            if git_metadata_may_execute_filters(workdir):
+                return False
+            result = subprocess.run(
+                ["git", "-C", str(workdir), "status", "--porcelain", "--untracked-files=all"],
+                capture_output=True, timeout=30, env=git_env_without_user_config(),
+            )
+            return result.returncode == 0 and not result.stdout.strip()
         except Exception:
             return False
 
@@ -3163,7 +3217,8 @@ class Agent:
                 "current host restrictions. The tool was not executed."
             )
         if (cap is not None and cap.allow_hosts and name not in _NET_TOOL_URL_ARGS
-                and name not in _HOST_SCOPED_LOCAL_TOOLS):
+                and name not in _HOST_SCOPED_LOCAL_TOOLS
+                and not self._has_connector_host_guard(name)):
             from .audit import EventKind
             self._audit_tool_event(EventKind.CAPABILITY_DENIED, tool=name,
                                    principal=cap.principal, reason="host_scope_unclassified")
@@ -3174,7 +3229,20 @@ class Agent:
         url_arg = _NET_TOOL_URL_ARGS.get(name)
         if cap is None or url_arg is None:
             return None
-        raw = args.get(url_arg) if isinstance(args, dict) else None
+        # Retain the legacy token_url restriction as well as the real schema
+        # field. Supplying an allowed authorize_url cannot hide a denied alias.
+        url_args = (url_arg, "token_url") if name == "oidc" else (url_arg,)
+        for key in url_args:
+            if denial := self._url_host_denial(name, args.get(key) if isinstance(args, dict) else None, cap):
+                return denial
+        return None
+
+    def _has_connector_host_guard(self, name: str) -> bool:
+        binding = getattr(self, "_host_scoped_connectors", {}).get(name)
+        current = getattr(self.tools, "_tools", {}).get(name)
+        return bool(binding and current is binding[0] and current.fn is binding[1])
+
+    def _url_host_denial(self, name: str, raw, cap) -> str | None:
         host = None
         if isinstance(raw, str) and raw:
             try:  # malformed URLs (e.g. bad IPv6) raise -- skip, don't crash
@@ -3813,14 +3881,6 @@ class Agent:
             )
             execution_status = _tool_status(output)
             explicit_state = output.state if isinstance(output, ToolResultText) else None
-            await _dispatch_hooks(HookContext(
-                event=HookEvent.POST_TOOL_USE,
-                tool_name=name,
-                tool_args=args,
-                tool_result=output,
-                goal_id=self.ctx.goal_id,
-                agent_role=self.role,
-            ))
             if shield is not None:
                 try:
                     out_verdict = shield.scan_output(output)
@@ -3868,6 +3928,14 @@ class Agent:
             result_bytes(output)
             output, _redacted = _redact_secrets(output)
             result_bytes(output)
+            await _dispatch_hooks(HookContext(
+                event=HookEvent.POST_TOOL_USE,
+                tool_name=name,
+                tool_args=args,
+                tool_result=output,
+                goal_id=self.ctx.goal_id,
+                agent_role=self.role,
+            ))
             safe_name, _ = _redact_secrets(str(name)[:128])
             complete_output = output
             if (tracker := getattr(self.ctx, "ifc", None)) is not None:
@@ -3885,7 +3953,7 @@ class Agent:
             # the one terminal row.  A later delivery failure can then be
             # recorded honestly as post-effect rather than leaving a misleading
             # already-finalized "completed" disposition.
-            guard_note = self._loop_guard_note(name, args, output)
+            guard_note = self._loop_guard_note(name, args, complete_output)
             if not record_terminal(
                 status=execution_status,
                 disposition=(
@@ -4817,6 +4885,7 @@ class Agent:
         from .template_connections import recheck_active
         recheck_active()
         budget = self.ctx.budget
+        killswitch.check()
         if Agent._goal_cancelled(self):
             raise GoalCancelled("cancelled by the goal owner before dispatch")
         remaining = budget.remaining_wall()
@@ -5023,8 +5092,8 @@ class Agent:
         the question was answered. Wholesale-replacing `messages` with the
         checkpoint would silently discard the fresh brief and re-show the
         model exactly the state it was in when it asked -- the resumed run
-        re-asks the same question forever. `_save_checkpoint` always commits
-        at the top of the loop (before that step's LLM call), so the saved
+        re-asks the same question forever. `_save_checkpoint` commits at the
+        top of the loop and after completed tool results are appended, so the saved
         history always ends on a "user" turn and starts on one too; swapping
         just index 0 for the freshly-built one keeps that alternation intact
         while carrying the rest of the crashed/blocked run's history forward.
@@ -5523,7 +5592,8 @@ class Agent:
             # Reset AFTER capturing the diff so the verifier (and downstream
             # evaluators) see HEAD when they re-apply.
             if sr_summary is not None:
-                await asyncio.to_thread(self._reset_workdir)
+                if getattr(self, "_patch_applied_in_place", False):
+                    await asyncio.to_thread(self._reset_workdir)
                 try:
                     self.ctx.blackboard.post(self.name, "tool_signal", "search_replace_used=1")
                 except Exception:
@@ -5639,7 +5709,7 @@ class Agent:
             patch = getattr(self, "_final_patch", None)
             if patch is None:
                 patch, _ = await asyncio.to_thread(self._extract_and_apply_patch, final)
-                if patch is not None:
+                if patch is not None and getattr(self, "_patch_applied_in_place", False):
                     # Applied to disk; reset for the verifier's own apply.
                     await asyncio.to_thread(self._reset_workdir)
             if patch is None:
@@ -5659,7 +5729,11 @@ class Agent:
                     verifier_critique="no valid diff in FINAL",
                 )
 
-            apply_ok = await asyncio.to_thread(self._git_apply, patch)
+            self._verification_requires_clean = True
+            try:
+                apply_ok = await asyncio.to_thread(self._git_apply, patch)
+            finally:
+                self._verification_requires_clean = False
             test_result = None
             if apply_ok:
                 try:
@@ -5730,7 +5804,7 @@ class Agent:
             if calibration.collect_from_coding_enabled():
                 from .verifier import verify_proposal
                 _cv = await verify_proposal(
-                    self.brief, final, self.ctx.llm,
+                    self.brief, final, SimpleNamespace(complete_async=self._complete_guarded),
                     self.ctx.budget, proposer_model=self.model,
                 )
                 calibration.record_sample(
@@ -5818,7 +5892,7 @@ class Agent:
             # A high-disagreement swarm fan-out asks FINAL to face the
             # cross-family ensemble.
             verdict = await verify_final(
-                self.brief, final, self.ctx.llm, self.ctx.budget,
+                self.brief, final, SimpleNamespace(complete_async=self._complete_guarded), self.ctx.budget,
                 proposer_model=self.model,
                 force_ensemble=bool(
                     getattr(self.ctx, "escalate_verification", False)
@@ -6033,14 +6107,20 @@ class Agent:
         )
         tool_results: list[dict] = []
         blocked = False
-        if run_parallel:
-            await self._dispatch_parallel(st, step, resp, tool_results)
-        else:
-            stopped, blocked = await self._dispatch_serial(st, step, resp, tool_results)
-            if stopped is not None:
-                return stopped
-        self._append_turn_trailers(st, step, tool_results)
-        st.messages.append({"role": "user", "content": tool_results})
+        try:
+            if run_parallel:
+                await self._dispatch_parallel(st, step, resp, tool_results)
+            else:
+                stopped, blocked = await self._dispatch_serial(st, step, resp, tool_results)
+                if stopped is not None:
+                    return stopped
+            self._append_turn_trailers(st, step, tool_results)
+            st.messages.append({"role": "user", "content": tool_results})
+        finally:
+            # Stop paths append answers for pending tool uses too. Persist
+            # those results and spend before unwinding, just as for a full turn.
+            if st.messages and st.messages[-1].get("content") is tool_results:
+                self._save_checkpoint(st.ckpt, step=step + 1, messages=st.messages, ep_id=st.ep_id)
         # Speculative tool execution (opt-in via [tools] speculative): while
         # the model reads these results, re-run the side-effect-free reads
         # this agent keeps repeating so the next ask is a cache hit.
@@ -6204,7 +6284,8 @@ class Agent:
                 # Model-written arguments can decode to null, a list or a string.
                 output = (await self._run_tool(tc.name, tc.input) if isinstance(tc.input, dict)
                           else _NotExecutedToolResult("ERROR: tool input must be a JSON object"))
-            except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted) as exc:
+            except (AuditRefused, BudgetExceeded, UsageAccountingError, killswitch.Halted,
+                    GoalCancelled) as exc:
                 _stop_reason = "audit refused" if isinstance(exc, AuditRefused) else type(exc).__name__
                 self._answer_pending_tool_uses(
                     resp, messages, tool_results,
