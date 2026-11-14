@@ -2280,3 +2280,48 @@ def test_published_derivatives_keep_current_human_display_constraints(access, mo
             purpose=PURPOSE, action="analyze", job_id="check-analysis")["count"] == 1
         with pytest.raises(context.SourceContextUnavailable):
             context.read_analysis(SimpleNamespace(get_goal=lambda _: goal), goal.id, goal.owner)
+
+
+def test_handoff_recipient_with_read_only_access_opens_a_published_analysis(access, monkeypatch):
+    from dataclasses import asdict
+
+    from maverick import knowledge_task_context as context
+
+    service, registry, rights, _ = access
+    resolve_actor = service.actor_authority_resolver
+    withheld = {"user:bob": 0}
+
+    def read_only_recipient(tenant, actor, action, purpose):
+        if actor == "user:bob" and action != "read":
+            raise PermissionError("the recipient holds read access only")
+        return resolve_actor(tenant, actor, action, purpose)
+
+    class Projector:
+        def resolve_for_context(self, tenant, reference, admission, authority):
+            return KnowledgeDocument(tenant=tenant, reference=reference, content_sha256=admission.content_sha256,
+                title="Source", summary="Source text", claim_state="verified",
+                permissions_withheld=withheld.get(authority.principal, 0))
+
+    service.actor_authority_resolver = read_only_recipient
+    service.content_resolver = Projector()
+    monkeypatch.setattr(context, "enabled", lambda: True)
+    monkeypatch.setattr(context, "service", lambda: service)
+    analyzed = _dataset(registry, rights, "tenant-a", "analyzed-source", action="analyze")
+    not_analyzed = _dataset(registry, rights, "tenant-a", "exported-source", action="export")
+
+    def published(goal_id, reference):
+        goal = SimpleNamespace(id=goal_id, title="Analysis", description="Compare evidence", created_at=1,
+                               owner="user:alice", status="done")
+        context._write(goal.id, {"tenant": "tenant-a", "owner": goal.owner, "brief_sha": context._brief(goal),
+            "references": [asdict(reference)], "purpose": PURPOSE, "phase": "published", "result": "Derivative"})
+        return goal
+
+    with tenant_scope(tenant="tenant-a"):
+        goal = published(1, analyzed)
+        context.require_read(goal, "user:bob")  # what a conversation handoff checks for its recipient
+        withheld["user:bob"] = 1
+        with pytest.raises(context.SourceContextUnavailable):
+            context.require_read(goal, "user:bob")
+        withheld["user:bob"] = 0
+        with pytest.raises(context.SourceContextUnavailable):
+            context.require_read(published(2, not_analyzed), "user:bob")

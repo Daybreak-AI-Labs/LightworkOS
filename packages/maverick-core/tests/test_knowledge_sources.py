@@ -763,11 +763,13 @@ def test_published_remote_analysis_revalidates_original_analyze_authority(servic
     with pytest.raises(context.SourceContextUnavailable):
         context.read_analysis(world, goal.id, OWNER)
     _set_limits(monkeypatch, {})
-    for action in ("read", "analyze"):
-        allowed[action] = False
-        with pytest.raises(context.SourceContextUnavailable):
-            context.read_analysis(world, goal.id, OWNER)
-        allowed[action] = True
+    # The reader needs current read access; analysis is what the source's admission authorised.
+    allowed["read"] = False
+    with pytest.raises(context.SourceContextUnavailable):
+        context.read_analysis(world, goal.id, OWNER)
+    allowed["read"], allowed["analyze"] = True, False
+    assert context.read_analysis(world, goal.id, OWNER)["result"] == "Approved derivative"
+    allowed["analyze"] = True
     row = service.sources.get(identifier)
     service.sources.update(identifier, lambda current: current.update(projection_allowed=False),
         expected_revision=row["revision"], action="test.withdraw", actor=OWNER)
