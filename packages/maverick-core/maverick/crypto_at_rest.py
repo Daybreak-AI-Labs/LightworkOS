@@ -748,7 +748,13 @@ def _active_keyring_key() -> tuple[bytes, bytes] | None:
     """``(key, keyid)`` of the newest keyring key, or None if the ring is empty
     (then sealing uses the legacy single-key v1 path, unchanged)."""
     try:
-        keys = sorted(_keyring_dir().glob("*.key"))
+        # Only <16 hex>.key names are key ids: a stray ``backup.key`` or a short
+        # stem would otherwise make every seal raise, or seal unopenable data.
+        keys = sorted(
+            path for path in _keyring_dir().glob("*.key")
+            if len(path.stem) == 2 * _KEYID_BYTES
+            and all(c in "0123456789abcdef" for c in path.stem.lower())
+        )
     except OSError:
         return None
     if not keys:

@@ -613,6 +613,16 @@ def test_rotation_refuses_while_the_key_is_injected(monkeypatch, tmp_path):
     assert not (tmp_path / "keys" / "at_rest.d").exists()
 
 
+@requires_crypto
+def test_a_stray_keyring_file_is_not_an_active_key(tmp_path):
+    ring = tmp_path / "keys" / "at_rest.d"
+    ring.mkdir(parents=True)
+    (ring / "backup.key").write_text("00" * 32)
+    (ring / "ab.key").write_text("00" * 32)
+    blob = car.seal(b"x")
+    assert car.unseal(blob) == b"x"
+
+
 def test_no_keyring_keeps_v1_format():
     # With no keyring, seal() produces the legacy v1 header (no behaviour change).
     blob = car.seal(b"hello")
