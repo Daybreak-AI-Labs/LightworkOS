@@ -68,7 +68,11 @@ def _is_local_grpc_target(target: str) -> bool:
     # creates insecure channels, so keep it to loopback names/addresses.
     parsed = urlparse(t)
     host = parsed.hostname
-    if host is None:
+    if parsed.scheme == "dns":
+        # dns:[//dns-server/]host:port -- the authority names the DNS server,
+        # not the endpoint, so judge the endpoint in the path.
+        host = parsed.path.lstrip("/").rsplit(":", 1)[0].strip("[]")
+    elif host is None:
         if t.startswith(("ipv4:", "ipv6:")):
             host = t.split(":", 1)[1].rsplit(":", 1)[0].strip("[]")
         else:

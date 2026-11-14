@@ -530,3 +530,14 @@ def test_runtime_protoc_disabled_stops_plugin_stub_generation(monkeypatch):
     with pytest.raises(RuntimeError, match="MAVERICK_NO_RUNTIME_PROTOC"):
         gph._load_stubs()
     assert generated == []
+
+
+@pytest.mark.parametrize("target,local", [
+    ("dns://127.0.0.1/evil.example:50051", False),
+    ("dns:///evil.example:50051", False),
+    ("dns:///localhost:50051", True),
+    ("dns://8.8.8.8/127.0.0.1:50051", True),
+    ("127.0.0.1:50051", True),
+])
+def test_dns_targets_are_judged_by_endpoint_not_dns_server(target, local):
+    assert gph._is_local_grpc_target(target) is local
