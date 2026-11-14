@@ -663,3 +663,10 @@ def test_tenant_seal_through_cloud_kms(monkeypatch, tmp_path):
     assert b"phi-data" not in blob
     assert tenant_kms.unseal_for_tenant("acme", blob, kms=kms) == b"phi-data"
     tenant_kms._clear_cache()
+
+
+def test_vault_refuses_remote_cleartext_before_using_credentials():
+    with pytest.raises(EncryptionUnavailable, match="HTTPS"):
+        kms_backends.VaultTransitKMS(key_id="key", address="http://vault.example", client=_FakeVault())
+    assert kms_backends.VaultTransitKMS(key_id="key", address="http://127.0.0.1:8200", client=_FakeVault())
+    assert kms_backends.VaultTransitKMS(key_id="key", address="https://vault.example", client=_FakeVault())

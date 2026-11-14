@@ -57,6 +57,14 @@ def _discard_torn_tail(fd, end):
 
 
 def _append(path, row):
+    # The caller holds the same process-shared journal lock used by readers.
+    # Retain the complete read window before opening the append descriptor, so
+    # replacement cannot strand a confirmed append on the old inode.
+    if Path(path).exists() and Path(path).stat().st_size > 2 * _MAX_TAIL_BYTES:
+        from .file_lock import atomic_write_bytes
+
+        retained = _tail_lines(path, _MAX_ROWS)
+        atomic_write_bytes(path, b"\n".join(retained) + (b"\n" if retained else b""))
     raw = (json.dumps(row, sort_keys=True) + "\n").encode("utf-8")
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_APPEND | getattr(os, "O_BINARY", 0), 0o600)
     try:

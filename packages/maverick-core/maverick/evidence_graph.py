@@ -510,6 +510,7 @@ def _ingest(
         "schema": _SCHEMA,
         **payload,
         "observed_at": observed,
+        "created_by": ingest_actor,
         "payload_sha256": digest,
         "status": "approved" if review else "pending_review",
         "review": review,
@@ -563,6 +564,10 @@ def decide(
     human = _required(reviewer, "reviewer", 4096)
 
     def _mutate(record: dict[str, Any]) -> None:
+        if not str(record.get("created_by") or "").strip():
+            raise ValueError("The original evidence ingester is unavailable; submit new evidence for review")
+        if str(record.get("created_by") or "").strip().casefold() == human.casefold():
+            raise ValueError("A different reviewer must assess the evidence")
         inherited_from = str(
             (record.get("review") or {}).get("inherited_from") or ""
         ).strip()
@@ -617,12 +622,59 @@ def get(node_id: str) -> dict[str, Any] | None:
 
 
 def list_nodes() -> list[dict[str, Any]]:
+    return [_present(row) for row in _bounded_graph_rows()]
+
+
+def _retire_superseded_security_node(row: dict[str, Any]) -> bool:
+    """Retire only a projection with a confirmed newer native authority."""
+    if row.get("source") != "security_ops" or row.get("evidence_type") != "reviewed_control_evidence":
+        return False
+    review = row.get("review") or {}
+    bound = _valid_authority_revision(review.get("authority_revision"))
+    if bound is None or not review.get("inherited_from") or row.get("_audit_pending"):
+        return False
+    try:
+        source, _decision, schema = _security_evidence_authority(review["inherited_from"])
+    except _InheritedAuthorityError:
+        return False  # Unavailable or unapproved source authority is not a retention decision.
+    if (source.get("id") != review["inherited_from"] or source.get("_audit_pending")
+            or review.get("authority_schema") != schema):
+        return False
+    revision = _valid_authority_revision(source.get("revision"))
+    if revision is None or revision < bound:
+        return False
+    if revision == bound:
+        if str(row.get("source_id") or "").endswith(_SECURITY_PROJECTION_VERSION):
+            return False
+        current_id = "EGN-" + hashlib.sha256(_canonical({
+            "source": "security_ops", "source_id": f"{source['id']}:review:{revision}{_SECURITY_PROJECTION_VERSION}",
+        })).hexdigest()[:24]
+        replacement = _STORE.get(current_id)
+        if not replacement or (_inherited_authority_validation(replacement) or {}).get("status") != "current":
+            return False
+    # The store publishes the digest-only retention receipt before deletion;
+    # an undelivered receipt or a concurrent revision keeps the original row.
+    retired = _STORE.update(row["id"], lambda value: value.update(
+        retention={"reason": "superseded_security_projection", "source_revision": revision}),
+        expected_revision=row["revision"], actor="system:evidence_graph", action="retire_superseded")
+    return bool(retired and not retired.get("_audit_pending")
+                and _STORE.delete(retired["id"], expected_revision=retired["revision"]))
+
+
+def _bounded_graph_rows() -> list[dict[str, Any]]:
+    from .authority_effects import authority_effect_fence
+
     rows = _STORE.list(limit=_MAX_GRAPH_NODES + 1)
-    if len(rows) > _MAX_GRAPH_NODES:
-        raise ValueError(
-            f"evidence graph exceeds the {_MAX_GRAPH_NODES}-node operational limit"
-        )
-    return [_present(row) for row in rows]
+    while len(rows) > _MAX_GRAPH_NODES:
+        with authority_effect_fence():
+            retired = sum(_retire_superseded_security_node(row) for row in rows)
+        if not retired:
+            raise ValueError(
+                f"evidence graph exceeds the {_MAX_GRAPH_NODES}-node operational limit; "
+                "no superseded security revision could be safely retired"
+            )
+        rows = _STORE.list(limit=_MAX_GRAPH_NODES + 1)
+    return rows
 
 
 def _coverage_report(
@@ -732,6 +784,7 @@ def collect_security_evidence(*, actor: str) -> list[dict[str, Any]]:
             observed_at=float(evidence.get("created_at") or time.time()),
             persisted_review=review,
         ))
+    _bounded_graph_rows()
     return imported
 
 

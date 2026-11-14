@@ -1,6 +1,7 @@
 """Real encrypted inbox records: exact receipts, policy, edits and checkpoint recovery."""
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 from types import SimpleNamespace
@@ -215,3 +216,73 @@ def test_owned_inventory_is_not_capped_by_other_owners_records(monkeypatch):
     monkeypatch.setattr(module, "_MAX_INVENTORY_SCAN", 100)
     with pytest.raises(ValueError, match="narrower"):
         module.owned_inventory("user:alice")
+
+
+def test_erasure_removes_message_fingerprints_and_replays_only_empty_tombstones(setup, monkeypatch):
+    world, goal, inbox, allowed = setup
+    token = uuid.uuid4().hex
+    item = send(inbox, goal, operation_id=token, text="yes")
+    with pytest.raises(RecordConflict):
+        send(inbox, goal, operation_id=token, text="different guess")
+    change_token = uuid.uuid4().hex
+    inbox.change(goal, item["id"], expected_revision=item["revision"], operation_id=change_token, action="cancel")
+    record, before = inbox._read(world.get_goal(goal))
+    assert before["operations"][token]["fingerprint"]
+    monkeypatch.setattr("maverick.ediscovery.assert_personal_chats_erasable", lambda *a, **kw: None)
+    module.erase_owned("user:owner", record["id"], record["revision"], uuid.uuid4().hex, actor="user:owner")
+    saved, erased = inbox._read(world.get_goal(goal))
+    tombstone = inbox.receipt(goal, token)["item"]
+    assert tombstone["state"] == "erased" and tombstone["text"] == "" and tombstone["files"] == []
+    assert tombstone["acknowledgement"] is None and tombstone["snapshot_version"] == ""
+    assert all("fingerprint" not in receipt for receipt in erased["operations"].values())
+    for guess in ("yes", "different guess"):
+        assert send(inbox, goal, operation_id=token, text=guess) == tombstone
+        assert inbox.change(goal, item["id"], expected_revision=item["revision"],
+                            operation_id=change_token, action="cancel", decision=guess) == tombstone
+    assert inbox._read(world.get_goal(goal)) == (saved, erased)
+    assert len(world.list_goals()) == 1 and world.get_goal(goal).status == "active"
+    with pytest.raises(RecordConflict):
+        send(inbox, goal, text="new operation still cannot replay a stale generation")
+    with pytest.raises(RecordConflict):
+        send(inbox, goal, operation_id=token, text="yes", item_id="unrelated-item", expected_revision=1)
+    with pytest.raises(RecordConflict):
+        inbox.change(goal, "unrelated-item", expected_revision=1, operation_id=change_token, action="cancel")
+    allowed["yes"] = False
+    with pytest.raises(PermissionError):
+        send(inbox, goal, operation_id=token, text="yes")
+    allowed["yes"] = True
+
+    # A missing fingerprint alone is not evidence that erasure happened.
+    for flaw in ("live", "mismatched", "private", "malformed", "no_erasure"):
+        invalid = copy.deepcopy(erased)
+        if flaw == "live":
+            invalid["items"][0]["state"] = "queued"
+        elif flaw == "mismatched":
+            for receipt in invalid["operations"].values():
+                receipt["item_id"] = "unrelated-item"
+        elif flaw == "private":
+            invalid["items"][0]["snapshot"] = {"description": "private retained text"}
+        elif flaw == "malformed":
+            invalid["operations"] = {token: None, change_token: {}}
+        else:
+            invalid.pop("erasures")
+        with monkeypatch.context() as patch:
+            patch.setattr(inbox, "_read", lambda root, value=invalid: (saved, value))
+            with pytest.raises(RecordConflict):
+                send(inbox, goal, operation_id=token, text="yes")
+            with pytest.raises(RecordConflict):
+                inbox.change(goal, item["id"], expected_revision=item["revision"],
+                             operation_id=change_token, action="cancel")
+    assert inbox._read(world.get_goal(goal)) == (saved, erased)
+
+
+def test_change_refuses_a_full_receipt_history_before_the_effect(setup):
+    world, goal, inbox, _ = setup
+    item = send(inbox, goal)
+    record, value = inbox._read(world.get_goal(goal))
+    for number in range(4000 - len(value["operations"])):
+        value["operations"][f"older-{number}"] = {"fingerprint": "0" * 64, "item_id": item["id"], "item": item}
+    inbox._save(record, value, actor="user:owner", action="test.history")
+    with pytest.raises(ValueError, match="history is full"):
+        inbox.change(goal, item["id"], expected_revision=item["revision"], operation_id=uuid.uuid4().hex, action="cancel")
+    assert inbox.state(goal)["items"][0]["state"] == "queued"
