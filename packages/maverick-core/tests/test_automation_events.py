@@ -74,6 +74,10 @@ def test_an_opaque_feed_rebaseline_is_logged(caplog):
                               feed="https://feeds.example/x")
     assert r.events == [] and ev._decode_cursor(r.cursor, "feed") == "c"
     assert "https://feeds.example/x" in caplog.text and "skipped 2" in caplog.text
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="maverick.automation_events"):
+        r = ev.diff_new_items([], cursor="a", id_field="id", feed="https://feeds.example/x")
+    assert r.events == [] and caplog.text == ""
 
 
 def test_http_json_source_with_injected_fetch(monkeypatch):

@@ -203,10 +203,11 @@ def diff_new_items(items: list[dict], cursor: str, id_field: str, *,
     else:
         # Otherwise what is before or after it cannot be told: re-baseline
         # instead of firing every listed (possibly historical) item as new.
-        log.warning(
-            "event feed %s: last-seen item %r is no longer listed; re-baselined "
-            "on %r and skipped %d listed item(s) without firing them",
-            feed or "(unnamed)", prior, newest, len(ids))
+        if ids:  # an empty page skips nothing
+            log.warning(
+                "event feed %s: last-seen item %r is no longer listed; re-baselined "
+                "on %r and skipped %d listed item(s) without firing them",
+                feed or "(unnamed)", prior, newest, len(ids))
         return PollResult(events=[], cursor=_encode_cursor("feed", newest))
     fresh.reverse()                                     # oldest-first for firing
     # Fire the OLDEST _MAX_EVENTS of a backlog and advance the cursor only to the
