@@ -13,6 +13,9 @@ from .paths import current_tenant_id_strict
 from .privacy_ops import RecordConflict
 
 STORE = GovernedRecordStore("deliverable_bundles", "DLB", "deliverable_bundle")
+# The inbox reads the whole namespace, so creation keeps it within this bound;
+# a full store archives its oldest settled (revoked) bundles to make room.
+_MAX_BUNDLES = 1000
 MAX_BYTES = 6 * 1024 * 1024
 MAX_ITEMS = 30
 LIFETIMES = (3600, 86400, 604800)
@@ -202,7 +205,8 @@ class DeliverableBundles:
             self.store.create({"id": identifier, "schema": "lightwork.deliverable-bundle.v1",
                                "owner": self.actor, "request_hash": request_hash, "status": "shared",
                                "expires_at": now + prepared["lifetime"], "acceptance": None,
-                               "operations": {}, "payload": prepared}, actor=self.actor, action="share_selected_bundle")
+                               "operations": {}, "payload": prepared}, actor=self.actor, action="share_selected_bundle",
+                              max_records=_MAX_BUNDLES)
         except RecordConflict:
             committed = self.store.get(identifier)
             if not committed or committed.get("request_hash") != request_hash:
@@ -261,8 +265,8 @@ class DeliverableBundles:
         return result
 
     def inbox(self):
-        rows = self.store.list(limit=1001)
-        if len(rows) > 1000:
+        rows = self.store.list(limit=_MAX_BUNDLES + 1)
+        if len(rows) > _MAX_BUNDLES:
             raise ValueError("The bundle inventory exceeds its current supported bound.")
         result = []
         for row in rows:
