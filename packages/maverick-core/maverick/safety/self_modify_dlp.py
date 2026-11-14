@@ -87,7 +87,8 @@ def contains_secret_material(text: str, *, unified_diff: bool = False) -> bool:
 
         for candidate in candidates:
             if (_has_lowercase_secret_literal(candidate)
-                    or scan(candidate) or scrub(candidate) != candidate):
+                    or scan(candidate)
+                    or scrub(candidate, key_values=False) != candidate):
                 return True
     except Exception:
         # Do not echo exception text/tracebacks: a failing detector may include

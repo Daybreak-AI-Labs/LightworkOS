@@ -132,6 +132,11 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # placeholder (JSON stays valid). An unquoted value must be a single token
     # ending the line or followed by a quote, comma, semicolon or closing
     # bracket, so prose such as "invalid password: user bob" is left alone.
+    # It must also mix letters and digits, be at least five characters and
+    # hold no opening bracket: source code names its variables after secrets
+    # (token = get_token(), def login(password: str), self.token = token) and
+    # rewriting those corrupts code that passes through here. An unquoted
+    # value made only of letters is therefore not redacted.
     # Values are bounded so a long run of key-like text cannot backtrack. A
     # value an earlier pattern already redacted is left alone.
     ("kv_secret", re.compile(
@@ -139,22 +144,27 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"client[_-]?secret|auth[_-]?token|access[_-]?token|refresh[_-]?token)"
         r"[\"']?[^\S\n]*[:=][^\S\n]*([\"'])?)"
         r"(?![\"']?\[REDACTED)"
-        r"((?(2)(?:(?!\2)[^\n]){1,4096}|[^\s,;\"'}\])]{1,512}(?=[^\S\n]*(?:$|[,;\"'}\])]))))",
+        r"((?(2)(?:(?!\2)[^\n]){1,4096}|"
+        r"(?=[^\s,;\"'}\])(\[{<]{0,511}[0-9])(?=[^\s,;\"'}\])(\[{<]{0,511}[A-Za-z])"
+        r"[^\s,;\"'}\])(\[{<]{5,512}(?=[^\S\n]*(?:$|[,;\"'}\])]))))",
     )),
 ]
 
 
-def scrub(text: str) -> str:
+def scrub(text: str, *, key_values: bool = True) -> str:
     """Return a copy of ``text`` with detected secrets replaced.
 
     The replacement preserves enough structure that the redacted result
     is still useful for debugging (you can see WHAT got redacted), but
-    the actual secret value is gone.
+    the actual secret value is gone. ``key_values=False`` leaves out the
+    lowercase key/value rule, for a caller that judges those pairs itself.
     """
     if not text:
         return text
     out = text
     for kind, pat in _PATTERNS:
+        if kind == "kv_secret" and not key_values:
+            continue
         if kind in ("bearer", "env_secret", "url_secret", "aws_secret_key", "jwt", "kv_secret"):
             # Keep the prefix (header name / KEY= / ?param= / text before a
             # token), redact the value.
