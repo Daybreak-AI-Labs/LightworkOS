@@ -226,6 +226,13 @@ class _ActionDataRefused(ValueError):
     """Substituted business data was refused before action dispatch."""
 
 
+_ACTION_DATA_REFUSED = (
+    "The data for this step contained a secret reference, so it was not sent. "
+    "The flow itself needs no change; check the data this run received. "
+    "Credentials reach a step only through Connections, never through run data."
+)
+
+
 def _render_param_value(value: Any, data: dict) -> Any:
     if isinstance(value, str):
         return render(value, data, allow_secrets=True)
@@ -246,7 +253,7 @@ def _render_params(node: FlowNode, data: dict) -> dict:
     except FlowCredentialRefused as exc:
         # The definition passed preflight. Refuse this step's untrusted data,
         # retaining ordinary error handling without permitting any dispatch.
-        raise _ActionDataRefused(str(exc)) from exc
+        raise _ActionDataRefused(_ACTION_DATA_REFUSED) from exc
     return values
 
 
