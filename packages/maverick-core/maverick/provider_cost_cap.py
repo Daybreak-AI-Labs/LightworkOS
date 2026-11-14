@@ -145,6 +145,21 @@ class ProviderAccountingUnavailable(RuntimeError):
         )
 
 
+class EarlierTenantLedgerUnreadable(ProviderAccountingUnavailable):
+    """A per-tenant ledger from an earlier version could not be folded in."""
+
+    def __init__(self, name: str):
+        RuntimeError.__init__(
+            self,
+            f"Provider spending recorded by an earlier version in {name} cannot "
+            "be read, so new calls with a configured cap are blocked. On the "
+            "Provider spending page, export the current accounting and repair it "
+            "with totals confirmed from final provider receipts, including the "
+            "spend recorded in that file; the repair marks it as reviewed.",
+        )
+        self.name = name
+
+
 class ProviderAttemptAlreadyAdmitted(ProviderAccountingUnavailable):
     """A durable operation attempt already owns the right to dispatch once."""
 
@@ -314,6 +329,26 @@ def _load_legacy(legacy: Path) -> dict:
     return _load_json(legacy)
 
 
+def _home_relative(path: Path) -> str:
+    from .paths import maverick_home
+    try:
+        return str(path.absolute().relative_to(maverick_home().absolute()))
+    except ValueError:
+        return str(path)
+
+
+def mark_tenant_fold_reviewed(path: Path) -> None:
+    """Record that a reviewed accounting repair of ``path`` covers the spend
+    in the earlier per-tenant ledgers, so they are not folded in again.
+    Callers hold ``path``'s cross-process lock and have just written the
+    operator-confirmed totals."""
+    journal = path.with_name(path.name + _TENANT_FOLD_SUFFIX)
+    reviewed = [_home_relative(legacy) for legacy in _legacy_tenant_ledgers(path)]
+    atomic_write_text(journal, json.dumps({
+        "state": "done", "reviewed": reviewed, "reviewed_at": time.time()}), mode=0o600)
+    _FOLDED.add(str(path.absolute()))
+
+
 def _fold_tenant_ledgers(path: Path) -> None:
     from .world_model_backends import is_postgres_configured
     if is_postgres_configured():
@@ -337,7 +372,11 @@ def _fold_tenant_ledgers(path: Path) -> None:
             period = state.get("period") or period_key()
             folded = json.loads(json.dumps(current))
             for legacy in _legacy_tenant_ledgers(path):
-                for name, total in _load_legacy(legacy).get(period, {}).items():
+                try:
+                    legacy_data = _load_legacy(legacy)
+                except Exception as exc:
+                    raise EarlierTenantLedgerUnreadable(_home_relative(legacy)) from exc
+                for name, total in legacy_data.get(period, {}).items():
                     bucket = folded.setdefault(period, {})
                     bucket[name] = _amount(bucket.get(name, 0.0)) + _amount(total)
             after = _ledger_digest(folded)

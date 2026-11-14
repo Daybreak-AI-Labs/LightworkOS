@@ -20,6 +20,7 @@ def ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(cap, "period_key", lambda now=None, period=None: "2026-09-06")
     monkeypatch.setattr(cap, "_shared_world", lambda: None)
     monkeypatch.setattr(cap, "_ledger_path", lambda: tmp_path / "provider_spend.json")
+    monkeypatch.setattr(cap, "_deployment_ledger_path", lambda: tmp_path / "provider_spend.json")
     monkeypatch.setattr(workspace_recovery, "_key", lambda: bytes(range(32)))
     monkeypatch.setattr(audit, "record", lambda *a, **kw: True)
     monkeypatch.setattr("maverick.installation_recovery.blockers", list)
@@ -289,3 +290,40 @@ def test_hold_review_completes_when_the_organization_reference_was_never_attache
     call = organization._load("review-workspace", key=key)["calls"][key]
     assert (call["state"], call["actual"]) == ("settled", 2.0)
     assert cap.check("openai").spent == 2
+
+
+def test_an_unreadable_earlier_tenant_ledger_is_named_and_repairable(tmp_path, monkeypatch):
+    """A corrupt pre-upgrade per-tenant ledger blocks calls (fail closed), the
+    refusal names the file, export still works, and a reviewed repair whose
+    confirmed totals include that spend lets the deployment resume."""
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "0")
+    monkeypatch.delenv("MAVERICK_TENANT", raising=False)
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    config.reset_config_cache()
+    monkeypatch.setattr(cap, "caps_from_config", lambda: {"openai": 20.0})
+    monkeypatch.setattr(cap, "_admission_cap", lambda name: 20.0)
+    monkeypatch.setattr(cap, "period_key", lambda now=None, period=None: "2026-09-06")
+    monkeypatch.setattr(cap, "_shared_world", lambda: None)
+    monkeypatch.setattr(workspace_recovery, "_key", lambda: bytes(range(32)))
+    monkeypatch.setattr(audit, "record", lambda *a, **kw: True)
+    monkeypatch.setattr("maverick.installation_recovery.blockers", list)
+    cap.record("openai", 2.0)                                   # deployment ledger is healthy
+    old = tmp_path / "tenants" / "acme" / "provider_spend.json"
+    old.parent.mkdir(parents=True)
+    old.write_text("{damaged", encoding="utf-8")
+    cap._FOLDED.clear()
+    with pytest.raises(cap.EarlierTenantLedgerUnreadable, match="tenants/acme/provider_spend.json"):
+        cap.check("openai")
+    status = spending.status()
+    assert status["available"] is False and "tenants/acme" in status["message"]
+    exported = spending.export_accounting()
+    kwargs = {"actor": "user:owner", "context": "context-a", "isolated": True}
+    review = spending.prepare_repair(exported, [{"provider": "openai", "period": "2026-09-06", "confirmed": 9}],
+                                     "Final invoices include the earlier workspace", receipts_complete=True, **kwargs)
+    spending.apply(review["id"], confirm=True, **kwargs)
+    cap._FOLDED.clear()                                         # a fresh process
+    assert cap.check("openai").spent == 9
+    assert old.read_text(encoding="utf-8") == "{damaged"        # evidence kept
+    config.reset_config_cache()
