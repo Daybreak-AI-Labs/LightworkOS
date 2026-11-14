@@ -254,7 +254,10 @@ class IRCChannel(Channel):
             if self.password:
                 await self._send_line(f"PASS {self.password}")
             await self._send_line("CAP LS 302")
-            await self._send_line("CAP REQ :account-tag message-tags")
+            # A CAP REQ is all-or-nothing, so ask for each capability on its
+            # own: a server without message-tags must not also drop account-tag.
+            await self._send_line("CAP REQ :account-tag")
+            await self._send_line("CAP REQ :message-tags")
             await self._send_line(f"NICK {self.nick}")
             await self._send_line(f"USER {self.nick} 0 * :Lightwork agent")
             await self._send_line("CAP END")
@@ -274,6 +277,10 @@ class IRCChannel(Channel):
             return None
         if is_ping(msg):
             await self._send_line(pong_for(msg))
+            return None
+        if msg.command == "CAP" and len(msg.params) >= 2 and msg.params[1] == "NAK":
+            log.warning("IRC server refused capability %s (account-tag is needed to authorise senders)",
+                        msg.trailing)
             return None
         if msg.command in {"330", "318", "401"} and len(msg.params) >= 2:
             pending = self._whois.get(msg.params[1].casefold())
