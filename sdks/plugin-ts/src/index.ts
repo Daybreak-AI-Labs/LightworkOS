@@ -303,7 +303,10 @@ function pctxElement(raw: unknown): PageElement {
     selector: pctxStr(o.selector, PCTX_MAX_SELECTOR),
   };
   if (typeof o.type === "string") el.type = pctxStr(o.type, 24);
-  if (typeof o.value === "string") el.value = pctxStr(o.value, PCTX_MAX_VALUE);
+  // The snapshot is untrusted: reapply the extension's password exclusion.
+  if (typeof o.value === "string" && el.type?.toLowerCase() !== "password") {
+    el.value = pctxStr(o.value, PCTX_MAX_VALUE);
+  }
   if (o.disabled === true) el.disabled = true;
   return el;
 }
