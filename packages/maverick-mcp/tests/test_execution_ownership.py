@@ -663,3 +663,45 @@ def test_a_finished_request_id_is_free_before_its_result_is_delivered():
         assert reused[0].result(timeout=5) == "again"
     finally:
         pool.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["reuse", "cancel"])
+@pytest.mark.parametrize("initialized", [False, True])
+async def test_same_credential_connections_have_independent_request_ids_and_cancellation(monkeypatch, operation, initialized):
+    server, app = http_server(monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def run(name, arguments):
+        if arguments.get("wait"):
+            entered.set()
+            while not release.wait(0.005):
+                killswitch.check()
+        return "finished"
+
+    server._dispatch_tool = run
+    headers = {"Authorization": "Bearer one-token"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 10001)), base_url="http://localhost") as one, \
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 10001 if initialized else 10002)), base_url="http://localhost") as two:
+        if initialized:
+            sessions = []
+            for client in (one, two):
+                reply = await client.post("/mcp", headers=headers, json={"id": 0, "method": "initialize"})
+                sessions.append(reply.headers["Mcp-Session-Id"])
+            assert sessions[0] != sessions[1]
+        call = asyncio.create_task(one.post("/mcp", headers=headers, json={"id": 7, "method": "tools/call", "params": {"name": "maverick_status", "arguments": {"wait": True}}}))
+        try:
+            await eventually(entered.is_set)
+            if operation == "reuse":
+                peer = await two.post("/mcp", headers=headers, json={"id": 7, "method": "tools/call", "params": {"name": "maverick_status"}})
+                assert "result" in peer.json()
+            await two.post("/mcp", headers=headers, json={"method": "notifications/cancelled", "params": {"requestId": 7}})
+            assert not server._requests.snapshot()[0]["cancelRequested"]
+            await one.post("/mcp", headers=headers, json={"method": "notifications/cancelled", "params": {"requestId": 7}})
+            stopped = await asyncio.wait_for(call, 2)
+            assert stopped.json()["error"]["code"] == -32800
+        finally:
+            release.set()
+            await asyncio.gather(call, return_exceptions=True)
+            server.shutdown()

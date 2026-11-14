@@ -48,3 +48,10 @@ def test_allowlist_default_empty(monkeypatch):
     monkeypatch.delenv("MAVERICK_MCP_ELICIT_ALLOWED_HOSTS", raising=False)
     monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {})
     assert _elicit_allowed_hosts() == frozenset()
+
+
+def test_elicitation_rejects_backslashes_and_userinfo_even_without_allowlist():
+    for allowed in (frozenset({"accounts.google.com"}), frozenset()):
+        for url in ("https://evil.example\\@accounts.google.com/x",
+                    "https://user@accounts.google.com/x", "https://@accounts.google.com/x"):
+            assert _elicit_host_allowed(url, allowed) is False
