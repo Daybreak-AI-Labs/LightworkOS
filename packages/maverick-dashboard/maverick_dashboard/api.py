@@ -11951,9 +11951,13 @@ async def trust_agent_remove(request: Request, agent_id: str) -> None:
     """Remove a managed external agent (admin). Config-file entries reappear
     after their managed override is deleted; the same 404 rule applies."""
     require_permission(request, "admin")
-    from maverick.agent_trust import remove_agent
+    from maverick.agent_trust import RevokedAgentRemovalRefused, remove_agent
 
-    if not remove_agent(agent_id):
+    try:
+        removed = remove_agent(agent_id)
+    except RevokedAgentRemovalRefused as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    if not removed:
         raise HTTPException(
             status_code=404,
             detail="this agent is not in the app-managed registry (it may be "
@@ -12098,8 +12102,13 @@ async def external_agent_unenroll(request: Request, agent_id: str) -> None:
     Prefer revoking (POST /trust/agents/{id}/revoke) to keep the entry."""
     require_permission(request, "admin")
     from maverick import external_agents as xa
+    from maverick.agent_trust import RevokedAgentRemovalRefused
 
-    if not xa.unenroll(agent_id):
+    try:
+        removed = xa.unenroll(agent_id)
+    except RevokedAgentRemovalRefused as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    if not removed:
         raise HTTPException(status_code=404, detail=f"agent {agent_id!r} is not enrolled")
 
 
