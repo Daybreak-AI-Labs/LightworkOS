@@ -330,6 +330,25 @@ def test_apply_that_raises_midway_leaves_the_harness_at_the_snapshot(monkeypatch
     assert hr.list_proposals(status="pending")[0]["id"] == second["id"]
 
 
+def test_apply_that_cannot_be_audited_is_rolled_back(monkeypatch):
+    _configure("enable = true\nrequire_approval = false")
+    proposal = hr.propose(_observation())
+    from maverick import audit
+
+    real = audit.audit_event
+
+    def _refuse(kind, *args, **kwargs):
+        if kind == audit.EventKind.HARNESS_REFINEMENT_APPLIED:
+            raise audit.AuditRefused("audit sink refused the write")
+        return real(kind, *args, **kwargs)
+
+    monkeypatch.setattr(audit, "audit_event", _refuse)
+    with pytest.raises(audit.AuditRefused):
+        hr.apply(proposal["id"])
+    assert hr.refinements() == []
+    assert hr.list_proposals(status="pending")[0]["id"] == proposal["id"]
+
+
 # ---- revert ---------------------------------------------------------------
 
 def test_revert_restores_prior_state_and_is_idempotent():

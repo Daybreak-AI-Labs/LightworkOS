@@ -920,18 +920,31 @@ def apply(proposal_id: str, *, applied_by: str = "",
             raise RefineError(
                 f"applying refinement {proposal_id!r} failed ({e}); the "
                 f"harness was restored from snapshot {snapshot}") from e
+        # Record the change before it is published as applied: a refinement
+        # that cannot be recorded is rolled back, as propose() discards one.
+        from .audit import EventKind, audit_event
+        try:
+            audit_event(EventKind.HARNESS_REFINEMENT_APPLIED, agent="harness_refine",
+                        goal_id=record.get("goal_id"), proposal=record["id"],
+                        target=record["target"], name=record["name"],
+                        digest=record["digest"], snapshot=snapshot,
+                        approval_id=record.get("approval_id"),
+                        applied_by=entry["applied_by"])
+        except Exception as e:
+            try:
+                _restore_snapshot(snapshot)
+            except Exception as restore_error:
+                raise RefineError(
+                    f"refinement {proposal_id!r} could not be recorded in the "
+                    f"audit log ({e}) AND the restore from snapshot {snapshot} "
+                    f"failed ({restore_error}); the harness may still carry the "
+                    "change — restore it by hand before running again") from e
+            raise  # restored: the change is not in force
         record.update(status="applied", applied_at=entry["applied_at"],
                       applied_by=entry["applied_by"], snapshot=snapshot)
         _confirm_decision(store, operation_id, entry["applied_at"])
         _save_store(store)
 
-    from .audit import EventKind, audit_event
-    audit_event(EventKind.HARNESS_REFINEMENT_APPLIED, agent="harness_refine",
-                goal_id=record.get("goal_id"), proposal=record["id"],
-                target=record["target"], name=record["name"],
-                digest=record["digest"], snapshot=snapshot,
-                approval_id=record.get("approval_id"),
-                applied_by=record["applied_by"])
     # Learned-state verification covers a self-refinement like any other
     # learned write — the same row shape the dream loop emits.
     audit_event(EventKind.LEARNING_UPDATE, agent="harness_refine",
