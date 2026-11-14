@@ -178,7 +178,10 @@ def migrate_world_db(
                     # A store sealed before the index rebuild existed can still
                     # hold plaintext terms there; clear them on any re-run.
                     _clear_leftover_index(conn)
-                _mark_migrated(db_path)
+                # Same re-check as the reseal path: plaintext written after the
+                # scan must not be covered by the strict-read marker.
+                if not _unsealed_remaining(conn):
+                    _mark_migrated(db_path)
             return report
         # Phase 2 -- optionally back up the plaintext, then reseal in place.
         if backup:
