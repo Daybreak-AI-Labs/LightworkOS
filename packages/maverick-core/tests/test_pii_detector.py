@@ -111,3 +111,14 @@ def test_pii_overlap_cluster_redacts_later_tail():
     assert matches[0].span == (0, 23)
     assert out == "[REDACTED:credit_card]"
     assert "555-2671" not in out
+
+
+def test_pii_email_scan_is_linear_on_runs_without_at_sign():
+    # Every word boundary in a long ``a.a.a.`` run used to start a scan to the
+    # end of the run (quadratic: about 50 s for this input). The local part
+    # is now bounded at 64 characters, its RFC 5321 limit.
+    from maverick.safety.pii_detector import scan
+
+    assert scan("a." * 100_000) == []
+    found = [m.kind for m in scan("mail first.last+tag@example.co.uk now")]
+    assert found == ["email"]

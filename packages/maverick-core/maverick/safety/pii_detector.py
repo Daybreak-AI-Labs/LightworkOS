@@ -31,8 +31,11 @@ class PIIMatch:
     value_preview: str
 
 
+# The local part is at most 64 characters (RFC 5321). Unbounded, every word
+# boundary inside a long run without ``@`` (``a.a.a.``) started a scan to the
+# end of the run, which is quadratic.
 _EMAIL = re.compile(
-    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+    r"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
 )
 # US phone: 555-555-5555, (555) 555-5555, +1 555 555 5555, 5555555555.
 # The leading (?<!\d) stops the pattern from matching a 10-digit *sub-run* of a
