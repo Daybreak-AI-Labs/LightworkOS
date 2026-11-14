@@ -114,9 +114,8 @@ def context_limit(model: str) -> int:
     Operator-declared ``[context.model_windows]`` entries win, then the
     built-in table, then the longest table id that the model id extends
     (``claude-sonnet-4-5-20250929`` -> ``claude-sonnet-4-5``), then the
-    smallest window of the model's family (an unknown ``claude-*`` id gets
-    the smallest Claude window, not the first one listed), then 32k as the
-    safe default when we have no clue.
+    first table entry of the model's family (text before the first ``-``),
+    then 32k as the safe default when we have no clue.
     """
     declared = _declared_windows()
     if model in declared:
@@ -130,10 +129,11 @@ def context_limit(model: str) -> int:
             best = key
     if best:
         return _MODEL_CONTEXT_LIMITS[best]
-    family = model.split("-")[0]
-    windows = [limit for key, limit in _MODEL_CONTEXT_LIMITS.items()
-               if key.split("-")[0] == family]
-    return min(windows) if windows else 32_000
+    # Family-prefix fallback for ids that extend no table id.
+    for prefix, limit in _MODEL_CONTEXT_LIMITS.items():
+        if model.startswith(prefix.split("-")[0]):
+            return limit
+    return 32_000
 
 
 def estimate_tokens(text: str) -> int:
