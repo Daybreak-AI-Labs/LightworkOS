@@ -93,6 +93,19 @@ class TestCompounding:
         assert len(v.coverage_trend) == 3
         assert v.improvement == 5  # 8 - 3
 
+    def test_malformed_ledger_lines_are_skipped(self, tmp_path, monkeypatch):
+        """Regression: valid JSON of the wrong shape raised out of compute()."""
+        import maverick.dreaming as dreaming
+        ledger = tmp_path / "hindsight.ndjson"
+        ledger.write_text(
+            '[]\n{"ts": "x"}\n{"ts": NaN}\n{"ts": 2000.0, "covered_now": "y"}\n'
+            '{"ts": 2000.0, "covered_now": 4}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(dreaming, "_tenant_path", lambda name, legacy: ledger)
+        v = workforce_value.compute(_World([], {}), window_days=100000, now=3001.0)
+        assert len(v.coverage_trend) == 1
+
     def test_improvement_none_without_history(self):
         v = workforce_value.compute(_World([], {}), window_days=90)
         assert v.improvement is None

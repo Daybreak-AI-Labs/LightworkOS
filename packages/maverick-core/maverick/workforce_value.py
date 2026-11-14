@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -212,15 +213,19 @@ def _coverage_trend(cutoff: float) -> list[tuple[str, int]]:
     try:
         with open(path, encoding="utf-8") as f:
             for raw in f:
+                # A malformed line (valid JSON of the wrong shape, a
+                # non-numeric or non-finite value) is skipped, never raised.
                 try:
                     d = json.loads(raw)
-                except json.JSONDecodeError:
+                    if not isinstance(d, dict):
+                        continue
+                    ts = float(d.get("ts", 0) or 0)
+                    if not math.isfinite(ts) or ts < cutoff:
+                        continue
+                    label = time.strftime("%Y-%m-%d", time.gmtime(ts))
+                    points.append((label, int(d.get("covered_now", 0) or 0)))
+                except (ValueError, TypeError, OverflowError, OSError):
                     continue
-                ts = float(d.get("ts", 0) or 0)
-                if ts < cutoff:
-                    continue
-                label = time.strftime("%Y-%m-%d", time.gmtime(ts))
-                points.append((label, int(d.get("covered_now", 0) or 0)))
     except OSError:
         return []
     return points
