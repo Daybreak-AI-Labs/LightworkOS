@@ -30,6 +30,7 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib  # type: ignore[no-redef]
 
+from ._envparse import coerce_bool
 from .agent_autonomy import AutonomyProfile
 from .safety.tool_risk import risk_rank, tool_risk
 
@@ -446,19 +447,55 @@ def render_workflow_prompt(workflow: list[WorkflowStep]) -> str:
     return "\n".join(lines)
 
 
+def extends_errors(name: str, patch: dict, base: DomainProfile | None,
+                   builtin_names) -> list[str]:
+    """Reject an ``extends`` link that would move or drop the envelope check.
+
+    An override that shares a built-in pack's name is always held to that
+    built-in, so it cannot name another base; and a base that cannot be
+    resolved must not turn the override into an unchecked standalone pack.
+    """
+    parent = str(patch.get("extends") or name)
+    if parent == name:
+        return []
+    if name in builtin_names:
+        return [f"{name!r} is a built-in agent; its override cannot extend {parent!r}"]
+    if base is None:
+        return [f"extends names {parent!r}, which is not an available agent"]
+    return []
+
+
+_MAX_EXTENDS_DEPTH = 32
+
+
 def _resolved_catalog() -> tuple[dict[str, DomainProfile], dict[str, list[str]]]:
-    """Resolve workspace packs, retaining rejected names for lint diagnostics."""
+    """Resolve workspace packs, retaining rejected names for lint diagnostics.
+
+    A pack is resolved after the workspace pack it extends, whatever the file
+    names, so a fork always inherits its base's restrictions.
+    """
     builtin = builtin_domains()
     resolved = dict(builtin)
     rejected: dict[str, list[str]] = {}
     raw = _load_raw_domains(user_dir(), rejected=rejected)
     for name in rejected:
         resolved.pop(name, None)
-    for name, patch in raw.items():
+    done: set[str] = set()
+
+    def resolve(name: str, depth: int) -> None:
+        if name in done:
+            return
+        done.add(name)
+        patch = raw[name]
+        parent = str(patch.get("extends") or name)
+        if parent != name and parent in raw and depth < _MAX_EXTENDS_DEPTH:
+            resolve(parent, depth + 1)
         try:
-            base = resolved.get(str(patch.get("extends") or name))
+            base = resolved.get(parent)
             profile = overlay_profile(base, patch) if base else _coerce(name, patch)
-            errors, _ = lint_profile(profile)
+            errors = extends_errors(name, patch, base, builtin)
+            if not errors:
+                errors, _ = lint_profile(profile)
             if base is not None and not errors:
                 errors.extend(_envelope_errors(base, profile))
         except Exception:
@@ -466,14 +503,17 @@ def _resolved_catalog() -> tuple[dict[str, DomainProfile], dict[str, list[str]]]
             # discovery or become active through the workspace catalog.
             rejected[name] = ["malformed domain pack fields"]
             resolved.pop(name, None)
-            continue
+            return
         if errors:
             # Editor saves already apply this lint gate. Apply it to files
             # placed or synced into the workspace directory as well.
             rejected[name] = errors
             resolved.pop(name, None)
-            continue
+            return
         resolved[name] = profile
+
+    for name in raw:
+        resolve(name, 0)
     return resolved, rejected
 
 
@@ -494,7 +534,7 @@ def rejected_workspace_domains() -> dict[str, list[str]]:
 # A pack's name prefix maps it to a business *suite* (finance, operations, legal,
 # ...), so an operator can enable/disable a whole suite at once. The installer
 # wizard writes the choices to ``[suites]`` in config.toml; ``enabled_domains``
-# applies them. Forward-looking entries (gtm_/hr_/...) are ready for those suites.
+# applies them.
 SUITE_PREFIXES: dict[str, str] = {
     "finance_": "finance",
     "ops_": "operations",
@@ -606,15 +646,22 @@ def _disabled_suites(cfg: dict | None = None) -> set[str]:
     """Suites turned OFF in the ``[suites]`` table (``suite = false``).
 
     Opt-out: a suite is enabled unless explicitly set false, so an empty/absent
-    ``[suites]`` table leaves every suite on (behaviour unchanged)."""
+    ``[suites]`` table leaves every suite on (behaviour unchanged). A value
+    that is not a recognised true turns its suite off, and an unreadable
+    configuration turns every suite off."""
+    every_suite = set(SUITE_PREFIXES.values())
     try:
         if cfg is None:
-            from .config import load_config
+            from .config import config_source_errors, load_config
             cfg = load_config() or {}
+            # Unreadable TOML loads as defaults; a suite the operator turned
+            # off must not come back on, so every suite stays off instead.
+            if config_source_errors(include_tenant=True):
+                return every_suite
         table = cfg.get("suites") or {}
     except Exception:
-        return set()
-    return {str(k) for k, v in table.items() if v is False}
+        return every_suite
+    return {str(k) for k, v in table.items() if not coerce_bool(v, default=False)}
 
 
 def enabled_domains(cfg: dict | None = None) -> dict[str, DomainProfile]:
@@ -798,7 +845,11 @@ def enforced_gate(profile: DomainProfile) -> str | None:
     the prompt playbook has no executable step cursor or pause/resume point.
     """
     terminal = profile.workflow[-1].gate if profile.workflow else None
-    return _strongest_gate((profile.output.gate, terminal))
+    # A gate value that is set but not recognised (a misspelling) still means
+    # someone asked for sign-off, so it is enforced as the strongest gate.
+    gates = [gate if not gate or gate in _VALID_GATES else "approval"
+             for gate in (profile.output.gate, terminal)]
+    return _strongest_gate(gates)
 
 
 def deliverable_release_allowed(
@@ -821,7 +872,7 @@ def _lint_output(out: OutputContract) -> list[str]:
                         f"{sorted(_VALID_SHAPES)} (it will render as prose)")
     if out.gate and out.gate not in _VALID_GATES:
         warnings.append(f"output.gate {out.gate!r} is not one of "
-                        f"{sorted(_VALID_GATES)}")
+                        f"{sorted(_VALID_GATES)} (it is enforced as approval)")
     if out.deliverable and not out.consumers:
         warnings.append("output declares a deliverable but no consumers: name "
                         "the roles who receive it so it can be routed")
