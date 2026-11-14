@@ -614,3 +614,28 @@ def test_root_mint_failure_installs_deny_all_grant(monkeypatch):
     assert cap.permits_path("/tmp/anything") is False
     assert cap.permits_host("example.com") is False
     assert ctx.capability is cap
+
+
+def test_role_scope_that_is_not_a_list_is_rejected(monkeypatch):
+    from maverick.capability import UnknownRoleError
+
+    _cfg(monkeypatch, {
+        "role_assignments": {"user:alice": "reader"},
+        "roles": {"reader": {"deny_tools": "shell"}},  # a string, not a list
+    })
+    with pytest.raises(UnknownRoleError, match="must be a list"):
+        capability_from_config("user:alice")
+
+
+def test_attenuating_globs_keeps_a_narrower_pattern_inside_the_parent():
+    from maverick.capability import Capability
+
+    parent = Capability(principal="p", allow_paths=frozenset({"src/*"}),
+                        allow_hosts=frozenset({"*.example.com"}))
+    child = parent.attenuate(allow_paths={"src/app/*", "docs/*"},
+                             allow_hosts={"api.example.com"})
+    assert child.permits_path("src/app/x.py") and not child.permits_path("docs/a.md")
+    assert child.permits_host("api.example.com") and not child.permits_host("evil.test")
+    # A pattern the parent cannot be shown to cover is not kept.
+    assert not Capability(principal="p", allow_paths=frozenset({"a?"})).attenuate(
+        allow_paths={"a*"}).permits_path("abc")

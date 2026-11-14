@@ -324,8 +324,25 @@ def _narrow_globs(
         return req
     if not req:
         return current
-    narrowed = current & req
+    # Each kept pattern lies inside a pattern of the other side, so the result
+    # never matches more than either side (and intersect stays symmetric).
+    narrowed = frozenset(
+        pat for side, other in ((req, current), (current, req)) for pat in side
+        if pat in other or any(_glob_within(pat, wider) for wider in other))
     return narrowed or frozenset({_DENY_ALL})
+
+
+def _glob_within(pattern: str, parent: str) -> bool:
+    """Whether every string ``pattern`` matches is also matched by ``parent``.
+
+    Decided only for a parent whose wildcards are all ``*``: its literal
+    characters then match the same literal characters of ``pattern``, and every
+    wildcard of ``pattern`` falls inside one of the parent's ``*`` spans
+    (``src/app/*`` within ``src/*``, ``api.example.com`` within
+    ``*.example.com``). Anything else is not kept (narrow-only)."""
+    if "?" in parent or "[" in parent or _DENY_ALL in (pattern, parent):
+        return False
+    return fnmatch(pattern, parent)
 
 
 def _have_crypto() -> bool:
@@ -571,9 +588,17 @@ def _apply_role(base: Capability, role_name: str) -> Capability:
 
     def _set(key: str) -> set[str] | None:
         v = scope.get(key)
-        return set(v) if isinstance(v, (list, tuple, set)) and v else None
+        if v is None or (isinstance(v, (list, tuple, set)) and not v):
+            return None
+        if not isinstance(v, (list, tuple, set)) or not all(isinstance(x, str) for x in v):
+            # A string or number here would otherwise be ignored and leave the
+            # principal with the whole deployment grant.
+            raise UnknownRoleError(f"invalid RBAC role {role_name!r}: {key} must be a list")
+        return set(v)
 
     risk = scope.get("max_risk")
+    if risk is not None and not isinstance(risk, str):
+        raise UnknownRoleError(f"invalid RBAC role {role_name!r}: max_risk must be a string")
     return base.attenuate(
         allow=_set("allow_tools"),
         deny=_set("deny_tools"),
