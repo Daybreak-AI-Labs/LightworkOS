@@ -2910,7 +2910,7 @@ class Agent:
         from .tool_token import tool_tokens_enabled
         if not tool_tokens_enabled():
             return None
-        from .tool_token import mint_tool_token, verify_tool_token
+        from .tool_token import _ReplayCache, mint_tool_token, verify_tool_token
         try:
             token = mint_tool_token(cap, name)
             # Same-process mint-then-verify: the token never crosses a trust
@@ -2918,7 +2918,11 @@ class Agent:
             # exchange fail-open when cryptography is unavailable (kernel rule),
             # while a present signature is still verified and the exported
             # verifier default stays require_signature=True for outside callers.
-            ok = verify_tool_token(token, name, require_signature=False)
+            # The token is verified once and discarded, so it needs no shared
+            # replay ledger: a private one keeps busy processes from filling
+            # the process-wide cache (which refuses tokens when full).
+            ok = verify_tool_token(token, name, require_signature=False,
+                                   replay_cache=_ReplayCache(maxsize=1))
         except Exception:  # pragma: no cover -- exchange must never brick a run
             return None
         if ok:
