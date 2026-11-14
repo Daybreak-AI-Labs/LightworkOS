@@ -222,13 +222,31 @@ def _credential_review(flow: Flow, resolve_flow):
     return (lambda reference: resolved.get(reference)) if resolve_flow else None
 
 
+class _ActionDataRefused(ValueError):
+    """Substituted business data was refused before action dispatch."""
+
+
+def _render_param_value(value: Any, data: dict) -> Any:
+    if isinstance(value, str):
+        return render(value, data, allow_secrets=True)
+    if isinstance(value, dict):
+        return {key: _render_param_value(item, data) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_render_param_value(item, data) for item in value]
+    return value
+
+
 def _render_params(node: FlowNode, data: dict) -> dict:
     _check_action_credentials(node.params)
-    values = {k: render(v, data, allow_secrets=True) if isinstance(v, str) else v
-              for k, v in (node.params or {}).items()}
+    values = _render_param_value(node.params or {}, data)
     # A data-key substitution must not silently hand an unresolved legacy
     # expression to a connector either. No second template evaluation occurs.
-    _check_action_credentials(values)
+    try:
+        _check_action_credentials(values)
+    except FlowCredentialRefused as exc:
+        # The definition passed preflight. Refuse this step's untrusted data,
+        # retaining ordinary error handling without permitting any dispatch.
+        raise _ActionDataRefused(str(exc)) from exc
     return values
 
 
@@ -543,6 +561,11 @@ def _run_work(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         try:
             result, outcome = _invoke_work(node, data, ctx)
             last_exc = None
+        except _ActionDataRefused as exc:
+            if node.on_error:
+                ctx.on_node(node, "error", 0.0)
+                return node.on_error
+            raise _NodeError(node.id, exc) from exc
         except (BudgetExceeded, Halted, FlowApprovalStale, AuditRefused, FlowCredentialRefused, FlowRegexRefused):
             raise
         except Exception as e:   # a raising executor is a retryable failure, not instant death
@@ -583,7 +606,12 @@ def _run_work(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         )
     if last_exc is not None:
         raise last_exc
-    ctx.on_node(node, "done", outcome)
+    try:
+        ctx.on_node(node, "done", outcome)
+    except Exception as exc:
+        # Dispatch has returned; a failed observer cannot prove it is safe to
+        # repeat that work. Do not call the same observer again to report this.
+        raise _Indeterminate(node.id, _safe_error_text(exc), boundary="completed work") from exc
     # A node that still failed routes to its on_error handler if it has one, so a
     # flow can catch and recover instead of poisoning `data` and marching on.
     # Never publish a failed connector result under its ordinary output key: it
@@ -676,7 +704,8 @@ def _run_switch(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         if ctx.recipe_teaching is not None and node.id == "teaching_choice":
             return _run_teaching_choice(node, data, ctx)
         return _run_recipe_choice(node, data, ctx)
-    subject = _as_text(_dig(data, node.condition))
+    value = _dig(data, node.condition)
+    subject = _as_text(value) if value is not None else None
     for case in node.cases:
         if _as_text(case.get("value")) == subject:
             ctx.on_node(node, f"case:{_as_text(case.get('value'))[:40]}", None)
@@ -895,10 +924,13 @@ def _sequential_item_data(node: FlowNode, data: dict, item: Any) -> dict:
     return sub
 
 
-def _run_foreach(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
+def _foreach_items(node: FlowNode, data: dict, ctx: _Ctx) -> list:
     if type(node.concurrency) is not int or not 0 <= node.concurrency <= _PARALLEL_MAX_WORKERS:
         raise _Reject(node, data, error="Choose Shared workflow limit or between 1 and 8 items at once.")
-    items = copy.deepcopy(ctx.frame.get("items", list(_dig(data, node.items) or [])))
+    items = ctx.frame["items"] if "items" in ctx.frame else _dig(data, node.items)
+    if not isinstance(items, list):
+        raise _Reject(node, data, error="Repeated work needs a list of items. This step processed no items.")
+    items = copy.deepcopy(items)
     if node.limit and node.limit > 0:
         items = items[:node.limit]          # cap iterations (a runaway-list guard)
     elif len(items) > _FOREACH_DEFAULT_CAP:
@@ -913,6 +945,11 @@ def _run_foreach(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
             "review the workflow before running again. Earlier steps may have completed."
         ))
     ctx.frame["items"] = items
+    return items
+
+
+def _run_foreach(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
+    items = _foreach_items(node, data, ctx)
     results = copy.deepcopy(ctx.frame.get("results", []))
     if node.concurrent and len(items) > 1:
         # Concurrent iteration: each item gets an isolated data copy and its own
@@ -1057,6 +1094,8 @@ def _run_approval(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
     # Ground the decided verdict (B7): approved=1.0 / rejected=0.0 / pending=None --
     # the highest-value human signal for the self-rewrite loop.
     ctx.on_node(node, decision, _approval_outcome(decision))
+    if decision == "rejected":
+        raise _Reject(node, data)
     # "approved" -- or any verdict the node explicitly offers (a choice approval:
     # "ship"/"hold"/"escalate") -- continues; the verdict is recorded to `output`
     # so downstream nodes (a branch/switch) can route on it.
@@ -1064,8 +1103,6 @@ def _run_approval(node: FlowNode, data: dict, ctx: _Ctx) -> str | None:
         if node.output:
             data[node.output] = decision
         return node.next
-    if decision == "rejected":
-        raise _Reject(node, data)
     if ctx.allow_pause:                    # pending + top level -> wait for a human
         # An approval's EXPIRY is `expires_after` (its own field, so it can't be
         # confused with the execution `timeout`). Older flows that encoded it in
