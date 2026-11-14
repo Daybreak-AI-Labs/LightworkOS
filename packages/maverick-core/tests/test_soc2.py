@@ -74,7 +74,7 @@ def test_toggle_on_is_reflected(monkeypatch):
     monkeypatch.setattr(capability, "capability_enforced", lambda: True)
     monkeypatch.setattr(paths, "tenant_by_user_enabled", lambda: True)
     monkeypatch.setattr(quotas, "quotas_enforced", lambda: True)
-    monkeypatch.setattr(oidc, "oidc_enabled", lambda: True)
+    monkeypatch.setattr(oidc, "oidc_enabled_as_configured", lambda: True)
     monkeypatch.setattr(crypto_at_rest, "at_rest_enabled", lambda: True)
 
     controls = soc2.collect_soc2_evidence()["controls"]
@@ -97,7 +97,7 @@ def test_toggle_off_is_reflected(monkeypatch):
     monkeypatch.setattr(capability, "capability_enforced", lambda: False)
     monkeypatch.setattr(paths, "tenant_by_user_enabled", lambda: False)
     monkeypatch.setattr(quotas, "quotas_enforced", lambda: False)
-    monkeypatch.setattr(oidc, "oidc_enabled", lambda: False)
+    monkeypatch.setattr(oidc, "oidc_enabled_as_configured", lambda: False)
     monkeypatch.setattr(crypto_at_rest, "at_rest_enabled", lambda: False)
 
     controls = soc2.collect_soc2_evidence()["controls"]
@@ -129,6 +129,17 @@ def test_oidc_probe_reflects_real_toggle_by_default():
     probe = soc2.collect_soc2_evidence()["controls"]["oidc_auth"]
     assert probe["status"] == soc2.STATUS_DISABLED
     assert probe["enabled"] is False
+
+
+def test_oidc_probe_is_unknown_when_configuration_is_unreadable(monkeypatch, tmp_path):
+    """Unreadable configuration is evidence of nothing: not the fail-closed True."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("[auth.oidc]\nenabled = [\n", encoding="utf-8")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(cfg))
+    monkeypatch.delenv("MAVERICK_OIDC_ENABLED", raising=False)
+    probe = soc2.collect_soc2_evidence()["controls"]["oidc_auth"]
+    assert probe["status"] == soc2.STATUS_UNKNOWN
+    assert probe["enabled"] is None
 
 
 def test_absent_optional_module_is_absent_not_crash():
