@@ -266,7 +266,7 @@ def test_announcement_owns_world_even_after_callers_world_closes(isolated, monke
         start=lambda: callbacks.append(kw["target"])))
     monkeypatch.setattr(approval_notify, "install_announcers", lambda: None)
     monkeypatch.setattr(approval_notify, "announcements_configured", lambda: True)
-    monkeypatch.setattr(world_model, "open_world", open_world)
+    monkeypatch.setattr(world_model, "WorldModel", open_world)
     monkeypatch.setattr(channel_approvals, "announce_new_approval", announce)
     caller = World()
     caller.path = isolated / "selected.db"
@@ -275,3 +275,65 @@ def test_announcement_owns_world_even_after_callers_world_closes(isolated, monke
     callbacks[0]()
     assert seen == [7]
     assert len(worlds) == 1 and worlds[0].closed
+
+
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+def test_announcement_reopens_exact_source_backend_and_database(isolated, monkeypatch, backend):
+    from maverick import approval_notify, channel_approvals, world_model
+    from maverick.world_model_backends import postgres
+
+    callbacks = []
+    opened = []
+    observed = []
+    closed = []
+    source_path = isolated / "source.db"
+    source_dsn = "postgresql://fixture/source_database"
+    if backend == "sqlite":
+        source = object.__new__(world_model.WorldModel)
+        source.path = source_path
+    else:
+        source = object.__new__(postgres.PostgresWorldModel)
+        source._dsn = source_dsn
+
+    def sqlite_factory(path):
+        assert backend == "sqlite" and path == source_path
+        opened.append("source SQLite")
+        return SimpleNamespace(identity="source SQLite", close=lambda: closed.append(True))
+
+    def postgres_factory(*, dsn):
+        assert backend == "postgres" and dsn == source_dsn
+        opened.append("source Postgres")
+        return SimpleNamespace(identity="source Postgres", close=lambda: closed.append(True))
+
+    monkeypatch.setattr(world_model, "WorldModel", sqlite_factory)
+    monkeypatch.setattr(postgres, "PostgresWorldModel", postgres_factory)
+    monkeypatch.setattr(world_model, "open_world", lambda *args: SimpleNamespace(
+        identity="wrong default database", close=lambda: None))
+    monkeypatch.setattr(approval_notify.threading, "Thread", lambda **kw: SimpleNamespace(
+        start=lambda: callbacks.append(kw["target"])))
+    monkeypatch.setattr(approval_notify, "install_announcers", lambda: None)
+    monkeypatch.setattr(approval_notify, "announcements_configured", lambda: True)
+    monkeypatch.setattr(channel_approvals, "announce_new_approval", lambda world, aid: observed.append(world.identity))
+    approval_notify.approval_created(7, world=source)
+    # Reconfiguration after enqueue must not choose another backend or DSN.
+    monkeypatch.setenv("MAVERICK_WORLD_BACKEND", "postgres" if backend == "sqlite" else "sqlite")
+    monkeypatch.setenv("MAVERICK_PG_DSN", "postgresql://fixture/different_database")
+    callbacks[0]()
+    assert observed == opened == ["source SQLite" if backend == "sqlite" else "source Postgres"]
+    assert closed == [True]
+
+
+def test_announcement_reports_unsupported_memory_source_without_opening_another_world(
+    isolated, monkeypatch, caplog,
+):
+    from maverick import approval_notify, world_model
+
+    source = object.__new__(world_model.WorldModel)
+    source.path = ":memory:"
+    monkeypatch.setattr(approval_notify, "install_announcers", lambda: None)
+    monkeypatch.setattr(approval_notify, "announcements_configured", lambda: True)
+    monkeypatch.setattr(approval_notify.threading, "Thread", lambda **kw: SimpleNamespace(start=kw["target"]))
+    monkeypatch.setattr(world_model, "open_world", lambda *args: pytest.fail("opened another world"))
+    approval_notify.approval_created(7, world=source)
+    assert "in-memory" in caplog.text
+    assert "independent" in caplog.text

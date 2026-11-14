@@ -396,8 +396,8 @@ class Worker:
     def _pause_unarmed_schedule(self, job: Job) -> None:
         """Make a terminally unarmed recurrence visible before dead-lettering.
 
-        If this write fails, leave the attempt recoverable instead of reporting
-        a terminal failure while its schedule still appears active. A successor
+        A failed pause write leaves the attempt running; queue-level stale
+        reclamation can still fail it without pausing its schedule. A successor
         or a newer lease always belongs to its current worker.
         """
         from .schedule_definitions import _record_version
