@@ -319,6 +319,7 @@ def test_workspace_endpoint_never_receives_the_deployment_key(tmp_path, monkeypa
 @pytest.mark.parametrize("provider,env,refused", [
     ("vertex", {}, True),                                      # Google ADC: ambient identity
     ("azure", {"AZURE_OPENAI_AD_TOKEN": "ad-fixture"}, True),  # pragma: allowlist secret
+    ("azure", {"AZURE_OPENAI_AUTH": "entra_id"}, True),      # managed identity, no key or token
     ("ollama", {}, False),                                     # keyless local endpoint
 ])
 def test_workspace_endpoint_refused_for_every_deployment_credential_kind(
@@ -329,7 +330,7 @@ def test_workspace_endpoint_refused_for_every_deployment_credential_kind(
     monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
     monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
     monkeypatch.setenv("MAVERICK_TENANT", "acme")
-    for name in ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_AD_TOKEN", "OLLAMA_API_KEY"):
+    for name in ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_AD_TOKEN", "AZURE_OPENAI_AUTH", "OLLAMA_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
         monkeypatch.setenv(name, value)

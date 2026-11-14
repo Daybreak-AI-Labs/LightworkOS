@@ -1612,9 +1612,10 @@ _CLIENT_CACHE_MAX = 32
 
 
 # Providers whose client signs in with an ambient cloud identity (Google ADC,
-# an AWS role or profile) that no variable here reveals: a workspace endpoint
+# an AWS role or profile, an Azure managed identity through
+# DefaultAzureCredential) that no variable here reveals: a workspace endpoint
 # for them could always receive the deployment's credential.
-_AMBIENT_IDENTITY_PROVIDERS = frozenset({"vertex", "bedrock"})
+_AMBIENT_IDENTITY_PROVIDERS = frozenset({"vertex", "bedrock", "azure"})
 # Credentials a client reads beyond PROVIDER_CREDENTIAL_ENV_MAP.
 _EXTRA_CREDENTIAL_ENV = {
     "anthropic": ("ANTHROPIC_AUTH_TOKEN",),
