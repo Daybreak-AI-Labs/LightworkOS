@@ -226,3 +226,34 @@ def test_non_finite_task_limit_request_cannot_raise_the_ceiling():
         assert clamp_task_limit(bad, 0.5) == 0.5
         assert clamp_task_limit(bad, None) is None
     assert clamp_task_limit(0.25, 0.5) == 0.25
+
+
+def test_non_finite_request_without_host_ceiling_gets_the_omitted_default(
+    set_budget_cfg, monkeypatch, tmp_path,
+):
+    # No factory ceiling and no operator cap: a model's NaN/inf max_dollars
+    # must land on the same finite default an omitted request gets.
+    import math
+
+    from maverick import agent_framework_adapters as adapters
+    from maverick.runner import (
+        DEFAULT_MAX_DOLLARS,
+        goal_budget_defaults,
+        requested_goal_dollars,
+    )
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.delenv("MAVERICK_BUDGET_DOLLARS", raising=False)
+    set_budget_cfg({})
+    dispatched = []
+    monkeypatch.setattr(adapters, "run_maverick_goal",
+                        lambda prompt, desc, *, max_dollars, **kw: dispatched.append(max_dollars) or "ok")
+    _tool_def, executor = adapters.maverick_openai_tool()
+    omitted = budget_from_config(defaults=goal_budget_defaults()).max_dollars
+    assert omitted == DEFAULT_MAX_DOLLARS and math.isfinite(omitted)
+    for bad in (float("nan"), float("inf")):
+        executor(prompt="x", max_dollars=bad)
+        assert dispatched[-1] is None
+        budget = budget_from_config(defaults=goal_budget_defaults(), max_dollars=dispatched[-1])
+        assert budget.max_dollars == omitted
+        assert requested_goal_dollars(bad) == omitted
