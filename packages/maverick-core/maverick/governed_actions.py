@@ -307,6 +307,21 @@ def _lineage_dir(store_dir: str | Path | None = None) -> Path:
     return data_dir("lineage")
 
 
+def _lineage_file_for_read(goal_id: int, store_dir: str | Path | None) -> Path:
+    """The ledger file to READ for ``goal_id``. Before lineage honoured
+    ``MAVERICK_HOME`` it was written under ``~/.maverick/lineage`` when no
+    tenant was active; a goal whose file is only there is still read from
+    there. Nothing is ever written to that location."""
+    path = _lineage_dir(store_dir) / f"{int(goal_id)}.ndjson"
+    if store_dir is None and not path.exists():
+        from .paths import current_tenant
+        if not current_tenant():
+            legacy = Path("~/.maverick/lineage").expanduser() / path.name
+            if legacy.exists():
+                return legacy
+    return path
+
+
 def record_tool_lineage(goal_id: int | None, action: str, params: object, *,
                         skills: tuple[str, ...] = (), sources: tuple[str, ...] = (),
                         actor: str = "", effect: str = "", result: str = "",
@@ -381,7 +396,7 @@ def record_tool_lineage(goal_id: int | None, action: str, params: object, *,
 def load_lineage(goal_id: int, store_dir: str | Path | None = None) -> list[dict]:
     """Best-effort display adapter; use verification for evidence decisions."""
     try:
-        f = _lineage_dir(store_dir) / f"{int(goal_id)}.ndjson"
+        f = _lineage_file_for_read(goal_id, store_dir)
         if not f.exists():
             return []
         links = [json.loads(ln) for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -410,7 +425,7 @@ def verify_lineage_file(goal_id: int, store_dir: str | Path | None = None) -> st
     chain to verify; read/parse failures must never become an empty chain.
     """
     try:
-        path = _lineage_dir(store_dir) / f"{int(goal_id)}.ndjson"
+        path = _lineage_file_for_read(goal_id, store_dir)
         body = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return "MISSING: no persisted lineage file"

@@ -167,6 +167,12 @@ def test_lineage_honours_maverick_home(monkeypatch, tmp_path):
     assert ga_mod.record_tool_lineage(7, "shell", {"c": "y"}, strict=True)
     assert (tmp_path / "custom" / "lineage" / "7.ndjson").exists()
     assert not (tmp_path / "home" / ".maverick").exists()
+    # A goal recorded before, under ~/.maverick/lineage, is still read there.
+    legacy = tmp_path / "home" / ".maverick" / "lineage"
+    legacy.mkdir(parents=True)
+    (legacy / "8.ndjson").write_text((tmp_path / "custom" / "lineage" / "7.ndjson").read_text())
+    assert ga_mod.verify_lineage_file(8).startswith("VALID")
+    assert ga_mod.load_lineage(8)[0]["action"] == "shell"
 
 
 def test_unreadable_config_keeps_the_approval_floor_and_lineage_on(monkeypatch, tmp_path):
