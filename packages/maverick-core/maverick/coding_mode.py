@@ -28,7 +28,11 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .git_safety import git_env_without_user_config, git_metadata_may_execute_filters
+from .git_safety import (
+    git_env_without_user_config,
+    git_metadata_hazard,
+    git_metadata_may_execute_filters,
+)
 
 CODER_CODING_MODE_TEMPLATE = """You are a coding agent solving a real software-engineering task on an
 existing codebase. Your goal is to resolve the issue described in
@@ -542,13 +546,14 @@ def validate_patch(
     # configured `clean` filter, and the agent can write this workdir's git
     # settings: refuse rather than run a planted command on the host, and keep
     # the caller's environment out of the child.
-    if git_metadata_may_execute_filters(workdir):
+    hazard = git_metadata_hazard(workdir)
+    if hazard is not None:
+        found = hazard or "a filter such as git-lfs, or another command"
         return PatchValidation(
             valid=False,
-            reason="unsafe git filter/fsmonitor metadata in the workdir (a "
-                   "filter such as git-lfs, or another command), so git was "
-                   "not run on the host to check the patch. This is not a "
-                   "problem with the patch itself",
+            reason=f"unsafe git filter/fsmonitor metadata in the workdir "
+                   f"({found}), so git was not run on the host to check the "
+                   "patch. This is not a problem with the patch itself",
         )
     # Normalise line endings before sending to git apply. CRLF in the
     # input is the #1 source of "corrupt patch" errors on real LLM
