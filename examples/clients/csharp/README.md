@@ -45,9 +45,11 @@ The example refuses tool errors and malformed `facts` results, bounds paginated
 tool metadata, and escapes terminal controls in displayed server text.
 `BoundedStdioServer` owns the child process and supplies the SDK's public
 `StreamClientTransport` with byte-limited streams: 16 MiB per stdout message and
-64 KiB per stderr line. After the read-only exchange, cleanup terminates the
-process tree before closing stdin, then waits for the child to exit. This keeps
-a cooperative parent from exiting before its children can be terminated.
+64 KiB per stderr line. After the read-only exchange, cleanup closes stdin and
+gives the server one second to run its own shutdown; a non-zero exit is
+reported as a failure. Only a server that does not exit has its process tree
+killed. On Linux, descendants recorded before stdin closes are also terminated
+after the server exits, so a re-parented child cannot outlive cleanup.
 It does not contain descendants that independently detach before cleanup.
 Initialization and the read-only smoke requests share a 30-second deadline.
 

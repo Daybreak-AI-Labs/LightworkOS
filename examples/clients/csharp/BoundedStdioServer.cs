@@ -62,6 +62,57 @@ internal sealed class BoundedStdioServer : IAsyncDisposable
         catch (InvalidOperationException) when (process.HasExited) { }
     }
 
+    // .NET has no parent-process API. On Linux, read the tree from /proc while
+    // the root is alive: once it exits, its children are re-parented and
+    // Kill(entireProcessTree) can no longer find them.
+    private List<Process> SnapshotDescendants()
+    {
+        List<Process> descendants = [];
+        if (!OperatingSystem.IsLinux()) return descendants;
+        Dictionary<int, int> parents = new();
+        foreach (string entry in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(entry), out int pid)) continue;
+            try
+            {
+                // The command name is parenthesised and may contain spaces;
+                // the state and then the parent PID follow it.
+                string stat = File.ReadAllText(Path.Combine(entry, "stat"));
+                string[] fields = stat[(stat.LastIndexOf(')') + 2)..].Split(' ');
+                parents[pid] = int.Parse(fields[1]);
+            }
+            catch (Exception) { } // The process exited while it was listed.
+        }
+        HashSet<int> tree = [process.Id];
+        for (bool grew = true; grew;)
+        {
+            grew = false;
+            foreach ((int pid, int parent) in parents)
+            {
+                if (tree.Contains(parent) && tree.Add(pid)) grew = true;
+            }
+        }
+        foreach (int pid in tree)
+        {
+            if (pid == process.Id) continue;
+            try { descendants.Add(Process.GetProcessById(pid)); }
+            catch (ArgumentException) { } // It has already exited.
+        }
+        return descendants;
+    }
+
+    private static void KillDescendants(List<Process> descendants)
+    {
+        foreach (Process descendant in descendants)
+        {
+            try
+            {
+                if (!descendant.HasExited) descendant.Kill(entireProcessTree: true);
+            }
+            catch (Exception) { } // It exited meanwhile; the stderr wait still reports a holder.
+        }
+    }
+
     private async Task DrainStderrAsync()
     {
         try
@@ -84,14 +135,23 @@ internal sealed class BoundedStdioServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        List<Process> descendants = [];
         try
         {
-            // The read-only exchange is finished. Terminate while the root is
-            // alive: closing stdin first can let it exit and re-parent children
-            // before a delayed stderr-size refusal gets to kill the tree.
-            Terminate();
+            // The read-only exchange is finished. Record the descendants while
+            // the root is alive, then close stdin so the server can run its own
+            // shutdown, and kill the tree only if it does not exit by itself.
+            descendants = SnapshotDescendants();
             process.StandardInput.Close();
+            try
+            {
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(1));
+            }
+            catch (TimeoutException) { }
+            Terminate();
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2));
+            // A descendant left by a graceful exit can still hold stderr open.
+            KillDescendants(descendants);
             await stderrTask.WaitAsync(TimeSpan.FromSeconds(2));
             if (failure is not null) throw new IOException("MCP transport refused server output", failure);
             if (!forced && process.ExitCode != 0)
@@ -112,9 +172,11 @@ internal sealed class BoundedStdioServer : IAsyncDisposable
                     Terminate();
                     await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2));
                 }
+                KillDescendants(descendants);
             }
             finally
             {
+                foreach (Process descendant in descendants) descendant.Dispose();
                 process.StandardOutput.Close();
                 process.StandardError.Close();
                 stopped.Dispose();
