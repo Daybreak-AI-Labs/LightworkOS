@@ -1369,7 +1369,7 @@ def base_registry(
         reg.register(ios_sim(sandbox))
     reg.register(spend_report())
     reg.register(budget_status(budget=budget))
-    reg.register(test_impact())
+    reg.register(test_impact(sandbox))
     reg.register(youtube())
     reg.register(notion())
     reg.register(obsidian())
