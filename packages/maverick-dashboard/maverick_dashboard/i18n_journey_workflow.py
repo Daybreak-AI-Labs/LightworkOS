@@ -1065,4 +1065,13 @@ ROWS = [
   'Bestehende Zeitpläne behalten ihre geprüften Inhalte und Versionen. Die Veröffentlichung betrifft nur '
   'neue Zeitpläne; eine Migration erfolgt nie automatisch.',
   '既存のスケジュールは確認済みの内容とバージョンを維持します。公開の影響は新規スケジュールのみで、自動移行は行われません。',
-  '现有计划保留其已检查的内容和版本。发布仅影响新计划，绝不会自动迁移。')]
+  '现有计划保留其已检查的内容和版本。发布仅影响新计划，绝不会自动迁移。'),
+ ('I read any earlier unconfirmed original and acknowledge that earlier work may already exist. This is a '
+  'separate new Save draft intent.',
+  'J’ai consulté tout résultat initial antérieur non confirmé et je reconnais qu’un travail antérieur peut '
+  'déjà exister. Il s’agit d’une nouvelle intention distincte d’enregistrer le brouillon.',
+  'Ich habe alle früheren unbestätigten Originalergebnisse gelesen und erkenne an, dass frühere Arbeit '
+  'bereits vorhanden sein kann. Dies ist eine separate neue Absicht, den Entwurf zu speichern.',
+  '以前の未確認の元の結果を確認し、以前の作業がすでに存在する可能性を理解しました。これは、下書きを保存するための別の新しい意思表示です。',
+  '我已阅读此前所有未确认的原始结果，并知悉此前的工作可能已经存在。这是一次独立的新“保存草稿”意图。'),
+]

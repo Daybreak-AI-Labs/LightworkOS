@@ -335,7 +335,7 @@
         <span class="wf__hint">{% if pack_editing_allowed %}{{ ui("Save a retained draft, then separately review Publish in Agent Factory. Saving here does not change the agent people use.") }} <a href="/agents">{{ ui("Agent Factory") }}</a>.{% else %}{{ ui("This draft stays unsaved until an administrator checks and saves it.") }} <button type="button" class="btn btn--ghost" id="pb-copy-draft">{{ ui("Copy the draft to send to an administrator") }}</button>{% endif %}</span>
       </div>
       </form>
-      <label><input type="checkbox" id="pb-acknowledge-original"> I read any earlier unconfirmed original and acknowledge that earlier work may already exist. This is a separate new Save draft intent.</label>
+      <label><input type="checkbox" id="pb-acknowledge-original"> {{ ui("I read any earlier unconfirmed original and acknowledge that earlier work may already exist. This is a separate new Save draft intent.") }}</label>
       <div id="pb-specialist-review" class="panel" aria-live="polite"></div>
     </div>
 
