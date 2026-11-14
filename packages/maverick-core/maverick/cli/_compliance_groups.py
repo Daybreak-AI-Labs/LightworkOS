@@ -107,10 +107,10 @@ def ropa_cmd(fmt: str, output) -> None:
     if output:
         try:
             from . import _write_private_export
-            _write_private_export(output, payload + "\n")
+            streamed = _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
+        click.echo(f"wrote {output}", err=streamed)
     else:
         click.echo(payload)
 
@@ -293,10 +293,10 @@ def dpia_cmd(fmt: str, output) -> None:
     if output:
         try:
             from . import _write_private_export
-            _write_private_export(output, payload + "\n")
+            streamed = _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
+        click.echo(f"wrote {output}", err=streamed)
     else:
         click.echo(payload)
 
@@ -595,10 +595,10 @@ def dsar_export(user_id: str, tenant: str | None, output, compact: bool) -> None
         # traceback on a bad/unwritable path.
         try:
             from . import _write_private_export
-            _write_private_export(output, payload)
+            streamed = _write_private_export(output, payload)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"exported to {output}")
+        click.echo(f"exported to {output}", err=streamed)
     else:
         click.echo(payload)
 
@@ -1248,10 +1248,10 @@ def ai_literacy_export(output) -> None:
     if output:
         try:
             from . import _write_private_export
-            _write_private_export(output, payload + "\n")
+            streamed = _write_private_export(output, payload + "\n")
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"wrote {output}")
+        click.echo(f"wrote {output}", err=streamed)
     else:
         click.echo(payload)
 

@@ -6396,35 +6396,56 @@ def record_verify(capsule: str, pubkeys: tuple[str, ...], trusted_file: str | No
 
 
 
-def _write_private_export(output, text: str) -> None:
-    """Write an export file as a new 0600 file, never through a final symlink.
+def _write_private_export(output, text: str) -> bool:
+    """Write an export as a new 0600 file, never through a symlink.
 
-    The parent directory is resolved first, so a symlinked parent (``/tmp`` on
-    macOS, ``-o link/out.json``) is fine; the final component is replaced
-    atomically, so an existing file's mode or a symlink there is not kept. A
-    path that is not a regular file or directory (a FIFO, a device) is written
-    in place, and ``-``, ``/dev/stdout`` and ``/dev/stderr`` go to that stream:
-    replacing them atomically would replace the ``/dev`` entry itself when the
-    stream is redirected to a file.
+    Returns True when the output went to a stream rather than a file, so the
+    caller sends its "wrote ..." note to stderr and a redirected export stays
+    valid JSON.
+
+    ``-``, ``/dev/stdout`` and ``/dev/stderr`` are written to that stream and
+    the path is never opened. Otherwise the parent directory is resolved (a
+    symlinked parent such as ``/tmp`` on macOS is fine) and the final
+    component is opened without following links: a FIFO or character device
+    the caller owns is written in place; a symlink is refused; anything else is
+    replaced atomically with a new 0600 file.
     """
+    import errno as _errno
     import stat as _stat
 
     from ..file_lock import atomic_write_text
 
     if str(output) in ("-", "/dev/stdout", "/dev/stderr"):
         click.echo(text, nl=False, err=str(output) == "/dev/stderr")
-        return
+        return True
     given = Path(output)
     target = given.parent.resolve() / given.name
+    if target.is_symlink():
+        raise OSError(_errno.ELOOP, "refusing to write through a symlink", str(target))
+    if os.name == "nt":  # no FIFOs, O_NOFOLLOW or uids: always a new file
+        atomic_write_text(target, text, mode=0o600)
+        return False
     try:
-        mode = os.stat(target).st_mode
-    except FileNotFoundError:
-        mode = None
-    if mode is not None and not (_stat.S_ISREG(mode) or _stat.S_ISDIR(mode)):
-        with open(target, "w", encoding="utf-8") as stream:
-            stream.write(text)
-        return
+        # No O_CREAT/O_TRUNC: this open only finds an existing stream. Non-
+        # blocking so a FIFO with no reader fails instead of hanging.
+        fd = os.open(target, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        if exc.errno not in (_errno.ENOENT, _errno.EISDIR):
+            raise
+        fd = -1
+    if fd >= 0:
+        info = os.fstat(fd)
+        if (_stat.S_ISFIFO(info.st_mode) or _stat.S_ISCHR(info.st_mode)) \
+                and info.st_uid == os.getuid():
+            os.set_blocking(fd, True)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(text)
+            return True
+        os.close(fd)
+        if not _stat.S_ISREG(info.st_mode):
+            raise OSError(_errno.EPERM, "not a regular file or a stream you own", str(target))
     atomic_write_text(target, text, mode=0o600)
+    return False
 
 
 @main.command("export-user")
@@ -6499,10 +6520,10 @@ def export_user(ctx, channel: str, user: str, output) -> None:
         # co-tenant can't read it, and fail cleanly instead of dumping a
         # traceback on a bad/unwritable path.
         try:
-            _write_private_export(output, payload)
+            streamed = _write_private_export(output, payload)
         except OSError as e:
             raise click.ClickException(f"could not write {output}: {e}") from e
-        click.echo(f"exported to {output}")
+        click.echo(f"exported to {output}", err=streamed)
     else:
         click.echo(payload)
 

@@ -216,9 +216,33 @@ def test_dsar_export_output_through_a_symlinked_parent_but_not_a_symlinked_file(
     (real / "trap.json").symlink_to(victim)
     result = CliRunner().invoke(
         main, ["dsar", "export", "--user", "alice", "--output", str(real / "trap.json")])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code != 0
+    assert "symlink" in result.output
     assert victim.read_text(encoding="utf-8") == "keep"
-    assert not (real / "trap.json").is_symlink()
+    assert (real / "trap.json").is_symlink()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs FIFOs")
+def test_dsar_export_writes_into_a_fifo_the_caller_owns_but_not_through_a_link(tmp_path):
+    import threading
+
+    _seed_world()
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    received = []
+    reader = threading.Thread(target=lambda: received.append(fifo.read_text(encoding="utf-8")))
+    reader.start()
+    result = CliRunner().invoke(
+        main, ["dsar", "export", "--user", "alice", "--json", "--output", str(fifo)])
+    reader.join(timeout=30)
+    assert result.exit_code == 0, result.output
+    assert json.loads(received[0])["subject"]["user_id"] == "alice"
+    assert "exported to" not in result.stdout   # the note went to stderr
+
+    (tmp_path / "pipe-link").symlink_to(fifo)
+    linked = CliRunner().invoke(
+        main, ["dsar", "export", "--user", "alice", "--output", str(tmp_path / "pipe-link")])
+    assert linked.exit_code != 0
 
 
 def test_dsar_export_output_to_dev_stdout_writes_the_stream():
@@ -226,5 +250,5 @@ def test_dsar_export_output_to_dev_stdout_writes_the_stream():
     result = CliRunner().invoke(
         main, ["dsar", "export", "--user", "alice", "--json", "--output", "/dev/stdout"])
     assert result.exit_code == 0, result.output
-    bundle, _end = json.JSONDecoder().raw_decode(result.output)
-    assert bundle["subject"]["user_id"] == "alice"
+    # The "exported to" note goes to stderr, so stdout is exactly the bundle.
+    assert json.loads(result.stdout)["subject"]["user_id"] == "alice"
