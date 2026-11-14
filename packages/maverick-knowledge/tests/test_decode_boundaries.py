@@ -6,9 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from maverick_knowledge import extraction
+from maverick_knowledge.base import KnowledgeBase
 from maverick_knowledge.image import _pixel_cap
 from maverick_knowledge.parse import extract_document
-from maverick_knowledge.store import QdrantStore
+from maverick_knowledge.store import QdrantStore, _namespace_from_cfg
 
 
 def test_pixel_cap_serializes_decodes_and_restores_original_value():
@@ -66,7 +67,49 @@ def test_pdf_stops_extracting_pages_after_text_bound(tmp_path, monkeypatch):
                for region in result.omitted_regions)
 
 
-def test_qdrant_workspace_collection_name_uses_supported_characters():
+def test_qdrant_workspace_collection_name_uses_supported_characters(monkeypatch):
     store = QdrantStore.__new__(QdrantStore)
-    store._namespace = "workspace:" + "a" * 64
-    assert store._cname("general") == "workspace_" + "a" * 64 + "__general"
+    store._namespace = _namespace_from_cfg({"path": "/workspace/owner/knowledge.db"})
+    assert store._cname("general").startswith("workspace_")
+    assert ":" not in store._cname("general")
+    other = QdrantStore.__new__(QdrantStore)
+    other._namespace = _namespace_from_cfg({"path": "/workspace/other/knowledge.db"})
+    legacy = QdrantStore.__new__(QdrantStore)
+    legacy._namespace = "legacy-valid"
+    assert legacy._cname("general") == "legacy-valid__general"
+    records = {s._cname("general"): [
+        {"subject": "alice", "source": "kept"},
+        {"subject": "bob", "source": "withdrawn"},
+    ] for s in (store, other, legacy)}
+
+    def matches(row, query):
+        return all(row.get(cond.key.removeprefix("meta.")) == cond.match.value
+                   for cond in query.must)
+
+    def delete(collection_name, points_selector):
+        records[collection_name] = [row for row in records[collection_name]
+                                    if not matches(row, points_selector.filter)]
+
+    client = SimpleNamespace(
+        get_collections=lambda: SimpleNamespace(collections=[
+            SimpleNamespace(name=name) for name in records]),
+        collection_exists=lambda name: name in records,
+        count=lambda collection_name, count_filter, exact: SimpleNamespace(count=sum(
+            matches(row, count_filter) for row in records[collection_name])),
+        delete=delete,
+    )
+    monkeypatch.setitem(sys.modules, "qdrant_client.models", SimpleNamespace(
+        Filter=SimpleNamespace, FieldCondition=SimpleNamespace,
+        MatchValue=SimpleNamespace, FilterSelector=SimpleNamespace))
+    monkeypatch.setitem(sys.modules, "qdrant_client", SimpleNamespace(
+        models=sys.modules["qdrant_client.models"]))
+    for owned in (store, legacy):
+        owned._client = client
+        kb = KnowledgeBase(store=owned)
+        assert kb.collections() == ["general"]
+        assert kb.count_subject("alice") == 1
+        assert kb.erase_subject("alice") == {"general": 1}
+        assert kb.count_subject("alice") == 0
+        assert kb.erase_source("withdrawn") == {"general": 1}
+        assert records[owned._cname("general")] == []
+    assert len(records[other._cname("general")]) == 2

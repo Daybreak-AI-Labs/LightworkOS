@@ -769,11 +769,19 @@ def _append_checked_receipt(path: Path, event: dict[str, Any], approver_trust: d
                     or before.st_size + row_size > MAX_RECEIPT_STORE_BYTES
                     or sum(1 for _ in stream) >= MAX_RECEIPT_ROWS):
                 raise TrainingReceiptError("training receipt store exceeds its storage boundary")
-            if not signer.write(event):
-                raise TrainingReceiptError("audit signer refused the training receipt")
+            written = signer.write(event)
             stream.seek(before.st_size)
             appended = stream.read(MAX_RECEIPT_ROW_BYTES + 1)
-            receipt = _strict_receipt_json(appended.decode("utf-8"))
+            if not written and not appended:
+                raise TrainingReceiptError("audit signer refused the training receipt")
+            try:
+                receipt = _strict_receipt_json(appended.decode("utf-8"))
+            except (UnicodeError, ValueError) as exc:
+                # The signer exposes no candidate bytes or partial-write
+                # extent. Never truncate a suffix we cannot identify as ours.
+                raise TrainingReceiptError(
+                    "training receipt append could not be isolated; store requires recovery",
+                ) from exc
             current = path.stat()
             if (len(appended) != row_size or appended.count(b"\n") != 1
                     or not appended.endswith(b"\n") or not isinstance(receipt, dict)
@@ -782,7 +790,7 @@ def _append_checked_receipt(path: Path, event: dict[str, Any], approver_trust: d
                     or current.st_size != before.st_size + len(appended)):
                 raise TrainingReceiptError("training receipt append could not be isolated")
             key_id = receipt.get("key_id")
-            if not isinstance(key_id, str) or not verify_training_receipt(
+            if not written or not isinstance(key_id, str) or not verify_training_receipt(
                 receipt, trusted_receipt_pubkeys={key_id: signer.public_key_hex},
                 trusted_approver_pubkeys=approver_trust,
             ):
@@ -791,6 +799,8 @@ def _append_checked_receipt(path: Path, event: dict[str, Any], approver_trust: d
                 stream.truncate(before.st_size)
                 stream.flush()
                 os.fsync(stream.fileno())
+                if not written:
+                    raise TrainingReceiptError("audit signer refused the training receipt")
                 raise TrainingReceiptError("signed training receipt failed self-check")
             return receipt, signer.public_key_hex
 

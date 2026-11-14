@@ -1246,7 +1246,7 @@ class QdrantStore:
                 provider_call(lambda: self._client.delete_collection(name))
 
     def collections(self) -> list[str]:
-        prefix = f"{self._namespace}__"
+        prefix = self._cname("")
         with metered_operation(
             "qdrant",
             category="retrieval",

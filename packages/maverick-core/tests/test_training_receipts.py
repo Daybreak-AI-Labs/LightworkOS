@@ -898,14 +898,31 @@ def test_public_commitment_is_verified_and_disclosure_minimal():
             )
 
 
-def test_receipt_self_check_failure_removes_only_its_new_row(monkeypatch):
+@pytest.mark.parametrize("failure", ["self_check", "fsync"])
+def test_receipt_self_check_failure_removes_only_its_new_row(monkeypatch, failure):
+    import os
+
     with tenant_scope(tenant="alpha"):
         first, trust = _issue()
         path = tr.receipts_path()
         before = path.read_bytes()
         with monkeypatch.context() as patcher:
-            patcher.setattr(tr, "verify_training_receipt", lambda *a, **kw: False)
-            with pytest.raises(tr.TrainingReceiptError, match="self-check"):
+            if failure == "self_check":
+                patcher.setattr(tr, "verify_training_receipt", lambda *a, **kw: False)
+                message = "self-check"
+            else:
+                original_fsync = os.fsync
+                failed = []
+
+                def fail_once(fd):
+                    if not failed and os.fstat(fd).st_ino == path.stat().st_ino:
+                        failed.append(True)
+                        raise OSError("receipt fsync failed")
+                    return original_fsync(fd)
+
+                patcher.setattr(os, "fsync", fail_once)
+                message = "signer refused"
+            with pytest.raises(tr.TrainingReceiptError, match=message):
                 _issue()
         assert path.read_bytes() == before
         assert tr.read_verified_training_receipt(
