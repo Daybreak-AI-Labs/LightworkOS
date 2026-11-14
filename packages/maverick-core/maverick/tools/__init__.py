@@ -211,7 +211,19 @@ def sandbox_run(
         if type(sandbox) is LocalBackend:
             # Direct argv and stdin avoid both Windows' command limit and
             # POSIX's per-argument limit. Never retry an effect on TypeError.
-            res = execute(argv, timeout=timeout, stdin=stdin)
+            try:
+                res = execute(argv, timeout=timeout, stdin=stdin)
+            except OSError as e:
+                # Keep the `sh -c` contract callers rely on: 127 when the
+                # program is missing, 126 when it cannot be executed. Other
+                # failures (a missing workdir) still raise.
+                if not argv or e.filename != argv[0]:
+                    raise
+                if isinstance(e, FileNotFoundError):
+                    return 127, "", f"sh: {argv[0]}: not found"
+                if isinstance(e, PermissionError):
+                    return 126, "", f"sh: {argv[0]}: Permission denied"
+                raise
             return res.exit_code, res.stdout, res.stderr
         import shlex
         cmd = shlex.join(argv)

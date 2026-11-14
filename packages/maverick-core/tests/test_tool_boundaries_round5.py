@@ -48,6 +48,21 @@ def test_large_local_stdin_reaches_backend_without_command_size_limit(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_local_missing_program_reports_shell_exit_codes(tmp_path):
+    from maverick.sandbox.local import LocalBackend
+    from maverick.tools import sandbox_run
+
+    backend = LocalBackend(workdir=tmp_path)
+    code, out, err = sandbox_run(backend, ["definitely-not-a-program-xyz"], timeout=5)
+    assert (code, out) == (127, "")
+    assert "definitely-not-a-program-xyz: not found" in err
+    if os.name != "nt":
+        plain = tmp_path / "plain.txt"
+        plain.write_text("x")
+        code, _, err = sandbox_run(backend, [str(plain)], timeout=5)
+        assert code == 126 and "Permission denied" in err
+
+
 def test_android_screenshot_refuses_git_metadata(tmp_path, monkeypatch):
     from maverick.tools.android import _op_screenshot
 
