@@ -15,12 +15,27 @@ class TestRedact:
         assert out["nested"]["note"] == "keep"
         assert out["list"][0]["access_token"] == "***redacted***"
 
-    def test_ordinary_keys_containing_secret_words_are_kept(self):
-        d = {"author": "Jane", "max_tokens": 500, "token_count": 3, "secretary": "Sam",
-             "pull_request": {"author_association": "MEMBER", "authority": "ops"}}
-        assert redact(d) == d
-        assert redact({"authToken": "t", "X-Auth-Token": "t"}) == {  # pragma: allowlist secret
-            "authToken": "***redacted***", "X-Auth-Token": "***redacted***"}
+    def test_key_masking_never_narrows_except_for_listed_ordinary_names(self):
+        import re
+
+        previous = re.compile(
+            r"(token|secret|password|passwd|api[_-]?key|apikey|authorization|auth|"
+            r"bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key)", re.IGNORECASE)
+        ordinary = {"author", "authors", "author_association", "authored_date", "authority",
+                    "secretary", "token_count", "tokenCount", "max_tokens", "maxTokens",
+                    "input_tokens", "total_tokens", "tokens_used"}
+        credentials = [
+            "accesstoken", "refreshtoken", "authtoken", "privatekey", "clientsecret",
+            "secretaccesskey", "mysecret", "userpassword", "dbpassword", "DBPASSWORD",
+            "securitytoken", "api_keys", "apikeys", "tokens", "token_value", "auth_header",
+            "authHeader", "api_key", "x-api-key", "access_token", "X-Auth-Token",
+            "Authorization", "AWS_SECRET_ACCESS_KEY", "credentials", "oauth_scopes",
+            "is_authenticated", "author_token", "max_tokens_secret",
+        ]
+        for key in credentials + sorted(ordinary):
+            assert previous.search(key)
+            masked = redact({key: "v"})[key] == "***redacted***"  # pragma: allowlist secret
+            assert masked is (key not in ordinary), key
 
     def test_non_secret_data_is_untouched(self):
         d = {"amount": 100, "items": [1, 2], "flag": True}

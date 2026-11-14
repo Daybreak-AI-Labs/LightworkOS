@@ -11,32 +11,25 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Key names are matched by whole word, not substring: ``author``,
-# ``max_tokens``, ``secretary`` or ``authority`` are ordinary execution data,
-# and masking them would silently change what a resumed or queued run sees.
-# Strong words mark a credential wherever they appear in the name; ``token``
-# and ``auth`` only when they end it (``access_token`` but not ``token_count``).
-_KEY_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
-_STRONG_KEY_WORDS = frozenset({
-    "secret", "secrets", "password", "passwords", "passwd", "passphrase",
-    "apikey", "authorization", "bearer", "credential", "credentials",
-})
-_TRAILING_KEY_WORDS = frozenset({"token", "auth"})
-_KEY_PAIRS = frozenset({
-    ("api", "key"), ("private", "key"), ("client", "secret"), ("access", "key"),
-    ("secret", "key"),
-})
+# Credential key names are matched as substrings, so joined and plural forms
+# (``accesstoken``, ``dbpassword``, ``api_keys``) stay masked.  A short list of
+# ordinary names that merely contain a secret word is removed first:
+# ``author*``/``authority`` (not ``authorization``), ``secretary`` and
+# token-count keys such as ``max_tokens`` or ``token_count``.  Masking those
+# would silently change what a resumed or queued run sees.
+_SECRET_KEY = re.compile(
+    r"(token|secret|password|passwd|api[_-]?key|apikey|authorization|auth|"
+    r"bearer|credential|private[_-]?key|client[_-]?secret|access[_-]?key)", re.IGNORECASE)
+_ORDINARY_KEY_PART = re.compile(
+    r"author(?!i[sz])|secretar(?:y|ies)"
+    r"|(?:max|min|input|output|prompt|completion|total|num|reasoning|cached)[_-]?tokens?"
+    r"(?![_-]?(?:secret|value|key))"
+    r"|tokens?[_-]?(?:counts?|limits?|usage|used|budget|estimate)",
+    re.IGNORECASE)
 
 
 def _secret_key(name: str) -> bool:
-    words = [word.lower() for word in _KEY_WORD.findall(name)]
-    if not words:
-        return False
-    return (
-        any(word in _STRONG_KEY_WORDS for word in words)
-        or words[-1] in _TRAILING_KEY_WORDS
-        or any(pair in _KEY_PAIRS for pair in zip(words, words[1:], strict=False))
-    )
+    return bool(_SECRET_KEY.search(_ORDINARY_KEY_PART.sub(" ", name)))
 
 
 _MASK = "***redacted***"
