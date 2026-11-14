@@ -29,6 +29,7 @@ All ops return strings; failures are "ERROR: ..." strings, never exceptions.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -51,7 +52,7 @@ _OPENOCD_MISSING = "ERROR: openocd not found — install OpenOCD and connect a p
 
 # OpenOCD -f arguments: either a name from OpenOCD's bundled script library
 # ("target/stm32f4x.cfg", "interface/stlink.cfg") or a plain relative file in
-# the workspace. Reject traversal, absolute paths, leading dashes (option
+# the workspace (only with allow_flash; see _workspace_cfg_denial). Reject traversal, absolute paths, leading dashes (option
 # injection) and shell/Tcl metacharacters.
 _CFG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]*\.cfg$")
 
@@ -164,9 +165,29 @@ def _openocd_argv(args: dict, commands: list[str]) -> list[str]:
     return argv
 
 
+def _workspace_cfg_denial(sandbox, argv: list[str]) -> str | None:
+    """Refuse a ``-f`` config that resolves to a workspace file unless flashing
+    is allowed. OpenOCD searches its working directory (the workspace) before
+    its script library, and a config is a Tcl script that can itself run
+    ``reset`` or ``flash write_image``. A file the agent wrote there (including
+    one shadowing a library name such as ``target/stm32f4x.cfg``) would run the
+    destructive ops ``allow_flash`` gates."""
+    base = Path(sandbox.workdir) if sandbox is not None else Path.cwd()
+    for flag, value in zip(argv, argv[1:], strict=False):
+        if flag == "-f" and os.path.lexists(base / value) and not _flash_allowed():
+            return (
+                f"ERROR: config {value!r} is a file in the workspace; a workspace "
+                "config can reset or flash the target, so it needs "
+                "[embedded] allow_flash = true in ~/.maverick/config.toml"
+            )
+    return None
+
+
 def _run_openocd(sandbox, argv: list[str], *, timeout: float = 60.0) -> str:
     if shutil.which("openocd") is None:
         return _OPENOCD_MISSING
+    if denial := _workspace_cfg_denial(sandbox, argv):
+        return denial
     from . import sandbox_run
     try:
         code, out, err = sandbox_run(sandbox, argv, timeout=timeout)
