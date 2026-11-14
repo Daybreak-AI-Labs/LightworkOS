@@ -361,6 +361,19 @@ def test_release_checks_record_a_baseline_and_compare_plainly(client, monkeypatc
     assert bad.status_code == 422
 
 
+def test_release_check_with_an_unmeasured_baseline_metric_fails_plainly(client):
+    # A baseline recorded from the command line may hold a measure this page
+    # does not take; it fails the check, is not shown as ok, and is not a 500.
+    from maverick.release_canary import CanaryStore
+    _finished_tasks(3, 0.10)
+    CanaryStore().record("cli-baseline", {"cost_per_task": 0.10, "accuracy": 0.9})
+    r = client.get(BASE + "/release-checks/compare", params={"baseline": "cli-baseline"})
+    assert r.status_code == 200
+    body = r.json()
+    row = next(row for row in body["rows"] if row["result"] == "Not measured")
+    assert body["passed"] is False and row["ok"] is False and row["now"] is None
+
+
 def test_connection_components_run_as_a_job_and_refuse_read_only_installs(client, monkeypatch):
     from maverick import grpc_stubs
     from maverick_dashboard import installation_ops_api

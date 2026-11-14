@@ -28,6 +28,7 @@ activity-record row naming who made them.
 """
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -562,7 +563,8 @@ _METRICS = {
     "p95_latency_s": "Time for the slowest tasks",
     "success_rate": "Tasks that finished successfully",
 }
-_VERDICTS = {"regressed": "Got worse", "improved": "Got better", "ok": "About the same", "new": "New measure"}
+_VERDICTS = {"regressed": "Got worse", "improved": "Got better", "ok": "About the same", "new": "New measure",
+             "missing": "Not measured", "invalid": "Not a valid number"}
 _TOLERANCES = (0.05, 0.10, 0.20, 0.30)
 
 
@@ -620,9 +622,11 @@ async def compare_release(request: Request, baseline: str, tolerance: float = 0.
     if not current:
         raise HTTPException(409, "No tasks finished in the last 30 days, so there is nothing to compare yet.")
     result = compare(base, current, tolerance=tolerance)
-    rows = [{"measure": _METRICS.get(v.metric, _words(v.metric)), "before": v.baseline, "now": v.candidate,
+    rows = [{"measure": _METRICS.get(v.metric, _words(v.metric)),
+             "before": v.baseline if math.isfinite(v.baseline) else None,
+             "now": v.candidate if math.isfinite(v.candidate) else None,
              "change": v.rel_change if abs(v.rel_change) != float("inf") else None,
-             "result": _VERDICTS.get(v.verdict, _words(v.verdict)), "ok": v.verdict != "regressed"}
+             "result": _VERDICTS.get(v.verdict, _words(v.verdict)), "ok": v.verdict not in {"regressed", "missing", "invalid"}}
             for v in result.verdicts]
     worse = len(result.regressions)
     summary = ("Performance held up against the baseline." if result.passed else
