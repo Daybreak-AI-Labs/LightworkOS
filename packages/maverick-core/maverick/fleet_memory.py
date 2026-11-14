@@ -398,8 +398,11 @@ def ingest(record: dict, *, shield: Any | None = None) -> tuple[bool, str]:
             failure_msg=f"from {source}", reflection=reflection,
             tools_used=tools, domain=domain,
         )
+        if not ok:
+            _audit("ingest_blocked", source=source, reason="write_failed")
+            return False, "write failed"
         _audit("ingest", source=source, kind=kind)
-        return bool(ok), "ok" if ok else "write failed"
+        return True, "ok"
 
     # success / failure -> donation-shaped record in the fleet inbox; the
     # dream cycle consolidates it alongside native experience
