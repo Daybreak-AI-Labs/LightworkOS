@@ -16,8 +16,12 @@ def test_resolve_pinned_rejects_a_private_resolving_host(monkeypatch):
 
 def test_resolve_pinned_honors_allow_private(monkeypatch):
     monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+    import ipaddress
+
     from maverick.tools.http_fetch import _resolve_pinned
-    assert _resolve_pinned("localhost") == "localhost"   # override: no pinning
+    # The override admits the loopback address but still pins it, so the
+    # connection cannot re-resolve the name to the metadata service.
+    assert ipaddress.ip_address(_resolve_pinned("localhost")).is_loopback
 
 
 def test_check_robots_uses_the_ssrf_safe_client(monkeypatch):
@@ -59,7 +63,8 @@ def test_allow_private_setting_reaches_every_check_of_the_fetch(allow_private_se
     from maverick.tools import _ssrf
     from maverick.tools.http_fetch import _preflight_fetch, _resolve_pinned, is_blocked_host
     assert is_blocked_host("localhost") is False
-    assert _resolve_pinned("localhost") == "localhost"
+    import ipaddress
+    assert ipaddress.ip_address(_resolve_pinned("localhost")).is_loopback   # pinned
     url = "https://127.0.0.1/x"
     assert _preflight_fetch(url, urlparse(url)) is None
     assert _ssrf.resolve_pinned_ip("127.0.0.1") == "127.0.0.1"
@@ -112,4 +117,17 @@ def test_fetch_override_keeps_link_local_blocked(monkeypatch):
 
     monkeypatch.setattr(socket, "getaddrinfo", fake_private)
     assert http_fetch.is_blocked_host("intranet.example") is False
-    assert http_fetch._resolve_pinned("intranet.example") == "intranet.example"  # override: no pinning
+    assert http_fetch._resolve_pinned("intranet.example") == "10.1.2.3"  # pinned, not re-resolved
+
+
+def test_allow_private_pins_the_validated_address(monkeypatch):
+    # A rebinding resolver answers the check with a private address and the
+    # connection with 169.254.169.254; the pinned connect never asks again.
+    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+    import socket
+
+    from maverick.tools import http_fetch
+    answers = iter(["10.0.0.7", "169.254.169.254"])
+    monkeypatch.setattr(http_fetch.socket, "getaddrinfo", lambda *a, **k: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers), 0))])
+    assert http_fetch._resolve_pinned("rebind.example") == "10.0.0.7"
