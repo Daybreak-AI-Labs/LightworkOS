@@ -348,12 +348,8 @@ def _jsonable(value: object) -> object:
     return value
 
 
-def create_no_code_grc_studio_router(  # noqa: C901, PLR0915
-    dependencies: GRCStudioDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or GRCStudioDependencies()
-    router = APIRouter(prefix="/compliance/grc-studio", tags=["no-code-grc-studio"])
-
+def _no_code_grc_studio_probes_routes(deps):
+    """Bind probes and related router operations."""
     def probes(request: Request, tenant: str) -> tuple[bool, bool, bool]:
         enabled_probe = _dependency(request, "grc_studio_enabled_probe", deps.enabled_probe)
         readiness_probe = _dependency(request, "grc_studio_readiness_probe", deps.readiness_probe)
@@ -402,7 +398,11 @@ def create_no_code_grc_studio_router(  # noqa: C901, PLR0915
         if not valid:
             raise HTTPException(status_code=503, detail="GRC studio authority is unavailable")
         return _ops(), tenant, store
+    return composition, probes
 
+
+def _no_code_grc_studio_call_routes(composition, deps, probes, router):
+    """Bind call and related router operations."""
     async def call(ops, function, *args, **kwargs):
         try:
             return await run_in_threadpool(function, *args, **kwargs)
@@ -529,7 +529,11 @@ def create_no_code_grc_studio_router(  # noqa: C901, PLR0915
             "count": len(rows),
             "items": _jsonable(rows),
         }
+    return call, runtime_dependencies
 
+
+def _no_code_grc_studio_list_sources_routes(call, composition, deps, router, runtime_dependencies):
+    """Bind list sources and related router operations."""
     @router.get("/sources")
     async def list_sources(request: Request, response: Response) -> dict[str, object]:
         """Current approved native evidence sources and listed destinations."""
@@ -759,6 +763,9 @@ def create_no_code_grc_studio_router(  # noqa: C901, PLR0915
         _secure(response)
         return _jsonable(result)  # type: ignore[return-value]
 
+
+def _no_code_grc_studio_apply_projection_routes(call, composition, router, runtime_dependencies):
+    """Bind apply projection and related router operations."""
     @router.post("/operations/projections/apply")
     async def apply_projection(
         request: Request, response: Response, body: ApplyProjectionIn
@@ -844,6 +851,18 @@ def create_no_code_grc_studio_router(  # noqa: C901, PLR0915
         result = await call(ops, store.verify_recovery_backup, tenant, backup_id)
         _secure(response)
         return _jsonable(result)  # type: ignore[return-value]
+
+
+def create_no_code_grc_studio_router(
+    dependencies: GRCStudioDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or GRCStudioDependencies()
+    router = APIRouter(prefix="/compliance/grc-studio", tags=["no-code-grc-studio"])
+
+    composition, probes = _no_code_grc_studio_probes_routes(deps)
+    call, runtime_dependencies = _no_code_grc_studio_call_routes(composition, deps, probes, router)
+    _no_code_grc_studio_list_sources_routes(call, composition, deps, router, runtime_dependencies)
+    _no_code_grc_studio_apply_projection_routes(call, composition, router, runtime_dependencies)
 
     return router
 

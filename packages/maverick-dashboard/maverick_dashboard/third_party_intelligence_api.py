@@ -489,15 +489,8 @@ class ThirdPartyIntelligenceDependencies:
         self.store_for = store_for
 
 
-def create_third_party_intelligence_router(  # noqa: C901, PLR0915
-    dependencies: ThirdPartyIntelligenceDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or ThirdPartyIntelligenceDependencies()
-    router = APIRouter(
-        prefix="/third-party/intelligence",
-        tags=["third-party-intelligence"],
-    )
-
+def _third_party_intelligence_authority_routes(deps):
+    """Bind authority and related router operations."""
     def authority(request: Request):
         ops = _ops()
         tenant = _tenant_id()
@@ -563,7 +556,11 @@ def create_third_party_intelligence_router(  # noqa: C901, PLR0915
                 raise HTTPException(409, "Your account or workspace changed. Reload the current controls.")
         check()
         return check
+    return authority, call, mail_guard
 
+
+def _third_party_intelligence_mail_review_routes(mail_guard):
+    """Bind mail review and related router operations."""
     def mail_review(request, tenant, store, selected=None):
         from maverick import mailer
         from maverick.governed_operations import digest
@@ -698,7 +695,13 @@ def create_third_party_intelligence_router(  # noqa: C901, PLR0915
                 detail="third-party provider readiness is unavailable",
             )
         return _jsonable(result)
+    return mail_review, provider_readiness, provider_runtime
 
+
+def _third_party_intelligence_status_routes(
+    authority, call, provider_readiness, provider_runtime, router,
+):
+    """Bind status and related router operations."""
     @router.get("/status")
     async def status(request: Request) -> dict[str, Any]:
         require_permission(request, "view")
@@ -958,6 +961,9 @@ def create_third_party_intelligence_router(  # noqa: C901, PLR0915
         ops, tenant, store = authority(request)
         return _jsonable(await call(ops, store.get_vendor, tenant, vendor_id))
 
+
+def _third_party_intelligence_upsert_relationship_routes(authority, call, router):
+    """Bind upsert relationship and related router operations."""
     @router.put("/relationships/{relationship_id}")
     async def upsert_relationship(
         request: Request,
@@ -1215,6 +1221,9 @@ def create_third_party_intelligence_router(  # noqa: C901, PLR0915
         ops, tenant, store = authority(request)
         return _jsonable(await call(ops, store.get_edd_case, tenant, case_id))
 
+
+def _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, mail_review, router):
+    """Bind set edd task and related router operations."""
     @router.put("/edd/cases/{case_id}/tasks/{task_id}")
     async def set_edd_task(
         request: Request,
@@ -1399,6 +1408,9 @@ def create_third_party_intelligence_router(  # noqa: C901, PLR0915
         )
         return {"items": _jsonable(rows), "count": len(rows)}
 
+
+def _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mail_review, router):
+    """Bind run outbox and related router operations."""
     @router.post("/outbox/run")
     async def run_outbox(
         request: Request,
@@ -1621,6 +1633,9 @@ def create_third_party_intelligence_router(  # noqa: C901, PLR0915
             and all(item.privacy_reviewed for item in rows),
         }
 
+
+def _third_party_intelligence_withdraw_exchange_consent_routes(authority, call, router):
+    """Bind withdraw exchange consent and related router operations."""
     @router.post("/exchange/consents/{consent_id}/withdraw")
     async def withdraw_exchange_consent(
         request: Request, consent_id: ObjectPath, body: RevisionRationaleIn
@@ -1658,6 +1673,30 @@ def create_third_party_intelligence_router(  # noqa: C901, PLR0915
         result = _jsonable(await call(ops, store.verify_integrity, tenant))
         result["valid"] = True
         return result
+
+
+def create_third_party_intelligence_router(
+    dependencies: ThirdPartyIntelligenceDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or ThirdPartyIntelligenceDependencies()
+    router = APIRouter(
+        prefix="/third-party/intelligence",
+        tags=["third-party-intelligence"],
+    )
+
+    authority, call, mail_guard = _third_party_intelligence_authority_routes(deps)
+    (
+        mail_review, provider_readiness, provider_runtime,
+    ) = _third_party_intelligence_mail_review_routes(
+        mail_guard,
+    )
+    _third_party_intelligence_status_routes(
+        authority, call, provider_readiness, provider_runtime, router,
+    )
+    _third_party_intelligence_upsert_relationship_routes(authority, call, router)
+    _third_party_intelligence_set_edd_task_routes(authority, call, mail_guard, mail_review, router)
+    _third_party_intelligence_run_outbox_routes(authority, call, mail_guard, mail_review, router)
+    _third_party_intelligence_withdraw_exchange_consent_routes(authority, call, router)
 
     return router
 

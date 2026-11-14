@@ -426,16 +426,8 @@ class ConsumerTrustCenterAuthorityDependencies:
         self.store_for = store_for
 
 
-def create_consumer_trust_center_authority_router(  # noqa: C901, PLR0915
-    dependencies: ConsumerTrustCenterAuthorityDependencies | None = None,
-) -> APIRouter:
-    deps = dependencies or ConsumerTrustCenterAuthorityDependencies()
-    router = APIRouter(
-        prefix="/consent/trust-center-authority",
-        tags=["consumer-trust-center-authority"],
-        route_class=_GenericValidationRoute,
-    )
-
+def _consumer_trust_center_authority_authority_routes(deps, router):
+    """Bind authority and related router operations."""
     def authority(request: Request):
         ops, trust_center = _ops()
         tenant = _tenant_id()
@@ -623,7 +615,11 @@ def create_consumer_trust_center_authority_router(  # noqa: C901, PLR0915
                 ops.TrustCenterContextAuthority,
             )
         )
+    return authority, call
 
+
+def _consumer_trust_center_authority_prepare_privacy_rights_context_routes(authority, call, router):
+    """Bind prepare privacy rights context and related router operations."""
     @router.post("/privacy-rights-contexts/prepare", status_code=201)
     async def prepare_privacy_rights_context(
         request: Request,
@@ -985,6 +981,9 @@ def create_consumer_trust_center_authority_router(  # noqa: C901, PLR0915
             )
         return _safe({"items": items, "count": len(items)})
 
+
+def _consumer_trust_center_authority_create_export_routes(authority, call, router):
+    """Bind create export and related router operations."""
     @router.post("/contexts/{context_ref}/exports", status_code=201)
     async def create_export(
         request: Request,
@@ -1155,7 +1154,11 @@ def create_consumer_trust_center_authority_router(  # noqa: C901, PLR0915
                 if isinstance(value, str) and _CLOSED_TEXT_RE.fullmatch(value):
                     labels[hashlib.sha256(value.encode("utf-8")).hexdigest()] = value
         return labels
+    return _labels
 
+
+def _consumer_trust_center_authority_overview_routes(_labels, authority, call, router):
+    """Bind overview and related router operations."""
     @router.get("/overview")
     async def overview(request: Request, response: Response) -> dict[str, Any]:
         """Every context, grant and rights authorization, with the viewer's role."""
@@ -1309,6 +1312,22 @@ def create_consumer_trust_center_authority_router(  # noqa: C901, PLR0915
                 ops.RightsCaseAuthorizationAuthority,
             )
         )
+
+
+def create_consumer_trust_center_authority_router(
+    dependencies: ConsumerTrustCenterAuthorityDependencies | None = None,
+) -> APIRouter:
+    deps = dependencies or ConsumerTrustCenterAuthorityDependencies()
+    router = APIRouter(
+        prefix="/consent/trust-center-authority",
+        tags=["consumer-trust-center-authority"],
+        route_class=_GenericValidationRoute,
+    )
+
+    authority, call = _consumer_trust_center_authority_authority_routes(deps, router)
+    _consumer_trust_center_authority_prepare_privacy_rights_context_routes(authority, call, router)
+    _labels = _consumer_trust_center_authority_create_export_routes(authority, call, router)
+    _consumer_trust_center_authority_overview_routes(_labels, authority, call, router)
 
     return router
 
