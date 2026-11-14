@@ -16,7 +16,7 @@ import os
 from typing import Any
 
 from ..governed_http import guarded_redirect_get
-from . import Tool
+from . import Tool, safe_path_segment
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +72,9 @@ def _op_subreddit(args: dict) -> str:
         return "ERROR: subreddit requires name"
     sort = (args.get("sort") or "hot").strip()
     limit = max(1, min(int(args.get("limit") or 25), 100))
+    name, sort = safe_path_segment(name), safe_path_segment(sort)
+    if name is None or sort is None:
+        return "ERROR: name and sort must each be a single path segment"
     code, data = _get(
         f"https://www.reddit.com/r/{name}/{sort}.json",
         {"limit": limit},
@@ -86,6 +89,9 @@ def _op_post(args: dict) -> str:
     pid = (args.get("post_id") or "").strip().removeprefix("t3_")
     if not pid:
         return "ERROR: post requires post_id"
+    pid = safe_path_segment(pid)
+    if pid is None:
+        return "ERROR: post_id must be a single path segment"
     code, data = _get(f"https://www.reddit.com/comments/{pid}.json")
     if code >= 400 or not isinstance(data, list):
         return f"ERROR: post ({code}): {data}"
@@ -108,6 +114,10 @@ def _op_search(args: dict) -> str:
         return "ERROR: search requires q"
     sub = (args.get("subreddit") or "").strip().removeprefix("r/")
     limit = max(1, min(int(args.get("limit") or 25), 100))
+    if sub:
+        sub = safe_path_segment(sub)
+        if sub is None:
+            return "ERROR: subreddit must be a single path segment"
     url = (
         f"https://www.reddit.com/r/{sub}/search.json"
         if sub else "https://www.reddit.com/search.json"
@@ -124,6 +134,9 @@ def _op_user(args: dict) -> str:
         return "ERROR: user requires username"
     sort = (args.get("sort") or "new").strip()
     limit = max(1, min(int(args.get("limit") or 25), 100))
+    u, sort = safe_path_segment(u), safe_path_segment(sort)
+    if u is None or sort is None:
+        return "ERROR: username and sort must each be a single path segment"
     code, data = _get(
         f"https://www.reddit.com/user/{u}/submitted/{sort}.json",
         {"limit": limit},

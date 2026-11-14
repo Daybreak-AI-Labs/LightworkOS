@@ -92,3 +92,13 @@ class TestRedditPrefixStrip:
         # have eaten leading t/3/_ chars too. Use an id starting with stripped chars.
         reddit_tool._op_post({"post_id": "tango123"})
         assert "/comments/tango123." in captured["url"], captured["url"]
+
+
+def test_reddit_ids_cannot_add_path_segments(monkeypatch):
+    get = MagicMock(return_value=_resp(200, {"data": {"children": []}}))
+    _fake_httpx(monkeypatch, get=get)
+    from maverick.tools.reddit_tool import reddit_tool
+    tool = reddit_tool()
+    tool.fn({"op": "subreddit", "name": "python", "sort": "../../api/v1/me"})
+    assert get.call_args.args[0] == "https://www.reddit.com/r/python/..%2F..%2Fapi%2Fv1%2Fme.json"
+    assert tool.fn({"op": "post", "post_id": ".."}).startswith("ERROR:")
