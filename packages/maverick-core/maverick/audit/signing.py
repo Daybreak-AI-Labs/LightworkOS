@@ -1634,23 +1634,23 @@ def ensure_anchors(audit_dir: Path) -> int:
         day = day_file.stem
         if day >= today or day in anchored:
             continue
-        try:
-            tip, count = _file_tip_and_count(day_file)
-        # failure-policy: fail_soft_with_audit
-        except Exception as e:
-            # One unreadable day must not leave every later day un-anchored
-            # (and so deletable without detection). verify_chain reports the
-            # unreadable file itself.
-            log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
-            continue
-        if count and not tip:
-            # An unsigned day (written before crypto was available) has no tip.
-            # An empty-tip anchor would sit in the append-only ledger forever
-            # and fail every WORM push's ledger schema check.
-            log.warning("audit anchors: %s has no signed rows; not anchored", day_file.name)
-            continue
-        if count and _append_anchor(audit_dir, day, tip, count):
-            written += 1
+        with cross_process_lock(day_file):
+            # A writer may have selected this day before midnight. Hold its
+            # append lock boundary from tip discovery through anchor publication.
+            with cross_process_lock(audit_dir / ANCHOR_FILENAME):
+                if day in _anchored_days(audit_dir):
+                    continue
+            try:
+                tip, count = _file_tip_and_count(day_file)
+            # failure-policy: fail_soft_with_audit
+            except Exception as e:
+                log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
+                continue
+            if count and not tip:
+                log.warning("audit anchors: %s has no signed rows; not anchored", day_file.name)
+                continue
+            if count and _append_anchor(audit_dir, day, tip, count):
+                written += 1
     return written
 
 
