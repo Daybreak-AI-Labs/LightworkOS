@@ -172,10 +172,10 @@ def test_migrate_store_refuses_a_corrupt_file_instead_of_renaming_it(world_home)
     sh._store_path().parent.mkdir(parents=True, exist_ok=True)
     sh._store_path().write_text("{not json")
     sh._meta_path(sh._store_path()).write_text(json.dumps({"l1": {"a": 1}}))
-    with pytest.raises(mig.MigrationRefused, match="malformed"):
+    with pytest.raises(mig.LearningFileUnreadable, match="could not be read"):
         mig.migrate_learning_files()
     assert sh._store_path().read_text() == "{not json"
-    assert "malformed" in mig.preview()["unreadable"]
+    assert mig.preview()["unreadable"] == str(sh._store_path())
 
 
 def test_migrate_store_merges_conflicting_blocks(world_home, monkeypatch):

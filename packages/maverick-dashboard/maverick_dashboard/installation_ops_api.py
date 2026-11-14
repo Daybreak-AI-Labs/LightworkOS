@@ -763,6 +763,9 @@ def _learning_move_state() -> dict[str, Any]:
         summary = ("Lightwork keeps what it learns in files on this computer. To share it across your "
                    "installations, first choose the shared records option for where improvements are kept "
                    "in All settings.")
+    elif state.get("unreadable"):
+        summary = (f"The learning file {state['unreadable']} on this computer could not be read, so "
+                   "nothing can be moved yet. Fix or move that file, then try again.")
     elif waiting:
         summary = (f"{waiting:,} learned item{'s are' if waiting != 1 else ' is'} still in files on this computer "
                    "and can be moved into the shared records.")
@@ -809,8 +812,11 @@ async def learning_move(body: ConfirmIn, request: Request) -> dict:
         result = await run_in_threadpool(_learning_move)
     except MigrationRefused as exc:
         await run_in_threadpool(_failed, request, "learning_move")
+        unreadable = getattr(exc, "path", None)
         raise HTTPException(409, "The learned items could not be moved safely, so the files on this computer "
-                                 "were left as they were.") from exc
+                                 "were left as they were."
+                                 + (f" The learning file {unreadable} could not be read; fix or move it first."
+                                    if unreadable else "")) from exc
     except Exception:
         await run_in_threadpool(_failed, request, "learning_move")
         raise

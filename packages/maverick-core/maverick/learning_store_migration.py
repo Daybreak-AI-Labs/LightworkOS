@@ -21,6 +21,16 @@ class MigrationRefused(RuntimeError):
     """The move cannot run (wrong store setting) or failed its verification."""
 
 
+class LearningFileUnreadable(MigrationRefused):
+    """A learning file on this host cannot be read; ``path`` names it."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        super().__init__(
+            f"the learning file {path} could not be read; fix or move it "
+            "first (nothing was imported)")
+
+
 def _raw(path: Path, keep) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -29,9 +39,7 @@ def _raw(path: Path, keep) -> dict:
     except (ValueError, OSError) as exc:
         # A corrupt file would otherwise import as empty and then be renamed
         # to *.migrated with its entries silently left behind.
-        raise MigrationRefused(
-            f"{path.name} is unreadable or malformed; fix or move it first "
-            "(nothing was imported)") from exc
+        raise LearningFileUnreadable(path) from exc
     return {str(k): v for k, v in data.items() if keep(v)} if isinstance(data, dict) else {}
 
 
@@ -64,8 +72,8 @@ def preview() -> dict[str, Any]:
     try:
         _src, addenda, meta, tried = _file_stores()
         problem = ""
-    except MigrationRefused as exc:
-        addenda, meta, tried, problem = {}, {}, {}, str(exc)
+    except LearningFileUnreadable as exc:
+        addenda, meta, tried, problem = {}, {}, {}, str(exc.path)
     return {"world_store": world_store_selected(), "addenda": len(addenda),
             "provenance": len(meta), "tried": len(tried),
             "corpus_configured": bool(sh.settings().get("eval_corpus")),
@@ -132,5 +140,5 @@ def migrate_corpus() -> dict[str, int] | None:
     return ev.migrate_corpus_files(cpath)
 
 
-__all__ = ["MigrationRefused", "world_store_selected", "require_world_store", "preview",
+__all__ = ["MigrationRefused", "LearningFileUnreadable", "world_store_selected", "require_world_store", "preview",
            "migrate_learning_files", "migrate_corpus"]
