@@ -107,7 +107,7 @@ def authority_identity():
         # Credential changes conservatively invalidate reviews too.
         settings = ["postgres", os.environ.get("MAVERICK_PG_DSN", ""), _rls_enabled()]
     else:
-        settings = ["local", str(_ledger_path().absolute())]
+        settings = ["local", str(_deployment_ledger_path().absolute())]
     return hashlib.sha256(json.dumps(settings).encode("utf-8")).hexdigest()
 
 
@@ -257,12 +257,99 @@ def period_key(now: float | None = None, period: str | None = None) -> str:
     return dt.strftime("%Y-%m-%d") if period == PERIOD_DAY else dt.strftime("%Y-%m")
 
 
-def _ledger_path() -> Path:
+def _deployment_ledger_path() -> Path:
     # Deployment-wide, like the Postgres table: a per-tenant file would give N
     # tenants N times the configured ceiling. The deployment is the bound
     # client (its data root), or the shared root when none is bound.
     from .client import strict_client_id
     return data_dir("provider_spend.json", tenant=strict_client_id())
+
+
+def _ledger_path() -> Path:
+    """The deployment ledger, after folding in the spend that earlier versions
+    recorded in per-tenant ledgers (once per deployment)."""
+    path = _deployment_ledger_path()
+    key = str(path.absolute())
+    if key not in _FOLDED:
+        _fold_tenant_ledgers(path)
+        _FOLDED.add(key)
+    return path
+
+
+# Earlier versions kept one ledger per tenant (tenants/<t>/provider_spend.json).
+# Their current-period totals are added to the deployment ledger exactly once.
+# A journal beside the ledger makes the fold crash-safe: it records the ledger
+# digest before and after the fold, so a retry either finishes or skips it and
+# never adds the same spend twice. The old files are left in place.
+_FOLDED: set[str] = set()
+_TENANT_FOLD_SUFFIX = ".tenant-fold"
+
+
+def _ledger_digest(data: dict) -> str:
+    return hashlib.sha256(json.dumps(data, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def _legacy_tenant_ledgers(path: Path) -> list[Path]:
+    from . import provider_spend_sqlite
+    from .paths import maverick_home
+
+    root = maverick_home() / "tenants"
+    if not root.is_dir():
+        return []
+    found = []
+    for child in sorted(root.iterdir()):
+        legacy = child / "provider_spend.json"
+        if legacy.absolute() == path.absolute() or not child.is_dir():
+            continue
+        if (legacy.exists() or legacy.with_suffix(legacy.suffix + ".required").exists()
+                or provider_spend_sqlite.is_active(legacy)):
+            found.append(legacy)
+    return found
+
+
+def _load_legacy(legacy: Path) -> dict:
+    from . import provider_spend_sqlite
+    if provider_spend_sqlite.is_active(legacy):
+        return provider_spend_sqlite.load(legacy, sys.modules[__name__])
+    return _load_json(legacy)
+
+
+def _fold_tenant_ledgers(path: Path) -> None:
+    from .world_model_backends import is_postgres_configured
+    if is_postgres_configured():
+        return  # the shared database was the authority before, too
+    journal = path.with_name(path.name + _TENANT_FOLD_SUFFIX)
+    if not journal.exists() and not _legacy_tenant_ledgers(path):
+        return
+    try:
+        with _LEDGER_LOCK, cross_process_lock(path, strict=True):
+            state = json.loads(atomic_read_text(journal)) if journal.exists() else {}
+            if state.get("state") == "done":
+                return
+            current = _load(path)
+            before = _ledger_digest(current)
+            if state.get("state") == "pending":
+                if before == state["after"]:
+                    atomic_write_text(journal, json.dumps({**state, "state": "done"}), mode=0o600)
+                    return
+                if before != state["before"]:
+                    raise ProviderAccountingUnavailable
+            period = state.get("period") or period_key()
+            folded = json.loads(json.dumps(current))
+            for legacy in _legacy_tenant_ledgers(path):
+                for name, total in _load_legacy(legacy).get(period, {}).items():
+                    bucket = folded.setdefault(period, {})
+                    bucket[name] = _amount(bucket.get(name, 0.0)) + _amount(total)
+            after = _ledger_digest(folded)
+            pending = {"state": "pending", "period": period, "before": before, "after": after}
+            atomic_write_text(journal, json.dumps(pending), mode=0o600)
+            if after != before:
+                _save(path, folded)
+            atomic_write_text(journal, json.dumps({**pending, "state": "done"}), mode=0o600)
+    except ProviderAccountingUnavailable:
+        raise
+    except Exception as exc:
+        raise ProviderAccountingUnavailable from exc
 
 
 def recorded_at() -> float | None:
@@ -277,7 +364,7 @@ def recorded_at() -> float | None:
         return None
     from . import provider_spend_sqlite
 
-    legacy = _ledger_path()
+    legacy = _deployment_ledger_path()
     database = provider_spend_sqlite.database_path(legacy)
     stamps = []
     for path in (legacy, database, database.with_name(database.name + "-wal")):
@@ -290,7 +377,7 @@ def recorded_at() -> float | None:
 
 def _use_indexed_ledger(path: Path) -> bool:
     """Migrate healthy local accounting before the legacy file size ceiling."""
-    if path.absolute() != _ledger_path().absolute():
+    if path.absolute() != _deployment_ledger_path().absolute():
         return False
     from . import provider_spend_sqlite
     if provider_spend_sqlite.is_active(path):
