@@ -52,6 +52,35 @@ def test_remove_agent():
     assert agent_trust.remove_agent("vega") is False
 
 
+def test_remove_refuses_to_drop_the_revocation_of_a_config_defined_agent(monkeypatch):
+    from maverick import config
+    cfg = {"agent_trust": {"agents": [{"id": "vega", "max_risk": "low"}]}}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: cfg)
+    agent_trust.put_agent({"id": "vega", "max_risk": "low"})
+    agent_trust.set_revoked("vega", True)
+    with pytest.raises(agent_trust.AgentTrustError, match="revoked"):
+        agent_trust.remove_agent("vega")
+    assert agent_trust.load_registry(cfg)["vega"].is_active()[0] is False
+
+
+def test_put_agent_refuses_an_entry_past_capacity(monkeypatch):
+    monkeypatch.setattr(agent_trust, "_MAX_AGENTS", 2)
+    agent_trust.put_agent({"id": "a"})
+    agent_trust.put_agent({"id": "b"})
+    with pytest.raises(agent_trust.AgentTrustError, match="capacity"):
+        agent_trust.put_agent({"id": "overflow"})
+    agent_trust.put_agent({"id": "b", "max_risk": "low"})  # replacing still works
+
+
+def test_attenuating_a_config_agent_stores_only_its_token_hash(monkeypatch):
+    from maverick import config
+    cfg = {"agent_trust": {"agents": [{"id": "vega", "a2a_token": "tok-plain-123"}]}}
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: cfg)
+    agent_trust.attenuate_agent("vega", max_risk="low")
+    assert "tok-plain-123" not in agent_trust.managed_path().read_text()
+    assert agent_trust.agent_for_token("tok-plain-123", "a2a", registry=agent_trust.load_registry(cfg)) is not None
+
+
 def test_revoke_blocks_via_is_active():
     agent_trust.put_agent({"id": "vega", "pubkey": "ab" * 32})
     assert agent_trust.set_revoked("vega", True) is True

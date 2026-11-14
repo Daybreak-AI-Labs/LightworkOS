@@ -704,6 +704,11 @@ def _entry_from_agent(agent: TrustedAgent) -> dict[str, Any]:
     for name in agent.__dataclass_fields__:
         value = getattr(agent, name)
         out[name] = sorted(value) if isinstance(value, frozenset) else value
+    # A config-file bearer may be plaintext; the overlay keeps only its hash.
+    for name in _TOKEN_ATTRS.values():
+        token = out.get(name)
+        if isinstance(token, str) and token and not token.startswith(_TOKEN_HASH_PREFIX):
+            out[name] = hash_token(token)
     return out
 
 
@@ -885,20 +890,40 @@ def put_agent(entry: dict, *, preserve_existing_identity: bool = False) -> Trust
         if persisted is None:
             raise AgentTrustError("updated agent entry is invalid")
         entries = [e for e in loaded if str(e.get("id") or "") != agent.id]
+        if len(entries) >= _MAX_AGENTS:
+            raise AgentTrustError("managed registry is at capacity")
         entries.append(clean)
         _save_managed(entries)
     return persisted
 
 
 def remove_agent(agent_id: str) -> bool:
-    """Delete a managed agent by id. Returns True if one was removed."""
+    """Delete a managed agent by id. Returns True if one was removed.
+
+    A revoked overlay that shadows a config-defined agent is the revocation of
+    that agent; deleting it would restore the config entry as active, so it is
+    refused (as it is when the config cannot be read to tell)."""
     with _managed_locked():
         entries = _load_managed()
         kept = [e for e in entries if str(e.get("id") or "") != agent_id]
         if len(kept) == len(entries):
             return False
+        if any(e.get("revoked") is True for e in entries
+               if str(e.get("id") or "") == agent_id) and _config_defines(agent_id):
+            raise AgentTrustError(
+                f"agent {agent_id!r} is revoked and also defined in config.toml; "
+                "removing its revocation would re-enable it. Clear the "
+                "revocation through the revocation workflow first")
         _save_managed(kept)
     return True
+
+
+def _config_defines(agent_id: str) -> bool:
+    """Does ``[agent_trust] agents`` name ``agent_id``? Unreadable config raises."""
+    cfg = _registry_config(None, strict=True) or {}
+    raw = (cfg.get("agent_trust") or {}).get("agents")
+    return isinstance(raw, list) and any(
+        isinstance(item, dict) and str(item.get("id") or "") == agent_id for item in raw)
 
 
 def set_revoked(agent_id: str, revoked: bool) -> bool:
