@@ -128,6 +128,13 @@ def test_render_pack_roundtrips_tables(tmp_path):
     assert 'quoted' in data["persona"] and "\n" in data["persona"]
 
 
+def test_render_pack_escapes_control_chars_and_quotes_dotted_keys():
+    # A CR, BEL or NUL in a string, and a model key with a dot or a space,
+    # used to render a pack that tomllib rejects or re-reads as nested tables.
+    pack = {"persona": "a\rb\x07\x00 end", "models": {"a.b": "x", "c d": "y"}}
+    assert tomllib.loads(render_pack(pack)) == pack
+
+
 def test_render_pack_roundtrips_workflow_array_of_tables():
     # Every shipped domain pack carries a [[workflow]] array-of-tables (a list
     # of dicts) and an [output] table. render_pack used to TypeError on the

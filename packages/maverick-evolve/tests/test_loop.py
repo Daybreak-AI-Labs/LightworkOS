@@ -361,3 +361,40 @@ def test_cli_no_args_prints_help(capsys):
     rc = main([])
     assert rc == 0
     assert "maverick-evolve" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_seed_champion_is_never_marked_promotion_confirmed(tmp_path, monkeypatch):
+    # With no child beating the seed, confirm_candidate returns the seed with no
+    # sealed comparison and no authorization; marking it confirmed made any
+    # caller-chosen seed adoptable.
+    monkeypatch.setattr("maverick_evolve.loop.calibration_frozen", lambda: False)
+    archive_path = tmp_path / "seed.json"
+    sealed: list[str] = []
+
+    def factory(config: dict):
+        async def agent(prompt: str) -> str:
+            if prompt != "development":
+                sealed.append(prompt)
+            return "PASS"
+        return agent
+
+    authorized: list[object] = []
+    best, history = await evolve_continuous(
+        {"n": 0},
+        [EvalCase(prompt="development", check=lambda out: out == "PASS")],
+        factory,
+        rounds=1,
+        generations_per_round=0,
+        archive_path=archive_path,
+        space={"n": ("int", 0, 1)},
+        rng=random.Random(1),
+        confirmation_cases=[EvalCase(prompt="sealed", check=lambda out: out == "PASS")],
+        confirmation_authorize=lambda *a, **k: authorized.append(a),
+    )
+
+    assert best.config == {"n": 0}
+    assert history[-1]["confirmation"] == "rejected"
+    assert sealed == [] and authorized == []
+    if archive_path.exists():
+        assert Archive.load(archive_path).confirmed_candidate_id is None
