@@ -36,6 +36,30 @@ def test_imagemagick_pins_raster_decoders_and_resource_limits(monkeypatch, tmp_p
     assert not seen
 
 
+@pytest.mark.parametrize("ext, coder", [(".ico", "ico"), (".pdf", "pdf")])
+def test_imagemagick_writes_ico_and_pdf_outputs_but_never_reads_them(monkeypatch, tmp_path, ext, coder):
+    from maverick.tools import imagemagick_tool as module
+
+    seen = []
+    monkeypatch.setattr(module, "_bin", lambda *names: names[0])
+    monkeypatch.setattr(module, "_run_cmd", lambda sb, cmd, **kw: (seen.append(cmd) or (0, "", "")))
+    tool = module.imagemagick_tool(SimpleNamespace(workdir=tmp_path))
+    for args in (
+        {"op": "resize", "input_path": "image.png", "output_path": f"out{ext}", "width": 32},
+        {"op": "convert", "input_path": "image.png", "output_path": f"out{ext.upper()}"},
+        {"op": "composite", "base_path": "base.png", "overlay_path": "o.png", "output_path": f"out{ext}"},
+    ):
+        assert not tool.fn(args).startswith("ERROR")
+        assert seen.pop()[-1] == f"{coder}:{tmp_path / ('out' + args['output_path'][3:])}"
+    for args in (
+        {"op": "identify", "input_path": f"image{ext}"},
+        {"op": "convert", "input_path": f"image{ext}", "output_path": "out.png"},
+        {"op": "composite", "base_path": f"base{ext}", "overlay_path": "o.png", "output_path": "out.png"},
+    ):
+        assert tool.fn(args).startswith("ERROR")
+    assert not seen
+
+
 def test_voice_conversion_uses_bound_workspace_sandbox(monkeypatch, tmp_path):
     from maverick import tools
     from maverick.tools import voice
