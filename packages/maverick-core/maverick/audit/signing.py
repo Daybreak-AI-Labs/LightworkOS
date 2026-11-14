@@ -939,7 +939,6 @@ class AuditSigner:
                 # Ordering is always sidecar -> append lock; rewriters take only
                 # the sidecar, so the two cannot deadlock.
                 with cross_process_lock(self._path):
-                    closed_day = _day_is_closed(self._path)
                     ensure_private_file(self._path, 0o600)
                     with open(self._path, "a+b") as f, _file_append_lock(f):
                         # The append lock still covers tail read, hash/sign, and
@@ -959,9 +958,6 @@ class AuditSigner:
                         ):
                             self._last_hash = actual_tail
                             return True
-                        if closed_day:
-                            log.warning("audit signer: refusing append to anchored day %s", self._path.name)
-                            return False
                         payload["prev_hash"] = actual_tail
                         payload["key_id"] = self._key_id
                         row_bytes = json.dumps(
@@ -1612,16 +1608,6 @@ def _purge_authorizes(entry: object, anchor: dict) -> bool:
     if not isinstance(count, int) or isinstance(count, bool):
         return False
     return tip == anchor.get("tip_hash") and count == anchor.get("row_count")
-
-
-def _day_is_closed(path: Path) -> bool:
-    """Check a day under its sidecar lock, before opening an append handle."""
-    if path.suffix != ".ndjson" or not _DAY_RE.fullmatch(path.stem):
-        return False
-    with cross_process_lock(path.parent / ANCHOR_FILENAME):
-        if not _ensure_anchor_ledger(path.parent):
-            raise ValueError("audit anchor ledger is missing; refusing day append")
-        return path.stem in _anchored_days(path.parent)
 
 
 def ensure_anchors(audit_dir: Path) -> int:

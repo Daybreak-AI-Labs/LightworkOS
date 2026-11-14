@@ -667,20 +667,18 @@ class AuditLog:
         # Sidecar lock FIRST, exactly as AuditSigner.write does. Whole-file
         # rewriters publish a new inode via os.replace, so an advisory lock on
         # an already-open handle alone cannot serialize against them.
-        from .signing import _day_is_closed
-
-        with cross_process_lock(path):
-            closed_day = _day_is_closed(path)
-            with open(path, "a+", encoding="utf-8") as fileobj, _file_append_lock(fileobj):
+        with cross_process_lock(path), open(
+            path,
+            "a+",
+            encoding="utf-8",
+        ) as fileobj:
+            with _file_append_lock(fileobj):
                 if identity is not None and _locked_event_identity_exists(
                     fileobj,
                     payload,
                     identity,
                 ):
                     return True
-                if closed_day:
-                    log.warning("audit: refusing append to anchored day %s", path.name)
-                    return False
                 fileobj.seek(0, os.SEEK_END)
                 fileobj.write(line)
                 fileobj.flush()

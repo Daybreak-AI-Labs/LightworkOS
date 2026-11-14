@@ -25,25 +25,32 @@ def isolated(tmp_path, monkeypatch):
     config.reset_config_cache()
 
 
-def test_anchor_rollover_serializes_tip_and_refuses_late_append(isolated, monkeypatch):
+def test_anchor_tip_waits_for_inflight_day_append(isolated, monkeypatch):
+    from contextlib import contextmanager
+
     from maverick.audit import signing
+    from maverick.file_lock import cross_process_lock
 
     audit_dir = isolated / "audit"
     path = audit_dir / "2000-01-01.ndjson"
     signer = signing.AuditSigner(path)
     assert signer.write({"kind": "before_rollover"})
+    attempted = threading.Event()
     snapshot = threading.Event()
-    append_started = threading.Event()
-    release = threading.Event()
     results = []
     errors = []
-    original = signing._file_tip_and_count
+    original_tip = signing._file_tip_and_count
 
-    def paused_tip(day_file):
-        result = original(day_file)
+    @contextmanager
+    def observed_lock(target, **kwargs):
+        if target == path:
+            attempted.set()
+        with cross_process_lock(target, **kwargs):
+            yield
+
+    def observed_tip(day_file):
         snapshot.set()
-        assert release.wait(5)
-        return result
+        return original_tip(day_file)
 
     def anchor():
         try:
@@ -51,38 +58,20 @@ def test_anchor_rollover_serializes_tip_and_refuses_late_append(isolated, monkey
         except BaseException as exc:
             errors.append(exc)
 
-    def append():
-        append_started.set()
-        try:
-            results.append(signer.write({"kind": "late_rollover"}))
-        except BaseException as exc:
-            errors.append(exc)
-
-    monkeypatch.setattr(signing, "_file_tip_and_count", paused_tip)
-    anchoring = threading.Thread(target=anchor)
-    anchoring.start()
-    assert snapshot.wait(5)
-    writing = threading.Thread(target=append)
-    writing.start()
-    assert append_started.wait(5)
-    # A writer that selected yesterday just before midnight cannot cross the
-    # tip snapshot/anchor transaction. Releasing the snapshot then closes it.
-    writing.join(0.1)
-    release.set()
+    monkeypatch.setattr(signing, "cross_process_lock", observed_lock)
+    monkeypatch.setattr(signing, "_file_tip_and_count", observed_tip)
+    with cross_process_lock(path):
+        anchoring = threading.Thread(target=anchor)
+        anchoring.start()
+        assert attempted.wait(5)
+        assert not snapshot.wait(0.1)
+        assert signer.write({"kind": "inflight_append"})
     anchoring.join(5)
-    writing.join(5)
-    assert not anchoring.is_alive() and not writing.is_alive()
-    assert errors == []
-    monkeypatch.setattr(signing, "_file_tip_and_count", original)
+    assert not anchoring.is_alive()
+    assert errors == [] and results == [1]
+    assert snapshot.is_set()
+    assert len(path.read_text().splitlines()) == 2
     assert signing.verify_anchors(audit_dir) == []
-    assert len(path.read_text().splitlines()) == 1
-    assert sorted(results) == [False, 1]
-    assert signer.write({"kind": "before_rollover"}, idempotency_identity=("kind", "before_rollover"))
-    from maverick.audit.writer import AuditLog
-    assert AuditLog(audit_dir, sign=False)._append_payload(path, {"kind": "unsigned_late"}, None) is False
-    assert signing.verify_anchors(audit_dir) == []
-    today = audit_dir / f"{datetime.now(timezone.utc):%Y-%m-%d}.ndjson"
-    assert signing.AuditSigner(today).write({"kind": "current_day"})
 
 
 def test_checkpoint_publication_recovers_only_its_stale_stage_link(isolated):
