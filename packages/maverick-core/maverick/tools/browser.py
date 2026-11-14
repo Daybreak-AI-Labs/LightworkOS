@@ -66,6 +66,10 @@ from .http_fetch import _scan_fetched
 log = logging.getLogger(__name__)
 
 
+# Upper bound for a caller's ``timeout_ms``: a wait blocks the scope's single
+# browser worker, and the wall-clock budget is only checked between tool calls.
+_DEFAULT_TIMEOUT_MS = 30_000
+_MAX_TIMEOUT_MS = 120_000
 _MAX_FILL_FORM_FIELDS = 25
 _MAX_FILL_FORM_SELECTOR_LENGTH = 500
 _MAX_FILL_FORM_VALUE_LENGTH = 10_000
@@ -180,7 +184,9 @@ _BROWSER_INPUT_SCHEMA: dict[str, Any] = {
         },
         "timeout_ms": {
             "type": "integer",
-            "description": "Override the default 30s action timeout.",
+            "minimum": 1,
+            "maximum": _MAX_TIMEOUT_MS,
+            "description": "Override the default 30s action timeout (at most 120s).",
         },
     },
     "required": ["action"],
@@ -973,6 +979,27 @@ def _browser_type(page, args, timeout) -> str:
     return f"typed {len(text)} chars into {safe_selector!r}"
 
 
+def _fill_form_input_error(args: dict[str, Any]) -> str | None:
+    """Size bounds for fill_form, checked before approval and dispatch.
+
+    The approved path fills every field in one page task, so these bounds must
+    hold there too, not only in the per-field ``_browser_fill_form`` loop.
+    """
+    fields = args.get("fields")
+    if not isinstance(fields, dict) or not fields:
+        return "ERROR: fill_form requires a non-empty 'fields' object {selector: value}"
+    if len(fields) > _MAX_FILL_FORM_FIELDS:
+        return f"ERROR: fill_form supports at most {_MAX_FILL_FORM_FIELDS} fields"
+    for selector, value in fields.items():
+        if len(str(selector)) > _MAX_FILL_FORM_SELECTOR_LENGTH:
+            return (f"ERROR: fill_form selectors are limited to "
+                    f"{_MAX_FILL_FORM_SELECTOR_LENGTH} characters")
+        if len(str(value)) > _MAX_FILL_FORM_VALUE_LENGTH:
+            return (f"ERROR: fill_form values are limited to "
+                    f"{_MAX_FILL_FORM_VALUE_LENGTH} characters")
+    return None
+
+
 def _browser_fill_form(page, args, timeout) -> str:
     fields = args.get("fields")
     if not isinstance(fields, dict) or not fields:
@@ -1365,8 +1392,14 @@ def _run_browser_action(args: dict[str, Any]) -> str:
     except ImportError as e:
         return f"ERROR: {e}"
 
-    timeout = int(args.get("timeout_ms") or 30_000)
+    try:
+        timeout = int(args.get("timeout_ms") or _DEFAULT_TIMEOUT_MS)
+    except (TypeError, ValueError):
+        return "ERROR: timeout_ms must be an integer number of milliseconds"
+    timeout = max(1, min(timeout, _MAX_TIMEOUT_MS))
     allow_hosts = _parse_allow_hosts(args)
+    if action == "fill_form" and (error := _fill_form_input_error(args)):
+        return error
 
     if action != "navigate":
         denial = _deny_and_close_current_page(page, allow_hosts)
