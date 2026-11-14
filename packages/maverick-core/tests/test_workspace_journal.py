@@ -243,3 +243,38 @@ def test_diff_shows_pre_vs_now(workdir, journal_on):
     _write(workdir, "a.txt", "new line\n")
     d = wj.diff_goal()
     assert "-old line" in d and "+new line" in d
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink and mode semantics")
+def test_revert_ignores_planted_temp_symlink_and_keeps_blobs_private(
+        workdir, journal_on, tmp_path):
+    """Regression: revert wrote its temp file through a fixed
+    ``<name>.journal-revert.tmp`` path an agent could plant as a symlink, and
+    pre-image blobs were created world-readable."""
+    (workdir / "a.txt").write_text("orig")
+    _write(workdir, "a.txt", "changed")
+    blob = next(wj.goal_dir().glob("*.pre"))
+    assert blob.stat().st_mode & 0o077 == 0
+    assert wj.goal_dir().stat().st_mode & 0o077 == 0
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched")
+    (workdir / "a.txt.journal-revert.tmp").symlink_to(victim)
+
+    res = wj.revert_goal()
+
+    assert victim.read_text() == "untouched"
+    assert (workdir / "a.txt").read_text() == "orig"
+    assert not (workdir / "a.txt").is_symlink()
+    assert res["reverted"] == 1 and res["complete"] is True
+
+
+def test_revert_with_skipped_entry_is_not_complete(workdir, journal_on):
+    """Regression: an entry skipped at revert time still reported complete."""
+    (workdir / "a.txt").write_text("orig")
+    _write(workdir, "a.txt", "changed")
+    next(wj.goal_dir().glob("*.pre")).unlink()
+
+    res = wj.revert_goal()
+
+    assert res["skipped"] == 1
+    assert res["complete"] is False
