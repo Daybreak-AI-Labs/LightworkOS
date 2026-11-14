@@ -386,15 +386,21 @@ def _resolve_signing(explicit: bool | None) -> bool:
 
         return env_bool("MAVERICK_AUDIT_SIGN", False)
     try:
+        from .._envparse import coerce_bool
         from ..config import load_config
         from ..security_defaults import secure_by_default
 
         # Secure-by-default: sign + hash-chain the audit log unless explicitly
         # disabled. An explicit [audit] sign still wins when present.
-        sign = ((load_config() or {}).get("audit") or {}).get("sign")
-        if sign is not None:
-            return bool(sign)
-        return secure_by_default()
+
+        # A malformed ``audit = "..."`` (not a table) must not switch signing
+        # off; it reads as "not set" and keeps the secure default. A string
+        # value parses as a boolean ("false" is False), anything unrecognised
+        # keeps the default too.
+        audit = (load_config() or {}).get("audit")
+        sign = audit.get("sign") if isinstance(audit, dict) else None
+        default = secure_by_default()
+        return default if sign is None else coerce_bool(sign, default)
     # failure-policy: best_effort
     except Exception:
         return False
@@ -551,7 +557,15 @@ class AuditLog:
                     ):
                         return True
                     return self._append_payload(path, payload, identity)
-            except (OSError, TypeError, ValueError) as e:
+            except (OSError, TypeError, ValueError, RuntimeError) as e:
+                from .segments import SegmentReadError
+
+                # An unreadable earlier day-file (scanned for the governed
+                # identity) is a failed write, not an exception escaping the
+                # documented True/False contract. Other RuntimeErrors (an
+                # AuditRefused, for one) still propagate.
+                if isinstance(e, RuntimeError) and not isinstance(e, SegmentReadError):
+                    raise
                 log.warning("audit: write failed: %s", e)
                 return False
 

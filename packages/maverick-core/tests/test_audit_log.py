@@ -115,3 +115,37 @@ def test_audit_tail_survives_deeply_nested_line(tmp_path):
     # deep line is version-dependent, so assert no-crash + presence, not shape.
     assert {"v": 1, "kind": "goal_start"} in rows
     assert log.grep("goal_start")  # grep also survives
+
+
+def test_unreadable_earlier_day_fails_governed_record_instead_of_raising(tmp_path, monkeypatch):
+    # record() promises True/False; an undecryptable old day-file scanned for
+    # a governed identity must surface as False, not a RuntimeError.
+    from maverick.audit import sealing
+    from maverick.audit.events import AuditEvent, EventKind
+    from maverick.audit.segments import SegmentReadError
+    from maverick.audit.writer import AuditLog
+
+    adir = tmp_path / "audit"
+    adir.mkdir()
+    (adir / "2020-01-01.ndjson").write_text("{}\n")
+
+    def _unreadable(path, *, fail_soft=True):
+        raise SegmentReadError(f"cannot decrypt {path}")
+
+    monkeypatch.setattr(sealing, "segment_text", _unreadable)
+    alog = AuditLog(adir, sign=False)
+    event = AuditEvent(ts=1.0, kind=EventKind.PRIVACY_RECORD_CHANGED, agent="a",
+                       payload={"event_id": "evt-1"})
+    assert alog.record(event) is False
+
+
+def test_signing_stays_on_when_audit_section_is_not_a_table(monkeypatch):
+    import maverick.config as config
+    from maverick.audit.writer import _resolve_signing
+
+    monkeypatch.delenv("MAVERICK_AUDIT_SIGN", raising=False)
+    monkeypatch.setattr("maverick.security_defaults.secure_by_default", lambda: True)
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {"audit": "oops"})
+    assert _resolve_signing(None) is True
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: {"audit": {"sign": "false"}})
+    assert _resolve_signing(None) is False
