@@ -190,19 +190,32 @@ def _default_runner(program: str) -> Iterable[str]:
             "the live eBPF monitor needs root to attach tracepoints; "
             "re-run under sudo."
         )
-    proc = subprocess.Popen(  # operator-run supervisor; see docstring
-        ["bpftrace", "-e", program],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-    )
-    try:
-        assert proc.stdout is not None
-        yield from proc.stdout
-    finally:
-        proc.terminate()
+    import tempfile
+
+    # stderr goes to a file, not a pipe nobody drains, so a failed attach can
+    # be reported instead of looking like a clean stop with zero events.
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errors:
+        proc = subprocess.Popen(  # operator-run supervisor; see docstring
+            ["bpftrace", "-e", program],
+            stdout=subprocess.PIPE, stderr=errors, text=True,
+        )
         try:
-            proc.wait(timeout=5)
-        except Exception:  # noqa: BLE001 -- best-effort teardown
-            proc.kill()
+            assert proc.stdout is not None
+            yield from proc.stdout
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:  # noqa: BLE001 -- best-effort teardown
+                proc.kill()
+        # Reached only when bpftrace closed its output by itself.
+        if proc.returncode:
+            errors.seek(0)
+            detail = " ".join(errors.read()[-2000:].split())
+            raise BpftraceUnavailable(
+                f"bpftrace exited with status {proc.returncode}: "
+                f"{detail or 'no error output'}"
+            )
 
 
 class EbpfMonitor:
