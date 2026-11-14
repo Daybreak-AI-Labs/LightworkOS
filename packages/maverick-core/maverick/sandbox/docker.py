@@ -15,10 +15,13 @@ wizard's smoke test catches it before the agent runs.
 from __future__ import annotations
 
 import logging
+import math
 import shlex
 import subprocess
+import threading
 import time
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -136,6 +139,10 @@ class DockerBackend:
         self.read_only_paths = tuple(normalized)
         self._read_only_mounts = tuple(validated)
         self._warm_name: str | None = None
+        if self.reuse_container:
+            # Cold backends retain the exact state accepted by the pool's
+            # policy handoff; warm guests are never eligible for that pool.
+            self._warm_lock = threading.RLock()
         self._verify_docker()
 
     def _verify_docker(self) -> None:
@@ -225,7 +232,9 @@ class DockerBackend:
         return (source, destination, identity, current_ancestors)
 
     def exec(self, cmd: str, timeout: float | None = None) -> ExecResult:
-        with operation_lease(self):
+        # The warm wrapper reaps every other guest process, so its full
+        # lifecycle (including startup and pending cleanup) must be exclusive.
+        with operation_lease(self), self._warm_lock if self.reuse_container else nullcontext():
             try:
                 return self._exec_owned(cmd, timeout)
             except ReadOnlyPathChanged as exc:
@@ -244,6 +253,8 @@ class DockerBackend:
         # tool can plumb a longer cap for pytest/npm test/etc. Falls
         # back to self.timeout (default 60 s).
         effective = self.timeout if timeout is None else timeout
+        if not math.isfinite(effective) or effective <= 0:
+            return ExecResult(stdout="", stderr="Invalid Docker command timeout", exit_code=1)
         if self.reuse_container:
             return self._exec_warm(cmd, effective)
         container_name = f"maverick-sandbox-{uuid.uuid4().hex}"
@@ -252,7 +263,10 @@ class DockerBackend:
             "--name", container_name,
             *self._container_flags(),
         ]
-        args.extend([self.image, "sh", "-c", cmd])
+        # A daemon-side deadline still runs if the harness or CLI disappears.
+        # Missing timeout in the image fails closed before the command starts.
+        args.extend([self.image, "timeout", "-s", "KILL",
+                     f"{max(effective, 0.001):.6f}s", "sh", "-c", cmd])
 
         try:
             result = subprocess.run(
@@ -384,7 +398,7 @@ class DockerBackend:
 
     def close(self) -> None:
         """Drain owned cleanup against one deadline; retain unresolved identities."""
-        with operation_lease(self, cleanup=True):
+        with operation_lease(self, cleanup=True), self._warm_lock if self.reuse_container else nullcontext():
             self._close_owned()
 
     def _close_owned(self) -> None:
