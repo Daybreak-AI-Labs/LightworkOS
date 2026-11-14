@@ -98,19 +98,24 @@ def test_a_recorded_choice_is_kept_after_the_trial_has_ended(env):
     assert later["candidate_id"] != trial["candidate_id"]
 
 
-def test_a_full_trial_store_drops_ended_trials_records_so_new_trials_get_traffic(env, monkeypatch):
+def test_a_full_trial_store_drops_finished_goals_of_ended_trials(env, monkeypatch):
     canary = env.canary
     monkeypatch.setattr(canary, "MAX_ROWS", 4)
+    monkeypatch.setattr(canary, "_PRUNE_RETRY_AFTER", 0.0)
+    world = FakeWorld()
     first = _start(canary, percent=50)
     for goal_id in range(1, 5):
         canary.version_for_goal(PACK, goal_id)
+        world.status[goal_id] = "done"
+    world.status[4] = "running"  # still running: its recorded choice must stay
     canary.finish(PACK, candidate_id=first["candidate_id"], outcome=canary.ROLLED_BACK, actor="owner")
     second = _start(canary, percent=50)
 
-    canary.version_for_goal(PACK, 100)
+    canary.version_for_goal(PACK, 100, world=world)
     row = canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 100))
     assert row is not None and row["candidate_id"] == second["candidate_id"]
-    assert all(r["candidate_id"] == second["candidate_id"] for r in canary.TRIAL_GOALS.list())
+    assert canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 4))["candidate_id"] == first["candidate_id"]
+    assert canary.TRIAL_GOALS.get(canary._goal_record_id(PACK, 1)) is None
 
 
 def test_a_resumed_goal_with_no_recorded_choice_keeps_the_current_version(env):

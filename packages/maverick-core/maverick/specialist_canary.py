@@ -193,7 +193,7 @@ def version_for_goal(name: str, goal_id: int, *, world=None, resume: bool = Fals
         try:
             row = _record_goal_choice({"id": record_id, "name": name, "goal_id": goal_id,
                                        "candidate_id": trial["candidate_id"], "version": version,
-                                       "assigned_at": time.time()})
+                                       "assigned_at": time.time()}, world)
         except Exception:  # the record is the only proof a goal may use the trial
             row = TRIAL_GOALS.get(record_id)
             if row is None:
@@ -204,23 +204,38 @@ def version_for_goal(name: str, goal_id: int, *, world=None, resume: bool = Fals
     return CURRENT, None
 
 
-def _prune_finished_trial_goals() -> int:
-    """Delete goal records of trials that are no longer live; returns how many.
+_FINISHED_GOAL_STATUSES = frozenset({"done", "completed", "failed", "cancelled", "error"})
+_PRUNE_RETRY_AFTER = 0.0  # monotonic time before which a full store is not listed again
 
-    Only the live trial's records are read (statistics and the goals' recorded
-    choices), so a full store is freed by dropping the records of ended trials.
+
+def _prune_finished_trial_goals(world) -> int:
+    """Delete goal records of ended trials whose goals have finished; returns how many.
+
+    Only the live trial's records feed its statistics, and a goal keeps its
+    recorded choice while it can still run, so only records of an ended trial
+    whose goal is finished (or gone) are removed. Without the world model a
+    goal's state is unknown and nothing is removed.
     """
+    global _PRUNE_RETRY_AFTER
+    if world is None or _now() < _PRUNE_RETRY_AFTER:
+        return 0
     rows = TRIAL_GOALS.list(limit=MAX_ROWS)
     live_ids: dict[str, str | None] = {}
-    dead = []
+    ended = []
     for row in rows:
         name = row.get("name")
         if name not in live_ids:
             trial = live(name)
             live_ids[name] = trial["candidate_id"] if trial else None
         if row.get("candidate_id") != live_ids[name] and not row.get("_audit_pending"):
-            dead.append(row)
+            ended.append(row)
+    goals = world.get_goals([row["goal_id"] for row in ended]) if ended else {}
+    dead = [row for row in ended
+            if row["goal_id"] not in goals
+            or getattr(goals[row["goal_id"]], "status", "") in _FINISHED_GOAL_STATUSES]
     if not dead:
+        # The store stays full for a while; do not list it on every goal start.
+        _PRUNE_RETRY_AFTER = _now() + AUTO_CHECK_SECONDS
         return 0
     from maverick.audit import EventKind, audit_event
 
@@ -229,7 +244,7 @@ def _prune_finished_trial_goals() -> int:
     return sum(1 for row in dead if TRIAL_GOALS.delete(row["id"], expected_revision=row["revision"]))
 
 
-def _record_goal_choice(record: dict) -> dict:
+def _record_goal_choice(record: dict, world) -> dict:
     def create() -> dict:
         return TRIAL_GOALS.create(record, action="specialist_canary.goal_assigned", actor=SYSTEM_ACTOR,
                                   max_records=MAX_ROWS)
@@ -237,7 +252,7 @@ def _record_goal_choice(record: dict) -> dict:
     try:
         return create()
     except GovernedRecordCapacityError:
-        if not _prune_finished_trial_goals():
+        if not _prune_finished_trial_goals(world):
             raise
         return create()
 
