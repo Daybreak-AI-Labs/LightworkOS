@@ -188,13 +188,17 @@ class WhatsAppChannel(Channel):
         import asyncio
 
         from .delivery import DeliveryNotSent, send_chunk
+        from .formatting import split_utf16
 
         # Twilio rejects a body over 1,600 characters, so a long reply goes
-        # out as several messages; each chunk has its own receipt, so a retry
-        # never re-sends a chunk Twilio already accepted.
+        # out as several messages (counted in UTF-16 units, the stricter
+        # count); each chunk has its own receipt, so a retry never re-sends a
+        # chunk Twilio already accepted. A reply over the limit even in code
+        # points was always rejected when it was saved as one "text-0" body,
+        # so its chunks use "part-N" keys and such a saved row can finish.
+        prefix = "part-" if len(text) > TWILIO_BODY_LIMIT else "text-"
         result = ""
-        for index, start in enumerate(range(0, max(len(text), 1), TWILIO_BODY_LIMIT)):
-            chunk = text[start:start + TWILIO_BODY_LIMIT]
+        for index, chunk in enumerate(split_utf16(text, TWILIO_BODY_LIMIT)):
 
             async def create(chunk=chunk):
                 try:
@@ -208,7 +212,7 @@ class WhatsAppChannel(Channel):
                     if isinstance(status, int) and 400 <= status < 500 and status != 408:
                         raise DeliveryNotSent("Provider rejected the message") from exc
                     raise
-            result = await send_chunk(f"text-{index}", chunk, create)
+            result = await send_chunk(f"{prefix}{index}", chunk, create)
         return result
 
     async def stop(self) -> None:

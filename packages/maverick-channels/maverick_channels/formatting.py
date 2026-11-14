@@ -80,6 +80,25 @@ def neutralize_mentions(text: str) -> str:
     return _MENTION_TRIGGER_RE.sub("@" + WORD_JOINER, text or "")
 
 
+def split_utf16(text: str, limit: int) -> list[str]:
+    """Split ``text`` into chunks of at most ``limit`` UTF-16 code units.
+
+    A character outside the Basic Multilingual Plane counts as two units and
+    is never split, so each chunk is within ``limit`` however the provider
+    counts. Returns ``[""]`` for empty input so callers always send something.
+    """
+    chunks: list[str] = []
+    start, units = 0, 0
+    for index, char in enumerate(text or ""):
+        width = 2 if ord(char) > 0xFFFF else 1
+        if units + width > limit:
+            chunks.append(text[start:index])
+            start, units = index, 0
+        units += width
+    chunks.append((text or "")[start:])
+    return chunks
+
+
 def split_for_discord(text: str, limit: int = DISCORD_LIMIT) -> list[str]:
     """Split ``text`` into <= ``limit``-char chunks on line boundaries.
 
