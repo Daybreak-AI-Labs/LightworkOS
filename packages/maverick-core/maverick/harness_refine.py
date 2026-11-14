@@ -597,13 +597,19 @@ def _consume_approval(store: dict, record: dict, approval_id: object, *,
             "propose and approve a new request"
         )
     consumed.append(aid)
-    keep = consumed[-_MAX_CONSUMED_APPROVALS:]
-    for stale in consumed[:len(consumed) - len(keep)]:
-        try:
-            floor = max(floor, int(stale))
-        except (TypeError, ValueError):  # junk entry; nothing to raise to
-            continue
-    store["consumed_approvals"] = keep
+    # A floor may only pass approvals whose proposals are no longer pending.
+    # Keep exact spends above the oldest outstanding approval, even when that
+    # temporarily exceeds the usual history window. Otherwise an unused old
+    # approval becomes indistinguishable from one that actually applied.
+    pending_ids = [
+        int(proposal["approval_id"]) for proposal in store.get("proposals", {}).values()
+        if proposal.get("status") == "pending" and proposal.get("approval_id") is not None
+        and int(proposal["approval_id"]) not in consumed
+    ]
+    ceiling = min(pending_ids) - 1 if pending_ids else max(consumed)
+    stale = consumed[:-_MAX_CONSUMED_APPROVALS]
+    floor = max([floor] + [int(value) for value in stale if int(value) <= ceiling])
+    store["consumed_approvals"] = [value for value in consumed if int(value) > floor]
     store["approval_floor"] = floor
     return aid
 

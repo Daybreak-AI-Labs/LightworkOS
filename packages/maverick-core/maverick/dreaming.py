@@ -1140,8 +1140,12 @@ async def rehearse(
     if scorer is None:
         try:
             from maverick_evolve.eval_harness import EvalCase, evaluate
+            async def guarded_agent(prompt):
+                check_learning_halt("dreaming", "rehearsal_case")
+                return await agent(prompt)
+
             report = await evaluate(
-                agent,
+                guarded_agent,
                 [EvalCase(prompt=c["prompt"], check=rehearsal_completed)
                  for c in cases],
             )
@@ -1295,8 +1299,7 @@ def _replay_donations(
             rec = json.loads(p.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        from .memory_ownership import source_allowed
-        if not isinstance(rec, dict) or not source_allowed(rec.get("goal_id"), ""):
+        if not isinstance(rec, dict):
             continue
         # Imported donation directories have no authenticated local subject
         # binding. Only explicitly unowned source records may become shared.
@@ -1315,7 +1318,7 @@ def _replay_donations(
                 "goal": brief, "success": True,
                 "tools": list(rec.get("tools_used", []) or []),
                 "t": ts, "domain": None,
-                "owner": "", "goal_id": rec.get("goal_id"),
+                "owner": "", "goal_id": None,
             })
         elif outcome:
             failures.append({
@@ -1323,7 +1326,7 @@ def _replay_donations(
                 "failure_class": f"fleet_{outcome}",
                 "reflection": str(rec.get("verifier_critique", "") or "")[:240],
                 "domain": None,
-                "owner": "", "goal_id": rec.get("goal_id"),
+                "owner": "", "goal_id": None,
             })
     return successes, failures
 
@@ -1959,16 +1962,22 @@ def prepare_learning_snapshot(*, keep_last: int | None = None) -> Path:
 @contextlib.contextmanager
 def learning_mutation_scope(*, keep_last: int | None = None):
     """Share one strict boundary across a combined dream/nightly cycle."""
-    snap = prepare_learning_snapshot(keep_last=keep_last)
-    binding = hashlib.sha256(json.dumps(
-        _state_binding(_live_stores(), native=True), sort_keys=True,
-    ).encode()).hexdigest()
-    _restore_coverage(snap, _live_stores(), native=True)
-    token = _mutation_snapshot.set((binding, snap))
-    try:
-        yield snap
-    finally:
-        _mutation_snapshot.reset(token)
+    with contextlib.ExitStack() as pins:
+        # Publication and pin acquisition share the retention lock, so another
+        # process can never prune a newly published boundary before it is held.
+        with cross_process_lock(snapshots_dir() / _SNAPSHOT_TRANSACTION, strict=True):
+            snap = prepare_learning_snapshot(keep_last=keep_last)
+            if _mutation_snapshot.get() is None and not pins.enter_context(_snapshot_pin(snap)):
+                raise RuntimeError("The learning safety copy could not be pinned")
+            binding = hashlib.sha256(json.dumps(
+                _state_binding(_live_stores(), native=True), sort_keys=True,
+            ).encode()).hexdigest()
+            _restore_coverage(snap, _live_stores(), native=True)
+            token = _mutation_snapshot.set((binding, snap))
+        try:
+            yield snap
+        finally:
+            _mutation_snapshot.reset(token)
 
 
 @dataclass(frozen=True)
@@ -2128,6 +2137,40 @@ def _validated_stores(stores: dict[str, Path]) -> dict[str, Path]:
     return out
 
 
+@contextlib.contextmanager
+def _snapshot_pin(snapshot: Path):
+    """Try an OS-held lease; crashes release it without PID or clock guesses.
+
+    The snapshot transaction lock must cover acquisition and retention. Lease
+    files live outside the immutable snapshot inventory and survive while busy.
+    """
+    pins = snapshot.parent / ".snapshot-pins"
+    ensure_private_directory(pins)
+    path = pins / snapshot.name
+    if _path_is_alias(path):
+        raise PermissionError("The learning safety-copy pin is an alias")
+    fd = os.open(_windows_extended_path(path) if os.name == "nt" else path,
+                 os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        ensure_private_file(path)
+        if not os.fstat(fd).st_size:
+            os.write(fd, b"1")
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, PermissionError):
+            yield False
+        else:
+            yield True
+    finally:
+        os.close(fd)
+
+
 def snapshot_learning_state(
     *, keep_last: int = 5, directory: Path | str | None = None,
     stores: dict[str, Path] | None = None, now: float | None = None,
@@ -2220,7 +2263,11 @@ def snapshot_learning_state(
             # retention; a crashed staging tree is never selectable as latest.
             names = _snapshot_names_unlocked(base)
             for old_name in names[:-max(1, keep_last)]:
-                shutil.rmtree(base / old_name, ignore_errors=True)
+                with _snapshot_pin(base / old_name) as available:
+                    if available:
+                        shutil.rmtree(base / old_name, ignore_errors=True)
+                if available and not (base / old_name).exists():
+                    (base / ".snapshot-pins" / old_name).unlink(missing_ok=True)
             return final
     except (OSError, RuntimeError) as e:
         log.warning("dreaming: snapshot failed: %s", e)
