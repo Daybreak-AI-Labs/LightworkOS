@@ -110,14 +110,12 @@ def test_dynamodb_query_follows_last_evaluated_key(monkeypatch):
             return {"Items": [{"id": "2", "name": "bob"}], "ScannedCount": 1}
 
     class _Resource:
-        meta = types.SimpleNamespace(client=types.SimpleNamespace(meta=types.SimpleNamespace(
-            endpoint_url="https://dynamodb.us-east-1.amazonaws.com")))
-
         def Table(self, name):
             return _Table()
 
     boto3.resource = lambda *a, **k: _Resource()
-    boto3.client = lambda *a, **k: None
+    boto3.client = lambda *a, **k: types.SimpleNamespace(meta=types.SimpleNamespace(
+        endpoint_url="https://dynamodb.us-east-1.amazonaws.com"))
     monkeypatch.setitem(sys.modules, "boto3", boto3)
 
     from maverick.tools.dynamodb_tool import dynamodb_tool
@@ -147,14 +145,12 @@ def test_dynamodb_scan_pagination_obeys_total_read_budget(monkeypatch):
             }
 
     class _Resource:
-        meta = types.SimpleNamespace(client=types.SimpleNamespace(meta=types.SimpleNamespace(
-            endpoint_url="https://dynamodb.us-east-1.amazonaws.com")))
-
         def Table(self, name):
             return _Table()
 
     boto3.resource = lambda *a, **k: _Resource()
-    boto3.client = lambda *a, **k: None
+    boto3.client = lambda *a, **k: types.SimpleNamespace(meta=types.SimpleNamespace(
+        endpoint_url="https://dynamodb.us-east-1.amazonaws.com"))
     monkeypatch.setitem(sys.modules, "boto3", boto3)
 
     from maverick.tools.dynamodb_tool import dynamodb_tool
@@ -180,14 +176,12 @@ def test_dynamodb_scan_pagination_missing_scanned_count_fails_closed(monkeypatch
             return {"Items": [], "LastEvaluatedKey": {"id": str(len(calls["scan"]))}}
 
     class _Resource:
-        meta = types.SimpleNamespace(client=types.SimpleNamespace(meta=types.SimpleNamespace(
-            endpoint_url="https://dynamodb.us-east-1.amazonaws.com")))
-
         def Table(self, name):
             return _Table()
 
     boto3.resource = lambda *a, **k: _Resource()
-    boto3.client = lambda *a, **k: None
+    boto3.client = lambda *a, **k: types.SimpleNamespace(meta=types.SimpleNamespace(
+        endpoint_url="https://dynamodb.us-east-1.amazonaws.com"))
     monkeypatch.setitem(sys.modules, "boto3", boto3)
 
     from maverick.tools.dynamodb_tool import dynamodb_tool

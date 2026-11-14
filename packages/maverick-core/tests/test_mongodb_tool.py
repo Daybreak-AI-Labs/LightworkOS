@@ -251,3 +251,23 @@ def test_mongodb_hosts_are_checked_against_enterprise_egress(monkeypatch, tmp_pa
     config.reset_config_cache()
     assert out.startswith("ERROR") and "db.example.com" in out
     assert built == []
+
+
+def test_mongodb_srv_uri_is_refused_under_an_egress_policy(monkeypatch, tmp_path):
+    # The hosts behind an SRV record come from DNS inside pymongo and are never
+    # checked, so a +srv URI is refused while a policy is active.
+    _install_fake_mongo(monkeypatch, [])
+    built = []
+    sys.modules["pymongo"].MongoClient = lambda *a, **k: built.append(a)
+    monkeypatch.setenv("MONGODB_URI", "mongodb+srv://u:p@cluster0.example.net/x")
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "absent.toml"))
+    from maverick import config
+    from maverick.tools.mongodb_tool import mongodb_tool
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "1")
+    config.reset_config_cache()
+    out = mongodb_tool().fn({"op": "find", "collection": "orders"})
+    assert out.startswith("ERROR") and "mongodb+srv" in out and built == []
+    monkeypatch.setenv("MAVERICK_ENTERPRISE", "0")
+    config.reset_config_cache()
+    assert "mongodb+srv" not in mongodb_tool().fn({"op": "find", "collection": "orders"})
+    config.reset_config_cache()

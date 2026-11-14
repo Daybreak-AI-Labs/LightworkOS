@@ -74,9 +74,18 @@ def _config() -> tuple[str, str]:
 
 def _check_egress(uri: str) -> None:
     """pymongo uses raw sockets, outside the process egress guard, so check
-    every seed host in the URI (or the SRV name) against the egress policy."""
-    from ._sdk_egress import require_sdk_egress
+    every seed host in the URI against the egress policy.
 
+    A ``mongodb+srv://`` URI names a DNS record whose hosts pymongo looks up
+    itself, so under any egress policy it is refused: list the hosts in a
+    ``mongodb://`` URI instead."""
+    from ._sdk_egress import egress_restricted, require_sdk_egress
+
+    if uri.lower().startswith("mongodb+srv://") and egress_restricted("mongodb"):
+        raise RuntimeError(
+            "mongodb: an egress policy is active and a mongodb+srv:// URI hides the "
+            "real database hosts behind DNS, so they cannot be checked; set "
+            "MONGODB_URI to a mongodb:// URI that lists the hosts")
     rest = uri.split("://", 1)[-1]
     hosts = rest.split("/", 1)[0].split("?", 1)[0].rsplit("@", 1)[-1]
     for host in hosts.split(","):

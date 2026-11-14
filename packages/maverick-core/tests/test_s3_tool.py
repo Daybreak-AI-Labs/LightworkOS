@@ -40,8 +40,16 @@ def _install_fake_boto3(monkeypatch, *, buckets=None, list_objects=None,
         def generate_presigned_url(self, *a, **k):
             return presigned_url
 
-    boto3.client = lambda *a, **k: _Client()
+    created = []
+    boto3.client = lambda *a, **k: created.append(k) or _Client()
+    boto3.created = created
     monkeypatch.setitem(sys.modules, "boto3", boto3)
+    botocore = types.ModuleType("botocore")
+    botocore_config = types.ModuleType("botocore.config")
+    botocore_config.Config = lambda **k: k
+    botocore.config = botocore_config
+    monkeypatch.setitem(sys.modules, "botocore", botocore)
+    monkeypatch.setitem(sys.modules, "botocore.config", botocore_config)
 
 
 # ---------- S3 ----------
@@ -107,3 +115,9 @@ def test_s3_endpoint_is_checked_against_enterprise_egress(monkeypatch, tmp_path)
     config.reset_config_cache()
     assert out.startswith("ERROR") and "s3.us-east-1.amazonaws.com" in out
     assert "b1" not in out
+    # Only the probe (static placeholder keys, so no credential provider
+    # runs) was built; it uses path-style addressing, so requests stay on the
+    # checked host instead of <bucket>.<host>.
+    created = sys.modules["boto3"].created
+    assert len(created) == 1 and created[0]["aws_access_key_id"] == "egress-probe"
+    assert created[0]["config"] == {"s3": {"addressing_style": "path"}}

@@ -14,7 +14,6 @@ ops:
 from __future__ import annotations
 
 import logging
-import os
 from decimal import Decimal
 from typing import Any
 
@@ -45,17 +44,10 @@ _DDB_SCHEMA: dict[str, Any] = {
 
 
 def _client():
-    import boto3
-
-    from ._sdk_egress import require_sdk_egress
-    resource = boto3.resource(
-        "dynamodb",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None,
-        region_name=os.environ.get("AWS_REGION") or None,
-    )
-    # botocore is outside the process egress guard; check the endpoint here.
-    require_sdk_egress("dynamodb", resource.meta.client.meta.endpoint_url)
-    return resource
+    from ._sdk_egress import aws_client
+    # botocore is outside the process egress guard; the endpoint is checked
+    # before the resource (and its credential resolution) exists.
+    return aws_client("dynamodb", "dynamodb", resource=True)
 
 
 def _serialize(obj: Any, _depth: int = 0) -> Any:

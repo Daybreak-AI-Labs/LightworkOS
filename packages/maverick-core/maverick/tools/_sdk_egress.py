@@ -9,6 +9,7 @@ policy that cannot be evaluated refuses the request.
 """
 from __future__ import annotations
 
+import os
 from urllib.parse import urlsplit
 
 
@@ -42,4 +43,47 @@ def require_sdk_egress(tool: str, url: str) -> None:
         raise RuntimeError(denial)
 
 
-__all__ = ["require_sdk_egress", "sdk_egress_denial"]
+def egress_restricted(tool: str) -> bool:
+    """Whether any egress policy limits ``tool`` to particular hosts.
+
+    Asks the same layers as :func:`sdk_egress_denial` about a host no policy
+    can list (``.invalid`` is reserved). True when that host would be refused,
+    or when the policy cannot be read.
+    """
+    probe = "egress-probe.invalid"
+    try:
+        from ..enterprise import egress_permitted
+        from ..tenant.egress import egress_allowed
+
+        return not (egress_permitted(f"https://{probe}/") and egress_allowed(tool, probe))
+    except Exception:  # noqa: BLE001 -- unreadable policy: treat as restricted
+        return True
+
+
+def aws_client(tool: str, service: str, *, resource: bool = False, config=None):
+    """Build a boto3 client (or resource) only after its endpoint is allowed.
+
+    botocore resolves credentials while it creates a client, and providers
+    such as instance metadata, container credentials, STS assume-role and SSO
+    make network requests. So the endpoint is decided first on a probe client
+    given static placeholder keys (no credential provider runs and endpoint
+    resolution is local), the policy is checked, and only then is the real
+    client built with the normal credential chain.
+    """
+    import boto3
+
+    kwargs = {
+        "endpoint_url": os.environ.get("AWS_ENDPOINT_URL") or None,
+        "region_name": os.environ.get("AWS_REGION") or None,
+    }
+    if config is not None:
+        kwargs["config"] = config
+    probe = boto3.client(service, aws_access_key_id="egress-probe",
+                         aws_secret_access_key="egress-probe", **kwargs)
+    require_sdk_egress(tool, probe.meta.endpoint_url)
+    if resource:
+        return boto3.resource(service, **kwargs)
+    return boto3.client(service, **kwargs)
+
+
+__all__ = ["aws_client", "egress_restricted", "require_sdk_egress", "sdk_egress_denial"]
