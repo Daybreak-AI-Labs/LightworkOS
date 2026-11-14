@@ -810,7 +810,7 @@ def build_app(server) -> FastAPI:
             method=method,
             is_task_request=is_task_request,
         )
-        execution_owner = _request_owner(request, response_sid, caller_scope)
+        execution_owner = _request_owner(response_sid, caller_scope)
 
         # Streamable HTTP: when the client accepts SSE and this is a real
         # request (not a fire-and-forget notification), stream progress
