@@ -349,6 +349,32 @@ def test_apply_that_cannot_be_audited_is_rolled_back(monkeypatch):
     assert hr.list_proposals(status="pending")[0]["id"] == proposal["id"]
 
 
+def test_an_unaudited_dashboard_apply_is_closed_so_it_can_be_retried(monkeypatch):
+    _configure("enable = true\nrequire_approval = false")
+    proposal = hr.propose(_observation())
+    from maverick import audit
+
+    real = audit.audit_event
+    refuse = [True]
+
+    def _maybe_refuse(kind, *args, **kwargs):
+        if refuse[0] and kind == audit.EventKind.HARNESS_REFINEMENT_APPLIED:
+            raise audit.AuditRefused("audit sink refused the write")
+        return real(kind, *args, **kwargs)
+
+    monkeypatch.setattr(audit, "audit_event", _maybe_refuse)
+    context, first, second = "c" * 64, "1" * 32, "2" * 32
+    revision = hr.change_review(proposal["id"])["revision"]
+    with pytest.raises(audit.AuditRefused):
+        hr.apply(proposal["id"], expected_revision=revision, operation_id=first, context=context)
+    receipt = hr.decision_receipt(proposal["id"], first, actor="", context=context, revision=revision)
+    assert receipt["status"] == "aborted"
+    refuse[0] = False
+    # The undone attempt no longer holds every later decision.
+    applied = hr.apply(proposal["id"], expected_revision=revision, operation_id=second, context=context)
+    assert applied["status"] == "applied"
+
+
 # ---- revert ---------------------------------------------------------------
 
 def test_revert_restores_prior_state_and_is_idempotent():
