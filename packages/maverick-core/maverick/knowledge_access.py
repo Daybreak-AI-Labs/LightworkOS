@@ -990,11 +990,15 @@ class KnowledgeAccessService:
         for detail succeed. A source whose content is unavailable (a storage or
         projection failure) is treated like a denied source: it backs no
         purpose, so the purpose is omitted rather than reported as an error.
+
+        The global effect fence is not held across the scan: each ``detail``
+        check takes it for itself, and a purpose already proven is not checked
+        again.
         """
         canonical = canonical_tenant_id(tenant)
         found: set[str] = set()
         after = snapshot = None
-        with tenant_scope(tenant=canonical), self.registry.effect_fence():
+        with tenant_scope(tenant=canonical):
             while True:
                 page = self.registry.knowledge_candidate_page(
                     canonical, source_selectors=None, limit=_MAX_SCAN,
@@ -1004,6 +1008,8 @@ class KnowledgeAccessService:
                     if row.get("state") != "approved":
                         continue
                     for purpose in row.get("manifest", {}).get("allowed_purposes", ()):
+                        if purpose in found:
+                            continue
                         try:
                             self.detail(canonical, actor, ResearchAssetRef(**row["reference"]),
                                         purpose=purpose)
