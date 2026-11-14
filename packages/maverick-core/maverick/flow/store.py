@@ -211,6 +211,9 @@ def save_flow(
     from .recipe_flow import check_persisted_lineage
     check_persisted_lineage(flow)
     with _definitions_lock():
+        existing = _read_json(_flows_dir() / f"{_safe_id(flow.id)}.json")
+        if existing is not None and existing.get("id") != flow.id:
+            raise FlowVersionConflict("This definition location belongs to a different flow id")
         prior = load_flow(flow.id)
         actual_version = int(prior.version) if prior is not None else 0
         if expected_version is not None and actual_version != int(expected_version):
@@ -254,7 +257,7 @@ def _new_revision() -> str:
 
 def load_flow(flow_id: str) -> Flow | None:
     d = _read_json(_flows_dir() / f"{_safe_id(flow_id)}.json")
-    return Flow.from_dict(d) if d else None
+    return Flow.from_dict(d) if d and d.get("id") == flow_id else None
 
 
 def list_versions(flow_id: str) -> list[Flow]:
@@ -293,18 +296,24 @@ def rollback_flow(
     """Restore a prior ``version`` (default: the one immediately before current)
     as a NEW current version -- non-destructive, so the rollback can itself be
     undone. Returns the new current flow, or ``None`` if the target is unknown."""
-    cur = load_flow(flow_id)
-    if cur is None:
-        return None
-    target_v = version if version is not None else int(cur.version) - 1
-    target = load_version(flow_id, target_v)
-    if target is None:
-        return None
-    return save_flow(
-        target.copy(),
-        expected_version=expected_version,
-        expected_revision=expected_revision,
-    )   # re-save the old content as a fresh version
+    with _definitions_lock():
+        cur = load_flow(flow_id)
+        if cur is None:
+            return None
+        target_v = version if version is not None else int(cur.version) - 1
+        target = load_version(flow_id, target_v)
+        if target is None:
+            return None
+        restored = target.copy()
+        restored.owner = cur.owner
+        errors = restored.validate()
+        if errors:
+            raise FlowVersionConflict("The earlier flow is invalid and cannot be restored: " + "; ".join(errors[:3]))
+        return save_flow(
+            restored,
+            expected_version=expected_version,
+            expected_revision=expected_revision,
+        )   # re-save the old content as a fresh version
 
 
 def list_flows() -> list[Flow]:
@@ -385,7 +394,9 @@ def _delete_flow_under_activation(
     with _definitions_lock():
         current = load_flow(flow_id)
         if current is None:
-            return False
+            return _revoke_missing_draft_pointer(
+                flow_id, expected_version, expected_revision, expected_release_id,
+            )
         if expected_version is not None and int(current.version) != int(expected_version):
             raise FlowVersionConflict(
                 f"flow {flow_id!r} changed (expected version {expected_version}, "
@@ -476,6 +487,33 @@ def _revoke_published_pointer_locked(flow_id: str) -> bool:
         raise FlowSnapshotError(
             f"published flow {flow_id!r} could not be revoked"
         ) from exc
+
+
+def _revoke_missing_draft_pointer(flow_id, expected_version, expected_revision, expected_release_id) -> bool:
+    """Revoke a lost draft's release without dropping the caller's CAS checks.
+
+    Called only under both mutation locks. Pointer metadata remains sufficient
+    for a restrictive revocation even if its immutable graph cannot be read.
+    """
+    path = _published_pointer_path(flow_id)
+    raw = _read_json(path)
+    if raw is None:
+        if path.exists():
+            raise FlowSnapshotError("published flow pointer is unreadable")
+        return False
+    if raw.get("flow_id") != flow_id:
+        raise FlowSnapshotError("published flow identity does not match its pointer")
+    if expected_version is not None and raw.get("definition_version") != expected_version:
+        raise FlowVersionConflict(f"flow {flow_id!r} changed since review")
+    if expected_revision is not None and raw.get("definition_revision") != expected_revision:
+        raise FlowVersionConflict(f"flow {flow_id!r} was replaced or changed generation")
+    if expected_release_id is not None:
+        active_id = raw.get("release_id") or release_digest_for(
+            raw.get("definition_digest", ""), raw.get("subflow_digests") or {},
+        )
+        if active_id != expected_release_id:
+            raise FlowVersionConflict(f"published flow {flow_id!r} changed since review")
+    return _revoke_published_pointer_locked(flow_id)
 
 
 def _canonical_flow_bytes(raw: dict) -> bytes:
@@ -585,7 +623,7 @@ def _snapshot_flow_bundle_locked(
                     f"subflow {ref!r} is unavailable to this flow owner"
                 )
             if validate_reachability:
-                errors = child.reachability_errors()
+                errors = child.validate() + child.reachability_errors()
                 if errors:
                     raise FlowSnapshotError(
                         f"subflow {ref!r} cannot be published: " + "; ".join(errors[:3])
@@ -947,28 +985,40 @@ def active_release_guard(flow_id: str, *, expected_release_id: str):
         yield published
 
 
-def list_published_bundles() -> list[tuple[Flow, dict]]:
-    """Every verified active release in the current tenant namespace."""
+def list_published_bundles(*, with_problems: bool = False):
+    """Verified releases, optionally paired with problems for partial inventory.
+
+    Strict callers (including retirement review) still refuse an incomplete
+    inventory. Cron collection opts into partial results and preserves jobs
+    associated with any release whose current state could not be read.
+    """
     directory = _published_dir()
-    if not directory.exists():
-        return []
     out: list[tuple[Flow, dict]] = []
+    problems: list[dict[str, str]] = []
     for path in sorted(directory.glob("*.json")):
-        raw = _read_json(path)
-        if raw is None:
-            if not path.exists():
-                continue
-            raise FlowSnapshotError(
-                f"published flow pointer {path.name!r} is unreadable"
-            )
-        if not raw.get("flow_id"):
-            raise FlowSnapshotError(
-                f"published flow pointer {path.name!r} has no flow identity"
-            )
-        bundle = load_published_bundle(str(raw["flow_id"]))
-        if bundle is not None:
-            out.append(bundle)
-    return out
+        identity = ""
+        try:
+            raw = _read_json(path)
+            if raw is None:
+                if not path.exists():
+                    continue
+                raise FlowSnapshotError(f"published flow pointer {path.name!r} is unreadable")
+            candidate = raw.get("flow_id")
+            if not isinstance(candidate, str) or not candidate or _published_pointer_path(candidate) != path:
+                raise FlowSnapshotError(f"published flow pointer {path.name!r} has no matching flow identity")
+            identity = candidate
+            bundle = load_published_bundle(identity)
+            if bundle is not None:
+                out.append(bundle)
+        except Exception as exc:
+            if not with_problems:
+                raise
+            # Store failures carry bounded structural diagnostics, never the
+            # definition or retained execution data.
+            error = str(exc) if isinstance(exc, FlowSnapshotError) else type(exc).__name__
+            problems.append({"flow_id": identity, "pointer": path.name, "error": error})
+            log.warning("Published flow %s could not be read: %s", path.name, error)
+    return (out, problems) if with_problems else out
 
 
 def unpublish_flow(
@@ -999,7 +1049,9 @@ def _unpublish_flow_under_activation(
     with _definitions_lock():
         current = load_flow(flow_id)
         if current is None:
-            return False
+            return _revoke_missing_draft_pointer(
+                flow_id, expected_version, expected_revision, expected_release_id,
+            )
         if int(current.version) != int(expected_version):
             raise FlowVersionConflict(
                 f"flow {flow_id!r} changed (expected version {expected_version}, "
@@ -1040,7 +1092,7 @@ def load_flow_snapshot(digest: str) -> Flow:
     except Exception as exc:
         raise FlowSnapshotError(f"flow snapshot {digest} is invalid") from exc
     # Bounds added after a release was published must not make it unloadable.
-    clamped = clamp_saved_numbers(flow)
+    clamped = clamp_saved_numbers(flow) + _clamp_snapshot_retries(flow)
     if clamped:
         log.warning("flow snapshot %s: clamped out-of-range values: %s",
                     digest, ", ".join(clamped[:10]))
@@ -1049,6 +1101,20 @@ def load_flow_snapshot(digest: str) -> Flow:
         raise FlowSnapshotError(
             "flow snapshot is structurally invalid: " + "; ".join(errors[:3]))
     return flow
+
+
+def _clamp_snapshot_retries(flow: Flow) -> list[str]:
+    from .ir import max_node_retries
+
+    ceiling = max_node_retries()
+    changes = []
+    for node in flow.nodes.values():
+        if type(node.retries) is int and node.retries > ceiling:
+            node.retries = ceiling
+            changes.append(f"{flow.id}/{node.id}.retries")
+        for child in ([node.body] if node.body is not None else []) + list(node.branches):
+            changes.extend(_clamp_snapshot_retries(child))
+    return changes
 
 
 def validate_snapshot_bundle_owners(
@@ -1469,9 +1535,16 @@ def save_run(run: FlowRun) -> None:
         # keeps peak storage to the old and new checkpoint, not every save ever.
         payloads.reclaim(artifact_root, run.run_id, (prior or {}).get("data_state"))
         previous_ref = (prior or {}).get("data_state")
+        unchanged = False
         if (previous_ref and prior.get("flow_id") == run.flow_id
-                and prior.get("owner", "") == run.owner
-                and payloads.decode(artifact_root, prior) == values):
+                and prior.get("owner", "") == run.owner):
+            try:
+                unchanged = payloads.decode(artifact_root, prior) == values
+            except payloads.FlowPayloadError:
+                # A lost prior payload must not prevent a complete replacement
+                # checkpoint or an honest indeterminate crash marker.
+                pass
+        if unchanged:
             # Status/lease checkpoints reuse unchanged immutable data.
             d["data_state"] = previous_ref
         else:
@@ -1523,6 +1596,26 @@ def load_run(run_id: str, *, owner: str | None = None,
             raise FlowPayloadError("flow checkpoint belongs to a different run")
         d.update(decode(_runs_dir().parent / "run_payloads", d))
         return FlowRun.from_dict(d)
+
+
+def quarantine_unreadable_run(run_id: str, *, flow_id: str, owner: str | None, error: str) -> FlowRun | None:
+    """Quarantine active metadata without treating an incomplete preview as data.
+
+    This is a crash-only transition, never an execution/retry loader. A missing
+    or mismatched metadata row cannot establish which work needs quarantine.
+    """
+    from .run_state import STATUS_INDETERMINATE, STATUS_RESUMING, STATUS_RUNNING
+
+    with _checkpoint_lock(run_id):
+        raw = _read_json(_runs_dir() / f"{_safe_id(run_id)}.json")
+        if (not raw or raw.get("run_id") != run_id or raw.get("flow_id") != flow_id
+                or (owner is not None and raw.get("owner", "") != owner)
+                or raw.get("status") not in {STATUS_RESUMING, STATUS_RUNNING}):
+            return None
+        values = dict(raw, data={}, input_data={}, continuation={}, status=STATUS_INDETERMINATE, error=error)
+        run = FlowRun.from_dict(values)
+        save_run(run)
+        return run
 
 
 def delete_run(run_id: str) -> bool:
