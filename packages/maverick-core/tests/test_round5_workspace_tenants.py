@@ -213,3 +213,54 @@ def test_postgres_legacy_backfill_filters_malformed_operations(postgres_test_dsn
         assert f"Skipped {len(receipts) - len(accepted)} malformed legacy provider operation receipt(s)" in caplog.text
     finally:
         world.close()
+
+
+@pytest.mark.parametrize("damage", ["truncated", "bad-signature", "moved-home"])
+def test_unusable_pending_review_never_blocks_recovery(tmp_path, monkeypatch, caplog, damage):
+    import shutil
+
+    from maverick import client, config, file_lock
+    from maverick import workspace_recovery as recovery
+    from maverick.paths import data_dir
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("MAVERICK_HOME", str(home))
+    monkeypatch.setenv("MAVERICK_CLIENT_ID", "acme")
+    for name in ("MAVERICK_TENANT", "MAVERICK_WORLD_BACKEND", "MAVERICK_PG_DSN",
+                 "MAVERICK_BACKUP_SIGNING_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "load_config", dict)
+    monkeypatch.setattr(config, "config_source_errors", lambda **_: [])
+    client.reset_client_cache()
+    try:
+        root = file_lock.ensure_private_directory(data_dir())
+        (root / "record.txt").write_text("original")
+        recovery.configure_key()
+        snapshot = recovery.create()
+        pending = recovery.prepare_restore(snapshot["id"], isolated=True, actor="admin")
+        review_path = recovery._store() / "review.json"
+        if damage == "truncated":
+            review_path.write_text(review_path.read_text()[:40])
+        elif damage == "bad-signature":
+            review = json.loads(review_path.read_text())
+            review["expires_at"] = 1
+            review_path.write_text(json.dumps(review))
+        else:
+            moved = tmp_path / "moved"
+            shutil.copytree(home, moved)
+            monkeypatch.setenv("MAVERICK_HOME", str(moved))
+            client.reset_client_cache()
+            review_path = recovery._store() / "review.json"
+        safety = recovery._archive(pending["safety_snapshot"])
+        assert safety.exists()
+        created = recovery.create()
+        assert recovery._archive(created["id"]).exists()
+        assert safety.exists()
+        assert not review_path.exists()
+        assert list(recovery._store().glob("review.json.unusable-*"))
+        assert "review.json" in caplog.text
+        again = recovery.prepare_restore(snapshot["id"], isolated=True, actor="admin")
+        assert again["safety_snapshot"] != pending["safety_snapshot"]
+        assert safety.exists()
+    finally:
+        client.reset_client_cache()
