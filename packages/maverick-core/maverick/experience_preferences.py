@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -16,6 +17,8 @@ from . import config
 from .crypto_at_rest import EncryptionUnavailable, deployment_key_scope, seal, unseal
 from .file_lock import atomic_write_bytes, cross_process_lock, ensure_private_directory
 from .paths import current_tenant_id_strict, data_dir
+
+log = logging.getLogger(__name__)
 
 DEFAULTS = {
     "preferred_name": "", "tone": "", "language": "en", "interface_language": "", "verbosity": "balanced",
@@ -95,7 +98,12 @@ def state(principal: str, *, thread: int | None = None) -> dict:
     for key in ("theme", "font", "density", "text_size", "glass"):
         inherited = cfg.get("dashboard", {}).get(key)
         if inherited is not None:
-            values[key], sources[key] = _validate(key, inherited), "installation settings"
+            try:
+                values[key], sources[key] = _validate(key, inherited), "installation settings"
+            except ValueError:
+                # One bad [dashboard] value must not break preferences for
+                # everyone: keep the product default for that field.
+                log.warning("ignoring invalid [dashboard] %s preference in installation settings", key)
     from .persona import STYLES
     from .styles import BUILTIN_STYLES, active_style_name
     style = active_style_name()

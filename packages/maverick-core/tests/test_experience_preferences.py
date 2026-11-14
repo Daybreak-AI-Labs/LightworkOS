@@ -128,6 +128,8 @@ def test_glass_effects_are_off_until_the_installation_or_a_person_turns_them_on(
     assert write('user:alice', {'glass': 'off'})['values']['glass'] == 'off'
     with pytest.raises(ValueError):
         write('user:alice', {'glass': 'sparkle'})
+    monkeypatch.setattr(prefs.config, 'load_config', lambda: {'dashboard': {'font': 'Comic'}})
+    assert prefs.state('user:alice')['values']['font'] == 'default'  # a bad installation value is skipped
 # Recent pages: the sidebar's short "Recent pages" list for one person.
 
 def test_recent_pages_are_personal_newest_first_distinct_and_bounded(isolated):
