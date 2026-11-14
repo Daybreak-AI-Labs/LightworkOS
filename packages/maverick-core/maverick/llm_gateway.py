@@ -1509,7 +1509,8 @@ def handle_anthropic_message(
 
 
 def gateway_status() -> dict[str, Any]:
-    rows = _LEDGER.list(limit=_MAX_LIST)
+    # The ledger holds at most _MAX_CALLERS rows; count all of them.
+    rows = _LEDGER.list(limit=_MAX_CALLERS)
     counts: dict[str, int] = {}
     callers: set[str] = set()
     requests = 0
@@ -1530,8 +1531,10 @@ def gateway_status() -> dict[str, Any]:
 def list_callers(*, limit: int = 100) -> list[dict[str, Any]]:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_LIST:
         raise ValueError(f"limit must be between 1 and {_MAX_LIST}")
-    rows = _LEDGER.list(limit=limit)
+    # Sort the whole bounded ledger first so the most recent callers win.
+    rows = _LEDGER.list(limit=_MAX_CALLERS)
     rows.sort(key=lambda row: -float(row.get("last_seen") or 0.0))
+    rows = rows[:limit]
     return [
         {
             "caller_digest": row.get("caller_digest"),

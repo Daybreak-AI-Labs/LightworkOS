@@ -306,6 +306,15 @@ def test_team_budget_keeps_usage_when_the_clock_steps_back_and_refuses_malformed
     assert not refused.allowed and refused.reason == "budget_authority"
 
 
+def test_list_callers_returns_the_most_recent_rows():
+    for i in range(12):
+        gw._record_call(caller=f"c{i}", model="m", status="ok", prompt_sha256="0" * 64,
+                        usage=None, now=1_000.0 + ((i * 7) % 12))
+    newest = gw.list_callers(limit=3)
+    assert [row["last_seen"] for row in newest] == [1_011.0, 1_010.0, 1_009.0]
+    assert gw.gateway_status()["caller_model_pairs"] == 12
+
+
 def test_otel_spans_land_in_the_caller_ledger():
     payload = {
         "resourceSpans": [{
