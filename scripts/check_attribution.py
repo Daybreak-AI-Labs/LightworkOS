@@ -39,33 +39,81 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: Assistants whose name in a trailer or footer marks it as AI attribution.
-#: Human co-authors and non-assistant bots (dependabot, renovate) pass.
+#: Assistants whose bare name in a trailer or footer marks it as AI
+#: attribution. A first name alone is not an assistant identity once an email
+#: address is attached (``Claude Monet <monet@example.com>`` is a person), so
+#: a name is matched only when it stands alone or the address agrees with it.
 _ASSISTANTS = (
     r"(?:claude|anthropic|copilot|chatgpt|openai|codex|gemini|cursor|devin|"
-    r"aider|windsurf|jules\[bot\]|amp|openhands|claudebot)"
+    r"aider|windsurf|jules|amp|openhands|claudebot)"
 )
-
-# A first name alone is not an assistant identity. Pair vendor identities
-# with their known addresses, or match a complete assistant bot login.
-_BOT_LOGIN = r"(?:jules\[bot\]|copilot\[bot\]|claude\[bot\]|claudebot|openhands\[bot\]|gemini-code-assist\[bot\]|devin-ai-integration\[bot\]|cursoragent)"
-IDENTITY_RULE = re.compile(
-    rf"^(?:{_BOT_LOGIN})(?:\s*<[^<>]+>)?$|"
-    r"^(?:claude(?:\s+[^<>]+)?|anthropic|assistant)\s*<noreply@anthropic\.com>$|"
-    r"^(?:chatgpt|openai|codex)\s*<noreply@openai\.com>$|"
-    r"^copilot\s*<copilot@github\.com>$|"
-    r"^devin\s*<(?:devin|noreply)@cognition\.(?:ai|com)>$|"
-    r"^cursor\s*<cursoragent@cursor\.com>$|"
-    r"^amp\s*<amp@ampcode\.com>$|"
-    r"^openhands\s*<openhands@all-hands\.dev>$",
+_NAME_RULE = re.compile(
+    rf"(?:(?:github|google|openai|anthropic)\s+)?{_ASSISTANTS}"
+    r"(?:\s+(?:code|agent|ai|bot|assist|assistant|cli))*",
     re.IGNORECASE,
 )
+#: Address domains that only an assistant (or its vendor) commits from.
+_VENDOR_DOMAINS = (
+    "anthropic.com", "openai.com", "cursor.com", "aider.chat", "ampcode.com",
+    "all-hands.dev", "cognition.ai", "cognition.com", "codeium.com",
+)
+#: Words of a ``[bot]`` login that make it an assistant's app rather than a
+#: dependency or CI bot (dependabot, renovate, github-actions pass).
+_ASSISTANT_TOKENS = frozenset({
+    "claude", "anthropic", "copilot", "chatgpt", "openai", "codex", "gemini",
+    "cursor", "cursoragent", "devin", "aider", "windsurf", "jules", "amp",
+    "openhands", "claudebot",
+})
+_IDENTITY = re.compile(r"(?P<name>[^<>]*?)\s*(?:<(?P<email>[^<>]*)>)?")
+_GITHUB_NOREPLY = re.compile(r"(?:\d+\+)?(?P<login>[^@]+)@users\.noreply\.github\.com",
+                             re.IGNORECASE)
 _TRAILER = re.compile(
     r"^\s*(co-authored-by|assisted-by|generated-by|ai-assisted-by|co-developed-by):\s*(.*?)\s*$",
     re.IGNORECASE,
 )
-_NAME_ONLY = re.compile(rf"(?:{_ASSISTANTS}|claude code)", re.IGNORECASE)
 _GENERATOR = re.compile(r"generated (?:with|by)\s+(.+?)\s*$", re.IGNORECASE)
+
+
+def _tokens(value: str) -> set[str]:
+    return set(re.split(r"[-_.+\s]+", value.lower()))
+
+
+def _assistant_login(login: str) -> bool:
+    """A GitHub login that belongs to an assistant: ``Copilot`` itself, or a
+    ``[bot]`` app login naming an assistant (``copilot-swe-agent[bot]``,
+    ``devin-ai-integration[bot]``, ``google-labs-jules[bot]``)."""
+    login = login.strip().lower()
+    if login in {"copilot", "claudebot", "cursoragent"}:
+        return True
+    return login.endswith("[bot]") and bool(_tokens(login[:-5]) & _ASSISTANT_TOKENS)
+
+
+def is_assistant_identity(value: str) -> bool:
+    """``Name <email>`` (or a bare name or login) that is an assistant.
+
+    An address at an assistant vendor's domain, a GitHub no-reply address of
+    an assistant login, or an assistant bot login is enough. A name is enough
+    only without an address, or when the address's local part names the same
+    kind of assistant (``Copilot <copilot@github.com>``).
+    """
+    match = _IDENTITY.fullmatch(value.strip())
+    if match is None:
+        return False
+    name = re.sub(r"\s*\([^()]*\)$", "", match.group("name")).strip()
+    email = (match.group("email") or "").strip().lower()
+    if _assistant_login(name):
+        return True
+    if not email:
+        return bool(_NAME_RULE.fullmatch(name))
+    domain = email.rpartition("@")[2]
+    if any(domain == d or domain.endswith("." + d) for d in _VENDOR_DOMAINS):
+        return True
+    noreply = _GITHUB_NOREPLY.fullmatch(email)
+    if noreply and _assistant_login(noreply.group("login")):
+        return True
+    local = re.sub(r"^\d+\+", "", email.partition("@")[0])
+    return bool(_NAME_RULE.fullmatch(name)) and bool(_tokens(local) & _ASSISTANT_TOKENS)
+
 
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("assistant session trailer",
@@ -80,18 +128,22 @@ RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 
 def _assistant_credit(value: str) -> bool:
-    credit = value.strip(" *_\t")
+    """A trailer value or generator credit that names an assistant. Markdown
+    emphasis, a link wrapper, trailing punctuation and a trailing parenthesised
+    part (a URL or model name) are stripped first."""
+    credit = value.strip(" *_\t.,;:!")
     link = re.fullmatch(r"\[([^\]]+)\]\([^)]+\)", credit)
     if link:
         credit = link.group(1)
-    return bool(IDENTITY_RULE.fullmatch(credit) or _NAME_ONLY.fullmatch(credit))
+    credit = re.sub(r"\s*\([^()]*\)$", "", credit).strip(" *_\t.,;:!")
+    return is_assistant_identity(credit)
 
 
 def identity_findings(author: str, committer: str, source: str) -> list[str]:
     """Author/committer identities of one commit that are assistant identities."""
     out: list[str] = []
     for role, identity in (("author", author), ("committer", committer)):
-        if IDENTITY_RULE.fullmatch(identity.strip()):
+        if is_assistant_identity(identity):
             out.append(f"{source}: AI {role} identity: {identity}")
     return out
 
