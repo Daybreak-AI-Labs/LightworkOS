@@ -215,7 +215,7 @@ def test_dry_run_and_revision_guard_stay_before_network(connector, monkeypatch):
     assert requests[0].headers["if-match"] == '"v1"'
 
 
-@pytest.mark.parametrize("status", [204, 205])
+@pytest.mark.parametrize("status", [200, 201, 204, 205])
 def test_valid_no_content_response_stays_compatible(connector, monkeypatch, status):
     requests = transport(monkeypatch, [(status, b"", {"content-type": "application/json"})])
     assert invoke(connector, {"op": "post", "path": "/items", "confirm": True}) == '""'
@@ -277,6 +277,18 @@ def test_cached_success_contains_only_public_result(connector, monkeypatch):
         assert len(requests) == 1
     finally:
         cache.reset()
+
+
+def test_read_allow_list_checks_the_path_that_is_sent(connector, monkeypatch):
+    requests = transport(monkeypatch, [(200, {"ok": True}, {})])
+    read_tool = make_rest_tool(name="bounded_read", base_url_env="BOUNDED_URL",
+                               token_env="BOUNDED_TOKEN", description="Fixture read",
+                               read_only=True, allowed_read_paths=("/items",))
+    # "//x/items" parses as host "x" + path "/items" but is sent as "//x/items".
+    for path in ("//returns/items", "/items/..;/returns/1"):
+        assert invoke(read_tool, {"path": path}).startswith("ERROR:")
+    assert not requests
+    assert invoke(read_tool, {"path": "/items/1"}) == '{"ok": true}'
 
 
 def test_graphql_missing_data_is_not_a_success(connector, monkeypatch):

@@ -379,7 +379,8 @@ def _execute_connector_http(method, url, request_headers, *, params, body, args,
                     raise
                 except (ValueError, UnicodeError):
                     content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-                    no_content = not raw and status in {204, 205} and label != "graphql"
+                    # Any 2xx with an empty body completed; only GraphQL must carry data.
+                    no_content = not raw and 200 <= status < 300 and label != "graphql"
                     if not no_content and (label == "graphql" or content_type == "application/json"
                                            or content_type.endswith("+json")):
                         return outcome(f"ERROR: {label} ({status}): invalid upstream response",
@@ -438,7 +439,7 @@ def _rest_execute(
         base, tok = config()
         # Query-param auth: the credential rides a query param (e.g. FRED's
         # ``api_key``, Census's ``key``) rather than a header. Caller-supplied
-        # params win, so an agent can still override; missing -> we inject env.
+        # params cannot replace it: the configured credential always wins.
         if query_auth and tok:
             params = {**(params or {}), query_auth: tok}
         url = f"{base}{norm(path)}"
@@ -559,9 +560,16 @@ def make_rest_tool(
         # must not help bypass or broaden endpoint checks. Percent-decode before
         # checking segments so encoded dot-segment traversal cannot pass the
         # allowlist and be normalized by the HTTP stack or upstream service.
-        parsed = urlsplit(_norm(path))
+        # A leading "//" would be parsed as a network location (dropping the
+        # first segment from the checked path) while the request is still
+        # sent to "<base>//...", so the check and the request would disagree.
+        normalized = _norm(path)
+        if normalized.startswith("//"):
+            return None
+        parsed = urlsplit(normalized)
         request_path = unquote(parsed.path or "/")
-        if any(segment in (".", "..") for segment in request_path.split("/")):
+        # "..;" is treated as ".." by upstreams that strip path parameters.
+        if any(segment.split(";", 1)[0] in (".", "..") for segment in request_path.split("/")):
             return None
         return request_path
 
