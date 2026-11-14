@@ -31,11 +31,13 @@ class MatrixRow:
 
 
 def _manifest_for(ep):
-    from .plugins import _find_manifest
+    """``(manifest, declared)``: a declared but unparseable manifest is
+    ``(None, True)``, which the runtime gate refuses."""
+    from .plugins import _manifest_details
     try:
-        return _find_manifest(ep)
+        return _manifest_details(ep)
     except Exception:
-        return None
+        return None, False
 
 
 def _is_enabled(name: str, dist: str, allow: set[str] | None) -> bool:
@@ -62,7 +64,16 @@ def build_matrix() -> list[MatrixRow]:
         for ep in _entry_points(group):
             name = getattr(ep, "name", "?")
             dist = _ep_dist_name(ep) or "?"
-            manifest = _manifest_for(ep)
+            manifest, declared = _manifest_for(ep)
+            if manifest is None and declared:
+                rows.append(MatrixRow(
+                    group=group, name=name, dist=dist, api_version="?",
+                    compatible=False, deprecated=False,
+                    enabled=_is_enabled(name, dist, allow),
+                    permissions_ok=True,
+                    notes="manifest declared but unreadable (refused at load)",
+                ))
+                continue
             if manifest is None:
                 rows.append(MatrixRow(
                     group=group, name=name, dist=dist, api_version="?",
@@ -86,17 +97,9 @@ def build_matrix() -> list[MatrixRow]:
 
 
 def _requested(manifest) -> list[str]:
-    p = manifest.permissions
-    out = []
-    if getattr(p, "network", False):
-        out.append("network")
-    if getattr(p, "fs_write", False):
-        out.append("fs_write")
-    if getattr(p, "subprocess", False):
-        out.append("subprocess")
-    if getattr(p, "sensitive_envs", None):
-        out.append("sensitive_envs")
-    return out
+    # The runtime gate's own list, including RFC ``requires`` entries.
+    from .plugins import _requested_permissions
+    return _requested_permissions(manifest)
 
 
 def render(rows: list[MatrixRow]) -> str:
