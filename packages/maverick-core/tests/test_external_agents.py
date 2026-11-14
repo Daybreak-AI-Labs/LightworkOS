@@ -760,8 +760,14 @@ def test_containment_reaches_midflight_via_heartbeat():
     assert xa.heartbeat("sf-quotebot", gid)["continue"] is False
     with pytest.raises(xa.ExternalAgentsError):
         xa.start_run("sf-quotebot", {"title": "Another"})
-    with pytest.raises(xa.ExternalAgentsError, match="contained"):
-        xa.finish_run("sf-quotebot", gid, {"summary": "done", "outcome": "success"})
+    # The run is closed and its cost metered, but its outcome is not accepted.
+    closed = xa.finish_run("sf-quotebot", gid, {"summary": "all done", "outcome": "success",
+                                                "steps": ["shipped it"], "cost_dollars": 1.5})
+    assert closed["contained"] is True
+    from maverick.world_model import WorldModel
+    goal = WorldModel().get_goal(gid)
+    assert goal.status == "blocked" and "contained" in goal.result
+    assert xa._load_sidecar()["sf-quotebot"]["spent_dollars"] == pytest.approx(1.5)
 
 
 def test_parked_approval_notifies_and_fires_webhook(monkeypatch, tmp_path):

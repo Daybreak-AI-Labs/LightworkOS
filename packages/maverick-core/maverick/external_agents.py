@@ -1064,7 +1064,10 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
     """Close a live run: outcome, step trail, costed episode, spend meter.
 
     Same schema as ``record_run`` minus ``title``. The goal must be live and
-    owned by the caller — cross-agent finishes are refused."""
+    owned by the caller — cross-agent finishes are refused. A contained agent
+    may still close its run so the reported cost reaches the spend meter, but
+    its summary, steps and outcome are not accepted: the goal is closed as
+    blocked with a fixed note."""
     if not enabled():
         raise ExternalAgentsError("external agents plane is disabled")
     from .agent_trust import decide_inbound, lookup, record_denied
@@ -1077,8 +1080,7 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
     if meta is None:
         raise ExternalAgentsError(
             f"agent {agent_id!r} has a trust entry but no enrollment")
-    if meta.get("contained"):
-        raise ExternalAgentsError("denied: agent is contained pending review")
+    contained = bool(meta.get("contained"))
     principal = f"agent:{agent_id}"
     from .world_model import open_world
     w = open_world()
@@ -1088,19 +1090,10 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
         raise ExternalAgentsError(
             "run is not live under this agent (finished, reclaimed, or "
             "not yours)")
-    summary = _clean_text(run.get("summary"), shield=shield)
-    if summary is None:
-        raise ExternalAgentsError("run summary rejected by the ingest screen")
-    outcome = "success" if str(run.get("outcome", "")).lower() in (
-        "success", "done", "ok") else "failure"
-    steps: list[str] = []
-    for raw in list(run.get("steps") or [])[:_MAX_STEPS]:
-        cleaned = _clean_text(raw, shield=shield)
-        if cleaned is None:
-            raise ExternalAgentsError(
-                "a run step was rejected by the ingest screen")
-        if cleaned:
-            steps.append(cleaned)
+    if contained:
+        summary, outcome, steps = _CONTAINED_CLOSE, "failure", []
+    else:
+        summary, outcome, steps = _finished_run_text(run, shield)
     for step in steps:
         w.append_event(goal_id, principal, "status", step)
     cost = max(0.0, float(run.get("cost_dollars") or 0.0))
@@ -1129,8 +1122,33 @@ def finish_run(agent_id: str, goal_id: int, run: dict,
                 goal_id=int(goal_id), external_agent=agent_id,
                 outcome=outcome, cost_dollars=cost, steps=len(steps),
                 over_budget=over_budget, over_wall=over_wall, live=True)
-    return {"goal_id": int(goal_id), "over_budget": over_budget,
-            "over_wall": over_wall}
+    out = {"goal_id": int(goal_id), "over_budget": over_budget,
+           "over_wall": over_wall}
+    if contained:
+        out["contained"] = True
+    return out
+
+
+_CONTAINED_CLOSE = ("Closed while the agent was contained; its reported outcome "
+                    "was not accepted.")
+
+
+def _finished_run_text(run: dict, shield: Any | None) -> tuple[str, str, list[str]]:
+    """Screened summary, outcome and step trail of a finished run."""
+    summary = _clean_text(run.get("summary"), shield=shield)
+    if summary is None:
+        raise ExternalAgentsError("run summary rejected by the ingest screen")
+    outcome = "success" if str(run.get("outcome", "")).lower() in (
+        "success", "done", "ok") else "failure"
+    steps: list[str] = []
+    for raw in list(run.get("steps") or [])[:_MAX_STEPS]:
+        cleaned = _clean_text(raw, shield=shield)
+        if cleaned is None:
+            raise ExternalAgentsError(
+                "a run step was rejected by the ingest screen")
+        if cleaned:
+            steps.append(cleaned)
+    return summary, outcome, steps
 
 
 # -- learning plane (fleet memory over the gateway) ---------------------------
