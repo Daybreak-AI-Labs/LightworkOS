@@ -190,6 +190,19 @@ def test_interrupted_archive_creation_does_not_block_provider_calls():
     assert attempt(budget, 1) is not None
 
 
+def test_partly_created_archive_schema_does_not_block_provider_calls():
+    import sqlite3
+
+    from maverick.paths import data_dir
+    path = data_dir('usage', 'provider_history.sqlite3', tenant='acme')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as db:  # crash after calls, before plans
+        db.execute('CREATE TABLE runs (id TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL)')
+        db.execute('CREATE TABLE calls (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, data TEXT NOT NULL)')
+    budget, _ = start_budget()
+    assert attempt(budget, 1) is not None
+
+
 def test_existing_history_is_still_read_without_its_marker():
     from maverick.paths import data_dir
     from maverick.tenant import _provider_archive
