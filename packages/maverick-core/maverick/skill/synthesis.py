@@ -91,8 +91,9 @@ async def synthesize_task_skill(
     """Synthesize a temporary skill for ``task``; return its text or None.
 
     ``retrieved`` is optional prior-experience context (skill bodies, past
-    lessons) to condition on. Returns None when disabled, on any error, or when
-    the model declines (``NONE``) -- so the caller can inject unconditionally.
+    lessons) to condition on. Returns None when provider egress is not allowed,
+    on any error, or when the model declines (``NONE``) -- so the caller can
+    inject unconditionally. It does not check ``enabled()``; the caller does.
     """
     if not task or not task.strip():
         return None

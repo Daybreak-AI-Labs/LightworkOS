@@ -119,3 +119,19 @@ def test_main_empty_outbox_writes_empty_and_warns(tmp_path, capsys):
     rc = export_texts.main(["--in", str(outbox), "--out", str(out)])
     assert rc == 0 and out.exists() and out.read_text() == ""
     assert "no transcripts" in capsys.readouterr().err.lower()
+
+
+def test_main_writes_raw_transcripts_owner_only(tmp_path):
+    import os
+    import stat
+
+    import pytest
+    if os.name != "posix":
+        pytest.skip("POSIX permission bits")
+    outbox = tmp_path / "outbox"
+    outbox.mkdir()
+    out = tmp_path / "proposer_texts.jsonl"
+    out.write_text("old", encoding="utf-8")
+    os.chmod(out, 0o644)
+    assert export_texts.main(["--in", str(outbox), "--out", str(out)]) == 0
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600

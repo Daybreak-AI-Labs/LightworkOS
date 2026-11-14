@@ -200,3 +200,25 @@ class TestIngest:
         (tmp_path / "good.json").write_text('{"x": 1, "source_ownership": "unowned"}')
         records = list(load_donations(tmp_path))
         assert records == [{"x": 1, "source_ownership": "unowned"}]
+
+    def test_fetch_steps_raises_instead_of_returning_a_truncated_trajectory(self, monkeypatch):
+        # A DB error on the second page returned the first page as if it were
+        # the whole trajectory, which was then trained on as complete.
+        from types import SimpleNamespace
+
+        import pytest
+        from maverick import memory_ownership, pilot_learning
+        from maverick.training.ingest import fetch_steps_for_goal
+
+        monkeypatch.setattr(pilot_learning, "excluded", lambda goal_id: False)
+        monkeypatch.setattr(memory_ownership, "source_allowed", lambda *a, **k: True)
+
+        class World:
+            def goal_events(self, goal_id, since_id=0, limit=500):
+                if since_id:
+                    raise OSError("database is locked")
+                return [SimpleNamespace(id=i + 1, agent="a", kind="plan", content="x", ts=0.0)
+                        for i in range(limit)]
+
+        with pytest.raises(RuntimeError, match="truncated"):
+            fetch_steps_for_goal(World(), 7)

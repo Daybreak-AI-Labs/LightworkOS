@@ -132,9 +132,14 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if world is not None:
             close_world_if_owned(world)
-    with args.out_file.open("w", encoding="utf-8") as out:
-        for tid, text in texts.items():
-            out.write(json.dumps({"id": tid, "text": text}) + "\n")
+    # The transcripts are raw, unscrubbed goal text: write them owner-only
+    # (0600), not with the umask's usual world-readable 0644.
+    from ..file_lock import atomic_write_text
+    atomic_write_text(
+        args.out_file,
+        "".join(json.dumps({"id": tid, "text": text}) + "\n" for tid, text in texts.items()),
+        mode=0o600,
+    )
     print(
         f"exported {len(texts)} proposer transcript(s) -> {args.out_file} "
         f"(from {len(records)} donation record(s))", file=sys.stderr,
