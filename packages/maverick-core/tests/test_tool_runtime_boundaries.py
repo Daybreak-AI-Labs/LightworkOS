@@ -130,20 +130,39 @@ def test_discord_disables_mentions_and_discloses_truncation(monkeypatch, reply):
     assert "truncat" in result.lower()
 
 
-def test_browser_unsupported_press_has_no_dom_effect():
+def _approved_browser_press(key, outcome):
     from maverick.approval_cards import digest
     from maverick.tools.browser import _BrowserSession
     effects = []
-    page = types.SimpleNamespace(url="https://example.test", evaluate=lambda *a: effects.append(a) or "dispatched")
+    page = types.SimpleNamespace(url="https://example.test", evaluate=lambda *a: effects.append(a) or outcome)
     session = _BrowserSession()
     session._page, session._context = page, object()
-    args = {"selector": "#target", "text": "Tab"}
+    args = {"selector": "#target", "text": key}
     session._approval_dispatch = {"action": "press", "parameters_sha256": digest(args),
         "page_instance_sha256": digest(id(page)), "context_instance_sha256": digest(id(session._context)),
         "targets": [{"handle": object(), "snapshot": {}}]}
-    result = session.dispatch_approved("press", args, 1000, set())
+    return session.dispatch_approved("press", args, 1000, set()), effects
+
+
+@pytest.mark.parametrize("key", ["", "Control+A"])
+def test_browser_undispatchable_press_has_no_dom_effect(key):
+    result, effects = _approved_browser_press(key, "dispatched")
     assert "not supported" in result
     assert effects == []
+
+
+@pytest.mark.parametrize("key", ["Enter", "Escape", "Tab"])
+def test_browser_press_dispatches_key_event_without_claiming_default_action(monkeypatch, key):
+    from maverick.tools import browser
+    monkeypatch.setattr(browser, "_deny_and_close_current_page", lambda *a: None)
+    # Enter on a form-less input (a scripted search box), Escape and Tab reach
+    # the page's listeners; the result must not claim a browser default action.
+    result, effects = _approved_browser_press(key, "dispatched")
+    assert len(effects) == 1 and effects[0][1]["key"] == key
+    assert "dispatched" in result and "no browser default action" in result
+    assert not result.startswith("pressed")
+    activated, _ = _approved_browser_press(key, "activated")
+    assert activated.startswith("pressed")
 
 
 def test_finance_partial_enqueue_reports_committed_ids(monkeypatch):

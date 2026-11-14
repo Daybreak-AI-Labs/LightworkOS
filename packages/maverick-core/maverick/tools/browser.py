@@ -505,9 +505,9 @@ class _BrowserSession:
         )
         if len(targets) != expected_count or not targets:
             return "ERROR: browser target could not be pinned; no action was sent"
-        if action == "press" and str(supplied.get("text") or "").lower() not in {
-            "enter", "return", "space", " ",
-        }:
+        press_key = str(supplied.get("text") or "")
+        if action == "press" and (not press_key or (len(press_key) > 1 and "+" in press_key)):
+            # A synthetic KeyboardEvent carries one key; it cannot hold a chord.
             return "ERROR: this key is not supported by approved browser dispatch; no action was sent"
         values = []
         if action == "type":
@@ -606,25 +606,24 @@ class _BrowserSession:
               if (!fill(elements[index], payload.values[index])) return 'unsupported';
           } else if (payload.action === 'press') {
             const target = elements[0]; const key = payload.key;
-            const enter = /^(Enter|Return)$/i.test(key);
-            const space = /^(Space| )$/i.test(key);
-            if (!(enter && (/^(BUTTON|A)$/.test(target.tagName) || target.form)) &&
-                !(space && target.tagName === 'BUTTON')) return 'unsupported';
             target.focus();
             const down = new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true});
             const allowed = target.dispatchEvent(down);
             target.dispatchEvent(new KeyboardEvent('keyup', {key, bubbles: true}));
+            // Synthetic events have no browser default action; emulate only
+            // activation of buttons/links and submission of a form.
             if (allowed && /^(Enter|Return|Space| )$/i.test(key)) {
-              if (/^(BUTTON|A)$/.test(target.tagName)) target.click();
-              else if (/^(Enter|Return)$/i.test(key) && target.form)
-                target.form.requestSubmit();
+              if (/^(BUTTON|A)$/.test(target.tagName)) { target.click(); return 'activated'; }
+              if (/^(Enter|Return)$/i.test(key) && target.form) {
+                target.form.requestSubmit(); return 'activated';
+              }
             }
           }
           return 'dispatched';
         }""", payload)
         if result == "stale":
             return "ERROR: browser target changed at dispatch; observe and review it again"
-        if result != "dispatched":
+        if result not in {"dispatched", "activated"}:
             return "ERROR: browser target does not support atomic dispatch; no action was sent"
         denial = _deny_and_close_current_page(self._page, allow_hosts)
         if denial is not None:
@@ -635,7 +634,11 @@ class _BrowserSession:
             return f"typed {len(values[0])} chars into {_redact_browser_text(supplied['selector'])!r}"
         if action == "fill_form":
             return f"filled {len(values)}/{len(values)} field(s)"
-        return f"pressed {_redact_browser_text(supplied.get('text') or '')}"
+        if result == "activated":
+            return f"pressed {_redact_browser_text(press_key)}"
+        return (f"dispatched {_redact_browser_text(press_key)} key events to "
+                f"{_redact_browser_text(supplied.get('selector') or '')!r}; no browser default action "
+                "(such as form submission) follows from them; only the page's own key listeners received them")
 
     def save_state(self) -> bool:
         """Persist cookies + localStorage to disk. Returns True if written."""
