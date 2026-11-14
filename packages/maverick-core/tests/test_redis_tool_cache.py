@@ -81,6 +81,9 @@ def test_miss_store_hit(monkeypatch):
     stats = cache.stats()
     assert stats["hits"] == 1 and stats["misses"] == 1 and stats["size"] == 1
     assert client.from_url_kwargs["url"] == "redis://test:6379/0"
+    # An unreachable Redis must not hang the cache lock (redis-py waits forever by default).
+    assert 0 < client.from_url_kwargs["socket_timeout"] <= 5
+    assert 0 < client.from_url_kwargs["socket_connect_timeout"] <= 5
 
 
 def test_ttl_uses_setex_else_set(monkeypatch):
