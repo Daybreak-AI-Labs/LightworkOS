@@ -1319,9 +1319,9 @@ class PostgresWorldModel:
             if self._rls:
                 self._preflight_rls_or_die()
                 self._apply_rls()
+            # The marker is read by the first transaction that follows, which
+            # is before anything it fetched can be decrypted.
             self._posture_ready = True
-            with self._tx():
-                pass  # Read the current tenant's durable rebinding marker.
         except BaseException:
             self.close()
             raise
@@ -1480,6 +1480,8 @@ class PostgresWorldModel:
         from ..world_model import _POSTGRES_STORE_POSTURES
 
         tenant = _active_tenant()
+        if _POSTGRES_STORE_POSTURES.get((self._posture_identity, tenant)):
+            return  # The marker is never removed, so a rebound tenant stays rebound.
         cur.execute("SELECT 1 FROM encryption_migrations WHERE scope=%s",
                     (postgres_migration_scope(tenant),))
         _POSTGRES_STORE_POSTURES[(self._posture_identity, tenant)] = cur.fetchone() is not None
