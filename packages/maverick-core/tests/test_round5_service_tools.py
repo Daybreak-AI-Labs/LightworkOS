@@ -103,6 +103,27 @@ def test_mongodb_database_is_operator_selected(monkeypatch):
     assert mongo._db_for({"db": "app"})[1].startswith("ERROR")
 
 
+@pytest.mark.parametrize("limit,batch", [(25, 25), (1000, 100)])
+def test_mongodb_find_batches_up_to_100_documents(monkeypatch, limit, batch):
+    from maverick.tools import mongodb_tool as mongo
+
+    seen = {}
+
+    class Cursor:
+        def batch_size(self, size):
+            seen["batch"] = size
+            return self
+
+        def limit(self, size):
+            seen["limit"] = size
+            return iter([{"n": 1}])
+
+    database = {"items": SimpleNamespace(find=lambda _flt: Cursor())}
+    monkeypatch.setattr(mongo, "_db_for", lambda _args: (database, None))
+    out = mongo._op_find({"collection": "items", "limit": limit})
+    assert seen == {"batch": batch, "limit": limit} and '"n":1' in out.replace(" ", "")
+
+
 @pytest.mark.parametrize("operation", ["update", "delete"])
 def test_mongodb_empty_write_filter_never_dispatches(monkeypatch, operation):
     from maverick.tools import mongodb_tool as mongo
@@ -156,7 +177,7 @@ def test_mongodb_find_stops_reading_at_output_limit(monkeypatch):
     out = mongo._op_find({"collection": "records", "limit": 1000})
     assert "truncated" in out and len(out) < 3100
     assert len(pulled) == 2 and closed == [True]
-    assert prefetched == [0, 1]
+    assert prefetched == list(range(100))  # one bounded batch, not all 1000
 
 
 def test_serial_refuses_virtual_consoles():
