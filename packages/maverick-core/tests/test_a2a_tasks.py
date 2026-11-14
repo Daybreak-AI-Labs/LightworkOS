@@ -351,6 +351,21 @@ def test_push_blocks_ssrf_to_internal_targets(monkeypatch, url):
     assert posted == []  # request was blocked before any connection
 
 
+def test_push_stays_public_only_under_the_fetch_private_override(monkeypatch):
+    monkeypatch.setenv("MAVERICK_FETCH_ALLOW_PRIVATE", "1")
+    posted = _spy_async_post(monkeypatch)
+    eng = TaskEngine(runner=_fake_runner)
+    t = eng._new_task(_msg("x"))
+    with pytest.raises(_RpcError) as caught:
+        eng.set_push_config({"taskId": t.id, "pushNotificationConfig": {
+            "url": "http://127.0.0.1:9/hook", "token": "tok"}})
+    assert "127.0.0.1" not in str(caught.value)  # no resolver detail returned
+    t.set_state("completed")
+    t.push_config = {"url": "http://127.0.0.1:9/hook", "token": "tok"}
+    asyncio.run(eng._fire_push(t))
+    assert posted == []
+
+
 def test_push_allows_public_host(monkeypatch):
     """A public push target still fires (the guard only blocks non-public)."""
     posted = _spy_async_post(monkeypatch)

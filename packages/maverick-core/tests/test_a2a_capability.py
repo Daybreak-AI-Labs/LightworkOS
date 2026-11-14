@@ -74,6 +74,16 @@ def test_unrecognized_risk_falls_back_to_medium(tmp_path, monkeypatch):
     assert _a2a_capability().max_risk == "medium"
 
 
+def test_blank_max_risk_keeps_the_ceiling(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _clear_env(monkeypatch)
+    _write_a2a_config(tmp_path, '[a2a]\nmax_risk = ""\n')
+    from maverick.a2a_tasks import _a2a_capability
+    assert _a2a_capability().max_risk == "medium"
+    monkeypatch.setenv("MAVERICK_A2A_MAX_RISK", "  ")
+    assert _a2a_capability().max_risk == "medium"
+
+
 def test_allowlist_from_config(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     _clear_env(monkeypatch)
