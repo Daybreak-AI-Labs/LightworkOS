@@ -255,8 +255,9 @@ class _Scanner:
                 return True
             return False
         self.check_limit()
-        self.values += 1
-        self.bytes += len(value)
+        if not text:  # world() already counted this cell and its stored bytes
+            self.values += 1
+            self.bytes += len(value)
         if len(value) > MAX_VALUE_BYTES or self.bytes > MAX_SCANNED_BYTES:
             self.count(label, "unsupported")
             return True

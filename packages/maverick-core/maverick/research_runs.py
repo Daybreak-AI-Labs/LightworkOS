@@ -1402,6 +1402,10 @@ class ResearchRuns:
                     preflight = getattr(self.effect_adapter, "validate_start", None)
                     if callable(preflight):
                         preflight(self, current, actor)
+                    # The submitter's authority is rechecked here as in queue,
+                    # retry, cancel and export: a revoked submitter's run must
+                    # not start because a different reviewer approved it.
+                    self._current_submitter(current, str(current.get("created_by") or ""))
                     binding, datasets, model = self._resolve_binding(
                         canonical,
                         current["manifest"],
@@ -2102,8 +2106,9 @@ class ResearchRuns:
         actor = _actor(principal, "principal")
         exact_run_id = _identifier(run_id, "run_id")
         with tenant_scope(tenant=canonical):
-            record = self._record(canonical, exact_run_id)
+            # Authority first, so a refusal never reveals whether the id exists.
             self._authority(canonical, actor)
+            record = self._record(canonical, exact_run_id)
             if record.get("created_by") != actor and not self._can_review(canonical, actor):
                 raise ResearchRunNotFound("research run was not found in this tenant")
             result = self._view(record)
