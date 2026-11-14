@@ -532,7 +532,9 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
     from ._ssrf import BlockedHost, safe_client
     # httpx's timeout bounds each read, not the whole body: a server that
     # trickles a byte just inside it could hold the call for hours. The body
-    # read stops once the overall budget is spent.
+    # read stops once the overall budget is spent, and what was read is
+    # returned marked as cut by the deadline (an approved POST's response
+    # must not be lost, which would invite a re-send).
     deadline = time.monotonic() + _FETCH_TIMEOUT_SECONDS
     try:
         with safe_client(url, timeout=_FETCH_TIMEOUT_SECONDS) as client:
@@ -546,7 +548,7 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
                 # caller can decide whether to fetch that URL.
                 location = resp.headers.get("location") if 300 <= status_code < 400 else None
                 buf = bytearray()
-                truncated = False
+                truncated: bool | str = False
                 # Keep one extra byte to distinguish exact-limit completion
                 # from genuinely omitted content, including chunk boundaries.
                 for chunk in resp.iter_bytes(chunk_size=min(8192, max_bytes + 1)):
@@ -555,8 +557,8 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
                         truncated = True
                         break
                     if time.monotonic() > deadline:
-                        return (f"ERROR: response body did not finish within "
-                                f"{_FETCH_TIMEOUT_SECONDS:.0f}s")
+                        truncated = "deadline"
+                        break
     except BlockedHost as e:
         return f"ERROR: refusing to fetch {url!r}: {e}"
     except httpx.HTTPError as e:
@@ -1474,6 +1476,8 @@ def _run_fetch(args: dict[str, Any]) -> str:
         rendered = _to_markdown(text)
 
     size_note = f"{len(raw_bytes)}{'+' if truncated else ''} bytes"
+    if truncated == "deadline":
+        size_note += f"; body cut off: not finished within {_FETCH_TIMEOUT_SECONDS:.0f}s"
     # The reason phrase and content type are server-chosen text outside the
     # injection scan below, so they are cut to a short printable prefix.
     header = (

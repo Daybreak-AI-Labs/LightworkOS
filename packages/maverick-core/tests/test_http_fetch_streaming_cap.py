@@ -96,7 +96,10 @@ def test_trickled_body_stops_at_the_overall_deadline_and_redirects_are_reported(
     clock = itertools.count(0.0, 10.0)
     monkeypatch.setattr(hf.time, "monotonic", lambda: next(clock))
     out = _fetch(_StreamResp([b"a"] * 50), monkeypatch)
-    assert out.startswith("ERROR: response body did not finish")
+    # What arrived is kept (an approved POST's response must not be lost),
+    # marked as cut off by the deadline.
+    assert out.startswith("HTTP 200") and "body cut off: not finished within 30s" in out.splitlines()[0]
+    assert 0 < out.count("a") < 50
 
     monkeypatch.setattr(hf.time, "monotonic", lambda: 0.0)
     moved = _StreamResp([b""])
