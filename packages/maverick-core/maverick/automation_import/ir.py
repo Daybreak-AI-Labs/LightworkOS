@@ -62,9 +62,20 @@ def _max_render_steps() -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         return _DEFAULT_RENDER_STEPS
     return min(value, _MAX_RENDER_STEPS_LIMIT)
-_SECRET_QUERY_RE = re.compile(
-    r"(?i)([?&][^=]*(?:token|key|secret|password|credential)[^=]*=)[^&\s]+"
-)
+# One query parameter (``?name=`` or ``&name=``) per match.  The name cannot
+# cross another ``?``/``&``, so each character is scanned once; the secret-word
+# test runs on the captured name.  A pattern with the keyword inside the
+# repetition backtracked quadratically on a long run of ``?`` or ``&``.
+_QUERY_PARAM_RE = re.compile(r"([?&][^=?&]*=)[^&\s]+")
+_SECRET_QUERY_NAME_RE = re.compile(r"(?i)token|key|secret|password|credential")
+
+
+def _redact_query_secrets(text: str) -> str:
+    return _QUERY_PARAM_RE.sub(
+        lambda m: (m.group(1) + "[REDACTED:automation_import_secret]"
+                   if _SECRET_QUERY_NAME_RE.search(m.group(1)) else m.group(0)),
+        text,
+    )
 
 
 def _redact_text(text: str) -> str:
@@ -78,7 +89,7 @@ def _redact_text(text: str) -> str:
 def _safe_line(text: Any, *, max_chars: int = _MAX_TEXT_CHARS) -> str:
     """Single-line, secret-redacted display text for untrusted imports."""
     redacted = _redact_text(str(text or ""))
-    redacted = _SECRET_QUERY_RE.sub(r"\1[REDACTED:automation_import_secret]", redacted)
+    redacted = _redact_query_secrets(redacted)
     safe = " ".join(redacted.split())
     if len(safe) > max_chars:
         return safe[: max_chars - 1].rstrip() + "…"
@@ -145,7 +156,7 @@ def operational_params(params: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, str):
             if len(value) > 16384:
                 raise ValueError("Imported step inputs require repair: value exceeds supported size")
-            return _SECRET_QUERY_RE.sub(r"\1[REDACTED:automation_import_secret]", _redact_text(value))
+            return _redact_query_secrets(_redact_text(value))
         if value is None or isinstance(value, (bool, int)):
             return value
         if isinstance(value, float) and math.isfinite(value):
