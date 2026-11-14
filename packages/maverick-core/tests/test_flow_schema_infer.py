@@ -61,7 +61,9 @@ def test_data_shaped_keys_are_not_saved_but_field_names_are():
     keyed_by_data = {"cus_NffrFeUfNV2Hib": {}, "u_48213": {}, "JohnSmith": {},
                      "alice@example.com": {}}
     assert infer_shape(keyed_by_data)["keys"] == []
-    for key in ["cus_NffrFeUfNV2Hib", "u_48213", "order_5f3a9c2e1b7d", "user48213", "a3f9c2e1b7d4"]:
+    id_shaped = ["cus_NffrFeUfNV2Hib", "u_48213", "order_5f3a9c2e1b7d", "user48213",
+                 "a3f9c2e1b7d4"]  # pragma: allowlist secret
+    for key in id_shaped:
         assert infer_shape({key: 1, "status": 2})["keys"] == ["status"]
     fields = ["customer_id", "orderTotal", "line_items", "ID", "sku", "AccountId",
               "address_line_2", "addressLine2", "sha256", "oauth2_token", "CreatedDate",
