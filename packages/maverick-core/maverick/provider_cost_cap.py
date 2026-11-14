@@ -160,6 +160,24 @@ class EarlierTenantLedgerUnreadable(ProviderAccountingUnavailable):
         self.name = name
 
 
+class EarlierTenantLedgerConflict(EarlierTenantLedgerUnreadable):
+    """An earlier per-tenant ledger reuses a reservation key already taken."""
+
+    def __init__(self, name: str):
+        RuntimeError.__init__(
+            self,
+            f"A provider reservation recorded by an earlier version in {name} "
+            "uses the same reference or call attempt as another workspace's, so "
+            "it cannot be moved into the shared spending record without "
+            "guessing which is which. New calls with a configured cap are "
+            "blocked. On the Provider spending page, export the current "
+            "accounting and repair it with totals confirmed from final provider "
+            "receipts, including the spend recorded in that file; the repair "
+            "marks it as reviewed.",
+        )
+        self.name = name
+
+
 class ProviderAttemptAlreadyAdmitted(ProviderAccountingUnavailable):
     """A durable operation attempt already owns the right to dispatch once."""
 
@@ -349,6 +367,66 @@ def mark_tenant_fold_reviewed(path: Path) -> None:
     _FOLDED.add(str(path.absolute()))
 
 
+def _canonical_ledger(data: dict) -> dict:
+    """``data`` without empty period buckets, receipt maps or attempt index.
+
+    The SQLite form never stores those, so a reload omits them; the fold
+    journal's digests are taken over this form so a reload of either storage
+    form matches the digest recorded before it was written."""
+    out: dict = {}
+    for key, value in data.items():
+        if key == _RECEIPTS:
+            value = {period: kept for period, providers in value.items()
+                     if (kept := {name: rows for name, rows in providers.items() if rows})}
+        if not isinstance(value, dict) or value:
+            out[key] = value
+    return out
+
+
+def _save_folded(path: Path, data: dict) -> None:
+    """Write the folded ledger. A fold may be larger than the deployment ledger
+    was, so one that is due for indexed storage (or too large for the JSON
+    form) is published as SQLite instead of having to fit the JSON form."""
+    size = len(json.dumps(data, allow_nan=False).encode("utf-8"))
+    if _use_indexed_ledger(path) or (size < _INDEXED_MIGRATION_BYTES and size <= _MAX_LEDGER_BYTES):
+        _save(path, data)
+        return
+    from . import provider_spend_sqlite
+    try:
+        provider_spend_sqlite.publish(path, data, sys.modules[__name__])
+    except Exception as exc:
+        raise ProviderAccountingUnavailable from exc
+
+
+def _fold_legacy_period(folded: dict, legacy: dict, period: str, name: str) -> None:
+    """Add one earlier per-tenant ledger's ``period`` into ``folded``: totals and
+    reservation receipts (state, projection and claims unchanged), plus all of
+    its attempt-index rows. A receipt's projection is already part of its old
+    total, so totals and receipts move as they are and nothing is added twice.
+    Keys are kept, so existing references, organization call keys and attempt
+    keys still resolve; a key another source already uses is refused."""
+    bucket = folded.setdefault(period, {})
+    receipts = legacy.get(_RECEIPTS, {}).get(period, {})
+    for provider, total in legacy.get(period, {}).items():
+        bucket[provider] = _amount(bucket.get(provider, 0.0)) + _amount(total)
+        rows = receipts.get(provider) or {}
+        if not rows:
+            continue
+        target = folded.setdefault(_RECEIPTS, {}).setdefault(period, {}).setdefault(provider, {})
+        for request_id, row in rows.items():
+            if request_id in target:
+                raise EarlierTenantLedgerConflict(name)
+            target[request_id] = json.loads(json.dumps(row))
+    # Every attempt row moves (not only this period's): it is what refuses a
+    # second dispatch of an operation attempt that was already admitted.
+    index = legacy.get(_ATTEMPT_INDEX) or {}
+    for attempt_key, row in index.items():
+        existing = folded.setdefault(_ATTEMPT_INDEX, {}).get(attempt_key)
+        if existing is not None and existing != row:
+            raise EarlierTenantLedgerConflict(name)
+        folded[_ATTEMPT_INDEX][attempt_key] = dict(row)
+
+
 def _fold_tenant_ledgers(path: Path) -> None:
     from .world_model_backends import is_postgres_configured
     if is_postgres_configured():
@@ -361,7 +439,7 @@ def _fold_tenant_ledgers(path: Path) -> None:
             state = json.loads(atomic_read_text(journal)) if journal.exists() else {}
             if state.get("state") == "done":
                 return
-            current = _load(path)
+            current = _canonical_ledger(_load(path))
             before = _ledger_digest(current)
             if state.get("state") == "pending":
                 if before == state["after"]:
@@ -376,14 +454,19 @@ def _fold_tenant_ledgers(path: Path) -> None:
                     legacy_data = _load_legacy(legacy)
                 except Exception as exc:
                     raise EarlierTenantLedgerUnreadable(_home_relative(legacy)) from exc
-                for name, total in legacy_data.get(period, {}).items():
-                    bucket = folded.setdefault(period, {})
-                    bucket[name] = _amount(bucket.get(name, 0.0)) + _amount(total)
+                _fold_legacy_period(folded, legacy_data, period, _home_relative(legacy))
+            if folded.get(_RECEIPTS) or _ATTEMPT_INDEX in folded:
+                try:
+                    folded[_ATTEMPT_INDEX] = _complete_attempt_index(folded)
+                    _validate_ledger(folded)
+                except ProviderAccountingUnavailable as exc:
+                    raise EarlierTenantLedgerConflict("tenants/*/provider_spend.json") from exc
+            folded = _canonical_ledger(folded)
             after = _ledger_digest(folded)
             pending = {"state": "pending", "period": period, "before": before, "after": after}
             atomic_write_text(journal, json.dumps(pending), mode=0o600)
             if after != before:
-                _save(path, folded)
+                _save_folded(path, folded)
             atomic_write_text(journal, json.dumps({**pending, "state": "done"}), mode=0o600)
     except ProviderAccountingUnavailable:
         raise

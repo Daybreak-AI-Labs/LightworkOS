@@ -233,6 +233,23 @@ def ensure(legacy: Path, cap) -> Path:
     return database
 
 
+def publish(legacy: Path, data: dict, cap) -> None:
+    """Make ``data`` the indexed ledger for ``legacy``, which is not yet
+    indexed, without writing the JSON form first (``data`` may be too large
+    for it). Same complete-before-active order as :func:`ensure`; the caller
+    holds the JSON lock."""
+    cap._validate_ledger(data)
+    if is_active(legacy):
+        raise sqlite3.DatabaseError("provider accounting is already indexed")
+    stage = _build_staged(legacy, data, cap)
+    try:
+        _publish_seal(legacy, stage)
+        os.replace(stage, database_path(legacy))
+        atomic_create_text(active_path(legacy), "provider accounting sqlite v1\n")
+    finally:
+        stage.unlink(missing_ok=True)
+
+
 def _bucket(connection: sqlite3.Connection, period: str, provider: str, cap):
     total_row = connection.execute(
         "SELECT dollars FROM totals WHERE period=? AND provider=?", (period, provider),
