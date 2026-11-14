@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
+
+_FRAME_OPEN_RE = re.compile(r"<tool_output [^\n]*\bid=([0-9a-f]+)>")
 
 
 @dataclass
@@ -263,17 +266,34 @@ class Blackboard:
             return "", latest
         limit = max(1, int(max_entries))
         omitted = max(0, len(fresh) - limit)
-        from .compaction import excerpt
         from .env_setting import env_or_config_int
         entry_cap = max(80, env_or_config_int(
             "MAVERICK_BB_RENDER_ENTRY_CHARS", "context", "blackboard_entry_chars", 800))
         lines = [
-            f"[{e.agent}/{e.kind}] {excerpt(e.content, entry_cap)}"
+            f"[{e.agent}/{e.kind}] {self._render_entry(e.content, entry_cap)}"
             for e in fresh[-limit:]
         ]
         if omitted:
             lines.insert(0, f"({omitted} earlier new entr{'y' if omitted == 1 else 'ies'} omitted)")
         return "\n".join(lines), latest
+
+    @staticmethod
+    def _render_entry(content: str, cap: int) -> str:
+        """``excerpt`` of one entry that keeps a ``<tool_output>`` frame closed.
+
+        A cut inside a framed tool result would leave the opening tag and drop
+        the closing one, so tool text would read as peer guidance; the cut copy
+        is re-closed with the frame's own nonce."""
+        from .compaction import excerpt
+        out = excerpt(content, cap)
+        if not isinstance(content, str) or out == content:
+            return out
+        match = _FRAME_OPEN_RE.search(content)
+        if match is not None and match.start() < cap:
+            close = f"</tool_output {match.group(1)}>"
+            if close not in out:
+                out += "\n" + close
+        return out
 
     def render(self, max_entries: int = 50) -> str:
         with self._lock:
@@ -286,13 +306,12 @@ class Blackboard:
         # first turn, so one oversized post (a long finding, a pasted dump)
         # would otherwise dominate every brief that includes it. Posts are
         # stored whole; only the rendered view is bounded.
-        from .compaction import excerpt
         from .env_setting import env_or_config_int
         entry_cap = max(80, env_or_config_int(
             "MAVERICK_BB_RENDER_ENTRY_CHARS", "context", "blackboard_entry_chars", 800))
         lines = []
         for e in recent:
-            lines.append(f"[{e.agent}/{e.kind}] {excerpt(e.content, entry_cap)}")
+            lines.append(f"[{e.agent}/{e.kind}] {self._render_entry(e.content, entry_cap)}")
         rendered = "\n".join(lines)
         self._measure_codec(rendered)
         return rendered
