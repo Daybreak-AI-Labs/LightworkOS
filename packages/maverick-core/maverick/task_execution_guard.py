@@ -7,12 +7,16 @@ world-model transaction across provider calls. No stale-timeout takeover.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .paths import current_tenant_id_strict
 from .task_file_recovery import RecoveryConflict, _lease
+
+
+log = logging.getLogger(__name__)
 
 
 class TaskBusy(ValueError):
@@ -29,11 +33,14 @@ def _identity(world, goal_id):
 def lease(world, goal_id):
     identity = _identity(world, goal_id)
     if getattr(world, "path", None) is not None:
-        try:
-            with _lease("execution-" + identity.hex()):
-                yield
-        except RecoveryConflict as exc:
-            raise TaskBusy("This task is still running or finishing. Wait for its safe boundary and review again.") from exc
+        with ExitStack() as stack:
+            # Only a conflict taking the lease means busy; one raised by the
+            # body keeps its own meaning.
+            try:
+                stack.enter_context(_lease("execution-" + identity.hex()))
+            except RecoveryConflict as exc:
+                raise TaskBusy("This task is still running or finishing. Wait for its safe boundary and review again.") from exc
+            yield
         return
     from .postgres_io import BoundedConnection, postgres_io_timeout_seconds
     from .world_model_backends.postgres import _connection_kwargs
@@ -51,5 +58,8 @@ def lease(world, goal_id):
         try:
             yield
         finally:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_advisory_unlock(%s)", (key,))
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT pg_advisory_unlock(%s)", (key,))
+            except Exception:  # closing the session releases the lock anyway
+                log.warning("task execution lease: advisory unlock failed", exc_info=True)
