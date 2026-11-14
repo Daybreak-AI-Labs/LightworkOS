@@ -20,6 +20,20 @@ def test_preflight_context_limit_unknown_falls_back():
     assert context_limit("totally-made-up-model-xyz") == 32_000
 
 
+def test_preflight_context_limit_dated_and_unknown_ids_are_conservative():
+    from maverick.preflight import PreflightFailed, context_limit, preflight
+    # A dated id inherits its base model's window, not the first claude entry.
+    assert context_limit("claude-sonnet-4-5-20250929") == 200_000
+    assert context_limit("claude-opus-4-8-20260101") == 1_000_000
+    # An unknown claude id gets the smallest Claude window in the table.
+    assert context_limit("claude-3-5-haiku-latest") == 200_000
+    # Warn mode never raises, even when max_tokens alone exceeds the window.
+    assert preflight(model="my-local-llm", system="", messages=[],
+                     max_tokens=32_000, strict=False) == 0
+    with pytest.raises(PreflightFailed):
+        preflight(model="my-local-llm", system="", messages=[], max_tokens=32_000)
+
+
 def test_preflight_estimate_tokens_zero_for_empty():
     from maverick.preflight import estimate_tokens
     assert estimate_tokens("") == 0
