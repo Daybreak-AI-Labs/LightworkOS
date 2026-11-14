@@ -11,6 +11,11 @@ from maverick.world_model_backends import postgres
 from maverick.world_model_backends.postgres import PostgresWorldModel
 
 _HAS_PSYCOPG = importlib.util.find_spec("psycopg") is not None
+# One statement binds both settings a transaction's RLS policies read.
+_BIND_TENANT_SQL = (
+    "SELECT set_config('maverick.tenant', %s, true), "
+    "set_config('maverick.workspace', %s, true)"
+)
 
 
 class RecordingCursor:
@@ -394,9 +399,7 @@ def test_rls_sets_fail_closed_sentinel_without_active_tenant(monkeypatch):
 
     world._set_tenant_guc(cur)
 
-    assert cur.calls == [
-        ("SELECT set_config('maverick.tenant', %s, true)", ("__maverick_no_tenant__",))
-    ]
+    assert cur.calls == [(_BIND_TENANT_SQL, ("__maverick_no_tenant__", "__maverick_no_tenant__"))]
 
 
 def test_rls_binds_the_active_tenant_on_every_transaction(monkeypatch):
@@ -404,15 +407,36 @@ def test_rls_binds_the_active_tenant_on_every_transaction(monkeypatch):
     # transaction-locally (is_local=true), so the database enforces the boundary
     # even on a query that carries no app-layer predicate.
     monkeypatch.setattr(postgres, "_active_tenant", lambda: "acme")
+    monkeypatch.setattr(postgres, "_active_workspace", lambda: "acme")
     world = PostgresWorldModel.__new__(PostgresWorldModel)
     world._rls = True
     cur = RecordingCursor()
 
     world._set_tenant_guc(cur)
 
-    assert cur.calls == [
-        ("SELECT set_config('maverick.tenant', %s, true)", ("acme",))
-    ]
+    assert cur.calls == [(_BIND_TENANT_SQL, ("acme", "acme"))]
+
+
+def test_rls_binds_the_raw_id_for_the_workspace_keyed_tables(monkeypatch):
+    # ``tenant_id`` columns hold the path-encoded segment and ``workspace``
+    # columns the raw id. For ``slack:U1`` the two differ, so one setting
+    # cannot serve both: with only ``maverick.tenant`` bound, that tenant could
+    # neither read nor insert its own webhook and deadline rows under RLS.
+    from maverick.paths import reset_tenant, set_tenant
+
+    world = PostgresWorldModel.__new__(PostgresWorldModel)
+    world._rls = True
+    cur = RecordingCursor()
+    token = set_tenant("slack:U1")
+    try:
+        world._set_tenant_guc(cur)
+        from maverick.webhook_subscriptions import workspace_id
+        written = workspace_id()
+    finally:
+        reset_tenant(token)
+
+    assert cur.calls == [(_BIND_TENANT_SQL, ("slack%3AU1", "slack:U1"))]
+    assert written == "slack:U1"
 
 
 def test_no_guc_is_written_when_rls_is_off(monkeypatch):
@@ -515,17 +539,21 @@ def test_rls_covers_the_workspace_scoped_webhook_and_alert_tables():
         assert table not in postgres._TENANT_TABLES
         sql = PostgresWorldModel._rls_policy_sql(table).lower()
         assert f"policy mvk_tenant_isolation on {table}" in sql
-        assert "workspace = nullif(current_setting('maverick.tenant', true), '')" in sql
-        assert "tenant_id" not in sql
-        assert sql.count("nullif(current_setting('maverick.tenant', true), '')") == 2
-    # Every other RLS table still keys on tenant_id.
-    assert "tenant_id = nullif" in PostgresWorldModel._rls_policy_sql("approvals")
+        # The column holds the raw tenant id, so it is compared with the
+        # setting that carries the raw id, not the path-encoded segment.
+        assert "workspace = nullif(current_setting('maverick.workspace', true), '')" in sql
+        assert "tenant_id" not in sql and "maverick.tenant'" not in sql
+        assert sql.count("nullif(current_setting('maverick.workspace', true), '')") == 2
+    # Every other RLS table still keys on tenant_id and the encoded segment.
+    approvals = PostgresWorldModel._rls_policy_sql("approvals")
+    assert approvals.count("tenant_id = nullif(current_setting('maverick.tenant', true), '')") == 2
 
 
 def test_rls_policy_verification_reads_the_table_specific_column(monkeypatch):
     world = PostgresWorldModel.__new__(PostgresWorldModel)
     # pg_get_expr's own rendering of the stock policy for webhook_deliveries.
-    workspace = "(workspace = NULLIF(current_setting('maverick.tenant'::text, true), ''::text))"
+    workspace = "(workspace = NULLIF(current_setting('maverick.workspace'::text, true), ''::text))"
+    earlier = "(workspace = NULLIF(current_setting('maverick.tenant'::text, true), ''::text))"
     tenant_id = "(tenant_id = NULLIF(current_setting('maverick.tenant'::text, true), ''::text))"
 
     def policy(expression, name="mvk_tenant_isolation", permissive=True):
@@ -549,6 +577,9 @@ def test_rls_policy_verification_reads_the_table_specific_column(monkeypatch):
         return world._rls_policy_is_active("webhook_deliveries")
 
     assert verify([policy(workspace)]) is True
+    # The policy an earlier version installed compares the raw id with the
+    # encoded segment; it is not current, so startup replaces it.
+    assert verify([policy(earlier)]) is False
     # The generic tenant_id column is not this table's isolation column.
     assert verify([policy(tenant_id)]) is False
     # Another permissive policy could OR around isolation.
@@ -855,6 +886,7 @@ class TestReconnectOnBrokenConnection:
         world = self._world()
         world._rls = True
         monkeypatch.setattr(postgres, "_active_tenant", lambda: "acme")
+        monkeypatch.setattr(postgres, "_active_workspace", lambda: "acme")
         dead = self._FakeConnection()
         dead.closed = 1  # e.g. explicitly closed by a prior broken _tx()
         world.conn = dead
@@ -875,7 +907,7 @@ class TestReconnectOnBrokenConnection:
         assert world.conn is fresh
         assert fresh.committed is True
         assert fresh.statements == [
-            ("SELECT set_config('maverick.tenant', %s, true)", ("acme",)),
+            (_BIND_TENANT_SQL, ("acme", "acme")),
             ("SELECT 1", None),
         ]
 
@@ -897,6 +929,7 @@ class TestReconnectOnBrokenConnection:
         world = self._world()
         world._rls = True
         monkeypatch.setattr(postgres, "_active_tenant", lambda: "acme")
+        monkeypatch.setattr(postgres, "_active_workspace", lambda: "acme")
         dying = self._FakeConnection(breaks_on_cursor=True)
         world.conn = dying
         import psycopg
@@ -922,7 +955,7 @@ class TestReconnectOnBrokenConnection:
         assert fresh.committed is True
         assert connect_calls == [("postgresql://fake", False, 0.25)]
         assert fresh.statements == [
-            ("SELECT set_config('maverick.tenant', %s, true)", ("acme",)),
+            (_BIND_TENANT_SQL, ("acme", "acme")),
             ("SELECT 1", None),
         ]
 

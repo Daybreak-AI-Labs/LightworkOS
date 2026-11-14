@@ -258,9 +258,11 @@ _RLS_TABLES = (
     "encryption_migrations",
 )
 # Tables whose tenant column is not called ``tenant_id``. The webhook and
-# deadline-alert tables (v42) scope rows by ``workspace`` (the same active
-# tenant id, written by ``paths.current_tenant_id``), so their RLS policy keys
-# on that column; the policy itself is identical.
+# deadline-alert tables (v42) scope rows by ``workspace``, which holds the RAW
+# tenant id (``webhook_subscriptions.workspace_id``), while every ``tenant_id``
+# column holds the path-encoded segment (``slack:U1`` is stored as
+# ``slack%3AU1``). Their RLS policy therefore keys on that column and on its
+# own session setting, ``maverick.workspace``, which carries the raw id.
 _RLS_TENANT_COLUMN: dict[str, str] = {
     "webhook_subscriptions": "workspace",
     "webhook_deliveries": "workspace",
@@ -803,6 +805,14 @@ def _active_tenant() -> str | None:
     # mode: swallowing one here removes every app-layer tenant predicate.
     from ..paths import current_tenant_strict
     return current_tenant_strict()
+
+
+def _active_workspace() -> str | None:
+    """The raw tenant id the ``workspace`` columns are written with, or ``None``
+    when unbound. It must be exactly ``webhook_subscriptions.workspace_id()``:
+    the RLS policy on those tables compares the column with this value."""
+    from ..paths import current_tenant_id_strict
+    return current_tenant_id_strict()
 
 
 def _truthy(value: object) -> bool:
@@ -1500,9 +1510,18 @@ class PostgresWorldModel:
             return
         tenant = _active_tenant()
         value = str(tenant) if tenant is not None else "__maverick_no_tenant__"
+        # The workspace-keyed tables store the raw id, which differs from the
+        # encoded segment for an id such as ``slack:U1``; both are bound in the
+        # same statement so neither can be left over from an earlier scope.
+        workspace = _active_workspace() if tenant is not None else None
+        raw = str(workspace) if workspace else "__maverick_no_tenant__"
         # set_config(name, value, is_local=true) is the parameterizable form of
         # SET LOCAL — transaction-scoped, cleared at commit/rollback.
-        cur.execute("SELECT set_config('maverick.tenant', %s, true)", (value,))
+        cur.execute(
+            "SELECT set_config('maverick.tenant', %s, true), "
+            "set_config('maverick.workspace', %s, true)",
+            (value, raw),
+        )
 
     def _preflight_rls_or_die(self) -> None:
         """Refuse to boot when enterprise auto-on RLS would silently hide rows.
@@ -1605,14 +1624,20 @@ class PostgresWorldModel:
                 ) from e
 
     @staticmethod
+    def _rls_setting(table: str) -> str:
+        """The session setting ``table``'s policy compares its column with."""
+        return "maverick.workspace" if table in _RLS_TENANT_COLUMN else "maverick.tenant"
+
+    @staticmethod
     def _rls_policy_sql(table: str) -> str:
         column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
+        setting = PostgresWorldModel._rls_setting(table)
         return (
             f"CREATE POLICY mvk_tenant_isolation ON {table} "
             "USING ("
-            f"  {column} = nullif(current_setting('maverick.tenant', true), '')"
+            f"  {column} = nullif(current_setting('{setting}', true), '')"
             ") WITH CHECK ("
-            f"  {column} = nullif(current_setting('maverick.tenant', true), '')"
+            f"  {column} = nullif(current_setting('{setting}', true), '')"
             ")"
         )
 
@@ -1650,7 +1675,8 @@ class PostgresWorldModel:
         if policy[3] != "*" or policy[4] is not True or list(policy[5] or ()) != [0]:
             return False
         column = _RLS_TENANT_COLUMN.get(table, "tenant_id")
-        expected = f"({column}=nullif(current_setting('maverick.tenant'::text,true),''::text))"
+        setting = PostgresWorldModel._rls_setting(table)
+        expected = f"({column}=nullif(current_setting('{setting}'::text,true),''::text))"
         return all("".join(str(expr).lower().split()) == expected for expr in policy[6:8])
 
     @staticmethod
