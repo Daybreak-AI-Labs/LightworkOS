@@ -127,3 +127,29 @@ class TestRedisClientClosed:
         from maverick.tools.redis_tool import redis_tool
         redis_tool().fn({"op": "get", "key": "k"})
         client.close.assert_called()  # no per-call connection-pool leak
+
+
+def test_redis_url_client_has_timeouts_and_string_keys_delete_one_key(monkeypatch):
+    seen: dict = {}
+
+    class _Redis:
+        @classmethod
+        def from_url(cls, url, **k):
+            seen["kwargs"] = k
+            return cls()
+
+        def delete(self, *keys):
+            seen["deleted"] = keys
+            return len(keys)
+
+        def close(self):
+            pass
+
+    redis_mod = types.ModuleType("redis")
+    redis_mod.Redis = _Redis
+    monkeypatch.setitem(sys.modules, "redis", redis_mod)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost")
+    from maverick.tools.redis_tool import redis_tool
+    out = redis_tool().fn({"op": "delete", "keys": "user:1", "confirm": True})
+    assert seen["deleted"] == ("user:1",) and "deleted 1" in out
+    assert seen["kwargs"]["socket_timeout"] and seen["kwargs"]["socket_connect_timeout"]

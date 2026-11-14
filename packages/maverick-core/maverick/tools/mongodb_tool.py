@@ -30,6 +30,10 @@ from typing import Any
 from ..fastjson import dumps_compact
 from . import Tool, as_bool
 
+# Bounds every server round trip, so a slow scan or a stalled server cannot
+# hold a tool worker thread indefinitely.
+_SOCKET_TIMEOUT_MS = 30_000
+
 log = logging.getLogger(__name__)
 
 
@@ -82,7 +86,8 @@ def _client():
     # Fallback (e.g. a helper called directly outside _run): build a one-off.
     from pymongo import MongoClient
     uri, _db = _config()
-    return MongoClient(uri, serverSelectionTimeoutMS=5000)
+    return MongoClient(uri, serverSelectionTimeoutMS=5000,
+                       socketTimeoutMS=_SOCKET_TIMEOUT_MS)
 
 
 def _db_for(args: dict[str, Any]):
@@ -284,7 +289,8 @@ def _run(args: dict[str, Any]) -> str:
     try:
         from pymongo import MongoClient
         uri, _db = _config()
-        _TL.client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        _TL.client = MongoClient(uri, serverSelectionTimeoutMS=5000,
+                                 socketTimeoutMS=_SOCKET_TIMEOUT_MS)
     except RuntimeError as e:
         return f"ERROR: {e}"
     except Exception as e:
