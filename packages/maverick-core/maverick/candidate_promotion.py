@@ -12,7 +12,8 @@ Every privileged transition resolves current server-owned authority again and
 every effect rechecks the current run/rights and artifact observations while
 holding the installation authority/effect fence.  Adapter failures after a
 durable claim become ``uncertain`` and require reconciliation; they are never
-silently retried.
+silently retried. A claim left behind by an interrupted process is reconciled
+the same way.
 """
 from __future__ import annotations
 
@@ -607,6 +608,12 @@ class CandidateDeploymentAdapter(Protocol):
         self, manifest: Mapping[str, object], rollback_handle: str
     ) -> DeploymentEffectReceipt: ...
     def reconcile(self, manifest: Mapping[str, object]) -> DeploymentReconciliation: ...
+
+
+# States whose deployment effect has no recorded outcome.
+_UNRESOLVED_STATES = frozenset({
+    "uncertain", "stage_claimed", "activation_claimed", "rollback_claimed",
+})
 
 
 def _event(events: Sequence[Mapping[str, object]], *, state: str, actor: str,
@@ -1588,13 +1595,19 @@ class CandidatePromotions:
     def reconcile(
         self, tenant: str, operator: str, candidate_id: str, *, expected_revision: int
     ) -> dict:
-        """Resolve an uncertain effect without replaying stage/activate/rollback."""
+        """Resolve an uncertain effect without replaying stage/activate/rollback.
+
+        A durable claim whose effect never recorded an outcome (the process
+        was interrupted or killed, or the outcome could not be saved) is
+        uncertain too: the effect fence is held for the whole effect, so a
+        claimed state seen here is never still in flight.
+        """
 
         canonical = canonical_tenant_id(tenant)
         actor = _principal(operator, "promotion operator", named_user=True)
         with tenant_scope(tenant=canonical), self.effect_fence():
             record = self._record(canonical, candidate_id)
-            if record["revision"] != expected_revision or record["state"] != "uncertain":
+            if record["revision"] != expected_revision or record["state"] not in _UNRESOLVED_STATES:
                 raise CandidatePromotionConflict("candidate is not at an uncertain revision")
             policy = self._policy()
             now = self.store.authoritative_time()

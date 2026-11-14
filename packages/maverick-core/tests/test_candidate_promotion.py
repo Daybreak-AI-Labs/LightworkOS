@@ -487,6 +487,28 @@ def test_uncertain_effect_can_be_reconciled_after_review_expiry_without_replay(p
     assert state["calls"][-1] == "reconcile"
 
 
+def test_interrupted_stage_claim_can_be_reconciled(promotion):
+    service, state = promotion
+    reviewed = _review(service, _request(service))
+    adapter = service.deployment_adapter
+    original = adapter.stage
+
+    def interrupted(manifest):
+        raise KeyboardInterrupt
+
+    adapter.stage = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        service.stage(TENANT, OPERATOR, "candidate-one", expected_revision=reviewed["revision"])
+    adapter.stage = original
+    claimed = service.inspect(TENANT, OPERATOR, "candidate-one")
+    assert claimed["state"] == "stage_claimed"
+
+    reconciled = service.reconcile(
+        TENANT, OPERATOR, "candidate-one", expected_revision=claimed["revision"]
+    )
+    assert reconciled["state"] == "rolled_back"
+
+
 @pytest.mark.parametrize("conclusion", ["negative", "inconclusive"])
 def test_a5_nonqualifying_study_is_complete_without_advancement(promotion, conclusion):
     service, state = promotion
