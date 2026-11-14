@@ -11,6 +11,7 @@ don't need to inherit from anything.
 from __future__ import annotations
 
 import contextvars
+import math
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -63,11 +64,14 @@ def llm_http_timeout(*, environment=None) -> Any | None:
         from .._envparse import env_float
         def value(name, default):
             if environment is None:
-                return env_float(name, default)
-            try:
-                return float(environment.get(name, default))
-            except (ValueError, TypeError):
-                return default
+                parsed = env_float(name, default)
+            else:
+                try:
+                    parsed = float(environment.get(name, default))
+                except (ValueError, TypeError):
+                    return default
+            # 0, a negative or a non-finite timeout is not a usable bound.
+            return parsed if math.isfinite(parsed) and parsed > 0 else default
         return httpx.Timeout(
             value("MAVERICK_LLM_READ_TIMEOUT", 120.0),
             connect=value("MAVERICK_LLM_CONNECT_TIMEOUT", 15.0),
@@ -99,6 +103,36 @@ def sdk_http_timeout(sdk: Any, *, environment=None) -> Any | None:
         write=timeout.write,
         pool=timeout.pool,
     )
+
+
+# Output rate assumed when sizing a non-streamed request's read timeout: the
+# Anthropic SDK's own estimate (an hour per 128,000 output tokens).
+_SECONDS_PER_OUTPUT_TOKEN = 3600.0 / 128_000
+
+
+def generation_timeout(sdk: Any, max_tokens: Any, *, environment=None) -> dict[str, Any]:
+    """``{"timeout": ...}`` for a non-streamed request, or ``{}``.
+
+    A non-streamed generation sends no bytes until it finishes, so the read
+    timeout is a total cap there. A long answer that outlasts it raises a
+    timeout, which the retry layer repeats with no usage recorded. Raise the
+    read timeout to the time ``max_tokens`` can take; ``{}`` keeps the client's
+    configured timeout when that already covers it.
+    """
+    timeout = llm_http_timeout(environment=environment) if environment is not None else llm_http_timeout()
+    try:
+        tokens = int(max_tokens or 0)
+    except (TypeError, ValueError):
+        return {}
+    expected = tokens * _SECONDS_PER_OUTPUT_TOKEN
+    if timeout is None or timeout.read is None or expected <= timeout.read:
+        return {}
+    sdk_timeout = getattr(sdk, "Timeout", None)
+    if sdk_timeout is None:  # pragma: no cover - legacy SDK fallback
+        return {"timeout": expected}
+    return {"timeout": sdk_timeout(
+        connect=timeout.connect, read=expected, write=timeout.write, pool=timeout.pool,
+    )}
 
 
 class Provider(Protocol):
@@ -159,5 +193,5 @@ def normalize_tool_choice(tool_choice: dict | None) -> dict | None:
     return out
 
 
-__all__ = ["Provider", "TOOL_CHOICE_TYPES", "llm_http_timeout",
+__all__ = ["Provider", "TOOL_CHOICE_TYPES", "generation_timeout", "llm_http_timeout",
            "normalize_tool_choice", "sdk_http_timeout"]
