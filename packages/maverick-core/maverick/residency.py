@@ -15,7 +15,9 @@ Resolution (env wins over config in every case):
     group table so the two never drift.
   - strict: ``MAVERICK_RESIDENCY_STRICT`` / ``[residency] strict``; default off.
     When the environment does not set it and config.toml cannot be read, strict
-    is assumed and the check fails, so a broken file cannot switch the gate off.
+    is assumed and the check reports the policy as unknown; start-up is refused
+    only when the unreadable file mentions residency, so a broken file cannot
+    switch the gate off and a typo elsewhere does not stop an install.
 
 Off by default and a silent no-op until an operator opts in, so the single-tenant
 default and existing deployments are unchanged (kernel rule 1).
@@ -27,9 +29,14 @@ that a strict deployment cannot boot misconfigured.
 """
 from __future__ import annotations
 
+import logging
 import os
+from pathlib import Path
 
 from .tools.data_residency import _GROUPS, _expand
+
+
+log = logging.getLogger(__name__)
 
 
 class ResidencyError(RuntimeError):
@@ -49,13 +56,30 @@ def _cfg(key: str):
         return None
 
 
-def _config_unreadable() -> bool:
-    """Whether an active config source could not be read. ``load_config`` then
-    returns defaults, so a ``[residency]`` policy in it may have been lost."""
+def _unreadable_sources() -> dict[str, str] | None:
+    """Active config sources that could not be read (path -> error), or None
+    when that cannot be determined. ``load_config`` returns defaults for them,
+    so a ``[residency]`` policy in one may have been lost."""
     try:
         from .config import config_source_errors
-        return bool(config_source_errors(include_tenant=True))
+        return config_source_errors(include_tenant=True)
     except Exception:
+        return None
+
+
+def _config_unreadable() -> bool:
+    return _unreadable_sources() != {}
+
+
+def _mentions_residency(path: str) -> bool:
+    """Whether an unreadable source's raw bytes mention residency (a
+    ``[residency]`` table or a ``residency`` key). Not parsed: it cannot be.
+    A file that cannot be read at all counts as evidence."""
+    try:
+        return b"residency" in Path(path).read_bytes().lower()
+    except FileNotFoundError:
+        return False
+    except OSError:
         return True
 
 
@@ -156,7 +180,20 @@ def require_residency_or_die() -> None:
     outside the allowlist), raises :class:`ResidencyError` so the deployment
     aborts at startup instead of storing data in the wrong place. Mirrors
     :func:`maverick.deployment.require_enterprise_or_die`.
+
+    When a config source cannot be read and the environment does not set
+    strict mode, start-up is refused only if an unreadable source mentions
+    residency; otherwise the unreadable files are logged and start-up goes on,
+    so a typo in an install that never enabled residency does not block it.
     """
+    env_set = _env_set("MAVERICK_RESIDENCY_STRICT")
+    unreadable = _unreadable_sources()
+    if not env_set and unreadable:
+        if not any(_mentions_residency(path) for path in unreadable):
+            log.error("residency: configuration could not be read (%s); it does "
+                      "not mention residency, so strict residency stays off",
+                      ", ".join(sorted(unreadable)))
+            return
     if not residency_strict():
         return
     ok, detail = check_residency()
