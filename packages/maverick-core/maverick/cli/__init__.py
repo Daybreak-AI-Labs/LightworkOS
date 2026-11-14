@@ -1890,7 +1890,10 @@ def harness_migrate_store() -> None:
                    + (f" ({merged} conflicting key(s) merged)" if merged else "")
                    + "; file stores renamed to *.migrated.")
     # The eval-corpus family rides the same migration when configured.
-    counts = migrate_corpus()
+    try:
+        counts = migrate_corpus()
+    except MigrationRefused as exc:
+        raise click.ClickException(str(exc)) from exc
     if counts and any(counts.values()):
         migrated_any = True
         click.echo(f"corpus: merged {counts['live']} live case(s), "
@@ -3131,13 +3134,17 @@ def tenant_quota(tenant_id: str, max_daily_dollars: float) -> None:
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
 def tenant_delete(tenant_id: str, purge: bool, yes: bool) -> None:
     """Remove a tenant from the registry (optionally purging its data)."""
-    from ..tenant.registry import delete_tenant
+    from ..tenant.registry import TenantRegistryError, delete_tenant
     if purge and not yes and not click.confirm(
         f"PURGE all data for tenant {tenant_id!r}? This cannot be undone."
     ):
         click.echo("aborted")
         return
-    if delete_tenant(tenant_id, purge=purge):
+    try:
+        deleted = delete_tenant(tenant_id, purge=purge)
+    except (ValueError, TenantRegistryError) as e:
+        raise click.ClickException(str(e)) from e
+    if deleted:
         click.echo(f"deleted {tenant_id!r}" + (" (data purged)" if purge else ""))
     else:
         click.echo(f"ERROR: no such tenant {tenant_id!r}", err=True)
@@ -3624,7 +3631,11 @@ def mcp_registry_add(name: str) -> None:
 def mcp_registry_remove(name: str) -> None:
     """Remove a configured MCP server from config."""
     from ..mcp_registry import remove_mcp_server_from_config
-    if remove_mcp_server_from_config(name):
+    try:
+        removed = remove_mcp_server_from_config(name)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    if removed:
         click.echo(f"removed: {name}")
     else:
         click.echo(f"no MCP server {name!r} in config.", err=True)
@@ -4352,7 +4363,10 @@ def schema_plan_cmd() -> None:
     structural lint.
     """
     from ..schema_migrations import current_plan, render
-    problems, _current, _target, steps = current_plan()
+    try:
+        problems, _current, _target, steps = current_plan()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
     if problems:
         for pb in problems:
             click.echo(f"LINT: {pb}", err=True)

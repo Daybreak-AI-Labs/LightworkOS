@@ -58,6 +58,12 @@ def test_remove(monkeypatch):
     r2 = CliRunner().invoke(main, ["mcp-registry", "remove", "absent"])
     assert r2.exit_code == 2 and "no MCP server" in r2.output
 
+    def _refuse(n):
+        raise ValueError("edit config.toml by hand (the file was not changed)")
+    monkeypatch.setattr(mcp_registry, "remove_mcp_server_from_config", _refuse)
+    r3 = CliRunner().invoke(main, ["mcp-registry", "remove", "inline"])
+    assert r3.exit_code == 1 and "by hand" in r3.output and r3.exception.__class__ is SystemExit
+
 
 def test_list_configured(monkeypatch):
     specs = [

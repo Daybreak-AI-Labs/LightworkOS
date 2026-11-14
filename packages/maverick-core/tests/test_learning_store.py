@@ -148,6 +148,18 @@ def test_migrate_store_imports_and_backs_up(world_home, monkeypatch):
     assert r.exit_code == 0 and "nothing to migrate" in r.output
 
 
+def test_migrate_store_reports_a_refused_corpus_migration(world_home, monkeypatch):
+    from maverick import learning_store_migration as mig
+    from maverick.cli import main
+
+    def _refuse():
+        raise mig.MigrationRefused("corpus file is unreadable")
+    monkeypatch.setattr(mig, "migrate_corpus", _refuse)
+    r = CliRunner().invoke(main, ["self-harness", "migrate-store"])
+    assert r.exit_code == 1 and "corpus file is unreadable" in r.output
+    assert isinstance(r.exception, SystemExit)
+
+
 def test_migrate_store_refuses_when_the_world_read_fails(world_home, monkeypatch):
     ls.write_addenda_db({"model-a": "- keep a", "model-b": "- keep b"})
     sh._store_path().parent.mkdir(parents=True, exist_ok=True)

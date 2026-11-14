@@ -99,6 +99,19 @@ def test_schema_plan_command_runs(tmp_path, monkeypatch):
     assert "current" in r.output or "pending" in r.output
 
 
+def test_schema_plan_command_reports_an_unreadable_world(monkeypatch):
+    from click.testing import CliRunner
+    from maverick import cli as cli_mod
+    from maverick import schema_migrations
+
+    def _unreadable(world=None):
+        raise RuntimeError("world database cannot be read")
+    monkeypatch.setattr(schema_migrations, "current_plan", _unreadable)
+    r = CliRunner().invoke(cli_mod.main, ["schema-plan"])
+    assert r.exit_code == 1 and "world database cannot be read" in r.output
+    assert isinstance(r.exception, SystemExit)
+
+
 def test_ci_gate_passes_on_the_shipped_table():
     from maverick.schema_migrations import main
     assert main(["--ci"]) == 0  # the shipped migrations lint clean
