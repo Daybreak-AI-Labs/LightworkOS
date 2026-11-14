@@ -36,6 +36,20 @@ def test_category_filter():
     assert "415-555-2671" in result["text"]
 
 
+def test_nested_findings_redact_the_whole_outer_span():
+    # The nested roster name used to win and leave the rest of the e-mail visible.
+    result = redact_text("contact john.smith@example.com now", roster=["john"])
+    assert result["text"] == "contact [REDACTED:email] now"
+    assert result["redactions"] == 1
+
+
+def test_findings_beyond_the_classifier_cap_refuse_instead_of_leaking():
+    from maverick.content_classifier import MAX_FINDINGS
+    text = " ".join(f"u{i}@example.com" for i in range(MAX_FINDINGS + 5))
+    with pytest.raises(ValueError, match="too many findings"):
+        redact_text(text)
+
+
 def test_bounds():
     with pytest.raises(ValueError, match="characters"):
         redact_text("x" * 2_000_001)

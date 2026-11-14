@@ -32,7 +32,9 @@ def redact_text(
     ``categories`` limits redaction to those categories; ``None`` redacts
     every finding. ``roster`` adds deterministic name matches (category
     ``name``). Returns ``{"text", "redactions", "counts"}`` where
-    ``counts`` maps category -> replacements made.
+    ``counts`` maps category -> replacements made. Overlapping findings are
+    replaced as one span. Raises ``ValueError`` when the classifier hit its
+    findings cap, since some findings would otherwise stay unredacted.
     """
 
     sample = str(text or "")
@@ -40,27 +42,30 @@ def redact_text(
         raise ValueError(f"text must be at most {MAX_TEXT_CHARS} characters")
     wanted = None if categories is None else {str(c) for c in categories}
     report = classify_text(sample, roster=roster)
-    spans = [
-        row
-        for row in report["findings"]
-        if wanted is None or row["category"] in wanted
-    ]
-    # Replace back-to-front so earlier spans keep their offsets; skip any
-    # span that overlaps one already replaced (nested hits).
-    spans.sort(key=lambda row: (-row["start"], row["end"]))
+    if report.get("truncated"):
+        # The classifier stops collecting at its findings cap; redacting only
+        # the collected spans would ship the rest in clear.
+        raise ValueError("text holds too many findings to redact completely")
+    spans = sorted(
+        (row for row in report["findings"]
+         if wanted is None or row["category"] in wanted),
+        key=lambda row: (row["start"], -row["end"]),
+    )
+    # Merge overlapping or nested spans into their union, labelled with the
+    # earliest (outermost) finding, so no part of an enclosing identifier stays
+    # visible around a nested hit.
+    merged: list[list[Any]] = []
+    for row in spans:
+        if merged and row["start"] < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], row["end"])
+            continue
+        merged.append([row["start"], row["end"], row["category"]])
+    # Replace back-to-front so earlier spans keep their offsets.
     out = sample
     counts: dict[str, int] = {}
-    last_start = len(sample) + 1
-    for row in spans:
-        if row["end"] > last_start:
-            continue
-        out = (
-            out[: row["start"]]
-            + REDACTION_TEMPLATE.format(category=row["category"])
-            + out[row["end"]:]
-        )
-        counts[row["category"]] = counts.get(row["category"], 0) + 1
-        last_start = row["start"]
+    for start, end, category in reversed(merged):
+        out = out[:start] + REDACTION_TEMPLATE.format(category=category) + out[end:]
+        counts[category] = counts.get(category, 0) + 1
     return {
         "text": out,
         "redactions": sum(counts.values()),
