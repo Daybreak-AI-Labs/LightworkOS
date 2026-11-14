@@ -205,5 +205,22 @@ class BedrockClient(AnthropicClient):
         kwargs.pop("betas", None)
         return kwargs
 
+    def prewarm(self, system: str, tools: list[dict] | None = None,
+                model: str | None = None, *, budget=None) -> bool:
+        """Gate the warm on the canonical id's cache minimum.
+
+        The base looks the minimum up by the Bedrock wire id, which no table
+        entry matches, so a 2,048/4,096-minimum model was warmed (and billed)
+        with a prefix too short to cache.
+        """
+        from .anthropic_provider import _min_cache_tokens
+
+        wire = model or self.DEFAULT_MODEL
+        canonical = bedrock_rate_card_model_id(wire) or wire
+        est_tokens = (len(system or "") + sum(len(str(t)) for t in tools or [])) / 4
+        if est_tokens < _min_cache_tokens(canonical):
+            return False
+        return super().prewarm(system, tools, model, budget=budget)
+
 
 __all__ = ["BedrockClient"]
