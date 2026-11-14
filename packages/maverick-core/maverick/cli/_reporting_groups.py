@@ -140,8 +140,16 @@ def flywheel(as_json: bool) -> None:
             "hypotheses": [{"swap": f"{h.baseline_action}->{h.candidate_action}",
                             "predicted_lift": h.predicted_lift} for h in rep.hypotheses],
             "predicted_lift": rep.predicted_lift,
+            "complete": rep.complete,
+            "problem": rep.problem,
         }))
+        if not rep.complete:
+            raise SystemExit(1)
         return
+    if not rep.complete:
+        # maybe_run() folds a failed cycle into an empty report; that is not
+        # "nothing to learn".
+        raise click.ClickException(f"flywheel cycle failed: {rep.problem or 'unknown error'}")
     if not rep.acted:
         click.echo("Flywheel: nothing to learn yet "
                    "(data engine off, or no failures/habits in the corpus).")

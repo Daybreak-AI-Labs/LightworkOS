@@ -130,3 +130,18 @@ def test_run_once_audits_each_learned_write_as_it_happens(tmp_path, monkeypatch)
         flywheel.run_once(_corpus(), guardrails=nk.GuardrailRegistry(path=tmp_path / "g2.json"),
                           memory=broken)
     assert [kw["store"] for _, kw in rows] == ["guardrails"]  # the earlier write is on record
+
+
+def test_cli_flywheel_fails_on_an_incomplete_cycle(monkeypatch):
+    from click.testing import CliRunner
+    from maverick.cli import main
+
+    monkeypatch.setattr(
+        "maverick.flywheel.maybe_run",
+        lambda: flywheel.FlywheelReport(n_episodes=0, complete=False, problem="store unavailable"))
+    text = CliRunner().invoke(main, ["flywheel"])
+    assert text.exit_code != 0
+    assert "store unavailable" in text.output
+    as_json = CliRunner().invoke(main, ["flywheel", "--json"])
+    assert as_json.exit_code != 0
+    assert '"complete": false' in as_json.output

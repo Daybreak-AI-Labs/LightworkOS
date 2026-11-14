@@ -357,6 +357,20 @@ class TestAvailableDomainsOverlay:
         assert "ERROR  unsafe: allow_tools is empty" in result.output
         assert "ERROR  unsafe: max_risk is unset" in result.output
 
+    def test_domains_lint_reports_unparseable_builtin_pack(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+        from maverick import domain
+        from maverick.cli import main
+
+        (tmp_path / "broken.toml").write_text('allow_tools = [', encoding="utf-8")
+        monkeypatch.setattr(domain, "builtin_dir", lambda: tmp_path)
+        monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path / "workspace"))
+
+        result = CliRunner().invoke(main, ["domains-lint", "--ci"])
+
+        assert result.exit_code != 0
+        assert "ERROR  broken: pack does not load" in result.output
+
     def test_same_name_override_inherits_base(self, tmp_path, monkeypatch):
         name, base = _clean_builtin()
         monkeypatch.setenv("MAVERICK_DOMAINS_DIR", str(tmp_path))

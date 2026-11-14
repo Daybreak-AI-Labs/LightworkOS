@@ -156,6 +156,9 @@ def domains_lint(ci: bool, show_warnings: bool) -> None:
         n_err += len(errors)
         for error in errors:
             click.echo(f"ERROR  {name}: {error}", err=True)
+    for name, error in _unparseable_builtin_packs():
+        n_err += 1
+        click.echo(f"ERROR  {name}: {error}", err=True)
     # The prose lint (text defects, duplicate personas, unknown tools) is part
     # of the same gate: a pack that reads wrong is as broken as one that is
     # envelope-unsafe. Mechanical classes fix with
@@ -168,6 +171,22 @@ def domains_lint(ci: bool, show_warnings: bool) -> None:
                + ("" if show_warnings else " (use --warnings to list them)"))
     if ci and n_err:
         raise click.ClickException(f"{n_err} pack error(s)")
+
+
+def _unparseable_builtin_packs() -> list[tuple[str, str]]:
+    """Built-in packs the loader skips because they do not parse.
+
+    ``load_domains`` drops a malformed pack so discovery keeps working, which
+    also drops it from the lint; the gate has to look for them itself.
+    """
+    from ..domain import builtin_dir, load_domain
+    bad: list[tuple[str, str]] = []
+    for path in sorted(builtin_dir().glob("*.toml")):
+        try:
+            load_domain(path)
+        except Exception as exc:
+            bad.append((path.stem, f"pack does not load ({type(exc).__name__}: {exc})"))
+    return bad
 
 
 @main.command("domains-audit")
