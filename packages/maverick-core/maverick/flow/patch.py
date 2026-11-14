@@ -29,6 +29,7 @@ from typing import Any
 
 from .draft import _sanitize_inputs
 from .ir import Flow, FlowNode, partition_draft_validation_errors
+from .work_policy import agent_error_route_errors
 
 PATCH_OPS = frozenset({"add_node", "remove_node", "set_field", "set_flow_field", "rewire"})
 
@@ -178,7 +179,7 @@ def describe_patch(p: dict) -> str:
     """One human line per patch, for the chat transcript / audit trail."""
     op = p.get("op", "?")
     if op == "add_node":
-        n = p.get("node") or {}
+        n = p.get("node") if isinstance(p.get("node"), dict) else {}
         where = f" after {p['after']}" if p.get("after") else ""
         return f"add {n.get('kind', '?')} node {n.get('id', '?')}{where}"
     if op == "remove_node":
@@ -209,17 +210,24 @@ def apply_patches(
     error, never a structural, safety, or tool-binding error.
     """
     _require(isinstance(patches, list) and patches, "no patches to apply")
-    out = flow.copy()
+    try:
+        out = flow.copy()
+    except Exception as e:
+        raise PatchError(f"could not copy flow for editing: {e}") from e
     for i, p in enumerate(patches):
         _require(isinstance(p, dict), f"patch {i}: not an object")
         op = p.get("op")
+        _require(isinstance(op, str), f"patch {i}: unknown op {op!r}")
         applier = _APPLIERS.get(op)
         _require(applier is not None, f"patch {i}: unknown op {op!r}")
         try:
             applier(out, p)
-        except PatchError as e:
+        except Exception as e:
             raise PatchError(f"patch {i} ({describe_patch(p)}): {e}") from e
-    errs = out.validate()
+    try:
+        errs = out.validate() + agent_error_route_errors(out)
+    except Exception as e:
+        raise PatchError(f"patched flow could not be validated: {e}") from e
     blocking, unclassified = partition_draft_validation_errors(errs)
     rejected = blocking or ([] if allow_unclassified_draft else unclassified)
     if rejected:
