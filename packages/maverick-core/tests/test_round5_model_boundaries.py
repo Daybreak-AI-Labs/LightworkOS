@@ -48,7 +48,7 @@ def test_local_probe_uses_effective_config_and_environment_endpoint(monkeypatch,
             assert calls[-1] == target
         for invalid in ('[providers.vllm]\nbase_url = "http://localhost:broken/v1"\n',
                         '[providers.vllm]\nbase_url = "http://localhost:0/v1"\n',
-                        '[providers.vllm]\nbase_url = "http://user:pass@localhost/v1"\n',
+                        '[providers.vllm]\nbase_url = "http://user:pass@localhost/v1"\n',  # pragma: allowlist secret -- synthetic rejected URL
                         'providers = "unreadable"\n', '[providers.vllm\n'):
             config_file.write_text(invalid)
             prior = len(calls)
@@ -110,7 +110,7 @@ def test_discovery_retains_pricing_evidence_and_caches_truncation(monkeypatch, t
     from maverick import model_discovery as discovery
 
     monkeypatch.setattr(discovery, "discovery_enabled", lambda: True)
-    monkeypatch.setattr(discovery, "_provider_material", lambda provider: {"configured": True, "api_key": "synthetic", "base_url": ""})
+    monkeypatch.setattr(discovery, "_provider_material", lambda provider: {"configured": True, "api_key": "synthetic", "base_url": ""})  # pragma: allowlist secret -- synthetic discovery fixture
     monkeypatch.setattr(llm, "MODEL_CATALOG", {"openrouter": ["z-priced"]})
     monkeypatch.setattr(llm, "MODEL_PRICES", {"openrouter:z-priced": (1.0, 2.0)})
     rows = [{"id": f"a-unpriced-{i:03}"} for i in range(discovery.MAX_MODELS_PER_PROVIDER)]
