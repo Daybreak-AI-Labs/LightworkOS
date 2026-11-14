@@ -113,3 +113,13 @@ def test_local_backend_hides_harness_environ_from_children(tmp_path):
     assert local._harness_environ_hidden() is True
     if os.geteuid() != 0:  # root reads everything; the check is the dumpable flag
         assert "Permission denied" in (res.stderr or "") or "rc=1" in res.stdout
+
+
+def test_short_secret_suffixes_are_stripped_but_path_and_pwd_kept():
+    from maverick.sandbox.local import scrub_env
+
+    names = ("MYSQL_PWD", "DB_PASS", "GITHUB_PAT", "STRIPE_SK", "SESSION_SALT",
+             "PRIVATE_PEM", "JWT_SIGNING", "WALLET_MNEMONIC", "BORG_PASSCOMMAND")
+    kept = ("PATH", "PWD", "OLDPWD", "HOME", "LANG", "MAVERICK_PASS_TO_PASS")
+    out = scrub_env(dict.fromkeys(names + kept, "v"))
+    assert sorted(out) == sorted(kept)
