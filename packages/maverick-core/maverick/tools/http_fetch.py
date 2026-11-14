@@ -8,11 +8,11 @@ Respects:
   - http(s) only (refuses file://, ftp://, etc.)
   - robots.txt when ``MAVERICK_FETCH_RESPECT_ROBOTS=1``
   - private IP ranges blocked unless ``MAVERICK_FETCH_ALLOW_PRIVATE=1``
-  - a person's approval for every request that can carry data or change
-    something at the destination: any method other than GET/HEAD, and any
+  - a person's approval for any method other than GET/HEAD and for any
     request with a body. Like ``shell``, the decision is fresh, exact and
     one-use; silent auto-approval and standing grants never authorize it, and
-    a run nobody can answer for is refused.
+    a run nobody can answer for is refused. A GET or HEAD is not reviewed,
+    although its URL query string and headers are model-chosen.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import socket
+import time
 import urllib.request
 from typing import Any
 from urllib.parse import unquote_plus, urljoin, urlparse, urlsplit, urlunsplit
@@ -529,6 +530,10 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
     import httpx
 
     from ._ssrf import BlockedHost, safe_client
+    # httpx's timeout bounds each read, not the whole body: a server that
+    # trickles a byte just inside it could hold the call for hours. The body
+    # read stops once the overall budget is spent.
+    deadline = time.monotonic() + _FETCH_TIMEOUT_SECONDS
     try:
         with safe_client(url, timeout=_FETCH_TIMEOUT_SECONDS) as client:
             with client.stream(method, url, headers=headers, content=body) as resp:
@@ -537,6 +542,9 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
                 resp_url = resp.url
                 encoding = resp.encoding
                 content_type = (resp.headers.get("content-type") or "").lower()
+                # Redirects are not followed; report where they point so the
+                # caller can decide whether to fetch that URL.
+                location = resp.headers.get("location") if 300 <= status_code < 400 else None
                 buf = bytearray()
                 truncated = False
                 # Keep one extra byte to distinguish exact-limit completion
@@ -546,12 +554,15 @@ def _stream_fetch(method: str, url: str, headers: dict, body: Any, max_bytes: in
                     if len(buf) > max_bytes:
                         truncated = True
                         break
+                    if time.monotonic() > deadline:
+                        return (f"ERROR: response body did not finish within "
+                                f"{_FETCH_TIMEOUT_SECONDS:.0f}s")
     except BlockedHost as e:
         return f"ERROR: refusing to fetch {url!r}: {e}"
     except httpx.HTTPError as e:
         return f"ERROR: {type(e).__name__}: {e}"
     return (status_code, reason_phrase, resp_url, encoding, content_type,
-            bytes(buf[:max_bytes]), truncated)
+            bytes(buf[:max_bytes]), truncated, location)
 
 
 # A plain read: no body and a method that only asks for a resource. Anything
@@ -1437,7 +1448,7 @@ def _run_fetch(args: dict[str, Any]) -> str:
     if isinstance(streamed, str):
         return streamed
     (status_code, reason_phrase, resp_url, encoding, content_type,
-     raw_bytes, truncated) = streamed
+     raw_bytes, truncated, location) = streamed
     # Per-host egress accounting (always-on, in-memory; never breaks a fetch).
     try:
         from ..egress_accounting import record as _egress_record
@@ -1463,13 +1474,23 @@ def _run_fetch(args: dict[str, Any]) -> str:
         rendered = _to_markdown(text)
 
     size_note = f"{len(raw_bytes)}{'+' if truncated else ''} bytes"
+    # The reason phrase and content type are server-chosen text outside the
+    # injection scan below, so they are cut to a short printable prefix.
     header = (
-        f"HTTP {status_code} {reason_phrase} "
-        f"({content_type or 'unknown'}; {size_note})\n"
+        f"HTTP {status_code} {_printable(reason_phrase, 64)} "
+        f"({_printable(content_type, 128) or 'unknown'}; {size_note})\n"
         f"URL: {resp_url}\n"
     )
+    if location:
+        # Server-chosen too, so it travels with the scanned content.
+        rendered = f"Redirect location (not followed): {location[:2048]}\n\n{rendered}"
     rendered, warning = _scan_fetched(rendered)
     return header + warning + "\n" + rendered
+
+
+def _printable(value: Any, limit: int) -> str:
+    text = "".join(ch for ch in str(value or "") if ch.isprintable())
+    return text[:limit]
 
 
 def _scan_fetched(rendered: str) -> tuple[str, str]:
