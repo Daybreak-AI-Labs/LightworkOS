@@ -117,3 +117,19 @@ def test_shopify_refund_dry_run(monkeypatch):
     })
     assert "DRY RUN" in out
     fake_httpx.Client.assert_not_called()
+
+
+def test_shopify_refund_requires_a_positive_amount(monkeypatch):
+    # With no amount the tool posted a refund with no transactions, which moves
+    # no money, yet reported a FULL refund; negative amounts were sent as-is.
+    monkeypatch.setenv("SHOPIFY_STORE", "my-shop")
+    monkeypatch.setenv("SHOPIFY_ACCESS_TOKEN", "shpat_xx")
+    fake_httpx = types.ModuleType("httpx")
+    fake_httpx.Client = MagicMock()
+    monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    from maverick.tools.shopify_tool import shopify_tool
+    for amount in (None, 0, -500):
+        out = shopify_tool().fn({"op": "refund_create", "order_id": 555,
+                                 "amount_cents": amount, "confirm": True})
+        assert out.startswith("ERROR") and "amount_cents" in out, amount
+    fake_httpx.Client.assert_not_called()
