@@ -175,6 +175,10 @@ def _same_value(readback: Any, written: Any) -> bool:
         return True
     if readback is None or written is None:
         return False
+    if isinstance(readback, bool) and isinstance(written, str) and written.strip() in {"true", "false"}:
+        return written.strip() == ("true" if readback else "false")
+    if isinstance(written, bool) and isinstance(readback, str) and readback.strip() in {"true", "false"}:
+        return readback.strip() == ("true" if written else "false")
     if _is_number(readback) or _is_number(written):
         left, right = _as_money(readback), _as_money(written)
         if left is not None and right is not None:

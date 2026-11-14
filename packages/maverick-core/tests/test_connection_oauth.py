@@ -59,6 +59,54 @@ def expire():
         connections._save(records)
 
 
+def test_native_prepare_ticket_cannot_start_two_live_consents(monkeypatch):
+    monkeypatch.setenv("MAVERICK_OAUTH_DESKTOP_RETURN", "1")
+    monkeypatch.setenv("MAVERICK_DESKTOP_OAUTH_TICKET_KEY", "07" * 32)
+    oauth.save_workspace_application(OWNER, provider="google", client_id="synthetic-client",
+        client_secret="synthetic-secret", expected_revision="", desktop_return=True)
+    prepared = oauth.native_prepare_ticket(OWNER, profile="google-drive", name="evidence",
+        context="fixture-context")
+
+    def begin():
+        with tenant_scope(tenant="tenant-a"):
+            try:
+                return oauth.begin(OWNER, profile="google-drive", name="evidence",
+                    context="fixture-context", redirect_uri=oauth.DESKTOP_CALLBACK,
+                    return_profile=oauth.DESKTOP_PROFILE, native_handle="d" * 64,
+                    prepare_ticket=prepared["prepare_ticket"])
+            except PermissionError:
+                return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        started = list(executor.map(lambda _: begin(), range(2)))
+    assert sum(value is not None for value in started) == 1
+    assert len(oauth._load()["consents"]) == 1
+
+
+def test_reconnect_resets_sharing_on_subject_change_and_retains_old_evidence(monkeypatch):
+    app()
+    saved = exchange(start(), monkeypatch)
+    shared = connections.set_connection("evidence", access="tenant",
+        allowed_principals=["user:reader"], expected_revision=saved["revision"])
+    with connections._mutation_lock():
+        records = connections._load()
+        evidence = {"last_test": {"revision": saved["revision"]},
+                    "test_history": [{"revision": "older"}],
+                    "capability_receipts": [{"revision": "older"}]}
+        records["evidence"].update(evidence)
+        connections._save(records)
+    same = exchange(start(expected_revision=shared["revision"]), monkeypatch)
+    assert same["access"] == "tenant" and same["allowed_principals"] == ["user:reader"]
+    monkeypatch.setattr(oauth, "_provider_identity", lambda *args, **kwargs: {
+        "provider": "google", "subject": "another-account", "display_name": "Another Account",
+        "email": "fixture@example.test", "email_verified": True, "hosted_domain": "example.test",
+    })
+    changed = exchange(start(expected_revision=same["revision"]), monkeypatch)
+    assert (changed["access"], changed["allowed_principals"],
+            {key: same[key] for key in evidence}, {key: changed[key] for key in evidence}) == (
+                "owner", [], evidence, evidence)
+
+
 def test_real_state_pkce_and_sealed_named_connection(monkeypatch):
     applications = app()
     begin = start()

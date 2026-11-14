@@ -374,7 +374,8 @@ def deposit(
     External callers may only deposit into fleet memory. Returns
     ``(ok, reason)`` and leaves one audit row for every outcome it returns;
     an exception raised by the knowledge base or fleet memory propagates and
-    is not audited here."""
+    is not audited here. The legacy ``source`` argument is accepted for API
+    compatibility; knowledge provenance always names the trusted caller."""
     caller = caller or Caller()
     tenant = _tenant()
 
@@ -400,7 +401,7 @@ def deposit(
         if kb is None:
             return _done(False, "knowledge base unavailable or disabled ([knowledge] enable)")
         try:
-            chunks = kb.ingest_text(collection, text, source=source or caller.principal)
+            chunks = kb.ingest_text(collection, text, source=caller.principal)
         finally:
             close = getattr(kb, "close", None)
             if callable(close):
