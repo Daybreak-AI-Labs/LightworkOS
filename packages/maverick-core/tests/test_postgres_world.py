@@ -681,16 +681,6 @@ def test_ask_answer_open_questions(world):
     assert answered.answered_at is not None
 
 
-def test_answer_is_recorded_once(world):
-    # Parity with SQLite: the agent may already have acted on the first
-    # answer, so a second one is refused rather than replacing it.
-    gid = world.create_goal("answered once")
-    qid = world.ask("which region?", goal_id=gid)
-    assert world.answer(qid, "us-east-1") is True
-    assert world.answer(qid, "eu-west-1") is False
-    assert [q.answer for q in world.all_questions(gid) if q.id == qid] == ["us-east-1"]
-
-
 def test_erase_conversations_clears_the_subject_approval_content(world):
     # Parity with SQLite: approvals parked by an erased goal keep their id and
     # decision for the audit outbox, but lose the sealed action, scope, detail

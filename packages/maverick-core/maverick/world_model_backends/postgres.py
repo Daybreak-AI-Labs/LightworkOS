@@ -4144,16 +4144,13 @@ class PostgresWorldModel:
         *,
         expected_owner: str | None = None,
     ) -> bool:
-        """Record an answer. Returns False if no unanswered question has that
-        id, so a typo'd id is flagged instead of reported as a false success.
-        An answer is recorded once: the agent may already have acted on it, so
-        it is never silently replaced (as on SQLite).
+        """Record an answer. Returns False if no question has that id, so a
+        typo'd id is flagged instead of reported as a false success.
 
         Scoped through the parent goal's tenant so a tenant cannot answer
-        another tenant's question by id."""
+        (overwrite) another tenant's question by id (no-op single-tenant)."""
         frag, fparams = _mutation_tenant_scope("g.tenant_id")
-        sql = ("UPDATE questions SET answer = %s, answered_at = %s "
-               "WHERE id = %s AND answer IS NULL")
+        sql = "UPDATE questions SET answer = %s, answered_at = %s WHERE id = %s"
         params: list = [_seal(answer, "questions.answer"), time.time(), question_id]
         if expected_owner is not None:
             sql += " AND goal_id IN (SELECT id FROM goals WHERE owner = %s)"
