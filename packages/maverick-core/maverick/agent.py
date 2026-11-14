@@ -5369,7 +5369,7 @@ class Agent:
         partial text already contains FINAL, and its incomplete tool arguments
         cannot be dispatched or kept as orphan tool-use history. Ask again;
         three cutoffs in a row end the run as incomplete."""
-        if resp.stop_reason not in {"max_tokens", "length"}:
+        if resp.stop_reason not in {"max_tokens", "length", "model_context_window_exceeded"}:
             st.truncated_responses = 0
             return None
         st.truncated_responses += 1

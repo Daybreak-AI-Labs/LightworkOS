@@ -170,8 +170,12 @@ class Blackboard:
                 and self._is_model_derived_event(kind, meta)
             ):
                 mirror_content = self._WITHHELD_CONTENT
-        except Exception:  # pragma: no cover -- feature check is fail-soft
-            pass
+        except Exception:  # pragma: no cover -- an unknown gateway state withholds
+            try:
+                if self._is_model_derived_event(kind, meta):
+                    mirror_content = self._WITHHELD_CONTENT
+            except Exception:
+                mirror_content = self._WITHHELD_CONTENT
         # Mirror to world.goal_events for live dashboard streaming. Best-effort:
         # if the world model write fails (e.g., disk full), the in-memory
         # blackboard still works for the agent loop.
