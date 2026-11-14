@@ -3,7 +3,10 @@
 Each link records {actor, action, prev_hash} plus a content hash computed as
 sha256("actor|action|prev_hash"). The chain starts from a genesis prev_hash of
 64 zeros; every subsequent link's prev_hash must equal the previous link's
-recomputed content hash. This catches reordering, edits, or forged links.
+recomputed content hash. This catches reordering or edits inside a chain;
+nothing anchors it, so a chain rebuilt from genesis also verifies, and the
+last link is protected only when it carries its own ``hash``. Compare the
+reported head with a value recorded elsewhere to detect that.
 Deterministic and offline; pure stdlib (hashlib.sha256). No disk.
 
 ops:
@@ -39,6 +42,10 @@ def _verify(args: dict[str, Any]) -> str:
         action = str(link.get("action") or "").strip()
         if not actor or not action:
             return f"BROKEN: link {i} missing actor/action"
+        if "|" in actor or "|" in action:
+            # "|" is the field separator, so ("a|b", "c") and ("a", "b|c")
+            # would hash identically.
+            return f"BROKEN: link {i} actor/action may not contain '|'"
         prev = str(link.get("prev_hash") or "").strip()
         if prev != expected_prev:
             return (
@@ -52,7 +59,7 @@ def _verify(args: dict[str, Any]) -> str:
             return f"BROKEN: link {i} ({actor}/{action}) content hash mismatch"
         expected_prev = computed
 
-    return f"VALID: {len(links)} link(s), head {expected_prev[:12]}..."
+    return f"VALID: {len(links)} link(s), head {expected_prev}"
 
 
 def _run(args: dict[str, Any]) -> str:
