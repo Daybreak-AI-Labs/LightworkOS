@@ -37,3 +37,29 @@ def test_open_world_sqlite_is_unaffected(tmp_path, monkeypatch):
         assert isinstance(w, wm.WorldModel)
     finally:
         w.close()
+
+
+def test_encryption_migrate_cli_dispatches_postgres_without_touching_sqlite(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+
+    from click.testing import CliRunner
+    from maverick.cli._ops_groups import encryption_group
+
+    calls = []
+    sentinel = object()
+    monkeypatch.setattr("maverick.world_model_backends.postgres.is_postgres_configured", lambda: True)
+    monkeypatch.setattr("maverick.world_model_backends.postgres.open_postgres_world", lambda: nullcontext(sentinel))
+    monkeypatch.setattr("maverick.encryption_migrate.migrate_postgres_world",
+                        lambda world, **kwargs: calls.append((world, kwargs)) or {"facts.value": 1})
+    db = tmp_path / "unused.db"
+    runner = CliRunner()
+    for args, dry_run in [(["migrate", "--dry-run"], True), (["migrate"], False)]:
+        result = runner.invoke(encryption_group, args, obj={"db": str(db)})
+        assert result.exit_code == 0, result.output
+        assert calls[-1] == (sentinel, {"dry_run": dry_run})
+        assert "facts.value:" in result.output
+    assert not db.exists()
+    refused = runner.invoke(encryption_group, ["migrate", "--backup"], obj={"db": str(db)})
+    assert refused.exit_code == 1
+    assert "--backup is SQLite-only" in refused.output
+    assert len(calls) == 2

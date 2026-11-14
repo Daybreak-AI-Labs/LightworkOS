@@ -257,6 +257,7 @@ _RLS_TABLES = (
     "webhook_subscriptions",
     "webhook_deliveries",
     "deadline_alerts",
+    "encryption_migrations",
 )
 # Tables whose tenant column is not called ``tenant_id``. The webhook and
 # deadline-alert tables (v42) scope rows by ``workspace`` (the same active
@@ -759,6 +760,13 @@ MIGRATIONS.append((50, ["CREATE INDEX IF NOT EXISTS idx_pg_questions_goal_id ON 
 # v51: which decisions can still be undone (mirrors SQLite v51).
 MIGRATIONS.append((51, ["ALTER TABLE approvals ADD COLUMN IF NOT EXISTS undo_hold TEXT"]))
 
+# v52: completion is tenant-scoped so RLS-hidden rows are never certified.
+MIGRATIONS.append((52, [
+    "CREATE TABLE IF NOT EXISTS encryption_migrations ("
+    "scope TEXT PRIMARY KEY, tenant_id TEXT, migrated_at DOUBLE PRECISION NOT NULL, "
+    "CHECK (scope = CASE WHEN tenant_id IS NULL THEN 'n:' ELSE 't:' || tenant_id END))",
+]))
+
 _PG_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 _MIGRATIONS_TABLE = (
@@ -1258,10 +1266,9 @@ class PostgresWorldModel:
                 "Postgres world model requires MAVERICK_PG_DSN or "
                 "[world_model] dsn in config.toml."
             )
-        # There is no rebinding migration for this backend, so values sealed
-        # before column binding existed must stay readable.
-        from ..world_model import _UNREBOUND_BACKENDS
-        _UNREBOUND_BACKENDS.add("postgres")
+        # Startup transactions precede the marker table and RLS installation.
+        self._posture_ready = False
+        self._posture_identity = hashlib.sha256(self._dsn.encode()).hexdigest()
         from ..postgres_io import BoundedConnection, postgres_io_timeout_seconds
 
         self._rls = _rls_enabled()
@@ -1312,6 +1319,9 @@ class PostgresWorldModel:
             if self._rls:
                 self._preflight_rls_or_die()
                 self._apply_rls()
+            self._posture_ready = True
+            with self._tx():
+                pass  # Read the current tenant's durable rebinding marker.
         except BaseException:
             self.close()
             raise
@@ -1417,6 +1427,7 @@ class PostgresWorldModel:
                     if snapshot:
                         cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                     self._set_tenant_guc(cur)
+                    self._note_encryption_posture(cur)
                     self._tx_depth.value = getattr(self._tx_depth, "value", 0) + 1
                     try:
                         yield cur
@@ -1434,6 +1445,7 @@ class PostgresWorldModel:
                 if snapshot:
                     cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                 self._set_tenant_guc(cur)
+                self._note_encryption_posture(cur)
                 self._tx_depth.value = getattr(self._tx_depth, "value", 0) + 1
                 try:
                     yield cur
@@ -1460,6 +1472,17 @@ class PostgresWorldModel:
             finally:
                 if cur is not None:
                     cur.close()
+
+    def _note_encryption_posture(self, cur) -> None:
+        if not getattr(self, "_posture_ready", False):
+            return
+        from ..encryption_migrate import postgres_migration_scope
+        from ..world_model import _POSTGRES_STORE_POSTURES
+
+        tenant = _active_tenant()
+        cur.execute("SELECT 1 FROM encryption_migrations WHERE scope=%s",
+                    (postgres_migration_scope(tenant),))
+        _POSTGRES_STORE_POSTURES[(self._posture_identity, tenant)] = cur.fetchone() is not None
 
     def _set_tenant_guc(self, cur) -> None:
         """Under RLS, bind this transaction to the active tenant.

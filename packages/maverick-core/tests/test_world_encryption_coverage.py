@@ -21,6 +21,7 @@ def _isolate(monkeypatch, tmp_path):
         monkeypatch.delenv(v, raising=False)
     monkeypatch.setattr("maverick.config.load_config", lambda *a, **k: {})
     monkeypatch.setattr(car, "_KEY_PATH", tmp_path / "keys" / "at_rest.key")
+    monkeypatch.setattr("maverick.world_model._POSTGRES_STORE_POSTURES", {})
 
 
 @requires_crypto
@@ -378,5 +379,5 @@ def test_migrated_store_withholds_an_unbound_sealed_value_pasted_into_a_column(
     assert wm.get_goal(gid).title == _UNSEALED_WITHHELD
     assert [g for g in wm.list_goals() if g.id == gid][0].title == _UNSEALED_WITHHELD
     # A backend with no rebinding migration keeps its older values readable.
-    monkeypatch.setattr(wm_mod, "_UNREBOUND_BACKENDS", {"postgres"})
+    monkeypatch.setattr(wm_mod, "_UNREBOUND_BACKENDS", {"legacy-backend"})
     assert wm.get_goal(gid).title == "a webhook secret"
