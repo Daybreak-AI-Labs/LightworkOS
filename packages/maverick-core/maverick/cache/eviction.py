@@ -2,11 +2,10 @@
 
 The cache modules in this package back different stores -- ``llm`` is SQLite
 rows, ``learning`` is a JSON-persisted dict -- so they cannot share a concrete
-store base without migrating one's on-disk format. What they DO share is the
-policy: TTL expiry plus a least-recently-used count cap. These pure helpers
-capture that decision so each store applies the same rule at its own layer
-(``learning`` calls them directly; the SQLite ``llm`` store expresses the same
-LRU-by-``last_used`` selection in SQL and references this module for the policy).
+store base without migrating one's on-disk format. These pure helpers hold the
+learning cache's policy: TTL expiry plus a least-recently-used count cap
+(``learning`` calls them directly). The SQLite ``llm`` store does not use them:
+it has no ``last_used`` column and evicts the oldest rows by ``created_at``.
 """
 from __future__ import annotations
 

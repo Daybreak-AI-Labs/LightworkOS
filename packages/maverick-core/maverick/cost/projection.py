@@ -1,7 +1,7 @@
 """Token-level cost projection at plan time.
 
 ``maverick start --dry-cost`` forecasts a goal's cost from *history*
-(:mod:`maverick.cost_forecast`); this module projects a *specific plan's*
+(:mod:`maverick.cost.forecast`); this module projects a *specific plan's*
 cost from its own shape, before a single token is spent. Each step's text is
 sized with the same chars/4 heuristic the live billing path uses
 (``llm._estimate_call_cost`` and the token preflight), and priced at the
