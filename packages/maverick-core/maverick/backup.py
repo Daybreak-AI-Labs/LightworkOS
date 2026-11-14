@@ -865,6 +865,11 @@ _KEY_MATERIAL_ROOTS = (("keys",), ("audit", "keys"))
 # unlocks, without a ``.key`` suffix. It is withheld under its own scope so an
 # older archive that bundled it never reads as carrying the at-rest keys.
 _VAULT_SCOPE = "vault"
+# The consent ledger's HMAC key (safety/consent.py) sits beside the ledger as
+# ``consent.ledger.key`` and authenticates standing consent grants. It is
+# withheld under its own scope for the same reason as the vault key.
+_CONSENT_LEDGER_KEY = ("consent.ledger.key",)
+_CONSENT_SCOPE = "consent"
 
 
 def _is_vault_key(parts: tuple[str, ...]) -> bool:
@@ -875,7 +880,8 @@ def _is_vault_key(parts: tuple[str, ...]) -> bool:
 def _key_material_scope(relative: Path) -> tuple[str, ...] | None:
     """The folder a raw key file belongs to: ``()`` for the data root's own keys,
     ``("tenants", <id>)`` for one workspace's, either with ``"vault"`` appended
-    for a browser-vault key; ``None`` when it is not key material."""
+    for a browser-vault key or ``"consent"`` for the consent-ledger key;
+    ``None`` when it is not key material."""
     parts = relative.parts
     scope: tuple[str, ...] = ()
     if len(parts) > 2 and parts[0] == "tenants":
@@ -884,6 +890,8 @@ def _key_material_scope(relative: Path) -> tuple[str, ...] | None:
         return scope
     if _is_vault_key(parts):
         return (*scope, _VAULT_SCOPE)
+    if parts == _CONSENT_LEDGER_KEY:
+        return (*scope, _CONSENT_SCOPE)
     return None
 
 
@@ -1031,9 +1039,9 @@ def create_backup(
     Existing destination paths are refused rather than overwritten.
 
     ``include_keys`` defaults to ``False``: the at-rest encryption key (and
-    rotation keyring), the audit signing key and the browser vault key, those
-    of the data root and of every workspace folder under it, are excluded from the
-    archive, matching docs/encryption.md's escrow guidance to keep key
+    rotation keyring), the audit signing key, the browser vault key and the
+    consent-ledger signing key, those of the data root and of every workspace
+    folder under it, are excluded from the archive, matching docs/encryption.md's escrow guidance to keep key
     material off the same copy as the data it decrypts. Pass
     ``include_keys=True`` only when the operator has explicitly chosen to
     bundle the key with the archive instead of escrowing it separately.
