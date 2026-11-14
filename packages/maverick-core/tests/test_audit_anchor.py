@@ -182,6 +182,18 @@ def test_unreadable_day_does_not_stop_later_days_being_anchored(tmp_path, monkey
     assert signing._anchored_days(tmp_path) == {good}
 
 
+def test_unsigned_day_is_not_anchored_with_an_empty_tip(tmp_path, monkeypatch):
+    # A day written before crypto was installed has no row hashes. An anchor
+    # with tip_hash "" is permanent in the append-only ledger and makes WORM
+    # reject the whole ledger schema.
+    _isolate_keys(monkeypatch, tmp_path)
+    unsigned, signed = _past_day(2), _past_day(1)
+    (tmp_path / f"{unsigned}.ndjson").write_text('{"kind": "tool_call"}\n')
+    _write_signed_day(tmp_path, signed, 1)
+    assert ensure_anchors(tmp_path) == 1
+    assert signing._anchored_days(tmp_path) == {signed}
+
+
 def test_highwater_is_not_written_from_a_half_written_ledger_line(tmp_path, monkeypatch):
     _isolate_keys(monkeypatch, tmp_path)
     _write_signed_day(tmp_path, _past_day(2), 1)
