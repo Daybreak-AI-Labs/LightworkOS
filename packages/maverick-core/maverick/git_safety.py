@@ -78,16 +78,20 @@ def git_env_without_user_config() -> dict[str, str]:
 # attributes file chosen from config. git accepts any run of blanks between a
 # section name and its quoted subsection (`[filter   "x"]`), so the section
 # names are matched as a pattern, not as the literal `[filter "`.
-# A promisor remote makes a plain `git diff` fetch a missing object, and that
-# fetch runs the transport settings: `remote.<name>.uploadpack`/`receivepack`,
-# `core.sshCommand`, `core.gitProxy`, an askpass or credential helper, or a
-# protocol (such as `ext::`) the repository allows itself. Those are matched too.
-_CONFIG_SECTION = re.compile(r"\[\s*(?:filter|include|credential|protocol)")
-_CONFIG_NEEDLES = (
-    "include.path", "includeif", "fsmonitor", "attributesfile",
-    "uploadpack", "receivepack", "sshcommand", "gitproxy", "askpass",
-    "credential.", "protocol.",
-)
+_CONFIG_SECTION = re.compile(r"\[\s*(?:filter|include)")
+_CONFIG_NEEDLES = ("include.path", "includeif", "fsmonitor", "attributesfile")
+
+# A promisor (partial-clone) remote makes a plain `git diff` fetch a missing
+# object, and that fetch runs the transport settings:
+# `remote.<name>.uploadpack`/`receivepack`, `core.sshCommand`,
+# `core.gitProxy`, an askpass or credential helper, or a protocol (such as
+# `ext::`) the repository allows itself. Without a promisor nothing on the
+# host-side path fetches, so in an ordinary repository these settings (an
+# ssh key choice, `protocol.version`, a credential store) are harmless.
+_PROMISOR_NEEDLES = ("promisor", "partialclone")
+_TRANSPORT_SECTION = re.compile(r"\[\s*(?:credential|protocol)")
+_TRANSPORT_NEEDLES = ("uploadpack", "receivepack", "sshcommand", "gitproxy",
+                      "askpass", "credential.", "protocol.")
 
 
 def _text(path: Path) -> str:
@@ -98,13 +102,20 @@ def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore").lower()
 
 
-def _config_may_run_commands(text: str) -> bool:
+def _config_hazard(text: str) -> str | None:
+    """What in this (lower-cased, combined) config text can make git run a
+    command, or None."""
     # The bare word "filter" is NOT sufficient and caused a false positive
     # on every partial clone: `git clone --filter=blob:none` writes a benign
     # `partialclonefilter = blob:none` into .git/config that never runs a
     # command, so matching "filter" would skip every git call on the entire
     # staged corpus. Match the executable surfaces precisely.
-    return bool(_CONFIG_SECTION.search(text)) or any(n in text for n in _CONFIG_NEEDLES)
+    if _CONFIG_SECTION.search(text) or any(n in text for n in _CONFIG_NEEDLES):
+        return "a filter, config include or fsmonitor setting"
+    if any(n in text for n in _PROMISOR_NEEDLES) and (
+            _TRANSPORT_SECTION.search(text) or any(n in text for n in _TRANSPORT_NEEDLES)):
+        return "a partial-clone remote with a transport command setting"
+    return None
 
 
 def _attributes_name_a_filter(text: str) -> bool:
@@ -157,39 +168,74 @@ def git_metadata_may_execute_filters(wd: Path) -> bool:
 
     A coding attempt can write the mounted workdir, including
     `.gitattributes`, `.git/info/attributes`, and local config. If those
-    mention filters, config includes, or fsmonitor hooks, host-side
-    `git diff`/`add`/`reset`/`worktree` may execute attacker-controlled
-    commands. Fail open by skipping the git call instead.
+    mention filters, config includes, fsmonitor hooks, or transport commands
+    of a partial-clone remote, host-side `git diff`/`add`/`reset`/`worktree`
+    may execute attacker-controlled commands. Fail open by skipping the git
+    call instead. :func:`git_metadata_hazard` names what was found.
 
     The settings git reads are not always `<wd>/.git/config`: a `.git`
     pointer file or symlink moves the git directory (possibly inside the
     workspace), a linked worktree reads its main repository's, and
     `extensions.worktreeConfig` adds `config.worktree`. All of those are
     scanned, as are the git directories of repositories nested in ``wd``,
-    and anything that cannot be followed or read counts as unsafe.
+    and anything that cannot be followed or read counts as unsafe (except a
+    nested `.git` pointer git cannot follow either: that is not a repository).
     """
+    return git_metadata_hazard(wd) is not None
+
+
+def git_metadata_hazard(wd: Path) -> str | None:
+    """A short description of the git metadata in ``wd`` that could make
+    host-side git run a command, or None when there is none."""
     try:
         wd = Path(wd)
+        reason = _settings_hazard(_git_directories(wd))
+        if reason:
+            return reason
+        nested, attributes = _scan_tree(wd)
         # A nested repository (a gitlink or submodule checkout) counts too:
         # git checks its dirtiness with a child `git status` that reads that
         # repository's own config and info/attributes.
-        nested = [path.parent for path in wd.glob("**/.git") if path.parent != wd]
-        for repo in [wd, *nested]:
-            if _git_settings_may_run_commands(_git_directories(repo)):
-                return True
-        return any(_attributes_name_a_filter(_text(path)) for path in wd.glob("**/.gitattributes"))
+        for repo in nested:
+            directories = _git_directories(repo)
+            if directories is None:
+                continue  # a stale pointer: git cannot open it either
+            reason = _settings_hazard(directories)
+            if reason:
+                return f"{reason} in the nested repository {repo.relative_to(wd)}"
+        for path in attributes:
+            if _attributes_name_a_filter(_text(path)):
+                return f"a filter (such as git-lfs) assigned in {path.relative_to(wd)}"
+        return None
     except Exception:
-        return True
+        return "git metadata that could not be read"
 
 
-def _git_settings_may_run_commands(directories: list[Path] | None) -> bool:
+def _scan_tree(wd: Path) -> tuple[list[Path], list[Path]]:
+    """One walk of the working tree: nested repository roots and every
+    `.gitattributes`. Git directories themselves are not descended into."""
+    nested: list[Path] = []
+    attributes: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(wd):
+        here = Path(dirpath)
+        if ".gitattributes" in filenames:
+            attributes.append(here / ".gitattributes")
+        if ".git" in dirnames or ".git" in filenames:
+            if here != wd:
+                nested.append(here)
+            if ".git" in dirnames:
+                dirnames.remove(".git")
+    return nested, attributes
+
+
+def _settings_hazard(directories: list[Path] | None) -> str | None:
     if directories is None:
-        return True
+        return "a .git entry that cannot be followed"
+    texts = []
     for directory in directories:
         config_files = [directory / "config", directory / "config.worktree"]
         config_files.extend(directory.glob("worktrees/*/config.worktree"))
-        if any(_config_may_run_commands(_text(path)) for path in config_files):
-            return True
+        texts.extend(_text(path) for path in config_files)
         if _attributes_name_a_filter(_text(directory / "info" / "attributes")):
-            return True
-    return False
+            return "a filter assigned in .git/info/attributes"
+    return _config_hazard("\n".join(texts))
