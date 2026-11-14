@@ -60,8 +60,8 @@ def announcements_configured() -> bool:
 def approval_created(approval_id: int, *, provenance: str | None = None, world=None) -> None:
     """Post the approval to every configured chat channel, in the background.
 
-    ``world`` is the world model that committed the row (it is shared across
-    threads); when omitted the default world is opened on the thread.
+    ``world`` identifies the database that committed the row. The thread opens
+    its own connection so the caller may close its world immediately.
     """
     if provenance == "settings_quorum":
         return  # protected-settings changes are decided in the dashboard only
@@ -73,21 +73,20 @@ def approval_created(approval_id: int, *, provenance: str | None = None, world=N
     if not announcements_configured():
         return
     context = contextvars.copy_context()
+    world_path = getattr(world, "path", None)
 
     def run() -> None:
         try:
             from .channel_approvals import announce_new_approval
             from .world_model import close_world_if_owned, open_world
 
-            # The thread starts with an empty context; the world is the
-            # caller's tenant's, so it is opened (and, if opened here, closed)
-            # under the context copied from the caller.
-            wm = world if world is not None else context.run(open_world)
+            # Preserve explicit CLI/test database paths as well as the tenant
+            # context, without retaining the caller's connection lifetime.
+            wm = context.run(open_world, world_path) if world_path is not None else context.run(open_world)
             try:
                 context.run(announce_new_approval, wm, int(approval_id))
             finally:
-                if world is None:
-                    close_world_if_owned(wm)
+                context.run(close_world_if_owned, wm)
         except Exception:  # noqa: BLE001 -- a failed post never blocks the queue
             log.warning("could not announce approval #%s", approval_id, exc_info=True)
 

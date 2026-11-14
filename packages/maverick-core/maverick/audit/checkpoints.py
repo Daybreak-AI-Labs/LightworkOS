@@ -452,9 +452,54 @@ def _read_checkpoint(
     return record, raw
 
 
+def _recover_stage_links(target: Path) -> None:
+    """Remove interrupted publication links under the caller's index lock.
+
+    Equal content alone does not establish a staging file's origin: only a
+    regular hard link to this exact target can be the publication crash residue.
+    Ordinary evidence readers retain their strict single-link requirement.
+    """
+    for stage in target.parent.glob(f".{target.name}.*.stage"):
+        nonce = stage.name[len(target.name) + 2:-6]
+        if not re.fullmatch(r"[0-9a-f]{16}", nonce):
+            continue
+        target_info = target.lstat()
+        stage_info = stage.lstat()
+        if (
+            _path_is_alias(target, target_info) or _path_is_alias(stage, stage_info)
+            or not stat.S_ISREG(target_info.st_mode)
+            or not stat.S_ISREG(stage_info.st_mode)
+            or not _same_identity(target_info, stage_info)
+            or target_info.st_size > _MAX_CHECKPOINT_BYTES
+        ):
+            continue
+        with open(target, "rb") as published, open(stage, "rb") as staged:
+            if not (
+                _same_identity(target_info, os.fstat(published.fileno()))
+                and _same_identity(stage_info, os.fstat(staged.fileno()))
+            ):
+                continue
+            raw = published.read(_MAX_CHECKPOINT_BYTES + 1)
+            if len(raw) > _MAX_CHECKPOINT_BYTES or staged.read(_MAX_CHECKPOINT_BYTES + 1) != raw:
+                continue
+            current_target, current_stage = target.lstat(), stage.lstat()
+            if (
+                _path_is_alias(target, current_target) or _path_is_alias(stage, current_stage)
+                or not _same_identity(target_info, current_target)
+                or not _same_identity(stage_info, current_stage)
+                or current_target.st_size != len(raw)
+                or current_target.st_mtime_ns != target_info.st_mtime_ns
+            ):
+                continue
+            stage.unlink()
+        _fsync_directory(target.parent)
+
+
 def _load_checkpoint_chain(
     checkpoint_dir: Path,
     trusted_keys: dict[str, str],
+    *,
+    recover_stages: bool = False,
 ) -> list[_ChainEntry]:
     loaded: list[_ChainEntry] = []
     previous_digest = ""
@@ -469,6 +514,8 @@ def _load_checkpoint_chain(
             raise AuditCheckpointError(
                 "checkpoint filenames contain a sequence gap or rollback"
             )
+        if recover_stages:
+            _recover_stage_links(path)
         record, raw = _read_checkpoint(
             path,
             trusted_keys,
@@ -825,7 +872,7 @@ def publish_checkpoint(
         anchor_rows = _verify_anchor_preflight(audit, trusted_keys)
         snapshot = _snapshot_day_for_publication(day_file, trusted_keys)
         with cross_process_lock(index_lock, strict=True):
-            chain = _load_checkpoint_chain(checkpoints, trusted_keys)
+            chain = _load_checkpoint_chain(checkpoints, trusted_keys, recover_stages=True)
             latest_for_day = next(
                 (entry for entry in reversed(chain) if entry.record["day"] == selected_day),
                 None,
@@ -940,10 +987,12 @@ def retire_checkpoint(
             "trusted key set"
         )
     ensure_private_directory(checkpoints)
-    # Resolve the signed target's day without mutating either store. The chain
-    # is reloaded under the index lock before publication, so a concurrent
-    # checkpoint can only make this preliminary lookup stale, never authoritative.
-    preliminary_chain = _load_checkpoint_chain(checkpoints, trusted_keys)
+    # Recover interrupted publication before the preliminary lookup. Release
+    # the index lock before taking the day lock to preserve the global order.
+    with cross_process_lock(checkpoints / ".checkpoint-index", strict=True):
+        preliminary_chain = _load_checkpoint_chain(
+            checkpoints, trusted_keys, recover_stages=True,
+        )
     preliminary_target = next(
         (
             entry
@@ -961,7 +1010,7 @@ def retire_checkpoint(
     with cross_process_lock(day_file, strict=True):
         anchor_rows = _verify_anchor_preflight(audit, trusted_keys)
         with cross_process_lock(checkpoints / ".checkpoint-index", strict=True):
-            chain = _load_checkpoint_chain(checkpoints, trusted_keys)
+            chain = _load_checkpoint_chain(checkpoints, trusted_keys, recover_stages=True)
             target_entry = next(
                 (
                     entry

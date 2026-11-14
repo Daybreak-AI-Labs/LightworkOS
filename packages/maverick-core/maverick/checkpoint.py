@@ -460,6 +460,22 @@ def rewind(world: Any, goal_id: int, to_step: int, *, fork: bool = False) -> Rew
     Builds only on the per-step root checkpoints (no swarm-tree
     concurrency). Never raises; returns a structured result.
     """
+    from .task_execution_guard import TaskBusy, lease
+
+    try:
+        with lease(world, goal_id):
+            return _rewind_idle(world, goal_id, to_step, fork=fork)
+    except TaskBusy as exc:
+        return RewindResult(False, str(exc))
+
+
+def _rewind_idle(world: Any, goal_id: int, to_step: int, *, fork: bool) -> RewindResult:
+    """Inspect and modify checkpoints while excluding concurrent execution."""
+    g = world.get_goal(goal_id)
+    if g is None:
+        return RewindResult(False, f"goal #{goal_id} no longer exists")
+    if g.status in {"active", "running"}:
+        return RewindResult(False, f"goal #{goal_id} is active; stop it before rewinding")
     ck = Checkpointer(world)
     found = ck.orchestrator_for(goal_id)
     if found is None:
@@ -472,11 +488,12 @@ def rewind(world: Any, goal_id: int, to_step: int, *, fork: bool = False) -> Rew
         return RewindResult(False, f"no checkpoint at or before step {to_step} "
                             f"for goal #{goal_id} (available steps: {steps})")
     if fork:
-        g = world.get_goal(goal_id)
         title = getattr(g, "title", None) or f"rewind of #{goal_id}"
         desc = getattr(g, "description", "") or ""
         domain = getattr(g, "domain", "") or ""
-        new_goal = world.create_goal(title, desc, parent_id=goal_id, domain=domain)
+        new_goal = world.create_goal(
+            title, desc, parent_id=goal_id, domain=domain, owner=g.owner,
+        )
         if not ck.copy_checkpoint(target, new_goal):
             return RewindResult(False, "fork failed: could not copy the checkpoint")
         try:

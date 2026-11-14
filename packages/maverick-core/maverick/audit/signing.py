@@ -939,6 +939,7 @@ class AuditSigner:
                 # Ordering is always sidecar -> append lock; rewriters take only
                 # the sidecar, so the two cannot deadlock.
                 with cross_process_lock(self._path):
+                    closed_day = _day_is_closed(self._path)
                     ensure_private_file(self._path, 0o600)
                     with open(self._path, "a+b") as f, _file_append_lock(f):
                         # The append lock still covers tail read, hash/sign, and
@@ -958,6 +959,9 @@ class AuditSigner:
                         ):
                             self._last_hash = actual_tail
                             return True
+                        if closed_day:
+                            log.warning("audit signer: refusing append to anchored day %s", self._path.name)
+                            return False
                         payload["prev_hash"] = actual_tail
                         payload["key_id"] = self._key_id
                         row_bytes = json.dumps(
@@ -1610,6 +1614,16 @@ def _purge_authorizes(entry: object, anchor: dict) -> bool:
     return tip == anchor.get("tip_hash") and count == anchor.get("row_count")
 
 
+def _day_is_closed(path: Path) -> bool:
+    """Check a day under its sidecar lock, before opening an append handle."""
+    if path.suffix != ".ndjson" or not _DAY_RE.fullmatch(path.stem):
+        return False
+    with cross_process_lock(path.parent / ANCHOR_FILENAME):
+        if not _ensure_anchor_ledger(path.parent):
+            raise ValueError("audit anchor ledger is missing; refusing day append")
+        return path.stem in _anchored_days(path.parent)
+
+
 def ensure_anchors(audit_dir: Path) -> int:
     """Record a tip-ledger anchor for every COMPLETED day-file lacking one.
 
@@ -1634,23 +1648,23 @@ def ensure_anchors(audit_dir: Path) -> int:
         day = day_file.stem
         if day >= today or day in anchored:
             continue
-        try:
-            tip, count = _file_tip_and_count(day_file)
-        # failure-policy: fail_soft_with_audit
-        except Exception as e:
-            # One unreadable day must not leave every later day un-anchored
-            # (and so deletable without detection). verify_chain reports the
-            # unreadable file itself.
-            log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
-            continue
-        if count and not tip:
-            # An unsigned day (written before crypto was available) has no tip.
-            # An empty-tip anchor would sit in the append-only ledger forever
-            # and fail every WORM push's ledger schema check.
-            log.warning("audit anchors: %s has no signed rows; not anchored", day_file.name)
-            continue
-        if count and _append_anchor(audit_dir, day, tip, count):
-            written += 1
+        with cross_process_lock(day_file):
+            # A writer may have selected this day before midnight. Hold its
+            # append lock boundary from tip discovery through anchor publication.
+            with cross_process_lock(audit_dir / ANCHOR_FILENAME):
+                if day in _anchored_days(audit_dir):
+                    continue
+            try:
+                tip, count = _file_tip_and_count(day_file)
+            # failure-policy: fail_soft_with_audit
+            except Exception as e:
+                log.warning("audit anchors: cannot read %s; not anchored: %s", day_file.name, e)
+                continue
+            if count and not tip:
+                log.warning("audit anchors: %s has no signed rows; not anchored", day_file.name)
+                continue
+            if count and _append_anchor(audit_dir, day, tip, count):
+                written += 1
     return written
 
 
