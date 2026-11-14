@@ -459,12 +459,28 @@ def _labels_path(key: str):
     return data_dir("immune", "ifc-labels", f"{key}.jsonl")
 
 
+UNREADABLE_LABELS = "ifc:earlier-labels-unreadable"
+
+
 def _load(key: str) -> set[str]:
-    from .immune import _ledger
+    """Labels earlier runs persisted under ``key``. A torn line (a crash during
+    an append) loses that line only; a file that cannot be read at all yields a
+    label of its own, so the run is gated as if it held the data."""
     try:
-        return {str(r["label"]) for r in _ledger.read(_labels_path(key)) if "label" in r}
-    except (OSError, ValueError):
+        text = _labels_path(key).read_text(encoding="utf-8")
+    except FileNotFoundError:
         return set()
+    except (OSError, ValueError):
+        return {UNREADABLE_LABELS}
+    labels: set[str] = set()
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and "label" in row:
+            labels.add(str(row["label"]))
+    return labels
 
 
 def _persist(keys: tuple[str, ...], labels: Iterable[str]) -> None:
