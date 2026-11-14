@@ -131,6 +131,18 @@ def _attributes_name_a_filter(text: str) -> bool:
     return "filter=" in text or "filter " in text
 
 
+def _gitfile_target(dotgit: Path) -> Path:
+    """The git directory a `.git` pointer file names, read exactly as git
+    reads it: only trailing line endings are stripped, the exact prefix
+    `gitdir: ` is required, and the rest is the path unchanged (spaces
+    included), relative to the file's directory. ValueError when git would
+    refuse the file's format."""
+    content = dotgit.read_bytes().rstrip(b"\r\n")
+    if not content.startswith(b"gitdir: "):
+        raise ValueError(f"invalid gitfile format: {dotgit}")
+    return dotgit.parent / os.fsdecode(content[len(b"gitdir: "):])
+
+
 def _git_directories(wd: Path) -> list[Path] | None:
     """The git directories git reads its settings from for a command run in
     ``wd``: the `.git` directory, or the one a `gitdir:` pointer file or a
@@ -145,11 +157,11 @@ def _git_directories(wd: Path) -> list[Path] | None:
         if dotgit.is_dir():
             gitdir = dotgit.resolve()
         elif dotgit.is_file():
-            # A pointer file: `gitdir: <path>`, relative to the file's directory.
-            lines = dotgit.read_text(encoding="utf-8", errors="ignore").strip().splitlines()
-            if lines and lines[0].lower().startswith("gitdir:"):
-                target = (wd / lines[0][len("gitdir:"):].strip()).resolve()
-                gitdir = target if target.is_dir() else None
+            try:
+                target = _gitfile_target(dotgit).resolve()
+            except ValueError:
+                target = None
+            gitdir = target if target is not None and target.is_dir() else None
         if gitdir is None:
             return None
     elif (wd / "HEAD").is_file() and (wd / "objects").is_dir() and (wd / "refs").is_dir():
@@ -160,7 +172,9 @@ def _git_directories(wd: Path) -> list[Path] | None:
     commondir = gitdir / "commondir"
     if commondir.is_file():
         # A linked worktree keeps its config and info/ in the main repository.
-        shared = (gitdir / commondir.read_text(encoding="utf-8", errors="ignore").strip()).resolve()
+        # git strips only trailing line endings from `commondir`, as below.
+        relative = os.fsdecode(commondir.read_bytes().rstrip(b"\r\n"))
+        shared = (gitdir / relative).resolve()
         if not shared.is_dir():
             return None
         directories.append(shared)
@@ -201,10 +215,9 @@ def git_metadata_hazard(wd: Path) -> str | None:
         # git checks its dirtiness with a child `git status` that reads that
         # repository's own config and info/attributes.
         for repo in nested:
-            directories = _git_directories(repo)
-            if directories is None:
-                continue  # a stale pointer: git cannot open it either
-            reason = _settings_hazard(directories)
+            if _stale_pointer(repo / ".git"):
+                continue  # git cannot open it either: not a repository
+            reason = _settings_hazard(_git_directories(repo))
             if reason:
                 return f"{reason} in the nested repository {repo.relative_to(wd)}"
         for path in attributes:
@@ -213,6 +226,19 @@ def git_metadata_hazard(wd: Path) -> str | None:
         return None
     except Exception:
         return "git metadata that could not be read"
+
+
+def _stale_pointer(dotgit: Path) -> bool:
+    """A well-formed `.git` pointer file whose exact target does not exist
+    (a vendored package's leftover). Anything git could follow, or that
+    cannot be parsed, is not stale."""
+    if dotgit.is_symlink() or not dotgit.is_file():
+        return False
+    try:
+        target = _gitfile_target(dotgit)
+    except ValueError:
+        return False
+    return not os.path.lexists(target)
 
 
 def _scan_tree(wd: Path) -> tuple[list[Path], list[Path]]:

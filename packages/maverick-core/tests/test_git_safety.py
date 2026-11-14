@@ -293,6 +293,30 @@ class TestGitDirDiscovery:
         sub_config.write_text(sub_config.read_text() + f'[filter "x"]\n\tclean = {_FILTER_PWN}\n')
         assert "nested repository sub" in git_metadata_hazard(repo)
 
+    def test_nested_pointer_paths_are_read_exactly_as_git_reads_them(self, tmp_path):
+        """git strips only the trailing line ending of a `.git` pointer and
+        keeps spaces in the path. A nested pointer whose path differs from a
+        whitespace-stripped reading must be followed, not skipped as stale."""
+        from maverick.git_safety import git_metadata_hazard
+        for pointer, target in (("gitdir: ../evil \n", ("evil ",)),
+                                ("gitdir:  ../evil\n", ("x", " ..", "evil"))):
+            (tmp_path / str(len(target))).mkdir()
+            repo = self._repo(tmp_path / str(len(target)))
+            sub = repo / "sub"
+            (sub / "x").mkdir(parents=True)
+            gitdir = sub.joinpath(*target)
+            subprocess.run(["git", "init", "-q", "--bare", str(gitdir)], check=True)
+            (sub / "x" / ".git").write_text(pointer)
+            with (gitdir / "config").open("a") as fh:
+                fh.write(f'[filter "pwn"]\n\tclean = {_FILTER_PWN}\n')
+            (gitdir / "info").mkdir(exist_ok=True)
+            (gitdir / "info" / "attributes").write_text("* filter=pwn\n")
+            # git itself follows this pointer.
+            found = subprocess.run(["git", "-C", str(sub / "x"), "rev-parse", "--git-dir"],
+                                   capture_output=True, text=True)
+            assert Path(found.stdout.rstrip("\n")).resolve() == gitdir.resolve(), pointer
+            assert "nested repository sub/x" in (git_metadata_hazard(repo) or ""), pointer
+
     def test_filter_attribute_such_as_git_lfs_is_refused(self, tmp_path):
         """A repository that really uses a filter (git-lfs) is refused too:
         the host cannot tell a legitimate clean/smudge command from a planted
