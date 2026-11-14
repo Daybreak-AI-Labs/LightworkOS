@@ -73,6 +73,20 @@ def _op_get(path: str, params: dict) -> str:
     return dumps_compact(data)[:4000]
 
 
+def _cookie_header(headers) -> str:
+    """Build a ``Cookie`` header from every ``Set-Cookie`` in a response.
+
+    ``headers.get("set-cookie")`` joins all cookies with ", " and keeps their
+    attributes (path, secure, ...), which is not a valid Cookie header and
+    loses the session cookie when it is not first. Keep only each
+    ``name=value``.
+    """
+    get_list = getattr(headers, "get_list", None)
+    raw = get_list("set-cookie") if get_list else [headers.get("set-cookie", "")]
+    pairs = (str(c).split(";", 1)[0].strip() for c in raw if c)
+    return "; ".join(pair for pair in pairs if "=" in pair)
+
+
 def _op_post(path: str, body: dict, confirm: bool) -> str:
     if not path:
         return "ERROR: post requires path"
@@ -87,7 +101,7 @@ def _op_post(path: str, body: dict, confirm: bool) -> str:
         g = _governed_sender(httpx.get)(f"{base}{_norm(path)}", headers={**headers, "X-CSRF-Token": "Fetch"},
                       timeout=30.0)
         token = g.headers.get("x-csrf-token") or g.headers.get("X-CSRF-Token")
-        cookie = g.headers.get("set-cookie", "")
+        cookie = _cookie_header(g.headers)
     except Exception:  # pragma: no cover - some gateways don't require CSRF
         pass
     if token:

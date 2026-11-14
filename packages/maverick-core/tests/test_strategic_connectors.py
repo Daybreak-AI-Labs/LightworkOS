@@ -323,6 +323,14 @@ def test_sap_post_needs_confirm(monkeypatch):
     post.assert_not_called()
 
 
+def test_sap_csrf_cookie_header_keeps_every_session_cookie():
+    import httpx
+    from maverick.tools.sap_tool import _cookie_header
+    headers = httpx.Headers([("set-cookie", "a=1; path=/"),
+                             ("set-cookie", "SID=abc; path=/; secure; HttpOnly")])
+    assert _cookie_header(headers) == "a=1; SID=abc"
+
+
 # ----------------------------------- Workday -------------------------------
 
 def test_workday_requires_config(monkeypatch):
