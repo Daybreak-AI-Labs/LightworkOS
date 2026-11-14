@@ -81,7 +81,8 @@ def _ifc() -> dict:
             "label_descriptions": {
                 ifc.UNREADABLE_LABELS: (
                     "Earlier information-flow labels for this task could not be read. "
-                    "Ask an administrator to repair or remove the task's label file, then retry."
+                    "Ask an administrator to repair the task's label file or restore it from a "
+                    "backup, then retry. Deleting it removes the restrictions it records."
                 ),
             },
             "by_outcome": dict(Counter(r["outcome"] for r in rows)),

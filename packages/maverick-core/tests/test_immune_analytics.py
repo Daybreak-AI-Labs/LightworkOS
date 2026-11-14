@@ -63,3 +63,17 @@ def test_composition_cache_is_per_tenant(monkeypatch):
     with tenant_scope(tenant="globex"):
         report._composition()
     assert built == ["acme", "globex"]
+
+
+def test_unreadable_label_advice_never_suggests_deleting_the_label_file(tmp_path, monkeypatch):
+    from maverick import config, ifc
+    from maverick.immune import report
+
+    monkeypatch.setenv("MAVERICK_HOME", str(tmp_path))
+    monkeypatch.setenv("MAVERICK_CONFIG", str(tmp_path / "config.toml"))
+    config.reset_config_cache()
+    advice = report._ifc()["label_descriptions"][ifc.UNREADABLE_LABELS]
+    # A missing label file reads as "no labels", so deleting it lifts the restriction.
+    assert "remove the task's label file" not in advice
+    assert "repair" in advice and "backup" in advice
+    assert "Deleting it removes the restrictions it records" in advice
