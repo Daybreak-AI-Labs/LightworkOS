@@ -147,11 +147,11 @@ def test_direct_message_from_an_allowed_person_is_answered_in_its_thread(stub):
     assert stub.created == [{"channel_id": DM, "message": "on it", "root_id": "x" * 26}]
 
 
-def test_reassigned_username_does_not_authorize_new_account(stub):
+def test_allow_list_accepts_provider_verified_username(stub):
     channel = _started(_channel(_reply, allowed_user_ids={"alice"}))
     stub.add("y" * 26, ALICE, DM, "hello")
     asyncio.run(channel._poll_once())
-    assert stub.created == []
+    assert [post["message"] for post in stub.created] == ["echo: hello"]
 
 
 def test_channel_posts_need_a_mention_and_the_mention_is_removed(stub):

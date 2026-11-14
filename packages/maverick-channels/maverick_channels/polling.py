@@ -53,6 +53,17 @@ POLL_DEADLINE_SECONDS = 15.0
 MAX_CYCLE_PAGES = 1024
 
 
+def page_before_floor(items, field, floor, *, inclusive=False):
+    """Only a wholly dated page can prove that ordered history is exhausted."""
+    boundary = parse_timestamp(floor)
+    if boundary is None or not items:
+        return False
+    timestamps = [parse_timestamp(item.get(field, "")) if isinstance(item, dict) else None
+                  for item in items]
+    return all(stamp is not None and (stamp <= boundary if inclusive else stamp < boundary)
+               for stamp in timestamps)
+
+
 @dataclass
 class PollPage:
     items: list[dict]
@@ -94,18 +105,24 @@ class PollCheckpoint:
         return await asyncio.to_thread(self.store.update, row["id"], lambda value: value.update(updates),
             expected_revision=row["revision"], action="poll_checkpoint", actor="system:channel")
 
-    async def drain(self, row, fetch, admit):
+    async def drain(self, row, fetch, admit, *, refresh_head=False):
         from maverick.channel_recovery import assert_checkpoint_ready
 
         assert_checkpoint_ready(row)
         admitted = []
         deadline = time.monotonic() + POLL_DEADLINE_SECONDS
-        for _ in range(MAX_PAGES):
+        # A bounded newest-page probe keeps fresh mentions visible while a
+        # saved continuation drains a burst. It shares the same wall deadline
+        # and does not replace that continuation or consume its page allowance.
+        probe_first = refresh_head and row["cursor"] is not None
+        for page_index in range(MAX_PAGES + int(probe_first)):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return admitted
             try:
-                page = await asyncio.wait_for(fetch(row), timeout=remaining)
+                probing = probe_first and page_index == 0
+                state = {**row, "cursor": None} if probing else row
+                page = await asyncio.wait_for(fetch(state), timeout=remaining)
                 if not isinstance(page, PollPage) or not isinstance(page.items, list) or len(page.items) > MAX_ITEMS_PER_PAGE:
                     raise ValueError("Provider page exceeded its bounded contract")
                 cursor = page.next_cursor
@@ -114,8 +131,10 @@ class PollCheckpoint:
                 for item in page.items:
                     if not isinstance(item, dict):
                         raise ValueError("Provider returned a malformed page item")
-                    if await asyncio.wait_for(admit(item, row), timeout=max(0, deadline - time.monotonic())):
+                    if await asyncio.wait_for(admit(item, state), timeout=max(0, deadline - time.monotonic())):
                         admitted.append(item)
+                if probing and cursor is not None:
+                    continue
                 seen = [*row["seen_cursors"], hashlib.sha256((row["cursor"] or "").encode()).hexdigest()]
                 repeated = cursor is not None and hashlib.sha256(cursor.encode()).hexdigest() in seen
                 if repeated or len(seen) >= MAX_CYCLE_PAGES:

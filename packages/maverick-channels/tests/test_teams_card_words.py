@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 
+import pytest
 from maverick.approval_cards import build_approval_card
 from maverick.channel_approvals import spending_text
 from maverick_channels.teams_cards import approval_card, budget_text
@@ -12,6 +13,15 @@ SHELL_BUDGET = {
                 "authority_sha256": "5ac93412c16f5f3723303a3784b956b2cd9fe81eafd414a6adbc660b6595a5c0"},  # pragma: allowlist secret
     "operation": {"timeout_seconds": None},
 }
+
+
+@pytest.mark.timeout(5)
+def test_unclosed_mention_tags_do_not_rescan_the_remaining_message():
+    from maverick_channels.teams_cards import strip_mentions_text
+
+    unclosed = "<at>" * 100_000
+    assert strip_mentions_text(" <at>Ada</at> " + unclosed + " ") == "Ada " + unclosed
+    assert strip_mentions_text("<at>outer <at>inner</at> end</at>") == "outer <at>inner end</at>"
 
 
 def test_spending_is_the_shared_sentence_not_a_mapping():

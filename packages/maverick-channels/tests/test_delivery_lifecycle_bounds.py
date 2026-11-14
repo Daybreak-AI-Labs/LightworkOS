@@ -60,6 +60,19 @@ def test_old_delivered_receipts_are_released_so_intake_never_fills(journal, monk
     assert _run(journal, 99, handler)["delivery"] == "delivered"
 
 
+def test_only_fully_written_irc_receipts_can_expire(journal, monkeypatch):
+    message = IncomingMessage(user_id="#room", text="question", channel="irc", message_id="irc-event")
+    row = journal.admit(message, external_id="irc-event", account="irc-account")
+    row = journal.change(row, execution="completed", delivery="delivery_unknown", chunks={
+        "reply": {"state": "delivery_unknown"},
+        "irc-0": {"state": "delivered", "provider_id": "local-wire-write-only"},
+    })
+    now = row["updated_at"] + delivery.RETENTION_SECONDS + 1
+    assert journal._compact_receipt(row, now) == "compacted"
+    partial = {**row, "chunks": {**row["chunks"], "irc-1": {"state": "delivery_unknown"}}}
+    assert delivery._settled(partial) is False
+
+
 def test_automatic_maintenance_frees_expired_receipts_without_replaying_unknowns(journal, monkeypatch):
     monkeypatch.setattr(delivery, "MAX_RECORDS", 2)
     monkeypatch.setattr(delivery, "MAINTENANCE_INTERVAL_SECONDS", 0)

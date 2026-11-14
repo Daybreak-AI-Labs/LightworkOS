@@ -89,6 +89,7 @@ class ThreadsChannel(Channel):
                 "Set THREADS_ALLOWED_USER_IDS to restrict who can drive the agent"
             )
         self.poll_seconds = float(poll_seconds)
+        self._username_senders: dict[str, str] = {}
         self._running = False
         self._stop_event = asyncio.Event()
 
@@ -132,6 +133,10 @@ class ThreadsChannel(Channel):
                 return PollPage(items, updates={"floor": floor, "initial_page": False})
             if cursor and not state["floor"]:
                 raise ValueError("Threads pagination has no established history boundary")
+            from .polling import page_before_floor
+
+            if page_before_floor(items, "timestamp", state["floor"]):
+                cursor = None
             return PollPage(items, cursor)
         async def admit(item, state):
             if not state["initial_page"] and state["floor"]:
@@ -141,15 +146,29 @@ class ThreadsChannel(Channel):
                 if timestamp < parse_timestamp(state["floor"]):
                     return False
             return await self._admit(item) is not None
-        results = await checkpoint.drain(row, fetch, admit)
+        results = await checkpoint.drain(row, fetch, admit, refresh_head=True)
         self.poll_status = (await asyncio.to_thread(checkpoint.store.get, checkpoint.record_id))["status"]
         return results
+
+    def _allowed_sender(self, sender_id):
+        return (is_allowed(sender_id, self.allowed_user_ids)
+                or any(name in self.allowed_user_ids and owner == sender_id
+                       for name, owner in self._username_senders.items()))
 
     def _input(self, reply):
         reply_id, text = str(reply.get("id") or ""), str(reply.get("text") or "")
         sender = reply.get("from") or {}
         sender_id = str(sender.get("id") or "")
-        if not text or not sender_id or sender_id == str(self.user_id) or not is_allowed(sender_id, self.allowed_user_ids):
+        if not text or not sender_id or sender_id == str(self.user_id):
+            return None
+        username = str(reply.get("username") or sender.get("username") or "")
+        # Bind configured names to provider IDs, keeping principals stable and
+        # at most one observed account per configured username.
+        self._username_senders = {name: owner for name, owner in self._username_senders.items()
+                                  if owner != sender_id or name == username}
+        if username and is_allowed(username, self.allowed_user_ids):
+            self._username_senders[username] = sender_id
+        if not self._allowed_sender(sender_id):
             return None
         if not reply_id:
             raise ValueError("Threads reply requires a stable provider identity")
@@ -162,7 +181,7 @@ class ThreadsChannel(Channel):
             return None
         account = self.user_id
         return await self.admit_message(incoming, external_id=incoming.message_id, account=account,
-            authorize=lambda: account == self.user_id and is_allowed(incoming.sender_id, self.allowed_user_ids))
+            authorize=lambda: account == self.user_id and self._allowed_sender(incoming.sender_id))
 
     async def _dispatch(self, reply: dict) -> None:
         receipt = await self._admit(reply)
@@ -173,7 +192,7 @@ class ThreadsChannel(Channel):
             if result.text:
                 return await self.send(incoming.user_id, result.text)
         return await self.process_message(incoming, external_id=incoming.message_id, account=account,
-            authorize=lambda: account == self.user_id and is_allowed(incoming.sender_id, self.allowed_user_ids),
+            authorize=lambda: account == self.user_id and self._allowed_sender(incoming.sender_id),
             receipt=receipt, send=send_saved)
 
     async def start(self) -> None:
@@ -200,7 +219,7 @@ class ThreadsChannel(Channel):
                         return await self.send(msg.user_id, reply.text)
                 try:
                     await self.recover_messages(account=account, send=send_saved,
-                        authorize=lambda msg, account=account: account == self.user_id and is_allowed(msg.sender_id, self.allowed_user_ids))
+                        authorize=lambda msg, account=account: account == self.user_id and self._allowed_sender(msg.sender_id))
                 except Exception:
                     log.warning("threads saved delivery recovery remains incomplete")
                 try:

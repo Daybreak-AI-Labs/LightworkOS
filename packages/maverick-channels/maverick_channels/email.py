@@ -319,9 +319,11 @@ class EmailChannel(Channel):
         and the text says so, so the request itself still runs. Errors that can
         pass (a full intake, a workspace hold) still raise and leave it unread.
         """
+        from .delivery import IntakeMessageRejected
+
         try:
             return journal.admit(incoming, external_id=external_id, account=self._account(), route=route)
-        except ValueError as exc:
+        except IntakeMessageRejected as exc:
             if incoming.attachments:
                 text_only = IncomingMessage(
                     user_id=incoming.user_id, channel="email", message_id=incoming.message_id,
@@ -329,7 +331,7 @@ class EmailChannel(Channel):
                                          "a file type or size is not supported.)")
                 try:
                     return journal.admit(text_only, external_id=external_id, account=self._account(), route=route)
-                except ValueError:
+                except IntakeMessageRejected:
                     pass
             log.warning("Incoming email refused at intake (%s)", type(exc).__name__)
             return None
@@ -374,7 +376,8 @@ class EmailChannel(Channel):
                     with mail_effect(self._mail_cfg):
                         mail.uid("store", uid, "+FLAGS", "\\Seen")
                     continue
-                subject, body = str(parsed.get("Subject", "")), self._extract_body(parsed)
+                subject = re.sub(r"\r?\n[ \t]+", " ", str(parsed.get("Subject", "")))
+                body = self._extract_body(parsed)
                 attachments = self._extract_attachments(parsed)
                 if not body and not attachments:
                     with mail_effect(self._mail_cfg):
