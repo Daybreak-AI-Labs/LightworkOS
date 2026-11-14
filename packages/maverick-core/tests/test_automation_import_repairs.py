@@ -208,3 +208,30 @@ def test_imported_schedule_carries_explicit_run_budgets(monkeypatch):
     materialize(automation, queue=object(), budget_dollars=0.5, budget_wall_seconds=30)
     assert captured[0]["max_dollars"] == 0.5
     assert captured[0]["max_wall_seconds"] == 30
+
+
+def test_workato_action_output_pill_is_not_read_as_trigger_data():
+    def imported(pill, *, action_alias="f00dbabe", trigger_alias=None):
+        tree = {"provider": "salesforce", "name": "new_record", "block": [
+            {"keyword": "action", "provider": "salesforce", "name": "search_records",
+             **({"as": action_alias} if action_alias else {})},
+            {"keyword": "if", "input": {"a": pill, "operation": "greater_than", "b": "100"},
+             "block": [{"keyword": "action", "name": "Body"}]},
+        ]}
+        if trigger_alias:
+            tree["as"] = trigger_alias
+        return workato.translate({"name": "pill", "code": tree})
+
+    for automation in [
+        imported("#{_('data.salesforce.f00dbabe.Amount')}"),
+        imported("#{_('data.salesforce.f00dbabe.Amount')}", action_alias=None),
+        imported("#{_('data.salesforce.f00dbabe.Amount')}", trigger_alias="1a2b3c4d"),
+        imported("#{_('data.salesforce.Amount')}", trigger_alias="1a2b3c4d"),
+    ]:
+        with pytest.raises(ValueError, match="repair"):
+            to_flow_with_report(automation)
+    for pill, alias in [("#{_('data.salesforce.1a2b3c4d.Amount')}", "1a2b3c4d"),
+                        ("#{_('data.salesforce.Amount')}", None)]:
+        flow, _ = to_flow_with_report(imported(pill, trigger_alias=alias))
+        branch = next(node for node in flow.nodes.values() if node.kind == NODE_BRANCH)
+        assert branch.condition == "Amount > 100"

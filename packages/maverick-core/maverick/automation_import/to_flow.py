@@ -493,27 +493,57 @@ _WK_OPS = {"equals_to": "==", "not_equals_to": "!=", "greater_than": ">",
            "less_than_or_equals_to": "<=", "contains": "contains"}
 
 
-def _wk_operand(v, source_provider: str) -> str:
+# Workato step aliases (the ``as`` key) are 8 hex digits; data pills carry them.
+_WK_ALIAS = re.compile(r"[0-9a-f]{8}")
+
+
+def _wk_step_aliases(block) -> set[str]:
+    aliases: set[str] = set()
+    for node in block or []:
+        if isinstance(node, dict):
+            if node.get("as"):
+                aliases.add(str(node["as"]))
+            aliases |= _wk_step_aliases(node.get("block"))
+    return aliases
+
+
+def _wk_trigger_field(pill: str, trigger: dict) -> str:
+    """Return the trigger field a pill reads, or refuse a pill that cannot be
+    shown to read the trigger (an action's output never exists as run data)."""
+    provider = str(trigger.get("provider") or "")
+    prefix = f"data.{provider}."
+    if not provider or not pill.startswith(prefix):
+        raise repair("Workato action output needs an explicit data binding")
+    field = pill[len(prefix):]
+    head, _, rest = field.partition(".")
+    alias = str(trigger.get("as") or "")
+    if alias:
+        if head != alias or not rest:
+            raise repair("Workato action output needs an explicit data binding")
+        return rest
+    if head in _wk_step_aliases(trigger.get("block")) or _WK_ALIAS.fullmatch(head):
+        raise repair("Workato action output needs an explicit data binding")
+    return field
+
+
+def _wk_operand(v, trigger: dict) -> str:
     """Retain trigger paths; action data pills need an explicit output binding."""
     if not isinstance(v, str) or len(v) > 1024:
         raise repair("Workato operand must name a data field")
     value = _checked_operand(v).strip()
     match = re.fullmatch(r"#\{_\('([^']+)'\)\}", value)
     if match:
-        prefix = f"data.{source_provider}."
-        if not source_provider or not match[1].startswith(prefix):
-            raise repair("Workato action output needs an explicit data binding")
-        value = match[1][len(prefix):]
+        value = _wk_trigger_field(match[1], trigger)
     return _path(value)
 
 
-def _wk_condition(inp: dict, source_provider: str) -> str:
+def _wk_condition(inp: dict, trigger: dict) -> str:
     op = _WK_OPS.get(str(inp.get("operation") or ""))
     if op is None:
         raise repair("unsupported Workato comparison operator")
     if not ({"a", "left"} & inp.keys()) or not ({"b", "right"} & inp.keys()):
         raise repair("Workato comparison requires both operands")
-    left = _wk_operand(inp.get("a", inp.get("left")), source_provider)
+    left = _wk_operand(inp.get("a", inp.get("left")), trigger)
     right = _checked_operand(inp.get("b", inp.get("right")))
     # Workato's numeric comparison inputs are serialized as strings.
     if isinstance(right, str) and op in {">", ">=", "<", "<="}:
@@ -527,7 +557,7 @@ def _wk_condition(inp: dict, source_provider: str) -> str:
 
 
 def _wk_lower(block: list, prefix: str,
-              report: list[dict], source_provider: str) -> tuple[dict[str, FlowNode], str | None]:
+              report: list[dict], trigger: dict) -> tuple[dict[str, FlowNode], str | None]:
     """Lower one Workato ``block`` list (one nesting level) into chained nodes.
     ``if`` steps become branch nodes (the nested block is the then-arm, wired to
     rejoin); ``foreach``/``repeat`` steps become foreach nodes with the nested
@@ -544,20 +574,20 @@ def _wk_lower(block: list, prefix: str,
         inp = node.get("input") if isinstance(node.get("input"), dict) else {}
         nested = node.get("block") if isinstance(node.get("block"), list) else []
         if keyword == "if":
-            t_nodes, t_start = _wk_lower(nested, nid + "t", report, source_provider)
+            t_nodes, t_start = _wk_lower(nested, nid + "t", report, trigger)
             _pa_wire_tail(t_nodes, nxt)
             nodes.update(t_nodes)
-            nodes[nid] = FlowNode(id=nid, kind=NODE_BRANCH, condition=_wk_condition(inp, source_provider),
+            nodes[nid] = FlowNode(id=nid, kind=NODE_BRANCH, condition=_wk_condition(inp, trigger),
                                   if_true=t_start or nxt, if_false=nxt, next=nxt,
                                   label=_safe_line(name, max_chars=60))
             report.append({"step": name, "node": nid, "kind": NODE_BRANCH,
                            "fidelity": "preserved",
                            "note": "Workato IF -> branch (then-arm wired; no-match falls through)"})
         elif keyword in ("foreach", "repeat"):
-            b_nodes, b_start = _wk_lower(nested, "b", report, source_provider)
+            b_nodes, b_start = _wk_lower(nested, "b", report, trigger)
             body = Flow(id="", name=f"{name} body", start=b_start or "",
                         nodes=b_nodes) if b_nodes else None
-            items = _wk_operand(inp.get("source", inp.get("list", "")), source_provider)
+            items = _wk_operand(inp.get("source", inp.get("list", "")), trigger)
             if body is not None:
                 nodes[nid] = FlowNode(id=nid, kind=NODE_FOREACH, items=items, body=body,
                                       next=nxt, output=f"{nid}_out",
@@ -597,7 +627,7 @@ def _wk_to_flow(automation: ImportedAutomation,
     block = tree.get("block") if isinstance(tree, dict) else None
     if not isinstance(block, list) or not block:
         return None
-    nodes, start = _wk_lower(block, "n", report, str(tree.get("provider") or ""))
+    nodes, start = _wk_lower(block, "n", report, tree)
     if not nodes or not start:
         return None
     flow = Flow(id=automation.template_name(), name=automation.name,
