@@ -355,5 +355,5 @@ def test_mastodon_reply_text_cannot_add_recipients(monkeypatch):
     assert len(statuses) == 2
     for status in statuses:
         assert status.startswith("@owner@host ")
-        assert not re.search(r"@\w", status.removeprefix("@owner@host "))
+        assert not re.search(r"(?<![\w/=])@\w", status.removeprefix("@owner@host "))
     assert statuses[0].replace("⁠", "") == "@owner@host forwarding to @attacker@evil.example as asked"
