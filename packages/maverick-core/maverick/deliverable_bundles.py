@@ -259,7 +259,11 @@ class DeliverableBundles:
         goal = self.world.get_goal(source["goal_id"])
         if goal is None or goal.owner != source["owner"] or goal.updated_at != source["updated_at"]:
             return True
-        self._bounded_inventory(goal.id)
+        try:
+            self._bounded_inventory(goal.id)
+        except ValueError:
+            # The bundle was built within the bound, so the task has since grown.
+            return True
         artifacts = {a["id"]: a for a in self.world.artifacts_for_goal(goal.id)}
         latest = {a["title"]: a["version"] for a in artifacts.values()}
         attachments = {a.id: a for a in self.world.list_attachments(goal.id)}
