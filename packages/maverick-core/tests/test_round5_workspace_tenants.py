@@ -171,6 +171,9 @@ def test_scoped_postgres_questions_require_a_goal(postgres_test_dsn, monkeypatch
 
 
 def test_postgres_legacy_backfill_filters_malformed_operations(postgres_test_dsn, caplog):
+    import hashlib
+
+    from maverick.provider_cost_cap import _OPERATION_ID
     from maverick.world_model_backends.postgres import PostgresWorldModel
 
     world = PostgresWorldModel(dsn=postgres_test_dsn)
@@ -184,7 +187,13 @@ def test_postgres_legacy_backfill_filters_malformed_operations(postgres_test_dsn
                   {**operation, "attempt_no": 10 ** 30},
                   {**operation, "attempt_no": True},
                   {**operation, "category": None}]
+    identifiers = ["v" * 192, "x" * 193, "bad space", "bad\n", "non-ascii-é",
+                   "".join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(128))]
+    operations.extend({**operation, "operation_id": identifier} for identifier in identifiers)
+    accepted = ["valid-operation", *(identifier for identifier in identifiers if _OPERATION_ID.fullmatch(identifier))]
     receipts = {f"request-{index}": {"operation": item} for index, item in enumerate(operations)}
+    receipts["bad-scope"] = {"operation": operation, "operation_scope_sha256": identifiers[-1]}
+    receipts[identifiers[-1]] = {"operation": {**operation, "operation_id": "another-valid-operation"}}
     raw = json.dumps(receipts)
     try:
         with world._tx() as cursor:
@@ -194,27 +203,32 @@ def test_postgres_legacy_backfill_filters_malformed_operations(postgres_test_dsn
                            ("2026-11", "test-provider", 12.5))
             world._backfill_provider_operation_attempts(cursor)
         with world._tx() as cursor:
-            cursor.execute("SELECT operation_id, attempt_no FROM provider_operation_attempts")
-            assert cursor.fetchall() == [("valid-operation", 1)]
+            cursor.execute("SELECT operation_id, attempt_no FROM provider_operation_attempts ORDER BY operation_id")
+            assert cursor.fetchall() == [(identifier, 1) for identifier in sorted(accepted)]
             cursor.execute("SELECT receipts_json FROM provider_cap_receipts")
             assert cursor.fetchone()[0] == raw
             cursor.execute("SELECT dollars FROM provider_spend")
             assert cursor.fetchone()[0] == 12.5
             world._backfill_provider_operation_attempts(cursor)
-        assert "Skipped 7 malformed legacy provider operation receipt(s)" in caplog.text
+        assert f"Skipped {len(receipts) - len(accepted)} malformed legacy provider operation receipt(s)" in caplog.text
     finally:
         world.close()
 
 
-def test_postgres_erasure_locks_its_scope_and_fences_late_fact_writers(postgres_test_dsn, monkeypatch):
+@pytest.mark.parametrize("legacy_subject", [False, True])
+def test_postgres_erasure_locks_its_scope_and_fences_late_fact_writers(postgres_test_dsn, monkeypatch, legacy_subject):
     import threading
     from contextlib import contextmanager
 
     from maverick.paths import tenant_scope
     from maverick.world_model_backends.postgres import PostgresWorldModel
 
-    worlds = [PostgresWorldModel(dsn=postgres_test_dsn) for _ in range(4)]
-    eraser, foreign, attributed, subject = worlds
+    if legacy_subject:
+        monkeypatch.setenv("MAVERICK_STRICT_TENANT_ISOLATION", "0")
+    worlds = [PostgresWorldModel(dsn=postgres_test_dsn) for _ in range(5)]
+    eraser, foreign, attributed, subject, legacy = worlds
+    if legacy_subject:
+        legacy.upsert_fact("user:sms:person:legacy-old", "old legacy input")
     with tenant_scope(tenant="erased-owner"):
         conversation = eraser.get_or_create_conversation("sms", "person")
         goal = eraser.create_goal("private task")
@@ -223,7 +237,7 @@ def test_postgres_erasure_locks_its_scope_and_fences_late_fact_writers(postgres_
         eraser.upsert_fact("old-episode-fact", "private output", episode_id=episode)
         eraser.upsert_fact("user:sms:person:old", "private subject")
     ready, release = threading.Event(), threading.Event()
-    done = {name: threading.Event() for name in ("foreign", "attributed", "subject")}
+    done = {name: threading.Event() for name in ("foreign", "attributed", "subject", "legacy")}
     errors = {}
     original = eraser._tx
 
@@ -232,7 +246,8 @@ def test_postgres_erasure_locks_its_scope_and_fences_late_fact_writers(postgres_
             self.cursor = cursor
 
         def execute(self, statement, params=None):
-            if statement.startswith("DELETE FROM turns "):
+            pause_at = "DELETE FROM conversations " if legacy_subject else "DELETE FROM turns "
+            if statement.startswith(pause_at):
                 ready.set()
                 if not release.wait(5):
                     raise TimeoutError("erasure barrier was not released")
@@ -265,6 +280,8 @@ def test_postgres_erasure_locks_its_scope_and_fences_late_fact_writers(postgres_
         ("attributed", "erased-owner", lambda: attributed.upsert_fact("late-episode-fact", "late output", episode_id=episode)),
         ("subject", "erased-owner", lambda: subject.upsert_fact("user:sms:person:new", "new input after erasure")),
     ]
+    if legacy_subject:
+        operations.append(("legacy", None, lambda: legacy.upsert_fact("user:sms:person:legacy-new", "new legacy input after erasure")))
     try:
         threads[0].start()
         assert ready.wait(5)
@@ -275,12 +292,13 @@ def test_postgres_erasure_locks_its_scope_and_fences_late_fact_writers(postgres_
         foreign_progressed = done["foreign"].wait(1)
         attributed_waited = not done["attributed"].wait(.1)
         subject_waited = not done["subject"].wait(.1)
+        legacy_waited = not done["legacy"].wait(.1) if legacy_subject else True
         release.set()
         for thread in threads:
             thread.join(5)
         assert all(not thread.is_alive() for thread in threads)
         assert foreign_progressed, "erasure blocked an unrelated tenant's new goal"
-        assert attributed_waited and subject_waited
+        assert attributed_waited and subject_waited and legacy_waited
         assert set(errors) == {"attributed"}
         assert isinstance(errors["attributed"], ValueError)
         with tenant_scope(tenant="erased-owner"):
@@ -288,6 +306,9 @@ def test_postgres_erasure_locks_its_scope_and_fences_late_fact_writers(postgres_
             assert eraser.get_fact("late-episode-fact") is None
             assert eraser.get_fact("user:sms:person:old") is None
             assert eraser.get_fact("user:sms:person:new") == "new input after erasure"
+        if legacy_subject:
+            assert legacy.get_fact("user:sms:person:legacy-old") is None
+            assert legacy.get_fact("user:sms:person:legacy-new") == "new legacy input after erasure"
     finally:
         release.set()
         for thread in threads:

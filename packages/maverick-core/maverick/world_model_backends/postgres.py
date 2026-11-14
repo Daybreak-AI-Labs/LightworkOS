@@ -5518,9 +5518,16 @@ class PostgresWorldModel:
         parts = key.split(":", 3)
         if len(parts) != 4 or parts[0] != "user":
             return
-        identity = json.dumps(["fact-erasure", _active_tenant(), *parts[:3]])
+        tenant = _active_tenant()
+        tenants = [tenant]
+        if not shared and tenant is not None and not _strict_tenant_isolation():
+            # Compatibility erasure includes NULL-owned facts. Fence their
+            # unbound writers too, in a stable order before the named scope.
+            tenants.insert(0, None)
         function = "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
-        cur.execute(f"SELECT {function}(hashtextextended(%s, 0))", (identity,))
+        for owner in tenants:
+            identity = json.dumps(["fact-erasure", owner, *parts[:3]])
+            cur.execute(f"SELECT {function}(hashtextextended(%s, 0))", (identity,))
 
     def _locked_conversation_erasure_plan_cursor(self, cur, requested: list[int]) -> dict:
         from ..erasure_receipts import ErasurePlanChanged
@@ -6044,8 +6051,19 @@ class PostgresWorldModel:
             "OR operation->>'attempt_no' <= '9223372036854775807') "
             "THEN (operation->>'attempt_no')::BIGINT ELSE NULL END AS attempt_no, "
             "COALESCE(jsonb_typeof(operation) = 'object' "
+            "AND request_id COLLATE \"C\" ~ '^[A-Za-z0-9_.:-]{1,192}$' "
             "AND jsonb_typeof(operation->'operation_id') = 'string' "
-            "AND length(operation->>'operation_id') > 0 "
+            "AND (operation->>'operation_id') COLLATE \"C\" ~ '^[A-Za-z0-9_.:-]{1,192}$' "
+            "AND (receipt->'work_item_sha256' IS NULL OR ("
+            "jsonb_typeof(receipt->'work_item_sha256') = 'string' "
+            "AND (receipt->>'work_item_sha256') COLLATE \"C\" ~ '^[0-9a-f]{64}$')) "
+            "AND (receipt->'operation_scope_sha256' IS NULL "
+            "OR jsonb_typeof(receipt->'operation_scope_sha256') = 'null' OR ("
+            "jsonb_typeof(receipt->'operation_scope_sha256') = 'string' "
+            "AND (receipt->>'operation_scope_sha256') COLLATE \"C\" ~ '^[0-9a-f]{64}$')) "
+            "AND (receipt->>'operation_scope_sha256' IS NULL "
+            "OR receipt->>'work_item_sha256' IS NULL "
+            "OR receipt->>'operation_scope_sha256' = receipt->>'work_item_sha256') "
             "AND jsonb_typeof(operation->'category') = 'string' "
             "AND jsonb_typeof(operation->'parent_category') = 'string' "
             "AND (operation->'service' IS NULL "
