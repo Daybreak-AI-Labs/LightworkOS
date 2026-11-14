@@ -174,6 +174,11 @@ def _op_remote(op: str, args: dict[str, Any], sandbox: Any) -> str:
 # ---------- local ops (Pillow, [computer-use] extra) ----------
 
 
+# Local ops run in the host process, so the output size is capped (the same
+# 8192-pixel side as imagemagick_tool): a 40000x40000 target is ~4.8 GB.
+_MAX_LOCAL_SIDE = 8192
+
+
 def _load_pil():
     try:
         from PIL import Image
@@ -217,6 +222,8 @@ def _op_crop(args: dict[str, Any], sandbox: Any) -> str:
         or not all(isinstance(v, int) and not isinstance(v, bool) for v in box)
     ):
         return "ERROR: crop requires box=[left, top, right, bottom] (integers)"
+    if box[2] - box[0] > _MAX_LOCAL_SIDE or box[3] - box[1] > _MAX_LOCAL_SIDE:
+        return f"ERROR: crop box sides must be at most {_MAX_LOCAL_SIDE} pixels"
     return _local_edit("crop", args, sandbox, lambda im: im.crop(tuple(box)))
 
 
@@ -224,6 +231,8 @@ def _op_resize(args: dict[str, Any], sandbox: Any) -> str:
     width, height = args.get("width"), args.get("height")
     if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (width, height)):
         return "ERROR: resize requires positive integer width and height"
+    if width > _MAX_LOCAL_SIDE or height > _MAX_LOCAL_SIDE:
+        return f"ERROR: resize width and height must be at most {_MAX_LOCAL_SIDE} pixels"
     return _local_edit("resize", args, sandbox, lambda im: im.resize((width, height)))
 
 
