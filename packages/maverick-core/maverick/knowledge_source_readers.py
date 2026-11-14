@@ -113,8 +113,19 @@ def read_bytes(binding, actor, path, guard, *, limit=None):
         token = str(current["token"])
         authorization = ("Basic " + b64encode(token.encode()).decode("ascii")
                          if cfg["kind"] == "confluence" and ":" in token else "Bearer " + token)
-        return _http_read_bytes(url, headers={"Authorization": authorization,
-                                            "Accept": "application/json"}, max_bytes=limit)
+    # The global authority fence is short-lived: it is not held across the
+    # network read, so the authority is checked again once the read is done.
+    body = _http_read_bytes(url, headers={"Authorization": authorization,
+                                          "Accept": "application/json"}, max_bytes=limit)
+    _recheck(cfg, actor, guard)
+    return body
+
+
+def _recheck(binding, actor, guard):
+    """Re-validate the read's authority after an unfenced network read."""
+    with authority_effect_fence(), connections._mutation_lock():
+        guard()
+        account(binding, actor)
 
 
 def _download_too_large(max_mib):
@@ -135,27 +146,31 @@ def _download(binding, actor, url, guard):
         with authority_effect_fence(), connections._mutation_lock():
             guard()
             account(binding, actor)
-            if time.monotonic() >= deadline:
-                raise SourceReadError("The document download exceeded its time limit.")
-            with _guarded_client(url, timeout=min(15, deadline - time.monotonic())) as client:
-                with client.stream("GET", url, headers={}) as response:
-                    if response.status_code in {301, 302, 303, 307, 308}:
-                        location = str(response.headers.get("location") or "")
-                        if not location:
-                            raise SourceReadError("The provider returned an incomplete document redirect.")
-                        url = urljoin(url, location)
-                        continue
-                    if response.status_code != 200:
-                        raise SourceReadError("The selected drive could not deliver this document.")
-                    chunks, total = [], 0
-                    for chunk in response.iter_bytes():
-                        total += len(chunk)
-                        if time.monotonic() >= deadline:
-                            raise SourceReadError("The document download exceeded its time limit.")
-                        if total > max_bytes:
-                            raise SourceReadError(_download_too_large(max_mib))
-                        chunks.append(chunk)
-                    return b"".join(chunks)
+        # The download address carries no credential of ours, so the global
+        # authority fence is not held across the network read; the authority
+        # is checked again once the body is in.
+        if time.monotonic() >= deadline:
+            raise SourceReadError("The document download exceeded its time limit.")
+        with _guarded_client(url, timeout=min(15, deadline - time.monotonic())) as client:
+            with client.stream("GET", url, headers={}) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = str(response.headers.get("location") or "")
+                    if not location:
+                        raise SourceReadError("The provider returned an incomplete document redirect.")
+                    url = urljoin(url, location)
+                    continue
+                if response.status_code != 200:
+                    raise SourceReadError("The selected drive could not deliver this document.")
+                chunks, total = [], 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if time.monotonic() >= deadline:
+                        raise SourceReadError("The document download exceeded its time limit.")
+                    if total > max_bytes:
+                        raise SourceReadError(_download_too_large(max_mib))
+                    chunks.append(chunk)
+        _recheck(binding, actor, guard)
+        return b"".join(chunks)
     raise SourceReadError("The provider returned too many document redirects.")
 
 
