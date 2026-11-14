@@ -47,6 +47,17 @@ def _resolve_elicitation_policy() -> str:
     return (os.environ.get(ELICITATION_ENV) or "decline").strip().lower()
 
 
+def _elicitation_field_text(schema: object) -> str:
+    """The field labels an elicitation prompt would show the operator."""
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    parts: list[str] = []
+    for key, field_spec in (props or {}).items() if isinstance(props, dict) else ():
+        parts.append(str(key))
+        if isinstance(field_spec, dict):
+            parts.extend(str(field_spec.get(k) or "") for k in ("title", "description"))
+    return "\n".join(parts)
+
+
 def _coerce_scalar(raw: str, declared: object) -> Any:
     """Coerce a typed-in string to the JSON-Schema scalar the server asked for.
 
@@ -792,6 +803,11 @@ class MCPClient:
             handler performs no network/browser I/O on the params at all."""
         message = str(params.get("message") or "")
         scan = scan_remote_content(message)
+        # Field names, titles and descriptions are shown to the operator too.
+        schema_scan = scan_remote_content(
+            _elicitation_field_text(params.get("requestedSchema")))
+        if schema_scan.suspicious:
+            scan = schema_scan
         if scan.suspicious:
             log.warning(
                 "MCP %s elicitation prompt flagged (score=%.2f, patterns=%s); "
