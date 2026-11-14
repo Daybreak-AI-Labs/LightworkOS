@@ -21,6 +21,8 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 _FRAME_OPEN_RE = re.compile(r"<tool_output [^\n]*\bid=([0-9a-f]+)>")
+# Longest opening tag: a repr of a 128-character tool name plus the nonce.
+_FRAME_HEADER_MAX = 600
 
 
 @dataclass
@@ -288,7 +290,9 @@ class Blackboard:
         out = excerpt(content, cap)
         if not isinstance(content, str) or out == content:
             return out
-        match = _FRAME_OPEN_RE.search(content)
+        # Only the kept head can open a frame that needs closing; searching the
+        # whole post would make this quadratic on a crafted entry.
+        match = _FRAME_OPEN_RE.search(content[:cap + _FRAME_HEADER_MAX])
         if match is not None and match.start() < cap:
             close = f"</tool_output {match.group(1)}>"
             if close not in out:
