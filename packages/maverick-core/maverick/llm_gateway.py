@@ -527,7 +527,7 @@ class TeamTokenBudget:
                 used_requests = row.get("requests")
                 used_prompt = row.get("prompt_tokens")
                 used_completion = row.get("completion_tokens")
-                invalid_row = (
+                malformed = key in rows and (
                     isinstance(started, bool)
                     or not isinstance(started, (int, float))
                     or isinstance(used_requests, bool)
@@ -539,10 +539,15 @@ class TeamTokenBudget:
                     or used_requests < 0
                     or used_prompt < 0
                     or used_completion < 0
-                    or current_time < float(started)
-                    or current_time - float(started) >= window_seconds
                 )
-                if invalid_row:
+                if malformed:
+                    # A malformed authority fails closed instead of granting a
+                    # fresh window.
+                    raise ValueError("team budget row is malformed")
+                # A new team, or an elapsed window, starts afresh. A window
+                # that starts in the future (the clock stepped back) keeps its
+                # usage until it elapses.
+                if key not in rows or current_time - float(started) >= window_seconds:
                     started, used_requests, used_prompt, used_completion = (
                         current_time, 0, 0, 0
                     )

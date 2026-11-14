@@ -286,6 +286,26 @@ def test_completion_budget_counts_every_choice_and_charges_overage(tmp_path):
     assert second == 429  # the first call's 5000 prompt tokens were charged
 
 
+def test_team_budget_keeps_usage_when_the_clock_steps_back_and_refuses_malformed_rows(tmp_path):
+    import json
+
+    path = tmp_path / "budget" / "team_budget.json"
+    budget = gw.TeamTokenBudget(path=path)
+    limits = {"max_requests": 1}
+    assert budget.reserve("t", limits, prompt_tokens=0, completion_tokens=0,
+                          window_seconds=60, now=1_000.0).allowed
+    # The clock steps back: the spent window must not reset to zero.
+    assert not budget.reserve("t", limits, prompt_tokens=0, completion_tokens=0,
+                              window_seconds=60, now=900.0).allowed
+    state = json.loads(path.read_text())
+    for row in state["rows"].values():
+        row["requests"] = "lots"
+    path.write_text(json.dumps(state))
+    refused = budget.reserve("t", limits, prompt_tokens=0, completion_tokens=0,
+                             window_seconds=60, now=2_000.0)
+    assert not refused.allowed and refused.reason == "budget_authority"
+
+
 def test_otel_spans_land_in_the_caller_ledger():
     payload = {
         "resourceSpans": [{
