@@ -140,7 +140,7 @@ def test_discovery_retains_verified_price_outside_picker_catalog(monkeypatch):
     assert model not in llm.MODEL_CATALOG["openai"]
     assert _lookup_price_quote(f"openai:{model}", estimate_only=False).verified
     monkeypatch.setattr(discovery, "discovery_enabled", lambda: True)
-    monkeypatch.setattr(discovery, "_provider_material", lambda provider: {"configured": True, "api_key": "synthetic", "base_url": ""})
+    monkeypatch.setattr(discovery, "_provider_material", lambda provider: {"configured": True, "api_key": "synthetic", "base_url": ""})  # pragma: allowlist secret -- synthetic discovery fixture
     rows = [{"id": f"a-unpriced-{i:03}"} for i in range(discovery.MAX_MODELS_PER_PROVIDER)]
     rows.append({"id": model, "context_length": 32768})
     entry = discovery.discover("openai", fetch=lambda *args, **kwargs: (200, json.dumps({"data": rows}).encode()))
