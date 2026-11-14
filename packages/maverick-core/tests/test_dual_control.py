@@ -56,6 +56,13 @@ def test_per_risk_minimums_only_add_approvers(monkeypatch):
     assert dual_control.required_approvals("critical") == 3  # the environment still wins
 
 
+def test_unparseable_env_does_not_lower_the_configured_quorum(monkeypatch):
+    monkeypatch.setattr(dual_control, "_security_cfg", lambda: {"approvals_required": 2})
+    for value in ("two", "0", "-1"):
+        monkeypatch.setenv("MAVERICK_APPROVALS_REQUIRED", value)
+        assert dual_control.required_approvals("high") == 2, value
+
+
 def test_allow_self_approval_default_false(monkeypatch):
     monkeypatch.delenv("MAVERICK_ALLOW_SELF_APPROVAL", raising=False)
     monkeypatch.setattr(dual_control, "_security_cfg", dict)

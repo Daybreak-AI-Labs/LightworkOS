@@ -31,10 +31,13 @@ or critical risk action may approve it themselves; the shared decision path
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from ..config_contracts import CHOICE_SETTINGS
+
+log = logging.getLogger(__name__)
 
 _RISK_ORDER = ("low", "medium", "high", "critical")
 
@@ -69,7 +72,11 @@ def required_approvals(risk: str | None = None) -> int:
     only ask for more people, never fewer."""
     env = os.environ.get("MAVERICK_APPROVALS_REQUIRED")
     if env is not None and env.strip() != "":
-        return _coerce_int(env, 1)
+        n = _coerce_int(env, 0)
+        if n:
+            return n
+        # An unreadable override must not drop a configured quorum to one.
+        log.warning("ignoring MAVERICK_APPROVALS_REQUIRED=%r; it is not a positive integer", env)
     sec = _security_cfg()
     base = _base_approvals(sec.get("approvals_required"), risk)
     by_risk = sec.get("approvals_required_by_risk")
