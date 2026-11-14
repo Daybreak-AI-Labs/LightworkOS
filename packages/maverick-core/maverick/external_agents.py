@@ -225,6 +225,10 @@ def _load_sidecar(*, strict: bool = False) -> dict[str, dict]:
 
 def _save_sidecar(entries: dict[str, dict]) -> None:
     from .file_lock import atomic_write_text, ensure_private_directory
+    # Callers read with the lenient loader, which turns an unreadable or
+    # corrupt sidecar into ``{}``. Writing that back would replace every other
+    # agent's enrollment, containment flag and meters, so refuse instead.
+    _load_sidecar(strict=True)
     path = registry_path()
     ensure_private_directory(path.parent)
     atomic_write_text(path, json.dumps(entries, indent=2, sort_keys=True),

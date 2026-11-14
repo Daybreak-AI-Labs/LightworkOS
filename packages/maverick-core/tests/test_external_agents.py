@@ -1325,6 +1325,15 @@ def test_commit_after_approval_fires_exactly_once(monkeypatch):
     assert len(conn.writes) == 1
 
 
+def test_a_corrupt_sidecar_is_never_overwritten():
+    _enroll()
+    path = xa.registry_path()
+    path.write_text("{ not json", encoding="utf-8")
+    with pytest.raises(xa.ExternalAgentsError):
+        xa._settle_spend("sf-quotebot", 1, cost=1.0, idem="", over_wall=False, cap=None)
+    assert path.read_text(encoding="utf-8") == "{ not json"
+
+
 def test_external_agent_approvals_carry_the_dual_control_quorum(monkeypatch):
     monkeypatch.setenv("MAVERICK_APPROVALS_REQUIRED", "2")
     _wire_fakecrm(monkeypatch)
