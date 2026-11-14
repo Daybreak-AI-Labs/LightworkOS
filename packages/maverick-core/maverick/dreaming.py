@@ -973,6 +973,10 @@ def retire_stale_skills(
     retired: list[str] = []
     dest = store_dir / "retired"
     for name in names:
+        # Names come from usage stats; one that is not a plain file name
+        # (``../x``) must not move a file from outside the store.
+        if not isinstance(name, str) or not name or Path(name).name != name:
+            continue
         src = store_dir / f"{name}.md"
         if not src.is_file():
             continue
